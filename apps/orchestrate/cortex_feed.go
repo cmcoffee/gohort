@@ -25,6 +25,7 @@ const (
 	cortexKindDeliverable = "deliverable" // a filed-artifact pointer
 	cortexKindRequest     = "request"     // a dispatch/request from ANOTHER agent
 	cortexKindSession     = "session"     // a one-line pointer a session left behind
+	cortexKindOverflow    = "overflow"    // an agent reply a channel couldn't deliver
 )
 
 // AppendCortexObservation records one non-triggering observation into an agent's

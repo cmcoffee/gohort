@@ -464,17 +464,9 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// reaching here is covered by NO credential, so a private IP / .local /
 	// .internal target is a genuine SSRF attempt and is refused, same rule as
 	// the LLM-callable fetch_url tool.
-	if host := parsed.Hostname(); host != "" {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
-				return
-			}
-		}
-		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
-			return
-		}
+	if host := parsed.Hostname(); host != "" && IsNonPublicHost(host) {
+		writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
+		return
 	}
 
 	// JS-heavy auto-route — match fetch_url's behavior so a URL that
@@ -938,6 +930,23 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 }
 
 // --- wire helpers ---
+
+// IsNonPublicHost reports whether a hostname is a loopback/private/link-local IP
+// or a non-public suffix (localhost / .local / .internal) — the SSRF rule the
+// sandbox fetch hook enforces. Exposed so other SERVER-SIDE fetch paths (e.g. the
+// outbound-attachment URL fetch) apply the identical guard. An empty host is
+// treated as non-public (refuse).
+func IsNonPublicHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+	lower := strings.ToLower(host)
+	return lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal")
+}
 
 func writeHookResult(conn net.Conn, result interface{}) {
 	b, _ := json.Marshal(map[string]interface{}{"result": result})

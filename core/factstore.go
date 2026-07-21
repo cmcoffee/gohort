@@ -56,6 +56,14 @@ type MemoryFact struct {
 	// Empty on facts saved before this field existed; factVector backfills
 	// those lazily on first use. Mirrors EmbeddedChunk.Vector in vector_store.go.
 	Vector []float32 `json:"vector,omitempty"`
+	// VectorModel stamps which embedding space (EmbedVersion: model@endpoint)
+	// Vector was computed in. A cached vector from a DIFFERENT space is never
+	// cosine-compared — it re-embeds on touch instead, so an embedding-model
+	// swap degrades to a one-time lazy re-embed rather than silent garbage
+	// similarity. Empty = legacy row from before this field: grandfathered
+	// into the CURRENT version on first touch (assumes the vector predates no
+	// model swap — true unless the embedder changed before this shipped).
+	VectorModel string `json:"vector_model,omitempty"`
 	// MemoryProvenance carries origin (Source/Volatility/AsOf) and retirement
 	// (Reason/RetiredAt/Successor). Its Reason field REPLACES the former
 	// SupersededAt/SupersededBy pair: supersession is now Reason==RetireSuperseded
@@ -312,7 +320,10 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 				if sim >= factDedupSimThreshold {
 					// Carry factVector's lazy backfill onto the copy we may
 					// re-persist, or the reconfirm write would clobber it.
+					// factVector guarantees the vector is in the CURRENT
+					// embedding space, so stamp the copy to match.
 					f.Vector = existVec
+					f.VectorModel = EmbedVersion()
 					return FactWriteResult{Fact: reconfirmFact(db, f, p), Reason: FactDuplicate}
 				}
 				if sim >= factSupersedeBandFloor {
@@ -334,6 +345,9 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		// write policy (MemSourceUnknown when the caller doesn't set one).
 		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source},
 		Vector:           newVec,
+	}
+	if len(newVec) > 0 {
+		f.VectorModel = EmbedVersion()
 	}
 
 	// Relevance gate + supersession. When the gate applies (strict mode + worker
@@ -427,14 +441,29 @@ func applySupersede(db Database, newID string, now time.Time, olds []MemoryFact)
 // dedup/search never re-embed the whole namespace. Returns nil if embedding fails
 // (caller skips the fact rather than crashing). ctx carries the shared timeout.
 func factVector(ctx context.Context, db Database, f MemoryFact) []float32 {
+	ver := EmbedVersion()
 	if len(f.Vector) > 0 {
-		return f.Vector
+		if f.VectorModel == ver {
+			return f.Vector
+		}
+		if f.VectorModel == "" {
+			// Legacy unstamped row: grandfather today's vector as current and
+			// stamp it, so a FUTURE embedder swap invalidates it correctly.
+			// Cheap write, no embed call.
+			f.VectorModel = ver
+			db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f)
+			return f.Vector
+		}
+		// Stamped under a different embedding space — never cosine-compare
+		// across spaces; fall through and re-embed in the current one.
+		Debug("[factstore] re-embedding fact %s: cached vector is from %q, current space is %q", f.ID, f.VectorModel, ver)
 	}
 	vec, err := Embed(ctx, f.Note)
 	if err != nil || len(vec) == 0 {
 		return nil
 	}
 	f.Vector = vec
+	f.VectorModel = ver
 	db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f) // backfill so this cost is paid once
 	return vec
 }
@@ -473,10 +502,15 @@ Reply with ONLY a JSON array of the numbers of existing facts the new fact repla
 		WithThink(false),
 		WithMaxTokens(128))
 	if err != nil || resp == nil {
+		// FAIL-OPEN breadcrumb: without the judge, the new fact simply
+		// coexists with what it may have replaced — record that supersession
+		// was skipped so a later "why do I have both?" is attributable.
+		Log("[factstore] supersession judge unavailable (%v) — %q stored WITHOUT supersession check against %d candidate(s)", err, newNote, len(candidates))
 		return nil
 	}
 	var idx []int
 	if DecodeJSON(ResponseText(resp), &idx) != nil {
+		Log("[factstore] supersession judge reply unparseable — %q stored WITHOUT supersession check against %d candidate(s)", newNote, len(candidates))
 		return nil
 	}
 	var out []MemoryFact
@@ -519,6 +553,10 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use 
 		WithThink(false),
 		WithMaxTokens(192))
 	if err != nil || resp == nil {
+		// FAIL-OPEN, and say so: with the worker down, the note stores
+		// unjudged — junk passes the gate and contradictions coexist until
+		// a later sweep. A silent skip made that pattern undiagnosable.
+		Log("[factstore] fact-write judge unavailable (%v) — storing %q UNJUDGED (fail-open: no relevance gate, no supersession)", err, newNote)
 		return true, nil
 	}
 	var parsed struct {
@@ -526,6 +564,7 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use 
 		Supersedes []int `json:"supersedes"`
 	}
 	if DecodeJSON(ResponseText(resp), &parsed) != nil {
+		Log("[factstore] fact-write judge reply unparseable — storing %q UNJUDGED (fail-open)", newNote)
 		return true, nil
 	}
 	relevant := parsed.Relevant == nil || *parsed.Relevant // missing field => keep
@@ -645,6 +684,18 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 			for _, s := range srcs {
 				retireFact(db, s, RetireMerged, res.Fact.ID, now)
 			}
+		} else {
+			// The combined note did NOT land (defensive — the empty policy
+			// disables the gate today, but a future rejection path must not
+			// leave sources tombstoned pointing at a successor that doesn't
+			// exist). Restore the pre-retirement rows: the merge simply
+			// didn't happen this sweep.
+			for _, s := range srcs {
+				db.Set(MemoryFactsTable, factDBKey(s.Namespace, s.ID), s)
+				removed--
+			}
+			Log("[factstore] sweep merge on %s: combined note not stored (%v) — %d source fact(s) restored", namespace, res.Reason, len(srcs))
+			continue
 		}
 		// The combined note is a REWORDING of its sources, not new evidence —
 		// storing it under the empty policy laundered provenance (Source reset
@@ -884,11 +935,14 @@ func SearchRetiredFacts(db Database, namespace, query string, k int) []MemoryFac
 				fact  MemoryFact
 				score float32
 			}
+			ver := EmbedVersion()
 			var ranked []scored
 			for _, f := range retired {
 				// No lazy backfill here (factVector would resurrect embed cost on
-				// dead rows) — vectorless legacy tombstones fall to the term tier.
-				if len(f.Vector) != len(qVec) {
+				// dead rows) — vectorless legacy tombstones fall to the term tier,
+				// as do vectors stamped under a DIFFERENT embedding space (never
+				// cosine-compare across spaces; unstamped legacy grandfathered).
+				if len(f.Vector) != len(qVec) || (f.VectorModel != "" && f.VectorModel != ver) {
 					continue
 				}
 				if s := Cosine(qVec, f.Vector); s >= factSearchMinScore {

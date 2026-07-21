@@ -30,7 +30,7 @@ func connectorDefTool() ChatTool {
 	gt.SetSingleFirePerBatch(true)
 	gt.SetHelpPreamble(strings.TrimSpace(`
 A connector is a reusable "bridge type": a declared external capability that
-lives in one governed surface (Admin > Connectors). Five kinds ship:
+lives in one governed surface (Admin > Connectors). Six kinds ship:
 
   remote_mcp — a remote Model Context Protocol server. Many services publish one
   (calendars, ticketing, CRMs). Its tools register as <name>.<tool>. Created
@@ -60,6 +60,36 @@ lives in one governed surface (Admin > Connectors). Five kinds ship:
   secret travels; the daemon auto-negotiates its own key. The user's desktop app
   must be running for the device half to apply.
 
+  rest_messaging — a SERVER-SIDE, two-sided messaging bridge for any REST-pollable
+  chat service (Microsoft Teams, Slack, Discord). It polls the service's API
+  through a SecureAPI credential, routes each new message to the bound channel
+  agent, and delivers replies back — no user device, no public webhook. Use a
+  preset so you supply only the credential + a couple of vars:
+    - preset="teams" — Graph channel-message delta; needs an oauth2 credential
+      (draft_oauth_credential) and vars {team_id, channel_id}. Corporate Teams
+      requires the tenant admin to grant the credential the Graph channel-read
+      permission (a Microsoft-side gate).
+    - preset="slack" — Slack Web API; needs a BEARER credential holding a bot
+      token (xoxb-…) with channels:history + chat:write, the bot added to the
+      channel, and var {channel_id}.
+  Or author poll_url + map (dot-paths) + cursor + send_url by hand for any other
+  service. Created UNAPPROVED (it routes external messages to agents and sends
+  replies) — an admin approves it in Admin > Connectors. Run
+  connector(action="test") to preview the mapping before approval.
+
+  REAL-TIME instead of polling: add webhook_provider="slack" to receive Slack
+  events the instant they happen (no poll interval). The bridge exposes a public
+  route at /bridges/api/webhook/<connector-name>: paste that as the Request URL in
+  the Slack app's Event Subscriptions, and the admin sets the app's Signing Secret
+  via POST /bridges/api/webhook-secret {"connector","secret"} (kept encrypted,
+  never in the connector's exported spec). Replies still go out via send_url +
+  credential. webhook_provider="graph" gives Microsoft Teams the same real-time
+  path (pair it with preset="teams"): on approval the bridge creates a Graph
+  change-notification subscription against that route (clientState auto-generated),
+  auto-renews it before the ~60-min expiry, and deletes it on unapprove/delete. It
+  needs this deployment's public URL reachable by Graph (validated at creation)
+  and the tenant's Teams change-notification licensing.
+
 Governance for remote_mcp: create leaves it UNAPPROVED and inert. Tell the user
 an admin must approve it in Admin > Connectors (there they confirm the endpoint +
 auth). You NEVER handle a secret:
@@ -82,7 +112,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":             {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents."},
+			"kind":             {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential — use preset=\"teams\" for the canned Graph mapping."},
 			"name":             {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":              {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":        {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -96,12 +126,63 @@ Typical flow for a calendar:
 			"command":          {Type: "string", Description: "(desktop_mcp / desktop_command) the executable the desktop runs, e.g. \"npx\" or an absolute path."},
 			"args":             {Type: "array", Description: "(desktop_mcp / desktop_command, optional) command arguments as a list of strings. For desktop_command, an arg may contain a {placeholder} filled from the tool call, e.g. [\"--query\", \"{q}\"]."},
 			"params":           {Type: "object", Description: "(desktop_command, optional) the tool's parameters as {name: description} — each becomes a required string arg the caller supplies and can be referenced as {name} in args. Omit for a fixed command with no inputs."},
-			"service":          {Type: "string", Description: "(messaging_bridge) the built-in service to bridge. Only \"imessage\" is supported today."},
+			"service":          {Type: "string", Description: "(messaging_bridge) the built-in service to bridge — only \"imessage\" today. (rest_messaging) a name that namespaces the bridge, e.g. \"teams\" (the preset sets it)."},
 			"poll_secs":        {Type: "number", Description: "(messaging_bridge, optional) how often the device relay polls for new messages, in seconds (default 5)."},
+			"preset":           {Type: "string", Description: "(rest_messaging, optional) a canned service template that fills poll_url/map/cursor/send_url. \"teams\" (Graph, needs an oauth2 credential) or \"slack\" (Web API, needs a bearer credential holding a bot token). Explicit fields still override the preset."},
+			"vars":             {Type: "object", Description: "(rest_messaging) values substituted into {token}s in the preset's URLs/chat id. teams: {\"team_id\":\"...\",\"channel_id\":\"...\"}. slack: {\"channel_id\":\"C...\"}."},
+			"poll_url":         {Type: "string", Description: "(rest_messaging) absolute list endpoint polled each interval (the preset provides this; omit when using a preset+vars)."},
+			"interval_secs":    {Type: "number", Description: "(rest_messaging, optional) poll cadence in seconds (default 30, min 5)."},
+			"list_path":        {Type: "string", Description: "(rest_messaging) dot-path to the message array in the response (e.g. \"value\"). Empty = the response root is the array."},
+			"map":              {Type: "object", Description: "(rest_messaging) element-relative dot-paths pulling fields from each message: chat_id (required), text (required), msg_id, sender, sender_name, conv_name, timestamp. E.g. {\"chat_id\":\"channelIdentity.channelId\",\"text\":\"body.content\"}."},
+			"next_url_path":    {Type: "string", Description: "(rest_messaging, cursor mode A) response dot-path whose value replaces poll_url next tick (Graph \"@odata.deltaLink\")."},
+			"cursor_path":      {Type: "string", Description: "(rest_messaging, cursor mode B) response dot-path whose value is injected as a query param (cursor_param) next tick."},
+			"cursor_param":     {Type: "string", Description: "(rest_messaging, cursor mode B) query-param name carrying cursor_path's value on the next poll (e.g. \"cursor\", \"after\")."},
+			"send_url":         {Type: "string", Description: "(rest_messaging) absolute send endpoint for replies; may contain {chat_id}. Omit for an inbound-only bridge."},
+			"send_method":      {Type: "string", Description: "(rest_messaging, optional) send HTTP method (default POST)."},
+			"send_body":        {Type: "string", Description: "(rest_messaging) JSON body template for a reply; {text} and {chat_id} are substituted and JSON-escaped."},
+			"chat_id_const":    {Type: "string", Description: "(rest_messaging, optional) a FIXED chat id for every message, for services whose messages omit their conversation id (Slack). Takes precedence over map.chat_id."},
+			"more_url_path":    {Type: "string", Description: "(rest_messaging, optional) response dot-path to a complete next-page URL followed within a tick until absent (Graph \"@odata.nextLink\")."},
+			"webhook_provider": {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API — turnkey: paste the webhook URL into the Slack app, admin sets the signing secret) or \"graph\". The poll fields become unused; send_url/credential still deliver replies."},
 			"description":      {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
 		Required: []string{"kind", "name"},
 		Handler:  connectorCreate,
+	})
+	gt.AddAction("update", &GroupedToolAction{
+		Description: "Change an EXISTING connector's fields WITHOUT recreating it — use when a preset value or mapping needs fixing later. Only the fields you pass change; the rest are kept. The kind can't change. If the connector is already approved (live), it re-materializes immediately (a rest_messaging poller restarts with the new spec, resuming from its cursor); an unapproved one just updates its draft. To CLEAR a field or switch preset/kind, delete and recreate instead.",
+		Params: map[string]ToolParam{
+			"name":             {Type: "string", Description: "The connector to update."},
+			"description":      {Type: "string", Description: "(optional) New description."},
+			"url":              {Type: "string", Description: "(remote_mcp / rest_poll) new URL."},
+			"auth_mode":        {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) new auth mode."},
+			"secure_cred":      {Type: "string", Description: "(remote_mcp) new SecureAPI credential name."},
+			"credential":       {Type: "string", Description: "(rest_poll / rest_messaging) new credential name."},
+			"wake_agent":       {Type: "string", Description: "(rest_poll) new agent to wake."},
+			"interval_minutes": {Type: "number", Description: "(rest_poll) new poll interval, minutes."},
+			"wake_brief":       {Type: "string", Description: "(rest_poll) new wake guidance."},
+			"method":           {Type: "string", Description: "(rest_poll / rest_messaging) new poll HTTP method."},
+			"body":             {Type: "string", Description: "(rest_poll / rest_messaging) new poll request body."},
+			"command":          {Type: "string", Description: "(desktop_mcp / desktop_command) new command."},
+			"args":             {Type: "array", Description: "(desktop_mcp / desktop_command) new args list (replaces the whole list)."},
+			"params":           {Type: "object", Description: "(desktop_command) new params {name: description} (replaces the whole set)."},
+			"service":          {Type: "string", Description: "(messaging_bridge / rest_messaging) new service name."},
+			"poll_secs":        {Type: "number", Description: "(messaging_bridge) new device relay poll seconds."},
+			"poll_url":         {Type: "string", Description: "(rest_messaging) new poll endpoint."},
+			"interval_secs":    {Type: "number", Description: "(rest_messaging) new poll cadence, seconds."},
+			"list_path":        {Type: "string", Description: "(rest_messaging) new message-array dot-path."},
+			"map":              {Type: "object", Description: "(rest_messaging) message field dot-paths to change (merged per-field into the existing map)."},
+			"next_url_path":    {Type: "string", Description: "(rest_messaging) new cross-tick cursor dot-path."},
+			"cursor_path":      {Type: "string", Description: "(rest_messaging) new cursor-value dot-path."},
+			"cursor_param":     {Type: "string", Description: "(rest_messaging) new cursor query-param name."},
+			"more_url_path":    {Type: "string", Description: "(rest_messaging) new within-tick next-page dot-path."},
+			"chat_id_const":    {Type: "string", Description: "(rest_messaging) new fixed chat id."},
+			"send_url":         {Type: "string", Description: "(rest_messaging) new reply send endpoint."},
+			"send_method":      {Type: "string", Description: "(rest_messaging) new send HTTP method."},
+			"send_body":        {Type: "string", Description: "(rest_messaging) new reply body template."},
+			"webhook_provider": {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging) switch inbound to a real-time webhook provider."},
+		},
+		Required: []string{"name"},
+		Handler:  connectorUpdate,
 	})
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List declared connectors and whether each is approved + live.",
@@ -298,6 +379,44 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		raw, _ := json.Marshal(spec)
 		c.Spec = raw
+	case RestMessagingConnectorKind:
+		if owner == "" {
+			return "", fmt.Errorf("rest_messaging requires an authenticated session (its channel agents run as you)")
+		}
+		fm := stringMapArg(args, "map")
+		over := RestMessagingSpec{
+			Service:      strings.TrimSpace(stringArg(args, "service")),
+			Credential:   strings.TrimSpace(stringArg(args, "credential")),
+			PollURL:      strings.TrimSpace(stringArg(args, "poll_url")),
+			Method:       strings.TrimSpace(stringArg(args, "method")),
+			Body:         stringArg(args, "body"),
+			IntervalSecs: oArgInt(args, "interval_secs"),
+			ListPath:     strings.TrimSpace(stringArg(args, "list_path")),
+			NextURLPath:  strings.TrimSpace(stringArg(args, "next_url_path")),
+			CursorPath:   strings.TrimSpace(stringArg(args, "cursor_path")),
+			CursorParam:  strings.TrimSpace(stringArg(args, "cursor_param")),
+			SendURL:         strings.TrimSpace(stringArg(args, "send_url")),
+			SendMethod:      strings.TrimSpace(stringArg(args, "send_method")),
+			SendBody:        stringArg(args, "send_body"),
+			ChatIDConst:     strings.TrimSpace(stringArg(args, "chat_id_const")),
+			MoreURLPath:     strings.TrimSpace(stringArg(args, "more_url_path")),
+			WebhookProvider: strings.TrimSpace(stringArg(args, "webhook_provider")),
+			Map: RestMessagingFieldMap{
+				ChatID:     strings.TrimSpace(fm["chat_id"]),
+				MsgID:      strings.TrimSpace(fm["msg_id"]),
+				Sender:     strings.TrimSpace(fm["sender"]),
+				SenderName: strings.TrimSpace(fm["sender_name"]),
+				Text:       strings.TrimSpace(fm["text"]),
+				ConvName:   strings.TrimSpace(fm["conv_name"]),
+				Timestamp:  strings.TrimSpace(fm["timestamp"]),
+			},
+		}
+		spec, err := ApplyRestMessagingPreset(stringArg(args, "preset"), over, stringMapArg(args, "vars"))
+		if err != nil {
+			return "", err
+		}
+		raw, _ := json.Marshal(spec)
+		c.Spec = raw
 	default:
 		return "", fmt.Errorf("unknown connector kind %q", kind)
 	}
@@ -314,6 +433,163 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 	return fmt.Sprintf(
 		"Drafted connector %q (kind=%s), created UNAPPROVED. %s\nTo go live: an admin opens Admin > Connectors, reviews it, and clicks Approve — then its tools register for agents. Nothing runs until then.",
 		name, kind, ConnectorSummary(saved)), nil
+}
+
+// argSet reports whether the caller explicitly passed a key (present but empty
+// still counts as "provided" — distinct from omitted).
+func argSet(args map[string]any, key string) bool {
+	_, ok := args[key]
+	return ok
+}
+
+// patchStr returns the provided arg (trimmed) when set, else the current value.
+func patchStr(cur string, args map[string]any, key string) string {
+	if argSet(args, key) {
+		return strings.TrimSpace(stringArg(args, key))
+	}
+	return cur
+}
+
+// patchInt returns the provided int arg when set, else the current value.
+func patchInt(cur int, args map[string]any, key string) int {
+	if argSet(args, key) {
+		return oArgInt(args, key)
+	}
+	return cur
+}
+
+// connectorUpdate patches an existing connector's fields in place. Only provided
+// fields change; the kind is fixed. SaveConnector re-validates and, if the
+// connector is approved, re-materializes so the change takes effect immediately.
+func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(stringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	prev, ok := GetConnector(RootDB, name)
+	if !ok {
+		return "", fmt.Errorf("no connector named %q — create it first", name)
+	}
+	owner := bridgeOwner(sess)
+	c := prev
+	if argSet(args, "description") {
+		c.Desc = strings.TrimSpace(stringArg(args, "description"))
+	}
+
+	switch prev.Kind {
+	case RemoteMCPConnectorKind:
+		var s RemoteMCPSpec
+		_ = json.Unmarshal(prev.Spec, &s)
+		s.URL = patchStr(s.URL, args, "url")
+		if argSet(args, "auth_mode") {
+			s.AuthMode = normalizeConnectorAuth(stringArg(args, "auth_mode"))
+		}
+		s.SecureCred = patchStr(s.SecureCred, args, "secure_cred")
+		c.Spec, _ = json.Marshal(s)
+	case RestPollConnectorKind:
+		var s RestPollSpec
+		_ = json.Unmarshal(prev.Spec, &s)
+		s.Credential = patchStr(s.Credential, args, "credential")
+		s.URL = patchStr(s.URL, args, "url")
+		s.Method = patchStr(s.Method, args, "method")
+		s.Body = patchStr(s.Body, args, "body")
+		s.WakeBrief = patchStr(s.WakeBrief, args, "wake_brief")
+		s.IntervalMinutes = patchInt(s.IntervalMinutes, args, "interval_minutes")
+		if argSet(args, "wake_agent") {
+			want := strings.TrimSpace(stringArg(args, "wake_agent"))
+			wa := resolveCheckAgent(sess, owner, want, "")
+			if wa == "" {
+				return "", fmt.Errorf("no agent named %q to wake", want)
+			}
+			s.WakeAgent = wa
+		}
+		c.Spec, _ = json.Marshal(s)
+	case DesktopMCPConnectorKind:
+		var s DesktopMCPSpec
+		_ = json.Unmarshal(prev.Spec, &s)
+		s.Command = patchStr(s.Command, args, "command")
+		if argSet(args, "args") {
+			s.Args = stringSliceArg(args, "args")
+		}
+		c.Spec, _ = json.Marshal(s)
+	case DesktopCommandConnectorKind:
+		var s DesktopCommandSpec
+		_ = json.Unmarshal(prev.Spec, &s)
+		s.Command = patchStr(s.Command, args, "command")
+		if argSet(args, "args") {
+			s.Args = stringSliceArg(args, "args")
+		}
+		if argSet(args, "description") {
+			s.Desc = c.Desc // desktop_command shows Desc as the tool's description
+		}
+		if argSet(args, "params") {
+			var params map[string]ToolParam
+			var required []string
+			for pn, pd := range stringMapArg(args, "params") {
+				if params == nil {
+					params = map[string]ToolParam{}
+				}
+				params[pn] = ToolParam{Type: "string", Description: pd}
+				required = append(required, pn)
+			}
+			s.Params, s.Required = params, required
+		}
+		c.Spec, _ = json.Marshal(s)
+	case MessagingBridgeConnectorKind:
+		var s MessagingBridgeSpec
+		_ = json.Unmarshal(prev.Spec, &s)
+		if argSet(args, "service") {
+			s.Service = strings.ToLower(strings.TrimSpace(stringArg(args, "service")))
+		}
+		s.PollSecs = patchInt(s.PollSecs, args, "poll_secs")
+		c.Spec, _ = json.Marshal(s)
+	case RestMessagingConnectorKind:
+		var existing RestMessagingSpec
+		_ = json.Unmarshal(prev.Spec, &existing)
+		fm := stringMapArg(args, "map")
+		// Build an overlay from the provided args; MergeRestMessagingSpec keeps the
+		// existing value for every field left empty, giving per-field partial patch.
+		over := RestMessagingSpec{
+			Service:      strings.TrimSpace(stringArg(args, "service")),
+			Credential:   strings.TrimSpace(stringArg(args, "credential")),
+			PollURL:      strings.TrimSpace(stringArg(args, "poll_url")),
+			Method:       strings.TrimSpace(stringArg(args, "method")),
+			Body:         stringArg(args, "body"),
+			IntervalSecs: oArgInt(args, "interval_secs"),
+			ListPath:     strings.TrimSpace(stringArg(args, "list_path")),
+			ChatIDConst:  strings.TrimSpace(stringArg(args, "chat_id_const")),
+			MoreURLPath:  strings.TrimSpace(stringArg(args, "more_url_path")),
+			NextURLPath:  strings.TrimSpace(stringArg(args, "next_url_path")),
+			CursorPath:   strings.TrimSpace(stringArg(args, "cursor_path")),
+			CursorParam:  strings.TrimSpace(stringArg(args, "cursor_param")),
+			SendURL:         strings.TrimSpace(stringArg(args, "send_url")),
+			SendMethod:      strings.TrimSpace(stringArg(args, "send_method")),
+			SendBody:        stringArg(args, "send_body"),
+			WebhookProvider: strings.TrimSpace(stringArg(args, "webhook_provider")),
+			Map: RestMessagingFieldMap{
+				ChatID:     strings.TrimSpace(fm["chat_id"]),
+				MsgID:      strings.TrimSpace(fm["msg_id"]),
+				Sender:     strings.TrimSpace(fm["sender"]),
+				SenderName: strings.TrimSpace(fm["sender_name"]),
+				Text:       strings.TrimSpace(fm["text"]),
+				ConvName:   strings.TrimSpace(fm["conv_name"]),
+				Timestamp:  strings.TrimSpace(fm["timestamp"]),
+			},
+		}
+		c.Spec, _ = json.Marshal(MergeRestMessagingSpec(existing, over))
+	default:
+		return "", fmt.Errorf("update not supported for kind %q — delete and recreate instead", prev.Kind)
+	}
+
+	if err := SaveConnector(RootDB, c); err != nil {
+		return "", err
+	}
+	saved, _ := GetConnector(RootDB, name)
+	state := "draft updated (still UNAPPROVED)"
+	if saved.Approved {
+		state = "updated and RE-MATERIALIZED (live now)"
+	}
+	return fmt.Sprintf("Connector %q %s. %s", name, state, ConnectorSummary(saved)), nil
 }
 
 func connectorList(args map[string]any, sess *ToolSession) (string, error) {
@@ -372,6 +648,16 @@ func connectorTest(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	if err := ValidateConnector(c); err != nil {
 		return "", err
+	}
+	// rest_messaging goes a step past shape validation: do one live poll and show
+	// the mapped first message, so the author can confirm the dot-paths before
+	// approval. Needs the credential enabled by an admin.
+	if c.Kind == RestMessagingConnectorKind {
+		preview, err := ProbeMessagingConnector(c)
+		if err != nil {
+			return "", fmt.Errorf("%q validates, but the live poll failed: %w\n(If the credential isn't enabled yet, an admin must add its secret and enable it in Admin > APIs first.)", name, err)
+		}
+		return fmt.Sprintf("Connector %q validates. %s\n%s\nApprove it in Admin > Connectors to go live.", name, ConnectorSummary(c), preview), nil
 	}
 	return fmt.Sprintf("Connector %q validates. %s\nIt still needs admin approval in Admin > Connectors before it goes live.", name, ConnectorSummary(c)), nil
 }

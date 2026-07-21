@@ -132,6 +132,16 @@ type AgentRecord struct {
 	// BlockedTools, filtered by cap. See availableWorkerToolOptions().
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 
+	// AutoApproveTools is the allow-list of tool names this agent may call on an
+	// UNATTENDED run (a standing/scheduled fire) without a human to click the
+	// approval card. A high-consequence (NeedsConfirm) tool NOT in this list is
+	// refused on an autonomous fire and queued as an "autonomous_tool"
+	// authorization; approving it (the Authorizations pane) adds the tool here so
+	// future fires run it. This is what makes a scheduled agent actually able to
+	// use its credential-backed tools, without silently auto-approving everything
+	// the way the recurring path used to.
+	AutoApproveTools []string `json:"auto_approve_tools,omitempty"`
+
 	// DisabledPersistentTools is an explicit DENY-LIST of admin-
 	// approved persistent temp-tool names this agent should NOT see.
 	// Persistent temp tools flow into every agent's catalog by default

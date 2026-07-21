@@ -70,6 +70,59 @@ func relativeAge(now, then time.Time) string {
 }
 
 // channelChatTools builds the CHANNEL-SCOPED messaging tools for an agent that
+// reservedDynamicToolNames are the per-agent framework tools assembled at
+// dispatch (channel messaging + operator/fleet) — not in the static catalog, so
+// temp-tool creation can't see them without this. Registered so an agent can't
+// author a temp tool named e.g. send_message that shadows the real one.
+func init() {
+	RegisterReservedToolName(
+		// channel-scoped messaging
+		"send_message", "list_chats", "read_chat", "list_members",
+		// operator / fleet
+		"message_contact", "notify_me", "await_result", "delegate",
+		"request_thread_binding", "release_thread_binding", "set_thread_wake",
+		"authorize_channel_sender",
+		"create_event_monitor", "delete_event_monitor", "list_event_monitors",
+		"create_standing_agent", "delete_standing_agent", "list_standing_agents",
+		"set_standing_paused", "run_standing_now", "inspect_run", "list_runs",
+	)
+}
+
+// channelsAccessibleToAgent returns the channels an agent may read/send on: its
+// own bound channels, channels an ANCESTOR (up the OwnedBy chain) is bound to (a
+// sub-agent inheriting its parent's channels), and channels it — or an ancestor —
+// has been explicitly granted as an AuthorizedSender. This is the SEE side of the
+// hybrid model: a sub-agent can resolve + list exactly the channels it may act on,
+// matching the send-authority predicate (channelSenderAuthorized) so visibility
+// and delivery agree.
+func channelsAccessibleToAgent(udb Database, owner, agentID string) []Channel {
+	chain := map[string]bool{} // the agent + every ancestor
+	seen := map[string]bool{}
+	for id := agentID; id != "" && !seen[id]; {
+		seen[id] = true
+		chain[id] = true
+		rec, ok := loadAgent(udb, id)
+		if !ok {
+			break
+		}
+		id = rec.OwnedBy
+	}
+	var out []Channel
+	for _, ch := range ListChannels(RootDB, owner) {
+		if chain[ch.AgentID] { // bound to the agent or an ancestor
+			out = append(out, ch)
+			continue
+		}
+		for _, s := range ch.AuthorizedSenders {
+			if chain[s] { // explicitly granted to the agent or an ancestor
+				out = append(out, ch)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // has channels — list_chats / read_chat / send_message. Scope is the agent's
 // bound channels: a whole-service binding (Address=="") widens to every thread
 // on that service; a per-contact binding narrows to that chat. The "global view"
@@ -77,7 +130,7 @@ func relativeAge(now, then time.Time) string {
 // mode. Returns nil when the agent has no channels or no messaging transport
 // (Bridges) has registered.
 func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
-	chans := ListChannelsForAgent(RootDB, owner, agentID)
+	chans := channelsAccessibleToAgent(UserDB(orchestrateBaseDB, owner), owner, agentID)
 	if len(chans) == 0 {
 		return nil
 	}
@@ -270,17 +323,27 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 				Name:        "send_message",
 				Description: "Send a message OUT over one of this agent's channels — to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to your channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool — put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
 				Parameters: map[string]ToolParam{
-					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id."},
-					"text":        {Type: "string", Description: "The message text to send to the channel."},
+					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id. (Alias: chat_id.)"},
+					"text":        {Type: "string", Description: "The message text to send to the channel. (Alias: message.)"},
+					"chat_id":     {Type: "string", Description: "Alias for `to` (a conversation's chat id) — accepted for compatibility; prefer `to`."},
+					"message":     {Type: "string", Description: "Alias for `text` — accepted for compatibility; prefer `text`."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
+					"attachment":  {Type: "string", Description: "Singular alias for `attachments` — a single attachment ref (workspace file, media id, or image/video URL). Accepted for compatibility; prefer `attachments`."},
 				},
-				Required: []string{"to", "text"},
+				// No hard-required set: a recipient may arrive as `to` OR `chat_id`
+				// and the body as `text` OR `message`; the handler validates the pair.
 			},
 			Handler: func(args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
+				if to == "" {
+					to = strings.TrimSpace(oArgStr(args, "chat_id")) // alias
+				}
 				text := strings.TrimSpace(oArgStr(args, "text"))
+				if text == "" {
+					text = strings.TrimSpace(oArgStr(args, "message")) // alias
+				}
 				if to == "" || text == "" {
-					return "", fmt.Errorf("to and text are required")
+					return "", fmt.Errorf("a recipient (`to`, or its alias `chat_id`) and message text (`text`, or its alias `message`) are both required")
 				}
 				chatID, handle, ok := resolve(to)
 				if !ok {
@@ -308,6 +371,16 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 					// (channel session + cortex) so it can field follow-ups.
 					recordChannelPost(sess.DB, owner, chatID, handle, text)
 					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
+				}
+				// Authorized sender: this agent — or a parent it's owned by — may
+				// deliver to this channel (inherited down the ownership chain). Send
+				// without queuing; the grant is the approval.
+				if channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, chatID, handle, agentID) {
+					if _, err := operatorDeliverMessage(owner, agentID, chatID, handle, text, images); err != nil {
+						return "", err
+					}
+					recordChannelPost(sess.DB, owner, chatID, handle, text)
+					return fmt.Sprintf("Sent to %s (authorized sender for this channel).", label), nil
 				}
 				a := SaveAuthorization(RootDB, Authorization{
 					Owner: owner, Action: "send_message", ChatID: chatID, Handle: handle, Text: text, Images: images,

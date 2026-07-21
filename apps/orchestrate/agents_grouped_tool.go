@@ -636,6 +636,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// Builder override — allow dispatch to any sub-agent for
 		// post-authoring verification. Logged for audit visibility.
 		Log("[orchestrate.agents.run] Builder override — dispatching to sub-agent %q (owned_by=%q)", target.Name, target.OwnedBy)
+	} else if target.OwnedBy != "" {
+		// A sub-agent is PRIVATE to its owner. Reaching here means the caller is
+		// neither the owning parent (handled above) nor Builder — so refuse
+		// OUTRIGHT, regardless of Hidden status or dispatch mode. A sub-agent runs
+		// WITH its parent's authority; letting another fleet agent invoke it would
+		// hand that agent the parent's reach. It's internal composition owned by one
+		// parent, not a shared fleet capability. (A capability meant to be shared
+		// should be a top-level agent, not a sub-agent.)
+		return "", fmt.Errorf("agents(run): %q is a sub-agent owned by another agent and is private to its owner — you can't dispatch to it. If you need this capability, ask its owning agent, or have the user make it a top-level agent.", target.Name)
 	} else {
 		switch effectiveDispatchMode(t.agent) {
 		case dispatchNone:

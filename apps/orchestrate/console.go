@@ -168,7 +168,17 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		rows = append(rows, row)
 	}
 	for _, sa := range ListStandingAgents(RootDB, user) {
-		if agentID != "" && sa.AgentID != agentID {
+		// Scope to the CONTROLLER that created + manages the task (ReportAgentID) —
+		// the same owner the "Enabled agents" card uses (handleConsoleAgents) — so a
+		// task that RUNS as a sub-agent shows on the PARENT's Scheduler rail where
+		// it's managed, not on the sub-agent that merely executes it. Fall back to
+		// the runner AgentID for legacy records that carry no controller, so they
+		// still surface somewhere.
+		manager := sa.ReportAgentID
+		if manager == "" {
+			manager = sa.AgentID
+		}
+		if agentID != "" && manager != agentID {
 			continue
 		}
 		id := url.QueryEscape(sa.Name)
@@ -1697,7 +1707,44 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	for _, e := range ListContactPolicies(RootDB, user) {
 		out = append(out, permRow{Who: e.Target, Detail: "Contact messaging", ID: "contact:" + e.Target, Managed: true, Policy: e.Policy})
 	}
+	// Zone 3 — autonomous-run tool grants: the tools you "Always allowed" a
+	// scheduled/standing agent to run unattended (AutoApproveTools). Surfaced so
+	// the grant isn't invisible after approval — Remove (or "Needs approval")
+	// revokes it, and the tool re-queues on its next unattended fire.
+	for _, ag := range listAgents(udb, user) {
+		for _, tool := range ag.AutoApproveTools {
+			out = append(out, permRow{
+				Who:     firstNonEmptyStr(ag.Name, ag.ID),
+				Detail:  "Autonomous tool: " + tool,
+				ID:      "autotool:" + ag.ID + ":" + tool,
+				Managed: true, Policy: "allow",
+			})
+		}
+	}
 	writeJSON(w, out)
+}
+
+// removeAutoApproveTool revokes a standing autonomous-tool grant from an agent.
+func removeAutoApproveTool(udb Database, agentID, tool string) {
+	rec, ok := loadAgent(udb, agentID)
+	if !ok {
+		return
+	}
+	var kept []string
+	changed := false
+	for _, t := range rec.AutoApproveTools {
+		if t == tool {
+			changed = true
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if changed {
+		rec.AutoApproveTools = kept
+		if _, err := saveAgent(udb, rec); err != nil {
+			Log("[console.perm] revoke autonomous tool %s/%s failed: %v", agentID, tool, err)
+		}
+	}
 }
 
 // handleConsolePermissionPolicy sets a subject's standing policy.
@@ -1722,6 +1769,12 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 		SetDelegationPolicy(RootDB, user, target, value)
 	case "contact":
 		SetContactPolicy(RootDB, user, target, value)
+	case "autotool":
+		// A tool grant is binary (granted or not) — any state other than "allow"
+		// revokes it; the tool re-queues for approval on its next unattended fire.
+		if aid, tool, ok := strings.Cut(target, ":"); ok && tool != "" && value != "allow" {
+			removeAutoApproveTool(UserDB(T.DB, user), aid, tool)
+		}
 	default:
 		http.Error(w, "unknown subject", http.StatusBadRequest)
 		return
@@ -1750,6 +1803,10 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 		RemoveDelegationPolicy(RootDB, user, target)
 	case "contact":
 		RemoveContactPolicy(RootDB, user, target)
+	case "autotool":
+		if aid, tool, ok := strings.Cut(target, ":"); ok && tool != "" {
+			removeAutoApproveTool(UserDB(T.DB, user), aid, tool)
+		}
 	default:
 		http.Error(w, "unknown subject", http.StatusBadRequest)
 		return
@@ -1806,6 +1863,35 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 			rec.PendingApproval = false
 			if _, err := saveAgent(udb, rec); err != nil {
 				Log("[operator.approval] activate_sub_agent %s save failed: %v", a.Agent, err)
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// autonomous_tool: an unattended (standing/scheduled) fire wanted a
+	// NeedsConfirm tool the agent isn't pre-authorized for. Approving adds the tool
+	// to the PARENT's AutoApproveTools when the requester is a sub-agent — the grant
+	// is inherited down the ownership chain, so the owner authorizes ONCE at the
+	// parent and every sub-agent inherits it (autonomousApprovedSet), rather than
+	// re-approving the same tool per sub-agent. Top-level agents grant on themselves.
+	if a.Action == "autonomous_tool" {
+		grantTo := a.Agent
+		if rec, ok := loadAgent(udb, a.Agent); ok && rec.OwnedBy != "" {
+			grantTo = rec.OwnedBy
+		}
+		if rec, ok := loadAgent(udb, grantTo); ok {
+			has := false
+			for _, t := range rec.AutoApproveTools {
+				if t == a.Brief {
+					has = true
+					break
+				}
+			}
+			if !has && a.Brief != "" {
+				rec.AutoApproveTools = append(rec.AutoApproveTools, a.Brief)
+				if _, err := saveAgent(udb, rec); err != nil {
+					Log("[operator.approval] autonomous_tool %s/%s save failed: %v", grantTo, a.Brief, err)
+				}
 			}
 		}
 		w.WriteHeader(http.StatusNoContent)

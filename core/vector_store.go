@@ -995,6 +995,22 @@ func ChunksWhere(db Database, keep func(c EmbeddedChunk) bool) []EmbeddedChunk {
 //
 // Scale notes: comfortable to ~50k chunks with the cache; consider a
 // real ANN index (HNSW via coder/hnsw, chromem-go) above that.
+// chunkVectorComparable reports whether a chunk's cached vector may be
+// cosine-compared against a query embedded in the CURRENT space: dimensions
+// must match, and a chunk stamped with a DIFFERENT embedding model is skipped
+// rather than compared across spaces (a same-dimension model swap otherwise
+// produces silently-garbage similarity; re-ingest re-embeds the chunk).
+// Chunks with an empty Model (single-model backends, legacy rows) and
+// deployments with no configured model name are grandfathered — a
+// same-endpoint model swap there is undetectable, see EmbedVersion.
+func chunkVectorComparable(c *EmbeddedChunk, query []float32) bool {
+	if len(c.Vector) != len(query) {
+		return false
+	}
+	cur := GetEmbeddingConfig().Model
+	return c.Model == "" || cur == "" || c.Model == cur
+}
+
 func SearchChunks(db Database, query []float32, k int) []SearchHit {
 	if db == nil || len(query) == 0 || k <= 0 {
 		return nil
@@ -1003,7 +1019,7 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
-		if len(c.Vector) != len(query) {
+		if !chunkVectorComparable(c, query) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
@@ -1052,7 +1068,7 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 		if !allow(*c) {
 			continue
 		}
-		if len(c.Vector) != len(query) {
+		if !chunkVectorComparable(c, query) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
@@ -1316,7 +1332,7 @@ func SearchChunksInSources(db Database, allowed map[string]bool, query []float32
 		if !allowed[c.Source] {
 			continue
 		}
-		if len(c.Vector) != len(query) {
+		if !chunkVectorComparable(c, query) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
@@ -1399,7 +1415,7 @@ func SearchChunksBySource(db Database, sourcePrefix string, query []float32, k i
 		if sourcePrefix != "" && !strings.HasPrefix(c.Source, sourcePrefix) {
 			continue
 		}
-		if len(c.Vector) != len(query) {
+		if !chunkVectorComparable(c, query) {
 			continue
 		}
 		s := Cosine(query, c.Vector)

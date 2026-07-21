@@ -50,6 +50,41 @@ func withSessionAppend(agentID, sessionID string, fn func()) {
 	fn()
 }
 
+// overflowChannelReply routes an agent's UNDELIVERABLE channel reply (a
+// bidirectional channel bound to a service with no output path) to a surface the
+// owner will see, instead of stranding it in an outbox nothing drains. Preferred
+// surface is the agent's cortex feed (a non-triggering awareness card); when
+// cortex is OFF, the reply is already in the agent's session chat (the dispatch
+// persisted it there), so we re-surface that thread as unread. Both are passive —
+// no turn runs — so there's no reply→observe→reply loop.
+func (app *OrchestrateApp) overflowChannelReply(in ChannelInbound, replyText string) {
+	replyText = strings.TrimSpace(replyText)
+	if replyText == "" || in.AgentID == "" {
+		return
+	}
+	db := UserDB(app.DB, in.Owner)
+	if db == nil {
+		return
+	}
+	if ag, ok := loadAgent(db, in.AgentID); ok && ag.Cortex {
+		appendCortexObs(db, in.AgentID, channelObsFrom(in), cortexKindOverflow, replyText)
+		return
+	}
+	// Cortex off: the reply is already in the channel session (dispatch persisted
+	// it). Re-save to bump LastAt (not LastSeen) so the thread lights UNREAD and the
+	// owner notices the reply that never went out.
+	sessionID := app.effectiveChannelSession(in.Owner, in.AgentID, in.SessionID)
+	withSessionAppend(in.AgentID, sessionID, func() {
+		s, ok := loadChatSession(db, in.AgentID, sessionID)
+		if !ok || s.ID == "" {
+			return
+		}
+		if _, err := saveChatSession(db, s); err != nil {
+			Log("[channel.overflow] WARN failed to surface overflow session agent=%s sub=%s: %v", in.AgentID, sessionID, err)
+		}
+	})
+}
+
 // registerChannelSilentRecorder installs the recorded-only mirror. Call once at
 // startup (orchestrate.go).
 func registerChannelSilentRecorder(app *OrchestrateApp) {

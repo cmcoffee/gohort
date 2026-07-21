@@ -42,6 +42,7 @@ var (
 const (
 	defaultMaxPlanSteps    = 5
 	defaultMaxWorkerRounds = 15 // 15 rounds + the 5 wrap-up grace rounds (grace only arms at MaxRounds >= 10)
+	minWorkerRounds        = 6  // floor: a too-low per-agent cap starves multi-step tasks (fetch → send) and forces a mid-action wrap-up; the cap is a MAXIMUM, so this never forces extra rounds on a snappy agent
 	// buildPlanRoundsPerStep is how many execution rounds each build-plan
 	// step grants once Builder calls present_build_plan. A step is
 	// typically draft script → test → fix → verify → mark_step_done, so
@@ -58,10 +59,13 @@ func resolveMaxPlanSteps(a AgentRecord) int {
 }
 
 func resolveMaxWorkerRounds(a AgentRecord) int {
-	if a.MaxWorkerRounds > 0 {
-		return a.MaxWorkerRounds
+	if a.MaxWorkerRounds <= 0 {
+		return defaultMaxWorkerRounds
 	}
-	return defaultMaxWorkerRounds
+	if a.MaxWorkerRounds < minWorkerRounds {
+		return minWorkerRounds // floor a too-low explicit setting so it can finish
+	}
+	return a.MaxWorkerRounds
 }
 
 // dispatchSystemPrompt assembles the system prompt for an external/channel
@@ -832,6 +836,13 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	var available []AgentRecord
 	for _, a := range all {
 		if a.ID == t.agent.ID || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+			continue
+		}
+		// A sub-agent owned by ANOTHER agent is private to its owner — never surface
+		// it in this agent's fleet view (mirrors the dispatch gate, which refuses to
+		// dispatch to it). The owner still sees its own sub-agents per the Hidden /
+		// mode rules below.
+		if a.OwnedBy != "" && a.OwnedBy != t.agent.ID {
 			continue
 		}
 		switch mode {
@@ -6217,6 +6228,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// "ran out of turns, got nothing back" failure (common for retrieval-heavy
 	// agents that exhaust rounds mid-investigation).
 	if resp != nil && resp.HitRoundCap {
+		t.turnDiag("round-cap", "This turn ran out of worker rounds before finishing — raise the round limit or narrow the ask.")
 		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."
 		// Same as the resp.Content path above: gate on the near-duplicate check,
 		// not a coarse "already rendered something" boolean, so this shows even

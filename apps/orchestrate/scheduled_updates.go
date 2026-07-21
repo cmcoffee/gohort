@@ -424,13 +424,18 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// allowance and had to be forced to wrap up (its work is likely incomplete).
 	softCap := resolveMaxWorkerRounds(agent)
 	lastRound := 0
+	// Unattended fire: same pre-authorization policy as the standing runner — a
+	// NeedsConfirm tool runs only if the owner pre-authorized it (AutoApproveTools),
+	// else it's refused and queued. Replaces the old blanket auto-approve that
+	// silently bypassed every tool's "Require confirm" contract on a schedule.
+	gate := app.newAutonomousGate(p.Username, agent.ID)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		SystemPrompt:  sysPrompt,
 		Tools:         tools,
 		MaxRounds:     softCap,
 		StampLocation: UserLocation(p.Username), // stamp the turn in the owning user's zone
 		ThinkBudget:   agent.ThinkBudget,
-		Confirm:       func(name, args string) bool { return true },
+		Confirm:       gate.confirm,
 		OnStep: func(s StepInfo) {
 			if s.Round > lastRound {
 				lastRound = s.Round

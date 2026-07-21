@@ -441,36 +441,40 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 	// human behind it) initiated the dispatch. Standing/autonomous runs must
 	// NOT auto-approve; they call runAgentSyncConfirm with a deny-by-default
 	// confirm so high-consequence tools route through approval instead.
-	return T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
+	text, _, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
 		func(string, string) bool { return true })
+	return text, err
 }
 
-func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool) (string, error) {
+// runAgentSyncConfirm returns (text, hitRoundCap, error) — hitRoundCap tells the
+// caller the run stopped because it exhausted its worker rounds (so a standing
+// run can flag itself incomplete rather than reporting a truncated result as ok).
+func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool) (string, bool, error) {
 	if T == nil || T.LLM == nil {
-		return "", errors.New("orchestrate runtime not initialized")
+		return "", false, errors.New("orchestrate runtime not initialized")
 	}
 	if agentOwner == "" {
-		return "", errors.New("agentOwner is required")
+		return "", false, errors.New("agentOwner is required")
 	}
 	if runtimeUser == "" {
 		runtimeUser = agentOwner
 	}
 	if strings.TrimSpace(message) == "" {
-		return "", errors.New("message is required")
+		return "", false, errors.New("message is required")
 	}
 	ownerDB := UserDB(T.DB, agentOwner)
 	if ownerDB == nil {
-		return "", fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+		return "", false, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
 	}
 	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
 	if !ok {
-		return "", fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+		return "", false, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
 	runtimeDB := ownerDB
 	if runtimeUser != agentOwner {
 		runtimeDB = UserDB(T.DB, runtimeUser)
 		if runtimeDB == nil {
-			return "", fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+			return "", false, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
 		}
 		// Layered rules (enabler #2): a scoped INSTANCE adds its own rules over the
 		// template's base. Modifying the local target copy means the standard prompt
@@ -651,12 +655,12 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Log("%s", line)
 	}
 	if runErr != nil {
-		return "", runErr
+		return "", false, runErr
 	}
 	if resp == nil {
-		return "", errors.New("agent returned no response")
+		return "", false, errors.New("agent returned no response")
 	}
-	return strings.TrimSpace(resp.Content), nil
+	return strings.TrimSpace(resp.Content), resp.HitRoundCap, nil
 }
 
 // RunAgentSyncContinuing is RunAgentSync's continuation variant —

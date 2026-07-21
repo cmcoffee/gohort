@@ -2138,6 +2138,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				forced.Content = forced.Reasoning
 			}
 			if strings.TrimSpace(forced.Content) != "" {
+				// The worker sometimes ignores "just text" and emits a tool call as
+				// PROSE. With no tools attached it can't run, and the raw <tool_call>
+				// XML would surface as the answer (observed: a scheduled agent's
+				// "card" was the send_message XML — the send never executed). Detect
+				// it, name what it was about to do, and replace with a clear
+				// "ran out of steps" note so the result reads as incomplete, not
+				// gibberish.
+				if strings.Contains(forced.Content, "<function=") || strings.Contains(forced.Content, "<tool_call>") {
+					if name, _ := parseFunctionTagToolCall(forced.Content); strings.TrimSpace(name) != "" {
+						forced.Content = "Ran out of steps before finishing — it was about to call \"" + name + "\", which did NOT run. Raise this agent's worker-round limit or narrow its task."
+					} else {
+						forced.Content = "Ran out of steps before finishing — an action it was about to take did NOT run. Raise this agent's worker-round limit or narrow its task."
+					}
+				}
 				lastResp = forced
 				Debug("[agent_loop] forced-final-answer rescue produced %d chars", len(forced.Content))
 			} else {

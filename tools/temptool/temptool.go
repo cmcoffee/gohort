@@ -231,6 +231,12 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			return "", fmt.Errorf("name %q collides with a registered tool — pick another", name)
 		}
 	}
+	// Also reject DYNAMIC per-agent built-ins (channel/operator tools) that aren't
+	// in the static catalog — a temp tool named e.g. send_message would otherwise
+	// shadow the real, delivering tool with a stub that fakes success.
+	if IsReservedToolName(name) {
+		return "", fmt.Errorf("name %q is a built-in tool (channel/operator) — pick another; don't recreate it", name)
+	}
 
 	desc := strings.TrimSpace(StringArg(args, "description"))
 	if desc == "" {
@@ -849,6 +855,13 @@ func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
 // single-entity boundary is untouched — one record, one credential, one
 // artifact; expansion is purely presentation, decided here at build time.
 func agentToolDefsFromTemp(sess *ToolSession, tt *TempTool) []AgentToolDef {
+	// Drop a temp tool that collides with a dynamic built-in (e.g. a stale
+	// send_message authored before the create-time guard existed). Leaving it in
+	// would shadow the real, delivering tool with a stub. Dropping it here lets
+	// the built-in (assembled separately at dispatch) take the name back.
+	if IsReservedToolName(tt.Name) {
+		return nil
+	}
 	if tt.Mode == TempToolModeToolbox && tt.Expand {
 		return expandedToolboxDefs(sess, tt)
 	}
@@ -1003,6 +1016,33 @@ func capsSubset(want, have []Capability) bool {
 	return true
 }
 
+// tempToolNeedsConfirm reports whether a temp tool is consequential enough to
+// require per-call approval. Credential/api tools reach a real endpoint;
+// RawNetwork leaves the sandbox; a hook capability outside the read-only set
+// (secret:<name>, fetch_via:<name>, …) grants more than a benign fetch. A plain
+// shell tool that at most does an audited read-only fetch/log/browse is not
+// consequential and runs freely.
+func tempToolNeedsConfirm(tt *TempTool) bool {
+	if tt == nil {
+		return true
+	}
+	if tt.Mode == TempToolModeAPI || strings.TrimSpace(tt.Credential) != "" {
+		return true
+	}
+	if tt.RawNetwork {
+		return true
+	}
+	for _, c := range tt.HookCapabilities {
+		switch c {
+		case "fetch", "log", "browse_page":
+			// read-only audited hooks — benign
+		default:
+			return true // secret:<name>, fetch_via:<name>, or any other capability
+		}
+	}
+	return false
+}
+
 func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	// Toolbox mode is structurally a GroupedTool — bundle of action-
 	// dispatched sub-endpoints. The LLM-facing schema is identical to
@@ -1049,10 +1089,15 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			Required:    tt.Required,
 			Caps:        caps,
 		},
-		// Confirm so each temp-tool invocation goes through the same
-		// approval prompt run_local does. The LLM defined the tool but
-		// the user still sees each call.
-		NeedsConfirm: true,
+		// Confirm only for CONSEQUENTIAL temp tools — ones that reach a real
+		// endpoint (api mode / a credential), leave the sandbox (RawNetwork),
+		// or hold a capability beyond the read-only audited hooks. A cred-less
+		// shell tool whose only external effect is a fetch/log/browse_page hook
+		// is read-only + low-consequence, so it runs WITHOUT an approval prompt
+		// — matching how the interactive orchestrate path already treats it
+		// (its confirm hook only gates credentialed tools), so an unattended
+		// scheduled fire doesn't queue an approval for every benign tool call.
+		NeedsConfirm: tempToolNeedsConfirm(tt),
 		// Live-resolve on dispatch — same staleness fix as the toolbox path
 		// above, generalized to api/shell/pipeline tools. An agent-OWNED
 		// temp tool is pinned into the static catalog and skipped by the

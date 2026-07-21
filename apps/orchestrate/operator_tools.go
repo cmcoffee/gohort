@@ -13,6 +13,9 @@ package orchestrate
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -229,6 +232,12 @@ func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64
 	}
 	imgs := resolveWorkspaceImages(sess, []string{ref})
 	if len(imgs) == 0 {
+		// Not a workspace file or inbound media — try a remote http(s) image/video
+		// URL (a meme, a fetched picture). Without this, an attachment given as a
+		// URL is silently dropped and the message sends text-only.
+		if b64, kind, ok := fetchAttachmentURL(ref); ok {
+			return b64, kind, true
+		}
 		return "", "", false
 	}
 	k := "image"
@@ -238,10 +247,59 @@ func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64
 	return imgs[0], k, true
 }
 
+// attachmentHTTP fetches remote attachment URLs; short timeout, no redirects to
+// non-public hosts (Get follows redirects but each hop's host is re-checked by the
+// transport-free guard below is best-effort — the final body is still capped).
+var attachmentHTTP = &http.Client{Timeout: 20 * time.Second}
+
+// maxAttachmentBytes caps a fetched attachment so a huge or malicious URL can't
+// balloon memory or the outbound payload.
+const maxAttachmentBytes = 20 << 20 // 20 MB
+
+// fetchAttachmentURL downloads a remote http(s) image/video (e.g. a meme URL) so
+// it can ride along on an outbound message. SSRF-guarded (IsNonPublicHost),
+// size-capped, and restricted to image/* or video/* content — arbitrary remote
+// content is never attached. Returns base64 + kind ("image"/"video") on success.
+func fetchAttachmentURL(ref string) (b64, kind string, ok bool) {
+	if !strings.HasPrefix(ref, "http://") && !strings.HasPrefix(ref, "https://") {
+		return "", "", false
+	}
+	u, err := url.Parse(ref)
+	if err != nil || IsNonPublicHost(u.Hostname()) {
+		return "", "", false
+	}
+	resp, err := attachmentHTTP.Get(ref)
+	if err != nil {
+		return "", "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", "", false
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxAttachmentBytes {
+		return "", "", false
+	}
+	ct := resp.Header.Get("Content-Type")
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	if ct = strings.TrimSpace(ct); ct == "" {
+		ct = http.DetectContentType(data)
+	}
+	switch {
+	case strings.HasPrefix(ct, "image/"):
+		return base64.StdEncoding.EncodeToString(data), "image", true
+	case strings.HasPrefix(ct, "video/"):
+		return base64.StdEncoding.EncodeToString(data), "video", true
+	}
+	return "", "", false // not an image/video — don't attach arbitrary content
+}
+
 // attachmentsParamDesc is the shared description for the messaging tools' explicit
 // image/file param. One self-contained call ("send THIS image to X") instead of
 // the implicit, easily-skipped workspace(action="attach")-first convention.
-const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this message. Either a workspace file path from image(action=\"find\"/\"generate\") e.g. [\"find-djbk.jpg\"], or an inbound media id from the media manifest e.g. [\"media#1\"] to re-send a photo someone sent you. The items ride out to the recipient in one call. Prefer this over a separate workspace(action=\"attach\") step."
+const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this message. Any of: a workspace file path from image(action=\"find\"/\"generate\") e.g. [\"find-djbk.jpg\"]; an inbound media id from the media manifest e.g. [\"media#1\"] to re-send a photo someone sent you; or a direct http(s) image/video URL e.g. [\"https://i.redd.it/abc.jpg\"] (fetched + attached; image/video only, size-capped). The items ride out to the recipient in one call. Prefer this over a separate workspace(action=\"attach\") step."
 
 // messageImages gathers every image to ride an outbound message: the explicit
 // `attachments` workspace paths (the steered, self-contained path) PLUS the
@@ -255,22 +313,37 @@ func messageImages(sess *ToolSession, args map[string]any, text string) []string
 	for _, im := range images {
 		seen[im] = true
 	}
-	// Each attachments[] entry routes through resolveAttachmentRef so an inbound
-	// media id ("media#1") works here exactly like a workspace filename. Images-
-	// only surface, so a video ref is skipped (videos ride the channel reply path).
-	if raw, ok := args["attachments"].([]any); ok {
-		for _, v := range raw {
-			s, ok := v.(string)
-			if !ok || strings.TrimSpace(s) == "" {
-				continue
+	// Collect refs from BOTH `attachments` (the canonical plural array) AND
+	// `attachment` (the singular alias LLMs reach for), each tolerating either an
+	// array OR a bare string — models pass whichever shape, and a dropped image on
+	// a name/shape mismatch is silent + confusing (observed: attachment="x.png"
+	// ignored because the handler only read attachments[]).
+	for _, key := range []string{"attachments", "attachment"} {
+		switch v := args[key].(type) {
+		case []any:
+			for _, e := range v {
+				if s, ok := e.(string); ok {
+					seen = addAttachmentRef(sess, s, seen, &images)
+				}
 			}
-			if b64, kind, ok := resolveAttachmentRef(sess, s, true); ok && kind != "video" && !seen[b64] {
-				seen[b64] = true
-				images = append(images, b64)
-			}
+		case string:
+			seen = addAttachmentRef(sess, v, seen, &images)
 		}
 	}
 	return images
+}
+
+// addAttachmentRef resolves one attachment ref (workspace file / inbound media id
+// / remote URL) and appends it to images if it's a new, non-video image.
+func addAttachmentRef(sess *ToolSession, ref string, seen map[string]bool, images *[]string) map[string]bool {
+	if strings.TrimSpace(ref) == "" {
+		return seen
+	}
+	if b64, kind, ok := resolveAttachmentRef(sess, ref, true); ok && kind != "video" && !seen[b64] {
+		seen[b64] = true
+		*images = append(*images, b64)
+	}
+	return seen
 }
 
 // isReplyToActiveInbound reports whether recip is the very conversation this run
@@ -536,9 +609,18 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						return "", fmt.Errorf("no agent named %q found — create it first, or check the name (agents action=list shows the exact names)", agentID)
 					}
 				}
+				// The scheduler dispatches the agent with Mission as the per-run
+				// message, and dispatch REQUIRES a non-empty message — an empty
+				// mission fails every fire with "message is required" (quietly, at
+				// fire time). Default it so a self-directed agent (whose orchestrator
+				// prompt already says what to do each run) still fires cleanly.
+				mission := strings.TrimSpace(oArgStr(args, "mission"))
+				if mission == "" {
+					mission = "Run your standing task now."
+				}
 				sa := StandingAgent{
 					Name: name, Owner: owner, AgentID: agentID,
-					Mission: strings.TrimSpace(oArgStr(args, "mission")), Created: time.Now(),
+					Mission: mission, Created: time.Now(),
 					ReportAgentID:   controllerAgentID,
 					ReportSessionID: controllerSession,
 				}
@@ -1059,6 +1141,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
 					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
 				}
+				// Authorized sender for this channel: a parent granted THIS agent the
+				// right to deliver to its channel, OR this agent is a sub-agent of one
+				// that may (inherited down the ownership chain). Send without queuing —
+				// the grant is the approval.
+				if channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, rec.ChatID, rec.Handle, agentID) {
+					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
+						return "", err
+					}
+					recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
+					return fmt.Sprintf("Sent to %s (authorized sender for this channel).", label), nil
+				}
 				// Don't queue a DUPLICATE. message_contact returns "queued for
 				// approval" (not "sent"), which a model reads as "it didn't go
 				// through" and re-sends a round later — stacking two identical
@@ -1074,6 +1167,47 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images,
 				})
 				return fmt.Sprintf("Queued a message to %s for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "authorize_channel_sender",
+				Description: "Grant ANOTHER agent (e.g. a sub-agent you created) the right to deliver to one of your channels WITHOUT the per-send approval queue — so its scheduled/autonomous runs can post to that group. Names the channel (by name, bound address, or chat_id) and the agent (by name or id).",
+				Parameters: map[string]ToolParam{
+					"channel": {Type: "string", Description: "The channel to grant on — its name, its bound address/chat_id, or its id."},
+					"agent":   {Type: "string", Description: "The agent to authorize — its name or id."},
+				},
+				Required: []string{"channel", "agent"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				chanRef := strings.TrimSpace(oArgStr(args, "channel"))
+				agentRef := strings.TrimSpace(oArgStr(args, "agent"))
+				if chanRef == "" || agentRef == "" {
+					return "", fmt.Errorf("channel and agent are both required")
+				}
+				target, ok := findAgentByNameOrID(UserDB(orchestrateBaseDB, owner), owner, agentRef)
+				if !ok {
+					return "", fmt.Errorf("no agent matches %q", agentRef)
+				}
+				var ch Channel
+				found := false
+				for _, c := range ListChannels(RootDB, owner) {
+					if c.Name == chanRef || c.Address == chanRef || c.ID == chanRef {
+						ch, found = c, true
+						break
+					}
+				}
+				if !found {
+					return "", fmt.Errorf("no channel matches %q — use its name, bound address, or id", chanRef)
+				}
+				for _, s := range ch.AuthorizedSenders {
+					if s == target.ID {
+						return fmt.Sprintf("%s is already an authorized sender on channel %q.", target.Name, ch.Name), nil
+					}
+				}
+				ch.AuthorizedSenders = append(ch.AuthorizedSenders, target.ID)
+				SaveChannel(RootDB, ch)
+				return fmt.Sprintf("Granted %s send access to channel %q — its autonomous runs can now post there without approval.", target.Name, ch.Name), nil
 			},
 		},
 		{

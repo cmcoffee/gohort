@@ -276,6 +276,10 @@ func (T *OrchestrateApp) Routes() {
 	// transcript, so it shows in the agent's chat and is in-context on the next
 	// wake — the agent reads along even while it stays silent.
 	registerChannelSilentRecorder(T)
+	// Reply overflow: when a bidirectional channel is bound to a service with no
+	// output path, the transport routes the agent's undeliverable reply here — into
+	// the agent's cortex feed — instead of stranding it in an outbox nothing drains.
+	RegisterChannelOverflow(T.overflowChannelReply)
 	// MCP agent gate: the inbound MCP server (ask_agent) calls this so only agents
 	// the owner marked "Reachable over MCP" can be dispatched from an external
 	// client. Reads the owner's own store; seeds resolve to their per-user shadow.

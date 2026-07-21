@@ -51,11 +51,17 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// so mark them public to bypass the login redirect.
 	RegisterPublicPath(prefix + "/api/hook")
 	RegisterPublicPath(prefix + "/api/poll")
+	// Provider-native webhook receiver — a public, per-connector inbound route
+	// (trailing "/" = prefix match). It authenticates each request itself via the
+	// provider's signature scheme against the connector's stored signing secret.
+	RegisterPublicPath(prefix + "/api/webhook/")
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", T.handleDashboard)
 	sub.HandleFunc("/api/hook", T.handleHook)
 	sub.HandleFunc("/api/poll", T.handlePoll)
+	sub.HandleFunc("/api/webhook/", T.handleWebhook)
+	sub.HandleFunc("/api/webhook-secret", T.handleWebhookSecret)
 	sub.HandleFunc("/api/keys", T.handleKeys)
 	sub.HandleFunc("/api/keys/", T.handleKeyOne)
 	sub.HandleFunc("/api/bridges", T.handleBridgeList)
@@ -94,6 +100,27 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Server half of the messaging_bridge connector kind: ensure a routing
 	// BridgeKey exists for a service and reflect the connector's enabled state.
 	RegisterBridgeProvisioner(T.ensureServiceBridge)
+
+	// Server-side poll loops for the rest_messaging connector kind (Teams/Slack/…
+	// via a REST API + SecureAPI credential). Materialize starts a loop; Teardown
+	// stops it. Registered here (store live) before ReloadApprovedConnectors runs at
+	// startup, so approved pollers restart automatically. The probe backs the
+	// connector `test` action (one poll + mapping preview).
+	RegisterMessagingPoller(func(c Connector, start bool) error {
+		if start {
+			return T.startPoller(c)
+		}
+		T.stopPoller(c.Name)
+		// Release provider-side resources (a Graph subscription) on unapprove/delete.
+		T.teardownWebhook(c)
+		return nil
+	})
+	RegisterMessagingProbe(T.probeMessaging)
+
+	// Graph webhook subscriptions are expiring push subscriptions; the core
+	// push-sub primitive owns their renewal + restart recovery, we supply the
+	// provider create/renew/delete via this handler.
+	RegisterPushSubHandler(graphPushKind, graphPushHandler{T})
 }
 
 // ensureServiceBridge is the server half of a messaging_bridge connector: make
@@ -169,9 +196,10 @@ type hookRequest struct {
 	RowID            int64    `json:"row_id"`
 }
 
-// handleHook is the inbound entry point: authenticate the connector, dedup,
-// then route to the bound Channel's agent (or record-only when nothing is
-// bound). No persona / engine here — the agent owns behavior.
+// handleHook is the inbound HTTP entry point: authenticate the connector, decode
+// the message, and hand it to ingestInbound. Every ingest outcome (dedup,
+// disabled, record-only, dispatched) is a 202 — the routing work happens
+// in-process, so a slow agent run never blocks the connector's POST.
 func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -182,20 +210,29 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	svc := strings.TrimSpace(key.Service)
-	if svc == "" {
-		svc = "imessage"
-	}
 	var req hookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	T.ingestInbound(key, req)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// ingestInbound routes one inbound message to the bound Channel's agent (or
+// records-only when nothing is bound / the transport is disabled). Shared by the
+// HTTP hook handler AND the server-side messaging poller (messaging_poller.go),
+// so it takes a decoded key + request and never touches an HTTP writer. No persona
+// / engine here — the agent owns behavior.
+func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
+	svc := strings.TrimSpace(key.Service)
+	if svc == "" {
+		svc = "imessage"
+	}
 	activeChatID := strings.TrimSpace(req.ChatID)
 
 	// Dedup — a connector may re-deliver; only act once.
 	if T.seenMessage(activeChatID, req.MsgID) {
-		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
@@ -218,7 +255,6 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	if !T.config().Enabled || !key.Enabled {
 		Log("[bridges] %s disabled — inbound from %s recorded, not routed",
 			map[bool]string{true: "transport", false: "bridge " + key.Name}[!T.config().Enabled], req.Handle)
-		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
@@ -227,7 +263,6 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		owner = T.bridgeOwner()
 	}
 	if owner == "" || !ChannelAgentRunnerReady() {
-		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
@@ -301,12 +336,16 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 				Text:             req.Text,
 			})
 		}
-		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
 	sessionID := ChannelSessionKey(ch, activeChatID)
 	replyHere := ChannelDirection(ch) != DirectionInbound
+	// Does this service actually have a delivery path? A rest_messaging connector
+	// without send_url (or a raw inbound webhook) has none — so an agent reply would
+	// strand in an outbox nothing drains. When there's no output, overflow the reply
+	// to the agent's cortex/session instead of enqueuing it.
+	hasOutput := T.serviceHasOutput(owner, svc)
 	chatID, handle, text, images, videos, audios := activeChatID, req.Handle, req.Text, req.Images, req.Videos, req.Audios
 
 	Log("[bridges] channel %q (svc=%s agent=%s dir=%s) handling inbound from %s",
@@ -325,8 +364,8 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		Videos:           videos,
 		Audios:           audios,
 		StatusCallback: func(s string) {
-			if !replyHere {
-				return
+			if !replyHere || !hasOutput {
+				return // no interim status when we can't deliver it
 			}
 			if s = strings.TrimSpace(s); s != "" {
 				T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: s, Type: "status"})
@@ -371,10 +410,40 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 {
 			return
 		}
-		T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"})
+		if hasOutput {
+			T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"})
+		} else if OverflowChannelReply(in, reply.Text) {
+			// No delivery path for this service — surface the reply to the agent's
+			// cortex/session instead of stranding it in an outbox nothing drains.
+			Log("[bridges] channel %q reply overflowed to agent cortex/session (no output path for svc=%s)", ch.Name, svc)
+		}
 		T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: reply.Text})
 	}()
-	w.WriteHeader(http.StatusAccepted)
+}
+
+// serviceHasOutput reports whether a service can actually deliver outbound. A
+// rest_messaging connector without send_url (a poll/webhook bridge configured
+// inbound-only) has no delivery path; any other service — iMessage, or a connector
+// WITH send_url — is assumed to have a drainer. Used to decide whether an agent's
+// reply is enqueued for delivery or overflowed to the agent's cortex/session.
+func (T *Bridges) serviceHasOutput(owner, svc string) bool {
+	found := false
+	for _, c := range ListConnectors(RootDB) {
+		if c.Kind != RestMessagingConnectorKind || !c.Approved || c.Owner != owner {
+			continue
+		}
+		var s RestMessagingSpec
+		if json.Unmarshal(c.Spec, &s) != nil || s.Service != svc {
+			continue
+		}
+		found = true
+		if strings.TrimSpace(s.SendURL) != "" {
+			return true
+		}
+	}
+	// Connector(s) exist for this service but none can send → no output. No matching
+	// connector (iMessage, etc.) → assume a drainer exists (existing behavior).
+	return !found
 }
 
 // handlePoll hands a connector ONLY its own service's pending outbound.

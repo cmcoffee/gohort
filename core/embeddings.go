@@ -30,6 +30,20 @@ var (
 	embedCfg   EmbeddingConfig
 )
 
+// EmbedVersion identifies the embedding SPACE cached vectors live in —
+// model + endpoint. Vectors cached under a different version must never be
+// cosine-compared against fresh ones: a same-dimension model swap otherwise
+// silently degrades every cached-vector comparison (fact dedup, the
+// supersession band, chunk search) with no visible failure. Consumers treat
+// a version mismatch as "no cached vector" and re-embed on touch.
+// Limitation: single-model backends (llama.cpp) ignore Model, so a model
+// swapped behind the SAME endpoint is undetectable — change the endpoint
+// (or set Model informationally) when swapping embedders there.
+func EmbedVersion() string {
+	cfg := GetEmbeddingConfig()
+	return strings.TrimSpace(cfg.Model) + "@" + strings.TrimSpace(cfg.Endpoint)
+}
+
 // SetEmbeddingConfig installs the process-wide embedding config. Called
 // from config.go during init_database.
 func SetEmbeddingConfig(cfg EmbeddingConfig) {

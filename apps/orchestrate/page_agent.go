@@ -186,6 +186,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
 			Placeholder: "0",
 			Help:        "Max thinking tokens per LLM call for this agent. 0 = inherit the deployment default (4096). The admin global budget is a hard ceiling — this can only LOWER the budget (snappier turns); a value above the admin ceiling is clamped. Only applies when Think is on."},
+		{Type: "header", Label: "Autonomous runs", Collapsed: true,
+			Help: "What this agent may do on a scheduled/standing fire, when no one is present to click Approve."},
+		{Field: "auto_approve_tools", Type: "tags", Label: "Pre-approved tools",
+			Help: "Tool names this agent — and its sub-agents, by inheritance — may call on a SCHEDULED/standing run WITHOUT a per-call approval prompt. Add the consequential tools you trust it to run unattended (a credential-backed tool, a channel send). Anything not listed is refused on the first unattended fire and queued in the Permissions pane (approving it there adds it here). Read-only tools never prompt, so you don't need to list them."},
 	}
 	// Per-agent lead-model escalation. Only offered when a distinct lead LLM
 	// is actually wired (HasDistinctLead) — otherwise it degrades straight

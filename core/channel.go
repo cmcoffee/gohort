@@ -51,6 +51,13 @@ type Channel struct {
 	//                     default; "" is treated as this.
 	//   "outbound"      — the agent only SENDS here; inbound is not processed.
 	Direction string `json:"direction,omitempty"`
+	// AuthorizedSenders is an allow-list of agent IDs — OTHER than the bound
+	// AgentID — permitted to deliver to this channel WITHOUT the proactive-send
+	// approval queue. It's how a parent grants a sub-agent (a different AgentID)
+	// the right to post to the parent's group channel: the sub-agent's send is
+	// treated as pre-authorized for this conversation instead of queuing. Empty =
+	// only the bound agent (and in-thread replies) deliver without approval.
+	AuthorizedSenders []string `json:"authorized_senders,omitempty"`
 	// Gatekeeper is this channel's own wake rule, layered on top of the
 	// deployment-wide overall gatekeeper. A cheap pre-agent filter: the
 	// transport evaluates it before spinning up the bound agent, and skips
@@ -260,6 +267,32 @@ func ListChannelsForAgent(db Database, owner, agentID string) []Channel {
 	return out
 }
 
+// ChannelAllowsSender reports whether agentID is authorized to deliver to the
+// owner's channel identified by chatID or handle WITHOUT the proactive-send
+// approval queue — either it's the bound agent, or it's in the channel's
+// AuthorizedSenders grant. Matches an exact Address binding (per-conversation) or
+// a whole-service channel (Address==""). Used by the send path to let a granted
+// sub-agent post to a parent's channel.
+func ChannelAllowsSender(db Database, owner, chatID, handle, agentID string) bool {
+	if agentID == "" {
+		return false
+	}
+	for _, ch := range ListChannels(db, owner) {
+		if ch.Address != "" && ch.Address != chatID && ch.Address != handle {
+			continue // a per-conversation channel that isn't this conversation
+		}
+		if ch.AgentID == agentID {
+			return true
+		}
+		for _, s := range ch.AuthorizedSenders {
+			if s == agentID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // DeleteChannel removes a channel binding.
 func DeleteChannel(db Database, owner, id string) {
 	if db == nil {
@@ -466,4 +499,40 @@ func RecordChannelSilent(in ChannelInbound) {
 		return
 	}
 	fn(in)
+}
+
+// ChannelOverflowFunc absorbs an agent's reply that a transport COULDN'T deliver
+// (a bidirectional channel bound to a service with no output path) into the
+// agent's cortex feed instead of stranding it in an undeliverable outbox. The
+// cortex is a non-triggering awareness surface, so this never re-runs the agent —
+// no reply→observe→reply loop. Owned by orchestrate (the cortex lives in the
+// agent's per-user store); the transport calls OverflowChannelReply at the point
+// it would otherwise enqueue an undeliverable reply.
+type ChannelOverflowFunc func(in ChannelInbound, replyText string)
+
+var (
+	channelOverflow   ChannelOverflowFunc
+	channelOverflowMu sync.RWMutex
+)
+
+// RegisterChannelOverflow installs the reply-overflow sink. Call once at startup
+// from orchestrate.
+func RegisterChannelOverflow(fn ChannelOverflowFunc) {
+	channelOverflowMu.Lock()
+	channelOverflow = fn
+	channelOverflowMu.Unlock()
+}
+
+// OverflowChannelReply routes an undeliverable reply to the agent's cortex.
+// Reports whether a sink handled it (false when orchestrate isn't loaded, so the
+// transport can fall back to its previous behavior).
+func OverflowChannelReply(in ChannelInbound, replyText string) bool {
+	channelOverflowMu.RLock()
+	fn := channelOverflow
+	channelOverflowMu.RUnlock()
+	if fn == nil {
+		return false
+	}
+	fn(in, replyText)
+	return true
 }

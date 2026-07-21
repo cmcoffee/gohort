@@ -90,7 +90,15 @@ func SaveOperatingNotes(db Database, namespace, text string) (OperatingNotes, bo
 func ResolveOperatingNotes(db Database, namespace, seed string) OperatingNotes {
 	n := LoadOperatingNotes(db, namespace)
 	if strings.TrimSpace(n.Text) == "" && strings.TrimSpace(seed) != "" {
-		return OperatingNotes{Text: strings.TrimSpace(seed)}
+		// The seed honors the same cap update_notes enforces — it's
+		// Builder/wizard-supplied, not agent-written, and previously bypassed
+		// the bound entirely (an oversized seed inflated every prompt until
+		// the first update_notes replaced it).
+		s := strings.TrimSpace(seed)
+		if r := []rune(s); len(r) > OperatingNotesCap {
+			s = strings.TrimSpace(string(r[:OperatingNotesCap]))
+		}
+		return OperatingNotes{Text: s}
 	}
 	return n
 }
