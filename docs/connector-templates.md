@@ -1,6 +1,6 @@
 # Connector Templates — design
 
-**Status:** spec, pending lock. **Author:** design pass, 2026-07-21.
+**Status:** Stage 1 shipped (2026-07-21). Stages 2–3 pending. **Author:** design pass, 2026-07-21.
 
 ## Problem
 
