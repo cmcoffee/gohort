@@ -152,12 +152,49 @@ func TestConnectorProvenanceTravels(t *testing.T) {
 	}
 }
 
+// TestDeclarationOnlyBackend is the Stage A proof: a NEW preset-shaped backend is
+// a pure declaration — it names the shared rest_image_preset strategy and writes
+// no code of its own, yet builds + reads back correctly.
+func TestDeclarationOnlyBackend(t *testing.T) {
+	RegisterConnectorTemplate(ConnectorTemplate{
+		Name:     "sdnext_decl_test",
+		Label:    "SD.Next (test)",
+		Category: "Image generation",
+		Kind:     RestImageConnectorKind,
+		Strategy: "rest_image_preset",
+		Params:   map[string]string{"preset": "a1111"}, // A1111-compatible API
+		Fields:   []TemplateField{{Key: "base_url", Type: "text"}, {Key: "default_steps", Type: "number"}},
+	})
+	tpl, ok := GetConnectorTemplate("sdnext_decl_test")
+	if !ok {
+		t.Fatal("declaration not registered")
+	}
+	spec, _, err := tpl.BuildSpec(map[string]any{"base_url": "http://gpu.box:7860", "default_steps": 30})
+	if err != nil {
+		t.Fatalf("declaration-only BuildSpec failed: %v", err)
+	}
+	if err := (restImageHandler{}).Validate(Connector{Kind: RestImageConnectorKind, Spec: spec}); err != nil {
+		t.Fatalf("built spec invalid: %v", err)
+	}
+	vals := tpl.ReadValues(spec)
+	if vals["base_url"] != "http://gpu.box:7860" {
+		t.Errorf("base_url not recovered via preset-suffix strip: %v", vals["base_url"])
+	}
+	if vals["default_steps"] != 30 {
+		t.Errorf("steps round-trip: %v", vals["default_steps"])
+	}
+}
+
 func TestConnectorTemplatesListed(t *testing.T) {
 	names := map[string]bool{}
 	for _, tpl := range ConnectorTemplates() {
 		names[tpl.Name] = true
-		if tpl.Category == "" || tpl.Label == "" || tpl.Kind == "" || tpl.BuildSpec == nil {
+		// A declaration must name a registered strategy (the code half).
+		if tpl.Category == "" || tpl.Label == "" || tpl.Kind == "" || tpl.Strategy == "" {
 			t.Errorf("template %q missing required fields", tpl.Name)
+		}
+		if _, ok := GetConnectorStrategy(tpl.Strategy); !ok {
+			t.Errorf("template %q references unregistered strategy %q", tpl.Name, tpl.Strategy)
 		}
 	}
 	if !names["comfyui"] || !names["a1111"] {

@@ -12,6 +12,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,30 +34,90 @@ type TemplateField struct {
 	Advanced bool     `json:"advanced,omitempty"`
 }
 
-// ConnectorTemplate is the declaration. BuildSpec/ReadValues are the value↔spec
-// mapping ("how to map the values"); Detect is the optional auto-fill.
+// ConnectorTemplate is a DECLARATION — pure data (no funcs), so it can be a Go
+// value today and a DB record / shared bundle later with no engine change. The
+// logic lives in a named ConnectorStrategy it points at; Params carry the few
+// per-declaration knobs the strategy reads (e.g. which rest_image preset). A new
+// INSTANCE of a known shape is just a declaration; only a new SHAPE needs a
+// strategy. See docs/templates.md.
 type ConnectorTemplate struct {
-	Name        string // stable id, stored on the connector for provenance (Stage 2)
-	Label       string
-	Category    string // groups the Add menu / catalog (e.g. "Image generation")
-	Description string
-	Kind        string // base connector kind it materializes
-
-	Fields []TemplateField
-
-	// BuildSpec maps collected field values → the connector Spec. Returns non-fatal
-	// warnings + a fatal error. The SAVE path MERGES this onto the existing raw Spec
-	// (MergeSpec) so unknown fields from a newer version survive — see the doc.
-	BuildSpec func(vals map[string]any) (json.RawMessage, []string, error)
-	// ReadValues is the inverse: prefill the Configure panel from an existing spec.
-	ReadValues func(spec json.RawMessage) map[string]any
-	// Detect (optional) auto-fills fields from others (ComfyUI: parse workflow →
-	// node map). nil = no Detect button.
-	Detect func(vals map[string]any) (map[string]any, []string, error)
+	Name        string            `json:"name"` // stable id, stored on the connector for provenance
+	Label       string            `json:"label"`
+	Category    string            `json:"category"` // groups the Add menu / catalog
+	Description string            `json:"description,omitempty"`
+	Kind        string            `json:"kind"`             // base connector kind it materializes
+	Strategy    string            `json:"strategy"`         // names a registered ConnectorStrategy (the code)
+	Params      map[string]string `json:"params,omitempty"` // per-declaration knobs the strategy reads
+	Fields      []TemplateField   `json:"fields"`           // what options are needed (the declaration)
 }
 
-// HasDetect reports whether the template exposes a Detect action.
-func (t ConnectorTemplate) HasDetect() bool { return t.Detect != nil }
+// ConnectorStrategy is the CODE half — the value↔spec mapping + optional
+// auto-fill, written once and shared by every declaration that names it. The
+// template is passed in so the strategy can read Params.
+type ConnectorStrategy struct {
+	// BuildSpec maps collected field values → the connector Spec. The SAVE path
+	// MERGES this onto the existing raw Spec (MergeSpec) so unknown fields from a
+	// newer version survive.
+	BuildSpec func(t ConnectorTemplate, vals map[string]any) (json.RawMessage, []string, error)
+	// ReadValues is the inverse: prefill the Configure panel from an existing spec.
+	ReadValues func(t ConnectorTemplate, spec json.RawMessage) map[string]any
+	// Detect (optional) auto-fills fields from others (ComfyUI: workflow → node
+	// map; later: OpenAPI spec → tool actions). nil = no Detect button.
+	Detect func(t ConnectorTemplate, vals map[string]any) (map[string]any, []string, error)
+}
+
+var (
+	connectorStrategies = map[string]ConnectorStrategy{}
+	connectorStrategyMu sync.RWMutex
+)
+
+// RegisterConnectorStrategy installs a strategy by name. Call once at startup.
+func RegisterConnectorStrategy(name string, s ConnectorStrategy) {
+	connectorStrategyMu.Lock()
+	connectorStrategies[name] = s
+	connectorStrategyMu.Unlock()
+}
+
+// GetConnectorStrategy returns a strategy by name.
+func GetConnectorStrategy(name string) (ConnectorStrategy, bool) {
+	connectorStrategyMu.RLock()
+	defer connectorStrategyMu.RUnlock()
+	s, ok := connectorStrategies[strings.TrimSpace(name)]
+	return s, ok
+}
+
+// BuildSpec resolves the template's strategy and runs it.
+func (t ConnectorTemplate) BuildSpec(vals map[string]any) (json.RawMessage, []string, error) {
+	s, ok := GetConnectorStrategy(t.Strategy)
+	if !ok || s.BuildSpec == nil {
+		return nil, nil, fmt.Errorf("template %q references unknown strategy %q", t.Name, t.Strategy)
+	}
+	return s.BuildSpec(t, vals)
+}
+
+// ReadValues resolves the strategy and prefills the Configure panel.
+func (t ConnectorTemplate) ReadValues(spec json.RawMessage) map[string]any {
+	s, ok := GetConnectorStrategy(t.Strategy)
+	if !ok || s.ReadValues == nil {
+		return map[string]any{}
+	}
+	return s.ReadValues(t, spec)
+}
+
+// Detect resolves the strategy and runs its auto-fill.
+func (t ConnectorTemplate) Detect(vals map[string]any) (map[string]any, []string, error) {
+	s, ok := GetConnectorStrategy(t.Strategy)
+	if !ok || s.Detect == nil {
+		return nil, nil, fmt.Errorf("template %q has no detect", t.Name)
+	}
+	return s.Detect(t, vals)
+}
+
+// HasDetect reports whether the template's strategy exposes a Detect action.
+func (t ConnectorTemplate) HasDetect() bool {
+	s, ok := GetConnectorStrategy(t.Strategy)
+	return ok && s.Detect != nil
+}
 
 var (
 	connectorTemplates  = map[string]ConnectorTemplate{}

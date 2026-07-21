@@ -93,10 +93,15 @@ scope, the verify gate, and approval — same as a hand-authored `tool_def`. See
 
 ## Staging
 
-- **Stage A — declaration/strategy split (connectors).** Factor the shipped
-  `BuildSpec`/`Detect` into **named strategies** (`rest_image_simple`, `comfyui`);
-  make comfyui/a1111 pure declarations that reference them. Prove "add a REST image
-  backend = one declaration." No behavior change; the renderer is untouched.
+- **Stage A — declaration/strategy split (connectors). SHIPPED.** `ConnectorTemplate`
+  is now pure data (Name/Label/Category/Kind/`Strategy`/`Params`/`Fields`, all
+  JSON-tagged — serializable, ready for Stage C). `ConnectorStrategy` +
+  `RegisterConnectorStrategy` hold the code; the template resolves its strategy via
+  methods (`BuildSpec`/`ReadValues`/`Detect`/`HasDetect`), so the renderer is
+  untouched. Strategies: `rest_image_preset` (generic, preset-driven) + `comfyui`
+  (workflow/map/Detect). **a1111 is a pure declaration** (Strategy
+  `rest_image_preset`, Params `{preset:a1111}`, no code); a test registers a new
+  `sdnext` backend as a declaration-only value and proves it builds + round-trips.
 - **Stage B — tool templates.** Add the `tool` target + a `rest_tool` strategy +
   an `openapi_tool` strategy with OpenAPI `Detect`. Surface in the Builder and the
   tools UI (governed as today).
