@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -222,8 +223,9 @@ func (t *restImageTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"prompt":   {Type: "string", Description: "A detailed description of the image to generate."},
 		"negative": {Type: "string", Description: "Optional: what to avoid in the image (negative prompt). Backends that don't support it ignore this."},
-		"width":    {Type: "number", Description: "Optional: image width in pixels (rounded to a multiple of 8). Omit for the backend's default size."},
-		"height":   {Type: "number", Description: "Optional: image height in pixels (rounded to a multiple of 8). Omit for the backend's default size."},
+		"aspect":   {Type: "string", Enum: []string{"square", "portrait", "landscape", "wide", "tall"}, Description: "Optional: named shape, sized to the backend's native resolution — square (1:1), portrait (2:3), landscape (3:2), wide (16:9), tall (9:16). Easier than raw pixels; use this for \"make it wide/portrait\". Explicit width/height override it."},
+		"width":    {Type: "number", Description: "Optional: exact image width in pixels (rounded to a multiple of 8). Overrides aspect. Omit for the backend's default size."},
+		"height":   {Type: "number", Description: "Optional: exact image height in pixels (rounded to a multiple of 8). Overrides aspect. Omit for the backend's default size."},
 		"steps":    {Type: "number", Description: "Optional: number of diffusion steps."},
 		"seed":     {Type: "number", Description: "Optional: seed for reproducibility (-1 or omit = random)."},
 	}
@@ -261,11 +263,32 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if negative == "" {
 		negative = s.DefaultNegative
 	}
+	// Dimensions: explicit width/height win; otherwise a named aspect (sized to the
+	// backend's native resolution) fills whichever axis wasn't given; otherwise the
+	// backend's default size.
+	w := intArgOr(args["width"], 0)
+	h := intArgOr(args["height"], 0)
+	if (w <= 0 || h <= 0) && stringFromArg(args["aspect"]) != "" {
+		if aw, ah, ok := resolveAspect(stringFromArg(args["aspect"]), s.DefaultWidth, s.DefaultHeight); ok {
+			if w <= 0 {
+				w = aw
+			}
+			if h <= 0 {
+				h = ah
+			}
+		}
+	}
+	if w <= 0 {
+		w = s.DefaultWidth
+	}
+	if h <= 0 {
+		h = s.DefaultHeight
+	}
 	out, err := s.generate(sess, restImageParams{
 		prompt:   prompt,
 		negative: negative,
-		width:    intArgOr(args["width"], s.DefaultWidth),
-		height:   intArgOr(args["height"], s.DefaultHeight),
+		width:    w,
+		height:   h,
 		steps:    intArgOr(args["steps"], s.DefaultSteps),
 		seed:     intArgOr(args["seed"], -1),
 	})
@@ -516,6 +539,35 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 		return nil, err
 	}
 	return &ImageGenResult{URL: path, Prompt: prompt}, nil
+}
+
+// aspectRatios maps a named aspect to a width/height ratio.
+var aspectRatios = map[string]float64{
+	"square":    1.0,
+	"portrait":  2.0 / 3.0,
+	"landscape": 3.0 / 2.0,
+	"wide":      16.0 / 9.0,
+	"tall":      9.0 / 16.0,
+}
+
+// resolveAspect turns a named aspect into concrete dimensions that PRESERVE the
+// backend's native pixel area (defW×defH) at the requested ratio — so "wide" is
+// ~680×384 on an SD1.5 (512²) backend but ~1360×768 on an SDXL (1024²) one,
+// staying in each model's trained range. Dimensions are snapped to a multiple of
+// 8 by the caller's normImageDim.
+func resolveAspect(name string, defW, defH int) (int, int, bool) {
+	r, ok := aspectRatios[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return 0, 0, false
+	}
+	if defW <= 0 {
+		defW = 512
+	}
+	if defH <= 0 {
+		defH = 512
+	}
+	area := float64(defW) * float64(defH)
+	return int(math.Round(math.Sqrt(area * r))), int(math.Round(math.Sqrt(area / r))), true
 }
 
 // normImageDim rounds a pixel dimension to the nearest multiple of 8 (Stable

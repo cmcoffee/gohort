@@ -257,6 +257,38 @@ func TestStripDataURIPrefix(t *testing.T) {
 	}
 }
 
+func TestResolveAspect(t *testing.T) {
+	// Unknown aspect → not ok.
+	if _, _, ok := resolveAspect("nope", 512, 512); ok {
+		t.Error("unknown aspect should return ok=false")
+	}
+	// Square preserves the default.
+	if w, h, ok := resolveAspect("square", 512, 512); !ok || w != 512 || h != 512 {
+		t.Errorf("square = %dx%d ok=%v", w, h, ok)
+	}
+	// Wide is landscape-oriented and preserves area (~512² for an SD1.5 backend).
+	w, h, ok := resolveAspect("wide", 512, 512)
+	if !ok || w <= h {
+		t.Errorf("wide should be landscape: %dx%d", w, h)
+	}
+	if area := w * h; area < 512*512*8/10 || area > 512*512*12/10 {
+		t.Errorf("wide area %d drifted too far from 512² (%d)", area, 512*512)
+	}
+	// Same aspect scales up with an SDXL-sized default (1024²).
+	xw, xh, _ := resolveAspect("wide", 1024, 1024)
+	if xw <= w {
+		t.Errorf("wide on 1024² (%d) should exceed wide on 512² (%d)", xw, w)
+	}
+	if xw <= xh {
+		t.Errorf("wide on 1024² not landscape: %dx%d", xw, xh)
+	}
+	// tall is the portrait inverse of wide.
+	tw, th, _ := resolveAspect("tall", 512, 512)
+	if tw >= th {
+		t.Errorf("tall should be portrait: %dx%d", tw, th)
+	}
+}
+
 func TestImageHostPattern(t *testing.T) {
 	cases := map[string]string{
 		"http://alpaca.snuglab.local:8188/prompt": "http://alpaca.snuglab.local:8188/**",
