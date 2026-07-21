@@ -40,6 +40,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -327,16 +328,12 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		"steps":    strconv.Itoa(p.steps),
 		"seed":     strconv.Itoa(seed),
 	}
-	cred := s.Credential
-	if cred == "" {
-		cred = "no_auth"
-	}
 	method := firstNonEmpty(s.SubmitMethod, "POST")
 	body := substituteTokens(s.SubmitBody, fields)
 
 	// Submit. Read via the pipe path for its higher byte cap — a base64 image
 	// blows past the 256KB text cap — but the response never reaches the LLM.
-	raw, err := Secure().DispatchToolCallForPipe(sess, cred, s.SubmitURL, method, body)
+	raw, err := s.dispatchImage(sess, s.SubmitURL, method, body)
 	if err != nil {
 		return out, fmt.Errorf("image submit failed: %w", err)
 	}
@@ -376,7 +373,7 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 	var pollNode any
 	ready := false
 	for {
-		praw, perr := Secure().DispatchToolCallForPipe(sess, cred, pollURL, pollMethod, "")
+		praw, perr := s.dispatchImage(sess, pollURL, pollMethod, "")
 		if perr == nil {
 			_, pbody := parseHTTPDispatchResult(praw)
 			if json.Unmarshal([]byte(pbody), &pollNode) == nil {
@@ -398,6 +395,45 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		substituteTokens(s.PollB64Path, idTok),
 		substituteTokens(s.PollURLPath, idTok),
 		s.PollURLTemplate, resolvePollFields(s.PollFields, pollNode, idTok))
+}
+
+// dispatchImage runs one governed HTTP call for the backend, reading with the
+// pipe-path byte cap (a base64 image exceeds the text cap; the response is
+// projected to a short IMAGE ref and never reaches the LLM). A named credential
+// routes through SecureAPI with its own auth + URL allow-list. The no_auth/local
+// case synthesizes an unauthenticated credential scoped to the connector's OWN
+// scheme+host — so a local ComfyUI on plain http works WITHOUT globally widening
+// the shared no_auth credential to http (which would open http SSRF, e.g. cloud
+// metadata, for every no_auth tool).
+func (s RestImageSpec) dispatchImage(sess *ToolSession, rawURL, method, body string) (string, error) {
+	cred := strings.TrimSpace(s.Credential)
+	if cred != "" && cred != "no_auth" && cred != "none" {
+		return Secure().DispatchToolCallForPipe(sess, cred, rawURL, method, body)
+	}
+	scoped := SecureCredential{
+		Name:              "rest_image_local",
+		Type:              SecureCredNone,
+		AllowedURLPattern: imageHostPattern(s.SubmitURL),
+		Description:       "Unauthenticated rest_image dispatch, scoped to the backend host.",
+	}
+	args := map[string]any{"url": rawURL, "method": method, "__pipe_following": true}
+	if body != "" {
+		args["body"] = body
+	}
+	return Secure().dispatch(scoped, args, sess)
+}
+
+// imageHostPattern derives a scheme+host glob (scheme://host/**) from the
+// backend's submit URL, so the no_auth dispatch allows exactly that host at
+// whatever scheme (http for a LAN box) and nothing else. Submit, poll, and view
+// all live on that host. Falls back to http-or-https-anywhere only if the submit
+// URL can't be parsed (it's validated http(s) at save time, so this is belt-and-
+// suspenders).
+func imageHostPattern(rawURL string) string {
+	if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil && u.Host != "" {
+		return u.Scheme + "://" + u.Host + "/**"
+	}
+	return "http*://**"
 }
 
 // extractOutcome pulls the finished image out of node by the given locators:

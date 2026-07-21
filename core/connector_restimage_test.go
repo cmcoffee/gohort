@@ -257,6 +257,28 @@ func TestStripDataURIPrefix(t *testing.T) {
 	}
 }
 
+func TestImageHostPattern(t *testing.T) {
+	cases := map[string]string{
+		"http://alpaca.snuglab.local:8188/prompt": "http://alpaca.snuglab.local:8188/**",
+		"https://api.example.com/sdapi/v1/txt2img": "https://api.example.com/**",
+		"http://localhost:7860/foo":                "http://localhost:7860/**",
+	}
+	for in, want := range cases {
+		if got := imageHostPattern(in); got != want {
+			t.Errorf("imageHostPattern(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// The derived pattern must actually admit the connector's own http host but
+	// reject a different host — the whole point of scoping instead of http*://**.
+	p := imageHostPattern("http://alpaca.snuglab.local:8188/prompt")
+	if !urlAllowedByCredential(SecureCredential{AllowedURLPattern: p}, "http://alpaca.snuglab.local:8188/history/abc") {
+		t.Error("scoped pattern should allow the same host's poll URL")
+	}
+	if urlAllowedByCredential(SecureCredential{AllowedURLPattern: p}, "http://169.254.169.254/latest/meta-data") {
+		t.Error("scoped pattern must NOT allow a different host (SSRF)")
+	}
+}
+
 func TestRestImageToolName(t *testing.T) {
 	if got := restImageToolName("my-comfy"); got != "generate_image_my_comfy" {
 		t.Errorf("hyphen not normalized: %q", got)
