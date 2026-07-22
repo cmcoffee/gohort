@@ -25,6 +25,7 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -92,6 +93,10 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// draft_api_credential — the non-oauth sibling: plain API key /
 		// bearer / header / basic_auth (OPNsense, X-API-Key services, etc.).
 		draftAPICredentialToolDef(t),
+		// update_api_credential — approval-gated CONFIG edit (base_url, etc.)
+		// of a working credential, so the LLM never resorts to a destructive
+		// delete-and-re-draft to fix a setting.
+		updateAPICredentialToolDef(t),
 		// store_credential_secret — write-only vault landing for keys
 		// received mid-flow (self-registration, rotation), so they go
 		// into the credential instead of into the chat.
@@ -247,8 +252,26 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			Required: []string{"name", "type", "base_url"},
 		},
 		Handler: func(args map[string]any) (string, error) {
+			credName := strings.TrimSpace(stringArg(args, "name"))
+			// Guard a WORKING credential from a destructive re-draft. A re-draft
+			// overwrites the config and sets Disabled=true, so re-drafting a live
+			// credential silently breaks it and forces the user to re-enter their
+			// secret. This is exactly the trap an LLM falls into when it
+			// misdiagnoses a config bug and tries to "recreate" the credential
+			// with a tweaked base_url. Only the user's OWN record is at risk
+			// (SaveAPIDraft keys by owner), so check that one precisely. An
+			// unfinished draft (disabled, no real secret) stays freely editable.
+			if _, ownExists := Secure().LoadUser(t.user, credName); ownExists {
+				if _, enabled, hasSecret := Secure().CredentialStatusOwned(t.user, credName); enabled || hasSecret {
+					state := "already has its secret set"
+					if enabled {
+						state = "enabled and in use"
+					}
+					return fmt.Sprintf("Credential %q %s — NOT re-drafting it. A re-draft overwrites the config AND disables the credential, wiping its working state and forcing the user to paste their secret again. Never delete or re-create a live credential to change a setting, and never ask the user to delete one. If a setting like base_url genuinely must change, use update_api_credential(name=%q, base_url=...) — it shows the user an old→new diff to approve and preserves the secret + enabled state. To simply USE the credential, pass credential=%q to tool_def; you do not need to re-draft it.", credName, state, credName, credName), nil
+				}
+			}
 			c := SecureCredential{
-				Name:        strings.TrimSpace(stringArg(args, "name")),
+				Name:        credName,
 				Type:        strings.TrimSpace(stringArg(args, "type")),
 				BaseURL:     strings.TrimSpace(stringArg(args, "base_url")),
 				ParamName:   strings.TrimSpace(stringArg(args, "param_name")),
@@ -274,6 +297,88 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
 			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat — the USER pastes %s and enables it in Extensions › My API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
 				c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
+		},
+	}
+}
+
+// credConfigChange is one field's old→new diff shown on the credential_update
+// approval card. Config only — never carries a secret.
+type credConfigChange struct {
+	Field string `json:"field"`
+	Label string `json:"label"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
+}
+
+// emitCredentialUpdateCard drops a credential_update approval card into the
+// chat: the proposed old→new config diff plus an Approve button. Approving
+// applies ONLY the config (base_url / param_name / description) via
+// /api/console/credential-update/apply, which preserves the secret and the
+// enabled state (Save with an empty secret). Nothing here is sensitive, so the
+// values ride through the card safely. Upserts by card id so re-proposing
+// refreshes the card instead of stacking.
+func (t *chatTurn) emitCredentialUpdateCard(name string, changes []credConfigChange) {
+	if t == nil || t.sse == nil {
+		return
+	}
+	id := "credupdate-" + name
+	payload, _ := json.Marshal(changes)
+	data := map[string]string{"name": name, "changes": string(payload)}
+	t.sse.Send(map[string]any{
+		"kind":  "block",
+		"type":  "credential_update",
+		"id":    id,
+		"title": name,
+		"data":  data,
+	})
+	if t.session != nil {
+		blk := UIBlock{Type: "credential_update", ID: id, Title: name, Data: data}
+		t.toolMu.Lock()
+		t.session.upsert_ui_block(blk, func(b *UIBlock) bool { return b.ID == id })
+		t.toolMu.Unlock()
+	}
+}
+
+// updateAPICredentialToolDef lets the LLM propose a CONFIG change to a working
+// api credential (correct a base_url, etc.) WITHOUT the destructive
+// delete-and-re-draft dance. It shows the user an old→new diff to approve; on
+// approval only the config changes — the secret and enabled state are
+// preserved. The alternative the LLM reaches for otherwise (re-draft, or asking
+// the user to delete the credential) wipes the secret and disables it.
+func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "update_api_credential",
+			Description: "Propose a CONFIG change to an EXISTING api credential the user owns — e.g. correct its base_url. This never deletes, re-creates, or disables the credential and never touches the secret: it shows the user an old→new diff with an Approve button, and on approval ONLY the config changes (the secret + enabled state are preserved). Use this instead of re-drafting or asking the user to delete a credential when a working credential's setting is wrong. You cannot change the secret (the user does that) and cannot edit a global/admin credential (an admin does that in Admin > APIs).",
+			Parameters: map[string]ToolParam{
+				"name":        {Type: "string", Description: "The existing credential to update (in the user's My API credentials)."},
+				"base_url":    {Type: "string", Description: "(optional) New base URL, e.g. https://p188-caldav.icloud.com/195178399. Omit to leave unchanged."},
+				"param_name":  {Type: "string", Description: "(optional, header/query types) New header or query-param name. Omit to leave unchanged."},
+				"description": {Type: "string", Description: "(optional) New description. Omit to leave unchanged."},
+			},
+			Required: []string{"name"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			name := strings.TrimSpace(stringArg(args, "name"))
+			cur, ok := Secure().LoadUser(t.user, name)
+			if !ok {
+				return fmt.Sprintf("No credential named %q in the user's API credentials to update. If it's a global/admin credential, an admin edits it in Admin > APIs. If it doesn't exist yet, draft_api_credential first.", name), nil
+			}
+			var changes []credConfigChange
+			if nv := strings.TrimSpace(stringArg(args, "base_url")); nv != "" && nv != cur.BaseURL {
+				changes = append(changes, credConfigChange{Field: "base_url", Label: "Base URL", Old: cur.BaseURL, New: nv})
+			}
+			if nv := strings.TrimSpace(stringArg(args, "param_name")); nv != "" && nv != cur.ParamName {
+				changes = append(changes, credConfigChange{Field: "param_name", Label: "Param name", Old: cur.ParamName, New: nv})
+			}
+			if nv := strings.TrimSpace(stringArg(args, "description")); nv != "" && nv != cur.Description {
+				changes = append(changes, credConfigChange{Field: "description", Label: "Description", Old: cur.Description, New: nv})
+			}
+			if len(changes) == 0 {
+				return fmt.Sprintf("No config changes to propose for %q — the provided values already match the credential (or none were given).", name), nil
+			}
+			t.emitCredentialUpdateCard(name, changes)
+			return fmt.Sprintf("Proposed %d config change(s) to credential %q — an approval card is showing in the chat with the old→new diff. It applies ONLY on the user's approval, and the secret + enabled state are preserved. Do NOT re-draft or delete the credential; wait for the user to approve, then continue.", len(changes), name), nil
 		},
 	}
 }

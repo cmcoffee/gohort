@@ -3157,6 +3157,10 @@ func substituteURL(tmpl string, params map[string]ToolParam, required []string, 
 		reqSet[r] = true
 	}
 	tmpl = dropAbsentOptionalQuery(tmpl, params, reqSet, args)
+	// Placeholders before the first "?" are path-position (keep "/" as a
+	// separator); after it they're query-position (fully encoded). qpos is a
+	// template offset, so it stays valid as we index into tmpl.
+	qpos := strings.IndexByte(tmpl, '?')
 	var b strings.Builder
 	for i := 0; i < len(tmpl); i++ {
 		if tmpl[i] != '{' {
@@ -3177,7 +3181,11 @@ func substituteURL(tmpl string, params map[string]ToolParam, required []string, 
 		if !ok {
 			return "", fmt.Errorf("missing arg %q", name)
 		}
-		b.WriteString(urlEscape(stringify(val)))
+		if qpos >= 0 && i > qpos {
+			b.WriteString(urlEscape(stringify(val)))
+		} else {
+			b.WriteString(urlEscapePath(stringify(val)))
+		}
 		i = i + 1 + end
 	}
 	return b.String(), nil
@@ -3223,7 +3231,21 @@ func dropAbsentOptionalQuery(tmpl string, params map[string]ToolParam, reqSet ma
 // — conservative, won't double-encode legitimately-encoded values
 // because callers should pass raw param values, not pre-encoded ones.
 func urlEscape(s string) string {
-	const safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+	return urlEscapeWith(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+}
+
+// urlEscapePath is urlEscape but keeps "/" unescaped, so a param that holds a
+// multi-segment PATH (e.g. a CalDAV calendar path "/195178399/calendars/home/",
+// or "/repos/owner/name") substitutes as real path separators instead of
+// "%2F...", which the credential allowlist would then reject as off-base_url.
+// Everything else — spaces, "?", "#", unicode — is still encoded, so a value
+// can't inject a query string or fragment. Used for path-position placeholders;
+// query-position ones stay fully encoded via urlEscape.
+func urlEscapePath(s string) string {
+	return urlEscapeWith(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/")
+}
+
+func urlEscapeWith(s, safe string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {

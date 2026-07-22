@@ -161,9 +161,23 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			RequiresConfirm: body.RequiresConfirm,
 			Owner:           user,
 		}
+		// Auto-enable on finishing a draft. A draft_api_credential lands
+		// DISABLED with a placeholder secret, and Save deliberately preserves
+		// Disabled — so pasting the secret here would leave the credential
+		// silently disabled and unusable, forcing the user to discover a
+		// SEPARATE Enable step (a real point of confusion). If this record was a
+		// pending draft (disabled, no real secret) and the user is now providing
+		// one, flip it live so saving the secret is all it takes.
+		_, wasEnabled, hadSecret := Secure().CredentialStatusOwned(user, c.Name)
 		if err := Secure().Save(c, body.Secret); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if !wasEnabled && !hadSecret && strings.TrimSpace(body.Secret) != "" {
+			if err := Secure().SetDisabledOwned(user, c.Name, false); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodDelete:

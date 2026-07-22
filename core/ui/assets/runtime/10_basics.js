@@ -2050,6 +2050,11 @@
             body: JSON.stringify(current),
           }).then(function(resp) {
             window.uiInvalidateSaved(cfg);
+            // Always give a visible "it saved" signal. A submit that closes a
+            // modal or just restores the button (204, no message) otherwise
+            // looks like it did nothing — the exact "the save button should do
+            // something" gap. A redirect navigates away, so skip the toast there.
+            if (!cfg.redirect_url) { showToast(cfg.saved_toast || 'Saved ✓'); }
             if (cfg.redirect_url) {
               var dest = substitute(cfg.redirect_url, resp || {});
               var target = cfg.redirect_target || '_self';

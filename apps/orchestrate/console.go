@@ -79,6 +79,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/approvals/approve", gw(T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", gw(T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", gw(T.handleApprovalDeny))
+	T.HandleFunc("/api/console/credential-update/apply", gw(T.handleCredentialUpdateApply))
 	T.HandleFunc("/api/console/channel/clear", g(T.handleChannelClear))
 	T.HandleFunc("/api/console/channel/compact", g(T.handleChannelCompact))
 	T.HandleFunc("/api/console/channel/decommission", g(T.handleChannelDecommission))
@@ -1990,6 +1991,54 @@ func (T *OrchestrateApp) handleApprovalApprove(w http.ResponseWriter, r *http.Re
 
 func (T *OrchestrateApp) handleApprovalAlways(w http.ResponseWriter, r *http.Request) {
 	T.resolveApproval(w, r, true)
+}
+
+// handleCredentialUpdateApply applies a user-APPROVED config change to the
+// caller's OWN api credential (the credential_update card's Approve button).
+// Config-only: base_url / param_name / description. It loads the existing
+// record, overlays only the provided fields, and saves with an EMPTY secret —
+// which Secure().Save treats as "keep the existing secret" and also preserves
+// the Disabled/Secured state. So approving an update can never wipe the secret
+// or silently enable/disable a working credential. Scoped to the user's
+// namespace (LoadUser + Owner=user), so it can't touch a global/admin cred.
+func (T *OrchestrateApp) handleCredentialUpdateApply(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		BaseURL     string `json:"base_url"`
+		ParamName   string `json:"param_name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	c, found := Secure().LoadUser(user, name)
+	if !found {
+		http.Error(w, "no credential named "+name+" in your API credentials", http.StatusNotFound)
+		return
+	}
+	// Overlay only the provided config fields; leave the rest as-is.
+	if v := strings.TrimSpace(body.BaseURL); v != "" {
+		c.BaseURL = v
+	}
+	if v := strings.TrimSpace(body.ParamName); v != "" {
+		c.ParamName = v
+	}
+	if v := strings.TrimSpace(body.Description); v != "" {
+		c.Description = v
+	}
+	c.Owner = user
+	// Empty secret => preserve the existing secret + enabled/secured state.
+	if err := Secure().Save(c, ""); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Request) {

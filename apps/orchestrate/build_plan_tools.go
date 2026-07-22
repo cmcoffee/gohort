@@ -139,18 +139,18 @@ func (t *chatTurn) markStepDoneToolDef() AgentToolDef {
 			Caps:     []Capability{CapRead},
 		},
 		Handler: func(args map[string]any) (string, error) {
+			// This is a COSMETIC checklist update — never hard-error on a
+			// stale/out-of-range step number, or the model burns the turn in an
+			// apology loop instead of doing the actual work. Soft-note and move on.
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "", errors.New("mark_step_done: no active build plan — call present_build_plan first")
+				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
 			}
 			step := intFromArgs(args, "step")
-			if step < 1 {
-				return "", errors.New("step must be >= 1 (1-indexed)")
-			}
 			summary := strings.TrimSpace(stringArg(args, "summary"))
 			plan := t.session.BuildPlan
 			idx := step - 1
-			if idx >= len(plan.Steps) {
-				return "", fmt.Errorf("step %d exceeds plan length %d", step, len(plan.Steps))
+			if step < 1 || idx >= len(plan.Steps) {
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)) — nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
 			}
 			plan.Steps[idx].Status = "done"
 			plan.Steps[idx].Findings = summary
@@ -242,7 +242,7 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "mark_step_in_progress",
-			Description: "Mark a step of the current build plan as in_progress before starting its worker. Pass step=N (1-indexed). Refuses when another step is already in_progress — call mark_step_done or mark_step_blocked on it first. Updates the visible plan card so the user sees which step is actively running.",
+			Description: "Mark a step of the current build plan as in_progress before starting its worker. Pass step=N (1-indexed). If another step was still in_progress it's auto-completed (forward progress) — you don't have to close it first. Updates the visible plan card so the user sees which step is actively running.",
 			Parameters: map[string]ToolParam{
 				"step": {Type: "integer", Description: "1-indexed step number, matching present_build_plan's numbering."},
 			},
@@ -250,31 +250,32 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 			Caps:     []Capability{CapRead},
 		},
 		Handler: func(args map[string]any) (string, error) {
+			// Cosmetic checklist update — tolerant by design (see mark_step_done).
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "", errors.New("mark_step_in_progress: no active build plan — call present_build_plan first")
+				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
 			}
 			step := intFromArgs(args, "step")
-			if step < 1 {
-				return "", errors.New("step must be >= 1 (1-indexed)")
-			}
 			plan := t.session.BuildPlan
 			idx := step - 1
-			if idx >= len(plan.Steps) {
-				return "", fmt.Errorf("step %d exceeds plan length %d", step, len(plan.Steps))
+			if step < 1 || idx >= len(plan.Steps) {
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)) — nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
 			}
-			// Refuse if another step is already in_progress —
-			// lifecycle hygiene. The LLM must close the prior step
-			// (done or blocked) before opening a new one.
+			// Auto-advance a stale in_progress step instead of refusing: the model
+			// has clearly moved on, and the old "close it first" error was the
+			// single biggest source of turn-wasting apology loops. Forward
+			// progress → mark any other in_progress step done.
+			advanced := false
 			for i, s := range plan.Steps {
-				if i == idx {
-					continue
-				}
-				if s.Status == "in_progress" {
-					return "", fmt.Errorf("step %d (%q) is already in_progress — call mark_step_done or mark_step_blocked on it before starting step %d", s.Number, s.Title, step)
+				if i != idx && s.Status == "in_progress" {
+					plan.Steps[i].Status = "done"
+					advanced = true
 				}
 			}
 			plan.Steps[idx].Status = "in_progress"
 			emitBuildPlanBlock(t.sse, plan)
+			if advanced {
+				return fmt.Sprintf("Step %d (%q) marked in_progress (auto-completed the previously open step). Continue.", step, plan.Steps[idx].Title), nil
+			}
 			return fmt.Sprintf("Step %d (%q) marked in_progress.", step, plan.Steps[idx].Title), nil
 		},
 	}
@@ -299,20 +300,17 @@ func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
 		},
 		Handler: func(args map[string]any) (string, error) {
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "", errors.New("mark_step_blocked: no active build plan — call present_build_plan first")
+				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
 			}
 			step := intFromArgs(args, "step")
-			if step < 1 {
-				return "", errors.New("step must be >= 1 (1-indexed)")
-			}
 			reason := strings.TrimSpace(stringArg(args, "reason"))
 			if reason == "" {
 				return "", errors.New("reason is required — describe what blocked the step in one line")
 			}
 			plan := t.session.BuildPlan
 			idx := step - 1
-			if idx >= len(plan.Steps) {
-				return "", fmt.Errorf("step %d exceeds plan length %d", step, len(plan.Steps))
+			if step < 1 || idx >= len(plan.Steps) {
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)) — nothing to update. The checklist is cosmetic; note the blocker in your reply instead of re-planning.", step, len(plan.Steps)), nil
 			}
 			plan.Steps[idx].Status = "blocked"
 			plan.Steps[idx].BlockedReason = reason

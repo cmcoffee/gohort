@@ -952,6 +952,64 @@
       return {wrap: wrap, body: null};
     });
 
+    // Credential update card — emitted by update_api_credential when the
+    // assistant proposes a CONFIG change (base_url, etc.) to a working
+    // credential. Shows an old→new diff; Approve applies ONLY the config via
+    // the apply endpoint, which preserves the secret + enabled state. No secret
+    // is ever involved, so the proposed values ride safely through the card.
+    window.uiRegisterBlockRenderer('credential_update', function(d) {
+      var data = d.data || {};
+      var name = String(data.name || d.title || '');
+      var changes = [];
+      try { changes = JSON.parse(data.changes || '[]'); } catch (e) { changes = []; }
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['✏️']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Update credential "' + name + '"?']));
+      var diff = el('div', {class: 'ui-orch-connect-sub'});
+      changes.forEach(function(ch) {
+        var row = el('div', {style: 'margin:0.15rem 0;word-break:break-all'});
+        row.appendChild(el('span', {style: 'color:var(--text-mute)'}, [String(ch.label || ch.field) + ': ']));
+        row.appendChild(el('span', {style: 'text-decoration:line-through;opacity:0.65'}, [String(ch.old || '(empty)')]));
+        row.appendChild(el('span', {style: 'color:var(--text-mute)'}, [' → ']));
+        row.appendChild(el('span', {style: 'font-weight:600'}, [String(ch.new || '')]));
+        diff.appendChild(row);
+      });
+      msg.appendChild(diff);
+      var note = el('div', {class: 'ui-orch-connect-sub', style: 'margin-top:0.3rem;opacity:0.8'},
+        ['The secret and enabled state are preserved.']);
+      msg.appendChild(note);
+      wrap.appendChild(msg);
+      var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});
+      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Approve update']);
+      var deny = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Dismiss']);
+      actions.appendChild(approve);
+      actions.appendChild(deny);
+      wrap.appendChild(actions);
+      if (!name || !changes.length) { approve.disabled = true; }
+      function settle(text) {
+        wrap.classList.add('connected');
+        if (actions.parentNode) actions.remove();
+        note.textContent = text;
+      }
+      approve.addEventListener('click', function() {
+        approve.disabled = true; deny.disabled = true;
+        var body = {name: name};
+        changes.forEach(function(ch) { body[ch.field] = ch.new; });
+        fetch('api/console/credential-update/apply', {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+        })
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle('Applied — the credential was updated (secret preserved).'); })
+          .catch(function(err) {
+            approve.disabled = false; deny.disabled = false;
+            window.uiAlert('Could not apply the update: ' + String(err && err.message || err));
+          });
+      });
+      deny.addEventListener('click', function() { settle('Dismissed — no changes made.'); });
+      return {wrap: wrap, body: null};
+    });
+
     // Credential setup card — emitted when Builder drafts a DISABLED
     // API credential (draft_api_credential / draft_oauth_credential).
     // The Set up button opens a modal whose form POSTs the secret
@@ -982,7 +1040,7 @@
       // modal. Point them to their surface and stop here.
       if (data.owned === '1') {
         msg.querySelector('.ui-orch-connect-title').textContent = 'API credential "' + name + '" needs your key';
-        sub.textContent = 'It is now in your API credentials (disabled). Add ' + secretLabel + ' and enable it under Extensions > My API credentials.';
+        sub.textContent = 'It is now in your API credentials. Open Extensions > My API credentials and save ' + secretLabel + ' — it goes live automatically once you save the secret.';
         btn.textContent = 'Open My API credentials';
         btn.addEventListener('click', function() { window.location.href = '/gateways'; });
         return {wrap: wrap, body: null};
