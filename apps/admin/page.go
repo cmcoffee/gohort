@@ -2049,82 +2049,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
-				Title:    "Tool Groups",
-				Subtitle: "Bundle related chat tools (a Calendar API, a communications suite, an Acme integration) under one logical heading. The runtime catalog collapses members into a single expandable entry — context savings when a deployment has many tools that share a purpose. Pick which tools to group; the LLM proposes the name and description based on what you selected.",
+				Title:    "Categories",
+				Subtitle: "Give a group of tools a named category — the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves (custom tools via their own setting in Gateways/Builder; built-in tools are framework-assigned), so here you just define the category's name and the description the model reads. A tool's claimed label is matched to a category by name.",
 				Body: ui.Stack{
 					Children: []ui.Component{
-						// Auto-create: pick tools → LLM names + describes.
-						// Skips the awkward "what should I call this?"
-						// step since the LLM is the one that'll have to
-						// call the group later anyway.
-						ui.Card{
-							HTML: `<div id="tg-create-wrap">
-  <div id="tg-create-tools" style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.6rem">Loading tools…</div>
-  <div style="display:flex;gap:0.6rem;align-items:center">
-    <button id="tg-create-btn" type="button" class="ui-row-btn primary" disabled>Create group (0 selected)</button>
-    <span id="tg-create-status" style="color:var(--text-mute);font-size:0.85rem"></span>
-  </div>
-</div>
-<style>
-#tg-create-tools .tg-chip {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text-mute); padding: 0.2rem 0.55rem; border-radius: 999px;
-  cursor: pointer; font-size: 0.78rem; font-family: inherit;
-}
-#tg-create-tools .tg-chip:hover { color: var(--text); border-color: var(--text-mute); }
-#tg-create-tools .tg-chip.on { color: var(--accent); border-color: var(--accent); }
-</style>
-<script>
-(function(){
-  var selected = {};
-  var wrap = document.getElementById('tg-create-tools');
-  var btn = document.getElementById('tg-create-btn');
-  var status = document.getElementById('tg-create-status');
-  function updateBtn() {
-    var n = Object.keys(selected).length;
-    btn.textContent = 'Create group (' + n + ' selected)';
-    btn.disabled = n === 0;
-  }
-  fetch('api/tool-groups/registry?exclude_grouped=true').then(function(r){return r.json()}).then(function(tools){
-    wrap.innerHTML = '';
-    if (!tools || !tools.length) { wrap.textContent = '(no tools available)'; return; }
-    tools.forEach(function(t){
-      var chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'tg-chip';
-      chip.textContent = t.name;
-      if (t.description) chip.title = t.description;
-      chip.addEventListener('click', function(){
-        if (selected[t.name]) { delete selected[t.name]; chip.classList.remove('on'); }
-        else { selected[t.name] = true; chip.classList.add('on'); }
-        updateBtn();
-      });
-      wrap.appendChild(chip);
-    });
-  }).catch(function(err){ wrap.textContent = 'Failed to load tools: ' + err.message; });
-  btn.addEventListener('click', function(){
-    var members = Object.keys(selected);
-    if (!members.length) return;
-    btn.disabled = true;
-    status.textContent = 'Asking the LLM to name + describe…';
-    fetch('api/tool-groups/auto-create', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({members: members})
-    }).then(function(r){
-      if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP '+r.status)); });
-      return r.json();
-    }).then(function(g){
-      status.textContent = 'Created "' + g.name + '". Reloading…';
-      setTimeout(function(){ window.location.reload(); }, 600);
-    }).catch(function(err){
-      status.textContent = 'Failed: ' + (err && err.message || err);
-      btn.disabled = false;
-    });
-  });
-})();
-</script>`,
-						},
 						// Table of existing groups with per-row editor + delete.
 						ui.Table{
 							Source: "api/tool-groups",
@@ -2134,54 +2062,53 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Field: "description", Flex: 2, Mute: true},
 							},
 							RowActions: []ui.RowAction{
-								ui.Expand("Edit", ui.Stack{
-									Children: []ui.Component{
-										// Name + description edit. Loads the
-										// group, POSTs the full record back.
-										ui.FormPanel{
-											Source:  "api/tool-groups/{id}",
-											PostURL: "api/tool-groups",
-											Method:  "POST",
-											Fields: []ui.FormField{
-												{Field: "name", Type: "text", Label: "Name",
-													SuggestURL: "api/tool-groups/suggest"},
-												{Field: "description", Type: "textarea", Label: "Description", Rows: 2,
-													SuggestURL: "api/tool-groups/suggest"},
-											},
-										},
-										// Members chip picker — toggleable
-										// across the global tool registry.
-										ui.ChipPicker{
-											OptionsSource: "api/tool-groups/registry?exclude_grouped=true&except_group={id}",
-											RecordSource:  "api/tool-groups/{id}",
-											Field:         "members",
-											PostTo:        "api/tool-groups",
-											Method:        "POST",
-											NameField:     "name",
-											LabelField:    "name",
-											DescField:     "description",
-										},
+								// Edit the category definition (name + the description
+								// the model reads). Membership isn't set here — custom
+								// tools self-claim their category and built-in members
+								// are framework-defined; the POST handler preserves the
+								// member list across a name/description save.
+								ui.Expand("Edit", ui.FormPanel{
+									Source:  "api/tool-groups/{id}",
+									PostURL: "api/tool-groups",
+									Method:  "POST",
+									Fields: []ui.FormField{
+										{Field: "name", Type: "text", Label: "Name"},
+										{Field: "description", Type: "textarea", Label: "Description", Rows: 3,
+											Help: "Shown to the model as the category's purpose (it appears in the tool catalog). Write it as a decision shape: when tools under this heading should come into play."},
 									},
 								}),
-								// Admin-curated groups: Delete drops the row.
+								// Admin-curated categories: Delete drops the row.
 								{Type: "button", Label: "Delete",
 									PostTo:  "api/tool-groups?id={id}",
 									Method:  "DELETE",
-									Confirm: "Delete this tool group? The member tools themselves are unaffected; only the grouping definition disappears.",
+									Confirm: "Delete this category? Tools that claim it fall back to their capability label; the tools themselves are unaffected.",
 									Variant: "danger",
 									HideIf:  "is_builtin"},
-								// Framework-default groups: Revert drops the
-								// admin shadow (if any) so the in-code default
-								// surfaces again. No-op if no shadow has been
-								// saved — the backend returns an error which
-								// surfaces as a toast.
+								// Framework-default categories: Revert drops the admin
+								// shadow so the in-code default surfaces again.
 								{Type: "button", Label: "Revert",
 									PostTo:  "api/tool-groups?id={id}",
 									Method:  "DELETE",
-									Confirm: "Revert this framework-default tool group to its in-code defaults? Any admin edits you made are discarded.",
+									Confirm: "Revert this framework-default category to its in-code defaults? Any admin edits you made are discarded.",
 									OnlyIf:  "is_builtin"},
 							},
-							EmptyText: "No tool groups defined. Create one above to start collapsing related tools into a single catalog entry.",
+							EmptyText: "No categories yet. Add one to give a group of tools a shared heading + description.",
+						},
+						ui.ModalButton{
+							Label:    "Add category",
+							Title:    "New category",
+							Subtitle: "A named heading tools can claim. Define the name + the description the model reads; tools reference it by name.",
+							Variant:  "primary",
+							Width:    "560px",
+							Body: ui.FormPanel{
+								PostURL:     "api/tool-groups",
+								SubmitLabel: "Create category",
+								Fields: []ui.FormField{
+									{Field: "name", Type: "text", Label: "Name", Placeholder: "e.g. Web Media, Acme API"},
+									{Field: "description", Type: "textarea", Label: "Description", Rows: 3,
+										Help: "What the model should understand this category to cover."},
+								},
+							},
 						},
 					},
 				},

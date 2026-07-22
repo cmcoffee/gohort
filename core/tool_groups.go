@@ -36,15 +36,22 @@ const (
 	toolGroupsTable = "tool_groups"
 )
 
-// ToolGroup is the persisted shape. Members reference chat tools by
-// name; the runtime rewriter looks them up against the chat-tool
-// registry, so a deleted tool simply drops out of the group at
-// resolve time without needing storage cleanup.
+// ToolGroup is the persisted shape of a tool CATEGORY. Name + Description
+// ARE the category definition (the registry the admin edits under
+// "Categories"); Description is the model-facing summary shown in the catalog.
+// Membership is now driven primarily by each tool's self-declared
+// Tool.Category (see Tool.Category / TempTool.Category) — the presentation
+// layer prefers a tool's claimed category, then falls back to this Members
+// list. Members is therefore FRAMEWORK/LEGACY membership: built-in groupings
+// (e.g. Web Media, defined in builtinToolGroups) and any pre-existing admin
+// groupings. It is no longer edited from the admin UI — the name/description
+// save preserves it. Members reference chat tools by name; the rewriter looks
+// them up in the registry, so a deleted tool drops out at resolve time.
 type ToolGroup struct {
 	ID          string    `json:"id"`
-	Name        string    `json:"name"`        // human-readable; appears in catalog ("Communications", "Acme API")
-	Description string    `json:"description"` // LLM-facing summary shown until the group is expanded
-	Members     []string  `json:"members"`     // chat tool names — both built-in and persistent temp tools eligible
+	Name        string    `json:"name"`        // category name; appears in catalog ("Web Media", "Acme API")
+	Description string    `json:"description"` // model-facing summary of the category
+	Members     []string  `json:"members"`     // framework/legacy membership; custom tools self-claim via Tool.Category
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
 }

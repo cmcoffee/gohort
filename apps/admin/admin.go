@@ -3564,6 +3564,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			// Membership is no longer edited from the Categories UI (custom
+			// tools self-claim via Tool.Category; built-in members are
+			// framework-defined). A name/description save omits Members, so
+			// PRESERVE the stored member list rather than blank it — otherwise
+			// renaming a category would drop the built-in Web Media grouping.
+			if req.ID != "" && len(req.Members) == 0 {
+				if existing, ok := LoadToolGroup(a.db, req.ID); ok {
+					req.Members = existing.Members
+				}
+			}
 			saved, err := SaveToolGroup(a.db, req)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
