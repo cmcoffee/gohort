@@ -69,7 +69,8 @@ func BuildToolDef() *GroupedTool {
 			"credential":        {Type: "string", Description: "(api / toolbox mode, optional) Name of the registered secure-API credential to dispatch through. For public no-auth APIs, OMIT it — it defaults to \"no_auth\", the bootstrapped open-pattern credential that applies gohort's allow-list/audit/rate-limit but injects no auth header. If you name the no-auth case explicitly, \"no_auth\" is the ONLY accepted spelling — never placeholders like \"none\" / \"public\" / \"n/a\". For authenticated APIs, name the credential the admin registered (\"github\", \"openweather\", etc.); the secret stays server-side and gohort injects the header (Bearer / custom / etc.) at dispatch. REUSE the existing credential for a service — it's normally named after the service (a Moltbook tool → credential \"moltbook\"); check_credential(name) confirms it. Do NOT mint a duplicate. If the credential exists but is DISABLED (check_credential reports it), ASK THE USER TO ENABLE IT rather than routing around it or recreating — a disabled credential blocks dispatch by design."},
 			"url_template":      {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":            {Type: "string", Description: "(api mode) HTTP method. Default GET."},
-			"body_template":     {Type: "string", Description: "(api mode) JSON body template with {param} placeholders (JSON-encoded at dispatch). Optional for GET; usually required for POST/PUT/PATCH."},
+			"body_template":     {Type: "string", Description: "(api mode) Request body template with {param} placeholders. By default the body is JSON: placeholders are JSON-encoded (strings auto-quoted) and the result is validated as JSON. For a NON-JSON API (XML/SOAP, CalDAV REPORT, plain text) set content_type (e.g. \"application/xml\") — then placeholders substitute RAW (no quoting) and no JSON validation runs, so an XML template with <time-range start=\"{start_date}T00:00:00Z\"/> works. Optional for GET; usually required for POST/PUT/PATCH/REPORT."},
+			"content_type":      {Type: "string", Description: "(api mode, optional) Content-Type for the request body. Empty = application/json (the default JSON body path). A non-JSON value like \"application/xml\" or \"text/xml\" switches body_template to RAW substitution + no JSON validation, and sends that header — required for XML/SOAP/CalDAV APIs."},
 			"response_pipe":     {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. **jq gotcha:** the `//` alternative operator MUST be parenthesized inside object construction — write `{k: (.a // .b)}`, NOT `{k: .a // .b}` (the bare form is a jq syntax error). Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
 			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "List of param names callers MUST provide. OMIT this field entirely to default ALL params to required; pass an explicit empty array [] to make ALL params optional; or list a subset. An optional param that appears in url_template as a query segment (\"?key={name}\") is dropped from the URL when the caller omits it."},
 			"state_path":        {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
@@ -160,6 +161,7 @@ func BuildToolDef() *GroupedTool {
 			"command_template": {Type: "string", Description: "(shell) New command template."},
 			"method":           {Type: "string", Description: "(api) New HTTP method."},
 			"body_template":    {Type: "string", Description: "(api) New request body template."},
+			"content_type":     {Type: "string", Description: "(api) New body Content-Type. Non-JSON (e.g. \"application/xml\") switches to raw substitution + no JSON validation."},
 			"response_pipe":    {Type: "string", Description: "(api) New response_pipe (jq/awk post-processor)."},
 			"script_body":      {Type: "string", Description: "(shell) New script body."},
 		},
@@ -461,6 +463,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if v, ok := args["body_template"]; ok {
 			apiArgs["body_template"] = v
+		}
+		if v, ok := args["content_type"]; ok {
+			apiArgs["content_type"] = v
 		}
 		if v, ok := args["response_pipe"]; ok {
 			apiArgs["response_pipe"] = v

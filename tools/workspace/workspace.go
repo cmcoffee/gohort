@@ -238,6 +238,7 @@ func init() {
 		Description: "Run a shell command inside the active workspace via bwrap. The workspace is the only writable path; reads outside silently fail. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation — use sparingly. For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead — no-confirmation, validated-input, purpose-built for that check.",
 		Params: map[string]ToolParam{
 			"command": {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
+			"env":     {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command — reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
 		},
 		Required:     []string{"command"},
 		Caps:         []Capability{CapExecute, CapRead, CapWrite, CapNetwork},
@@ -534,6 +535,15 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	if cmd == "" {
 		return "", fmt.Errorf("command is required")
 	}
+	// Optional env: {"KEY":"val"} exposed to the command as $KEY / os.environ —
+	// so a debug run can supply the same variables a registered shell tool gets.
+	var extraEnv map[string]string
+	if raw, ok := args["env"].(map[string]any); ok && len(raw) > 0 {
+		extraEnv = make(map[string]string, len(raw))
+		for k, v := range raw {
+			extraEnv[strings.TrimSpace(k)] = fmt.Sprint(v)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	// Run with the iterate-and-test hook attached so `from gohort
@@ -545,8 +555,8 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	// browse_page — the common probe surface. secret:* and fetch_via:*
 	// stay explicit so a tool that needs credentials still has to
 	// declare them in its tool record.
-	res := RunSandboxedShellWithHook(ctx, cmd, sess.WorkspaceDir, sess,
-		[]string{"fetch", "log", "browse_page"})
+	res := RunSandboxedShellWithHookEnv(ctx, cmd, sess.WorkspaceDir, sess,
+		[]string{"fetch", "log", "browse_page"}, extraEnv)
 	output := strings.TrimSpace(res.Output)
 	if len(output) > runMaxOutput {
 		totalLines := strings.Count(output, "\n") + 1

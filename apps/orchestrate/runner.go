@@ -5529,7 +5529,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// self-serve authoring agent gets them here. The matching
 		// credentialFirstGuidance is injected into the system prompt above under
 		// the same !isBuilderAgent condition.
-		knowTools = append(knowTools, draftOAuthCredentialToolDef(t), draftAPICredentialToolDef(t), storeCredentialSecretToolDef(), checkCredentialToolDef())
+		knowTools = append(knowTools, draftOAuthCredentialToolDef(t), draftAPICredentialToolDef(t), storeCredentialSecretToolDef(), checkCredentialToolDef(t))
 	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.

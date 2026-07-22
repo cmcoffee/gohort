@@ -1105,6 +1105,25 @@ func (s *SecureAPI) CredentialStatus(name string) (exists, enabled, hasSecret bo
 	return true, !c.Disabled, hasSecret
 }
 
+// CredentialStatusOwned is CredentialStatus resolved in a user's namespace: a
+// user-owned credential (their own "My API credentials") is found, falling back
+// to global. Empty owner = global only. hasSecret is false for an unfinished
+// draft (the "(pending)" placeholder), so a caller can tell "needs its secret"
+// from "ready".
+func (s *SecureAPI) CredentialStatusOwned(owner, name string) (exists, enabled, hasSecret bool) {
+	c, ok := s.Resolve(name, owner)
+	if !ok {
+		return false, false, false
+	}
+	// Secret is keyed by the SAME store key the credential resolved under
+	// (global = bare name; user-owned = the @u:<owner>:<name> tuple). Resolve
+	// fills c.Owner, so credStoreKey reproduces that key.
+	sec, ok2 := s.loadSecret(credStoreKey(c.Owner, c.Name))
+	sec = strings.TrimSpace(sec)
+	hasSecret = ok2 && sec != "" && sec != "(pending)"
+	return true, !c.Disabled, hasSecret
+}
+
 // ----------------------------------------------------------------------
 // Tool generation + dispatch
 // ----------------------------------------------------------------------
@@ -1240,7 +1259,20 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 // per-credential tool. sess provides workspace context for save_to;
 // nil disables the save_to capability for this call.
 func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
-	return s.dispatchToolCall(sess, credName, urlStr, method, body, false)
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, "", false)
+}
+
+// DispatchToolCallCT is DispatchToolCall with an explicit request Content-Type
+// (empty defaults to application/json). Used by api-mode tools that declare a
+// non-JSON body (e.g. application/xml for CalDAV/SOAP).
+func (s *SecureAPI) DispatchToolCallCT(sess *ToolSession, credName, urlStr, method, body, contentType string) (string, error) {
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, contentType, false)
+}
+
+// DispatchToolCallForPipeCT is DispatchToolCallForPipe with an explicit
+// Content-Type (see DispatchToolCallCT).
+func (s *SecureAPI) DispatchToolCallForPipeCT(sess *ToolSession, credName, urlStr, method, body, contentType string) (string, error) {
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, contentType, true)
 }
 
 // DispatchToolCallForPipe is identical to DispatchToolCall but signals
@@ -1252,10 +1284,10 @@ func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method
 // pipe is genuinely going to run; calling this without piping leaks
 // the full response into LLM context.
 func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
-	return s.dispatchToolCall(sess, credName, urlStr, method, body, true)
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, "", true)
 }
 
-func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body string, pipeFollowing bool) (string, error) {
+func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -1279,6 +1311,9 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 		if body != "" {
 			args["body"] = body
 		}
+		if contentType != "" {
+			args["__content_type"] = contentType
+		}
 		return s.dispatch(synth, args, sess)
 	}
 	c, ok := s.Resolve(credName, sessUsername(sess))
@@ -1291,6 +1326,9 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 	}
 	if body != "" {
 		args["body"] = body
+	}
+	if contentType != "" {
+		args["__content_type"] = contentType
 	}
 	if pipeFollowing {
 		args["__pipe_following"] = true
@@ -1542,7 +1580,14 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		}
 	}
 	if body != "" && req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
+		ct := ""
+		if v, ok := args["__content_type"].(string); ok {
+			ct = strings.TrimSpace(v)
+		}
+		if ct == "" {
+			ct = "application/json"
+		}
+		req.Header.Set("Content-Type", ct)
 	}
 
 	var oauthBearer string // captured for redaction

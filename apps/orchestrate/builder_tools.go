@@ -96,6 +96,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// received mid-flow (self-registration, rotation), so they go
 		// into the credential instead of into the chat.
 		storeCredentialSecretToolDef(),
+		// check_credential — verify a drafted credential is now enabled +
+		// secret-set (owner-aware, so a user's own My-API-credentials entry is
+		// found) BEFORE wiring a tool to it. Builder lacked this, so it kept
+		// building against not-yet-registered creds and flailing.
+		checkCredentialToolDef(t),
 	}
 	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
@@ -316,11 +321,15 @@ func storeCredentialSecretToolDef() AgentToolDef {
 // pasted) WITHOUT ever returning the secret. Builder calls it before declaring
 // a build done so it can't ship an agent wired to a still-disabled credential —
 // instead it tells the user to finish it in Admin > APIs and come back.
-func checkCredentialToolDef() AgentToolDef {
+func checkCredentialToolDef(t *chatTurn) AgentToolDef {
+	owner := ""
+	if t != nil {
+		owner = t.user
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "check_credential",
-			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
+			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Resolves in the user's OWN namespace too, so a credential the user set up in Extensions > My API credentials is found (not just admin globals). Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
 			Parameters: map[string]ToolParam{
 				"name": {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
 			},
@@ -331,7 +340,7 @@ func checkCredentialToolDef() AgentToolDef {
 			if name == "" {
 				return "", fmt.Errorf("name is required")
 			}
-			exists, enabled, hasSecret := Secure().CredentialStatus(name)
+			exists, enabled, hasSecret := Secure().CredentialStatusOwned(owner, name)
 			if !exists {
 				return fmt.Sprintf("Credential %q does not exist — draft it first (draft_api_credential / draft_oauth_credential). NOT READY.", name), nil
 			}
@@ -340,7 +349,7 @@ func checkCredentialToolDef() AgentToolDef {
 			// refused dispatch against reality instead of guessing config
 			// from error strings and sending the admin on fix-it loops.
 			cfg := ""
-			if c, ok := Secure().Load(name); ok {
+			if c, ok := Secure().Resolve(name, owner); ok {
 				cfg = fmt.Sprintf("\nConfig (authoritative): type=%s", c.Type)
 				// Grant only means something on oauth2 — a leftover grant
 				// value on a bearer credential misled the model into

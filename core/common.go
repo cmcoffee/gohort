@@ -1673,11 +1673,21 @@ type TempTool struct {
 	// Credential is the registered secure-API credential name this
 	// tool dispatches through. Used in api mode only.
 	Credential string `json:"credential,omitempty"`
-	// Method is the HTTP method for api mode (default GET).
+	// Method is the HTTP method for api mode (default GET). Any method is
+	// allowed, including non-standard ones like CalDAV's REPORT.
 	Method string `json:"method,omitempty"`
 	// BodyTemplate is an optional request body template for api mode.
-	// `{arg_name}` placeholders are JSON-encoded.
+	// `{arg_name}` placeholders are JSON-encoded UNLESS ContentType marks the
+	// body as non-JSON (see ContentType) — then they substitute as raw text.
 	BodyTemplate string `json:"body_template,omitempty"`
+	// ContentType overrides the request body's Content-Type for api mode.
+	// Empty defaults to application/json (placeholders JSON-encoded, body
+	// validated as JSON). A NON-JSON value (e.g. "application/xml" for
+	// CalDAV/SOAP) switches the body to RAW substitution: `{arg}` placeholders
+	// are inserted verbatim (no JSON quoting), the body is NOT JSON-validated,
+	// and the header is sent as declared. This is what lets an XML/text API be
+	// a first-class api-mode tool instead of forcing a shell detour.
+	ContentType string `json:"content_type,omitempty"`
 	// ResponsePipe is an optional shell command for api mode that
 	// receives the raw API response on stdin and emits the LLM-visible
 	// result on stdout. Runs in a tight sandbox (no network, no

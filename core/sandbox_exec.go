@@ -131,20 +131,43 @@ func RunSandboxedShell(ctx context.Context, command, workspaceDir string) Sandbo
 // the no-hook path so the run still completes; the script will then
 // see the HookError on attempt and the operator gets a Log line.
 func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string, sess *ToolSession, capabilities []string) SandboxedShellResult {
+	return RunSandboxedShellWithHookEnv(ctx, command, workspaceDir, sess, capabilities, nil)
+}
+
+// RunSandboxedShellWithHookEnv is RunSandboxedShellWithHook plus caller-supplied
+// env: extraEnv is merged with the gohort hook path and exposed to the script
+// (shell $VAR / Python os.environ). The hook path always wins over a colliding
+// caller key. Used by workspace(action="run", env={...}) so a manual debug run
+// can pass variables — the same way a registered shell tool receives its params.
+func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir string, sess *ToolSession, capabilities []string, extraEnv map[string]string) SandboxedShellResult {
+	merge := func(hookPath string) map[string]string {
+		env := map[string]string{}
+		for k, v := range extraEnv {
+			env[k] = v
+		}
+		if hookPath != "" {
+			env["GOHORT_HOOK_PATH"] = hookPath // hook path is authoritative
+		}
+		return env
+	}
 	if len(capabilities) == 0 || workspaceDir == "" {
-		return RunSandboxedShell(ctx, command, workspaceDir)
+		if len(extraEnv) == 0 {
+			return RunSandboxedShell(ctx, command, workspaceDir)
+		}
+		return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(""))
 	}
 	hook, err := NewSandboxHook(workspaceDir, capabilities, sess)
 	if err != nil || hook == nil {
 		if err != nil {
 			Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
 		}
-		return RunSandboxedShell(ctx, command, workspaceDir)
+		if len(extraEnv) == 0 {
+			return RunSandboxedShell(ctx, command, workspaceDir)
+		}
+		return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(""))
 	}
 	defer hook.Close()
-	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, map[string]string{
-		"GOHORT_HOOK_PATH": hook.SocketPath,
-	})
+	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(hook.SocketPath))
 }
 
 // RunSandboxedShellWithEnv is the env-extended variant: extraEnv maps

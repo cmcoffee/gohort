@@ -2461,9 +2461,13 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		// AllowedURLPattern if scope-limiting matters.
 		credName = "no_auth"
 	}
-	cr, ok := Secure().Load(credName)
+	// Owner-aware: resolve in the AUTHOR's namespace so a user-owned credential
+	// (their own "My API credentials", e.g. a Builder-drafted key) is found, not
+	// just global/admin ones. Runtime dispatch already resolves owner-aware, so
+	// this keeps create-time validation consistent with it.
+	cr, ok := Secure().Resolve(credName, sess.Username)
 	if !ok {
-		return "", fmt.Errorf("credential %q is not registered — register it via the admin UI first", credName)
+		return "", fmt.Errorf("credential %q is not registered. Register it in Extensions > My API credentials (or Admin > APIs for a shared one), then enable it", credName)
 	}
 	// A secured credential auto-binds to any tool that declares it (api-mode
 	// dispatches server-side; secret never exposed) — no approval step, access
@@ -2530,6 +2534,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		Credential:      credName,
 		Method:          method,
 		BodyTemplate:    bodyTpl,
+		ContentType:     strings.TrimSpace(StringArg(args, "content_type")),
 		ResponsePipe:    respPipe,
 	}
 	// Allow in-session overwrite — see CreateTempToolTool for rationale.
@@ -2914,25 +2919,38 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		method = "GET"
 	}
 	var body string
+	// A non-JSON ContentType (e.g. application/xml for CalDAV/SOAP) switches the
+	// body to RAW substitution: placeholders insert verbatim and the body is NOT
+	// JSON-validated. Empty/JSON content type keeps the JSON path (encode +
+	// validate). This is what lets an XML/text API be a first-class api tool.
+	rawBody := tt.ContentType != "" && !isJSONContentType(tt.ContentType)
 	if tt.BodyTemplate != "" {
-		body, err = substituteJSON(tt.BodyTemplate, tt.Params, tt.Required, args)
-		if err != nil {
-			return "", fmt.Errorf("body template: %w", err)
+		if rawBody {
+			body, err = substituteRaw(tt.BodyTemplate, tt.Params, tt.Required, args)
+			if err != nil {
+				return "", fmt.Errorf("body template: %w", err)
+			}
+			Debug("[temptool] api tool %q raw (%s) body (%d bytes)", tt.Name, tt.ContentType, len(body))
+		} else {
+			body, err = substituteJSON(tt.BodyTemplate, tt.Params, tt.Required, args)
+			if err != nil {
+				return "", fmt.Errorf("body template: %w", err)
+			}
+			// Validate the substituted body is valid JSON before sending.
+			// Catches template-shape mistakes (mismatched braces, missing
+			// commas, an LLM-baked literal that didn't escape correctly)
+			// before the remote API rejects them with a generic "Expected
+			// ',' or '}' at position N" — which is hard to act on without
+			// seeing the actual body. The error returned to the LLM
+			// includes the produced body so it can inspect what it built
+			// and re-create the tool with a corrected template.
+			var probe any
+			if jerr := json.Unmarshal([]byte(body), &probe); jerr != nil {
+				Debug("[temptool] api tool %q produced invalid JSON body: %s\nTEMPLATE: %s\nBODY: %s", tt.Name, jerr, tt.BodyTemplate, body)
+				return "", fmt.Errorf("body template substitution produced invalid JSON: %w. Template: %s. Substituted body: %s. (For an XML/non-JSON API, set content_type — e.g. \"application/xml\" — so the body is sent RAW instead of being JSON-encoded/validated.)", jerr, tt.BodyTemplate, body)
+			}
+			Debug("[temptool] api tool %q body validated (%d bytes)", tt.Name, len(body))
 		}
-		// Validate the substituted body is valid JSON before sending.
-		// Catches template-shape mistakes (mismatched braces, missing
-		// commas, an LLM-baked literal that didn't escape correctly)
-		// before the remote API rejects them with a generic "Expected
-		// ',' or '}' at position N" — which is hard to act on without
-		// seeing the actual body. The error returned to the LLM
-		// includes the produced body so it can inspect what it built
-		// and re-create the tool with a corrected template.
-		var probe any
-		if jerr := json.Unmarshal([]byte(body), &probe); jerr != nil {
-			Debug("[temptool] api tool %q produced invalid JSON body: %s\nTEMPLATE: %s\nBODY: %s", tt.Name, jerr, tt.BodyTemplate, body)
-			return "", fmt.Errorf("body template substitution produced invalid JSON: %w. Template: %s. Substituted body: %s", jerr, tt.BodyTemplate, body)
-		}
-		Debug("[temptool] api tool %q body validated (%d bytes)", tt.Name, len(body))
 	}
 	if sess.DB != nil && sess.Username != "" {
 		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
@@ -2949,11 +2967,11 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// directly). Used for public JSON endpoints (Reddit,
 		// Wikipedia, public data feeds) where requiring a fake
 		// credential just to satisfy the dispatcher would be silly.
-		raw, err = dispatchPublicAPICall(urlStr, method, body)
+		raw, err = dispatchPublicAPICall(urlStr, method, body, tt.ContentType)
 	} else if tt.ResponsePipe != "" {
-		raw, err = Secure().DispatchToolCallForPipe(sess, tt.Credential, urlStr, method, body)
+		raw, err = Secure().DispatchToolCallForPipeCT(sess, tt.Credential, urlStr, method, body, tt.ContentType)
 	} else {
-		raw, err = Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
+		raw, err = Secure().DispatchToolCallCT(sess, tt.Credential, urlStr, method, body, tt.ContentType)
 	}
 	if err != nil {
 		return raw, err
@@ -3046,7 +3064,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 // Returns the same "HTTP <code> <text>\n<body>" shape as
 // Secure().DispatchToolCall so downstream response_pipe logic and
 // status-line handling keep working unchanged.
-func dispatchPublicAPICall(urlStr, method, body string) (string, error) {
+func dispatchPublicAPICall(urlStr, method, body, contentType string) (string, error) {
 	if method == "" {
 		method = "GET"
 	}
@@ -3056,7 +3074,11 @@ func dispatchPublicAPICall(urlStr, method, body string) (string, error) {
 	}
 	req.Header.Set("User-Agent", publicAPIUserAgent)
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		ct := strings.TrimSpace(contentType)
+		if ct == "" {
+			ct = "application/json"
+		}
+		req.Header.Set("Content-Type", ct)
 	}
 	client := &http.Client{Timeout: publicAPITimeout}
 	resp, err := client.Do(req)
@@ -3230,6 +3252,67 @@ func urlEscape(s string) string {
 // values (numbers, booleans, objects, arrays) the wrap is also
 // incorrect on the input side, so we treat the strip as the
 // authoritative shape and let json.Marshal produce the right form.
+// isJSONContentType reports whether a Content-Type should be treated as JSON
+// (the default body path). Empty counts as JSON; anything with "json" in it
+// (application/json, application/vnd.api+json) does too. Everything else
+// (application/xml, text/xml, text/plain) takes the RAW body path.
+func isJSONContentType(ct string) bool {
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	return ct == "" || strings.Contains(ct, "json")
+}
+
+// substituteRaw replaces {name} placeholders with the arg's value inserted
+// VERBATIM — no JSON quoting/encoding — for a non-JSON body (XML/SOAP/text).
+// A required placeholder with no arg errors; an optional one with no arg drops
+// to empty. An unknown {token} is left intact (literal braces in XML survive).
+func substituteRaw(tmpl string, params map[string]ToolParam, required []string, args map[string]any) (string, error) {
+	reqSet := make(map[string]bool, len(required))
+	for _, r := range required {
+		reqSet[r] = true
+	}
+	var out strings.Builder
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			out.WriteByte(tmpl[i])
+			continue
+		}
+		end := strings.IndexByte(tmpl[i+1:], '}')
+		if end < 0 {
+			out.WriteByte(tmpl[i])
+			continue
+		}
+		name := tmpl[i+1 : i+1+end]
+		if _, known := params[name]; !known {
+			out.WriteByte(tmpl[i]) // not a param — leave the brace, keep scanning
+			continue
+		}
+		val, ok := args[name]
+		if !ok {
+			if reqSet[name] {
+				return "", fmt.Errorf("missing arg %q", name)
+			}
+			i += end + 1 // optional + absent: drop the whole {name}
+			continue
+		}
+		out.WriteString(rawStringify(val))
+		i += end + 1 // advance past the closing '}'
+	}
+	return out.String(), nil
+}
+
+// rawStringify renders an arg value as plain text for a raw body: a string
+// as-is, nil as empty, anything else via fmt (a JSON number like 5.0 prints
+// "5"). No quoting — the caller controls the surrounding markup.
+func rawStringify(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
+}
+
 func substituteJSON(tmpl string, params map[string]ToolParam, required []string, args map[string]any) (string, error) {
 	// An OPTIONAL body field whose value wasn't provided should drop out of
 	// the JSON entirely — the same guarantee substituteURL gives query params.

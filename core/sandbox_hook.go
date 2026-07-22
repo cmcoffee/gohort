@@ -818,9 +818,16 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		return
 	}
 	sec := Secure()
-	cred, ok := sec.Load(name)
+	// Owner-aware: a user's own My-API-credentials entry resolves for that
+	// user's tools, not just global (admin) credentials. Falls back to
+	// global when the session has no username.
+	owner := ""
+	if h.Sess != nil {
+		owner = h.Sess.Username
+	}
+	cred, ok := sec.Resolve(name, owner)
 	if !ok {
-		writeHookError(conn, fmt.Sprintf("no credential named %q registered — register it via the admin UI first", name))
+		writeHookError(conn, fmt.Sprintf("no credential named %q registered — register it via Extensions > My API credentials (or Admin > APIs) first", name))
 		return
 	}
 	if cred.Secured {
@@ -837,7 +844,7 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		writeHookError(conn, fmt.Sprintf("credential %q is no_auth — it has no stored secret to return", name))
 		return
 	}
-	secret, ok := sec.loadSecret(name)
+	secret, ok := sec.loadSecret(credStoreKey(cred.Owner, cred.Name))
 	if !ok || secret == "" {
 		writeHookError(conn, fmt.Sprintf("credential %q has no stored secret value (was it created without one?)", name))
 		return
