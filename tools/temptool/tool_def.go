@@ -1331,14 +1331,25 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			pass("all required params are wired into the url/body templates")
 		}
 
-		// B. Body template renders to valid JSON with the sample args.
+		// B. Body template renders with the sample args. A non-JSON
+		// content_type (application/xml for CalDAV/SOAP) switches to RAW
+		// substitution + no JSON validation — mirroring the dispatch path,
+		// so an XML PROPFIND/REPORT body doesn't fail verify as "invalid
+		// JSON". content_type is a tool-level field (toolbox actions are
+		// JSON-only today), so it applies to the single-endpoint api case.
 		if ep.BodyTemplate != "" {
+			rawBody := tt.ContentType != "" && !isJSONContentType(tt.ContentType)
 			if coversRequired(sample, ep.Required) {
-				body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample)
-				if err != nil {
+				if rawBody {
+					if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
+						fail("body_template render failed: %v", err)
+					} else {
+						pass("body_template renders (raw, %s — no JSON validation)", tt.ContentType)
+					}
+				} else if body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
 					fail("body_template render failed: %v", err)
 				} else if jerr := json.Unmarshal([]byte(body), new(any)); jerr != nil {
-					fail("body_template produced INVALID JSON: %v — rendered body: %s", jerr, oneLine(body, 200))
+					fail("body_template produced INVALID JSON: %v — rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
 				} else {
 					pass("body_template renders valid JSON")
 				}
