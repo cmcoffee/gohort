@@ -292,13 +292,40 @@ func contains(ss []string, s string) bool {
 func (T *Bridges) syncMembersFromHistory(chatID string) Convo {
 	c, _ := T.getConvo(chatID)
 	c.ChatID = chatID
+	// A CONVERSATION ALIAS handle is an alternate id for the CHAT itself (a
+	// folded-in duplicate reachable via another phone/email), NOT a person — so
+	// it must never enter the participant roster. Skip alias handles when
+	// harvesting senders, and prune any that were harvested as a member before
+	// the user marked them an alias. Without this, folding a chat in by its email
+	// makes that email show up as a bogus participant.
+	isAlias := func(h string) bool {
+		if h = strings.TrimSpace(h); h == "" {
+			return false
+		}
+		for _, a := range c.AliasHandles {
+			if strings.EqualFold(strings.TrimSpace(a), h) {
+				return true
+			}
+		}
+		return false
+	}
+	changed := false
+	kept := c.Members[:0]
+	for _, m := range c.Members {
+		if isAlias(m.Handle) {
+			changed = true // drop a member that's really a conversation alias
+			continue
+		}
+		kept = append(kept, m)
+	}
+	c.Members = kept
 	before := len(c.Members)
 	for _, m := range T.recentMessages(chatID, 0) { // 0 = entire thread
-		if m.Role == "user" && strings.TrimSpace(m.Handle) != "" {
+		if m.Role == "user" && strings.TrimSpace(m.Handle) != "" && !isAlias(m.Handle) {
 			c.Members = upsertMember(c.Members, m.Handle, m.DisplayName)
 		}
 	}
-	if len(c.Members) != before {
+	if changed || len(c.Members) != before {
 		T.saveConvo(c)
 	}
 	return c
