@@ -565,6 +565,14 @@ func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		adopted := LoadAdoptedGlobalTools(AuthDB(), user)
+		// A tool already in the user's OWN pool (they authored it, and it may be
+		// the one they shared) is always active for them — "adopting" it from the
+		// catalog is a no-op, and a same-named global tool would just collide. So
+		// hide anything the user already has by name from the catalog.
+		own := map[string]bool{}
+		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			own[p.Tool.Name] = true
+		}
 		type row struct {
 			Name        string `json:"name"`
 			Description string `json:"description,omitempty"`
@@ -575,6 +583,11 @@ func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		}
 		rows := []row{}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
+			// Own tool (or a same-named one already in the pool) — not a catalog
+			// candidate; it's shown under "My tools" instead.
+			if own[p.Tool.Name] {
+				continue
+			}
 			// Adopt-ACL: a restricted global tool only appears in the catalog for
 			// users on its AllowedUsers list (empty = open to everyone). Keeps a
 			// user from even seeing — let alone adopting — a tool not meant for them.
