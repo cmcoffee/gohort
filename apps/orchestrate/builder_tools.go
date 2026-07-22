@@ -114,7 +114,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 // endpoint enforces the admin role; non-admin clickers get told to
 // hand off. Upserts by credential name so a re-draft refreshes the
 // existing card instead of stacking a new one.
-func (t *chatTurn) emitCredentialSetupCard(name, credType, grant, secretLabel string) {
+// emitCredentialSetupCard drops a credential_setup block into the chat. owned=true
+// marks a USER-owned draft (My API credentials) — the card then points the user
+// to finish it in their own surface; owned=false is a global/admin draft that
+// routes to Admin > APIs.
+func (t *chatTurn) emitCredentialSetupCard(name, credType, grant, secretLabel string, owned bool) {
 	if t == nil || t.sse == nil {
 		return
 	}
@@ -122,6 +126,9 @@ func (t *chatTurn) emitCredentialSetupCard(name, credType, grant, secretLabel st
 	data := map[string]string{"cred_type": credType}
 	if grant != "" {
 		data["grant"] = grant
+	}
+	if owned {
+		data["owned"] = "1"
 	}
 	t.sse.Send(map[string]any{
 		"kind":  "block",
@@ -191,7 +198,7 @@ func draftOAuthCredentialToolDef(t *chatTurn) AgentToolDef {
 				OAuthGrantRefreshToken:      "the refresh token",
 				OAuthGrantPassword:          "the client secret AND the user's password (two separate fields)",
 			}[c.Grant]
-			t.emitCredentialSetupCard(c.Name, SecureCredOAuth2, c.Grant, secretNeeded)
+			t.emitCredentialSetupCard(c.Name, SecureCredOAuth2, c.Grant, secretNeeded, false)
 			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. A setup card is now showing in the chat — an admin can paste %s and enable it right there (Admin > APIs works too), then hit Test. It goes live as fetch_url_%s.",
 				c.Name, c.Grant, secretNeeded, c.Name), nil
 		},
@@ -241,6 +248,11 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				BaseURL:     strings.TrimSpace(stringArg(args, "base_url")),
 				ParamName:   strings.TrimSpace(stringArg(args, "param_name")),
 				Description: strings.TrimSpace(stringArg(args, "description")),
+				// Default a personally-crafted API credential to the user's OWN
+				// namespace ("My API credentials") — they can finish it (paste
+				// their own key + enable) without an admin. (OAuth2 stays admin;
+				// see draft_oauth_credential.)
+				Owner: t.user,
 			}
 			if err := Secure().SaveAPIDraft(c); err != nil {
 				return "", err
@@ -254,8 +266,8 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			if secretNeeded == "" {
 				secretNeeded = "the secret value"
 			}
-			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded)
-			return fmt.Sprintf("Drafted %s credential %q, created DISABLED. A setup card is now showing in the chat — an admin can paste %s and enable it right there (Admin > APIs works too). It goes live as fetch_url_%s. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift from the admin's config.",
+			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
+			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat — the USER pastes %s and enables it in Extensions › My API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
 				c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
 		},
 	}

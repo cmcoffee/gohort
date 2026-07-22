@@ -977,6 +977,16 @@
       wrap.appendChild(msg);
       var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Set up']);
       wrap.appendChild(btn);
+      // User-owned draft (data.owned): it lives in the user's OWN API
+      // credentials, so they finish it themselves — no admin, no inline secret
+      // modal. Point them to their surface and stop here.
+      if (data.owned === '1') {
+        msg.querySelector('.ui-orch-connect-title').textContent = 'API credential "' + name + '" needs your key';
+        sub.textContent = 'It is now in your API credentials (disabled). Add ' + secretLabel + ' and enable it under Extensions > My API credentials.';
+        btn.textContent = 'Open My API credentials';
+        btn.addEventListener('click', function() { window.location.href = '/gateways'; });
+        return {wrap: wrap, body: null};
+      }
       function markDone(text) {
         wrap.classList.add('connected');
         btn.textContent = 'Configured';

@@ -357,22 +357,28 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
 		return fmt.Errorf("draft needs a base_url (e.g. https://192.168.0.1) or an allowed_url_pattern")
 	}
-	c.Disabled = true // inert until the admin adds the secret + enables
+	c.Disabled = true // inert until the secret is added + enabled
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Owner-aware key: a global (admin) draft keys by bare name; a user-owned
+	// draft keys by the @u:<owner>:<name> tuple, so a personally-crafted API
+	// credential lands in the user's OWN namespace ("My API credentials") for
+	// them to finish, rather than the admin pool.
+	key := credStoreKey(c.Owner, c.Name)
+	secretKey := secureCredSecretKey(key)
 	var existing SecureCredential
-	if s.db.Get(secureAPITable, c.Name, &existing) {
+	if s.db.Get(secureAPITable, key, &existing) {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
 	} else {
 		c.CreatedAt = time.Now()
 	}
-	s.db.Set(secureAPITable, c.Name, c)
-	// Placeholder secret so the admin UI flags "needs secret"; the admin
-	// replaces it with the real value.
+	s.db.Set(secureAPITable, key, c)
+	// Placeholder secret so the UI flags "needs secret"; the owner replaces it
+	// with the real value.
 	var hasSecret string
-	if !s.db.Get(secureAPITable, secureCredSecretKey(c.Name), &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
-		s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), "(pending)")
+	if !s.db.Get(secureAPITable, secretKey, &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
+		s.db.CryptSet(secureAPITable, secretKey, "(pending)")
 	}
 	return nil
 }
