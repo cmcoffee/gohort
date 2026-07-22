@@ -909,6 +909,49 @@
       return {wrap: wrap, body: null};
     });
 
+    // Sub-agent approval card — emitted when Builder drafts a sub-agent HELD
+    // for approval (create_agent under a dispatched build). Approve activates it
+    // and it becomes dispatchable; Deny discards the draft. Wired to the SAME
+    // authorization the Permissions pane shows, so either surface resolves it.
+    window.uiRegisterBlockRenderer('agent_approval', function(d) {
+      var authID = String(d.auth_id || '');
+      var name = String(d.name || 'a new sub-agent');
+      var brief = String(d.brief || '');
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🤖']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Approve sub-agent "' + name + '"?']));
+      var sub = el('div', {class: 'ui-orch-connect-sub'},
+        [brief || 'It stays inactive until you approve it; on approval it goes live and becomes dispatchable.']);
+      msg.appendChild(sub);
+      wrap.appendChild(msg);
+      var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});
+      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Approve']);
+      var deny = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Deny']);
+      actions.appendChild(approve);
+      actions.appendChild(deny);
+      wrap.appendChild(actions);
+      if (!authID) { approve.disabled = true; deny.disabled = true; }
+      function settle(text) {
+        wrap.classList.add('connected');
+        if (actions.parentNode) actions.remove();
+        sub.textContent = text;
+      }
+      function act(path, verb, done) {
+        approve.disabled = true; deny.disabled = true;
+        fetch('api/console/approvals/' + path + '?id=' + encodeURIComponent(authID), {method: 'POST'})
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle(done); })
+          .catch(function(err) {
+            approve.disabled = false; deny.disabled = false;
+            window.uiAlert('Could not ' + verb + ' the sub-agent: ' + String(err && err.message || err));
+          });
+      }
+      approve.addEventListener('click', function() { act('approve', 'approve', 'Approved — "' + name + '" is live.'); });
+      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied — the draft was discarded.'); });
+      return {wrap: wrap, body: null};
+    });
+
     // Credential setup card — emitted when Builder drafts a DISABLED
     // API credential (draft_api_credential / draft_oauth_credential).
     // The Set up button opens a modal whose form POSTs the secret

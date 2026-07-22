@@ -111,12 +111,18 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if dispatchedBuild {
 		// Queue the parent owner's approval. Agent holds the created id; the
 		// console's activate handler flips PendingApproval off on approve.
-		SaveAuthorization(RootDB, Authorization{
+		auth := SaveAuthorization(RootDB, Authorization{
 			Owner:  sess.Username,
 			Action: "activate_sub_agent",
 			Agent:  saved.ID,
 			Brief:  fmt.Sprintf("Activate %q — sub-agent Builder drafted for %s. Inherits the parent's read-only tools; nothing consequential.", saved.Name, sess.DispatchParentAgentID),
 		})
+		// Surface it as an inline Approve/Deny card in the conversation so the
+		// owner decides right here — not only in the Permissions pane. No-op on a
+		// non-interactive run (nil callback).
+		if sess.ApprovalPrompt != nil {
+			sess.ApprovalPrompt(auth.ID, saved.Name, auth.Brief)
+		}
 	}
 	// Stamp the session's authoring-in-progress slot so subsequent
 	// create_*_tool calls can auto-default for_agent to this agent

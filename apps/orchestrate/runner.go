@@ -1544,6 +1544,23 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 			"url":    "/account/mcp/connect?server=" + url.QueryEscape(server),
 		})
 	}
+	// Inline sub-agent approval card — surfaces a drafted-but-held sub-agent as an
+	// Approve/Deny card right in the conversation, wired to the same authorization
+	// the Permissions pane shows. See ToolSession.ApprovalPrompt / create_agent.
+	sess.ApprovalPrompt = func(authID, agentName, brief string) {
+		authID = strings.TrimSpace(authID)
+		if authID == "" {
+			return
+		}
+		t.sse.Send(map[string]any{
+			"kind":    "block",
+			"type":    "agent_approval",
+			"id":      "agent-approval-" + authID,
+			"auth_id": authID,
+			"name":    agentName,
+			"brief":   brief,
+		})
+	}
 }
 
 func (t *chatTurn) newToolSession() *ToolSession {

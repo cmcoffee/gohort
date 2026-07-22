@@ -1328,6 +1328,16 @@ type ToolSession struct {
 	// from a tool goroutine — set once at session creation, don't mutate after.
 	ConnectPrompt func(server string)
 
+	// ApprovalPrompt, if set, surfaces an INLINE approve/deny card in the
+	// conversation for a one-shot authorization the user must decide on (today:
+	// activating a Builder-drafted sub-agent). The app wires it to emit an
+	// agent_approval block carrying the authorization id, so the user approves in
+	// place instead of hunting for it in the Permissions pane. Nil ⇒ the tool
+	// falls back to the "held in the Authorizations pane" text only (a wake /
+	// non-interactive run with no live viewer). Must be safe to call from a tool
+	// goroutine — set once at session creation, don't mutate after.
+	ApprovalPrompt func(authID, agentName, brief string)
+
 	// SubAgentRunner spawns a one-shot sub-agent loop for tools that
 	// need to dispatch their OWN LLM round (today: pipeline-mode
 	// temp tools). Apps wire this on session creation; nil means
