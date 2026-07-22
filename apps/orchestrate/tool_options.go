@@ -63,7 +63,7 @@ var frameworkInfrastructureTools = map[string]bool{
 // next to workspace) and hidden from the curation UI / default pool — the
 // admin never manages them, but the model always has them. Keep this set to
 // genuinely pure utilities; anything touching network/state stays curated.
-var frameworkUtilityTools = []string{"calculate", "date_math", "time_in_zone"}
+var frameworkUtilityTools = []string{"calculate", "date_math", "time_in_zone", "parse_xml"}
 
 // supersededWorkerTools are standalone registered tools whose function is
 // fully covered by a grouped tool, so showing both just bloats the schema
