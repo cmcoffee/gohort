@@ -297,6 +297,27 @@ func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// Single-record fetch (?id=) — prefills the Edit form with the BEHAVIOR
+		// fields the user may edit (triggers flattened to newline-separated
+		// text). Builder-managed fields (bundled Tools, AllowedTools,
+		// AttachedCollections) are intentionally omitted — this surface edits
+		// behavior, not capability grants.
+		if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
+			for _, s := range LoadSkills(AuthDB(), user) {
+				if s.ID == id {
+					writeJSON(w, map[string]any{
+						"id":           s.ID,
+						"name":         s.Name,
+						"description":  s.Description,
+						"triggers":     strings.Join(s.Triggers, "\n"),
+						"instructions": s.Instructions,
+					})
+					return
+				}
+			}
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		// Wire shape omits the embedding (a large float32 array the UI never
 		// needs) and the instructions/tools bodies (managed in Builder).
 		type row struct {
@@ -320,32 +341,75 @@ func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
-		// Only the enable/disable toggle is user-editable here; the full record
-		// (name, triggers, instructions) is authored via Builder, not this form.
-		action := strings.TrimSpace(r.URL.Query().Get("action"))
-		if action != "enable" && action != "disable" {
-			http.Error(w, "only action=enable|disable is supported here", http.StatusBadRequest)
-			return
-		}
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
+		action := strings.TrimSpace(r.URL.Query().Get("action"))
+		// enable/disable — mute/unmute without touching the definition.
+		if action == "enable" || action == "disable" {
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			var found *SkillRecord
+			for _, s := range LoadSkills(AuthDB(), user) {
+				if s.ID == id {
+					dup := s
+					found = &dup
+					break
+				}
+			}
+			if found == nil {
+				http.Error(w, "skill not found", http.StatusNotFound)
+				return
+			}
+			found.Disabled = (action == "disable")
+			if _, err := SaveSkill(AuthDB(), user, *found); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		var found *SkillRecord
-		for _, s := range LoadSkills(AuthDB(), user) {
-			if s.ID == id {
-				dup := s
-				found = &dup
-				break
+		// Save — create (no ?id=) or edit (?id=) a skill's BEHAVIOR fields
+		// directly (name, description, triggers, instructions). An edit
+		// load-then-mutates so Builder-managed capability fields (bundled Tools,
+		// AllowedTools, AttachedCollections) are preserved. This form CANNOT set
+		// those grants — a form-authored skill is pure behavior; anything that
+		// ships code or grants tools stays in Builder. Own namespace only.
+		var body struct {
+			Name         string `json:"name"`
+			Description  string `json:"description"`
+			Triggers     string `json:"triggers"`
+			Instructions string `json:"instructions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		var rec SkillRecord
+		if id != "" {
+			found := false
+			for _, s := range LoadSkills(AuthDB(), user) {
+				if s.ID == id {
+					rec = s // preserve Tools / AllowedTools / AttachedCollections
+					found = true
+					break
+				}
+			}
+			if !found {
+				http.Error(w, "skill not found", http.StatusNotFound)
+				return
 			}
 		}
-		if found == nil {
-			http.Error(w, "skill not found", http.StatusNotFound)
-			return
-		}
-		found.Disabled = (action == "disable")
-		if _, err := SaveSkill(AuthDB(), user, *found); err != nil {
+		rec.Name = name
+		rec.Description = strings.TrimSpace(body.Description)
+		rec.Instructions = body.Instructions
+		rec.Triggers = splitSkillTriggers(body.Triggers)
+		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -561,6 +625,33 @@ func credentialFormFields() []ui.FormField {
 	}
 }
 
+// userSkillFormFields is the Add/Edit form for a user's own skill. BEHAVIOR
+// fields only — a form-authored skill is a pure instruction packet. Bundled
+// tools, tool grants (AllowedTools), and attached collections are NOT here:
+// those ship code or grant capability and stay Builder-authored. An edit
+// preserves them (the handler load-then-mutates).
+func userSkillFormFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "name", Label: "Name", Placeholder: "Contract Reviewer", Help: "Shown to your agents; also the H2 header above the instructions when the skill is active."},
+		{Field: "description", Label: "Description", Help: "One line — when this skill applies. The assistant reads it to decide relevance."},
+		{Field: "triggers", Label: "Triggers", Type: "textarea", Rows: 3, Placeholder: "contract\n*.pdf", Help: "Substring patterns (or *.ext for attachments), ONE PER LINE. Any match activates the skill. Leave blank to rely on the description."},
+		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active — the approach, voice, or method it should apply."},
+	}
+}
+
+// splitSkillTriggers parses the triggers textarea (one pattern per line) into
+// the stored slice, trimming blanks. Newline-only split so a pattern may
+// itself contain a comma.
+func splitSkillTriggers(s string) []string {
+	var out []string
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
 func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
@@ -694,36 +785,61 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "My skills",
-			Subtitle: "Behavior packs your agents draw on — instructions (plus optional knowledge) the assistant consults when a skill's triggers or description match the turn. Ask Builder in Agents to author or change one (\"create a skill called X that fires when…\"). Disable to mute a skill without losing it; delete to retire it.",
-			Body: ui.Table{
-				Source: "api/skills",
-				RowKey: "id",
-				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
-					{Field: "description", Mute: true, Flex: 2},
-					{Field: "triggers", Label: "Triggers", Mute: true},
-					{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Disabled", Color: "danger"},
-						{Value: false, Label: "Active", Color: "success"},
-					}},
+			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions), or ask Builder in Agents for skills that ship code or grant tools. Disable to mute a skill without losing it; delete to retire it.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Table{
+					Source: "api/skills",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "name", Flex: 1},
+						{Field: "description", Mute: true, Flex: 2},
+						{Field: "triggers", Label: "Triggers", Mute: true},
+						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Disabled", Color: "danger"},
+							{Value: false, Label: "Active", Color: "success"},
+						}},
+					},
+					RowActions: []ui.RowAction{
+						// Edit the skill's behavior fields. Source prefills; the id
+						// rides in the PostURL so the handler load-then-mutates
+						// (preserving any Builder-authored tools/grants).
+						ui.Expand("Edit", ui.FormPanel{
+							Source:      "api/skills?id={id}",
+							PostURL:     "api/skills?id={id}",
+							SubmitLabel: "Save skill",
+							Fields:      userSkillFormFields(),
+							Invalidate:  []string{"api/skills"},
+						}),
+						{Type: "button", Label: "Disable", Method: "POST",
+							PostTo:     "api/skills?action=disable&id={id}",
+							HideIf:     "disabled",
+							Optimistic: true},
+						{Type: "button", Label: "Enable", Method: "POST",
+							PostTo:     "api/skills?action=enable&id={id}",
+							OnlyIf:     "disabled",
+							Optimistic: true},
+						{Type: "button", Label: "Delete", Method: "DELETE",
+							PostTo:     "api/skills?id={id}",
+							Variant:    "danger",
+							Confirm:    "Delete this skill? The definition is gone for good.",
+							Optimistic: true},
+					},
+					EmptyText: "No skills yet. Add one below, or ask Builder in Agents to author one for you.",
 				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Disable", Method: "POST",
-						PostTo:     "api/skills?action=disable&id={id}",
-						HideIf:     "disabled",
-						Optimistic: true},
-					{Type: "button", Label: "Enable", Method: "POST",
-						PostTo:     "api/skills?action=enable&id={id}",
-						OnlyIf:     "disabled",
-						Optimistic: true},
-					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "api/skills?id={id}",
-						Variant:    "danger",
-						Confirm:    "Delete this skill? The definition is gone for good; Builder will need to re-author it.",
-						Optimistic: true},
+				ui.ModalButton{
+					Label:    "Add skill",
+					Title:    "New skill",
+					Subtitle: "A behavior pack — instructions your agents apply when the triggers match. For a skill that ships code or grants tools, use Builder instead.",
+					Variant:  "primary",
+					Width:    "640px",
+					Body: ui.FormPanel{
+						PostURL:     "api/skills",
+						SubmitLabel: "Create skill",
+						Fields:      userSkillFormFields(),
+						Invalidate:  []string{"api/skills"},
+					},
 				},
-				EmptyText: "No skills yet. Ask Builder in Agents to author one for you.",
-			},
+			}},
 		},
 		{
 			Title:    "My pipelines",

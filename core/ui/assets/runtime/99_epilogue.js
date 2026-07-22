@@ -63,12 +63,19 @@
     // page, easy to reach without scrolling.
     if (cfg.back_url || cfg.show_title || (cfg.nav && cfg.nav.length)) {
       var header = el('div', {class: 'ui-page-header'});
+      // Left group = column 1 of the header grid (back link + title). Bundling
+      // them in their own track lets the title truncate within it while the
+      // tabs stay centered in column 2 — the two can never overlap.
+      var headerLeft = el('div', {class: 'ui-page-header-left'});
       if (cfg.back_url) {
-        header.appendChild(el('a', {class: 'ui-back-link', href: cfg.back_url, title: 'Back'}, ['← Back']));
+        headerLeft.appendChild(el('a', {class: 'ui-back-link', href: cfg.back_url, title: 'Back'}, ['← Back']));
       }
       if (cfg.show_title && cfg.title) {
-        header.appendChild(el('h1', {class: 'ui-page-title'}, [cfg.title]));
+        // title attr = full name, so a name truncated by the ellipsis in a
+        // narrow column is still readable on hover.
+        headerLeft.appendChild(el('h1', {class: 'ui-page-title', title: cfg.title}, [cfg.title]));
       }
+      header.appendChild(headerLeft);
       // Top tabs — Page.Nav rendered inline on the header row (same line as the
       // back link): a shared page menu for a multi-page app, active page
       // highlighted. Scrolls horizontally on narrow screens rather than wrapping.

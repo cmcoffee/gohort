@@ -26,7 +26,12 @@ body { min-height: 100vh; min-height: 100dvh; }
   padding-top: calc(0.45rem + env(safe-area-inset-top, 0px));
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
-  position: relative; /* anchor for the fixed-offset top tabs */
+  position: relative; /* anchor for the fixed-offset tabs + live-pill popover */
+}
+.ui-page-header-left {
+  /* back link + title grouped on the left; min-width:0 lets the title clamp. */
+  display: flex; align-items: center; gap: 0.6rem;
+  min-width: 0;
 }
 .ui-back-link {
   display: inline-flex; align-items: center;
@@ -49,13 +54,13 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-page-tabs {
   display: flex; align-items: center; gap: 0.15rem;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
-  /* Absolutely positioned at a FIXED left offset so the tabs land in the same
-   * spot on every app (Agency / Bridges / Knowledge / …), independent of that
-   * page's title width — the title still renders in flow to the left. The
-   * offset clears the back link + a normal-length title; keep app titles short
-   * so they don't tuck under. Scrolls if the tab row overflows. */
-  position: absolute; left: 18rem;
-  max-width: calc(100% - 20rem);
+  /* Fixed left offset so the tabs land in the SAME spot on every app (they never
+   * jump per title width). The title is CLAMPED (max-width below) so it always
+   * truncates with an ellipsis BEFORE reaching this offset — that's what kills
+   * the old tuck-under. Keep the two in sync: title max-width < (this offset −
+   * the back link). Scrolls horizontally if the tab row overflows. */
+  position: absolute; left: 22rem;
+  max-width: calc(100% - 24rem);
 }
 .ui-page-tabs::-webkit-scrollbar { height: 0; }
 .ui-page-tab {
@@ -70,10 +75,12 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-page-tab.active { color: var(--text); background: var(--bg-2); font-weight: 600; }
 @media (max-width: 700px) {
   .ui-page-tab { min-height: var(--tap); padding: 0.5rem 0.7rem; }
-  /* Too narrow for a fixed offset — go back inline after the title. */
+  /* Too narrow for a fixed offset — flow the tabs inline after the title, and
+     let the title use its full width. */
   .ui-page-tabs { position: static; left: auto; max-width: none; margin-left: 0.4rem; }
+  .ui-page-title { max-width: none; }
 }
-/* Live-sessions pill — pinned to the right of the page header.
+/* Live-sessions pill — pinned to the right of the page header (margin-left:auto).
  * Hidden when no sessions are active so the header stays clean
  * during normal use; pulses with a colored dot when something is
  * running. Click → dropdown listing each session with click-through
@@ -161,7 +168,10 @@ body { min-height: 100vh; min-height: 100dvh; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ui-page-title {
-  margin: 0; flex: 1;
+  /* Clamped so a wide name truncates with "…" (full name on the title tooltip)
+     BEFORE it can reach the fixed-offset tabs — the fix for the tuck-under.
+     Keep max-width below .ui-page-tabs' left offset minus the back link. */
+  margin: 0; flex: 0 1 auto; min-width: 0; max-width: 15rem;
   font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
   font-weight: 700; font-size: 1.1rem; letter-spacing: 0.05em; line-height: 1;
   /* Metallic gradient — chrome-on-charcoal wordmark matching the
@@ -172,6 +182,8 @@ body { min-height: 100vh; min-height: 100dvh; }
   -webkit-text-fill-color: transparent;
   background-clip: text;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --- Section --- */
