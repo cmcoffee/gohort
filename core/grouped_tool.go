@@ -116,6 +116,7 @@ type GroupedTool struct {
 	preamble   string
 	actions    map[string]*GroupedToolAction
 	singleFire bool
+	serialFire bool
 	framework  bool
 	trusted    bool
 }
@@ -141,6 +142,18 @@ func (g *GroupedTool) SetSingleFirePerBatch(v bool) {
 
 // SingleFirePerBatch satisfies the SingleFireTool interface.
 func (g *GroupedTool) SingleFirePerBatch() bool { return g.singleFire }
+
+// SetSerialFirePerBatch marks the grouped tool as serial-fire: when the LLM
+// emits multiple calls to it in one response, they ALL run but SEQUENTIALLY in
+// submission order (each observing the prior's mutations), instead of the
+// single-fire first-wins skip. Use for stateful authoring tools where a batch
+// like [delete X, create Y] is a legit two-step edit — see SerialFireTool.
+func (g *GroupedTool) SetSerialFirePerBatch(v bool) {
+	g.serialFire = v
+}
+
+// SerialFirePerBatch satisfies the SerialFireTool interface.
+func (g *GroupedTool) SerialFirePerBatch() bool { return g.serialFire }
 
 // SetFrameworkTool marks the tool as framework infrastructure so
 // pickers hide it. The tool stays registered + executable; the

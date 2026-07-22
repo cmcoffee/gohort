@@ -77,9 +77,9 @@ func TestFetchViaHeadersReachWire(t *testing.T) {
 func TestShimFetchViaCarriesHeaders(t *testing.T) {
 	shim := SandboxHookPythonShim
 	for _, want := range []string{
-		`def fetch_via(self, credential, url, method="GET", body=None, headers=None):`,
-		`"headers": headers or {},`,
-		`def fetch_via(credential, url, method="GET", body=None, headers=None):`,
+		`def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None):`,
+		`"headers": hdrs,`,
+		`def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None):`,
 	} {
 		if !strings.Contains(shim, want) {
 			t.Errorf("shim missing fetch_via headers plumbing: %q", want)

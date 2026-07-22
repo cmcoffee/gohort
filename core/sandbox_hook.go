@@ -1231,18 +1231,23 @@ class _Gohort:
         result = self._call("secret", {"name": name})
         return result["secret"] if isinstance(result, dict) else result
 
-    def fetch_via(self, credential, url, method="GET", body=None, headers=None):
+    def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None):
         """HTTP via a named gohort credential: URL allowlist enforced,
         auth injected server-side, audit logged. Tool must declare
         "fetch_via:<credential>" in hook_capabilities. headers is an
         optional dict of extra request headers (e.g. {"Depth": "1"} for
-        CalDAV PROPFIND); the credential's auth header always wins."""
+        CalDAV PROPFIND); the credential's auth header always wins.
+        request_headers is accepted as an alias for headers (the name
+        api-mode tools use), so either spelling works."""
+        hdrs = dict(headers or {})
+        if request_headers:
+            hdrs.update(request_headers)
         return self._call("fetch_via", {
             "credential": credential,
             "url": url,
             "method": method,
             "body": body or "",
-            "headers": headers or {},
+            "headers": hdrs,
         })
 
     def browse_page(self, url):
@@ -1297,6 +1302,6 @@ def secret(name):
     return gohort.secret(name)
 
 
-def fetch_via(credential, url, method="GET", body=None, headers=None):
-    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers)
+def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None):
+    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers)
 `

@@ -1275,6 +1275,24 @@ type SingleFireTool interface {
 	SingleFirePerBatch() bool
 }
 
+// SerialFireTool is an optional interface for stateful tools whose batched
+// calls are a legit SEQUENCE, not a duplicate. When the LLM emits several
+// calls in one response, they all run — but SEQUENTIALLY in submission order,
+// each observing the prior call's mutations — instead of the single-fire
+// first-wins skip. Other tools in the same batch still run in parallel.
+//
+// Use for authoring tools where a batch like [delete X, create Y] is a real
+// two-step edit: single-fire would run the delete and SKIP the create,
+// leaving state half-changed (the tool gone, its replacement never made) and
+// costing a round to recover. Serial-fire runs both in order, this turn, with
+// no concurrent-mutation race. tool_def is the canonical case.
+//
+// Prefer SingleFireTool for tools where a second call is genuinely wrong
+// (send_email, an image attach) rather than the next step of a sequence.
+type SerialFireTool interface {
+	SerialFirePerBatch() bool
+}
+
 // TrustedOutputTool is an optional interface a ChatTool implements to declare
 // its result is framework-generated control / authoring text, not raw external
 // content — so the untrusted-content fence should be suppressed even when the

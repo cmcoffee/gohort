@@ -26,10 +26,16 @@ func BuildToolDef() *GroupedTool {
 	gt := NewGroupedTool("tool_def",
 		"Manage runtime-defined tools — wrappers around shell commands or registered API credentials. Use to list what's defined, create a new one, delete one you no longer need. Call action=\"help\" for the full usage spec including the workspace-first flow for wrapping scripts.")
 	gt.SetHelpPreamble(helpText)
-	// tool_def is single-fire per batch — authoring one tool at a
-	// time keeps each create+verify cycle visible to the operator
-	// before the LLM bundle-creates three tools that might overlap.
-	gt.SetSingleFirePerBatch(true)
+	// tool_def is serial-fire per batch: when the LLM bundles several
+	// tool_def calls in one response (the classic [delete X, create Y]
+	// replace, or two edits), they all run — but SEQUENTIALLY in submission
+	// order, so the delete lands before the create and two writes can't race
+	// the same record. Single-fire used to run only the first and SKIP the
+	// rest, which fired the delete and dropped the recreate — leaving the
+	// tool gone and costing a round to notice. Serial-fire keeps each
+	// mutation ordered and visible while letting a legit multi-step edit
+	// complete in one turn.
+	gt.SetSerialFirePerBatch(true)
 	// Decline the BLANKET fence and apply it per-action instead. Nearly every
 	// action returns framework-authoring text (create/update/delete/list/get
 	// confirmations) — not external content — and the union Caps() carry
@@ -983,6 +989,13 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		if tt.BodyTemplate != "" {
 			out["body_template"] = tt.BodyTemplate
 		}
+		// content_type drives raw (non-JSON) body substitution for api tools.
+		// The update schema round-trips through here, so dropping it silently
+		// turned an XML/CalDAV tool back into a JSON-validated one on ANY edit —
+		// the body then failed as "invalid character '<'". Preserve it.
+		if tt.ContentType != "" {
+			out["content_type"] = tt.ContentType
+		}
 		if tt.ResponsePipe != "" {
 			out["response_pipe"] = tt.ResponsePipe
 		}
@@ -1085,7 +1098,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// Patch top-level scalar fields when provided (present = intent to change).
 	// "expand" (toolbox presentation toggle) rides the same present-means-change
 	// path — BoolArg in createToolboxGrouped reads whatever value lands here.
-	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name", "expand"} {
+	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "response_pipe", "script_body", "script_name", "expand"} {
 		if v, present := args[f]; present {
 			merged[f] = v
 		}

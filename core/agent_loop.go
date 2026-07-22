@@ -60,6 +60,14 @@ type AgentToolDef struct {
 	// multi-fire-per-batch is structurally wrong (authoring actions,
 	// outbound communication, resource creation).
 	SingleFirePerBatch bool
+
+	// SerialFirePerBatch indicates that batched calls to this tool are a
+	// SEQUENCE: they all run, but sequentially in submission order (each
+	// observing the prior's mutations), instead of the single-fire skip.
+	// Other tools in the same batch still run in parallel. Use for stateful
+	// authoring tools where [delete X, create Y] is a legit two-step edit
+	// (tool_def). Takes precedence over SingleFirePerBatch if both are set.
+	SerialFirePerBatch bool
 }
 
 // ConfirmFunc is called to ask the user whether a tool call should proceed.
@@ -560,6 +568,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	handlers := make(map[string]ToolHandlerFunc)
 	needsConfirm := make(map[string]bool)
 	singleFireTools := make(map[string]bool)
+	serialFireTools := make(map[string]bool)
 	rebuildToolMaps := func(active []AgentToolDef) {
 		toolDefs = toolDefs[:0]
 		for k := range handlers {
@@ -571,13 +580,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		for k := range singleFireTools {
 			delete(singleFireTools, k)
 		}
+		for k := range serialFireTools {
+			delete(serialFireTools, k)
+		}
 		for _, td := range active {
 			toolDefs = append(toolDefs, td.Tool)
 			handlers[td.Tool.Name] = td.Handler
 			if td.NeedsConfirm {
 				needsConfirm[td.Tool.Name] = true
 			}
-			if td.SingleFirePerBatch {
+			// Serial-fire takes precedence: a serial tool must NOT be added to
+			// the single-fire set, or the enforcement pass would drop its
+			// excess calls before the executor gets to run them in order.
+			if td.SerialFirePerBatch {
+				serialFireTools[td.Tool.Name] = true
+			} else if td.SingleFirePerBatch {
 				singleFireTools[td.Tool.Name] = true
 			}
 		}
@@ -1933,20 +1950,43 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		} else if len(work) > 1 {
 			var wg sync.WaitGroup
 			var errCount int32
+			invokeStore := func(w toolWork) {
+				output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
+				if err != nil {
+					debugToolErr(w.tc.Name, err)
+					results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
+					atomic.AddInt32(&errCount, 1)
+				} else {
+					debugResult(w.tc.Name, output)
+					results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
+				}
+			}
+			// Partition: serial-fire tool calls run SEQUENTIALLY in submission
+			// order, so a stateful authoring batch like tool_def[delete X,
+			// create Y] applies in the order the LLM intended and can't race on
+			// the same record. Everything else still runs in parallel. work is
+			// already in submission order, so one ordered goroutine over the
+			// serial slice preserves it while the parallel calls fan out.
+			var serial []toolWork
 			for _, w := range work {
+				if serialFireTools[w.tc.Name] {
+					serial = append(serial, w)
+					continue
+				}
 				wg.Add(1)
 				go func(w toolWork) {
 					defer wg.Done()
-					output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
-					if err != nil {
-						debugToolErr(w.tc.Name, err)
-						results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
-						atomic.AddInt32(&errCount, 1)
-					} else {
-						debugResult(w.tc.Name, output)
-						results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
-					}
+					invokeStore(w)
 				}(w)
+			}
+			if len(serial) > 0 {
+				wg.Add(1)
+				go func(items []toolWork) {
+					defer wg.Done()
+					for _, w := range items {
+						invokeStore(w)
+					}
+				}(serial)
 			}
 			wg.Wait()
 			toolErrors += int(atomic.LoadInt32(&errCount))

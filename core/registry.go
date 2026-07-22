@@ -364,6 +364,10 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	if sf, ok := ct.(SingleFireTool); ok {
 		singleFire = sf.SingleFirePerBatch()
 	}
+	serialFire := false
+	if sf, ok := ct.(SerialFireTool); ok {
+		serialFire = sf.SerialFirePerBatch()
+	}
 	trusted := false
 	if to, ok := ct.(TrustedOutputTool); ok {
 		trusted = to.TrustedOutput()
@@ -379,6 +383,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 		Handler:            handler,
 		NeedsConfirm:       confirm,
 		SingleFirePerBatch: singleFire,
+		SerialFirePerBatch: serialFire,
 	}
 }
 
