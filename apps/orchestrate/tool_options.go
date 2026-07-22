@@ -149,9 +149,15 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		if d.Tool.Name == "keep_going" {
 			continue
 		}
+		// Grouping precedence: the category the tool CLAIMS for itself wins
+		// (self-declared, ownership-scoped), then the legacy ToolGroup.Members
+		// mapping (admin-curated), then the capability label as a last resort.
 		group := capGroupLabel(d.Tool.Caps)
 		if gName, ok := memberToGroup[d.Tool.Name]; ok {
 			group = gName
+		}
+		if d.Tool.Category != "" {
+			group = d.Tool.Category
 		}
 		opts = append(opts, ui.SelectOption{
 			Value: d.Tool.Name,

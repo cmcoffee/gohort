@@ -161,7 +161,7 @@ func (T *OrchestrateApp) WebPath() string { return "/orchestrate" }
 func (T *OrchestrateApp) HubTab() (string, int) { return "Agents", 10 }
 func (T *OrchestrateApp) WebName() string { return "Agents" }
 func (T *OrchestrateApp) WebDesc() string {
-	return "Build, manage, and dispatch your fleet of AI agents — the workbench where personas, tools, pipelines, and memory all live."
+	return "Build, manage, and dispatch your fleet of AI agents."
 }
 
 // WebOrder pins Agents to the top of the dashboard card grid above
@@ -169,9 +169,11 @@ func (T *OrchestrateApp) WebDesc() string {
 // other future "top-of-list" apps without needing to bump this.
 func (T *OrchestrateApp) WebOrder() int { return -1000 }
 
-// WebFeatured renders Agents as the large full-width hero card at the top
-// of the dashboard — it's the primary workbench, so it demands attention
-// above the regular app grid.
+// WebFeatured marks Agents as the primary entry point. Because Agents is a
+// hub member it renders inside the "Orchestrator" cluster as an equal-sized
+// card (the cluster title carries the grouping), so this flag no longer blows
+// it up into a full-width hero — it only WOULD if Agents ever stopped being a
+// hub member, in which case it'd hero on its own. Kept to document intent.
 func (T *OrchestrateApp) WebFeatured() bool { return true }
 
 // WebRestricted hides Orchestrate from non-admin users on the landing

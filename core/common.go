@@ -1293,6 +1293,8 @@ type ToolSession struct {
 	Videos            []string           // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
 	PendingViewImages [][]byte           // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
 	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
+	imgGenAttempts    int                // Tier-2 auto-retry CHAIN length for the current image (resets on a new subject); drives the retry budget. See NextImageAttempt.
+	imgGenTotal       int                // Tier-2 absolute generate_image calls this turn (never resets); the runaway hard cap. See NextImageAttempt.
 	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	LLM               LLM                // optional LLM made available to tools that need sub-calls
 	LeadLLM           LLM                // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
@@ -1636,6 +1638,19 @@ type TempTool struct {
 	Description string               `json:"description"`
 	Params      map[string]ToolParam `json:"params,omitempty"`
 	Required    []string             `json:"required,omitempty"`
+	// Category is the grouping label the tool CLAIMS (see Tool.Category). It's
+	// the persisted counterpart of the runtime Tool.Category and is copied onto
+	// the runtime def in agentToolFromTemp. Because it lives on the per-user
+	// tool record, a user setting it touches only their own tool — this is why
+	// grouping needs no separate per-user group store. Empty = fall back to the
+	// legacy ToolGroup.Members mapping, then the capability label. The matching
+	// ToolGroup (by Name) is the registry that supplies the LLM-facing group
+	// description.
+	Category string `json:"category,omitempty"`
+	// Template records the tool template that authored this tool (provenance),
+	// so it can be reconfigured through the same template later — the tool-side
+	// analog of Connector.Template. Empty for hand-authored tools.
+	Template string `json:"template,omitempty"`
 	// CommandTemplate is the body. Interpreted as a shell command in
 	// shell mode and as a URL template in api mode. `{arg_name}`
 	// placeholders are substituted with the args at dispatch time
@@ -2216,6 +2231,29 @@ func (s *ToolSession) DrainViewImages() [][]byte {
 	out := s.PendingViewImages
 	s.PendingViewImages = nil
 	return out
+}
+
+// NextImageAttempt records one generate_image call and returns (attempt, total),
+// both 1-based. `attempt` is the CHAIN position that drives the retry budget:
+// refine=true continues the chain (the model is regenerating the previous image
+// to fix a checkable miss), refine=false resets it (a new, distinct subject gets
+// a fresh budget). `total` is the absolute count this turn — never reset, so the
+// runaway hard cap can't be evaded by mislabeling retries as new subjects. The
+// counters are session-scoped, so a fresh ToolSession each turn zeroes both.
+// Nil-safe.
+func (s *ToolSession) NextImageAttempt(refine bool) (attempt, total int) {
+	if s == nil {
+		return 1, 1
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.imgGenTotal++
+	if refine {
+		s.imgGenAttempts++ // continue the retry chain
+	} else {
+		s.imgGenAttempts = 1 // new subject → fresh retry budget
+	}
+	return s.imgGenAttempts, s.imgGenTotal
 }
 
 // SessionChatTool extends ChatTool for tools that need per-session state.

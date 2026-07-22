@@ -583,6 +583,35 @@ func QueuePendingTempTool(db Database, username string, t TempTool, sessionID st
 // chat Tools modal — the admin is already authorized to approve, so
 // the queue step would be pure ceremony. Replaces any existing entry
 // with the same name.
+// AdminReconfigureTempTool replaces the TOOL DEFINITION of an existing persistent
+// tool in place, preserving its wrapper metadata (ApprovedAt, LastUsedAt, Shared,
+// AllowedUsers) — the safe save path for provenance-driven "Configure". A plain
+// AdminPersistTempTool would mint a fresh wrapper and silently drop the tool's
+// share + adopt-ACL state. Errors if no tool of that name exists for the owner
+// (reconfigure is an edit, not a create).
+func AdminReconfigureTempTool(db Database, username string, t TempTool) error {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return errString("admin action requires authenticated user")
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	list := LoadPersistentTempTools(db, username)
+	found := false
+	for i := range list {
+		if list[i].Tool.Name == t.Name {
+			list[i].Tool = t // keep ApprovedAt/LastUsedAt/Shared/AllowedUsers
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errString("no persistent tool named " + t.Name)
+	}
+	db.Set(persistentTempToolsTable, username, list)
+	return nil
+}
+
 func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	db = tempToolStore(db)
 	if db == nil || username == "" {

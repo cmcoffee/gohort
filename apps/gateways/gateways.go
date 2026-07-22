@@ -26,29 +26,35 @@ type Gateways struct {
 
 func (T Gateways) Name() string         { return "gateways" }
 func (T Gateways) SystemPrompt() string { return "" }
-func (T Gateways) Desc() string         { return "Apps: your agents' outward reach — credentials, tools, connections." }
-func (T *Gateways) Init() error         { return T.Flags.Parse() }
+func (T Gateways) Desc() string {
+	return "Apps: the capabilities your agents draw on — credentials, tools, skills, connections."
+}
+func (T *Gateways) Init() error { return T.Flags.Parse() }
 func (T *Gateways) Main() error {
 	Log("gateways is a dashboard-only app. Start with: gohort serve")
 	return nil
 }
 
+// WebPath stays /gateways (the URL slug) so existing links/bookmarks keep
+// working; the user-facing NAME is "Extensions", matching the admin group.
 func (T *Gateways) WebPath() string { return "/gateways" }
-func (T *Gateways) WebName() string { return "Gateways" }
+func (T *Gateways) WebName() string { return "Extensions" }
 func (T *Gateways) WebDesc() string {
-	return "Credentials, tools, and connections your agents use to reach the outside world."
+	return "Credentials, tools, skills, and connections your agents draw on to do their work."
 }
 
-// HubTab puts Gateways on the shared top-nav tab row alongside Agents, Bridges,
+// HubTab puts Extensions on the shared top-nav tab row alongside Agents, Bridges,
 // and Knowledge — it's the per-user capability surface those agents draw on, so
 // it belongs in the same hub. Ordered after the others.
-func (T *Gateways) HubTab() (string, int) { return "Gateways", 40 }
+func (T *Gateways) HubTab() (string, int) { return "Extensions", 40 }
 
 func (T *Gateways) Routes() {
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
+	T.HandleFunc("/api/skills", T.handleUserSkills)
+	T.HandleFunc("/api/pipelines", T.handleUserPipelines)
 	T.HandleFunc("/", T.servePage)
 }
 
@@ -169,13 +175,29 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	switch r.Method {
 	case http.MethodGet:
+		// Single-record fetch (?name=) — powers the "View" RecordView and the
+		// "Set category" form prefill. Returns the raw TempTool, whose json tags
+		// already expose every field (category, command_template, script_body,
+		// actions, …). Own pool only, so a user can only inspect their own tools.
+		if name != "" {
+			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+				if p.Tool.Name == name {
+					writeJSON(w, p.Tool)
+					return
+				}
+			}
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		type row struct {
 			Name        string `json:"name"`
 			Description string `json:"description,omitempty"`
 			Mode        string `json:"mode,omitempty"`
 			Credential  string `json:"credential,omitempty"`
+			Category    string `json:"category,omitempty"`
 			Missing     bool   `json:"missing"`
 			Shared      bool   `json:"shared"`
 			LastUsed    string `json:"last_used,omitempty"`
@@ -203,13 +225,50 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			pending := !p.Shared && PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
 			rows = append(rows, row{
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Missing: missing, Shared: p.Shared, LastUsed: last,
+				Credential: p.Tool.Credential, Category: p.Tool.Category,
+				Missing: missing, Shared: p.Shared, LastUsed: last,
 				Requested: pending, CanRequest: !p.Shared && !pending,
 			})
 		}
 		writeJSON(w, rows)
+	case http.MethodPost:
+		// set_category — the user CLAIMS (or clears) a grouping label on their
+		// OWN tool. Free-form: a tool may coin a new category by name; the admin
+		// ToolGroup registry only supplies optional descriptions for categories
+		// that have a registered entry. Because the label lives on the user's own
+		// tool record, this touches nothing outside their namespace — no per-user
+		// group store needed. See Tool.Category.
+		if r.URL.Query().Get("action") != "set_category" {
+			http.Error(w, "unknown action", http.StatusBadRequest)
+			return
+		}
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Category string `json:"category"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		var tt *TempTool
+		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			if p.Tool.Name == name {
+				t := p.Tool // copy; UpdatePersistentTempTool replaces the whole TempTool
+				tt = &t
+				break
+			}
+		}
+		if tt == nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		tt.Category = strings.TrimSpace(body.Category)
+		if !UpdatePersistentTempTool(AuthDB(), user, *tt) {
+			http.Error(w, "update failed", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case http.MethodDelete:
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
 		if name == "" {
 			http.Error(w, "missing name", http.StatusBadRequest)
 			return
@@ -218,6 +277,145 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserSkills is the user's OWN skills surface — the per-user counterpart to
+// the admin Skills section, scoped to the calling user's pool. Skills are behavior
+// packets the assistant draws on in its own context (see the admin section for the
+// full model). Authoring stays in Builder/chat — a skill is instructions plus
+// optional knowledge, not a hand-filled form — so this surface is view + toggle +
+// delete, mirroring "My tools". GET lists; POST ?action=enable|disable mutes/unmutes
+// without a full round-trip; DELETE removes one.
+func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		// Wire shape omits the embedding (a large float32 array the UI never
+		// needs) and the instructions/tools bodies (managed in Builder).
+		type row struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description,omitempty"`
+			Triggers    int    `json:"triggers"`
+			Disabled    bool   `json:"disabled"`
+			Updated     string `json:"updated,omitempty"`
+		}
+		rows := []row{}
+		for _, s := range LoadSkills(AuthDB(), user) {
+			updated := ""
+			if !s.Updated.IsZero() {
+				updated = s.Updated.Format("2006-01-02")
+			}
+			rows = append(rows, row{
+				ID: s.ID, Name: s.Name, Description: s.Description,
+				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
+			})
+		}
+		writeJSON(w, rows)
+	case http.MethodPost:
+		// Only the enable/disable toggle is user-editable here; the full record
+		// (name, triggers, instructions) is authored via Builder, not this form.
+		action := strings.TrimSpace(r.URL.Query().Get("action"))
+		if action != "enable" && action != "disable" {
+			http.Error(w, "only action=enable|disable is supported here", http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		var found *SkillRecord
+		for _, s := range LoadSkills(AuthDB(), user) {
+			if s.ID == id {
+				dup := s
+				found = &dup
+				break
+			}
+		}
+		if found == nil {
+			http.Error(w, "skill not found", http.StatusNotFound)
+			return
+		}
+		found.Disabled = (action == "disable")
+		if _, err := SaveSkill(AuthDB(), user, *found); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if !DeleteSkill(AuthDB(), user, id) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserPipelines is the user's OWN pipelines surface — the per-user
+// counterpart to the admin Pipelines section, scoped to the calling user's pool.
+// A pipeline is a declarative multi-stage workflow authored in Agents (the
+// pipeline tool / Builder), so — like skills and tools — this surface is view +
+// delete, not authoring. GET lists (with the full definition for the stage
+// inspector); DELETE retires one.
+//
+// Storage note: pipelines live in ORCHESTRATE's per-app bucket, not this app's,
+// so we scope UserDB off RootDB.Bucket("orchestrate") — the same base the admin
+// Pipelines section reaches into. This couples to orchestrate's app name, which
+// is where the data genuinely lives; the alternative (a cross-app pipeline API)
+// isn't worth it for a read/delete view.
+func (T *Gateways) handleUserPipelines(w http.ResponseWriter, r *http.Request) {
+	base := RootDB
+	if base == nil {
+		http.Error(w, "pipeline store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	user, udb, ok := RequireUser(w, r, base.Bucket("orchestrate"))
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		// Detail carries the full definition so the row's "View" expand can show
+		// the stages without a second fetch (mirrors the admin section).
+		type wire struct {
+			ID          string      `json:"id"`
+			Name        string      `json:"name"`
+			Description string      `json:"description,omitempty"`
+			Stages      int         `json:"stages"`
+			Detail      PipelineDef `json:"detail"`
+		}
+		defs := ListPipelineDefs(udb, user)
+		out := make([]wire, 0, len(defs))
+		for _, d := range defs {
+			out = append(out, wire{ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages), Detail: d})
+		}
+		writeJSON(w, map[string]any{"pipelines": out})
+	case http.MethodDelete:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if _, found := LoadPipelineDef(udb, user, id); !found {
+			http.NotFound(w, r)
+			return
+		}
+		DeletePipelineDef(udb, id)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -418,6 +616,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 				RowKey: "name",
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
+					{Field: "category", Label: "Category", Mute: true},
 					{Field: "mode", Mute: true},
 					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Shared", Color: "info"},
@@ -431,6 +630,47 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "description", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
+					// View the full tool definition (read parity with the admin's
+					// tool RecordView, scoped to the user's own pool). Source fetches
+					// the single record so heavy fields (script body, command
+					// template, actions) don't bloat the list payload.
+					ui.Expand("View", ui.RecordView{
+						Source: "api/tools?name={name}",
+						Pairs: []ui.DisplayPair{
+							{Label: "Name", Field: "name", Mono: true},
+							{Label: "Category", Field: "category"},
+							{Label: "Description", Field: "description"},
+							{Label: "Mode", Field: "mode"},
+							{Label: "Method", Field: "method", Mono: true},
+							{Label: "Command / URL template", Field: "command_template", Mono: true, Block: true},
+							{Label: "Body template", Field: "body_template", Mono: true, Block: true},
+							{Label: "Script name", Field: "script_name", Mono: true},
+							{Label: "Script body", Field: "script_body", Block: true},
+							{Label: "Credential", Field: "credential", Mono: true},
+							{Label: "Response pipe", Field: "response_pipe", Mono: true, Block: true},
+							// Toolbox-mode tools bundle several endpoints under one
+							// name — list each sub-action. Empty for non-toolbox tools.
+							{Label: "Actions", Field: "actions", Items: []ui.DisplayPair{
+								{Field: "name", Mono: true},
+								{Label: "method", Field: "method", Mono: true},
+								{Label: "url", Field: "url_template", Mono: true},
+								{Label: "desc", Field: "description"},
+							}},
+						},
+					}),
+					// Set category — the user claims a grouping label on their own
+					// tool. Free-form; Source prefills the current value.
+					ui.Expand("Set category", ui.FormPanel{
+						Source:      "api/tools?name={name}",
+						PostURL:     "api/tools?action=set_category&name={name}",
+						SubmitLabel: "Save category",
+						Fields: []ui.FormField{
+							{Field: "category", Type: "text", Label: "Category",
+								Placeholder: "e.g. Acme API, Research, Messaging",
+								Help:        "Groups this tool under a header in the tool picker and your list. Leave blank to fall back to its capability label."},
+						},
+						Invalidate: []string{"api/tools"},
+					}),
 					// Request to publish — ask an admin to Share this tool to the
 					// deployment-wide catalog. Only when it isn't already shared and
 					// has no request pending (can_request).
@@ -450,6 +690,62 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						Optimistic: true},
 				},
 				EmptyText: "No tools yet. Ask the assistant in chat to build one for you.",
+			},
+		},
+		{
+			Title:    "My skills",
+			Subtitle: "Behavior packs your agents draw on — instructions (plus optional knowledge) the assistant consults when a skill's triggers or description match the turn. Ask Builder in Agents to author or change one (\"create a skill called X that fires when…\"). Disable to mute a skill without losing it; delete to retire it.",
+			Body: ui.Table{
+				Source: "api/skills",
+				RowKey: "id",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 1},
+					{Field: "description", Mute: true, Flex: 2},
+					{Field: "triggers", Label: "Triggers", Mute: true},
+					{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Disabled", Color: "danger"},
+						{Value: false, Label: "Active", Color: "success"},
+					}},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Disable", Method: "POST",
+						PostTo:     "api/skills?action=disable&id={id}",
+						HideIf:     "disabled",
+						Optimistic: true},
+					{Type: "button", Label: "Enable", Method: "POST",
+						PostTo:     "api/skills?action=enable&id={id}",
+						OnlyIf:     "disabled",
+						Optimistic: true},
+					{Type: "button", Label: "Delete", Method: "DELETE",
+						PostTo:     "api/skills?id={id}",
+						Variant:    "danger",
+						Confirm:    "Delete this skill? The definition is gone for good; Builder will need to re-author it.",
+						Optimistic: true},
+				},
+				EmptyText: "No skills yet. Ask Builder in Agents to author one for you.",
+			},
+		},
+		{
+			Title:    "My pipelines",
+			Subtitle: "Declarative multi-stage workflows your agents run — authored in Agents (the pipeline tool or Builder). Expand one to inspect its stages; delete to retire a definition (it also detaches from any agent that used it).",
+			Body: ui.Table{
+				Source:       "api/pipelines",
+				RecordsField: "pipelines",
+				RowKey:       "id",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 1},
+					{Field: "description", Mute: true, Flex: 2},
+					{Field: "stages", Label: "Stages"},
+				},
+				RowActions: []ui.RowAction{
+					ui.Expand("View", ui.JSONView{Field: "detail", Title: "Definition"}),
+					{Type: "button", Label: "Delete", Method: "DELETE",
+						PostTo:     "api/pipelines?id={id}",
+						Variant:    "danger",
+						Confirm:    "Delete this pipeline definition? It's removed and detached from any agent that used it; re-authoring means re-creating the stages.",
+						Optimistic: true},
+				},
+				EmptyText: "No pipelines yet. Ask Builder in Agents to author one, or use the pipeline tool.",
 			},
 		},
 		{
@@ -490,12 +786,12 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	ui.Page{
-		Title:     "Gateways",
-		ShowTitle: true,
-		BackURL:   "/",
-		Nav:       HubNav("/gateways"), // shared hub tabs, Gateways active
-		MaxWidth:  "1200px",            // wide, admin-style: full-width tables in a two-column grid
-		Grid:      true,                // two-column section grid (Wide sections span both)
-		Sections:  sections,
+		Title:      "Extensions",
+		ShowTitle:  true,
+		BackURL:    "/",
+		Nav:        HubNav("/gateways"), // shared hub tabs, Extensions active
+		MaxWidth:   "1200px",            // wide, admin-style: full-width tables in the content pane
+		SectionNav: true,                // left-rail sub-nav: one section (credentials/tools/…) at a time
+		Sections:   sections,
 	}.ServeHTTP(w, r)
 }

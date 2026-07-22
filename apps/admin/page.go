@@ -109,15 +109,20 @@ func buildTunableSections() []ui.Section {
 			Decimals: s.Decimals,
 		})
 	}
-	// One category per rail item, so the Tuning tab is a compact side-index of
-	// areas (Network Timeouts, Limits, …) with only the selected category's
-	// fields shown — instead of one long stack that grows every time a knob is
-	// registered. Each category still saves as you edit with its own Revert.
-	items := make([]ui.NavItem, 0, len(order))
+	// One category per SECTION, so the framework's SectionNav renders the Tuning
+	// tab as a compact left-rail side-index of areas (Network Timeouts, Limits,
+	// …) with only the selected category's fields shown — instead of one long
+	// stack that grows every time a knob is registered. This replaces the app's
+	// own embedded NavShell rail with the shared menu system, so Tuning navigates
+	// exactly like Extensions. Each category still saves as you edit and carries
+	// its own Revert.
+	out := make([]ui.Section, 0, len(order))
 	for _, cat := range order {
-		items = append(items, ui.NavItem{
-			Label: cat,
-			Key:   cat,
+		out = append(out, ui.Section{
+			Title:    cat,
+			Group:    "Tuning",
+			Wide:     true, // each category pane wants full width, not the two-up config column
+			Subtitle: "Saved automatically as you edit.",
 			Body: ui.FormPanel{
 				Source:       "api/settings",
 				ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
@@ -127,12 +132,7 @@ func buildTunableSections() []ui.Section {
 			},
 		})
 	}
-	return []ui.Section{{
-		Group:    "Tuning",
-		Wide:     true, // rail + pane wants the full grid width, not the two-up config column
-		Subtitle: "Operator knobs, saved automatically as you edit. Pick an area on the left; each has its own Revert to defaults.",
-		Body:     ui.NavShell{Embedded: true, Items: items},
-	}}
+	return out
 }
 
 // sourceHookFormTemplates turns the built-in SourceHookTemplates into
@@ -431,6 +431,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("add_image_backend", addImageBackendAction).
 			ClientAction("configure_backend", configureBackendAction).
 			ClientAction("configure_backend_pick", configureBackendPickAction).
+			ClientAction("add_tool_from_template", addToolFromTemplateAction).
+			ClientAction("template_add", templateAddAction).
+			ClientAction("add_extension", addExtensionAction).
+			ClientAction("configure_tool", configureToolAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("tool_scope_manage", toolScopeManageAction).
@@ -440,9 +444,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("skills_export", skillsExportAction).
 			ClientAction("skills_export_all", skillsExportAllAction).
 			ClientAction("artifacts_export_all", artifactsExportAllAction),
-		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
-		Grid:     false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
-		Tabbed:   true,     // category tab bar across the top (the multiple menus); sections grouped below
+		MaxWidth:   "1200px", // desktop admin: wide enough for full-width tables in a single column
+		Grid:       false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
+		Tabbed:     true,     // category tab bar across the top (the multiple menus); sections grouped below
+		SectionNav: true,     // within each tab, a left-rail sub-nav of its sections (one at a time)
 		Sections: []ui.Section{
 			{
 				Title:    "System Status",
@@ -1282,7 +1287,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "User-owned credentials",
-				Subtitle: "Credentials users create for themselves (on their Gateways page) — the admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these. Disable revokes a credential without deleting it (the owner keeps the record; it stops resolving); Delete removes it and its encrypted secret. (User-owned agents will join this governance area once peer-sharing ships.)",
+				Subtitle: "Credentials users create for themselves (on their Extensions page) — the admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these. Disable revokes a credential without deleting it (the owner keeps the record; it stops resolving); Delete removes it and its encrypted secret. (User-owned agents will join this governance area once peer-sharing ships.)",
 				Body: ui.Table{
 					Source: "api/user-credentials",
 					RowKey: "id",
@@ -1311,12 +1316,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Confirm: "Delete this user's credential? The encrypted secret goes with it. This cannot be undone.",
 							Variant: "danger"},
 					},
-					EmptyText: "No user-owned credentials. When a user creates one on their Gateways page, it appears here.",
+					EmptyText: "No user-owned credentials. When a user creates one on their Extensions page, it appears here.",
 				},
 			},
 			{
 				Title:    "Global-tool adoptions",
-				Subtitle: "Who has pulled each SHARED global tool into their fleet (opt-in from their Gateways catalog). Shows a shared tool's blast radius before you revoke it, and lets you force-remove one user's adoption. A ⚠ row is a stale adoption — the tool has since left the shared catalog. Removing an adoption stops that user's agents loading the tool until they re-adopt (if still permitted by its access list).",
+				Subtitle: "Who has pulled each SHARED global tool into their fleet (opt-in from their Extensions catalog). Shows a shared tool's blast radius before you revoke it, and lets you force-remove one user's adoption. A ⚠ row is a stale adoption — the tool has since left the shared catalog. Removing an adoption stops that user's agents loading the tool until they re-adopt (if still permitted by its access list).",
 				Body: ui.Table{
 					Source: "api/tool-adoptions",
 					RowKey: "id",
@@ -1334,7 +1339,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Confirm: "Remove this user's adoption of the tool? Their agents stop loading it until they re-adopt (if still permitted).",
 							Variant: "danger"},
 					},
-					EmptyText: "No global-tool adoptions yet. When a user adopts a shared tool from their Gateways catalog, it appears here.",
+					EmptyText: "No global-tool adoptions yet. When a user adopts a shared tool from their Extensions catalog, it appears here.",
 				},
 			},
 			{
@@ -1375,7 +1380,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Pending promotions",
-				Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Gateways page); Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
+				Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page); Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
 				Body: ui.Table{
 					Source: "api/promotions",
 					RowKey: "id",
@@ -1549,6 +1554,52 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Variant: "danger"},
 					},
 					EmptyText: "No bridges yet. Agents create these (via the bridge tool) to watch an API and wake an agent on change; they appear here for enable/disable the moment one exists.",
+				},
+			},
+			{
+				Title:    "Extensions",
+				Subtitle: "Every capability you can add from a template — connectors (service bridges) and tools (model-callable actions) — in one catalog. Pick one to author it from its fields; it lands in its own section for approval (a connector under Connectors, a tool under Persistent Tools). Templates ease authoring — they grant no new power: the same credential binding and approval still apply.",
+				Body: ui.Table{
+					Source: "api/extensions",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "label", Flex: 1},
+						{
+							Field: "target", Label: "Kind", Type: "badge",
+							Badges: []ui.BadgeMapping{
+								{Value: "connector", Label: "Connector", Color: "info"},
+								{Value: "tool", Label: "Tool", Color: "success"},
+							},
+						},
+						{Field: "category", Mute: true},
+						{Field: "description", Mute: true, Flex: 2},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Add", Method: "client",
+							PostTo: "add_extension", Variant: "primary"},
+					},
+					EmptyText: "No extension templates registered.",
+				},
+			},
+			{
+				Title:    "Templates",
+				Subtitle: "Ready-made blueprints for connectors and tools — declare “what options are needed” and the framework builds the rest. “Add” opens a form to fill in your specifics; the result lands as a draft connector or a pending tool for review. New backends/tools of a known shape are just declarations (no code).",
+				Body: ui.Table{
+					Source: "api/all-templates",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "label", Flex: 1},
+						{Field: "target", Label: "Kind", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "connector", Label: "Connector", Color: "mute"},
+							{Value: "tool", Label: "Tool", Color: "mute"},
+						}},
+						{Field: "category", Mute: true},
+						{Field: "description", Mute: true, Flex: 2},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Add", Method: "client", PostTo: "template_add", Variant: "primary"},
+					},
+					EmptyText: "No templates registered.",
 				},
 			},
 			{
@@ -1794,7 +1845,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Global Tools",
-				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Gateways page (it no longer auto-loads for everyone); Unshare pulls it from the catalog. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page (it no longer auto-loads for everyone); Unshare pulls it from the catalog. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 				Body: ui.Stack{Children: []ui.Component{
 					ui.Table{
 						Source:       "api/persistent-tools",
@@ -1803,6 +1854,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						Columns: []ui.Col{
 							{Field: "tool.name", Flex: 1},
 							{Field: "owner", Flex: 0, Mute: true},
+							{Field: "tool.category", Flex: 0, Label: "Category", Mute: true},
 							{Field: "has_missing", Flex: 0, Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "⚠ missing", Color: "danger"},
 							}},
@@ -1817,6 +1869,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								Pairs: []ui.DisplayPair{
 									{Label: "Name", Field: "tool.name", Mono: true},
 									{Label: "Owner", Field: "owner"},
+									{Label: "Category", Field: "tool.category"},
 									{Label: "Description", Field: "tool.description"},
 									{Label: "Mode", Field: "tool.mode"},
 									{Label: "Method", Field: "tool.method", Mono: true},
@@ -1864,7 +1917,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								OnlyIf:     "shared",
 								Optimistic: true},
 							// Access — tier-1 user ACL: which USERS may adopt this SHARED
-							// tool from their Gateways catalog. Symmetric with the API
+							// tool from their Extensions catalog. Symmetric with the API
 							// credential "Access" button. Only meaningful once shared, so
 							// it appears on a shared row only. (Tier 2 — which of a user's
 							// OWN agents load it — is the user's per-agent Tools choice in
@@ -1876,9 +1929,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								PostTo:        "api/persistent-tools?action=set_allowed_users&name={tool.name}&owner={owner}",
 								Method:        "POST",
 								Noun:          "user",
-								Intro:         "Which users may adopt this shared tool from their Gateways catalog. Empty = every user. Each user then chooses which of their agents load it.",
+								Intro:         "Which users may adopt this shared tool from their Extensions catalog. Empty = every user. Each user then chooses which of their agents load it.",
 								EmptyText:     "No other users to grant yet.",
 							})),
+							// Configure — re-open a template-authored tool in the generic
+							// form to edit it (resolved via provenance). Shown only when
+							// the tool carries a template name; the edit preserves its
+							// share + adopt-ACL state.
+							{Type: "button", Label: "Configure", Method: "client",
+								PostTo: "configure_tool", OnlyIf: "tool.template", Compact: true},
 							{Type: "button", Label: "Export", Method: "client",
 								PostTo: "tools_export", Compact: true},
 							{Type: "button", Label: "Delete",
@@ -1890,9 +1949,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						},
 						EmptyText: "No active persistent tools.",
 					},
-					// Export all persistent tools (every owner) as one bundle.
+					// Add a tool from a template + export all as one bundle.
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
+							{Label: "Add tool from template…", Method: "client", URL: "add_tool_from_template"},
 							{Label: "Export all tools", Method: "client", URL: "tools_export_all"},
 						},
 					},
@@ -1909,6 +1969,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Field: "tool.name", Flex: 1},
 						{Field: "agent", Flex: 1, Label: "Agents", Mute: true},
 						{Field: "owner", Flex: 0, Mute: true},
+						{Field: "tool.category", Flex: 0, Label: "Category", Mute: true},
 						{Field: "has_missing", Flex: 0, Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "⚠ missing", Color: "danger"},
 						}},
@@ -1920,6 +1981,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Label: "Name", Field: "tool.name", Mono: true},
 								{Label: "Agents", Field: "agent"},
 								{Label: "Owner", Field: "owner"},
+								{Label: "Category", Field: "tool.category"},
 								{Label: "Description", Field: "tool.description"},
 								{Label: "Mode", Field: "tool.mode"},
 								{Label: "Method", Field: "tool.method", Mono: true},
@@ -2372,11 +2434,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Web Search": "Capabilities", "Mail (SMTP)": "System",
 		"Network Timeouts": "Tuning",
 
-		"API Credentials": "Tools", "MCP Servers": "Tools", "Connectors": "Tools",
-		"Source Hooks": "Tools", "Persistent Tools (Pending)": "Tools",
-		"Global Tools": "Tools", "Agent-Scoped Tools": "Tools", "Orphaned Tools": "Tools",
-		"Tool Groups": "Tools",
-		"Skills":     "Tools", "Pipelines": "Tools", "Catalog": "Tools",
+		"Extensions": "Extensions",
+
+		// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
+		// which are configured features like Image Generation / STT).
+		"Templates":       "Extensions",
+		"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions",
+		"Source Hooks": "Extensions", "Persistent Tools (Pending)": "Extensions",
+		"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
+		"Tool Groups": "Extensions",
+		"Skills":      "Extensions", "Pipelines": "Extensions", "Catalog": "Extensions",
 
 		"Agent Capabilities — Outward & Spending": "Agents",
 
@@ -2391,6 +2458,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Persistent Tools (Pending)": true, "Global Tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
+		"Extensions": true,
+		"Templates":  true,
 		"Catalog":    true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities — Outward & Spending": true,
@@ -2421,7 +2490,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// by this rank so the tabs read in a sensible order regardless of the
 	// section authoring order above; sections keep their relative order
 	// within each group.
-	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Tools": 5, "Tuning": 6, "Prompts": 7, "Maintenance": 8}
+	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Extensions": 5, "Tools": 6, "Tuning": 7, "Prompts": 8, "Maintenance": 9}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})
@@ -2653,6 +2722,7 @@ const connectorsExportAllAction = `function(){
 // render through this. Lives in the admin app (domain-agnostic), not core/ui.
 const connectorFormDef = `
 window.uiTemplateForm = function(cfg, reload){
+  var apiBase = (cfg.target==='tool') ? 'api/tool' : 'api/connector';
   window.uiOpenSimpleModal({ title:(cfg.create?'Add ':'Configure ')+(cfg.label||'backend'), width:'720px', mount:function(body,dlg){
     var vals=cfg.values||{}, inputs={};
     var inCss='width:100%;padding:6px;box-sizing:border-box;font-size:12px;';
@@ -2674,7 +2744,7 @@ window.uiTemplateForm = function(cfg, reload){
       body.appendChild(wrap);
     }
     var nameInp=null;
-    if(cfg.create){ heading('Backend'); makeField({key:'__name',label:'Name (id)',type:'text',help:'letters, digits, underscore, dash'}); nameInp=inputs['__name'].el; }
+    if(cfg.create){ heading(cfg.target==='tool'?'Tool':'Backend'); makeField({key:'__name',label:'Name (id)',type:'text',help:'letters, digits, underscore, dash'}); nameInp=inputs['__name'].el; }
     var groups={}, order=[];
     (cfg.fields||[]).forEach(function(f){ if(!groups[f.group]){groups[f.group]=[];order.push(f.group);} groups[f.group].push(f); });
     order.forEach(function(g){ heading(g); groups[g].forEach(makeField); });
@@ -2684,7 +2754,7 @@ window.uiTemplateForm = function(cfg, reload){
     if(cfg.detect){
       var det=document.createElement('button'); det.className='ui-row-btn'; det.textContent='Detect';
       det.onclick=function(){ msg.textContent=''; det.disabled=true; det.textContent='Detecting…';
-        fetch('api/connector-detect?template='+encodeURIComponent(cfg.template),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:collect()})})
+        fetch(apiBase+'-detect?template='+encodeURIComponent(cfg.template),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:collect()})})
           .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
           .then(function(d){ var dv=d.values||{}; Object.keys(dv).forEach(function(k){ if(inputs[k]){ var it=inputs[k]; if(it.type==='bool')it.el.checked=!!dv[k]; else it.el.value=dv[k]; } }); det.disabled=false; det.textContent='Detect';
             if(d.warnings&&d.warnings.length){ msg.style.color='#f5a623'; msg.textContent='Detected with notes: '+d.warnings.join('; '); } else { msg.style.color='#3fb950'; msg.textContent='Detected.'; } })
@@ -2697,10 +2767,10 @@ window.uiTemplateForm = function(cfg, reload){
     var cancel=document.createElement('button'); cancel.className='ui-row-btn'; cancel.textContent='Cancel'; cancel.onclick=function(){ try{dlg.close();dlg.remove();}catch(e){} };
     var save=document.createElement('button'); save.className='ui-wb-action-btn'; save.textContent=cfg.create?'Create & approve':'Save';
     save.onclick=function(){ msg.style.color='#e5484d'; msg.textContent='';
-      var payload={ template:cfg.template, connector:(cfg.create?'':cfg.connector), name:(nameInp?nameInp.value.trim():''), values:collect(), set_default:(defChk?defChk.checked:false) };
+      var payload={ template:cfg.template, connector:(cfg.create?'':cfg.connector), owner:(cfg.owner||''), name:(nameInp?nameInp.value.trim():''), values:collect(), set_default:(defChk?defChk.checked:false) };
       if(cfg.create && !payload.name){ msg.textContent='Name is required.'; return; }
       save.disabled=true; save.textContent='Saving…';
-      fetch('api/connector-config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      fetch(apiBase+'-config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); try{dlg.close();dlg.remove();}catch(e){} if(reload)reload(); })
         .catch(function(e){ save.disabled=false; save.textContent=cfg.create?'Create & approve':'Save'; msg.textContent=(e&&e.message)||(''+e); });
     };
@@ -2717,6 +2787,19 @@ window.uiAddBackend=function(category, reload){
       if(list.length===1){ open(list[0].name); return; }
       var labels=list.map(function(x){return x.label+' ('+x.name+')';});
       var pick=window.prompt('Add which backend?\n'+labels.join('\n'), list[0].name);
+      if(pick){ open(pick.trim()); }
+    })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
+};
+window.uiAddTool=function(reload){
+  fetch('api/tool-templates',{cache:'no-store',credentials:'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      if(!list||!list.length){ window.uiAlert && window.uiAlert('No tool templates available.'); return; }
+      function open(name){ fetch('api/tool-template?name='+encodeURIComponent(name),{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(sc){ window.uiTemplateForm(sc, reload); }); }
+      if(list.length===1){ open(list[0].name); return; }
+      var labels=list.map(function(x){return x.label+' ('+x.name+')';});
+      var pick=window.prompt('Add which tool?\n'+labels.join('\n'), list[0].name);
       if(pick){ open(pick.trim()); }
     })
     .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
@@ -2740,6 +2823,57 @@ var configureBackendAction = `function(ctx){
   var name = ctx && ctx.record && ctx.record.name;
   if(!name){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
   window.uiConfigureBackend(name, (ctx && ctx.reload) || function(){ location.reload(); });
+}`
+
+// templateAddAction (Templates catalog row "Add") → open the generic renderer for
+// the chosen template, resolving connector vs tool by the row's target.
+var templateAddAction = `function(ctx){
+  if(!window.uiTemplateForm){` + connectorFormDef + `}
+  var r=(ctx&&ctx.record)||{}; var target=r.target||'connector'; var name=r.name;
+  if(!name){ window.uiAlert && window.uiAlert('No template selected.'); return; }
+  var base=(target==='tool')?'api/tool-template':'api/connector-template';
+  fetch(base+'?name='+encodeURIComponent(name),{cache:'no-store',credentials:'same-origin'})
+    .then(function(res){ if(!res.ok) return res.text().then(function(t){throw new Error(t||('HTTP '+res.status));}); return res.json(); })
+    .then(function(sc){ window.uiTemplateForm(sc, function(){ location.reload(); }); })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
+}`
+
+// addToolFromTemplateAction (Global Tools toolbar) → Add a tool from a tool
+// template (same generic renderer, tool target → persists a TempTool).
+var addToolFromTemplateAction = `function(ctx){
+  if(!window.uiTemplateForm){` + connectorFormDef + `}
+  window.uiAddTool(function(){ if(window.uiInvalidate) window.uiInvalidate(['api/persistent-tools']); else location.reload(); });
+}`
+
+// addExtensionAction (Extensions catalog row "Add") → open the generic template
+// form for the row's template. The row carries its Target, so one action serves
+// both connectors and tools; the schema endpoint stamps `target` and the renderer
+// routes the save (api/connector-config vs api/tool-config) itself.
+var addExtensionAction = `function(ctx){
+  if(!window.uiTemplateForm){` + connectorFormDef + `}
+  var r=(ctx&&ctx.record)||{};
+  if(!r.name){ window.uiAlert && window.uiAlert('No extension selected.'); return; }
+  var reload=(ctx&&ctx.reload)||function(){ location.reload(); };
+  fetch('api/extension-template?target='+encodeURIComponent(r.target||'')+'&name='+encodeURIComponent(r.name),{cache:'no-store',credentials:'same-origin'})
+    .then(function(res){ if(!res.ok) return res.text().then(function(t){throw new Error(t||('HTTP '+res.status));}); return res.json(); })
+    .then(function(sc){ window.uiTemplateForm(sc, reload); })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
+}`
+
+// configureToolAction (Global Tools row "Configure") → re-open a template-authored
+// tool in the generic form, prefilled from its provenance. Mirrors
+// configureBackendAction on the connector side; the shared uiTemplateForm routes
+// the save to api/tool-config (edit mode preserves share/ACL state).
+var configureToolAction = `function(ctx){
+  if(!window.uiTemplateForm){` + connectorFormDef + `}
+  var r=(ctx&&ctx.record)||{};
+  var name=r.tool&&r.tool.name;
+  if(!name){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
+  var reload=(ctx&&ctx.reload)||function(){ if(window.uiInvalidate) window.uiInvalidate(['api/persistent-tools']); else location.reload(); };
+  fetch('api/tool-config?tool='+encodeURIComponent(name)+'&owner='+encodeURIComponent(r.owner||''),{cache:'no-store',credentials:'same-origin'})
+    .then(function(res){ if(!res.ok) return res.text().then(function(t){throw new Error(t||('HTTP '+res.status));}); return res.json(); })
+    .then(function(sc){ window.uiTemplateForm(sc, reload); })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 }`
 
 // configureBackendPickAction (Image Generation toolbar) → pick an image backend to configure.

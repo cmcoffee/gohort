@@ -47,6 +47,7 @@ func restImagePresetBuildSpec(t ConnectorTemplate, vals map[string]any) (json.Ra
 		spec.DefaultSteps = s
 	}
 	spec.PromptSuffix = TemplateStr(vals, "prompt_suffix")
+	spec.PromptGuidance = TemplateStr(vals, "prompt_guidance")
 	raw, err := json.Marshal(spec)
 	return raw, nil, err
 }
@@ -55,12 +56,13 @@ func restImagePresetReadValues(t ConnectorTemplate, spec json.RawMessage) map[st
 	var s RestImageSpec
 	_ = json.Unmarshal(spec, &s)
 	return map[string]any{
-		"base_url":       restImagePresetBaseURL(t.Params["preset"], s.SubmitURL),
-		"credential":     s.Credential,
-		"default_width":  s.DefaultWidth,
-		"default_height": s.DefaultHeight,
-		"default_steps":  s.DefaultSteps,
-		"prompt_suffix":  s.PromptSuffix,
+		"base_url":        restImagePresetBaseURL(t.Params["preset"], s.SubmitURL),
+		"credential":      s.Credential,
+		"default_width":   s.DefaultWidth,
+		"default_height":  s.DefaultHeight,
+		"default_steps":   s.DefaultSteps,
+		"prompt_suffix":   s.PromptSuffix,
+		"prompt_guidance": s.PromptGuidance,
 	}
 }
 
@@ -117,6 +119,7 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 		spec.DefaultSteps = s
 	}
 	spec.PromptSuffix = TemplateStr(vals, "prompt_suffix")
+	spec.PromptGuidance = TemplateStr(vals, "prompt_guidance")
 	raw, err := json.Marshal(spec)
 	return raw, warns, err
 }
@@ -125,13 +128,14 @@ func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
 	var s RestImageSpec
 	_ = json.Unmarshal(spec, &s)
 	vals := map[string]any{
-		"base_url":       strings.TrimSuffix(s.SubmitURL, "/prompt"),
-		"workflow":       s.ComfyWorkflow,
-		"credential":     s.Credential,
-		"default_width":  s.DefaultWidth,
-		"default_height": s.DefaultHeight,
-		"default_steps":  s.DefaultSteps,
-		"prompt_suffix":  s.PromptSuffix,
+		"base_url":        strings.TrimSuffix(s.SubmitURL, "/prompt"),
+		"workflow":        s.ComfyWorkflow,
+		"credential":      s.Credential,
+		"default_width":   s.DefaultWidth,
+		"default_height":  s.DefaultHeight,
+		"default_steps":   s.DefaultSteps,
+		"prompt_suffix":   s.PromptSuffix,
+		"prompt_guidance": s.PromptGuidance,
 	}
 	comfyMapToVals(s.ComfyMap, vals)
 	return vals
@@ -205,6 +209,7 @@ func comfyuiTemplate() ConnectorTemplate {
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
 			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads (NOT the prompt). Teach it this backend's quirks, e.g. 'put any words you want rendered as text inside \"double quotes\"'."},
 		},
 	}
 }
@@ -226,8 +231,15 @@ func a1111Template() ConnectorTemplate {
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
 			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads (NOT the prompt). Teach it this backend's quirks, e.g. 'put any words you want rendered as text inside \"double quotes\"'."},
 		},
 	}
+}
+
+// ConnectorTemplateRef is the provenance handle for a connector: Target is always
+// "connector"; Name is its stored Connector.Template.
+func ConnectorTemplateRef(c Connector) TemplateRef {
+	return TemplateRef{Target: TargetConnector, Name: strings.TrimSpace(c.Template)}
 }
 
 // TemplateForConnector resolves which template owns a connector. It PREFERS the
@@ -235,10 +247,8 @@ func a1111Template() ConnectorTemplate {
 // connectors authored before provenance: rest_image with a workflow → comfyui;
 // other rest_image → a1111. Returns ("", false) when no template applies.
 func TemplateForConnector(c Connector) (ConnectorTemplate, bool) {
-	if t := strings.TrimSpace(c.Template); t != "" {
-		if tpl, ok := GetConnectorTemplate(t); ok {
-			return tpl, true
-		}
+	if tpl, ok := ConnectorTemplateRef(c).Resolve(); ok {
+		return tpl, true
 	}
 	if c.Kind != RestImageConnectorKind {
 		return ConnectorTemplate{}, false

@@ -158,6 +158,17 @@ type Tool struct {
 	// unknown fields off the tool object anyway.
 	RenderLate bool `json:"-"`
 
+	// Category is a human-chosen grouping label the tool CLAIMS for itself —
+	// the organizing unit for the tool-picker's section headers (and the user's
+	// "My tools" list). It rides on the tool like Caps do: self-declared, and
+	// because it lives ON the tool it inherits the tool's ownership for free
+	// (a user categorizing their own tool touches only their record — no
+	// separate per-user group store). Empty falls back to the legacy
+	// ToolGroup.Members mapping, then to the capability label. The matching
+	// ToolGroup (by Name) supplies the LLM-facing description. Not serialized
+	// to the model — purely a presentation/organization concern.
+	Category string `json:"-"`
+
 	// TrustedOutput marks a tool whose result is framework-generated control
 	// or authoring text (e.g. tool_def / add_tool confirmations), NOT raw
 	// content fetched from outside. Such a tool may still declare CapNetwork

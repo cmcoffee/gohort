@@ -93,6 +93,33 @@ type AgentLoopConfig struct {
 	// OnStep is called after each LLM round for logging/observability. Optional.
 	OnStep StepCallback
 
+	// OnDiag is called when the loop makes a silent framework decision on the
+	// user's behalf mid-turn — chiefly the correction guards below that inject
+	// a hidden corrective message and re-prompt (no-arg tool named in prose,
+	// tool-call written as text markup, empty reasoning-collapse round, giving
+	// up with tool errors pending). These otherwise vanish into Debug logs; a
+	// silent guard that alters the turn but leaves no trace is exactly what the
+	// per-session ⚠ diagnostics trail exists to prevent. Wire it to the app's
+	// session-diag sink (orchestrate: chatTurn.turnDiag). kind is a short
+	// stable slug; detail is one human-readable sentence. Optional; nil means
+	// the loop still corrects, just without a breadcrumb.
+	OnDiag func(kind, detail string)
+
+	// SettleRound is called by a correction guard right before it re-prompts
+	// and continues, so the app can FINALIZE whatever the just-rejected round
+	// already streamed into its own bubble and open a fresh one for the retry.
+	// Without it, a correction that `continue`s before the normal end-of-round
+	// finalize orphans the streamed text: the retry round's text concatenates
+	// into the still-open bubble ("…What API?Fair point…") and the post-loop
+	// path can re-emit it as a second bubble. The app MUST settle by finalizing
+	// (never length-clearing) — a correction retry is not guaranteed to repeat
+	// the earlier text, so clearing it would lose real content; finalizing is
+	// lossless and lets the post-loop near-duplicate check suppress any echo.
+	// Wire it to the orchestrate streamHandler's finalize path. Optional; nil
+	// means the pre-fix behavior (orphaned bubble). Idempotent / no-op when
+	// nothing streamed this round.
+	SettleRound func()
+
 	// DrainViewImages, when set, is called after each tool-execution round to
 	// pull any frames a tool queued for the model to look at (e.g. view_video's
 	// sampled video frames, held on sess.PendingViewImages). Returned images are
@@ -710,6 +737,26 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// rounds without progress.
 	promiseCorrectionsTotal := 0
 	const maxPromiseCorrections = 2
+
+	// emitDiag breadcrumbs a silent correction into the app's session-diag
+	// trail (nil-safe). Kept here so every correction guard below records the
+	// framework decision it just made — see AgentLoopConfig.OnDiag.
+	emitDiag := func(kind, detail string) {
+		if cfg.OnDiag != nil {
+			cfg.OnDiag(kind, detail)
+		}
+	}
+
+	// settleRound finalizes the just-rejected round's streamed text before a
+	// correction re-prompts (nil-safe), so the retry starts in a fresh bubble
+	// instead of concatenating into an orphaned one — see
+	// AgentLoopConfig.SettleRound. Every correction guard that `continue`s on a
+	// round that may have streamed content calls this first.
+	settleRound := func() {
+		if cfg.SettleRound != nil {
+			cfg.SettleRound()
+		}
+	}
 
 	// toolFiredThisTurn tracks whether ANY tool dispatched at any
 	// point in this turn (any round). The action-promise correction
@@ -1384,6 +1431,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 						}
 					}
 					Debug("[agent_loop] orphaned XML tool-call detected (name=%q), re-prompting: correction %d/%d", attemptedName, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote tool-call XML for an unknown tool (%q); markup stripped and re-prompted for a real call.", attemptedName))
+					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
 						Content: "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
@@ -1419,6 +1468,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 						hint = fmt.Sprintf(" You appeared to invoke %q.", attemptedName)
 					}
 					Debug("[agent_loop] fake <tool_code>/::name():: block detected (name=%q), re-prompting: correction %d/%d", attemptedName, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote a tool call as plain text (%q) instead of a real call; markup stripped and re-prompted.", attemptedName))
+					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
 						Content: "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
@@ -1467,9 +1518,26 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// explicit "if you didn't mean to, answer directly" out. Flip the
 			// const to disable if it ever proves noisy.
 			const noArgToolMentionCorrection = true
-			if noArgToolMentionCorrection && !cfg.DisableToolMentionCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn {
+			// Full-reply gate (double-emit prevention). This correction fires by
+			// re-prompting, and re-prompting a round whose content ALREADY
+			// streamed to the client makes the retry stream a SECOND time — the
+			// "…What API?" + "Fair point, I was just describing…" double. That's
+			// only worth the risk when the round is a genuine PREAMBLE ("Let me
+			// get_joke") that plausibly meant to fire the tool. When the content
+			// is a full reply that merely MENTIONS a tool in passing, it's
+			// exposition, not a missed call — a complete answer never needed a
+			// tool to exist, so re-prompting can only produce restated noise.
+			// Gate on the same lead-in/full-answer cutoff the runner uses for
+			// the analogous mis-emit case (leadInMaxLen, 600): only nudge when
+			// the visible reply is short enough to be a lead-in. Source-side and
+			// lossless — a skipped correction leaves the full answer standing.
+			const noArgCorrectionMaxContentLen = 600
+			contentIsPreamble := len(strings.TrimSpace(resp.Content)) <= noArgCorrectionMaxContentLen
+			if noArgToolMentionCorrection && contentIsPreamble && !cfg.DisableToolMentionCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn {
 				if name := mentionedNoArgTool(resp.Content, handlers, toolDefs); name != "" {
 					Debug("[agent_loop] no-arg tool %q named in prose without a call, re-prompting: correction %d/%d", name, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
+					settleRound() // finalize the preamble so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
 						Content: fmt.Sprintf("Your previous response referred to the %q tool but did not actually call it (it takes no arguments, so there was nothing to run). If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name),
@@ -1501,6 +1569,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds &&
 				len(trimmedContent) < 3 && len(resp.Reasoning) > 200 {
 				Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(resp.Reasoning), len(trimmedContent), promiseCorrectionsTotal+1, maxPromiseCorrections)
+				emitDiag("empty-round-retried", "A round produced reasoning but no visible reply and no tool call; re-prompted for concrete output.")
+				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
 				history = append(history, Message{
 					Role:    "user",
 					Content: "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
@@ -1536,6 +1606,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				len(trimmedContent) < 30 {
 				Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch), re-prompting: correction %d/%d",
 					cumulativeToolErrors, roundsLeft, len(trimmedContent), promiseCorrectionsTotal+1, maxPromiseCorrections)
+				emitDiag("giveup-retried", fmt.Sprintf("The turn stopped with %d unaddressed tool error(s) and rounds to spare; re-prompted to adjust and retry rather than give up.", cumulativeToolErrors))
+				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
 				errPlural := ""
 				if cumulativeToolErrors != 1 {
 					errPlural = "s"
@@ -1912,17 +1984,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			Role:        "user",
 			ToolResults: results,
 		})
-		// If a tool queued frames for the model to look at (view_video samples a
-		// clip into sess.PendingViewImages), inject them as a vision message NOW
-		// so the next round actually sees them. Without this the frames were
-		// extracted and dropped, and the model hallucinated a description of a
-		// video it never saw. Goes right after the tool results so the order is
-		// assistant-tool_calls -> tool_results -> the frames it asked to see.
+		// If a tool queued images for the model to look at, inject them as a
+		// vision message NOW so the next round actually sees them. Producers:
+		// view_video (samples frames from a clip) and generate_image (shows the
+		// model its own output so it can verify the result matches the request).
+		// Without this the bytes were extracted and dropped, and the model
+		// hallucinated a description of something it never saw. Goes right after
+		// the tool results — the order is assistant-tool_calls -> tool_results ->
+		// the images it asked to see — and the wording is producer-agnostic: the
+		// preceding tool result says what the images are.
 		if cfg.DrainViewImages != nil {
 			if imgs := cfg.DrainViewImages(); len(imgs) > 0 {
 				history = append(history, Message{
 					Role:    "user",
-					Content: fmt.Sprintf("Here are %d frames sampled in time order from the video you asked to view. Describe only what is actually visible in them; do not guess beyond what the frames show.", len(imgs)),
+					Content: fmt.Sprintf("Here are %d image(s) queued for you to view, in order — the preceding tool result says what they are. Look, and describe or verify only what is actually visible; do not guess beyond what is shown.", len(imgs)),
 					Images:  imgs,
 				})
 			}
@@ -3161,7 +3236,13 @@ func mentionedNoArgTool(content string, handlers map[string]ToolHandlerFunc, too
 	lower := strings.ToLower(content)
 	best := ""
 	for _, td := range toolDefs {
-		if td.Name == "" || len(td.Required) != 0 || !strings.Contains(td.Name, "_") {
+		// "No-arg" means literally zero parameters — the only case where
+		// there is nothing to extract from prose and the mention can't be a
+		// real call. Keying off Required instead would match parameterized
+		// tools that merely mark everything optional (e.g. tool_def, which
+		// validates in-handler, not via the schema), so a purely DESCRIPTIVE
+		// mention ("I wrap APIs via tool_def") would trip the correction.
+		if td.Name == "" || len(td.Parameters) != 0 || !strings.Contains(td.Name, "_") {
 			continue
 		}
 		if _, ok := handlers[td.Name]; !ok {

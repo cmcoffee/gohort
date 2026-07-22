@@ -88,6 +88,11 @@ type Page struct {
 	// out in the grid within its panel. Sections with no Group fall under
 	// "General". Default false.
 	Tabbed bool
+	// SectionNav (Tabbed only): within each group's tab panel, render a left-rail
+	// sub-navigation of that group's sections, showing one at a time — for tabs
+	// with many sections (e.g. admin Extensions). Opt-in; unset keeps sections
+	// stacked, so other tabbed pages are unaffected.
+	SectionNav bool
 	// MaxWidth caps the central column width. Default 600px (mobile-first
 	// even on desktop). Set to "" or "100%" for full width.
 	MaxWidth string
@@ -146,16 +151,17 @@ func (p Page) Render(w http.ResponseWriter) error {
 // carries each component's "type" tag, so the stored blob is self-describing.
 func (p Page) ConfigJSON() (json.RawMessage, error) {
 	cfg := pageConfig{
-		Title:     p.Title,
-		Sticky:    marshalComponent(p.Sticky),
-		Sections:  make([]sectionConfig, 0, len(p.Sections)),
-		MaxWidth:  p.MaxWidth,
-		Grid:      p.Grid,
-		Tabbed:    p.Tabbed,
-		Footer:    p.Footer,
-		FooterURL: p.FooterURL,
-		BackURL:   p.BackURL,
-		ShowTitle: p.ShowTitle,
+		Title:      p.Title,
+		Sticky:     marshalComponent(p.Sticky),
+		Sections:   make([]sectionConfig, 0, len(p.Sections)),
+		MaxWidth:   p.MaxWidth,
+		Grid:       p.Grid,
+		Tabbed:     p.Tabbed,
+		SectionNav: p.SectionNav,
+		Footer:     p.Footer,
+		FooterURL:  p.FooterURL,
+		BackURL:    p.BackURL,
+		ShowTitle:  p.ShowTitle,
 	}
 	if cfg.MaxWidth == "" {
 		cfg.MaxWidth = "600px"
@@ -305,7 +311,12 @@ type pageConfig struct {
 	MaxWidth  string          `json:"max_width"`
 	Grid      bool            `json:"grid,omitempty"`
 	Tabbed    bool            `json:"tabbed,omitempty"`
-	Footer    string          `json:"footer,omitempty"`
+	// SectionNav (Tabbed only): within each group's tab panel, render a left-rail
+	// sub-navigation of that group's sections, showing one at a time — for tabs
+	// with many sections (e.g. admin Extensions). Opt-in; unset keeps sections
+	// stacked, so other tabbed pages are unaffected.
+	SectionNav bool   `json:"section_nav,omitempty"`
+	Footer     string `json:"footer,omitempty"`
 	FooterURL string          `json:"footer_url,omitempty"`
 }
 

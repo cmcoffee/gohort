@@ -413,16 +413,42 @@ func operatorDeliverMessage(owner, agentID, chatID, handle, text string, images 
 	if !ok {
 		return "", fmt.Errorf("no messaging transport is available")
 	}
-	// Empty service => let the transport resolve it from the conversation, so a
-	// proactive send to a Telegram chat goes out Telegram (not the iMessage
-	// default). Channel REPLIES already pass the inbound's service explicitly.
-	// The resolved agent name rides along for the optional outbound name tag —
-	// this covers proactive sends (send_message) and notify_me, so the owner
-	// sees which agent pinged them.
-	if err := ct.Deliver(owner, "", chatID, handle, text, agentNameTag(owner, agentID), images); err != nil {
+	// Resolve the recipient's bound channel and route through its service when an
+	// EXACT per-contact binding exists — so a proactive send_message goes out the
+	// same channel that conversation lives on (and its per-agent name tag rides
+	// along). We deliberately use ONLY an exact binding, never the whole-service
+	// fallback: passing a global iMessage channel's service for a Telegram chat
+	// would misroute. With no exact binding we keep the empty service, which lets
+	// the transport resolve it from the conversation (Telegram stays Telegram,
+	// not the iMessage default). Channel REPLIES already pass the inbound's
+	// service explicitly. The name tag itself stays per-agent opt-in (TagName).
+	service := exactChannelService(owner, chatID, handle)
+	if err := ct.Deliver(owner, service, chatID, handle, text, agentNameTag(owner, agentID), images); err != nil {
 		return "", err
 	}
 	return text, nil
+}
+
+// exactChannelService returns the service of a channel EXACTLY bound to this
+// chat_id/handle, or "" when only a whole-service ("global view") channel — or
+// nothing — covers it. Unlike channelForChat, it never falls back to a
+// whole-service binding, because that channel's service isn't guaranteed to be
+// the transport THIS conversation uses (see operatorDeliverMessage). Empty means
+// "let the transport resolve it," preserving the multi-service routing default.
+func exactChannelService(owner, chatID, handle string) string {
+	chatID, handle = strings.TrimSpace(chatID), strings.TrimSpace(handle)
+	if owner == "" || (chatID == "" && handle == "") {
+		return ""
+	}
+	for _, ch := range ListChannels(RootDB, owner) {
+		if ch.Address == "" {
+			continue // whole-service binding — doesn't pin a transport for THIS chat
+		}
+		if ch.Address == chatID || (handle != "" && ch.Address == handle) {
+			return ch.Service
+		}
+	}
+	return ""
 }
 
 // orchestrateBaseDB is the orchestrate app's base store, captured at Init so

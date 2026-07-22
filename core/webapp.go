@@ -1102,10 +1102,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	// membership is "implements WebAppHubTab", the SAME single source HubNav reads,
 	// so no new metadata. They render as one titled cluster, so the dashboard
 	// mirrors the tab-row grouping instead of scattering these among unrelated
-	// apps. A family member that is ALSO featured (the primary entry point, e.g.
-	// Agents) becomes the cluster's full-width LEAD card rather than a separate
-	// hero above it — the cluster IS the family, so its main member belongs in it.
-	// A featured app that is NOT a family member stays a standalone hero.
+	// apps. A featured app that is NOT a family member stays a standalone hero;
+	// a featured app that IS a family member (e.g. Agents) just joins the cluster
+	// as an equal card — the cluster's title already carries the grouping, so the
+	// four hub apps sit together as a tidy grid instead of one being blown up
+	// into a full-width lead.
 	var heroB, restB strings.Builder
 	var family []dashApp
 	for _, a := range apps {
@@ -1138,11 +1139,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	if len(family) > 0 {
 		cards.WriteString(`<div class="cluster"><div class="cluster-head">Orchestrator</div><div class="cluster-grid">`)
 		for _, a := range family {
-			extra := ""
-			if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
-				extra = " featured" // the family's primary entry — full-width lead card
-			}
-			renderCard(&cards, a, extra)
+			// Every family member renders at equal size so the four hub apps
+			// (Agents / Bridges / Knowledge / Extensions) sit together as a tidy
+			// grid. The primary (Agents) is deliberately NOT blown up into a
+			// full-width lead here — the cluster title signals the grouping.
+			renderCard(&cards, a, "")
 		}
 		cards.WriteString(`</div></div>`)
 	}

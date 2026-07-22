@@ -221,6 +221,28 @@ body { min-height: 100vh; min-height: 100dvh; }
   border-color: var(--accent, #4a9eff); color: var(--text);
 }
 .ui-tab-hidden { display: none; }
+/* Section sub-nav (Page.SectionNav): a left rail of a tab group's sections. */
+.ui-secnav { display: flex; gap: 1.2rem; align-items: flex-start; }
+.ui-secnav-rail {
+  flex: 0 0 200px; display: flex; flex-direction: column; gap: 0.2rem;
+  position: sticky; top: 0.5rem; align-self: flex-start;
+}
+.ui-secnav-content { flex: 1 1 auto; min-width: 0; }
+.ui-secnav-item {
+  text-align: left; padding: 0.45rem 0.7rem; border-radius: 8px; cursor: pointer;
+  font: inherit; font-size: 0.85rem;
+  border: 1px solid transparent; background: transparent; color: var(--text-mute);
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ui-secnav-item:hover { color: var(--text); background: var(--bg-1); }
+.ui-secnav-item.active {
+  background: var(--accent-soft, rgba(74,158,255,0.16));
+  border-color: var(--accent, #4a9eff); color: var(--text);
+}
+@media (max-width: 720px) {
+  .ui-secnav { flex-direction: column; gap: 0.6rem; }
+  .ui-secnav-rail { flex-basis: auto; flex-direction: row; flex-wrap: wrap; position: static; }
+}
 .ui-section-h {
   font-size: 0.85rem; margin: 0 0 0.7rem 0;
   color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;

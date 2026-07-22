@@ -75,6 +75,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// approves it in Admin > Connectors. Distinct from bridge, which
 		// polls one URL; connector registers a capability type.
 		ChatToolToAgentToolDefWithSession(connectorDefTool(), sess),
+		// tool_template — author a tool from a ready-made TEMPLATE (a REST call,
+		// a GitHub issue, …) instead of hand-crafting a tool_def: pick a template,
+		// fill its options, and the framework builds + attaches the tool. Governed
+		// exactly like add_tool (attaches to the focused agent, verifiable).
+		ChatToolToAgentToolDefWithSession(toolTemplateTool(), sess),
 		// collections — read-only enumeration so Builder can
 		// resolve user-named collections to IDs when authoring
 		// agents (attached_collections=[...]). Mutating

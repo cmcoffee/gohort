@@ -4,10 +4,14 @@ import "testing"
 
 func TestMentionedNoArgTool(t *testing.T) {
 	defs := []Tool{
-		{Name: "get_joke"},                                // no-arg, snake_case → eligible
-		{Name: "get_meme", Required: []string{}},          // no-arg → eligible
-		{Name: "web_search", Required: []string{"query"}}, // has a required arg → never
-		{Name: "image"},                                   // no underscore → never (common-word guard)
+		{Name: "get_joke"},                       // zero params, snake_case → eligible
+		{Name: "get_meme", Required: []string{}}, // zero params → eligible
+		{Name: "web_search", // has a param → never (nothing-to-extract test fails)
+			Parameters: map[string]ToolParam{"query": {Type: "string"}},
+			Required:   []string{"query"}},
+		{Name: "tool_def", // OPTIONAL params, empty Required → must NOT match
+			Parameters: map[string]ToolParam{"action": {Type: "string"}}},
+		{Name: "image"}, // no underscore → never (common-word guard)
 	}
 	handlers := map[string]ToolHandlerFunc{}
 	for _, d := range defs {
@@ -15,13 +19,14 @@ func TestMentionedNoArgTool(t *testing.T) {
 	}
 
 	cases := []struct{ content, want string }{
-		{"Sure, let me get_joke for you.", "get_joke"}, // token, eligible
-		{"I'll fire get_meme now", "get_meme"},         // token, eligible
-		{"here is a joke i made up myself", ""},        // no tool token at all
-		{"I could web_search that", ""},                // has required args → excluded
-		{"look at these images", ""},                   // "image" substring + no underscore → excluded
-		{"the getjokes endpoint", ""},                  // not token-bounded, no underscore
-		{"maybe use get_joke instead", "get_joke"},     // bounded by space/edge
+		{"Sure, let me get_joke for you.", "get_joke"},       // token, eligible
+		{"I'll fire get_meme now", "get_meme"},               // token, eligible
+		{"here is a joke i made up myself", ""},              // no tool token at all
+		{"I could web_search that", ""},                      // has a param → excluded
+		{"I wrap APIs into tools via tool_def", ""},          // optional params, empty Required → excluded (the false-positive regression)
+		{"look at these images", ""},                         // "image" substring + no underscore → excluded
+		{"the getjokes endpoint", ""},                        // not token-bounded, no underscore
+		{"maybe use get_joke instead", "get_joke"},           // bounded by space/edge
 	}
 	for _, c := range cases {
 		if got := mentionedNoArgTool(c.content, handlers, defs); got != c.want {

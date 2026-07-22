@@ -903,6 +903,7 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 			Parameters:  act.Params,
 			Required:    act.Required,
 			Caps:        []Capability{CapNetwork, CapExecute},
+			Category:    tt.Category, // expanded actions inherit the toolbox's claimed category
 		},
 		NeedsConfirm: true,
 		Handler: func(args map[string]any) (string, error) {
@@ -1071,6 +1072,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			}
 			return newToolboxGroupedTool(live).RunWithSession(args, sess)
 		}
+		def.Tool.Category = tt.Category // claimed grouping label rides onto the toolbox def too
 		return def
 	}
 
@@ -1088,6 +1090,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			Parameters:  tt.Params,
 			Required:    tt.Required,
 			Caps:        caps,
+			Category:    tt.Category, // the claimed grouping label rides onto the runtime def
 		},
 		// Confirm only for CONSEQUENTIAL temp tools — ones that reach a real
 		// endpoint (api mode / a credential), leave the sandbox (RawNetwork),

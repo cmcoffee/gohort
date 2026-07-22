@@ -5790,6 +5790,45 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		t.setCurrentMsgID("")
 	}
 
+	// settleRound finalizes whatever the CURRENT round already streamed into
+	// its own bubble, then opens the way for a fresh one — the agent loop calls
+	// it (via AgentLoopConfig.SettleRound) right before a correction guard
+	// re-prompts and continues. Without it, the rejected round's text is left
+	// in an open bubble and the retry round concatenates into it (the
+	// "…What API?Fair point…" double). Deliberately mirrors the onStep
+	// final-round finalize but OMITS the !info.Done length-clear: a correction
+	// retry is not guaranteed to repeat the earlier text, so clearing it could
+	// lose real content — finalize instead (lossless), and setting
+	// lastFinalizedText lets emitCapturedAsBubble suppress any echo the retry
+	// emits. No-op when nothing visible streamed (e.g. reasoning-collapse):
+	// the empty open bubble is left for the retry to adopt.
+	settleRound := func() {
+		id := streamMsgID
+		if id == "" {
+			id = t.getCurrentMsgID()
+		}
+		if id == "" {
+			streamedBuf.Reset()
+			return
+		}
+		raw := streamedBuf.String()
+		cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
+		if cleaned == "" {
+			streamedBuf.Reset()
+			return
+		}
+		if cleaned != strings.TrimSpace(raw) {
+			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
+		}
+		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+		lastFinalizedID = id
+		lastFinalizedText = cleaned
+		t.captureMidTurnBubble(cleaned)
+		streamMsgID = ""
+		streamedBuf.Reset()
+		t.setCurrentMsgID("")
+	}
+
 	// Budget injection — surface the round counter to the LLM so it
 	// can pace itself instead of calling tools until it hits the cap
 	// blind. OnRoundStart fires AFTER history is appended but BEFORE
@@ -5942,6 +5981,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		Stream:               streamHandler,
 		OnStep:               onStepHandler,
 		OnRoundStart:         onRoundStartHandler,
+		// Route the loop's silent correction guards into this session's ⚠
+		// diagnostics trail, so a re-prompt the framework issued on the user's
+		// behalf (e.g. named-a-tool-but-didn't-call-it) leaves a breadcrumb
+		// instead of vanishing into Debug logs.
+		OnDiag: t.turnDiag,
+		// Settle the rejected round's streamed bubble before a correction
+		// re-prompts, so the retry opens a fresh bubble instead of
+		// concatenating into an orphaned one (the double-emit fix).
+		SettleRound: settleRound,
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.
 		DrainViewImages: sess.DrainViewImages,
@@ -6569,6 +6617,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		MaxRounds:            hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Stream:               stream,
+		// Worker-step corrections breadcrumb into the same session trail as
+		// the orchestrator loop — a silent re-prompt during a plan step is
+		// still a framework decision the user should be able to see.
+		OnDiag: t.turnDiag,
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at
 		// the top of runWorkerStep.

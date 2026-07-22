@@ -134,7 +134,46 @@ func ImageGenerationAvailable() bool {
 // methods remain in case private code references them directly,
 // but there's no global registration to compete with the
 // imagefetch version.
-func init() {}
+func init() {
+	// Tier-2 auto-retry knobs. The soft budget drives how hard the tool nudges
+	// the model to regenerate a checkable miss; the hard cap is a runaway guard
+	// set well above it so genuine multi-image turns ("make me 4 logos") aren't
+	// blocked. Both are per-turn (the attempt counter is session-scoped).
+	RegisterTunable(TunableSpec{Key: "tune_image_max_regens", Category: "Limits", Label: "Image auto-regeneration budget", Help: "How many times the model may regenerate an image to fix a CHECKABLE miss (a specific count, named object, or required text) before it must deliver the best result. 0 disables auto-retry — the model still SEES the image (Tier 1) but is told to caveat rather than retry.", Kind: KindInt, Default: 2, Min: 0, Max: 5})
+	RegisterTunable(TunableSpec{Key: "tune_image_gen_hard_cap", Category: "Limits", Label: "Image generations per turn (hard cap)", Help: "Absolute ceiling on generate_image calls in one turn — a runaway guard, not the retry budget. Set well above the auto-regeneration budget so legitimate multi-image requests still work.", Kind: KindInt, Default: 10, Min: 1, Max: 50})
+}
+
+// imageMaxRegens / imageGenHardCap read the Tier-2 knobs with safe fallbacks.
+func imageMaxRegens() int {
+	n := TuneInt("tune_image_max_regens")
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func imageGenHardCap() int {
+	if n := TuneInt("tune_image_gen_hard_cap"); n >= 1 {
+		return n
+	}
+	return 10
+}
+
+// imageVerifyText is the attempt-aware tool result: it puts the checkable-criteria
+// GATE in front of the model (which alone can judge whether the request has
+// objective criteria and whether they were met) and tracks the remaining
+// regeneration budget so the retry chain is bounded.
+func imageVerifyText(attempt, maxRegens int) string {
+	const base = "IMAGE:generated. The image is shown to you now — verify it against what the user EXPLICITLY asked for: a specific count, a named object, or required/visible text. "
+	const tail = " Do not describe or try to open a file path."
+	if maxRegens <= 0 {
+		return base + "If it misses an explicit requirement, tell the user plainly; otherwise deliver it." + tail
+	}
+	if regensLeft := maxRegens - (attempt - 1); regensLeft > 0 {
+		return base + fmt.Sprintf("If it FAILS one of those checkable requirements, call generate_image again with a CORRECTED prompt that fixes the specific miss (do not repeat the same prompt) and refine_of_previous=true — %d regeneration(s) left. Regenerate ONLY for such explicit requirements, never for aesthetic or stylistic preference. Otherwise deliver it.", regensLeft) + tail
+	}
+	return base + "The auto-regeneration budget for this image is spent — do NOT call generate_image again to retry it. Deliver this result; if it still falls short of an explicit requirement, tell the user plainly rather than retrying." + tail
+}
 
 type generateImageChatTool struct{}
 
@@ -144,7 +183,8 @@ func (t *generateImageChatTool) Desc() string {
 }
 func (t *generateImageChatTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"prompt": {Type: "string", Description: "A detailed description of the image to generate."},
+		"prompt":             {Type: "string", Description: "A detailed description of the image to generate."},
+		"refine_of_previous": {Type: "boolean", Description: "Set true ONLY when this call regenerates the PREVIOUS image to fix a specific checkable miss (a failed count, named object, or required text). Leave false or omit for a new, distinct image — that starts a fresh regeneration budget."},
 	}
 }
 func (t *generateImageChatTool) Run(args map[string]any) (string, error) {
@@ -168,9 +208,10 @@ func (t *generateImageChatTool) Run(args map[string]any) (string, error) {
 	return "IMAGE:generated (local file: " + result.URL + ")", nil
 }
 
-// RunWithSession generates an image and appends it to the session's image list
-// so it gets delivered as an outbox attachment. Returns a short reference to
-// avoid bloating LLM context with base64 image data.
+// RunWithSession generates an image, delivers it to the user, and shows it to the
+// LLM to self-verify (Tier 1). Tier 2 bounds the retry chain: a per-turn attempt
+// counter drives an escalating, checkable-criteria-gated instruction and a hard
+// runaway cap. Returns a short reference to avoid bloating LLM context with base64.
 func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
 	if !ImageGenerationAvailable() {
 		return "", fmt.Errorf("image generation is not configured")
@@ -179,25 +220,47 @@ func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSe
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
+	// Tier-2 accounting. Count this call BEFORE generating so the runaway guard
+	// can refuse without burning a diffusion run. `refine` continues the retry
+	// chain (bounded budget); a new subject resets the chain but the absolute
+	// `total` still climbs, so the hard cap can't be evaded by mislabeling.
+	refine, _ := args["refine_of_previous"].(bool)
+	attempt, total := sess.NextImageAttempt(refine)
+	if hardCap := imageGenHardCap(); total > hardCap {
+		return "", fmt.Errorf("image generation limit reached for this turn (%d calls) — deliver the best result so far or tell the user what fell short instead of regenerating again", hardCap)
+	}
+	// On a refine (chain length > 1), tell the user the wait is deliberate
+	// (nil-safe: apps without live status just ignore it).
+	if attempt > 1 && sess.StatusCallback != nil {
+		sess.StatusCallback("Refining the image to better match your request…")
+	}
+
 	result, err := GenerateImage(context.Background(), "", prompt)
 	if err != nil {
 		return "", err
 	}
-	// For HTTP URLs (DALL-E), return the URL — no session append needed.
+	// For HTTP URLs (DALL-E), return the URL — no local bytes to show or verify.
 	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
 		return "IMAGE:" + result.URL, nil
 	}
-	// For local files (Gemini), read and encode the image for session delivery,
-	// then return a short reference to avoid bloating LLM context.
+	// For local files (self-hosted ComfyUI / Gemini), read the bytes once and use
+	// them for two independent channels: AppendImage delivers the image to the
+	// USER (outbox), and AppendViewImage shows it to the LLM on its next round so
+	// it can VERIFY the result matches the request before presenting it. The bytes
+	// never bloat persisted history — the vision message is injected for that one
+	// round and drained. We do NOT echo the file path: it's removed immediately
+	// below, and a stale path only invites the model to hunt for a file that no
+	// longer exists (see connector_restimage note).
 	data, err := os.ReadFile(result.URL)
 	if err == nil {
-		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data)) // → user (outbox)
+		sess.AppendViewImage(data)                                // → LLM (self-verify)
 	}
 	os.Remove(result.URL)
 	if err != nil {
 		return "IMAGE:generated", nil
 	}
-	return "IMAGE:generated (local file: " + result.URL + ")", nil
+	return imageVerifyText(attempt, imageMaxRegens()), nil
 }
 
 func (t *generateImageChatTool) IsInternetTool() bool { return true }

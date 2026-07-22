@@ -176,20 +176,52 @@
     var tabbed = !!cfg.tabbed;
     var sectionsHost = root;        // non-tabbed host
     var groupHosts = {};            // group name -> mount host (tabbed)
+    var secNav = !!cfg.section_nav; // left-rail sub-nav of a group's sections
+    // buildSecNav renders a left rail of section titles into mountEl; one
+    // section is shown at a time. Each section stashes its own mount host
+    // (s.__host) so hostForSection routes to the right sub-panel. Used both
+    // inside a tab (a group's sections) and at page level on a non-tabbed page
+    // (all sections form a single rail).
+    function buildSecNav(mountEl, secs) {
+      var rail = el('div', {class: 'ui-secnav-rail'});
+      var content = el('div', {class: 'ui-secnav-content'});
+      mountEl.appendChild(el('div', {class: 'ui-secnav'}, [rail, content]));
+      var subPanels = [];
+      secs.forEach(function(s, si) {
+        var sp = el('div', {class: 'ui-secnav-panel' + (si === 0 ? '' : ' ui-tab-hidden')});
+        if (inGrid) { var sg = el('div', {class: 'ui-section-grid'}); sp.appendChild(sg); s.__host = sg; }
+        else { s.__host = sp; }
+        content.appendChild(sp);
+        subPanels.push(sp);
+        var ib = el('button', {type: 'button', class: 'ui-secnav-item' + (si === 0 ? ' active' : '')}, [s.title || ('Section ' + (si + 1))]);
+        ib.addEventListener('click', function() {
+          for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
+          var items = rail.querySelectorAll('.ui-secnav-item');
+          for (var m = 0; m < items.length; m++) items[m].classList.remove('active');
+          ib.classList.add('active');
+        });
+        rail.appendChild(ib);
+      });
+    }
     if (tabbed) {
-      var order = [], seenG = {};
+      var order = [], seenG = {}, secByGroup = {};
       (cfg.sections || []).forEach(function(s) {
         var g = s.group || 'General';
-        if (!seenG[g]) { seenG[g] = true; order.push(g); }
+        if (!seenG[g]) { seenG[g] = true; order.push(g); secByGroup[g] = []; }
+        secByGroup[g].push(s);
       });
       var tabbar = el('div', {class: 'ui-tabbar'});
       root.appendChild(tabbar);
       var panels = [];
       order.forEach(function(g, idx) {
         var panel = el('div', {class: 'ui-tabpanel' + (idx === 0 ? '' : ' ui-tab-hidden')});
-        var host = panel;
-        if (inGrid) { host = el('div', {class: 'ui-section-grid'}); panel.appendChild(host); }
-        groupHosts[g] = host;
+        if (secNav && secByGroup[g].length > 1) {
+          buildSecNav(panel, secByGroup[g]);
+        } else {
+          var host = panel;
+          if (inGrid) { host = el('div', {class: 'ui-section-grid'}); panel.appendChild(host); }
+          groupHosts[g] = host;
+        }
         panels.push(panel);
         var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === 0 ? ' active' : '')}, [g]);
         btn.addEventListener('click', function() {
@@ -201,11 +233,17 @@
         tabbar.appendChild(btn);
         root.appendChild(panel);
       });
+    } else if (secNav && (cfg.sections || []).length > 1) {
+      // Page-level side-nav: no top tabs (a single conceptual area), just one
+      // rail of all sections. Fits a flat management surface better than a long
+      // scroll of stacked panels.
+      buildSecNav(root, cfg.sections || []);
     } else if (inGrid) {
       sectionsHost = el('div', {class: 'ui-section-grid'});
       root.appendChild(sectionsHost);
     }
     function hostForSection(s) {
+      if (s.__host) return s.__host;
       if (tabbed) return groupHosts[s.group || 'General'] || sectionsHost;
       return sectionsHost;
     }
