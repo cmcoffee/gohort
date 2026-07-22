@@ -1981,6 +1981,12 @@ Then in the script:
                    "https://api.openweathermap.org/data/2.5/weather?q=Seattle")
   print(data["body"])
 
+  # fetch_via also takes method, body, and extra request headers —
+  # e.g. a CalDAV PROPFIND that needs a Depth header and an XML body:
+  #   fetch_via("apple_caldav", url, method="PROPFIND", body=xml,
+  #             headers={"Depth": "1", "Content-Type": "application/xml"})
+  # The credential's auth header always wins over anything you pass.
+
 (secret:<name> exists for the rare API that can't be reached that
 way — the script gets the decrypted value and injects it itself.
 Prefer fetch_via.)

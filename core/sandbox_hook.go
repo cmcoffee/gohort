@@ -908,9 +908,20 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 		method = strings.ToUpper(strings.TrimSpace(m))
 	}
 	body, _ := params["body"].(string)
+	// Optional caller headers (e.g. Depth for CalDAV PROPFIND). Routed
+	// through the args entry point so they land as request_headers —
+	// symmetric with api-mode tools and fetch_url. Credential auth is
+	// still injected server-side and overrides any caller auth header.
+	args := map[string]any{"url": url, "method": method}
+	if body != "" {
+		args["body"] = body
+	}
+	if hdrs, ok := params["headers"].(map[string]interface{}); ok && len(hdrs) > 0 {
+		args["request_headers"] = hdrs
+	}
 	Log("[hook/fetch_via] start %s %s via %q", method, url, credName)
 	callStart := time.Now()
-	out, err := Secure().DispatchToolCall(h.Sess, credName, url, method, body)
+	out, err := Secure().DispatchToolCallArgs(h.Sess, credName, args)
 	if err != nil {
 		Log("[hook/fetch_via] done elapsed=%s error=%v", time.Since(callStart).Round(time.Millisecond), err)
 		writeHookError(conn, "fetch_via: "+err.Error())
@@ -1220,15 +1231,18 @@ class _Gohort:
         result = self._call("secret", {"name": name})
         return result["secret"] if isinstance(result, dict) else result
 
-    def fetch_via(self, credential, url, method="GET", body=None):
+    def fetch_via(self, credential, url, method="GET", body=None, headers=None):
         """HTTP via a named gohort credential: URL allowlist enforced,
         auth injected server-side, audit logged. Tool must declare
-        "fetch_via:<credential>" in hook_capabilities."""
+        "fetch_via:<credential>" in hook_capabilities. headers is an
+        optional dict of extra request headers (e.g. {"Depth": "1"} for
+        CalDAV PROPFIND); the credential's auth header always wins."""
         return self._call("fetch_via", {
             "credential": credential,
             "url": url,
             "method": method,
             "body": body or "",
+            "headers": headers or {},
         })
 
     def browse_page(self, url):
@@ -1283,6 +1297,6 @@ def secret(name):
     return gohort.secret(name)
 
 
-def fetch_via(credential, url, method="GET", body=None):
-    return gohort.fetch_via(credential, url, method=method, body=body)
+def fetch_via(credential, url, method="GET", body=None, headers=None):
+    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers)
 `
