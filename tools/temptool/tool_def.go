@@ -18,6 +18,12 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// responseExtractDesc documents the response_extract spec for the tool_def
+// schema. Shared across the create/action/update schemas so the shape stays
+// consistent. Namespace-agnostic (local names) is the headline — it's what
+// makes XML/CalDAV parseable without hand-written ElementTree/xpath.
+const responseExtractDesc = "(api mode, optional) Parse an XML response into JSON DECLARATIVELY — use this for any XML/WebDAV/CalDAV/SOAP endpoint instead of a shell script + ElementTree/xpath (which is unreliable). Object shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional filter...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. ALL matching is by LOCAL element name — namespaces/prefixes are IGNORED (<response>, <D:response>, <ns0:response> all match \"select\":\"response\"). Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"name\"} keep records containing a descendant <name>; {\"missing\":\"name\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole doc as one object. Example (CalDAV calendar list): {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}. Runs on a 2xx body; an empty result is [] (not an error). If response_pipe is also set it runs on the extracted JSON."
+
 // BuildToolDef constructs the tool_def grouped tool. NOT globally
 // registered — callers (Builder's catalog assembly) construct a
 // fresh instance per session so the tool can't be reached except via
@@ -78,6 +84,7 @@ func BuildToolDef() *GroupedTool {
 			"body_template":     {Type: "string", Description: "(api mode) Request body template with {param} placeholders. By default the body is JSON: placeholders are JSON-encoded (strings auto-quoted) and the result is validated as JSON. For a NON-JSON API (XML/SOAP, CalDAV REPORT, plain text) set content_type (e.g. \"application/xml\") — then placeholders substitute RAW (no quoting) and no JSON validation runs, so an XML template with <time-range start=\"{start_date}T00:00:00Z\"/> works. Optional for GET; usually required for POST/PUT/PATCH/REPORT."},
 			"content_type":      {Type: "string", Description: "(api mode, optional) Content-Type for the request body. Empty = application/json (the default JSON body path). A non-JSON value like \"application/xml\" or \"text/xml\" switches body_template to RAW substitution + no JSON validation, and sends that header — required for XML/SOAP/CalDAV APIs."},
 			"response_pipe":     {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. **jq gotcha:** the `//` alternative operator MUST be parenthesized inside object construction — write `{k: (.a // .b)}`, NOT `{k: .a // .b}` (the bare form is a jq syntax error). Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
+			"response_extract":  {Type: "object", Description: responseExtractDesc},
 			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "List of param names callers MUST provide. OMIT this field entirely to default ALL params to required; pass an explicit empty array [] to make ALL params optional; or list a subset. An optional param that appears in url_template as a query segment (\"?key={name}\") is dropped from the URL when the caller omits it."},
 			"state_path":        {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell mode, OPTIONAL for HTTP; REQUIRED for credentialed access) Grant the script extra callbacks back into gohort. **The bare capabilities — \"fetch\", \"log\", \"browse_page\" — are GRANTED BY DEFAULT for any shell-mode tool with script_body.** You don't need to declare them. Just `from gohort import fetch_url, browse_page, log` and call them — works out of the box. Declare ONLY when you need credentialed access: \"secret:<credential_name>\" (return the decrypted value of a credential registered via the admin UI — script then injects it itself); \"fetch_via:<credential_name>\" (PREFERRED for credentialed or scoped endpoints — gohort routes the request through that credential's Secure.Dispatch: URL allowlist enforced, auth injected server-side, audit logged, script NEVER sees the secret). Example: hook_capabilities=[\"fetch_via:openweather\"]. Usage in script: `from gohort import fetch_via; data = fetch_via(\"openweather\", \"https://api.openweathermap.org/data/2.5/weather?q=Seattle\"); body = data[\"body\"]`. For unauth public endpoints, register a no_auth credential (with the URL pattern scoping reachable endpoints) and use fetch_via:no_auth — same audit + allowlist benefits, no auth header injected. **Prefer fetch_via:<name> over fetch_url + secret:<name>** — the credential machinery does the right thing automatically and the secret stays out of the script's hands."},
@@ -96,19 +103,21 @@ func BuildToolDef() *GroupedTool {
 				}},
 			"pipeline_tools":      {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(pipeline mode) Names of tools the sub-agent (adaptive) or step executor (deterministic) may call. Must include every tool referenced in pipeline_steps."},
 			"pipeline_max_rounds": {Type: "integer", Description: "(pipeline mode, adaptive only) Cap on sub-agent LLM rounds. Default 6. Ignored when pipeline_steps is set."},
-			"actions": {Type: "array", Description: "(toolbox mode) Sub-action endpoints. Array of objects, each shape: {name, description, url_template, params, required?, method?, body_template?, response_pipe?}. Every action is one api-mode endpoint with its own params + URL. Names must be unique within the toolbox; the LLM calls the toolbox as <toolbox_name>(action=\"<sub>\", ...). The toolbox's top-level credential is shared across all actions — APIs almost always have one credential per service. NOT for shell-mode sub-actions (toolbox is api-only today); use mode=\"shell\" for those.",
+			"actions": {Type: "array", Description: "(toolbox mode) Sub-action endpoints. Array of objects, each shape: {name, description, url_template, params, required?, method?, body_template?, content_type?, response_pipe?}. Every action is one api-mode endpoint with its own params + URL. Names must be unique within the toolbox; the LLM calls the toolbox as <toolbox_name>(action=\"<sub>\", ...). The toolbox's top-level credential is shared across all actions — APIs almost always have one credential per service. Actions can mix body formats: set content_type per action (e.g. application/xml for a CalDAV REPORT, text/calendar for a PUT) so each sends a RAW non-JSON body. NOT for shell-mode sub-actions (toolbox is api-only today); use mode=\"shell\" for those.",
 				Items: &ToolParam{
 					Type: "object",
 					Properties: map[string]ToolParam{
-						"name":          {Type: "string", Description: "Sub-action name, unique within the toolbox; called as <toolbox>(action=\"<name>\")."},
-						"description":   {Type: "string", Description: "What this sub-action does."},
-						"url_template":  {Type: "string", Description: "Endpoint URL with {param} placeholders."},
-						"method":        {Type: "string", Description: "HTTP method. Default GET."},
-						"params":        {Type: "object", Description: "Param definitions for this sub-action, shape {name: {type, description}}. OPTIONAL — omit entirely for a no-param sub-action (a plain GET like list_submolts or home); do NOT invent a dummy placeholder param, the sub-action is callable with just action=\"<name>\"."},
-						"required":      {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Names of this action's params callers MUST supply. OMIT to default all required; pass [] to make all optional; or list a subset. An optional query-param placeholder (\"?key={name}\") drops from the URL when omitted."},
-						"body_template": {Type: "string", Description: "Optional request body template; {param} placeholders are JSON-encoded."},
-						"response_pipe": {Type: "string", Description: "Optional shell post-processor (jq, awk, ...) for the raw response."},
-						"disabled":      {Type: "boolean", Description: "Quarantine this ONE action without touching the rest of the toolbox — it drops from the catalog and refuses to run, while the other actions keep serving. Use when a single action is broken. Re-enable via update with disabled:false. Default false."},
+						"name":             {Type: "string", Description: "Sub-action name, unique within the toolbox; called as <toolbox>(action=\"<name>\")."},
+						"description":      {Type: "string", Description: "What this sub-action does."},
+						"url_template":     {Type: "string", Description: "Endpoint URL with {param} placeholders."},
+						"method":           {Type: "string", Description: "HTTP method. Default GET."},
+						"params":           {Type: "object", Description: "Param definitions for this sub-action, shape {name: {type, description}}. OPTIONAL — omit entirely for a no-param sub-action (a plain GET like list_submolts or home); do NOT invent a dummy placeholder param, the sub-action is callable with just action=\"<name>\"."},
+						"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Names of this action's params callers MUST supply. OMIT to default all required; pass [] to make all optional; or list a subset. An optional query-param placeholder (\"?key={name}\") drops from the URL when omitted."},
+						"body_template":    {Type: "string", Description: "Optional request body template. By default {param} placeholders are JSON-encoded + the result is JSON-validated. Set content_type (below) for a NON-JSON body (XML/CalDAV/iCalendar) — then placeholders substitute RAW."},
+						"content_type":     {Type: "string", Description: "Optional Content-Type for this action's body. Empty = application/json. A non-JSON value (application/xml, text/calendar, text/xml) switches body_template to RAW substitution + no JSON validation, and sends that header — required for XML/SOAP/CalDAV/iCalendar actions."},
+						"response_pipe":    {Type: "string", Description: "Optional shell post-processor (jq, awk, ...) for the raw response."},
+						"response_extract": {Type: "object", Description: responseExtractDesc},
+						"disabled":         {Type: "boolean", Description: "Quarantine this ONE action without touching the rest of the toolbox — it drops from the catalog and refuses to run, while the other actions keep serving. Use when a single action is broken. Re-enable via update with disabled:false. Default false."},
 					},
 					Required: []string{"name", "url_template"},
 				}},
@@ -169,6 +178,7 @@ func BuildToolDef() *GroupedTool {
 			"body_template":    {Type: "string", Description: "(api) New request body template."},
 			"content_type":     {Type: "string", Description: "(api) New body Content-Type. Non-JSON (e.g. \"application/xml\") switches to raw substitution + no JSON validation."},
 			"response_pipe":    {Type: "string", Description: "(api) New response_pipe (jq/awk post-processor)."},
+			"response_extract": {Type: "object", Description: "(api) New response_extract spec (XML→JSON). Same shape as create; see the create schema."},
 			"script_body":      {Type: "string", Description: "(shell) New script body."},
 		},
 		Required:     []string{"name"},
@@ -210,7 +220,7 @@ func BuildToolDef() *GroupedTool {
 	gt.AddAction("test", &GroupedToolAction{
 		Description: "VERIFY an api/toolbox tool actually works BEFORE you call it done or hand it to a user. For every endpoint it: (1) renders the URL + body template with your sample args and checks the body is valid JSON — catches a body field that never lands (the #1 cause of a live 400 like \"content must be a string\"); (2) compile-checks the response_pipe — catches a broken jq/awk filter before it fails live; (3) for READ endpoints (GET) it makes a real call and asserts a 2xx, then runs the response_pipe against the REAL response body — catches shape mismatches a syntax check can't. WRITE endpoints (POST/PUT/PATCH/DELETE) are NOT auto-fired (that would spam the live service): their body is render-validated only, and the report tells you to make one manual call and confirm a 2xx yourself. Pass `cases` with representative inputs per action so read probes and body renders have real values to work with (e.g. a real post_id for get_post). Returns a per-endpoint PASS/FAIL table. Run this, fix every FAIL by action=\"update\", and re-run until green — an unexercised toolbox action is a live grenade.",
 		Params: map[string]ToolParam{
-			"name": {Type: "string", Description: "Name of the api or toolbox tool to verify."},
+			"name":  {Type: "string", Description: "Name of the api or toolbox tool to verify."},
 			"cases": {Type: "array", Description: "Sample inputs to exercise. Array of objects: {action?: \"<sub-action>\" (toolbox only — omit for a single api tool), args: {param: value, ...}}. Provide one per endpoint you want live-probed or body-validated; give real values (a genuine id, a valid query) so read probes hit 2xx. Endpoints with no case still get offline checks (pipe compile-check, and body render when they need no required args).", Items: &ToolParam{Type: "object"}},
 		},
 		Required: []string{"name"},
@@ -476,6 +486,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if v, ok := args["response_pipe"]; ok {
 			apiArgs["response_pipe"] = v
 		}
+		if v, ok := args["response_extract"]; ok {
+			apiArgs["response_extract"] = v
+		}
 		if v, ok := args["required"]; ok {
 			apiArgs["required"] = v
 		}
@@ -632,15 +645,17 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			scaffoldedActions = append(scaffoldedActions, actName)
 		}
 		actions = append(actions, TempToolAction{
-			Name:         actName,
-			Description:  actDesc,
-			Params:       actParams,
-			Required:     actRequired,
-			URLTemplate:  urlTpl,
-			Method:       method,
-			BodyTemplate: bodyTpl,
-			ResponsePipe: strings.TrimSpace(StringArg(m, "response_pipe")),
-			Disabled:     BoolArg(m, "disabled"),
+			Name:            actName,
+			Description:     actDesc,
+			Params:          actParams,
+			Required:        actRequired,
+			URLTemplate:     urlTpl,
+			Method:          method,
+			BodyTemplate:    bodyTpl,
+			ContentType:     strings.TrimSpace(StringArg(m, "content_type")),
+			ResponsePipe:    strings.TrimSpace(StringArg(m, "response_pipe")),
+			ResponseExtract: ParseExtractSpec(m["response_extract"]),
+			Disabled:        BoolArg(m, "disabled"),
 		})
 	}
 	tool := &TempTool{
@@ -937,8 +952,14 @@ func actionToArgs(a TempToolAction) map[string]any {
 	if a.BodyTemplate != "" {
 		m["body_template"] = a.BodyTemplate
 	}
+	if a.ContentType != "" {
+		m["content_type"] = a.ContentType
+	}
 	if a.ResponsePipe != "" {
 		m["response_pipe"] = a.ResponsePipe
+	}
+	if a.ResponseExtract != nil {
+		m["response_extract"] = a.ResponseExtract
 	}
 	if a.Disabled {
 		m["disabled"] = true
@@ -998,6 +1019,9 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		}
 		if tt.ResponsePipe != "" {
 			out["response_pipe"] = tt.ResponsePipe
+		}
+		if tt.ResponseExtract != nil {
+			out["response_extract"] = tt.ResponseExtract
 		}
 		if tt.ScriptBody != "" {
 			out["script_body"] = tt.ScriptBody
@@ -1098,7 +1122,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// Patch top-level scalar fields when provided (present = intent to change).
 	// "expand" (toolbox presentation toggle) rides the same present-means-change
 	// path — BoolArg in createToolboxGrouped reads whatever value lands here.
-	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "response_pipe", "script_body", "script_name", "expand"} {
+	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "response_pipe", "response_extract", "script_body", "script_name", "expand"} {
 		if v, present := args[f]; present {
 			merged[f] = v
 		}
@@ -1351,13 +1375,19 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		// JSON". content_type is a tool-level field (toolbox actions are
 		// JSON-only today), so it applies to the single-endpoint api case.
 		if ep.BodyTemplate != "" {
-			rawBody := tt.ContentType != "" && !isJSONContentType(tt.ContentType)
+			// Per-action content_type wins (toolbox actions each carry their own);
+			// fall back to the tool-level one for a single api tool.
+			epCT := ep.ContentType
+			if epCT == "" {
+				epCT = tt.ContentType
+			}
+			rawBody := epCT != "" && !isJSONContentType(epCT)
 			if coversRequired(sample, ep.Required) {
 				if rawBody {
 					if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
 						fail("body_template render failed: %v", err)
 					} else {
-						pass("body_template renders (raw, %s — no JSON validation)", tt.ContentType)
+						pass("body_template renders (raw, %s — no JSON validation)", epCT)
 					}
 				} else if body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
 					fail("body_template render failed: %v", err)

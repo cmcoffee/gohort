@@ -1636,7 +1636,18 @@ type TempToolAction struct {
 	URLTemplate  string               `json:"url_template"`
 	Method       string               `json:"method,omitempty"`
 	BodyTemplate string               `json:"body_template,omitempty"`
+	// ContentType drives raw (non-JSON) body substitution for THIS action, the
+	// same way TempTool.ContentType does for a single api tool. Empty = JSON
+	// (placeholders JSON-encoded + validated); a non-JSON value like
+	// application/xml or text/calendar switches the action's body_template to
+	// RAW substitution + no JSON validation. Lets a toolbox mix JSON, XML, and
+	// iCalendar actions (e.g. a CalDAV toolbox: REPORT/xml + PUT/text/calendar).
+	ContentType  string               `json:"content_type,omitempty"`
 	ResponsePipe string               `json:"response_pipe,omitempty"`
+	// ResponseExtract parses THIS action's XML response into JSON (see
+	// TempTool.ResponseExtract / ExtractSpec). Per-action so a toolbox can
+	// have some JSON actions and some XML-extracted ones.
+	ResponseExtract *ExtractSpec `json:"response_extract,omitempty"`
 	// Disabled quarantines a single action without touching the rest of
 	// the toolbox: the renderer drops it from the catalog (collapsed OR
 	// expanded) and the dispatcher refuses to run it. Set it when one
@@ -1715,6 +1726,13 @@ type TempTool struct {
 	// Adding a pipe upgrades the wrapper tool's required caps to
 	// include CapExecute.
 	ResponsePipe string `json:"response_pipe,omitempty"`
+	// ResponseExtract, when set, parses an XML api response into JSON via a
+	// declarative, namespace-agnostic spec (see ExtractSpec) — so an XML/WebDAV/
+	// CalDAV endpoint returns structured JSON directly, with no hand-written
+	// ElementTree/xpath (which small models cannot get right). Runs on a 2xx
+	// response body; a response_pipe, if also set, then projects the extracted
+	// JSON (XML → JSON → jq).
+	ResponseExtract *ExtractSpec `json:"response_extract,omitempty"`
 	// Expand (toolbox mode only) surfaces each action as its own
 	// top-level `<toolbox>_<action>` tool instead of one collapsed
 	// action="<sub>" catalog entry. The record, credential, artifact,

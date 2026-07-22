@@ -2536,6 +2536,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		BodyTemplate:    bodyTpl,
 		ContentType:     strings.TrimSpace(StringArg(args, "content_type")),
 		ResponsePipe:    respPipe,
+		ResponseExtract: ParseExtractSpec(args["response_extract"]),
 	}
 	// Allow in-session overwrite — see CreateTempToolTool for rationale.
 	sess.RemoveTempTool(tool.Name)
@@ -2881,7 +2882,9 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 		Credential:      tt.Credential,
 		Method:          act.Method,
 		BodyTemplate:    act.BodyTemplate,
+		ContentType:     act.ContentType,
 		ResponsePipe:    act.ResponsePipe,
+		ResponseExtract: act.ResponseExtract,
 	}
 	// Required-arg check (mirrors the top-level dispatchTempTool guard
 	// but scoped to the action's params, since the outer toolbox tool
@@ -2968,7 +2971,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// Wikipedia, public data feeds) where requiring a fake
 		// credential just to satisfy the dispatcher would be silly.
 		raw, err = dispatchPublicAPICall(urlStr, method, body, tt.ContentType)
-	} else if tt.ResponsePipe != "" {
+	} else if tt.ResponsePipe != "" || tt.ResponseExtract != nil {
 		raw, err = Secure().DispatchToolCallForPipeCT(sess, tt.Credential, urlStr, method, body, tt.ContentType)
 	} else {
 		raw, err = Secure().DispatchToolCallCT(sess, tt.Credential, urlStr, method, body, tt.ContentType)
@@ -2976,7 +2979,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if err != nil {
 		return raw, err
 	}
-	if tt.ResponsePipe == "" {
+	if tt.ResponsePipe == "" && tt.ResponseExtract == nil {
 		return raw, nil
 	}
 	// The raw response from Secure().DispatchToolCall is shaped as:
@@ -2991,6 +2994,26 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	statusLine, body := splitStatusLine(raw)
 	if !isStatus2xx(statusLine) {
 		return raw, nil
+	}
+	// response_extract: XML → JSON. Runs first on the 2xx body; if a
+	// response_pipe is ALSO set, it then projects the extracted JSON (so
+	// XML → JSON → jq is a valid chain). The model never writes XML parsing.
+	if tt.ResponseExtract != nil {
+		out, xerr := ExtractXML([]byte(body), *tt.ResponseExtract)
+		if xerr != nil {
+			hdr := strings.TrimSpace(statusLine)
+			if hdr == "" {
+				hdr = "HTTP 2xx"
+			}
+			return fmt.Sprintf("response_extract could not parse the response (%s): %v. The HTTP call SUCCEEDED — the body just didn't match the spec. Check select/fields against the real XML, or drop response_extract to see the raw body.", hdr, xerr), nil
+		}
+		body = string(out)
+		if tt.ResponsePipe == "" {
+			if statusLine != "" {
+				return statusLine + "\n" + body, nil
+			}
+			return body, nil
+		}
 	}
 	pipeCtx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
