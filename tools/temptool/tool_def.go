@@ -22,7 +22,7 @@ import (
 // schema. Shared across the create/action/update schemas so the shape stays
 // consistent. Namespace-agnostic (local names) is the headline — it's what
 // makes XML/CalDAV parseable without hand-written ElementTree/xpath.
-const responseExtractDesc = "(api mode, optional) Parse an XML response into JSON DECLARATIVELY — use this for any XML/WebDAV/CalDAV/SOAP endpoint instead of a shell script + ElementTree/xpath (which is unreliable). Object shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional filter...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. ALL matching is by LOCAL element name — namespaces/prefixes are IGNORED (<response>, <D:response>, <ns0:response> all match \"select\":\"response\"). Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"name\"} keep records containing a descendant <name>; {\"missing\":\"name\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole doc as one object. Example (CalDAV calendar list): {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}. Runs on a 2xx body; an empty result is [] (not an error). If response_pipe is also set it runs on the extracted JSON."
+const responseExtractDesc = "(api mode, optional) Parse an XML response into JSON DECLARATIVELY — use this for any XML/WebDAV/CalDAV/SOAP endpoint instead of a shell script + ElementTree/xpath (which is unreliable). Object shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional filter...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. ALL matching is by LOCAL element name — namespaces/prefixes are IGNORED (<response>, <D:response>, <ns0:response> all match \"select\":\"response\"). Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"<selector>\"} keep records where the selector resolves (accepts a bare descendant name like \"calendar\" OR a path like \"propstat/prop/resourcetype/calendar\" — same grammar as fields); {\"missing\":\"<selector>\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole doc as one object. Example (CalDAV calendar list): {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}. Runs on a 2xx body; an empty result is [] (not an error). If response_pipe is also set it runs on the extracted JSON."
 
 // BuildToolDef constructs the tool_def grouped tool. NOT globally
 // registered — callers (Builder's catalog assembly) construct a
@@ -377,9 +377,13 @@ func modeLabel(mode string) string {
 // dispatchable THIS turn regardless of scope. Deliberate re-scoping
 // (agent→global, or attaching a global tool onto an agent) is an admin
 // action, not an authoring one — see the admin Tools surface.
-func finalizeAuthoredTool(sess *ToolSession, toolName string) {
+// It returns a short, ACCURATE one-line description of where the tool landed,
+// which the create path appends to its result so the LLM (and the user) get the
+// truth instead of the stale "an admin must promote this" ceremony — Builder's
+// tools are already the user's and persist with no approval.
+func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 	if sess == nil || sess.DB == nil || sess.Username == "" || sess.ChatSessionID == "" || toolName == "" {
-		return
+		return ""
 	}
 	var draft *TempTool
 	for _, d := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
@@ -390,7 +394,7 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) {
 		}
 	}
 	if draft == nil {
-		return
+		return ""
 	}
 	// Global scope (Builder only): auto-persist to the user-wide pool,
 	// skipping the pending-approval queue. AdminPersistTempTool replaces
@@ -399,10 +403,10 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) {
 	if sess.CanScopeGlobal {
 		if err := AdminPersistTempTool(sess.DB, sess.Username, *draft); err != nil {
 			Log("[temptool.scope] global persist failed for %q: %v", toolName, err)
-		} else {
-			Log("[temptool.scope] persisted %q to the user-wide pool (Builder authoring; no approval)", toolName)
+			return "Available for this session; saving it to your tools failed (see server logs)."
 		}
-		return
+		Log("[temptool.scope] persisted %q to the user-wide pool (Builder authoring; no approval)", toolName)
+		return "Saved to your tools — available to all your agents and across sessions. No admin approval needed."
 	}
 	// Agent scope (every non-Builder agent): attach to the calling
 	// agent's own record. On any failure (no bundle target, seed with no
@@ -410,16 +414,17 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) {
 	// session-scoped — usable this turn, not escalated to the shared pool.
 	if sess.BundleTool == nil {
 		Log("[temptool.scope] %q kept session-scoped (no agent bundle target)", toolName)
-		return
+		return "Available for THIS session. Promote it from the Tools modal to keep it past the session."
 	}
 	if err := sess.BundleTool(*draft); err != nil {
 		Log("[temptool.scope] agent-scope attach failed for %q (kept session-scoped): %v", toolName, err)
-		return
+		return "Available for THIS session. Promote it from the Tools modal to keep it past the session."
 	}
 	// Now owned by the agent record; clear any stale pending entry so the
 	// same name can't linger in the admin review queue.
 	DequeuePendingTempTool(sess.DB, sess.Username, toolName)
 	Log("[temptool.scope] attached %q to authoring agent record (agent-scoped)", toolName)
+	return "Saved to this agent's own tools (persists across sessions)."
 }
 
 // createGrouped dispatches between create_temp_tool (shell) and
@@ -463,7 +468,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		t := &CreateTempToolTool{}
 		res, err := t.RunWithSession(shellArgs, sess)
 		if err == nil {
-			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
+			if scope := finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name"))); scope != "" {
+				res = strings.TrimRight(res, " ") + " " + scope
+			}
 		}
 		return res, err
 	case TempToolModeAPI:
@@ -498,19 +505,25 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		t := &CreateAPIToolTool{}
 		res, err := t.RunWithSession(apiArgs, sess)
 		if err == nil {
-			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
+			if scope := finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name"))); scope != "" {
+				res = strings.TrimRight(res, " ") + " " + scope
+			}
 		}
 		return res, err
 	case TempToolModePipeline:
 		res, err := createPipelineGrouped(args, sess)
 		if err == nil {
-			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
+			if scope := finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name"))); scope != "" {
+				res = strings.TrimRight(res, " ") + " " + scope
+			}
 		}
 		return res, err
 	case TempToolModeToolbox:
 		res, err := createToolboxGrouped(args, sess)
 		if err == nil {
-			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
+			if scope := finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name"))); scope != "" {
+				res = strings.TrimRight(res, " ") + " " + scope
+			}
 		}
 		return res, err
 	default:
@@ -676,7 +689,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		}
 	}
 	_ = BoolArg(args, "persist") // ignored — same as other modes
-	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...). Available in this session; admin promotes to permanent via the Tools modal.",
+	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...).",
 		name, len(actions), actionNames(actions), name)
 	if len(scaffoldedActions) > 0 {
 		msg += fmt.Sprintf(" NOTE: for write action(s) %v I auto-added a body_template whose JSON keys are your PARAM NAMES — that is a GUESS at the API's body schema, not a verified fact. If the API expects different field names (a common case: it wants \"parent_id\" for a comment_id value), the live call will 4xx. Override with an explicit body_template via action=\"update\", mapping each value with its {param} placeholder — e.g. body_template={\"parent_id\": {comment_id}, \"content\": {content}}. Verify the field names against the API docs before relying on these actions.", scaffoldedActions)

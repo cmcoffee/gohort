@@ -66,6 +66,29 @@ func TestExtractXMLNamespaceAgnostic(t *testing.T) {
 	}
 }
 
+// The EXACT response_extract spec the Builder wrote (08:09:55) — path-based
+// where.has and a path-based field. It returned [] before the fix because
+// where.has only accepted a bare local name. This locks the model's natural
+// usage working.
+func TestExtractXMLPathSelectorsInWhereAndFields(t *testing.T) {
+	spec := ExtractSpec{
+		Select: "response",
+		Where:  &ExtractWhere{Has: "propstat/prop/resourcetype/calendar"},
+		Fields: map[string]string{
+			"path":         "href",
+			"display_name": "propstat/prop/displayname",
+		},
+	}
+	got, err := ExtractXML([]byte(caldavCalendarsXML), spec)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	want := `[{"display_name":"Home","path":"/195178399/calendars/home/"},{"display_name":"Work","path":"/195178399/calendars/work/"}]`
+	if string(got) != want {
+		t.Fatalf("path-selector where/fields mismatch:\n got %s\nwant %s", got, want)
+	}
+}
+
 func TestExtractXMLEdgeCases(t *testing.T) {
 	spec := ExtractSpec{Select: "response", Fields: map[string]string{"path": "href"}}
 

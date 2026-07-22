@@ -31,7 +31,7 @@ func (t *ParseXMLTool) Caps() []Capability { return nil }
 func (t *ParseXMLTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"xml": {Type: "string", Description: "The XML content to parse."},
-		"spec": {Type: "object", Description: "Extraction spec. Shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"name\"} keep records containing a descendant <name>; {\"missing\":\"name\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole document as one object. Example: {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}."},
+		"spec": {Type: "object", Description: "Extraction spec. Shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"<selector>\"} keep records where the selector resolves — accepts a bare descendant name (\"calendar\") OR a path (\"propstat/prop/resourcetype/calendar\"), same grammar as fields; {\"missing\":\"<selector>\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole document as one object. Example: {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}."},
 	}
 }
 

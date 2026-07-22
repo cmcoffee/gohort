@@ -278,9 +278,17 @@ func whereMatch(rec *xmlNode, w *ExtractWhere) bool {
 	}
 	switch {
 	case strings.TrimSpace(w.Has) != "":
-		return firstDescendant(rec, strings.TrimSpace(w.Has)) != nil
+		// has/missing accept the SAME selector grammar as fields — a bare
+		// descendant name ("calendar") OR a path ("propstat/prop/resourcetype/
+		// calendar") OR an attribute. Models naturally reach for a path here
+		// (consistent with fields); restricting has to a bare local name made a
+		// perfectly reasonable spec silently return []. Existence = the selector
+		// resolves, so an empty element like <calendar/> still counts as present.
+		_, ok := resolveSelector(rec, strings.TrimSpace(w.Has))
+		return ok
 	case strings.TrimSpace(w.Missing) != "":
-		return firstDescendant(rec, strings.TrimSpace(w.Missing)) == nil
+		_, ok := resolveSelector(rec, strings.TrimSpace(w.Missing))
+		return !ok
 	case w.Equals != nil:
 		v, _ := resolveSelector(rec, w.Equals.Field)
 		return v == w.Equals.Value

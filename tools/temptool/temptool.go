@@ -570,7 +570,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// via the Tools modal in the chat surface.
 	_ = BoolArg(args, "persist")
 	saveSessionScoped()
-	return fmt.Sprintf("Created temp tool %q. It is available in your tool catalog for the rest of this conversation. The user (admin) can promote it to keep past the session via the Tools modal.%s", name, spec), nil
+	return fmt.Sprintf("Created temp tool %q. It is now in your tool catalog.%s", name, spec), nil
 }
 
 // ----------------------------------------------------------------------
@@ -2560,7 +2560,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// session-scoped pool; the admin promotes via the Tools modal.
 	_ = BoolArg(args, "persist")
 	saveSessionScoped()
-	return fmt.Sprintf("Created api tool %q (wraps credential %q). Available in your tool catalog for the rest of this conversation. The user (admin) can promote it via the Tools modal.%s", name, credName, spec), nil
+	return fmt.Sprintf("Created api tool %q (wraps credential %q). It is now in your tool catalog.%s", name, credName, spec), nil
 }
 
 // dispatchAPIModeTempTool handles a TempTool whose Mode is api. The
