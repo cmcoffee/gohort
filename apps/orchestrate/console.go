@@ -1682,8 +1682,9 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		Requested string `json:"Requested,omitempty"`
 		ID        string `json:"_id"`
 		Pending   bool   `json:"_pending,omitempty"`
-		Managed   bool   `json:"_managed,omitempty"` // a standing policy row (segmented control + Remove)
-		Policy    string `json:"_policy,omitempty"`  // allow | ask | block (the segmented state)
+		Managed   bool   `json:"_managed,omitempty"`  // a standing policy row (segmented control + Remove)
+		Policy    string `json:"_policy,omitempty"`   // allow | ask | block (the segmented state)
+		OneShot   bool   `json:"_oneshot,omitempty"`  // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
 	}
 	out := []permRow{}
 	// Zone 1 — live pending requests (a decision is blocked on the user).
@@ -1693,6 +1694,10 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 			Who: who, Detail: detail, Status: "Pending",
 			Requested: a.Requested.Local().Format("Jan 2 3:04 PM"),
 			ID:        a.ID, Pending: true,
+			// Activating a drafted sub-agent is a ONE-TIME decision — approving it
+			// makes the agent live and the authorization disappears, so "Always"
+			// has no meaning. Present just Approve / Deny for it.
+			OneShot: a.Action == "activate_sub_agent",
 		})
 	}
 	// Zone 2 — standing permission policy per subject (Always allow / Needs

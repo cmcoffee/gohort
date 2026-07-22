@@ -282,8 +282,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							},
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_pending"},
-								{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_pending", Confirm: "Approve and run this once?"},
-								{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_pending", Confirm: "Approve, run, and always allow this in future?"},
+								// One-shot decisions (activating a drafted sub-agent): just
+								// Approve — "Allow once"/"Always" don't apply, since approving
+								// activates the agent and consumes the authorization.
+								{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_oneshot", Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
+								{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_pending", HideIf: "_oneshot", Confirm: "Approve and run this once?"},
+								{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_pending", HideIf: "_oneshot", Confirm: "Approve, run, and always allow this in future?"},
 								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
 							}},
 						{Label: "Compact Cortex", ActionURL: "api/console/channel/compact",
