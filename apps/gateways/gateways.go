@@ -85,12 +85,13 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			Description     string `json:"description,omitempty"`
 			RequiresConfirm bool   `json:"requires_confirm"`
 			HasSecret       bool   `json:"has_secret"`
+			Disabled        bool   `json:"disabled"`
 		}
 		toRow := func(c SecureCredential) row {
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
 				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
-				HasSecret: c.Type != SecureCredNone,
+				HasSecret: c.Type != SecureCredNone, Disabled: c.Disabled,
 			}
 		}
 		// ?name=<name> returns the SINGLE record — the edit form's Source. The
@@ -111,6 +112,23 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
+		// enable/disable — mute/unmute a credential without editing it. A
+		// disabled credential drops out of the agent tool catalog until re-
+		// enabled. Owner-scoped via SetDisabledOwned, so it only ever touches
+		// the user's own credential, never a global one of the same name.
+		if action := strings.TrimSpace(r.URL.Query().Get("action")); action == "enable" || action == "disable" {
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			if err := Secure().SetDisabledOwned(user, name, action == "disable"); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		var body struct {
 			Name            string `json:"name"`
 			Type            string `json:"type"`
@@ -669,6 +687,10 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						{Field: "name", Flex: 1},
 						{Field: "type", Mute: true},
 						{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
+						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Disabled", Color: "danger"},
+							{Value: false, Label: "Active", Color: "success"},
+						}},
 					},
 					RowActions: []ui.RowAction{
 						ui.Expand("Edit", ui.FormPanel{
@@ -677,6 +699,16 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 							SubmitLabel: "Save changes",
 							Fields:      credentialFormFields(),
 						}),
+						// Mute/unmute without editing — a disabled credential drops
+						// out of the agent tool catalog until re-enabled.
+						{Type: "button", Label: "Disable", Method: "POST",
+							PostTo:     "api/credentials?action=disable&name={name}",
+							HideIf:     "disabled",
+							Optimistic: true},
+						{Type: "button", Label: "Enable", Method: "POST",
+							PostTo:     "api/credentials?action=enable&name={name}",
+							OnlyIf:     "disabled",
+							Optimistic: true},
 						{Type: "button", Label: "Delete", Method: "DELETE",
 							PostTo:     "api/credentials?name={name}",
 							Variant:    "danger",
@@ -698,6 +730,12 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			}},
+		},
+		{
+			Title:    "Connected accounts",
+			Wide:     true,
+			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
+			Body:     ui.Card{HTML: connectionsHTML},
 		},
 		{
 			Title:    "My tools",
@@ -893,12 +931,6 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 				},
 				EmptyText: "No global tools published yet. When your deployment shares one, it appears here to add.",
 			},
-		},
-		{
-			Title:    "Connected accounts",
-			Wide:     true,
-			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
-			Body:     ui.Card{HTML: connectionsHTML},
 		},
 	}
 	ui.Page{
