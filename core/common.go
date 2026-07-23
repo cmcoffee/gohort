@@ -1643,6 +1643,9 @@ type TempToolAction struct {
 	// RAW substitution + no JSON validation. Lets a toolbox mix JSON, XML, and
 	// iCalendar actions (e.g. a CalDAV toolbox: REPORT/xml + PUT/text/calendar).
 	ContentType  string               `json:"content_type,omitempty"`
+	// Headers are extra request headers for THIS action, the same way
+	// TempTool.Headers works for a single api tool. See TempTool.Headers.
+	Headers map[string]string `json:"headers,omitempty"`
 	ResponsePipe string               `json:"response_pipe,omitempty"`
 	// ResponseExtract parses THIS action's XML response into JSON (see
 	// TempTool.ResponseExtract / ExtractSpec). Per-action so a toolbox can
@@ -1686,6 +1689,24 @@ type TempTool struct {
 	// ToolGroup (by Name) is the registry that supplies the LLM-facing group
 	// description.
 	Category string `json:"category,omitempty"`
+	// Locked freezes the tool's DEFINITION: while true, the AI's tool_def
+	// cannot update, delete, or overwrite it — the user must unlock it in
+	// Extensions › My tools first. Running the tool is unaffected. A
+	// user-only control (the AI can't set or clear it), the tool analog of
+	// SecureCredential.Secured / the credential re-draft guard.
+	Locked bool `json:"locked,omitempty"`
+	// Disabled hides the WHOLE tool from every agent's runtime catalog (not
+	// dispatchable, not offered to the LLM) while keeping its definition in
+	// the user's pool. For diagnostic / Builder-only tools the user doesn't
+	// want cluttering agents. Distinct from TempToolAction.Disabled (which
+	// quarantines ONE action of a toolbox) and AgentRecord.DisabledPersistentTools
+	// (per-agent opt-out) — this is a global, user-managed on/off from My tools.
+	Disabled bool `json:"disabled,omitempty"`
+	// BuilderOnly exposes the tool to the Builder authoring agent only — every
+	// OTHER agent's runtime catalog omits it. For diagnostic / authoring-support
+	// tools the user wants available while building but NOT surfaced to Chat,
+	// Research, etc. Distinct from Disabled (off everywhere including Builder).
+	BuilderOnly bool `json:"builder_only,omitempty"`
 	// Template records the tool template that authored this tool (provenance),
 	// so it can be reconfigured through the same template later — the tool-side
 	// analog of Connector.Template. Empty for hand-authored tools.
@@ -1717,6 +1738,23 @@ type TempTool struct {
 	// and the header is sent as declared. This is what lets an XML/text API be
 	// a first-class api-mode tool instead of forcing a shell detour.
 	ContentType string `json:"content_type,omitempty"`
+	// Headers are extra request headers sent with an api-mode call, as
+	// {name: value}. Some protocols carry REQUIRED semantics in a header
+	// rather than the body or the URL: a CalDAV calendar-query REPORT (or a
+	// PROPFIND) needs "Depth: 1" to match the collection's CHILD resources —
+	// without it the server applies the query at Depth 0, matches nothing,
+	// and returns a well-formed but EMPTY 207 multistatus. That reads as
+	// "the call worked, the calendar is empty," which is how a broken read
+	// tool passes verification and ships.
+	//
+	// The sandbox hook has always accepted headers (gohort.fetch_via(...,
+	// headers={"Depth": "1"})), so a shell tool could do this and an api
+	// tool could not — the asymmetry this field closes.
+	//
+	// Auth headers are ignored here (Authorization / Proxy-Authorization are
+	// dropped at the request-build layer): auth comes from the credential, so
+	// a tool can never smuggle its own.
+	Headers map[string]string `json:"headers,omitempty"`
 	// ResponsePipe is an optional shell command for api mode that
 	// receives the raw API response on stdin and emits the LLM-visible
 	// result on stdout. Runs in a tight sandbox (no network, no

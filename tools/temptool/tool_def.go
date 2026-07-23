@@ -12,6 +12,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -82,9 +85,11 @@ func BuildToolDef() *GroupedTool {
 			"url_template":      {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":            {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":     {Type: "string", Description: "(api mode) Request body template with {param} placeholders. By default the body is JSON: placeholders are JSON-encoded (strings auto-quoted) and the result is validated as JSON. For a NON-JSON API (XML/SOAP, CalDAV REPORT, plain text) set content_type (e.g. \"application/xml\") — then placeholders substitute RAW (no quoting) and no JSON validation runs, so an XML template with <time-range start=\"{start_date}T00:00:00Z\"/> works. Optional for GET; usually required for POST/PUT/PATCH/REPORT."},
+			"headers":           {Type: "object", Description: "(api mode, optional) Extra request headers as {name: value}. Use when a protocol carries REQUIRED semantics in a header: a CalDAV calendar-query REPORT or PROPFIND needs {\"Depth\": \"1\"} to match the collection's CHILD resources — without it the server applies the query at Depth 0, matches nothing, and returns a well-formed but EMPTY 207 multistatus that looks exactly like \"no events\". Also for API-version or Accept headers. Auth headers are ignored: auth comes from the credential."},
 			"content_type":      {Type: "string", Description: "(api mode, optional) Content-Type for the request body. Empty = application/json (the default JSON body path). A non-JSON value like \"application/xml\" or \"text/xml\" switches body_template to RAW substitution + no JSON validation, and sends that header — required for XML/SOAP/CalDAV APIs."},
 			"response_pipe":     {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. **jq gotcha:** the `//` alternative operator MUST be parenthesized inside object construction — write `{k: (.a // .b)}`, NOT `{k: .a // .b}` (the bare form is a jq syntax error). Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
 			"response_extract":  {Type: "object", Description: responseExtractDesc},
+			"category":          {Type: "string", Description: "A SHORT human-readable grouping label for this tool — the service or domain it belongs to (e.g. \"Apple Calendar\", \"GitHub\", \"Weather\"). ALWAYS set it, and use the SAME category string for every tool you build for the same service so they group together in the user's Tools list (where they enable tools on agents). Uncategorized tools fall into a generic \"My Tools\" bucket that's hard to find. 1-3 words, Title Case; a toolbox's actions inherit its category."},
 			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "List of param names callers MUST provide. OMIT this field entirely to default ALL params to required; pass an explicit empty array [] to make ALL params optional; or list a subset. An optional param that appears in url_template as a query segment (\"?key={name}\") is dropped from the URL when the caller omits it."},
 			"state_path":        {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell mode, OPTIONAL for HTTP; REQUIRED for credentialed access) Grant the script extra callbacks back into gohort. **The bare capabilities — \"fetch\", \"log\", \"browse_page\" — are GRANTED BY DEFAULT for any shell-mode tool with script_body.** You don't need to declare them. Just `from gohort import fetch_url, browse_page, log` and call them — works out of the box. Declare ONLY when you need credentialed access: \"secret:<credential_name>\" (return the decrypted value of a credential registered via the admin UI — script then injects it itself); \"fetch_via:<credential_name>\" (PREFERRED for credentialed or scoped endpoints — gohort routes the request through that credential's Secure.Dispatch: URL allowlist enforced, auth injected server-side, audit logged, script NEVER sees the secret). Example: hook_capabilities=[\"fetch_via:openweather\"]. Usage in script: `from gohort import fetch_via; data = fetch_via(\"openweather\", \"https://api.openweathermap.org/data/2.5/weather?q=Seattle\"); body = data[\"body\"]`. For unauth public endpoints, register a no_auth credential (with the URL pattern scoping reachable endpoints) and use fetch_via:no_auth — same audit + allowlist benefits, no auth header injected. **Prefer fetch_via:<name> over fetch_url + secret:<name>** — the credential machinery does the right thing automatically and the secret stays out of the script's hands."},
@@ -114,6 +119,7 @@ func BuildToolDef() *GroupedTool {
 						"params":           {Type: "object", Description: "Param definitions for this sub-action, shape {name: {type, description}}. OPTIONAL — omit entirely for a no-param sub-action (a plain GET like list_submolts or home); do NOT invent a dummy placeholder param, the sub-action is callable with just action=\"<name>\"."},
 						"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Names of this action's params callers MUST supply. OMIT to default all required; pass [] to make all optional; or list a subset. An optional query-param placeholder (\"?key={name}\") drops from the URL when omitted."},
 						"body_template":    {Type: "string", Description: "Optional request body template. By default {param} placeholders are JSON-encoded + the result is JSON-validated. Set content_type (below) for a NON-JSON body (XML/CalDAV/iCalendar) — then placeholders substitute RAW."},
+						"headers":          {Type: "object", Description: "Optional extra request headers for THIS action as {name: value} — e.g. {\"Depth\": \"1\"} on a CalDAV REPORT/PROPFIND, without which the server returns an empty 207. Auth headers are ignored (auth comes from the credential)."},
 						"content_type":     {Type: "string", Description: "Optional Content-Type for this action's body. Empty = application/json. A non-JSON value (application/xml, text/calendar, text/xml) switches body_template to RAW substitution + no JSON validation, and sends that header — required for XML/SOAP/CalDAV/iCalendar actions."},
 						"response_pipe":    {Type: "string", Description: "Optional shell post-processor (jq, awk, ...) for the raw response."},
 						"response_extract": {Type: "object", Description: responseExtractDesc},
@@ -176,9 +182,11 @@ func BuildToolDef() *GroupedTool {
 			"command_template": {Type: "string", Description: "(shell) New command template."},
 			"method":           {Type: "string", Description: "(api) New HTTP method."},
 			"body_template":    {Type: "string", Description: "(api) New request body template."},
+			"headers":          {Type: "object", Description: "(api) Replace the extra request headers, as {name: value}. Pass {} to clear them."},
 			"content_type":     {Type: "string", Description: "(api) New body Content-Type. Non-JSON (e.g. \"application/xml\") switches to raw substitution + no JSON validation."},
 			"response_pipe":    {Type: "string", Description: "(api) New response_pipe (jq/awk post-processor)."},
 			"response_extract": {Type: "object", Description: "(api) New response_extract spec (XML→JSON). Same shape as create; see the create schema."},
+			"category":         {Type: "string", Description: "New grouping label (service/domain, e.g. \"Apple Calendar\"). Reuse the same string across a service's tools."},
 			"script_body":      {Type: "string", Description: "(shell) New script body."},
 		},
 		Required:     []string{"name"},
@@ -218,9 +226,9 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("test", &GroupedToolAction{
-		Description: "VERIFY an api/toolbox tool actually works BEFORE you call it done or hand it to a user. For every endpoint it: (1) renders the URL + body template with your sample args and checks the body is valid JSON — catches a body field that never lands (the #1 cause of a live 400 like \"content must be a string\"); (2) compile-checks the response_pipe — catches a broken jq/awk filter before it fails live; (3) for READ endpoints (GET) it makes a real call and asserts a 2xx, then runs the response_pipe against the REAL response body — catches shape mismatches a syntax check can't. WRITE endpoints (POST/PUT/PATCH/DELETE) are NOT auto-fired (that would spam the live service): their body is render-validated only, and the report tells you to make one manual call and confirm a 2xx yourself. Pass `cases` with representative inputs per action so read probes and body renders have real values to work with (e.g. a real post_id for get_post). Returns a per-endpoint PASS/FAIL table. Run this, fix every FAIL by action=\"update\", and re-run until green — an unexercised toolbox action is a live grenade.",
+		Description: "VERIFY a tool actually works BEFORE you call it done or hand it to a user. SHELL tools: syntax-checks the script (an unterminated string or bad indent means every call dies before doing any work — this catches it without touching the live service), reports how each required param reaches the script, and — when you pass `cases` — RUNS the tool for real with those args and reports the exit status. A shell tool with no case stays UNVERIFIED: executing it is the only proof. API/TOOLBOX tools: for every endpoint it: (1) renders the URL + body template with your sample args and checks the body is valid JSON — catches a body field that never lands (the #1 cause of a live 400 like \"content must be a string\"); (2) compile-checks the response_pipe — catches a broken jq/awk filter before it fails live; (3) for READ endpoints (GET/HEAD and the read-only WebDAV queries REPORT/PROPFIND/SEARCH) it makes a real call and asserts a 2xx, then runs the response_pipe against the REAL response body — catches shape mismatches a syntax check can't. WRITE endpoints (POST/PUT/PATCH/DELETE) are NOT auto-fired (that would spam the live service): their body is render-validated only, and the report tells you to make one manual call and confirm a 2xx yourself. Pass `cases` with representative inputs per action so read probes and body renders have real values to work with (e.g. a real post_id for get_post). Returns a per-endpoint PASS/FAIL table. Run this, fix every FAIL by action=\"update\", and re-run until green — an unexercised toolbox action is a live grenade.",
 		Params: map[string]ToolParam{
-			"name":  {Type: "string", Description: "Name of the api or toolbox tool to verify."},
+			"name":  {Type: "string", Description: "Name of the shell, api or toolbox tool to verify."},
 			"cases": {Type: "array", Description: "Sample inputs to exercise. Array of objects: {action?: \"<sub-action>\" (toolbox only — omit for a single api tool), args: {param: value, ...}}. Provide one per endpoint you want live-probed or body-validated; give real values (a genuine id, a valid query) so read probes hit 2xx. Endpoints with no case still get offline checks (pipe compile-check, and body render when they need no required args).", Items: &ToolParam{Type: "object"}},
 		},
 		Required: []string{"name"},
@@ -429,7 +437,28 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 
 // createGrouped dispatches between create_temp_tool (shell) and
 // create_api_tool (api) based on the mode arg.
+// persistentToolLocked reports whether a tool of this name is Locked in the
+// user's persistent pool. Lock is a user-only control set from Extensions ›
+// My tools; the AI's create/update/delete honor it so a stable tool can't be
+// silently rewritten or removed. Session-only drafts (never locked) don't count.
+func persistentToolLocked(sess *ToolSession, name string) bool {
+	if sess == nil || sess.DB == nil || sess.Username == "" || name == "" {
+		return false
+	}
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			return p.Tool.Locked
+		}
+	}
+	return false
+}
+
+const lockedToolMsg = "Tool %q is LOCKED — it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › My tools, then it's editable. Do NOT recreate it under a different name."
+
 func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	if name := strings.TrimSpace(StringArg(args, "name")); persistentToolLocked(sess, name) {
+		return fmt.Sprintf(lockedToolMsg, name), nil
+	}
 	mode := strings.TrimSpace(StringArg(args, "mode"))
 	switch mode {
 	case "", TempToolModeShell:
@@ -440,6 +469,7 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			"description":      args["description"],
 			"params":           args["params"],
 			"command_template": args["command_template"],
+			"category":         args["category"],
 		}
 		if r, ok := args["required"]; ok {
 			shellArgs["required"] = r
@@ -480,6 +510,7 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			"params":       args["params"],
 			"credential":   args["credential"],
 			"url_template": args["url_template"],
+			"category":     args["category"],
 		}
 		if v, ok := args["method"]; ok {
 			apiArgs["method"] = v
@@ -489,6 +520,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if v, ok := args["content_type"]; ok {
 			apiArgs["content_type"] = v
+		}
+		if v, ok := args["headers"]; ok {
+			apiArgs["headers"] = v
 		}
 		if v, ok := args["response_pipe"]; ok {
 			apiArgs["response_pipe"] = v
@@ -650,6 +684,9 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		//     ends the loop and the write actually works.
 		//   - a body_template exists but still misses them → a real key mismatch;
 		//     keep the actionable error so the author fixes the keys.
+		if missing := pathPlaceholderParams(urlTpl, actRequired); len(missing) > 0 {
+			return "", fmt.Errorf("action %q: "+pathPlaceholderMsg, actName, missing, missing[0], missing[0])
+		}
 		if unsent := unsentWriteParams(method, urlTpl, bodyTpl, actRequired); len(unsent) > 0 {
 			if bodyTpl != "" {
 				return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE — this %s action's body_template doesn't reference them, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add them to the body_template, e.g. {\"content\": {content}}", i, actName, unsent, method)
@@ -666,6 +703,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			Method:          method,
 			BodyTemplate:    bodyTpl,
 			ContentType:     strings.TrimSpace(StringArg(m, "content_type")),
+			Headers:         stringMapArg(m, "headers"),
 			ResponsePipe:    strings.TrimSpace(StringArg(m, "response_pipe")),
 			ResponseExtract: ParseExtractSpec(m["response_extract"]),
 			Disabled:        BoolArg(m, "disabled"),
@@ -678,6 +716,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		Credential:  credential,
 		Actions:     actions,
 		Expand:      BoolArg(args, "expand"),
+		Category:    strings.TrimSpace(StringArg(args, "category")),
 	}
 	sess.RemoveTempTool(tool.Name)
 	if err := sess.AppendTempTool(tool); err != nil {
@@ -968,6 +1007,9 @@ func actionToArgs(a TempToolAction) map[string]any {
 	if a.ContentType != "" {
 		m["content_type"] = a.ContentType
 	}
+	if len(a.Headers) > 0 {
+		m["headers"] = a.Headers
+	}
 	if a.ResponsePipe != "" {
 		m["response_pipe"] = a.ResponsePipe
 	}
@@ -992,6 +1034,9 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		"name":        tt.Name,
 		"description": tt.Description,
 		"mode":        mode,
+	}
+	if tt.Category != "" {
+		out["category"] = tt.Category
 	}
 	if tt.Credential != "" {
 		out["credential"] = tt.Credential
@@ -1029,6 +1074,9 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		// the body then failed as "invalid character '<'". Preserve it.
 		if tt.ContentType != "" {
 			out["content_type"] = tt.ContentType
+		}
+		if len(tt.Headers) > 0 {
+			out["headers"] = tt.Headers
 		}
 		if tt.ResponsePipe != "" {
 			out["response_pipe"] = tt.ResponsePipe
@@ -1109,6 +1157,9 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
+	if persistentToolLocked(sess, name) {
+		return fmt.Sprintf(lockedToolMsg, name), nil
+	}
 	existing, ok := loadExistingToolRecord(sess, name)
 	if !ok {
 		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
@@ -1135,7 +1186,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// Patch top-level scalar fields when provided (present = intent to change).
 	// "expand" (toolbox presentation toggle) rides the same present-means-change
 	// path — BoolArg in createToolboxGrouped reads whatever value lands here.
-	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "response_pipe", "response_extract", "script_body", "script_name", "expand"} {
+	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "headers", "response_pipe", "response_extract", "category", "script_body", "script_name", "expand"} {
 		if v, present := args[f]; present {
 			merged[f] = v
 		}
@@ -1247,6 +1298,9 @@ func securedBindingCreds(tt TempTool) map[string]bool {
 
 func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
+	if persistentToolLocked(sess, name) {
+		return fmt.Sprintf(lockedToolMsg, name), nil
+	}
 	// Forget this tool's secured-credential bindings (approved/pending) on delete —
 	// tidy-up under auto-resolve. A revoke tombstone is deliberately KEPT so an
 	// admin's deny survives a delete + same-name recreate.
@@ -1309,21 +1363,34 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 
 	// Flatten to a uniform endpoint list. A single api tool becomes one
 	// synthetic endpoint; a toolbox contributes each of its actions.
+	//
+	// Mode is resolved through effectiveTempToolMode, NOT read raw: shell
+	// tools are stored with Mode=="" (the legacy spelling — see
+	// createGrouped and add_tool), so a raw `case TempToolModeAPI, ""`
+	// swept every shell tool into the api path and "verified" it by
+	// HTTP-GETting its command_template. That produced the nonsense
+	// `unsupported protocol scheme ""` verdict on a working script and
+	// sent the authoring model editing command_template in a loop trying
+	// to make a python3 invocation look like a URL.
 	var endpoints []TempToolAction
-	switch tt.Mode {
+	switch effectiveTempToolMode(tt) {
 	case TempToolModeToolbox:
 		endpoints = tt.Actions
-	case TempToolModeAPI, "":
+	case TempToolModeShell:
+		return testShellTool(tt, args, sess)
+	case TempToolModeAPI:
 		if strings.TrimSpace(tt.CommandTemplate) == "" {
 			return "", fmt.Errorf("tool %q has no url_template — nothing to probe", name)
 		}
 		endpoints = []TempToolAction{{
 			Name: name, Params: tt.Params, Required: tt.Required,
 			URLTemplate: tt.CommandTemplate, Method: tt.Method,
-			BodyTemplate: tt.BodyTemplate, ResponsePipe: tt.ResponsePipe,
+			BodyTemplate: tt.BodyTemplate, ContentType: tt.ContentType,
+			Headers: tt.Headers,
+			ResponsePipe: tt.ResponsePipe, ResponseExtract: tt.ResponseExtract,
 		}}
 	default:
-		return "", fmt.Errorf("tool %q is mode=%q — test verifies api/toolbox tools (the ones that call live endpoints). For shell/script tools, exercise the script with local(run) instead", name, tt.Mode)
+		return "", fmt.Errorf("tool %q is mode=%q — test verifies shell, api and toolbox tools. For a %s tool, exercise it by calling it directly with real args", name, tt.Mode, tt.Mode)
 	}
 	if len(endpoints) == 0 {
 		return "", fmt.Errorf("tool %q has no endpoints to test", name)
@@ -1342,14 +1409,19 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if !netOK {
 		b.WriteString("(network is blocked this turn — running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
 	}
-	failCount, writeManual := 0, 0
+	failCount, writeManual, emptyRead := 0, 0, 0
 
 	for _, ep := range endpoints {
 		method := strings.ToUpper(strings.TrimSpace(ep.Method))
 		if method == "" {
 			method = "GET"
 		}
-		isRead := method == "GET" || method == "HEAD"
+		// GET/HEAD and the read-only WebDAV query methods (REPORT, PROPFIND,
+		// SEARCH — RFC 3253/4918) are safe to live-fire: they QUERY, never
+		// mutate. A CalDAV list_events is a REPORT; without this it was
+		// misclassified as a write, so verify refused to fire it and the model
+		// punted a manual call to the user for a plain read.
+		isRead := method == "GET" || method == "HEAD" || method == "REPORT" || method == "PROPFIND" || method == "SEARCH"
 		sample := cases[strings.ToLower(ep.Name)]
 		if sample == nil {
 			sample = cases[""] // single-api-tool convenience: unlabeled case
@@ -1445,6 +1517,22 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 							pass("response_pipe runs clean on the real response")
 						}
 					}
+					// A 2xx that carried NO records is the single most
+					// misleading result this action can produce. It proves the
+					// request was well-formed and says NOTHING about whether the
+					// query is right — and it is exactly what a CalDAV REPORT
+					// missing its Depth header returns (an empty 207
+					// multistatus). Reported live: "all endpoints passed, tool
+					// verified" on a list tool that could never return an event,
+					// while the user was saying it didn't work.
+					//
+					// Not a FAIL — an empty collection is a legitimate state for
+					// a fresh account — but it must never read as proof the tool
+					// returns data.
+					if emptyResultBody(body, ep) {
+						note("live call returned 2xx but ZERO records — this proves the request is well-formed, NOT that the query is right. If you expected data: check the filter/date-range, and for WebDAV/CalDAV check headers (a REPORT/PROPFIND without \"Depth\": \"1\" matches nothing and returns exactly this). Confirm against data you know exists before calling it done.")
+						emptyRead++
+					}
 				}
 			default:
 				note("read endpoint NOT live-probed — no sample args for required %v (pass a case with real values to hit the live API)", ep.Required)
@@ -1478,11 +1566,280 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	case writeManual > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired — needs one manual live call each to confirm a 2xx", writeManual))
 		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each — fire one, confirm a 2xx, then it's done.", writeManual)
+	case emptyRead > 0:
+		// Checks passed, but every read came back empty — the tool is
+		// UNPROVEN, not verified. Signing it off here is what let a list tool
+		// that could never return a row ship as "verified".
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) returned 2xx with zero records — not proven to return data", emptyRead))
+		fmt.Fprintf(&b, "RESULT: the request shape is valid, but %d read endpoint(s) came back EMPTY — nothing here proves the tool returns data. Point a case at a record you KNOW exists and re-run; if it is still empty, the query (filter, date range, headers) is wrong, not the plumbing.", emptyRead)
 	default:
 		RecordToolVerification(sess, name, true, "")
 		b.WriteString("RESULT: all endpoints passed. Tool verified.")
 	}
 	return b.String(), nil
+}
+
+// effectiveTempToolMode resolves a stored record's mode. Mode=="" is the
+// legacy spelling of shell (createGrouped, add_tool and the shell dispatch
+// path all treat it that way), so an empty mode resolves to shell — EXCEPT
+// for a record whose command_template is plainly an http(s) URL, which is an
+// api tool written before Mode was populated. Never returns "".
+func effectiveTempToolMode(tt TempTool) string {
+	if m := strings.TrimSpace(tt.Mode); m != "" {
+		return m
+	}
+	cmd := strings.TrimSpace(tt.CommandTemplate)
+	if strings.HasPrefix(cmd, "http://") || strings.HasPrefix(cmd, "https://") {
+		return TempToolModeAPI
+	}
+	return TempToolModeShell
+}
+
+// testShellTool verifies a shell-mode tool. There are no endpoints to probe,
+// so the checks are the ones that actually catch shell-tool bugs:
+//
+//	(1) the script PARSES — an unterminated string or a bad indent means every
+//	    dispatch dies before doing any work, and nothing else in the report
+//	    matters until it's fixed;
+//	(2) each required param has a delivery route the script can read;
+//	(3) the tool actually RUNS, for real, with the author's sample args.
+//
+// (3) is the only thing that verifies a shell tool — there is no offline
+// substitute — so a tool tested without `cases` stays UNVERIFIED and the
+// report says why. The run is a genuine dispatch: the tool's side effects
+// happen. Pass sample args you're willing to have executed.
+func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string, error) {
+	cases := parseTestCases(args["cases"])
+	sample := cases[strings.ToLower(tt.Name)]
+	if sample == nil {
+		sample = cases[""] // single-tool convenience: unlabeled case
+	}
+
+	var lines []string
+	failed := false
+	fail := func(f string, a ...any) { lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...)); failed = true }
+	pass := func(f string, a ...any) { lines = append(lines, "ok    "+fmt.Sprintf(f, a...)) }
+	note := func(f string, a ...any) { lines = append(lines, "note  "+fmt.Sprintf(f, a...)) }
+
+	// A. Does the script parse? Runs the interpreter's own syntax checker —
+	//    no args, no network, no side effects. This is the deterministic
+	//    catch for the class where a tool was authored with a broken
+	//    f-string / quote and every single call returns a SyntaxError.
+	if strings.TrimSpace(tt.ScriptBody) != "" {
+		lang, problem, checked := scriptSyntaxCheck(tt)
+		switch {
+		case !checked:
+			note("script_body not syntax-checked (no checker available for this language) — the live run is the only proof")
+		case problem != "":
+			fail("script_body has a SYNTAX ERROR — every dispatch dies before the tool does any work: %s", problem)
+		default:
+			pass("script_body parses clean (%s)", lang)
+		}
+	} else if strings.Contains(tt.CommandTemplate, "{workspace_dir}") {
+		note("no script_body on the record, but command_template references a workspace file — the tool breaks the moment that workspace is wiped. Re-author with script_body so the script travels with the tool record.")
+	}
+
+	// B. Param delivery. A shell tool receives every arg BOTH as a {param}
+	//    substitution in command_template AND as a lowercase env var, so a
+	//    param missing from the template is not a bug the way it is for an
+	//    api tool — it just means the script must read it from the
+	//    environment. Report the route rather than failing on it.
+	var envOnly []string
+	for _, r := range tt.Required {
+		if !strings.Contains(tt.CommandTemplate, "{"+r+"}") {
+			envOnly = append(envOnly, r)
+		}
+	}
+	switch {
+	case len(envOnly) > 0:
+		note("required param(s) %v are not in command_template — they reach the script ONLY as lowercase env vars (os.environ[%q] / $%s). Confirm the script reads them there, not from argv.", envOnly, envOnly[0], envOnly[0])
+	case len(tt.Required) > 0:
+		pass("every required param is substituted into command_template")
+	}
+
+	// C. The real run.
+	ran := false
+	switch {
+	case sample == nil:
+		note("tool NOT run — pass cases=[{args:{...}}] with real values. Running it is the ONLY thing that verifies a shell tool; the checks above can't.")
+	case !coversRequired(sample, tt.Required):
+		note("tool NOT run — the supplied case doesn't cover required %v. Pass a value for each.", tt.Required)
+	default:
+		ran = true
+		out, derr := DispatchTempToolDirect(sess, &tt, sample)
+		switch {
+		case derr != nil:
+			fail("live run FAILED: %v", derr)
+		case shellRunFailed(out):
+			fail("live run returned a non-zero exit / timeout: %s", oneLine(out, 300))
+		default:
+			pass("live run succeeded — output: %s", oneLine(out, 200))
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Verification report for %q (shell tool):\n\n", tt.Name)
+	verdict := "PASS"
+	if failed {
+		verdict = "FAIL"
+	} else if !ran {
+		verdict = "UNVERIFIED"
+	}
+	fmt.Fprintf(&b, "[%s] %s\n", verdict, tt.Name)
+	for _, l := range lines {
+		fmt.Fprintf(&b, "   %s\n", l)
+	}
+	b.WriteByte('\n')
+
+	switch {
+	case failed:
+		RecordToolVerification(sess, tt.Name, false, "shell tool failed verification")
+		b.WriteString("RESULT: FAILED. Fix with tool_def(action=\"update\", script_body=\"...\") and re-run test until it's green. Do NOT call this tool done or hand it to a user while it FAILs.")
+	case !ran:
+		RecordToolVerification(sess, tt.Name, false, "never run — test was called without cases")
+		b.WriteString("RESULT: NOT VERIFIED. The static checks passed, but the tool was never executed. Re-run: tool_def(action=\"test\", name=\"" + tt.Name + "\", cases=[{args:{...}}]) with real values.")
+	default:
+		RecordToolVerification(sess, tt.Name, true, "")
+		b.WriteString("RESULT: ran clean with the supplied args. Tool verified.")
+	}
+	return b.String(), nil
+}
+
+// shellRunFailed reports whether a shell dispatch result is the framework's
+// rendering of a non-zero exit or a killed command. dispatchTempTool returns
+// those as OUTPUT with a trailing marker rather than as an error, so a report
+// that only checks err would call a script that died on line 1 a success.
+func shellRunFailed(out string) bool {
+	return strings.Contains(out, "[exit: ") || strings.Contains(out, "[TIMED OUT")
+}
+
+// scriptSyntaxCheck parses tt.ScriptBody with the interpreter's own syntax
+// checker inside the sandbox. Returns the language, a one-line problem
+// description (empty when it parses), and whether a verdict could be reached
+// at all — an unknown extension or a missing interpreter yields checked=false
+// rather than a false accusation of a syntax error.
+func scriptSyntaxCheck(tt TempTool) (lang, problem string, checked bool) {
+	name := tt.CanonicalScriptName
+	if name == "" {
+		name = tt.ScriptName
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		// No filename on the record — infer from the interpreter the
+		// command_template invokes.
+		switch {
+		case strings.Contains(tt.CommandTemplate, "python"):
+			ext = ".py"
+		case strings.Contains(tt.CommandTemplate, "bash"), strings.Contains(tt.CommandTemplate, "sh "):
+			ext = ".sh"
+		case strings.Contains(tt.CommandTemplate, "node"):
+			ext = ".js"
+		}
+	}
+	var checker string
+	switch ext {
+	case ".py":
+		lang, checker = "python3", "python3 -m py_compile %s"
+	case ".sh", ".bash":
+		lang, checker = "bash", "bash -n %s"
+	case ".js":
+		lang, checker = "node", "node --check %s"
+	case ".rb":
+		lang, checker = "ruby", "ruby -c %s"
+	default:
+		return "", "", false
+	}
+
+	dir, err := MintToolDispatchDir("toolsyntax-")
+	if err != nil {
+		return lang, "", false
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	path := filepath.Join(dir, "script"+ext)
+	if werr := os.WriteFile(path, []byte(tt.ScriptBody), 0700); werr != nil {
+		return lang, "", false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	res := RunSandboxedShell(ctx, fmt.Sprintf(checker, shellQuote(path)), dir)
+	if res.Err == nil && !res.TimedOut {
+		return lang, "", true
+	}
+	// A non-zero exit is only evidence of a SYNTAX problem when the output
+	// says so. Anything else (interpreter not installed, sandbox refused,
+	// timeout) is a checker failure, not the author's bug — say nothing
+	// rather than send them rewriting a script that's fine.
+	out := strings.TrimSpace(res.Output)
+	low := strings.ToLower(out)
+	for _, marker := range []string{"syntaxerror", "syntax error", "unexpected", "indentationerror", "parse error", "unterminated"} {
+		if strings.Contains(low, marker) {
+			return lang, oneLine(out, 300), true
+		}
+	}
+	return lang, "", false
+}
+
+// stringMapArg reads a {name: value} object arg into a string map, tolerating
+// the shapes an LLM actually emits: a JSON object (the normal path) or a JSON
+// STRING containing one (models quote objects surprisingly often). Non-string
+// values are stringified rather than dropped, so headers={"Depth": 1} still
+// sends "1" instead of silently sending nothing. Returns nil when empty, so an
+// absent field stays absent through the create/update round-trip.
+func stringMapArg(args map[string]any, key string) map[string]string {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	// Already a string map — the shape tempToolToCreateArgs emits when an
+	// update round-trips a stored tool. Missing this case is how a field
+	// survives create and vanishes on the next unrelated edit.
+	if m, ok := raw.(map[string]string); ok {
+		if len(m) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(m))
+		for k, v := range m {
+			if k = strings.TrimSpace(k); k != "" {
+				out[k] = v
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	if str, isStr := raw.(string); isStr {
+		str = strings.TrimSpace(str)
+		if str == "" {
+			return nil
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(str), &m); err != nil {
+			return nil
+		}
+		raw = m
+	}
+	m, isMap := raw.(map[string]any)
+	if !isMap || len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		k = strings.TrimSpace(k)
+		if k == "" || v == nil {
+			continue
+		}
+		if str, isStr := v.(string); isStr {
+			out[k] = str
+			continue
+		}
+		out[k] = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // parseTestCases normalizes the `cases` arg into action-name → args.
@@ -1534,7 +1891,16 @@ func liveProbe(sess *ToolSession, cred string, ep TempToolAction, sample map[str
 	syn := TempTool{
 		Name: "test." + ep.Name, Params: ep.Params, Required: ep.Required,
 		Mode: TempToolModeAPI, CommandTemplate: ep.URLTemplate, Credential: cred,
-		Method: ep.Method, BodyTemplate: ep.BodyTemplate, ResponsePipe: "",
+		Method: ep.Method, BodyTemplate: ep.BodyTemplate,
+		// Carry content_type so a raw XML/CalDAV/iCalendar body is sent as-is
+		// (not JSON-validated). ResponsePipe + ResponseExtract are suppressed:
+		// the probe only confirms a live 2xx; projection/extraction correctness
+		// is checked separately, and running them here could turn a healthy 2xx
+		// into a spurious FAIL.
+		// Headers MUST ride along: probing without the Depth header a CalDAV
+		// REPORT requires would test a different request than dispatch sends,
+		// and report a 2xx for a call the real tool can't make work.
+		ContentType: ep.ContentType, Headers: ep.Headers, ResponsePipe: "",
 	}
 	inner := canonicalizeArgKeys(cloneArgs(sample), ep.Required, ep.Params)
 	raw, derr := dispatchAPIModeTempTool(sess, &syn, inner)
@@ -1543,6 +1909,43 @@ func liveProbe(sess *ToolSession, cred string, ep TempToolAction, sample map[str
 	}
 	status, body = splitStatusLine(raw)
 	return status, body, nil
+}
+
+// emptyResultBody reports whether a 2xx response carried no records. It is
+// deliberately conservative — only shapes that unambiguously mean "nothing
+// came back" count, because a false positive would nag about a healthy tool.
+//
+// Recognized: an empty body; a bare empty JSON array/object; and the WebDAV
+// signature that motivated this check — a multistatus element with no
+// <response> children, which is what a CalDAV REPORT returns when it matched
+// nothing (classically, a missing Depth header). When the endpoint declares a
+// response_extract, the extraction is run and its RESULT is what's judged: an
+// extractor yielding [] over a body full of XML is still zero records.
+func emptyResultBody(body string, ep TempToolAction) bool {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return true
+	}
+	if ep.ResponseExtract != nil {
+		out, err := ExtractXML([]byte(trimmed), *ep.ResponseExtract)
+		if err != nil {
+			return false // extraction problems are reported elsewhere
+		}
+		trimmed = strings.TrimSpace(string(out))
+	}
+	switch trimmed {
+	case "[]", "{}", "null":
+		return true
+	}
+	// WebDAV: <multistatus/> or <multistatus ...></multistatus> with no
+	// <response> child. Namespace prefixes vary (D:, d:, none), so match on
+	// the local name rather than a fixed spelling.
+	low := strings.ToLower(trimmed)
+	if strings.Contains(low, "multistatus") && !strings.Contains(low, "<response") &&
+		!strings.Contains(low, ":response") {
+		return true
+	}
+	return false
 }
 
 // pipeCompileError runs a response_pipe against a trivial JSON doc and
@@ -1577,6 +1980,50 @@ func runPipeAgainst(pipe, body string) string {
 		return oneLine(res.Output, 200)
 	}
 	return ""
+}
+
+// pathPlaceholderMsg is the authoring error for an optional PATH placeholder.
+// Shared by the single-api-tool and toolbox-action create paths so both refuse
+// the same shape with the same guidance.
+const pathPlaceholderMsg = "param(s) %v are interpolated into the url_template's PATH but are not required — url substitution has nothing to put there when they're omitted, so the call dies at dispatch with `url template: missing arg \"%s\"`. Either add them to required, or move them to the query string (\"?key={%s}\"), where an omitted placeholder legitimately drops out of the URL"
+
+// placeholderRE matches a {param} interpolation in a URL or body template.
+var placeholderRE = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// pathPlaceholderParams returns the params a url_template interpolates into its
+// PATH — the segment before any "?" — that are not in required.
+//
+// A path placeholder cannot be optional: url-template substitution has nothing
+// to put there when the arg is absent, so the call dies with `url template:
+// missing arg "uid"` at DISPATCH time, long after authoring, with an error that
+// reads like a framework bug rather than a spec mistake. (Seen live on an
+// iCloud CalDAV create tool whose "{uid}.ics" filename param was declared
+// optional — the model then invented a uid to get past it.)
+//
+// QUERY placeholders are deliberately excluded: "?since={cursor}" legitimately
+// drops out of the URL when omitted, which is the documented optional-query
+// behavior.
+func pathPlaceholderParams(urlTpl string, required []string) []string {
+	path := urlTpl
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	req := map[string]bool{}
+	for _, r := range required {
+		req[r] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range placeholderRE.FindAllStringSubmatch(path, -1) {
+		name := m[1]
+		if name == "" || req[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // unsentWriteParams returns the required params of a WRITE action (POST/PUT/
@@ -2053,6 +2500,10 @@ Then in the script:
   #   fetch_via("apple_caldav", url, method="PROPFIND", body=xml,
   #             headers={"Depth": "1", "Content-Type": "application/xml"})
   # The credential's auth header always wins over anything you pass.
+  # Returns {status, status_line, body}; status is the NUMERIC code, same
+  # as fetch_url, so a plain  if r["status"] != 200:  works unchanged.
+  # Do NOT write  int(r["status"].split()[1])  — that was a workaround
+  # for an older shape and now raises on an int.
 
 (secret:<name> exists for the rare API that can't be reached that
 way — the script gets the decrypted value and injects it itself.
@@ -2138,6 +2589,64 @@ URL placeholders are URL-encoded at dispatch. Body placeholders are
 JSON-encoded. Both are safe against injection.
 
 ================================================================
+WebDAV / CalDAV — the Depth header is not optional
+================================================================
+
+A calendar-query REPORT (or a PROPFIND) applies at the DEPTH the
+request asks for. Depth 0 means "the collection resource itself" —
+which is never a VEVENT — so the server answers 207 Multi-Status
+with an EMPTY multistatus and no error anywhere:
+
+  <?xml version="1.0" encoding="UTF-8"?><multistatus xmlns="DAV:"/>
+
+That is indistinguishable from "the calendar has no events." It is
+the single most common reason a CalDAV read tool looks correct,
+verifies clean, and returns nothing forever. Set the header:
+
+  tool_def(action=create, mode="api",
+           name="list_calendar_events",
+           credential="apple_caldav",
+           url_template="/{principal}/calendars/{calendar_id}/",
+           method="REPORT",
+           headers={"Depth": "1"},
+           content_type="application/xml",
+           body_template="""<?xml version="1.0" encoding="utf-8" ?>
+             <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+               <d:prop><d:getetag/><c:calendar-data/></d:prop>
+               <c:filter>
+                 <c:comp-filter name="VCALENDAR">
+                   <c:comp-filter name="VEVENT">
+                     <c:time-range start="{start}" end="{end}"/>
+                   </c:comp-filter>
+                 </c:comp-filter>
+               </c:filter>
+             </c:calendar-query>""",
+           response_extract={"select": "response",
+                             "where": {"has": "calendar-data"},
+                             "fields": {"href": "href", "ical": "calendar-data"}},
+           params={...})
+
+Rules that make the difference between working and silently empty:
+  * headers={"Depth": "1"} on REPORT and PROPFIND. Always.
+  * The filter MUST nest comp-filter VCALENDAR > VEVENT > time-range.
+    A time-range at the VCALENDAR level matches nothing — same empty
+    207, no error.
+  * <c:calendar-data/> is a SELF-CLOSING prop. Putting <d:prop>
+    children inside it (<d:summary/> etc.) is not a partial-retrieval
+    spec and returns nothing useful — those are iCalendar properties,
+    not DAV ones.
+  * content_type="application/xml" so the body substitutes RAW.
+  * Parse with response_extract, not a hand-written XML pipe.
+  * A WRITE is a plain PUT of one .ics to <calendar>/<uid>.ics with
+    content_type="text/calendar" — no Depth, no filter. A create tool
+    working proves NOTHING about a read tool: they exercise different
+    verbs, different headers, and different server-side logic.
+
+If a read returns 2xx with zero records, check in this order:
+Depth header, filter nesting, the time range, and only THEN the
+calendar path — a path that accepts a PUT is a path that exists.
+
+================================================================
 toolbox mode — wrap a whole API surface
 ================================================================
 
@@ -2209,10 +2718,10 @@ When NOT to use toolbox:
     a wrapper around one API.
 
 ================================================================
-verify — action="test" (DO THIS BEFORE YOU CALL AN API TOOL DONE)
+verify — action="test" (DO THIS BEFORE YOU CALL A TOOL DONE)
 ================================================================
 
-Authoring an api/toolbox tool and NOT exercising it is how a broken
+Authoring a tool and NOT exercising it is how a broken
 tool reaches a user: a POST action with no body_template (so a required
 field is never sent → live 400 "content must be a string"), a jq
 response_pipe with a syntax error, a URL that 404s. action="test"
@@ -2245,6 +2754,26 @@ Pass a cases entry per endpoint with REAL values so reads hit 2xx.
 Returns a PASS/FAIL table. Fix every FAIL with action="update" and
 re-run until green. Treat a tool as done only when test is clean and
 each write endpoint has had one confirmed live call.
+
+SHELL tools go through the same action, with checks that fit a script:
+
+    tool_def(action="test",
+             name="create_calendar_entry",
+             cases=[{args: {summary: "test", start_time: "...",
+                            end_time: "..."}}])
+
+  * Syntax-checks script_body with the real interpreter (python3 -m
+    py_compile, bash -n, node --check). An unterminated string or a
+    bad indent fails HERE instead of on every future call.
+  * Reports how each required param reaches the script: substituted
+    into command_template, or ONLY as a lowercase env var (params are
+    always exported as env vars — os.environ["summary"], $summary).
+  * RUNS the tool with your case args and checks the exit status.
+    This is a genuine dispatch — its side effects really happen, so
+    pass args you're willing to have executed.
+
+Without a cases entry a shell tool reports UNVERIFIED, not PASS:
+running it is the only thing that proves a script works.
 
 ================================================================
 persist

@@ -1259,20 +1259,47 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 // per-credential tool. sess provides workspace context for save_to;
 // nil disables the save_to capability for this call.
 func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
-	return s.dispatchToolCall(sess, credName, urlStr, method, body, "", false)
+	return s.DispatchToolCallRequest(sess, ToolCallRequest{
+		Credential: credName, URL: urlStr, Method: method, Body: body,
+	})
+}
+
+// ToolCallRequest is one api-mode dispatch through a named credential. It
+// exists because the parameter list outgrew a readable signature once headers
+// joined url/method/body/content-type/pipe-hint — and because a caller that
+// forgets a field should get a zero value, not a silently shifted argument.
+type ToolCallRequest struct {
+	Credential  string
+	URL         string
+	Method      string
+	Body        string
+	ContentType string // empty defaults to application/json when a body is present
+	// Headers are extra request headers ({name: value}). Auth headers are
+	// dropped at the request-build layer — auth comes from the credential.
+	Headers map[string]string
+	// PipeFollowing signals the caller will run the response through a
+	// sandboxed pipe, so the body is read with a higher byte cap and without
+	// the truncation marker. Only set it when a pipe genuinely runs.
+	PipeFollowing bool
+}
+
+// DispatchToolCallRequest is the full-shape entry point behind the
+// DispatchToolCall* wrappers.
+func (s *SecureAPI) DispatchToolCallRequest(sess *ToolSession, r ToolCallRequest) (string, error) {
+	return s.dispatchToolCall(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers)
 }
 
 // DispatchToolCallCT is DispatchToolCall with an explicit request Content-Type
 // (empty defaults to application/json). Used by api-mode tools that declare a
 // non-JSON body (e.g. application/xml for CalDAV/SOAP).
 func (s *SecureAPI) DispatchToolCallCT(sess *ToolSession, credName, urlStr, method, body, contentType string) (string, error) {
-	return s.dispatchToolCall(sess, credName, urlStr, method, body, contentType, false)
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, contentType, false, nil)
 }
 
 // DispatchToolCallForPipeCT is DispatchToolCallForPipe with an explicit
 // Content-Type (see DispatchToolCallCT).
 func (s *SecureAPI) DispatchToolCallForPipeCT(sess *ToolSession, credName, urlStr, method, body, contentType string) (string, error) {
-	return s.dispatchToolCall(sess, credName, urlStr, method, body, contentType, true)
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, contentType, true, nil)
 }
 
 // DispatchToolCallForPipe is identical to DispatchToolCall but signals
@@ -1284,10 +1311,10 @@ func (s *SecureAPI) DispatchToolCallForPipeCT(sess *ToolSession, credName, urlSt
 // pipe is genuinely going to run; calling this without piping leaks
 // the full response into LLM context.
 func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
-	return s.dispatchToolCall(sess, credName, urlStr, method, body, "", true)
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, "", true, nil)
 }
 
-func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool) (string, error) {
+func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -1314,6 +1341,9 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 		if contentType != "" {
 			args["__content_type"] = contentType
 		}
+		if h := toolCallHeaderArgs(headers); h != nil {
+			args["request_headers"] = h
+		}
 		return s.dispatch(synth, args, sess)
 	}
 	c, ok := s.Resolve(credName, sessUsername(sess))
@@ -1333,7 +1363,25 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 	if pipeFollowing {
 		args["__pipe_following"] = true
 	}
+	if h := toolCallHeaderArgs(headers); h != nil {
+		args["request_headers"] = h
+	}
 	return s.dispatch(c, args, sess)
+}
+
+// toolCallHeaderArgs converts a tool's declared headers into the map shape
+// dispatch reads. Returns nil for an empty set so the arg stays absent rather
+// than present-and-empty. Auth headers are dropped by dispatch itself, so no
+// filtering is needed here.
+func toolCallHeaderArgs(headers map[string]string) map[string]any {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(headers))
+	for k, v := range headers {
+		out[k] = v
+	}
+	return out
 }
 
 // dispatch is the handler logic for one credential's tool. Validates

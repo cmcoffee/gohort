@@ -932,19 +932,41 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	// prefixed text. Split the first line as the status hint and
 	// return both pieces structured so the script doesn't have to
 	// parse the prefix itself.
-	status := ""
+	statusLine := ""
 	respBody := out
 	if idx := strings.IndexByte(out, '\n'); idx >= 0 {
 		first := strings.TrimSpace(out[:idx])
 		if len(first) <= 100 {
-			status = first
+			statusLine = first
 			respBody = out[idx+1:]
 		}
 	}
+	// "status" is the numeric code, matching fetch_url / browse_page and the
+	// documented guard `if result["status"] != 200`. It used to be the raw
+	// status LINE ("HTTP 207 Multi-Status"), so the same comparison that
+	// worked with fetch_url silently failed here — authored scripts ended up
+	// carrying `int(r['status'].split()[1]) if isinstance(r['status'], str)
+	// else r['status']` to paper over the difference. The full line stays
+	// available as status_line for anything that wants the reason phrase.
 	writeHookResult(conn, map[string]interface{}{
-		"status": status,
-		"body":   respBody,
+		"status":      statusCodeFromLine(statusLine),
+		"status_line": statusLine,
+		"body":        respBody,
 	})
+}
+
+// statusCodeFromLine pulls the numeric code out of a status line like
+// "HTTP 207 Multi-Status" (the shape SecureAPI.DispatchToolCall prefixes onto
+// a response). Returns 0 when there's no code to find, which reads as "not
+// 2xx" in the standard `if result["status"] != 200` guard rather than
+// masquerading as success.
+func statusCodeFromLine(line string) int {
+	for _, f := range strings.Fields(line) {
+		if n, err := strconv.Atoi(f); err == nil && n >= 100 && n <= 599 {
+			return n
+		}
+	}
+	return 0
 }
 
 // --- wire helpers ---
@@ -1238,7 +1260,17 @@ class _Gohort:
         optional dict of extra request headers (e.g. {"Depth": "1"} for
         CalDAV PROPFIND); the credential's auth header always wins.
         request_headers is accepted as an alias for headers (the name
-        api-mode tools use), so either spelling works."""
+        api-mode tools use), so either spelling works.
+
+        Returns {status, status_line, body} — status is the NUMERIC code,
+        the same shape fetch_url returns, so the standard guard works:
+
+            r = fetch_via("apple_caldav", url, method="PROPFIND",
+                          body=xml, headers={"Depth": "1"})
+            if r["status"] != 207: ...
+
+        status_line carries the full "HTTP 207 Multi-Status" text when you
+        want the reason phrase."""
         hdrs = dict(headers or {})
         if request_headers:
             hdrs.update(request_headers)

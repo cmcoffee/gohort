@@ -346,6 +346,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		Params:          params,
 		Required:        required,
 		CommandTemplate: cmd,
+		Category:        strings.TrimSpace(StringArg(args, "category")),
 	}
 	// Persist the script content into the tool record so it
 	// survives workspace wipes. At dispatch the framework will
@@ -2520,6 +2521,11 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// Hard authoring gate (mirrors the toolbox path): a write action whose
 	// required param appears in neither the url_template nor the body_template
 	// sends it nowhere → a live 400 the author can't diagnose. Reject here.
+	// A PATH placeholder can't be optional — substitution has nothing to put
+	// there, so the call dies at dispatch instead of at authoring time.
+	if missing := pathPlaceholderParams(urlTpl, required); len(missing) > 0 {
+		return "", fmt.Errorf(pathPlaceholderMsg, missing, missing[0], missing[0])
+	}
 	if unsent := unsentWriteParams(method, urlTpl, bodyTpl, required); len(unsent) > 0 {
 		return "", fmt.Errorf("required param(s) %v are sent NOWHERE — this %s tool references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", unsent, method)
 	}
@@ -2535,8 +2541,10 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		Method:          method,
 		BodyTemplate:    bodyTpl,
 		ContentType:     strings.TrimSpace(StringArg(args, "content_type")),
+		Headers:         stringMapArg(args, "headers"),
 		ResponsePipe:    respPipe,
 		ResponseExtract: ParseExtractSpec(args["response_extract"]),
+		Category:        strings.TrimSpace(StringArg(args, "category")),
 	}
 	// Allow in-session overwrite — see CreateTempToolTool for rationale.
 	sess.RemoveTempTool(tool.Name)
@@ -2883,6 +2891,7 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 		Method:          act.Method,
 		BodyTemplate:    act.BodyTemplate,
 		ContentType:     act.ContentType,
+		Headers:         act.Headers,
 		ResponsePipe:    act.ResponsePipe,
 		ResponseExtract: act.ResponseExtract,
 	}
@@ -2970,11 +2979,16 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// directly). Used for public JSON endpoints (Reddit,
 		// Wikipedia, public data feeds) where requiring a fake
 		// credential just to satisfy the dispatcher would be silly.
-		raw, err = dispatchPublicAPICall(urlStr, method, body, tt.ContentType)
-	} else if tt.ResponsePipe != "" || tt.ResponseExtract != nil {
-		raw, err = Secure().DispatchToolCallForPipeCT(sess, tt.Credential, urlStr, method, body, tt.ContentType)
+		raw, err = dispatchPublicAPICall(urlStr, method, body, tt.ContentType, tt.Headers)
 	} else {
-		raw, err = Secure().DispatchToolCallCT(sess, tt.Credential, urlStr, method, body, tt.ContentType)
+		// Headers ride along: a protocol like CalDAV carries required
+		// semantics in one (Depth: 1 on a REPORT/PROPFIND), and without
+		// them the server answers 2xx with an empty result set.
+		raw, err = Secure().DispatchToolCallRequest(sess, ToolCallRequest{
+			Credential: tt.Credential, URL: urlStr, Method: method, Body: body,
+			ContentType: tt.ContentType, Headers: tt.Headers,
+			PipeFollowing: tt.ResponsePipe != "" || tt.ResponseExtract != nil,
+		})
 	}
 	if err != nil {
 		return raw, err
@@ -3087,7 +3101,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 // Returns the same "HTTP <code> <text>\n<body>" shape as
 // Secure().DispatchToolCall so downstream response_pipe logic and
 // status-line handling keep working unchanged.
-func dispatchPublicAPICall(urlStr, method, body, contentType string) (string, error) {
+func dispatchPublicAPICall(urlStr, method, body, contentType string, headers map[string]string) (string, error) {
 	if method == "" {
 		method = "GET"
 	}
@@ -3096,6 +3110,17 @@ func dispatchPublicAPICall(urlStr, method, body, contentType string) (string, er
 		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("User-Agent", publicAPIUserAgent)
+	// Tool-declared headers (Depth, Accept, X-Api-Version, …). Auth headers
+	// are refused on this path: an unauthenticated dispatch that carries a
+	// hand-written credential is exactly what the credential machinery
+	// exists to replace.
+	for k, v := range headers {
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "authorization", "proxy-authorization":
+			continue
+		}
+		req.Header.Set(k, v)
+	}
 	if body != "" {
 		ct := strings.TrimSpace(contentType)
 		if ct == "" {
