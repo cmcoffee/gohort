@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,70 @@ type AccountToken struct {
 	Token    string `json:"token,omitempty"` // full secret: returned once at mint; masked on list
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`
+
+	// Scope narrows what a key may do at an outward-facing surface (the OpenAI
+	// /v1 endpoint). NIL = LEGACY UNRESTRICTED: a key minted before scoping
+	// existed reaches every feature and target its owner can, so turning
+	// enforcement on doesn't break a live integration. A non-nil Scope is
+	// deny-by-default — only the listed features and targets are allowed.
+	// New keys are minted with an explicit (possibly empty) Scope, so they are
+	// restricted from the start; the nil case is strictly the pre-scoping
+	// grandfather. See AllowsFeature / AllowsTarget.
+	Scope *TokenScope `json:"scope,omitempty"`
+}
+
+// TokenScope is a key's allow-list. Two independent dimensions the user sets
+// per key: which admin-permitted FEATURES the key may use (the OpenAI endpoint
+// is the first), and which agent/channel/tier TARGETS it may drive. Both are
+// deny-by-default within a non-nil scope.
+type TokenScope struct {
+	// Features the key may use, e.g. "openai". A feature the admin has not
+	// permitted for this user is denied regardless — the key toggle only
+	// narrows within what the admin already allows.
+	Features []string `json:"features,omitempty"`
+	// Targets the key may drive: "worker", "lead", "agent:<id>",
+	// "channel:<chat>". Matched against the resolved /v1 target.
+	Targets []string `json:"targets,omitempty"`
+}
+
+// AllowsFeature reports whether the key permits a feature. A nil scope is the
+// legacy-unrestricted grandfather (see AccountToken.Scope) and allows anything.
+func (t *AccountToken) AllowsFeature(feature string) bool {
+	if t == nil {
+		return false
+	}
+	if t.Scope == nil {
+		return true // legacy: minted before scoping — unrestricted
+	}
+	return containsFold(t.Scope.Features, feature)
+}
+
+// AllowsTarget reports whether the key permits a resolved /v1 target. Nil scope
+// = legacy-unrestricted. An empty target set on a non-nil scope denies all —
+// deny-by-default is the whole point.
+func (t *AccountToken) AllowsTarget(target string) bool {
+	if t == nil {
+		return false
+	}
+	if t.Scope == nil {
+		return true // legacy: unrestricted
+	}
+	return containsFold(t.Scope.Targets, target)
+}
+
+// IsLegacyUnscoped reports a key that predates scoping (nil Scope). Surfaced so
+// the account + admin UIs can flag "this key is unrestricted — set a scope",
+// turning the grandfather from an invisible allow into a visible one.
+func (t *AccountToken) IsLegacyUnscoped() bool { return t != nil && t.Scope == nil }
+
+func containsFold(list []string, want string) bool {
+	want = strings.TrimSpace(want)
+	for _, v := range list {
+		if strings.EqualFold(strings.TrimSpace(v), want) {
+			return true
+		}
+	}
+	return false
 }
 
 const accountTokenTable = "account_tokens"
@@ -50,6 +115,55 @@ func MintAccountToken(owner, name string) AccountToken {
 		RootDB.Set(accountTokenTable, t.Token, t)
 	}
 	return t
+}
+
+// MintAccountTokenScoped is MintAccountToken with an explicit scope. New keys
+// go through here so they are deny-by-default from birth; pass an empty (non-
+// nil) TokenScope for "reaches nothing yet", to be filled in by the editor.
+func MintAccountTokenScoped(owner, name string, scope *TokenScope) AccountToken {
+	t := MintAccountToken(owner, name)
+	if scope != nil {
+		t.Scope = scope
+		if RootDB != nil {
+			RootDB.Set(accountTokenTable, t.Token, t)
+		}
+	}
+	return t
+}
+
+// SetAccountTokenScope replaces the scope on one of owner's tokens (by ID).
+// Owner-scoped so a user can never rescope another user's key. A nil scope is
+// rejected — clearing back to legacy-unrestricted is not an editor action, only
+// the pre-scoping grandfather produces it. Returns true when a token matched.
+func SetAccountTokenScope(owner, id string, scope *TokenScope) bool {
+	if RootDB == nil || scope == nil {
+		return false
+	}
+	for _, secret := range RootDB.Keys(accountTokenTable) {
+		var t AccountToken
+		if RootDB.Get(accountTokenTable, secret, &t) && t.Owner == owner && t.ID == id {
+			t.Scope = scope
+			RootDB.Set(accountTokenTable, secret, t)
+			return true
+		}
+	}
+	return false
+}
+
+// AccountTokenFromRequest resolves a request's API key to its full token record
+// (scope included), for surfaces that must enforce per-key scope rather than
+// only resolve the owner. Returns the raw record — do NOT echo t.Token, it is
+// the live secret. nil when no valid account token is presented.
+func AccountTokenFromRequest(r *http.Request) *AccountToken {
+	secret := rawAPIKey(r)
+	if secret == "" || RootDB == nil {
+		return nil
+	}
+	var t AccountToken
+	if RootDB.Get(accountTokenTable, secret, &t) && t.Owner != "" {
+		return &t
+	}
+	return nil
 }
 
 // ListAccountTokens returns owner's tokens (secret masked, never the real value),

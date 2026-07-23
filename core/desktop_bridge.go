@@ -271,13 +271,22 @@ func APIKeyUser(r *http.Request) string { return userFromAPIKey(r) }
 // third-party integrations send and the only thing some of them CAN send
 // (an OpenAI-compatible client library, a voice platform's custom-LLM
 // config). Same token either way; only the envelope differs.
-func userFromAPIKey(r *http.Request) string {
+// rawAPIKey extracts the presented API secret from a request — X-API-Key, else
+// an "Authorization: Bearer <key>". The single place the header convention
+// lives, shared by userFromAPIKey (key→owner) and AccountTokenFromRequest
+// (key→record) so the two never drift on how a key is read off the wire.
+func rawAPIKey(r *http.Request) string {
 	key := r.Header.Get("X-API-Key")
 	if key == "" {
 		if a := strings.TrimSpace(r.Header.Get("Authorization")); len(a) > 7 && strings.EqualFold(a[:7], "bearer ") {
 			key = strings.TrimSpace(a[7:])
 		}
 	}
+	return strings.TrimSpace(key)
+}
+
+func userFromAPIKey(r *http.Request) string {
+	key := rawAPIKey(r)
 	if key == "" {
 		return ""
 	}
