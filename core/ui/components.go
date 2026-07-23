@@ -142,6 +142,17 @@ type Table struct {
 	// individual agents, and chat sessions. Prefer a sort or a filter when the
 	// rows are the same kind and only differ by value.
 	GroupBy string `json:"group_by,omitempty"`
+	// Search renders a filter box above the table. Typing narrows rows to those
+	// whose visible column values (and group heading) contain the text, matched
+	// case-insensitively. Client-side over the rows already fetched — this is a
+	// find-in-list affordance, not a server query, so it stays instant and needs
+	// no endpoint support.
+	//
+	// Worth turning on once a list is long enough that a reader scans rather
+	// than reads: a tool catalog, a user list. Noise on a short fixed list.
+	Search bool `json:"search,omitempty"`
+	// SearchPlaceholder overrides the filter box's placeholder text.
+	SearchPlaceholder string `json:"search_placeholder,omitempty"`
 	// RecordsField extracts the rows from a specific key of the GET
 	// response. Use when one endpoint returns multiple lists in a
 	// shaped object (e.g. `{pending: [...], active: [...]}`) and you

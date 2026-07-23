@@ -510,6 +510,19 @@ body { min-height: 100vh; min-height: 100dvh; }
   margin-left: auto;
   justify-content: flex-end;
 }
+/* Filter box for a table declaring search. Sits above the list, styled like a
+ * form input so it reads as a control rather than as data. */
+.ui-table-wrap { display: flex; flex-direction: column; }
+.ui-table-search {
+  width: 100%; box-sizing: border-box;
+  margin-bottom: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 0.9rem; font-family: inherit;
+  outline: none; transition: border-color 0.1s ease;
+  -webkit-appearance: none; appearance: none;
+}
+.ui-table-search:focus { border-color: var(--accent); }
 /* Group heading for a table declaring group_by — a quiet section rule, not a
  * row, so the eye reads it as structure rather than data. */
 .ui-table-group {

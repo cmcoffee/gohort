@@ -45,6 +45,7 @@
     var listEl = el('div', {class: 'ui-table-list'}, ['Loading…']);
     var refreshIndicator = null;
     var records = [];
+    var searchText = '';
     var openExpansions = {}; // rowKey -> {actionIndex: panel}
 
     // Refetch when an external action invalidates our source. See
@@ -84,17 +85,40 @@
         .then(function(){ if (refreshIndicator) setTimeout(function(){ refreshIndicator.textContent = ''; }, 600); });
     }
 
+    // matchesSearch tests a record against the filter text across the values a
+    // reader can actually SEE — the declared columns plus the group heading.
+    // Matching hidden fields would make rows appear for reasons nothing on
+    // screen explains.
+    function matchesSearch(rec) {
+      if (!searchText) return true;
+      var hay = [];
+      (cfg.columns || []).forEach(function(col) {
+        var v = lookup(rec, col.field);
+        if (v !== undefined && v !== null && typeof v !== 'object') hay.push(String(v));
+      });
+      if (cfg.group_by) {
+        var g = lookup(rec, cfg.group_by);
+        if (g) hay.push(String(g));
+      }
+      return hay.join(' \u0000 ').toLowerCase().indexOf(searchText) >= 0;
+    }
+
     function renderRows() {
       listEl.innerHTML = '';
       if (!records.length) {
         listEl.appendChild(el('div', {class: 'ui-table-empty'}, [cfg.empty_text || 'Nothing here yet.']));
         return;
       }
+      var visible = records.filter(matchesSearch);
+      if (!visible.length) {
+        listEl.appendChild(el('div', {class: 'ui-table-empty'}, ['No matches for "' + searchText + '".']));
+        return;
+      }
       // Group headings, when the table declares group_by. Order follows the
       // RECORDS, not a client-side sort — the server already ordered them, and
       // re-sorting here would fight it and reshuffle headings between refreshes.
       var lastGroup = null;
-      records.forEach(function(rec) {
+      visible.forEach(function(rec) {
         if (cfg.group_by) {
           var g = lookup(rec, cfg.group_by);
           g = (g === undefined || g === null) ? '' : String(g);
@@ -485,7 +509,17 @@
         if (h) refreshIndicator = h;
       }
     }, 0);
-    return listEl;
+    if (!cfg.search) return listEl;
+    var box = el('input', {
+      type: 'search', class: 'ui-table-search',
+      placeholder: cfg.search_placeholder || 'Filter…',
+      'aria-label': cfg.search_placeholder || 'Filter list',
+    });
+    box.addEventListener('input', function() {
+      searchText = box.value.trim().toLowerCase();
+      renderRows();
+    });
+    return el('div', {class: 'ui-table-wrap'}, [box, listEl]);
   };
 
   components.history_panel = function(cfg) {
