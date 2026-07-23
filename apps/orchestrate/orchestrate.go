@@ -30,9 +30,11 @@
 package orchestrate
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -159,7 +161,7 @@ func (T *OrchestrateApp) WebPath() string { return "/orchestrate" }
 
 // HubTab makes the Agents workbench a member of the shared top-nav hub.
 func (T *OrchestrateApp) HubTab() (string, int) { return "Agents", 10 }
-func (T *OrchestrateApp) WebName() string { return "Agents" }
+func (T *OrchestrateApp) WebName() string       { return "Agents" }
 func (T *OrchestrateApp) WebDesc() string {
 	return "Build, manage, and dispatch your fleet of AI agents."
 }
@@ -277,6 +279,32 @@ func (T *OrchestrateApp) Routes() {
 	// surfaces outside this app (Extensions > My tools). Only this app can map
 	// agents and sessions to a user.
 	registerScopedToolLister(T)
+	// Authored tools commit onto the requesting agent's record. Wired here
+	// because only this app owns agent records.
+	AttachToolToAgent = func(db Database, owner, agentID string, t TempTool) error {
+		return bundleAgentToolByID(agentUserDB(db, owner), owner, agentID, t)
+	}
+	// Confirming a trial tool is the user vouching for it: the tool does not
+	// move or change, only the "nobody has looked at this" mark clears.
+	ConfirmAgentTool = func(db Database, owner, agentID, toolName string) error {
+		udb := agentUserDB(db, owner)
+		rec, ok := loadAgent(udb, agentID)
+		if !ok {
+			return fmt.Errorf("agent %q not found", agentID)
+		}
+		for i := range rec.Tools {
+			if rec.Tools[i].Name == toolName {
+				if !rec.Tools[i].Trial {
+					return nil // already confirmed; nothing to do
+				}
+				rec.Tools[i].Trial = false
+				rec.Tools[i].TrialSince = time.Time{}
+				_, err := saveAgent(udb, rec)
+				return err
+			}
+		}
+		return fmt.Errorf("agent %q has no tool named %q", rec.Name, toolName)
+	}
 	// Recorded-only mirror: when the gatekeeper BLOCKS an inbound (no wake), the
 	// transport calls this to append the message into the bound agent's own
 	// transcript, so it shows in the agent's chat and is in-context on the next

@@ -1577,6 +1577,17 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		LeadLLM:  t.app.LeadLLM,
 		Username: t.user,
 		DB:       t.udb,
+		// Whose turn this is — an authoring tool commits what it writes to
+		// this agent rather than to a per-chat-session pool.
+		AgentID: t.agent.ID,
+		// …unless the turn is authoring FOR another agent, which is Builder's
+		// whole job. Read live: focus moves when get_agent / create_agent runs.
+		AuthoringAgentFn: func() string {
+			if t.session != nil {
+				return t.session.AuthoringAgentID
+			}
+			return ""
+		},
 		// Network connector — the SAME instance carried on t.ctx +
 		// the inflight registry. Sharing one pointer is what makes
 		// the mid-turn cutoff propagate: when the privacy endpoint
@@ -1720,18 +1731,41 @@ func (t *chatTurn) newToolSession() *ToolSession {
 				continue
 			}
 			if err := sess.AppendTempTool(&tool); err != nil {
-				// Name conflict with persistent or agent-scoped pool —
-				// the committed version wins (it's the canonical copy).
-				// add_tool deliberately writes BOTH the session draft
-				// and the agent.Tools entry so the new tool is callable
-				// mid-turn; on the next turn the committed copy is the
-				// real one and this draft is just stale duplication.
-				// Drop it from session_temp_tools so the Tools UI and
-				// the runtime stop showing two of the same thing.
+				// Name conflict with the persistent or agent-scoped pool — the
+				// committed version wins (it's the canonical copy) and this
+				// draft is stale duplication. Drop it so the runtime and the
+				// Tools UI stop showing two of the same thing.
 				RemoveSessionTempTool(t.udb, t.session.ID, tool.Name)
 				cleaned++
 				Debug("[orchestrate.tools] dropped redundant session draft %q (committed copy exists)", tool.Name)
+				continue
 			}
+			// MIGRATION: session-scoped tools are retired — an authored tool now
+			// commits to the agent that asked for it. A draft that reaches here
+			// is committed nowhere (the prune above caught the rest), so it is
+			// real work living only in this conversation. Give it a durable home
+			// on this agent, marked Trial, and clear the draft.
+			//
+			// Done here rather than in a migration script because this is where
+			// drafts are consumed: they drain as conversations resume, and a
+			// conversation nobody reopens has nothing worth keeping.
+			if AttachToolToAgent != nil && t.agent.ID != "" {
+				migrated := tool
+				migrated.Trial = true
+				migrated.TrialSince = time.Now()
+				if err := AttachToolToAgent(t.udb, t.user, t.agent.ID, migrated); err == nil {
+					RemoveSessionTempTool(t.udb, t.session.ID, tool.Name)
+					Log("[orchestrate.tools] migrated session draft %q onto agent %q as a trial tool", tool.Name, t.agent.Name)
+				} else {
+					Debug("[orchestrate.tools] could not migrate session draft %q: %v", tool.Name, err)
+				}
+			}
+		}
+		if ReapTrialTools != nil {
+			// Cheap in the common case: no trial tools means one agent walk and
+			// no writes. Keeps an agent in regular use tidy without requiring
+			// anyone to visit a settings page.
+			_ = ReapTrialTools(t.udb, t.user)
 		}
 		if n := len(drafts); n > 0 {
 			Log("[orchestrate.tools] loaded %d session-draft tool(s) for session=%s (cleaned %d redundant)", n, t.session.ID, cleaned)
@@ -4739,7 +4773,7 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 		}
 	}
 	out = append(out, t.loadToolToolDef(sess)) // gateway for the agent's lazy custom tools
-	out = append(out, t.skillToolDefs()...) // read_skill / skill_knowledge_*; nil when skills off
+	out = append(out, t.skillToolDefs()...)    // read_skill / skill_knowledge_*; nil when skills off
 	if unifiedMemoryEnabled() {
 		// Collapsed surface: remember / recall / forget replace the six
 		// memory + knowledge tools (knowledge_search + fetch were skipped near

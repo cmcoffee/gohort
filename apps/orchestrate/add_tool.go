@@ -322,12 +322,11 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	if _, err := saveAgent(sess.DB, target); err != nil {
 		return "", fmt.Errorf("save focused agent: %v", err)
 	}
-	// Install as session draft so the LLM can dispatch by name on the
-	// next round if it wants to (the verification path below covers the
-	// common case; this is the fallback for tools without test_args).
-	if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, tt); err != nil {
-		Log("[orchestrate.add_tool] session draft save failed for %q: %v", tt.Name, err)
-	}
+	// No session-draft copy: the tool was just committed to the agent's own
+	// record above, and an agent always loads its own kit — so it is callable
+	// by name from the next round without a second copy in a parallel pool.
+	// The duplicate is what forced a shadow-reconciliation pass on every read
+	// and what the runner had to prune turn after turn.
 	// Dequeue from admin pending-review pool — tool is now owned by
 	// the focused agent record, so it doesn't need separate admin
 	// promotion. Mirrors the autoCopy hook in create_agent.

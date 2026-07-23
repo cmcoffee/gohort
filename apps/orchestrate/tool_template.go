@@ -119,8 +119,12 @@ func toolTemplateCreate(args map[string]any, sess *ToolSession) (string, error) 
 	if _, err := saveAgent(sess.DB, target); err != nil {
 		return "", fmt.Errorf("save agent: %w", err)
 	}
-	if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, tt); err != nil {
-		Log("[orchestrate.tool_template] session draft save failed for %q: %v", tt.Name, err)
+	// In-memory verification handle only — the canonical copy is on the target
+	// agent's record just above. A persisted session copy outlived the turn in a
+	// parallel scope that had to be shadowed and pruned on every read.
+	sess.RemoveTempTool(tt.Name)
+	if err := sess.AppendTempTool(&tt); err != nil {
+		Log("[orchestrate.tool_template] in-session registration failed for %q: %v", tt.Name, err)
 	}
 	if sess.Username != "" {
 		DequeuePendingTempTool(sess.DB, sess.Username, tt.Name)

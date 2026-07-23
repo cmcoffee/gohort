@@ -492,6 +492,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Username:      runtimeUser,
 		DB:            runtimeDB,
 		ChatSessionID: subSessID,
+		AgentID:       target.ID,
 		// Credential scope travels with the agent — a dispatched run can
 		// fetch_url too, so enforce the same deny-set here.
 		DeniedCredentials: credentialDenySet(target, runtimeUser),
@@ -1006,6 +1007,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		Username:           runtimeUser,
 		DB:                 runtimeDB,
 		ChatSessionID:      subSessionID,
+		AgentID:            target.ID,
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}

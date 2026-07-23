@@ -722,11 +722,8 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
 	}
-	if sess.DB != nil && sess.ChatSessionID != "" {
-		if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
-			Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
-		}
-	}
+	// Durable home for the unapproved toolbox — see persistUnapprovedTool.
+	persistUnapprovedTool(sess, tool)
 	_ = BoolArg(args, "persist") // ignored — same as other modes
 	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...).",
 		name, len(actions), actionNames(actions), name)
@@ -838,15 +835,8 @@ func createPipelineGrouped(args map[string]any, sess *ToolSession) (string, erro
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
 	}
-	if sess.DB != nil && sess.ChatSessionID != "" {
-		if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
-			Log("[temptool.pipeline.create] session-scoped save FAILED for session=%s tool=%q: %v", sess.ChatSessionID, name, err)
-		} else {
-			Log("[temptool.pipeline.create] saved session tool %q to session=%s (mode=pipeline)", name, sess.ChatSessionID)
-		}
-	} else {
-		Log("[temptool.pipeline.create] pipeline tool %q NOT session-saved: db=%v chat_session_id=%q — modal Session-tools section will be empty", name, sess.DB != nil, sess.ChatSessionID)
-	}
+	// Durable home for the unapproved pipeline tool — see persistUnapprovedTool.
+	persistUnapprovedTool(sess, tool)
 	shape := "adaptive (pipeline_prompt + pipeline_tools)"
 	if len(steps) > 0 {
 		shape = fmt.Sprintf("deterministic (%d steps)", len(steps))
@@ -1386,7 +1376,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			Name: name, Params: tt.Params, Required: tt.Required,
 			URLTemplate: tt.CommandTemplate, Method: tt.Method,
 			BodyTemplate: tt.BodyTemplate, ContentType: tt.ContentType,
-			Headers: tt.Headers,
+			Headers:      tt.Headers,
 			ResponsePipe: tt.ResponsePipe, ResponseExtract: tt.ResponseExtract,
 		}}
 	default:

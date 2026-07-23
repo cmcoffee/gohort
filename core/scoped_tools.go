@@ -71,6 +71,11 @@ type ScopedTool struct {
 	SessionID    string `json:"session_id,omitempty"`
 	SessionTitle string `json:"session_title,omitempty"`
 
+	// Trial mirrors TempTool.Trial: authored mid-conversation and not yet
+	// confirmed by the user. A real tool on a real agent — this only says
+	// nobody has vouched for it.
+	Trial bool `json:"trial,omitempty"`
+
 	// Shadowed marks a tool whose name is already covered by a committed copy
 	// elsewhere — an agent's bundled tools or the user's pool. add_tool writes
 	// BOTH a session draft and a committed copy so the tool is callable

@@ -264,6 +264,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Session   bool `json:"session"`    // draft, not kept anywhere
 			AgentTool bool `json:"agent_tool"` // bundled onto an agent record
 			Orphan    bool `json:"orphan"`     // owning agent was deleted
+			Trial     bool `json:"trial"`      // authored mid-chat, unconfirmed
 			// Deletable = has a record of its own to delete (pool or orphan). A
 			// session draft is excluded: Discard is its verb, and DELETE would
 			// 404 on a tool that lives only in a chat session.
@@ -297,45 +298,65 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Missing: missing, Shared: p.Shared, LastUsed: last,
 				Locked: p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly,
 				Requested: pending, CanRequest: !p.Shared && !pending,
-				Pool: true,
+				Pool: true, Deletable: true,
+				Group: "All Agents (Global tools)",
 			})
 		}
-		// Everything attached to an agent, after the pool: tools bundled onto an
-		// agent record, then that agent's session drafts. The pool is what a user
-		// normally manages, so it leads; the rest is grouped by what it's
-		// connected to, because "which agent is this on?" is how you actually
-		// navigate a list like this.
+		// Agent-scoped tools after the global pool. Sections read: All Agents ->
+		// Scoped Tools (per agent) -> legacy session drafts -> Orphaned.
+		//
+		// Two passes, because grouping follows RECORD order: pass one emits
+		// every agent-scoped tool, pass two the legacy drafts. The lister sorts
+		// by agent, so agents stay grouped within each pass.
 		//
 		// Shadowed rows are dropped: a draft already committed under the same
-		// name would invite a "Keep" that does nothing.
-		for _, st := range ListScopedTools(user) {
-			if st.Shadowed {
-				continue
-			}
-			agent := strings.TrimSpace(st.AgentName)
-			if agent == "" {
-				agent = st.AgentID
-			}
-			group := "Attached to — " + agent
-			if st.Scope == ScopeSessionTool {
-				group = "Session drafts — " + agent
-				if t := strings.TrimSpace(st.SessionTitle); t != "" {
-					group += " · " + t
+		// name would invite an action that does nothing.
+		scoped := ListScopedTools(user)
+		for _, pass := range []string{ScopeAgentTool, ScopeSessionTool} {
+			for _, st := range scoped {
+				if st.Shadowed || st.Scope != pass {
+					continue
 				}
-			}
-			missing := false
-			if cred := strings.TrimSpace(st.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
-				if _, found := Secure().Resolve(cred, user); !found {
-					missing = true
+				agent := strings.TrimSpace(st.AgentName)
+				if agent == "" {
+					agent = st.AgentID
 				}
+				// One "Scoped Tools" family, named per agent so you can still see
+				// which. An unconfirmed tool sits with its agent rather than in its
+				// own section — the Unconfirmed badge already distinguishes it, and
+				// splitting scattered one agent's tools across two headings.
+				group := "Scoped Tools — " + agent
+				if st.Scope == ScopeSessionTool {
+					// Legacy: session scope is retired, so these exist only until the
+					// conversation holding them is reopened and they migrate.
+					group = "Session drafts (legacy) — " + agent
+					if t := strings.TrimSpace(st.SessionTitle); t != "" {
+						group += " · " + t
+					}
+				}
+				missing := false
+				if cred := strings.TrimSpace(st.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+					if _, found := Secure().Resolve(cred, user); !found {
+						missing = true
+					}
+				}
+				rows = append(rows, row{
+					Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
+					Credential: st.Tool.Credential, Category: st.Tool.Category, Missing: missing,
+					Session:   st.Scope == ScopeSessionTool,
+					AgentTool: st.Scope == ScopeAgentTool,
+					Trial:     st.Trial,
+					SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
+				})
 			}
-			rows = append(rows, row{
-				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
-				Credential: st.Tool.Credential, Category: st.Tool.Category, Missing: missing,
-				Session:   st.Scope == ScopeSessionTool,
-				AgentTool: st.Scope == ScopeAgentTool,
-				SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
-			})
+		}
+		// Reap expired unconfirmed tools before listing, so the page never shows
+		// a row it is about to delete. Opening My tools is the moment a user is
+		// looking at exactly this, which makes it the honest place to sweep.
+		if ReapTrialTools != nil {
+			if n := ReapTrialTools(AuthDB(), user); n > 0 {
+				Log("[gateways] reaped %d unconfirmed tool(s) for %s", n, user)
+			}
 		}
 		// Orphans last: a tool whose agent was deleted is still the user's, and it
 		// was captured precisely so it wouldn't vanish with the record — but it is
@@ -356,7 +377,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
 				Credential: o.Tool.Credential, Category: o.Tool.Category, Missing: missing,
 				Orphan: true, Deletable: true,
-				Group: "Orphaned — agent " + former + " was deleted",
+				Group: "Orphaned Tools — agent " + former + " was deleted",
 			})
 		}
 		writeJSON(w, rows)
@@ -375,6 +396,33 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		}
 		// Session-draft actions run BEFORE the pool lookup: a draft is by
 		// definition not in the persistent pool, so that lookup would 404 it.
+		// confirm — the user vouching for a trial tool the assistant authored.
+		// It doesn't move the tool; it only clears the unconfirmed mark.
+		if action == "confirm" {
+			agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+			if agentID == "" {
+				for _, st := range ListScopedTools(user) {
+					if st.Scope == ScopeAgentTool && st.Tool.Name == name {
+						agentID = st.AgentID
+						break
+					}
+				}
+			}
+			if agentID == "" {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			if ConfirmAgentTool == nil {
+				http.Error(w, "confirm unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if err := ConfirmAgentTool(AuthDB(), user, agentID, name); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if action == "keep_draft" || action == "drop_draft" {
 			sid := strings.TrimSpace(r.URL.Query().Get("session_id"))
 			if sid == "" {
@@ -947,10 +995,12 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "My tools",
-			Subtitle: "Everything built for you, grouped by what it's attached to. \"My pool\" is yours across every agent; \"Attached to\" are tools living on one agent's record; \"Session drafts\" were built mid-conversation and are NOT kept — they work for the life of that chat and disappear with it; \"Orphaned\" lost their agent when it was deleted. Access sets which of your agents can use a tool — switching one on is also what keeps a draft or re-homes an orphan.",
+			Subtitle: "Everything built for you. \"All Agents\" is your global pool — every agent can use it. \"Scoped Tools\" live on one agent's record; ones the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Access sets which of your agents can use a tool — switching one on also re-homes an orphan. Filter the list with the box above.",
 			Body: ui.Table{
-				Source: "api/tools",
-				RowKey: "name",
+				Source:            "api/tools",
+				RowKey:            "name",
+				Search:            true,
+				SearchPlaceholder: "Filter tools by name, agent, category…",
 				// Rows arrive pre-ordered (pool, then per-agent tools, then that
 				// agent's session drafts) and render under a heading per scope —
 				// "which agent is this attached to?" is how this list is actually
@@ -992,6 +1042,9 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					}},
 					{Field: "orphan", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Orphaned", Color: "danger"},
+					}},
+					{Field: "trial", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Unconfirmed", Color: "warning"},
 					}},
 					{Field: "description", Mute: true, Flex: 1},
 				},
@@ -1065,6 +1118,12 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					// agents load your own tool.
 					{Type: "button", Label: "Access", Method: "client",
 						PostTo: "tool_access_pills"},
+					// Confirm — vouch for a tool the assistant authored. Only on
+					// unconfirmed rows; it clears the mark without moving the tool.
+					{Type: "button", Label: "Confirm", Method: "POST",
+						PostTo:     "api/tools?action=confirm&name={name}&agent_id={agent_id}",
+						OnlyIf:     "trial",
+						Optimistic: true},
 					{Type: "button", Label: "Discard", Method: "POST",
 						PostTo:     "api/tools?action=drop_draft&name={name}&session_id={session_id}",
 						OnlyIf:     "session",

@@ -130,16 +130,22 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess.ChatSessionID != "" {
 		saveAuthoringInProgress(sess.DB, sess.ChatSessionID, saved.ID)
 	}
-	// Install each inline-bundled tool as a session draft so the LLM
-	// can dispatch it BY NAME in the current session to verify before
-	// declaring success. The canonical copy lives in saved.Tools; the
-	// session draft is purely a verification handle and shadows out
-	// when the user switches to the new agent.
+	// Register each inline-bundled tool IN MEMORY on this session so the LLM can
+	// dispatch it BY NAME to verify before declaring success. The canonical copy
+	// lives on the new agent's record; this is purely a verification handle for
+	// the authoring turn.
+	//
+	// In-memory, not a persisted session draft: the authoring agent is not the
+	// agent that owns the tool, so it has no kit to load it from — but it only
+	// needs it while it is verifying, and a persisted copy outlived the turn as
+	// a ghost in a parallel scope that then had to be shadowed and pruned.
 	installedDrafts := 0
-	if sess.ChatSessionID != "" && len(saved.Tools) > 0 {
+	if len(saved.Tools) > 0 {
 		for i := range saved.Tools {
-			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, saved.Tools[i]); err != nil {
-				Log("[orchestrate.agent_crud] session draft save failed for bundled tool %q: %v", saved.Tools[i].Name, err)
+			t := saved.Tools[i]
+			sess.RemoveTempTool(t.Name)
+			if err := sess.AppendTempTool(&t); err != nil {
+				Log("[orchestrate.agent_crud] in-session registration failed for bundled tool %q: %v", t.Name, err)
 				continue
 			}
 			installedDrafts++
@@ -390,14 +396,18 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if err != nil {
 		return "", err
 	}
-	// If tools[] was in the update, install each as a session draft so
-	// the LLM can dispatch them by name to verify before ending the turn.
-	// Same testability principle as create_agent.
+	// If tools[] was in the update, register each in memory so the LLM can
+	// dispatch them by name to verify before ending the turn. Same testability
+	// principle as create_agent, and the same reason it isn't persisted: the
+	// canonical copy is on the target agent, and this handle is only needed for
+	// the authoring turn.
 	installedDrafts := 0
-	if _, supplied := args["tools"]; supplied && sess.ChatSessionID != "" {
+	if _, supplied := args["tools"]; supplied {
 		for i := range saved.Tools {
-			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, saved.Tools[i]); err != nil {
-				Log("[orchestrate.agent_crud] session draft save failed for updated tool %q: %v", saved.Tools[i].Name, err)
+			t := saved.Tools[i]
+			sess.RemoveTempTool(t.Name)
+			if err := sess.AppendTempTool(&t); err != nil {
+				Log("[orchestrate.agent_crud] in-session registration failed for updated tool %q: %v", t.Name, err)
 				continue
 			}
 			installedDrafts++

@@ -727,6 +727,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		Username:          t.user,
 		DB:                t.udb,
 		ChatSessionID:     subSessID,
+		AgentID:           target.ID,
 		DeniedCredentials: credentialDenySet(target, t.user),
 		SubAgentRunner:    t.runPipelineSubAgent,
 		// Carry the dispatching parent so authoring tools (Builder's

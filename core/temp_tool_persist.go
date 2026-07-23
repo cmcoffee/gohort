@@ -72,6 +72,36 @@ type ToolScopeState struct {
 // return is false when the tool can't be found in any scope.
 var AdminToolScopeState func(db Database, owner, toolName string) (ToolScopeState, bool)
 
+// TrialToolTTL is how long an UNCONFIRMED authored tool survives before the
+// reaper drops it. Generous on purpose: the cost of reaping too early is
+// destroying work someone meant to keep, while the cost of reaping too late is
+// a stale row in a list. Set to 0 to disable reaping entirely.
+var TrialToolTTL = 14 * 24 * time.Hour
+
+// ReapTrialTools, when set, drops a user's unconfirmed authored tools whose TTL
+// has elapsed and returns how many went. Wired by the app that owns agent
+// records; nil means no reaping (nothing to walk).
+//
+// This is what makes ephemerality an ATTRIBUTE rather than a storage scope: the
+// session-pool design got automatic cleanup for free by tying tools to a
+// conversation's lifetime, at the cost of a scope nobody could see or reason
+// about. Keeping the cleanup as an explicit, logged sweep is the trade.
+var ReapTrialTools func(db Database, owner string) int
+
+// ConfirmAgentTool, when set, clears the Trial flag on a tool attached to an
+// agent — the user vouching for something the assistant authored. Wired by the
+// app that owns agent records.
+var ConfirmAgentTool func(db Database, owner, agentID, toolName string) error
+
+// AttachToolToAgent, when set, commits a tool onto an agent's record (replace
+// by name). Wired by the app that owns agent records; nil where there are none.
+//
+// This is what lets an authored tool land on the agent that asked for it
+// instead of in a per-chat-session pool. A tool on its own agent's record is
+// callable by that agent immediately, survives the conversation, and is reached
+// by the normal access controls — none of which was true of a session draft.
+var AttachToolToAgent func(db Database, owner, agentID string, t TempTool) error
+
 // AdminSetToolScope, when set, applies ONE pill toggle. target is either
 // "global" (the Global pill) or an agent id; on is the desired state.
 // The orchestrate impl interprets the transition against current state:

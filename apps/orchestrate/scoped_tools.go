@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -24,6 +25,7 @@ func registerScopedToolLister(app *OrchestrateApp) {
 	})
 	// Promotion shares the in-chat Tools modal's implementation, so a draft
 	// kept from Extensions lands exactly where one kept from the chat does.
+	ReapTrialTools = func(db Database, owner string) int { return app.reapTrialTools(db, owner) }
 	RegisterScopedToolPromoter(func(user, agentID, sessionID, toolName, target string) (string, error) {
 		if app == nil {
 			return "", fmt.Errorf("orchestrate not initialized")
@@ -60,6 +62,7 @@ func (T *OrchestrateApp) listScopedTools(user string) []ScopedTool {
 			out = append(out, ScopedTool{
 				Tool: t, Scope: ScopeAgentTool,
 				AgentID: agent.ID, AgentName: agent.Name,
+				Trial: t.Trial,
 				// An agent copy duplicated in the user's pool is redundant, but
 				// it is NOT stale the way a draft is — the agent genuinely holds
 				// it. Marked so a UI can choose; nothing deletes it.
@@ -93,4 +96,51 @@ func (T *OrchestrateApp) listScopedTools(user string) []ScopedTool {
 		return out[i].Tool.Name < out[j].Tool.Name
 	})
 	return out
+}
+
+// reapTrialTools drops a user's unconfirmed authored tools once their TTL has
+// elapsed, returning how many went.
+//
+// The session-scoped pool this replaced got cleanup for free — a tool tied to a
+// conversation died with it — but paid for that with a scope nobody could see.
+// Ephemerality is now an attribute, so the cleanup has to be explicit. Every
+// removal is logged: a tool disappearing on its own is exactly the kind of
+// thing that must leave a trail rather than being noticed weeks later.
+//
+// Only Trial tools with a TrialSince stamp are eligible. A confirmed tool, or
+// one from before the stamp existed, is never touched — the reaper's failure
+// mode has to be "left something behind", never "deleted work someone wanted".
+func (T *OrchestrateApp) reapTrialTools(db Database, owner string) int {
+	if T == nil || strings.TrimSpace(owner) == "" || TrialToolTTL <= 0 {
+		return 0
+	}
+	udb := agentUserDB(db, owner)
+	if udb == nil {
+		return 0
+	}
+	cutoff := time.Now().Add(-TrialToolTTL)
+	reaped := 0
+	for _, agent := range listAgents(udb, owner) {
+		kept := agent.Tools[:0:0]
+		dropped := []string{}
+		for _, tl := range agent.Tools {
+			if tl.Trial && !tl.TrialSince.IsZero() && tl.TrialSince.Before(cutoff) {
+				dropped = append(dropped, tl.Name)
+				continue
+			}
+			kept = append(kept, tl)
+		}
+		if len(dropped) == 0 {
+			continue
+		}
+		agent.Tools = kept
+		if _, err := saveAgent(udb, agent); err != nil {
+			Log("[orchestrate.tools] reap failed for agent %q: %v", agent.Name, err)
+			continue
+		}
+		reaped += len(dropped)
+		Log("[orchestrate.tools] reaped %d unconfirmed tool(s) from agent %q after %s: %s",
+			len(dropped), agent.Name, TrialToolTTL, strings.Join(dropped, ", "))
+	}
+	return reaped
 }

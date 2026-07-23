@@ -1455,6 +1455,27 @@ type ToolSession struct {
 	// stock-tracker style features). Empty for non-chat apps.
 	ChatSessionID string
 
+	// AgentID is the agent whose turn this is. Set by the host app that owns
+	// agents; empty for hosts that have none.
+	//
+	// It exists so an authoring tool can commit what it writes to the agent that
+	// asked for it. Without it, a tool authored mid-conversation had nowhere to
+	// live but a per-CHAT-SESSION pool — a scope no user thinks in (delete the
+	// chat, lose the tool) that also had to be reconciled against the real
+	// scopes on every read.
+	AgentID string
+
+	// AuthoringAgentFn, when set, returns the agent currently in AUTHORING FOCUS
+	// — the one an authoring turn is building for, which is usually NOT the
+	// agent running the turn. Builder is the case that matters: it authors tools
+	// for other agents, so committing what it writes to AgentID would pile every
+	// tool it ever built onto Builder itself.
+	//
+	// A function rather than a field because focus moves mid-turn (a get_agent
+	// or create_agent call reassigns it), and a value captured at session
+	// construction would be stale by the time a tool is authored.
+	AuthoringAgentFn func() string
+
 	// DispatchParentAgentID is set when this session runs a sub-agent dispatched
 	// by a parent (e.g. Chat dispatching Builder). It carries the PARENT agent's
 	// id so authoring tools can stamp creations as owned by the parent and route
@@ -1642,11 +1663,11 @@ type TempToolAction struct {
 	// application/xml or text/calendar switches the action's body_template to
 	// RAW substitution + no JSON validation. Lets a toolbox mix JSON, XML, and
 	// iCalendar actions (e.g. a CalDAV toolbox: REPORT/xml + PUT/text/calendar).
-	ContentType  string               `json:"content_type,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
 	// Headers are extra request headers for THIS action, the same way
 	// TempTool.Headers works for a single api tool. See TempTool.Headers.
-	Headers map[string]string `json:"headers,omitempty"`
-	ResponsePipe string               `json:"response_pipe,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	ResponsePipe string            `json:"response_pipe,omitempty"`
 	// ResponseExtract parses THIS action's XML response into JSON (see
 	// TempTool.ResponseExtract / ExtractSpec). Per-action so a toolbox can
 	// have some JSON actions and some XML-extracted ones.
@@ -1738,6 +1759,24 @@ type TempTool struct {
 	// and the header is sent as declared. This is what lets an XML/text API be
 	// a first-class api-mode tool instead of forcing a shell detour.
 	ContentType string `json:"content_type,omitempty"`
+	// Trial marks a tool authored mid-conversation that the user has not
+	// confirmed. It is a real tool on a real agent — callable, visible, and
+	// governed by the normal access controls — the flag only records that
+	// nobody has vouched for it yet, so a UI can badge it and a cleanup can
+	// reap the ones that were never kept.
+	//
+	// This replaces the session-scoped tool pool. Ephemerality is an ATTRIBUTE
+	// of a tool, not a separate storage scope: the pool version produced an
+	// owner-less global table, tools invisible to the person who owned them, a
+	// cross-user delete, and a shadow-reconciliation pass on every read.
+	Trial bool `json:"trial,omitempty"`
+
+	// TrialSince is when the tool was marked Trial — the clock the reaper reads.
+	// Zero on a confirmed tool. Stamped at attach time rather than derived from
+	// the agent record's mtime, because editing an agent for any reason would
+	// otherwise reset every unconfirmed tool's age.
+	TrialSince time.Time `json:"trial_since,omitempty"`
+
 	// Headers are extra request headers sent with an api-mode call, as
 	// {name: value}. Some protocols carry REQUIRED semantics in a header
 	// rather than the body or the URL: a CalDAV calendar-query REPORT (or a

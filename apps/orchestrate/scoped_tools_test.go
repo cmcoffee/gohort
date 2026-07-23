@@ -1,7 +1,9 @@
 package orchestrate
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -244,8 +246,8 @@ func TestScopeTargetsIncludeHiddenAgents(t *testing.T) {
 		}
 	}
 	mk("visible", false, "")
-	mk("hidden_util", true, "")   // a user's own hidden agent — must be offered
-	mk("sub", false, "visible")   // sub-agents are managed via their parent
+	mk("hidden_util", true, "") // a user's own hidden agent — must be offered
+	mk("sub", false, "visible") // sub-agents are managed via their parent
 	if err := AdminPersistTempTool(db, "alice", TempTool{Name: "get_weather"}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,5 +268,164 @@ func TestScopeTargetsIncludeHiddenAgents(t *testing.T) {
 	}
 	if seen["sub"] {
 		t.Error("sub-agents are managed via their parent, not scoped directly")
+	}
+}
+
+// TestAuthoredToolLandsOnFocusedAgent is the Builder case: an authoring turn
+// builds FOR another agent, so what it writes must land on the agent in
+// authoring focus, not on the agent running the turn. Getting this backwards
+// piles every tool Builder ever wrote onto Builder itself.
+func TestAuthoredToolLandsOnFocusedAgent(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+
+	app := &OrchestrateApp{}
+	app.DB = db
+	udb := agentUserDB(db, "alice")
+	for _, id := range []string{"seed-builder", "target"} {
+		if _, err := saveAgent(udb, AgentRecord{ID: id, Owner: "alice", Name: id, OrchestratorPrompt: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prevAttach := AttachToolToAgent
+	AttachToolToAgent = func(d Database, owner, agentID string, tt TempTool) error {
+		return bundleAgentToolByID(agentUserDB(d, owner), owner, agentID, tt)
+	}
+	t.Cleanup(func() { AttachToolToAgent = prevAttach })
+
+	// Builder is running the turn; "target" is in authoring focus.
+	sess := &ToolSession{
+		Username: "alice", DB: db, AgentID: "seed-builder",
+		AuthoringAgentFn: func() string { return "target" },
+	}
+	tool := &TempTool{Name: "probe_thing", Description: "d"}
+	// Mirrors temptool.persistUnapprovedTool's targeting rule (focus wins over
+	// the running agent) without reaching into that package's unexported half.
+	target := sess.AgentID
+	if sess.AuthoringAgentFn != nil {
+		if f := sess.AuthoringAgentFn(); f != "" {
+			target = f
+		}
+	}
+	trial := *tool
+	trial.Trial = true
+	if err := AttachToolToAgent(sess.DB, sess.Username, target, trial); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	tgt, _ := loadAgent(udb, "target")
+	if len(tgt.Tools) != 1 || tgt.Tools[0].Name != "probe_thing" {
+		t.Fatalf("tool should land on the FOCUSED agent, target has %+v", tgt.Tools)
+	}
+	if !tgt.Tools[0].Trial {
+		t.Error("an authored, unapproved tool must be marked Trial")
+	}
+	if b, _ := loadAgent(udb, "seed-builder"); len(b.Tools) != 0 {
+		t.Errorf("nothing should land on the authoring agent itself, got %+v", b.Tools)
+	}
+
+	// Confirming clears the mark without moving the tool.
+	prevConfirm := ConfirmAgentTool
+	ConfirmAgentTool = func(d Database, owner, agentID, toolName string) error {
+		u := agentUserDB(d, owner)
+		rec, ok := loadAgent(u, agentID)
+		if !ok {
+			return fmt.Errorf("no agent")
+		}
+		for i := range rec.Tools {
+			if rec.Tools[i].Name == toolName {
+				rec.Tools[i].Trial = false
+				_, err := saveAgent(u, rec)
+				return err
+			}
+		}
+		return fmt.Errorf("no tool")
+	}
+	t.Cleanup(func() { ConfirmAgentTool = prevConfirm })
+	if err := ConfirmAgentTool(db, "alice", "target", "probe_thing"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	tgt2, _ := loadAgent(udb, "target")
+	if tgt2.Tools[0].Trial {
+		t.Error("confirm must clear the Trial mark")
+	}
+	if len(tgt2.Tools) != 1 {
+		t.Error("confirm must not move or duplicate the tool")
+	}
+}
+
+// TestReapTrialTools: an unconfirmed authored tool expires; a confirmed one and
+// an unstamped one never do. The reaper's failure mode must be "left something
+// behind", never "deleted work someone wanted".
+func TestReapTrialTools(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+
+	app := &OrchestrateApp{}
+	app.DB = db
+	udb := agentUserDB(db, "alice")
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "a1", Owner: "alice", Name: "Chat", OrchestratorPrompt: "x",
+		Tools: []TempTool{
+			{Name: "expired", Trial: true, TrialSince: old},
+			{Name: "fresh", Trial: true, TrialSince: time.Now()},
+			{Name: "confirmed"},
+			// Pre-dates the stamp: unconfirmed but ageless, so never reaped.
+			{Name: "unstamped", Trial: true},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := app.reapTrialTools(db, "alice"); n != 1 {
+		t.Fatalf("reaped %d, want 1", n)
+	}
+	rec, _ := loadAgent(udb, "a1")
+	left := map[string]bool{}
+	for _, tl := range rec.Tools {
+		left[tl.Name] = true
+	}
+	if left["expired"] {
+		t.Error("an expired unconfirmed tool must be reaped")
+	}
+	for _, keep := range []string{"fresh", "confirmed", "unstamped"} {
+		if !left[keep] {
+			t.Errorf("%q must survive the reaper", keep)
+		}
+	}
+
+	// Idempotent: a second pass has nothing left to take.
+	if n := app.reapTrialTools(db, "alice"); n != 0 {
+		t.Errorf("second pass reaped %d, want 0", n)
+	}
+}
+
+// TestReapTrialToolsDisabled: TTL 0 disables reaping entirely, so a deployment
+// can opt out without the sweep silently running anyway.
+func TestReapTrialToolsDisabled(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	prev := TrialToolTTL
+	TrialToolTTL = 0
+	t.Cleanup(func() { TrialToolTTL = prev })
+
+	app := &OrchestrateApp{}
+	app.DB = db
+	udb := agentUserDB(db, "alice")
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "a1", Owner: "alice", Name: "Chat", OrchestratorPrompt: "x",
+		Tools: []TempTool{{Name: "ancient", Trial: true, TrialSince: time.Now().Add(-365 * 24 * time.Hour)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := app.reapTrialTools(db, "alice"); n != 0 {
+		t.Fatalf("reaped %d with TTL disabled, want 0", n)
 	}
 }

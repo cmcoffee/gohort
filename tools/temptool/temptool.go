@@ -546,17 +546,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
 	}
-	// Session-scoped persistence: save the tool keyed by chat session
-	// ID so it survives across messages within the same chat. Only
-	// applies when persist=false (the persist=true path queues for
-	// admin approval, which lives in a separate pool).
-	saveSessionScoped := func() {
-		if sess.DB != nil && sess.ChatSessionID != "" {
-			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
-				Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
-			}
-		}
-	}
+	saveSessionScoped := func() { persistUnapprovedTool(sess, tool) }
 
 	// Persist request: queue for human approval. The tool is already
 	// usable in this session (just registered above); persistence is
@@ -822,6 +812,52 @@ func (t *DeleteTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 // ----------------------------------------------------------------------
 // Conversion + dispatch
 // ----------------------------------------------------------------------
+
+// persistUnapprovedTool gives a freshly authored, UNAPPROVED tool a durable
+// home: the agent that asked for it, marked Trial because nobody has vouched
+// for it yet. (An approved tool takes the persist=true path into the pending
+// pool instead; this is the everything-else case.)
+//
+// It used to write a per-CHAT-SESSION copy. That scope answered "who can use
+// this tool?" with "whichever chat window you were in" — not a boundary anyone
+// reasons about. Deleting the conversation deleted the tool, nothing outside
+// that conversation could see it existed, and reconciling it against the real
+// scopes needed a shadow pass on every read. Committing to the agent keeps the
+// property that mattered (an agent always loads its own kit, so the tool is
+// callable immediately, before any approval) and drops the rest.
+//
+// Hosts with no agent of their own — no AgentID, or no attach seam wired — keep
+// the session pool as a fallback so they still have somewhere to put it.
+func persistUnapprovedTool(sess *ToolSession, tool *TempTool) {
+	if sess == nil || sess.DB == nil || tool == nil {
+		return
+	}
+	// Authoring focus wins over the running agent: an authoring turn builds FOR
+	// another agent, and committing to the runner would pile every tool Builder
+	// ever wrote onto Builder itself.
+	target := sess.AgentID
+	if sess.AuthoringAgentFn != nil {
+		if focus := strings.TrimSpace(sess.AuthoringAgentFn()); focus != "" {
+			target = focus
+		}
+	}
+	if target != "" && AttachToolToAgent != nil {
+		t := *tool
+		t.Trial = true
+		t.TrialSince = time.Now()
+		if err := AttachToolToAgent(sess.DB, sess.Username, target, t); err == nil {
+			Debug("[temptool] %q committed to agent %s as a trial tool", tool.Name, target)
+			return
+		} else {
+			Debug("[temptool] attach %q to agent %s failed, falling back to session scope: %v", tool.Name, target, err)
+		}
+	}
+	if sess.ChatSessionID != "" {
+		if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
+			Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, tool.Name, err)
+		}
+	}
+}
 
 // BuildAgentToolDefs converts a session's temp tools into AgentToolDefs
 // suitable for AgentLoopConfig.DynamicTools. Each tool's handler
@@ -2551,15 +2587,8 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
 	}
-	// Session-scoped persistence so the tool survives across messages
-	// in the same chat session (see CreateTempToolTool for rationale).
-	saveSessionScoped := func() {
-		if sess.DB != nil && sess.ChatSessionID != "" {
-			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
-				Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
-			}
-		}
-	}
+	// Durable home for the unapproved tool — see persistUnapprovedTool.
+	saveSessionScoped := func() { persistUnapprovedTool(sess, tool) }
 
 	spec := formatTempToolSpec(tool)
 
