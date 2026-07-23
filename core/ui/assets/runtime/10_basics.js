@@ -90,7 +90,23 @@
         listEl.appendChild(el('div', {class: 'ui-table-empty'}, [cfg.empty_text || 'Nothing here yet.']));
         return;
       }
+      // Group headings, when the table declares group_by. Order follows the
+      // RECORDS, not a client-side sort — the server already ordered them, and
+      // re-sorting here would fight it and reshuffle headings between refreshes.
+      var lastGroup = null;
       records.forEach(function(rec) {
+        if (cfg.group_by) {
+          var g = lookup(rec, cfg.group_by);
+          g = (g === undefined || g === null) ? '' : String(g);
+          if (g !== lastGroup) {
+            lastGroup = g;
+            // An empty group value renders ungrouped — no heading — so a table
+            // can carry a few "loose" rows above its first section.
+            if (g !== '') {
+              listEl.appendChild(el('div', {class: 'ui-table-group'}, [g]));
+            }
+          }
+        }
         var rowKey = rec[cfg.row_key];
         var row = el('div', {class: 'ui-table-row'});
 
@@ -114,6 +130,10 @@
           }
           var cell = el('div', {class: 'ui-table-cell' + (col.mute ? ' mute' : '')});
           if (col.flex) cell.style.flex = col.flex;
+          // Full value on hover — cells ellipsize when crowded, so a long name
+          // (create_apple_calendar_event) stays readable via the native tooltip.
+          var cellText = fmt(v, col.format);
+          if (cellText) cell.title = String(cellText);
           // Link column: render a safe anchor (text + href set separately so
           // nothing is HTML-injected) instead of embedding raw <a> markup, which
           // a cell would escape and show as literal text. Guard the scheme so a
@@ -1600,6 +1620,77 @@
           clearTimeout(debounceTimers[f.field]);
           if (current[f.field] !== input.value) save(f.field, input.value);
         });
+        // Multi-line paste upgrade. A single-line <input> CANNOT hold
+        // newlines — the HTML value-sanitization algorithm strips CR/LF on
+        // the way in — so pasting a block of text silently joins every line
+        // and the user loses structure they can't get back. On the first
+        // paste containing a newline, swap the field to a <textarea> in
+        // place: same field name, same value, same save wiring, newlines
+        // intact. The upgrade is per-field and sticky for the life of the
+        // panel — once a field has held multi-line content, typing in it
+        // should keep working the same way.
+        //
+        // Only plain text/tel fields upgrade. Declare Type "textarea" when a
+        // field is ALWAYS multi-line (that path has expand/Edit affordances
+        // this one deliberately doesn't); set SingleLine on a value that must
+        // stay one line — a handle, a URL, a slug — to opt out entirely.
+        if (!f.single_line && (t === 'text' || t === 'tel')) {
+          input.addEventListener('paste', function(ev) {
+            var clip = ev.clipboardData || window.clipboardData;
+            if (!clip) return;
+            var pasted = clip.getData('text/plain') || '';
+            if (pasted.indexOf('\n') === -1 && pasted.indexOf('\r') === -1) return;
+            ev.preventDefault();
+            upgradeFieldToTextarea(pasted);
+          });
+        }
+      }
+
+      // upgradeFieldToTextarea replaces this field's <input> with a growing
+      // <textarea> carrying the pasted block, merged at the caret exactly as
+      // a native paste would (selection replaced, surrounding text kept).
+      //
+      // Reassigning `input` is what keeps the rest of the field wiring
+      // correct: every later consumer — fieldSetters (Suggest), the preset
+      // chips, show_when — reads `input.value` at CALL time, so it follows
+      // the binding to the new node. The one consumer that captured the NODE
+      // is renderFormChips (it takes it as an argument), so re-render the
+      // chips row against the replacement.
+      function upgradeFieldToTextarea(pasted) {
+        var old = input;
+        if (!old || old.tagName === 'TEXTAREA') return;
+        var start = old.selectionStart == null ? old.value.length : old.selectionStart;
+        var end = old.selectionEnd == null ? old.value.length : old.selectionEnd;
+        var merged = old.value.substring(0, start) + pasted + old.value.substring(end);
+
+        var ta = el('textarea', {
+          class: 'ui-form-input ui-form-input-multiline',
+          rows: '2', placeholder: f.placeholder || '',
+        });
+        ta.value = merged;
+        function autosize() {
+          ta.style.height = 'auto';
+          // scrollHeight reads 0 while the field is in a hidden container (a
+          // collapsed section, an inactive wizard step) — leaving the rows=2
+          // fallback height alone is right until it's actually visible, and
+          // the next input event resizes it properly.
+          if (ta.scrollHeight > 0) ta.style.height = (ta.scrollHeight + 2) + 'px';
+        }
+        ta.addEventListener('input', function(){ debounced(f.field, ta.value); autosize(); });
+        ta.addEventListener('blur', function(){
+          clearTimeout(debounceTimers[f.field]);
+          if (current[f.field] !== ta.value) save(f.field, ta.value);
+        });
+        if (old.parentNode) old.parentNode.replaceChild(ta, old);
+        input = ta;
+        if (typeof chipsHost !== 'undefined' && chipsHost) renderFormChips(chipsHost, f, input);
+        autosize();
+        // Park the caret after the pasted block, mirroring a native paste.
+        var caret = start + pasted.length;
+        try { ta.focus(); ta.selectionStart = ta.selectionEnd = caret; } catch (_) {}
+        // A paste is a real edit — persist it now rather than waiting for a
+        // blur the user may never give this field.
+        save(f.field, ta.value);
       }
       // Chips row above the input — declared via f.chips_source.
       // Each chip applies a preset value to the input and saves.

@@ -191,6 +191,7 @@ least one minor release before it goes. Changes are recorded in the repo-root
 | A multi-line list editor (each row a rule) | `ui.FormField{Type: "rules"}` inside `FormPanel` |
 | A compact tag-array editor (chips with × removers) | `ui.FormField{Type: "tags"}` inside `FormPanel` |
 | A toggle (boolean) on a form | `ui.FormField{Type: "toggle"}` |
+| A field that must stay one line (handle, URL, slug, API key) | `ui.FormField{SingleLine: true}` — otherwise a multi-line paste grows the field into a textarea rather than flattening the content |
 | A bar chart | `ui.BarChart` |
 | An article editor with full markdown + image insertion | `ui.ArticleEditor` |
 | A code editor with diff + history | `ui.CodeWriterPanel` |

@@ -510,6 +510,16 @@ body { min-height: 100vh; min-height: 100dvh; }
   margin-left: auto;
   justify-content: flex-end;
 }
+/* Group heading for a table declaring group_by — a quiet section rule, not a
+ * row, so the eye reads it as structure rather than data. */
+.ui-table-group {
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-mute);
+  padding: 0.9rem 0.2rem 0.3rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.2rem;
+}
+.ui-table-group:first-child { padding-top: 0.2rem; }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
 .ui-table-cell.mute { color: var(--text-mute); font-size: 0.78rem; }
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
@@ -863,6 +873,18 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-form-textarea:focus,
 .ui-form-select:focus { border-color: var(--accent); }
 .ui-form-textarea { resize: vertical; min-height: calc(var(--tap) * 1.5); line-height: 1.4; }
+/* A single-line text field that grew into a textarea because the user
+ * pasted multi-line content (see upgradeFieldToTextarea). It keeps the
+ * .ui-form-input chrome so the form doesn't visibly reshuffle — only the
+ * wrapping behavior changes. Height is set inline by the autosizer; the
+ * cap keeps a big paste from pushing the rest of the form off-screen. */
+.ui-form-input-multiline {
+  resize: vertical;
+  line-height: 1.4;
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
 .ui-form-help { display: block; font-size: 0.75rem; color: var(--text-mute); margin-top: 0.3rem; }
 /* Section-divider field (FormField type="header") — splits a long
  * form into visually grouped chunks without breaking the single-save
@@ -3236,6 +3258,13 @@ body { min-height: 100vh; min-height: 100dvh; }
  * the LLM's reply is the focus. */
 .ui-agent-msg-user { align-self: flex-end; }
 .ui-agent-msg-user .ui-agent-msg-body {
+  /* User text is set as textContent and never markdown-rendered (addMessage
+   * gates markdown to role="assistant"), so without this HTML collapses the
+   * newlines and a pasted multi-line block — a log, an address, a list —
+   * renders as one run-on line. The text was always sent intact; only the
+   * echo was wrong. Assistant bubbles handle their own whitespace: raw while
+   * streaming (.ui-agent-msg-streaming), block elements once markdown runs. */
+  white-space: pre-wrap;
   background: var(--bg-2);
   border-right: 3px solid var(--accent);
   /* Brighter than --text-mute (too dim — own messages became hard

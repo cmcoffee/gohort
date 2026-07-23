@@ -2359,7 +2359,16 @@
       // emits structured block elements (p / pre / lists handle
       // their own whitespace). Leaving it on would add weird gaps
       // between block tags.
-      if (m.bubble) m.bubble.classList.remove('ui-agent-msg-streaming');
+      //
+      // Only when markdown ACTUALLY ran, though: an app with
+      // cfg.markdown off keeps raw textContent in the body forever, so
+      // dropping the class there collapsed every newline the moment the
+      // turn finished — the reply looked right while streaming and then
+      // reflowed into one paragraph. Same class of bug as the user
+      // bubble's missing pre-wrap.
+      if (m.bubble && cfg.markdown && m.role === 'assistant') {
+        m.bubble.classList.remove('ui-agent-msg-streaming');
+      }
       // Fire registered decorators so apps can append per-message
       // affordances (save buttons, copy actions, …).
       var decorators = window.UIMessageDecorators || [];

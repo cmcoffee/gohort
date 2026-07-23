@@ -131,6 +131,17 @@ type Table struct {
 	PullToRefresh bool        `json:"pull_to_refresh,omitempty"`
 	SortBy        string      `json:"sort_by,omitempty"` // field to sort by (descending if SortDesc)
 	SortDesc      bool        `json:"sort_desc,omitempty"`
+	// GroupBy renders rows under headings, one per distinct value of this
+	// field, in the order the records arrive (so the server controls grouping
+	// order by ordering its rows — no client-side sort to keep in sync). Rows
+	// with an empty value render ungrouped, above the first heading. Empty
+	// GroupBy = a flat table, the default.
+	//
+	// Use when one list legitimately holds rows of different KINDS and the kind
+	// is what the reader navigates by — e.g. tools split across a user's pool,
+	// individual agents, and chat sessions. Prefer a sort or a filter when the
+	// rows are the same kind and only differ by value.
+	GroupBy string `json:"group_by,omitempty"`
 	// RecordsField extracts the rows from a specific key of the GET
 	// response. Use when one endpoint returns multiple lists in a
 	// shaped object (e.g. `{pending: [...], active: [...]}`) and you
@@ -708,8 +719,18 @@ type FormField struct {
 	// non-textarea field types.
 	Expand bool `json:"expand,omitempty"`
 	Inline bool `json:"inline,omitempty"`
-	Min    int  `json:"min,omitempty"`
-	Max    int  `json:"max,omitempty"`
+	// SingleLine opts a "text" / "tel" field OUT of the multi-line paste
+	// upgrade. By default, pasting text containing a newline into a
+	// single-line field swaps it to a growing textarea in place, because an
+	// <input> physically cannot hold newlines (the HTML value-sanitization
+	// algorithm strips CR/LF) and the paste would otherwise be silently
+	// flattened into one line. Set this on a value that must stay one line —
+	// a handle, a URL, a slug, an API key — where a flattened paste is
+	// preferable to a field that accepts structure the backend will reject.
+	// Ignored for field types that are already multi-line.
+	SingleLine bool `json:"single_line,omitempty"`
+	Min        int  `json:"min,omitempty"`
+	Max        int  `json:"max,omitempty"`
 	// Decimals enables float input on a "number" field. 0 = integer
 	// only (default). >0 = parseFloat with that many decimal places
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
