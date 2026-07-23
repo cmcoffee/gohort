@@ -587,7 +587,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// carries the parent's network connector so a Private parent stays
 					// private in the sub-run (applyForcePrivateToDispatch enforces it
 					// from the blocked ctx). Both nil-safe.
-					rec := RunDelegation(sess.ContextWithNetworkConnector(sess.Context()), RootDB, owner, agent, brief)
+					// controllerAgentID is the agent doing the delegating — passed
+					// so the delegate can address the channels its delegator
+					// reaches instead of handing text back up to be relayed.
+					rec := RunDelegation(sess.ContextWithNetworkConnector(sess.Context()), RootDB, owner, agent, brief, controllerAgentID)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
 					}
@@ -597,7 +600,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					return fmt.Sprintf("Delegated to %q (pre-authorized). Result:\n%s", agent, out), nil
 				}
-				a := SaveAuthorization(RootDB, Authorization{Owner: owner, Agent: agent, Brief: brief})
+				// FromAgent rides the queued record so an APPROVED delegation runs
+				// with the same channel reach a pre-authorized one gets — the user
+				// clicking Approve isn't making a scope decision.
+				a := SaveAuthorization(RootDB, Authorization{Owner: owner, Agent: agent, Brief: brief, FromAgent: controllerAgentID})
 				return fmt.Sprintf("Queued a delegation to %q for the user's approval — it's in the Authorizations pane (id %s) and runs once approved.", agent, a.ID), nil
 			},
 		},

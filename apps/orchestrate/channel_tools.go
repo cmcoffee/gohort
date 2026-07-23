@@ -88,6 +88,35 @@ func init() {
 	)
 }
 
+// inheritedChannelChain gates the DELEGATED half of channel access against the
+// target's own tool allow-list, and returns the chain to actually pass through
+// (nil = own channels only).
+//
+// The channel tools are force-added AFTER the allow-list resolves, so they land
+// in the catalog whether or not the agent lists them. That's long-standing and
+// deliberate for an agent's OWN channels — binding a channel to an agent is the
+// grant. Extending it to a dispatch chain, though, would hand messaging tools to
+// a delegate that never had any: an agent curated down to a narrow list, or set
+// to no tools at all, would gain list_chats / read_chat / send_message purely by
+// being delegated to. A delegation should widen what an agent can REACH, never
+// what it can DO.
+//
+// So: an agent with no explicit allow-list (everything) takes the inherited
+// channels; a curated one takes them only if it actually lists a channel tool.
+// Its own channels are unaffected either way — that path is untouched.
+func inheritedChannelChain(target AgentRecord, via []string) []string {
+	if len(via) == 0 || len(target.AllowedTools) == 0 {
+		return via // nothing inherited, or "everything" — unchanged behavior
+	}
+	for _, n := range target.AllowedTools {
+		switch canonicalToolName(n) {
+		case "list_chats", "read_chat", "send_message", "list_members":
+			return via
+		}
+	}
+	return nil
+}
+
 // channelsAccessibleToAgent returns the channels an agent may read/send on: its
 // own bound channels, channels an ANCESTOR (up the OwnedBy chain) is bound to (a
 // sub-agent inheriting its parent's channels), and channels it — or an ancestor —
@@ -95,17 +124,34 @@ func init() {
 // hybrid model: a sub-agent can resolve + list exactly the channels it may act on,
 // matching the send-authority predicate (channelSenderAuthorized) so visibility
 // and delivery agree.
-func channelsAccessibleToAgent(udb Database, owner, agentID string) []Channel {
-	chain := map[string]bool{} // the agent + every ancestor
+//
+// via carries the agent ids of the LIVE DISPATCH CHAIN — the agent that
+// dispatched this run and whoever dispatched that one. Ownership is a standing
+// relationship; a dispatch is a runtime edge, and an agent handed a task by a
+// parent needs to reach the channels that parent reaches, or every delivery has
+// to bounce back through the parent to be relayed. Each via id contributes its
+// OWN accessible set (its bindings, its ancestors', its grants), so the result
+// can never exceed what the dispatching parent itself could reach — authority
+// narrows down a chain, exactly as dispatchOrigin enforces for dispatch targets.
+//
+// Note the deliberate asymmetry with channelSenderAuthorized: visibility follows
+// the dispatch chain, the proactive-send BYPASS does not. A dispatched sub-agent
+// can address the parent's channels, and its proactive sends land in the same
+// approval queue the parent's own would — a runtime edge grants reach, not
+// standing authority to message people unprompted.
+func channelsAccessibleToAgent(udb Database, owner, agentID string, via ...string) []Channel {
+	chain := map[string]bool{} // the agent + every ancestor + the dispatch chain
 	seen := map[string]bool{}
-	for id := agentID; id != "" && !seen[id]; {
-		seen[id] = true
-		chain[id] = true
-		rec, ok := loadAgent(udb, id)
-		if !ok {
-			break
+	for _, seed := range append([]string{agentID}, via...) {
+		for id := seed; id != "" && !seen[id]; {
+			seen[id] = true
+			chain[id] = true
+			rec, ok := loadAgent(udb, id)
+			if !ok {
+				break
+			}
+			id = rec.OwnedBy
 		}
-		id = rec.OwnedBy
 	}
 	var out []Channel
 	for _, ch := range ListChannels(RootDB, owner) {
@@ -128,9 +174,11 @@ func channelsAccessibleToAgent(udb Database, owner, agentID string) []Channel {
 // on that service; a per-contact binding narrows to that chat. The "global view"
 // is just the special case of holding a whole-service channel — no separate
 // mode. Returns nil when the agent has no channels or no messaging transport
-// (Bridges) has registered.
-func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
-	chans := channelsAccessibleToAgent(UserDB(orchestrateBaseDB, owner), owner, agentID)
+// (Bridges) has registered. via carries the live dispatch chain — see
+// channelsAccessibleToAgent — so a dispatched sub-agent can reach the channels
+// the agent that dispatched it reaches.
+func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) []AgentToolDef {
+	chans := channelsAccessibleToAgent(UserDB(orchestrateBaseDB, owner), owner, agentID, via...)
 	if len(chans) == 0 {
 		return nil
 	}
@@ -185,7 +233,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "list_chats",
-				Description: "List the conversations on THIS agent's channels — display name, handle, and chat id — so you can read or message one. Scoped to your channels only (you can't see chats outside them). Read-only.",
+				Description: "List the conversations on the channels YOU can reach — your own, plus any inherited from the agent that dispatched you — with display name, handle, and chat id, so you can read or message one. Scoped to those channels only (you can't see chats outside them). Read-only.",
 				Parameters:  map[string]ToolParam{"limit": {Type: "number", Description: "Max conversations (default 20)."}},
 			},
 			Handler: func(args map[string]any) (string, error) {
@@ -321,7 +369,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "send_message",
-				Description: "Send a message OUT over one of this agent's channels — to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to your channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool — put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
+				Description: "Send a message OUT over one of the channels you can reach (your own, or one inherited from the agent that dispatched you) — to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to those channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool — put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
 				Parameters: map[string]ToolParam{
 					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id. (Alias: chat_id.)"},
 					"text":        {Type: "string", Description: "The message text to send to the channel. (Alias: message.)"},

@@ -104,3 +104,120 @@ func TestChannelsAccessibleToAgent(t *testing.T) {
 		t.Errorf("other access = %v, want {c2,c3}", got)
 	}
 }
+
+// TestChannelsAccessibleViaDispatchChain covers the dispatch-chain inheritance:
+// an agent handed a task by a parent can reach the parent's channels, so a
+// specialist asked to "post the summary to the team thread" addresses it
+// directly instead of handing text back up to be relayed.
+func TestChannelsAccessibleViaDispatchChain(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	savedRoot := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = savedRoot })
+
+	mk := func(id, ownedBy string) {
+		if _, err := saveAgent(db, AgentRecord{ID: id, Owner: "u", Name: id, OrchestratorPrompt: "x", OwnedBy: ownedBy}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("chat", "")      // dispatching parent, bound to the team thread
+	mk("research", "")  // top-level specialist — NOT owned by chat
+	mk("helper", "research")
+	mk("stranger", "")
+
+	SaveChannel(db, Channel{ID: "team", Owner: "u", AgentID: "chat", Service: "imessage", Address: "chatTeam"})
+	SaveChannel(db, Channel{ID: "priv", Owner: "u", AgentID: "stranger", Service: "imessage", Address: "chatPriv"})
+
+	ids := func(chs []Channel) map[string]bool {
+		m := map[string]bool{}
+		for _, c := range chs {
+			m[c.ID] = true
+		}
+		return m
+	}
+
+	// Baseline: with no dispatch chain, the specialist sees nothing — it is not
+	// owned by chat, so the OwnedBy walk alone never reaches the team channel.
+	if got := ids(channelsAccessibleToAgent(db, "u", "research")); len(got) != 0 {
+		t.Fatalf("undispatched specialist access = %v, want none", got)
+	}
+	// Dispatched BY chat: it can now reach chat's channel.
+	got := ids(channelsAccessibleToAgent(db, "u", "research", "chat"))
+	if !got["team"] || got["priv"] || len(got) != 1 {
+		t.Fatalf("dispatched specialist access = %v, want {team}", got)
+	}
+	// Two hops (chat → research → helper): the chain carries, and still only
+	// covers what the dispatchers themselves could reach.
+	deep := ids(channelsAccessibleToAgent(db, "u", "helper", "chat", "research"))
+	if !deep["team"] || deep["priv"] || len(deep) != 1 {
+		t.Fatalf("two-hop access = %v, want {team}", deep)
+	}
+	// A dispatch never reaches an unrelated agent's channel.
+	if got := ids(channelsAccessibleToAgent(db, "u", "research", "stranger")); !got["priv"] || got["team"] {
+		t.Fatalf("chain must grant exactly the dispatcher's channels, got %v", got)
+	}
+}
+
+// TestDispatchChainDoesNotGrantSendBypass pins the deliberate asymmetry:
+// visibility follows the dispatch chain, the proactive-send bypass does not.
+// A runtime edge grants reach, not standing authority to message people
+// unprompted — a dispatched agent's proactive send still queues for approval.
+func TestDispatchChainDoesNotGrantSendBypass(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	savedRoot := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = savedRoot })
+
+	for _, id := range []string{"chat", "research"} {
+		if _, err := saveAgent(db, AgentRecord{ID: id, Owner: "u", Name: id, OrchestratorPrompt: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	SaveChannel(db, Channel{ID: "team", Owner: "u", AgentID: "chat", Service: "imessage", Address: "chatTeam"})
+
+	// The specialist can SEE the channel when dispatched by chat...
+	if got := channelsAccessibleToAgent(db, "u", "research", "chat"); len(got) != 1 {
+		t.Fatalf("dispatched agent should see the channel, got %v", got)
+	}
+	// ...but does not hold the send bypass: its proactive send queues.
+	if channelSenderAuthorized(db, "u", "chatTeam", "", "research") {
+		t.Fatal("a dispatch edge must not confer the proactive-send bypass")
+	}
+}
+
+// TestInheritedChannelChainRespectsAllowList: the channel tools are force-added
+// after the allow-list resolves, so a delegation must not hand messaging tools
+// to an agent that never had any. A delegation widens what an agent can REACH,
+// never what it can DO.
+func TestInheritedChannelChainRespectsAllowList(t *testing.T) {
+	chain := []string{"chat"}
+
+	// No explicit allow-list = everything: takes the inherited channels.
+	if got := inheritedChannelChain(AgentRecord{}, chain); len(got) != 1 {
+		t.Errorf("open allow-list should inherit, got %v", got)
+	}
+	// Curated list naming a channel tool: takes them.
+	withMsg := AgentRecord{AllowedTools: []string{"web_search", "send_message"}}
+	if got := inheritedChannelChain(withMsg, chain); len(got) != 1 {
+		t.Errorf("allow-list naming send_message should inherit, got %v", got)
+	}
+	// A retired alias still resolves (read_phantom_chat -> read_chat).
+	alias := AgentRecord{AllowedTools: []string{"read_phantom_chat"}}
+	if got := inheritedChannelChain(alias, chain); len(got) != 1 {
+		t.Errorf("renamed channel tool should still count, got %v", got)
+	}
+	// Curated list with NO channel tool: no inherited channels.
+	noMsg := AgentRecord{AllowedTools: []string{"web_search", "calculate"}}
+	if got := inheritedChannelChain(noMsg, chain); got != nil {
+		t.Errorf("curated non-messaging agent must not inherit, got %v", got)
+	}
+	// The no-tools sentinel inherits nothing.
+	none := AgentRecord{AllowedTools: []string{noToolsSentinel}}
+	if got := inheritedChannelChain(none, chain); got != nil {
+		t.Errorf("no-tools agent must not inherit, got %v", got)
+	}
+	// Nothing to inherit stays nothing, whatever the allow-list says.
+	if got := inheritedChannelChain(noMsg, nil); got != nil {
+		t.Errorf("empty chain stays empty, got %v", got)
+	}
+}

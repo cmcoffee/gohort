@@ -63,6 +63,17 @@ type StandingAgent struct {
 	// the reporter then falls back to the target agent's channel home thread.
 	ReportAgentID   string `json:"report_agent_id,omitempty"`
 	ReportSessionID string `json:"report_session_id,omitempty"`
+	// DispatchedBy carries the live dispatch chain when this record is a
+	// TRANSIENT one built for a runtime dispatch (RunDelegation) rather than a
+	// stored schedule — the agent that delegated, and whoever delegated to it.
+	// The runner hands it to the sub-run so the delegate can reach the channels
+	// its delegator reaches (see orchestrate.channelsAccessibleToAgent).
+	//
+	// Deliberately NOT the same thing as ReportAgentID: that names where a run
+	// REPORTS, which every stored schedule has, and treating it as an authority
+	// grant would silently widen every scheduled agent's channel reach to its
+	// creator's channels. A real (saved) standing agent leaves this empty.
+	DispatchedBy []string `json:"dispatched_by,omitempty"`
 }
 
 // StandingRunResult is what a registered runner reports for one run.

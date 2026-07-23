@@ -436,20 +436,24 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 	return extraTools, availableBlock, customToolPrompt, subTurn
 }
 
-func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUser, agentKey, message string) (string, error) {
+// via, when supplied, is the live dispatch chain — the agent that dispatched
+// this run and whoever dispatched that one — so the target can reach the
+// channels its dispatcher reaches. Omit it for a run with no dispatching parent
+// (a schedule, a monitor wake): the target then keeps its own scope.
+func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, via ...string) (string, error) {
 	// Dispatch sub-agents auto-approve tool calls — a parent agent (with a
 	// human behind it) initiated the dispatch. Standing/autonomous runs must
 	// NOT auto-approve; they call runAgentSyncConfirm with a deny-by-default
 	// confirm so high-consequence tools route through approval instead.
 	text, _, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
-		func(string, string) bool { return true })
+		func(string, string) bool { return true }, via...)
 	return text, err
 }
 
 // runAgentSyncConfirm returns (text, hitRoundCap, error) — hitRoundCap tells the
 // caller the run stopped because it exhausted its worker rounds (so a standing
 // run can flag itself incomplete rather than reporting a truncated result as ok).
-func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool) (string, bool, error) {
+func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (string, bool, error) {
 	if T == nil || T.LLM == nil {
 		return "", false, errors.New("orchestrate runtime not initialized")
 	}
@@ -555,7 +559,10 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
 	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
-	if chTools := channelChatTools(subSess, agentOwner, target.ID); len(chTools) > 0 {
+	// via carries the dispatch chain on a DELEGATED run, so a delegate can also
+	// address the channels its delegator reaches (empty for a schedule / wake,
+	// which have no dispatching parent).
+	if chTools := channelChatTools(subSess, agentOwner, target.ID, inheritedChannelChain(target, via)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
@@ -623,9 +630,9 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Tools:         tools,
 		MaxRounds:     resolveMaxWorkerRounds(target),
 		StampLocation: UserLocation(runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:   target.ThinkBudget,         // per-agent override; 0 = inherit route/global
+		ThinkBudget:   target.ThinkBudget,        // per-agent override; 0 = inherit route/global
 		OnStep:        func(info StepInfo) { telem.record(info) },
-		Confirm:      confirm,
+		Confirm:       confirm,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
@@ -698,6 +705,27 @@ type AgentSyncRun struct {
 	Message          string
 	FreshSession     bool
 	StatusCallback   func(string) // optional: wired to the sub-session's StatusCallback
+	// Stream, when set, receives assistant text deltas AS THEY GENERATE, wired
+	// straight to the agent loop's stream handler. Without it a caller only
+	// gets AgentSyncResult.Text when the whole turn is done — fine for a
+	// scheduled run, fatal for anything a person is waiting on out loud, where
+	// time-to-first-word is the entire experience.
+	//
+	// It fires for EVERY round, so a turn that calls tools streams the model's
+	// interim prose before the final answer. For a voice caller that reads as
+	// natural filler ("let me check that…"); for a caller that wants only the
+	// settled answer, leave this nil and use the returned Text.
+	Stream func(string)
+	// Think overrides the agent's own thinking setting for this run. nil keeps
+	// the agent's default.
+	//
+	// It exists because thinking and a waiting caller are in direct conflict:
+	// the model can spend its whole reasoning budget before emitting one word
+	// of CONTENT, and a stream callback only ever sees content. Measured live:
+	// a voice turn held an open stream for 19.75s producing nothing visible,
+	// with think=true and thinking_budget=4096, until the caller hung up. For
+	// anything with a human waiting on audio, set this false.
+	Think *bool
 	// Title, when set, names a FRESH session (used only if it has no title
 	// yet). Channel rooms pass the contact's display name so the rail row and
 	// transcript read as the conversation partner rather than the raw id.
@@ -711,6 +739,11 @@ type AgentSyncRun struct {
 	// channel) to ride on the user message as multimodal content the vision
 	// model sees this turn. Empty for text-only callers.
 	Images [][]byte
+	// DispatchedBy carries the live dispatch chain when this run was delegated
+	// by another agent, so the target can reach the channels its delegator
+	// reaches. Empty for a schedule, a monitor wake, or a channel inbound —
+	// none of those has a dispatching parent.
+	DispatchedBy []string
 	// Interactive marks this as a real person's message (a channel inbound),
 	// NOT an agent-to-agent dispatch. When set, the delegated-invocation marker
 	// is skipped — there IS a human, follow-up questions can be answered, and
@@ -1042,7 +1075,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
 	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
-	if chTools := channelChatTools(subSess, agentOwner, target.ID); len(chTools) > 0 {
+	// run.DispatchedBy widens this to the delegator's channels on a delegated
+	// run; it's empty for a wake / channel inbound.
+	if chTools := channelChatTools(subSess, agentOwner, target.ID, inheritedChannelChain(target, run.DispatchedBy)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
@@ -1230,6 +1265,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 
 	think := resolveDispatchThink(target)
+	if run.Think != nil {
+		think = *run.Think
+	}
 	loopCfg := AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
@@ -1269,6 +1307,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		if lc.PendingWorkFn != nil {
 			loopCfg.PendingWorkFn = lc.PendingWorkFn
 		}
+	}
+	// Caller-supplied token stream (a voice/HTTP caller waiting on first word).
+	if run.Stream != nil {
+		loopCfg.Stream = run.Stream
 	}
 	// Feed view_video's sampled frames to the model on the next round.
 	loopCfg.DrainViewImages = subSess.DrainViewImages

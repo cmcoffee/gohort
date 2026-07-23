@@ -831,7 +831,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// add these; the in-session path was the lone gap. Self-gates: returns nil
 	// when the target has no channels or no transport is registered, and
 	// send_message still routes through its own pre-auth / approval check.
-	if chTools := channelChatTools(subSess, t.user, target.ID); len(chTools) > 0 {
+	//
+	// The live dispatch chain rides along, so the sub-agent can also reach the
+	// channels the agent that DISPATCHED it reaches — otherwise a specialist
+	// handed "post the summary to the team thread" has to hand its text back up
+	// to be relayed, and the parent's own channel is invisible to it. Same slice
+	// the sub-turn carries for cycle detection; it can only narrow down a chain.
+	if chTools := channelChatTools(subSess, t.user, target.ID, inheritedChannelChain(target, subTurn.dispatchChain)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}
 

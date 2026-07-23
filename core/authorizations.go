@@ -55,6 +55,13 @@ type Authorization struct {
 	Text      string    `json:"text,omitempty"`    // send_message: message body
 	Images    []string  `json:"images,omitempty"`  // send_message: base64 attachments captured at queue time (survive until approval)
 	Requested time.Time `json:"requested"`
+	// FromAgent is the agent that requested this delegation, captured at queue
+	// time. Approving it runs the delegation with the same channel reach a
+	// PRE-AUTHORIZED delegation gets — without this, whether a delegate could
+	// address its delegator's channels would depend on whether the user had
+	// pre-authorized the target, which is not a distinction the user is making
+	// when they click Approve. Empty on legacy records (runs with its own scope).
+	FromAgent string `json:"from_agent,omitempty"`
 }
 
 func authKey(owner, id string) string { return owner + ":" + id }
@@ -351,8 +358,26 @@ func listPolicies(db Database, table, owner string, legacyAllow []string) []Poli
 // runner (the agent-execution closure) and records it to the run-ledger. It
 // reuses the deny-by-default confirm posture — a delegated run never auto-
 // approves high-consequence tools.
-func RunDelegation(ctx context.Context, db Database, owner, agent, brief string) RunRecord {
+//
+// via names the agent that delegated (and whoever delegated to it), so the
+// delegate can reach that agent's channels instead of having to hand its output
+// back up to be relayed. Optional: a delegation with no known delegator (an
+// approval resolved on a legacy queued record) simply runs with its own scope.
+func RunDelegation(ctx context.Context, db Database, owner, agent, brief string, via ...string) RunRecord {
 	return executeStandingRun(ctx, db, StandingAgent{
 		Owner: owner, Name: agent, AgentID: agent, Mission: brief,
+		DispatchedBy: trimIDs(via),
 	}, "delegation")
+}
+
+// trimIDs drops blanks from a dispatch chain so an unset caller id never
+// becomes an empty seed in the channel-scope walk.
+func trimIDs(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

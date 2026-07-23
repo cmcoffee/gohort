@@ -52,7 +52,10 @@ func registerStandingRunner(app *OrchestrateApp) {
 			mission = "Run your standing task now."
 		}
 		// Standing agents run as their owner (no separate runtime user).
-		out, hitRoundCap, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm)
+		// sa.DispatchedBy is set only on a DELEGATION (a transient record built
+		// by RunDelegation) — it hands the delegate the delegator's channel
+		// reach. A stored schedule leaves it empty and keeps its own scope.
+		out, hitRoundCap, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
 		if err != nil {
 			return StandingRunResult{
 				Status:  RunFailed,

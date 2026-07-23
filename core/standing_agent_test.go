@@ -131,3 +131,54 @@ func TestExecuteStandingRunWithRunner(t *testing.T) {
 		t.Fatal("GetRun should rehydrate the run's raw output")
 	}
 }
+
+// TestRunDelegationCarriesDispatchChain: a delegation hands the delegating
+// agent's id to the runner (as StandingAgent.DispatchedBy), which is what lets
+// the delegate reach the channels its delegator reaches instead of handing its
+// output back up to be relayed. Blank ids are dropped so an unset caller never
+// becomes an empty seed in the channel-scope walk.
+func TestRunDelegationCarriesDispatchChain(t *testing.T) {
+	db := memDB(t)
+	var seen StandingAgent
+	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
+		seen = sa
+		return StandingRunResult{Status: RunOK, Summary: "done"}
+	})
+	defer RegisterStandingRunner(nil)
+
+	RunDelegation(context.Background(), db, "alice", "research", "dig into X", "chat", "", "  ")
+	if len(seen.DispatchedBy) != 1 || seen.DispatchedBy[0] != "chat" {
+		t.Fatalf("DispatchedBy = %v, want [chat] (blanks dropped)", seen.DispatchedBy)
+	}
+	if seen.Mission != "dig into X" || seen.AgentID != "research" {
+		t.Fatalf("delegation record wrong: %+v", seen)
+	}
+
+	// A delegation with no known delegator runs with its own scope — no empty
+	// seed, which would otherwise widen the walk.
+	RunDelegation(context.Background(), db, "alice", "research", "dig into X")
+	if len(seen.DispatchedBy) != 0 {
+		t.Fatalf("undelegated run should carry no chain, got %v", seen.DispatchedBy)
+	}
+}
+
+// TestScheduledRunCarriesNoDispatchChain: a stored schedule has no dispatching
+// parent, so it must never pick up channel reach it wasn't given. Guards the
+// deliberate split from ReportAgentID, which every schedule has.
+func TestScheduledRunCarriesNoDispatchChain(t *testing.T) {
+	db := memDB(t)
+	var seen StandingAgent
+	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
+		seen = sa
+		return StandingRunResult{Status: RunOK}
+	})
+	defer RegisterStandingRunner(nil)
+
+	executeStandingRun(context.Background(), db, StandingAgent{
+		Owner: "alice", Name: "nightly", AgentID: "worker", Mission: "run",
+		ReportAgentID: "chat", ReportSessionID: "s1",
+	}, "schedule")
+	if len(seen.DispatchedBy) != 0 {
+		t.Fatalf("a schedule must carry no dispatch chain, got %v", seen.DispatchedBy)
+	}
+}

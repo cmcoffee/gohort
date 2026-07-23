@@ -1981,7 +1981,10 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	if always {
 		SetDelegationPreAuthorized(RootDB, user, a.Agent, true)
 	}
-	go RunDelegation(context.Background(), RootDB, a.Owner, a.Agent, a.Brief)
+	// a.FromAgent (captured when the delegation was queued) keeps an approved
+	// delegation's channel reach identical to a pre-authorized one's. Empty on
+	// legacy records — that run just keeps its own scope.
+	go RunDelegation(context.Background(), RootDB, a.Owner, a.Agent, a.Brief, a.FromAgent)
 	w.WriteHeader(http.StatusNoContent)
 }
 
