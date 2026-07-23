@@ -51,6 +51,39 @@ var ErrToolDenied = fmt.Errorf("tool call denied by user")
 // bite only on a genuine flail. Set to 0 to disable the cap entirely.
 var LeadTurnTokenBudget = 500_000
 
+// FirstToolOrderViolation returns the index of the first message carrying tool
+// results that does NOT directly follow an assistant tool-call message (or
+// another tool-result message), or -1 when the history is well-formed.
+//
+// Providers enforce this adjacency in their chat templates, and they enforce it
+// HARD: llama.cpp answers with a 400 ("A tool message must follow an assistant
+// or tool message") and the turn dies with loop_error, ~40s in, having produced
+// nothing. It is an easy invariant to break by accident, because the natural
+// place to inject a mid-round correction — right where the results are
+// inspected — is inside the very gap the rule forbids. That is exactly how the
+// failure-shape guard broke it: the guard fired only on turns that had already
+// hit three identical failures, so it killed precisely the builds that were
+// struggling while easy turns sailed through.
+//
+// Kept as an exported pure function so callers can assert cheaply before a
+// dispatch and leave a breadcrumb naming the offending index, instead of
+// discovering the problem as an opaque provider error much later.
+func FirstToolOrderViolation(history []Message) int {
+	for i, m := range history {
+		if len(m.ToolResults) == 0 {
+			continue
+		}
+		if i == 0 {
+			return i
+		}
+		prev := history[i-1]
+		if len(prev.ToolCalls) == 0 && len(prev.ToolResults) == 0 {
+			return i
+		}
+	}
+	return -1
+}
+
 // failureShapeCorrection builds the message injected when a turn has hit the
 // same failure shape repeatedly. Two forms:
 //
@@ -1370,6 +1403,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// the provider — needs a per-call hard timeout or the
 		// provider's endpoint is wedged.
 		Log("[agent_loop] round %d: → LLM call (history=%d msgs)", round, len(history))
+		// Assert the tool-result adjacency invariant before we hand the history
+		// to a provider. Violating it is a hard 400 from the chat template
+		// tens of seconds later, with an error that names a line in a Jinja
+		// file rather than the message we mis-ordered. Log, don't block: the
+		// request may still succeed on a provider with a laxer template, and a
+		// guard that kills the turn to prevent a bad turn is the mistake this
+		// invariant already caused once.
+		if bad := FirstToolOrderViolation(history); bad >= 0 {
+			prev := "(start of history)"
+			if bad > 0 {
+				prev = strconv.Quote(history[bad-1].Role)
+			}
+			Log("[agent_loop] round %d: WARNING history[%d] carries tool results but follows %s, which has no tool calls — providers reject this ordering (a mid-round correction injected before the tool-results message is the usual cause)",
+				round, bad, prev)
+		}
 		// If the caller wants reasoning streamed but didn't set a content
 		// stream handler, take the streaming path with a no-op content
 		// callback so the reasoning callback can fire. The reasoning
@@ -2203,6 +2251,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			toolErrors += int(atomic.LoadInt32(&errCount))
 		}
 
+		// Corrections raised while inspecting this round's results. They MUST
+		// land after the tool-results message, never before it: providers
+		// enforce that a tool result directly follows an assistant-or-tool
+		// message, and a plain user turn wedged into that gap is a hard 400
+		// from the chat template, not a soft degradation.
+		var pendingCorrections []Message
+
 		// Update the repeated-failure loop-guard from this round's outcomes:
 		// bump the per-signature error count on failure, reset it on success
 		// (so legitimate polling that finally changes isn't penalized).
@@ -2246,7 +2301,17 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				errShapeNudged[shape] = true
 				Debug("[agent_loop] failure-shape guard: %q seen %d times this turn — nudging", oneLineShape(shape), n)
 				msg, consulted := failureShapeCorrection(n, oneLineShape(shape), results[w.index].Content, cfg.Consult)
-				history = append(history, Message{Role: "user", Content: msg})
+				// DEFERRED, not appended here. We are between the assistant
+				// message that carried the tool calls and the tool-results
+				// message appended below, and a tool result must directly
+				// follow an assistant-or-tool message. Slipping a plain user
+				// turn into that gap makes the provider's chat template reject
+				// the whole request — llama.cpp returns a hard 400 ("A tool
+				// message must follow an assistant or tool message") and the
+				// turn dies with loop_error, so the guard meant to rescue a
+				// struggling turn killed it instead. Queue it and let it land
+				// after the results.
+				pendingCorrections = append(pendingCorrections, Message{Role: "user", Content: msg})
 				if consulted {
 					Log("[agent_loop] failure-shape guard: consulted on %q after %d hits", oneLineShape(shape), n)
 					if cfg.OnDiag != nil {
@@ -2277,6 +2342,10 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			Role:        "user",
 			ToolResults: results,
 		})
+		// Now the deferred corrections — after the results, where a plain user
+		// turn is legal and the model reads them as commentary on what it just
+		// saw rather than as an interruption of the tool exchange.
+		history = append(history, pendingCorrections...)
 		// If a tool queued images for the model to look at, inject them as a
 		// vision message NOW so the next round actually sees them. Producers:
 		// view_video (samples frames from a clip) and generate_image (shows the
