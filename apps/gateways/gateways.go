@@ -11,7 +11,9 @@ package gateways
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -52,6 +54,7 @@ func (T *Gateways) Routes() {
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
+	T.HandleFunc("/api/tool-categories", T.handleUserToolCategories)
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
@@ -422,6 +425,55 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Group: "Orphaned Tools — agent " + former + " was deleted",
 			})
 		}
+		// Re-heading by what a tool IS FOR rather than where its record lives,
+		// and re-ordering so the grouping (which follows record order — the
+		// server owns it) renders cleanly.
+		//
+		// Scope answered "who can use this?", which the Agents column already
+		// answers per row; with forty tools the scope headings mostly said
+		// "these forty are yours" and the list read as one wall. Category is
+		// the axis that actually splits it, and it is the axis the tool picker
+		// and each app's tool list already use — so a tool now sits under the
+		// same heading everywhere.
+		//
+		// Two lifecycle buckets keep their own headings instead of being filed
+		// by subject: an orphan and a legacy session draft are not kinds of
+		// tool, they are records awaiting a decision (re-home, keep, discard).
+		// Filing them by subject would scatter them and lose the only thing the
+		// user needs to see. They sort last, after everything healthy.
+		rank := func(r row) int {
+			switch {
+			case r.Orphan:
+				return 3
+			case r.Session:
+				return 2
+			case strings.TrimSpace(r.Category) == "":
+				return 1 // uncategorized sits after the named categories
+			default:
+				return 0
+			}
+		}
+		for i := range rows {
+			if rows[i].Orphan || rows[i].Session {
+				continue // keep the lifecycle heading built at construction
+			}
+			if c := strings.TrimSpace(rows[i].Category); c != "" {
+				rows[i].Group = c
+			} else {
+				rows[i].Group = "Uncategorized"
+			}
+		}
+		sort.SliceStable(rows, func(i, j int) bool {
+			ri, rj := rank(rows[i]), rank(rows[j])
+			if ri != rj {
+				return ri < rj
+			}
+			gi, gj := strings.ToLower(rows[i].Group), strings.ToLower(rows[j].Group)
+			if gi != gj {
+				return gi < gj
+			}
+			return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+		})
 		writeJSON(w, rows)
 	case http.MethodPost:
 		// Governance toggles + category, all on the user's OWN tool record (own
@@ -1018,7 +1070,8 @@ func splitSkillTriggers(s string) []string {
 }
 
 func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	sections := []ui.Section{
@@ -1085,17 +1138,68 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 			Body:     ui.Card{HTML: connectionsHTML},
 		},
 		{
+			Title:    "Categories",
+			Subtitle: "Headings for your tools — the same ones the tool picker and each app's tool list use. Open a category to tick the tools that belong in it, or start a new one and fill it in the same step. A tool holds one category, so moving it here moves it out of wherever it was.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Table{
+					Source: "api/tool-categories",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Flex: 1},
+						{Field: "count", Label: "Tools", Flex: 0},
+						{Field: "tool_list", Label: "Members", Flex: 3, Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						// Category-first assignment: the whole point. Picking from
+						// one list beats opening each tool and setting a label.
+						ui.Expand("Choose tools", ui.ACLPicker(ui.ACLPickerConfig{
+							OptionsSource: "api/tool-categories?options=1",
+							RecordSource:  "api/tool-categories?name={name}",
+							Field:         "tools",
+							PostTo:        "api/tool-categories?name={name}",
+							Noun:          "tool",
+							Intro:         "Tick the tools that belong under this heading. Unticking one clears its category — it does not delete anything.",
+							EmptyText:     "You have no tools yet.",
+						})),
+					},
+					EmptyText: "No categories yet. Add one below, or set a category on any tool in My tools.",
+				},
+				ui.ModalButton{
+					Label:    "Add category",
+					Title:    "New category",
+					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it — an empty one has nothing to show.",
+					Variant:  "primary",
+					Width:    "560px",
+					Body: ui.FormPanel{
+						PostURL:     "api/tool-categories?name={name}",
+						SubmitLabel: "Create category",
+						Fields: []ui.FormField{
+							{Field: "name", Type: "text", Label: "Category name",
+								Placeholder: "e.g. Calendar, Moltbook, Research",
+								Suggestions: knownToolCategories(AuthDB(), user),
+								Help:        "Reuse an existing name to add to that category, or type a new one."},
+							{Field: "tools", Type: "tags", Label: "Tools",
+								Help: "Tool names to file under it. You can also fill it from the Choose tools action once it exists."},
+						},
+						Invalidate: []string{"api/tool-categories", "api/tools"},
+					},
+				},
+			}},
+		},
+		{
 			Title:    "My tools",
-			Subtitle: "Everything built for you. \"All Agents\" is your global pool — every agent can use it. \"Scoped Tools\" live on specific agents; each is listed once with its agents named, and Access is where you change which. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Set a tool's category from its row; type a new name there to create one. Tools that haven't claimed a category sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			Body: ui.Table{
 				Source:            "api/tools",
 				RowKey:            "name",
 				Search:            true,
 				SearchPlaceholder: "Filter tools by name, agent, category…",
-				// Rows arrive pre-ordered (pool, then per-agent tools, then that
-				// agent's session drafts) and render under a heading per scope —
-				// "which agent is this attached to?" is how this list is actually
-				// read. Grouping follows record order, so the server owns it.
+				// Rows arrive pre-ordered and grouped by CATEGORY (see the
+				// regroup pass in the GET handler), with the lifecycle buckets —
+				// legacy session drafts, then orphans — sorted last. "What is
+				// this tool for?" is how a forty-row list is actually read;
+				// "which agent has it?" is the Agents column. Grouping follows
+				// record order, so the server owns it.
 				GroupBy: "group",
 				Columns: []ui.Col{
 					// Tool names run long (create_apple_calendar_event) and this row
@@ -1172,15 +1276,21 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						},
 					}),
 					// Set category — the user claims a grouping label on their own
-					// tool. Free-form; Source prefills the current value.
-					ui.ExpandIf("Set category", "pool", "", ui.FormPanel{
+					// tool. Free-form, but offers the categories that already exist
+					// so reuse is the easy path and near-duplicates ("Calendar" vs
+					// "calendars", which would split one heading in two) take
+					// deliberate effort. Not gated to pool rows: an agent-scoped
+					// tool has a category too, and set_category writes through to
+					// every agent holding a copy.
+					ui.Expand("Set category", ui.FormPanel{
 						Source:      "api/tools?name={name}",
 						PostURL:     "api/tools?action=set_category&name={name}",
 						SubmitLabel: "Save category",
 						Fields: []ui.FormField{
 							{Field: "category", Type: "text", Label: "Category",
 								Placeholder: "e.g. Acme API, Research, Messaging",
-								Help:        "Groups this tool under a header in the tool picker and your list. Leave blank to fall back to its capability label."},
+								Suggestions: knownToolCategories(AuthDB(), user),
+								Help:        "Groups this tool under a header in the tool picker and your list. Pick an existing category or type a new name to create one. Leave blank to fall back to its capability label."},
 						},
 						Invalidate: []string{"api/tools"},
 					}),
@@ -1366,12 +1476,19 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	ui.Page{
-		Title:      "Extensions",
-		ShowTitle:  true,
-		BackURL:    "/",
-		Nav:        HubNav("/gateways"), // shared hub tabs, Extensions active
-		MaxWidth:   "1200px",            // wide, admin-style: full-width tables in the content pane
-		SectionNav: true,                // left-rail sub-nav: one section (credentials/tools/…) at a time
+		Title:     "Extensions",
+		ShowTitle: true,
+		BackURL:   "/",
+		Nav:       HubNav("/gateways"), // shared hub tabs, Extensions active
+		// Full width. My tools is the widest table in the product — name,
+		// category, mode, agents, last-used and eight status badges — and at
+		// 1200px the name column ellipsizes while badges wrap, which is most of
+		// why the list is hard to scan. SectionNav shows one section at a time,
+		// so nothing else is competing for the space. "100%" rather than a
+		// bigger fixed cap: the tables are the content here, and a laptop and a
+		// wide monitor should both use what they have.
+		MaxWidth:   "100%",
+		SectionNav: true, // left-rail sub-nav: one section (credentials/tools/…) at a time
 		Sections:   sections,
 		// App-specific behavior stays in the app: core/ui supplies the generic
 		// pill renderer (uiRenderScopePills), this supplies the endpoint it
@@ -1604,3 +1721,243 @@ const toolAccessPillsJS = `function(ctx){
     }
   });
 }`
+
+// knownToolCategories lists the category names worth offering when someone
+// files a tool: the admin-defined ones (a ToolGroup record carries the
+// model-facing description, so these are the "real" categories) plus every
+// label this user's own tools already claim — a category with no record is
+// still a live heading, since the presentation layer falls back to the claimed
+// label. Sorted, de-duplicated case-insensitively.
+//
+// Offered, never enforced. Claiming a NEW name has to stay one keystroke away
+// or the categories people actually want never get created; the suggestion
+// list only exists so the same category doesn't get coined three times with
+// three spellings.
+func knownToolCategories(db Database, user string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		k := strings.ToLower(name)
+		if seen[k] {
+			return
+		}
+		seen[k] = true
+		out = append(out, name)
+	}
+	for _, g := range LoadToolGroups(db) {
+		add(g.Name)
+	}
+	if user != "" {
+		for _, p := range LoadPersistentTempTools(db, user) {
+			add(p.Tool.Category)
+		}
+		for _, st := range ListScopedTools(user) {
+			if st.Scope == ScopeAgentTool {
+				add(st.Tool.Category)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+	})
+	return out
+}
+
+// setToolCategoryFor files ONE of the user's tools under a category (empty
+// clears the claim). Works in either scope: a pool tool is updated in place, an
+// agent-scoped tool is rewritten on EVERY agent holding a copy — category is a
+// property of the tool, not of one attachment, and leaving copies behind under
+// the old label would scatter one tool across two headings.
+//
+// Shared by the per-row Set category action and the category member picker, so
+// filing one tool and filing twenty take exactly the same path.
+func setToolCategoryFor(user, name, category string) error {
+	db := AuthDB()
+	for _, p := range LoadPersistentTempTools(db, user) {
+		if p.Tool.Name != name {
+			continue
+		}
+		t := p.Tool
+		t.Category = category
+		if !UpdatePersistentTempTool(db, user, t) {
+			return fmt.Errorf("could not update %q", name)
+		}
+		return nil
+	}
+	if AttachToolToAgent == nil {
+		return fmt.Errorf("agent-scoped update unavailable")
+	}
+	updated := 0
+	for _, st := range ListScopedTools(user) {
+		if st.Shadowed || st.Scope != ScopeAgentTool || st.Tool.Name != name {
+			continue
+		}
+		t := st.Tool
+		t.Category = category
+		if err := AttachToolToAgent(db, user, st.AgentID, t); err != nil {
+			return err
+		}
+		updated++
+	}
+	if updated == 0 {
+		return fmt.Errorf("no tool named %q", name)
+	}
+	return nil
+}
+
+// userToolCategories returns the user's categories with their members, derived
+// from what each tool claims. A category is not a stored entity — it exists
+// because tools point at it — so this IS the category list; there is nothing
+// else to read. Sorted by name; the members of each are sorted too.
+func userToolCategories(user string) map[string][]string {
+	out := map[string][]string{}
+	add := func(cat, name string) {
+		cat = strings.TrimSpace(cat)
+		if cat == "" || name == "" {
+			return
+		}
+		out[cat] = append(out[cat], name)
+	}
+	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		add(p.Tool.Category, p.Tool.Name)
+	}
+	seen := map[string]bool{}
+	for _, st := range ListScopedTools(user) {
+		if st.Shadowed || st.Scope != ScopeAgentTool || seen[st.Tool.Name] {
+			continue
+		}
+		seen[st.Tool.Name] = true
+		add(st.Tool.Category, st.Tool.Name)
+	}
+	for k := range out {
+		sort.Strings(out[k])
+	}
+	return out
+}
+
+// handleUserToolCategories backs the category member picker: the surface that
+// asks "which tools belong under this heading?" rather than making you open
+// forty tools and answer it one at a time.
+//
+//	GET  /api/tool-categories            → [{name, count, tools[]}] for the table
+//	GET  /api/tool-categories?name=X     → {name, tools[]} (picker's current selection)
+//	GET  /api/tool-categories?options=1  → [{value,label,desc}] candidate tools
+//	POST /api/tool-categories?name=X     → body {tools:[...]} — file exactly these
+//
+// The POST is a SET operation, not an append: tools added to the list claim the
+// category, tools dropped from it have their claim cleared. A tool holds one
+// category, so moving it here moves it out of wherever it was — which is the
+// behavior the picker's checkboxes imply, and the reason this is a set.
+func (T *Gateways) handleUserToolCategories(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	switch r.Method {
+	case http.MethodGet:
+		if r.URL.Query().Get("options") != "" {
+			type opt struct {
+				Value string `json:"value"`
+				Label string `json:"label"`
+				Desc  string `json:"desc,omitempty"`
+			}
+			opts := []opt{}
+			seen := map[string]bool{}
+			addOpt := func(n, desc, cat string) {
+				if n == "" || seen[n] {
+					return
+				}
+				seen[n] = true
+				// Show where a tool currently sits, so moving one between
+				// categories is a visible choice rather than a silent steal.
+				if c := strings.TrimSpace(cat); c != "" && !strings.EqualFold(c, name) {
+					desc = strings.TrimSpace("currently in " + c + " · " + desc)
+				}
+				opts = append(opts, opt{Value: n, Label: n, Desc: desc})
+			}
+			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+				addOpt(p.Tool.Name, p.Tool.Description, p.Tool.Category)
+			}
+			for _, st := range ListScopedTools(user) {
+				if st.Shadowed || st.Scope != ScopeAgentTool {
+					continue
+				}
+				addOpt(st.Tool.Name, st.Tool.Description, st.Tool.Category)
+			}
+			sort.Slice(opts, func(i, j int) bool {
+				return strings.ToLower(opts[i].Label) < strings.ToLower(opts[j].Label)
+			})
+			writeJSON(w, opts)
+			return
+		}
+		cats := userToolCategories(user)
+		if name != "" {
+			// Record mode: the picker reads its current selection from here.
+			// An unknown name is a category being created — empty, not 404.
+			writeJSON(w, map[string]any{"name": name, "tools": cats[name]})
+			return
+		}
+		type catRow struct {
+			Name  string   `json:"name"`
+			Count int      `json:"count"`
+			Tools []string `json:"tools"`
+			List  string   `json:"tool_list,omitempty"`
+		}
+		rows := []catRow{}
+		for n, tools := range cats {
+			rows = append(rows, catRow{Name: n, Count: len(tools), Tools: tools, List: strings.Join(tools, ", ")})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+		})
+		writeJSON(w, rows)
+	case http.MethodPost:
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Tools []string `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		want := map[string]bool{}
+		for _, t := range body.Tools {
+			if t = strings.TrimSpace(t); t != "" {
+				want[t] = true
+			}
+		}
+		// File everything ticked, and clear the claim on anything that was in
+		// this category and is no longer ticked. Only THIS category's former
+		// members are cleared — a tool that lives elsewhere is untouched.
+		var failed []string
+		for t := range want {
+			if err := setToolCategoryFor(user, t, name); err != nil {
+				failed = append(failed, t+" ("+err.Error()+")")
+			}
+		}
+		for _, t := range userToolCategories(user)[name] {
+			if want[t] {
+				continue
+			}
+			if err := setToolCategoryFor(user, t, ""); err != nil {
+				failed = append(failed, t+" ("+err.Error()+")")
+			}
+		}
+		if len(failed) > 0 {
+			// Partial success is the honest report: the rest DID move.
+			http.Error(w, "some tools could not be filed: "+strings.Join(failed, "; "), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}

@@ -747,6 +747,13 @@ type FormField struct {
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
 	Decimals int            `json:"decimals,omitempty"`
 	Options  []SelectOption `json:"options,omitempty"`
+	// Suggestions offers existing values on a text field WITHOUT constraining
+	// it to them (rendered as a native datalist). Use wherever the value is
+	// free-form but reuse should be the easy path — claiming an existing
+	// category name rather than coining a near-duplicate ("Calendar" vs
+	// "calendars"). A select would be wrong there: it forbids the new value
+	// that the field exists to allow.
+	Suggestions []string `json:"suggestions,omitempty"`
 	// Collapsed, on a Type=="header" field, makes that header a collapsible
 	// group: the fields that follow it (until the next header) fold into a body
 	// that's hidden until the header is clicked. Declutters advanced settings

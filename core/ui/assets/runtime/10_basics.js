@@ -1649,6 +1649,24 @@
         // text, tel, anything else
         input = el('input', {type: t, class: 'ui-form-input', placeholder: f.placeholder || ''});
         input.value = String(initial);
+        // Suggestions: an existing-values list the field offers while still
+        // accepting anything typed. A <select> would force the value to be
+        // one of the known set, which is wrong wherever the point is to reuse
+        // an existing name OR coin a new one (claiming a category, tagging).
+        // Native datalist — no popup to manage, no keyboard handling to
+        // reimplement, and it degrades to a plain text box everywhere.
+        if (Array.isArray(f.suggestions) && f.suggestions.length) {
+          var dl = el('datalist');
+          dl.id = 'ui-sugg-' + Math.random().toString(36).slice(2, 10);
+          f.suggestions.forEach(function(s) {
+            if (s == null || s === '') return;
+            var o = el('option');
+            o.value = String(s);
+            dl.appendChild(o);
+          });
+          input.setAttribute('list', dl.id);
+          fieldWrap.appendChild(dl);
+        }
         input.addEventListener('input', function(){ debounced(f.field, input.value); });
         input.addEventListener('blur', function(){
           clearTimeout(debounceTimers[f.field]);
