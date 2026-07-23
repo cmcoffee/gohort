@@ -43,6 +43,83 @@ func safeInvoke(name string, handler ToolHandlerFunc, args map[string]any) (outp
 // ErrToolDenied is returned when the user denies a tool call.
 var ErrToolDenied = fmt.Errorf("tool call denied by user")
 
+// LeadTurnTokenBudget caps what ONE agent turn may spend on the lead tier
+// (input + output, summed across the turn's lead-served rounds). Past it the
+// remaining rounds run on the worker — the turn still finishes, it just stops
+// billing frontier rates for a loop that isn't converging. Sized to clear a
+// legitimately large design turn (roughly eight full-history rounds) and to
+// bite only on a genuine flail. Set to 0 to disable the cap entirely.
+var LeadTurnTokenBudget = 500_000
+
+// normalizeFailureShape reduces a failed tool result to a comparable
+// fingerprint of WHAT went wrong, so the same wall is recognized across
+// different calls and different arguments. Case and whitespace are flattened,
+// a leading "error:" is dropped, and long digit runs (ids, timestamps, ports)
+// collapse to "#" so one failure with a rotating id is still one shape. Only
+// the head of the message is kept — the first line or two carries the failure;
+// the tail is usually a stack or a body echo that varies harmlessly.
+//
+// Returns "" for a result too short to fingerprint, which the caller skips.
+func normalizeFailureShape(content string) string {
+	s := strings.ToLower(strings.TrimSpace(content))
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimPrefix(s, "error: ")
+	s = strings.TrimPrefix(s, "error:")
+	var b strings.Builder
+	var digits []rune
+	// Long runs collapse to "#" (a rotating id shouldn't split one wall into
+	// many); short ones are written back VERBATIM — "exit status 1" and "exit
+	// status 2" are different failures, and the shape is quoted back to the
+	// model in the nudge, so it must not misreport what it saw.
+	flushDigits := func() {
+		if len(digits) >= 4 {
+			b.WriteByte('#')
+		} else {
+			for _, d := range digits {
+				b.WriteRune(d)
+			}
+		}
+		digits = digits[:0]
+	}
+	lastSpace := false
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			digits = append(digits, r)
+			lastSpace = false
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flushDigits()
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+		default:
+			flushDigits()
+			b.WriteRune(r)
+			lastSpace = false
+		}
+	}
+	flushDigits()
+	out := strings.TrimSpace(b.String())
+	if len(out) < 12 { // too generic to be a meaningful fingerprint
+		return ""
+	}
+	if len(out) > 160 {
+		out = out[:160]
+	}
+	return out
+}
+
+// oneLineShape renders a failure shape for a log line or a directive.
+func oneLineShape(shape string) string {
+	if len(shape) > 120 {
+		return shape[:120] + "…"
+	}
+	return shape
+}
+
 // AgentToolDef combines a tool definition with its handler.
 type AgentToolDef struct {
 	Tool    Tool
@@ -857,6 +934,24 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	repeatSame := map[string]int{}
 	lastToolContent := map[string]string{}
 	const repeatSameLimit = 4
+	// Failure-SHAPE guard. Both guards above key on the call SIGNATURE
+	// (tool name + exact args), which a model defeats without meaning to
+	// by varying an argument slightly between attempts. Observed live: a
+	// tool returning "Failed to create calendar" eight times across four
+	// signatures (two date ranges × two tools) while a second wall,
+	// "agent X has no attached tools to run", came back nine more times —
+	// none of it consecutive-identical, so nothing tripped and the turn
+	// ground on. The all-tools-failed streak below missed it too: the
+	// rounds were MIXED (a recall or a probe succeeded alongside the
+	// failures), which resets that counter every time.
+	//
+	// What never changed was the failure TEXT. Counting normalized error
+	// shapes across the turn, regardless of which call produced them,
+	// catches the wall the other three guards walk past.
+	errShapeCount := map[string]int{}
+	errShapeNudged := map[string]bool{}
+	const errShapeNudgeAt = 3    // say it plainly, once per shape
+	const errShapeDeescalateAt = 6 // stop paying lead rates to keep hitting it
 	// Seed the guard from prior-turn history so a fixation that spans
 	// SEPARATE user turns is caught. repeatFail is otherwise turn-local, so
 	// a model that re-issues the SAME wrong+erroring call every turn resets
@@ -891,6 +986,23 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	guardBlockedStreak := 0
 	const guardBlockedBreakLimit = 2
 	forceFinal := false
+
+	// Lead-tier spend guard. Escalation to lead is decided per ROUTE (an
+	// agent's stage resolves to lead and every round of its turn goes
+	// there), so a turn that goes badly spends frontier tokens on every
+	// round of the flail — and because the whole history is resent each
+	// round, the rounds get MORE expensive as they get less productive.
+	// Observed live: a 93.6k-token round on lead that produced 141 tokens
+	// of "let me try that again."
+	//
+	// leadTokens accumulates what the lead tier actually served this turn
+	// (resp.Tier is authoritative on both the streaming and non-streaming
+	// paths). Past the budget the turn finishes on the worker: the work
+	// still completes, it just stops costing frontier rates. Same response
+	// to a no-progress failure-shape streak — a turn that keeps hitting an
+	// identical wall has stopped being worth the better model.
+	leadTokens := 0
+	deescalated := ""
 
 	// keep_going spin guard. keep_going is a pure "run another round" signal
 	// with no side effect — meant for "I'm about to act, give me one more
@@ -1197,13 +1309,25 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if streamHandler == nil && cfg.ReasoningStream != nil {
 			streamHandler = func(string) {}
 		}
+		// Spend guard: once this turn has burned its lead budget, or kept
+		// hitting one identical failure, the rest of the rounds run on the
+		// worker. Clearing the route key is what carries the decision to
+		// ChatStreamWithReport, which resolves the tier from that key alone;
+		// the non-streaming branch below reads deescalated directly.
+		callOpts := opts
+		if deescalated != "" {
+			callOpts = append(append([]ChatOption{}, opts...), WithRouteKey(""))
+		}
 		if streamHandler != nil {
-			resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, opts...)
+			resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 		} else {
 			// NoLead redirects all routing to worker — no escalation.
 			useLead := cfg.Tier == LEAD && !T.NoLead
 			if cfg.RouteKey != "" && !T.NoLead {
 				useLead = RouteToLead(cfg.RouteKey)
+			}
+			if deescalated != "" {
+				useLead = false
 			}
 			callFn := T.WorkerChat
 			if useLead {
@@ -1212,7 +1336,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// Empty/timeout/empty-error retry happens inside retryLLM
 			// (core/llm.go) — every caller gets it for free, including
 			// direct WorkerChat/LeadChat and chat-handler ChatStream.
-			resp, err = callFn(ctx, history, opts...)
+			resp, err = callFn(ctx, history, callOpts...)
 		}
 		// Context-exceeded recovery: provider rejected the prompt as
 		// too large. Naive retries don't help (same prompt → same
@@ -1225,17 +1349,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			Debug("[agent_loop] round %d: context exceeded — force-compacting history and retrying once", round)
 			compactHistory(history, systemPrompt, cfg.ContextSize, true)
 			if streamHandler != nil {
-				resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, opts...)
+				resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 			} else {
 				useLead := cfg.Tier == LEAD && !T.NoLead
 				if cfg.RouteKey != "" && !T.NoLead {
 					useLead = RouteToLead(cfg.RouteKey)
 				}
+				if deescalated != "" {
+					useLead = false
+				}
 				callFn := T.WorkerChat
 				if useLead {
 					callFn = T.LeadChat
 				}
-				resp, err = callFn(ctx, history, opts...)
+				resp, err = callFn(ctx, history, callOpts...)
 			}
 			if err != nil && IsContextExceededError(err) {
 				Debug("[agent_loop] round %d: context exceeded after force-compact — giving up", round)
@@ -1249,6 +1376,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			return resp, history, err
 		}
 		lastResp = resp
+
+		// Lead-spend accounting. resp.Tier reflects the tier that actually
+		// SERVED the round — a lead call that fell back to the worker is
+		// tagged WORKER and correctly doesn't count against the budget.
+		if resp != nil && resp.Tier == LEAD {
+			leadTokens += resp.InputTokens + resp.OutputTokens
+			if deescalated == "" && LeadTurnTokenBudget > 0 && leadTokens >= LeadTurnTokenBudget {
+				deescalated = "budget"
+				Log("[agent_loop] lead budget spent (%d tokens ≥ %d) — remaining rounds run on the worker tier", leadTokens, LeadTurnTokenBudget)
+				if cfg.OnDiag != nil {
+					cfg.OnDiag("tier_deescalated", fmt.Sprintf("This turn spent its lead-model budget (%d tokens) — the remaining rounds ran on the worker model.", leadTokens))
+				}
+			}
+		}
 
 		Debug("[agent_loop] round %d: content=%d chars, reasoning=%d chars, tool_calls=%d", round, len(resp.Content), len(resp.Reasoning), len(resp.ToolCalls))
 		// BREADCRUMB: LLM returned. Pair with the "→ LLM call"
@@ -2012,6 +2153,46 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				repeatSame[w.sig] = 0
 			}
 			lastToolContent[w.sig] = results[w.index].Content
+		}
+
+		// Failure-SHAPE bookkeeping (see errShapeCount decl). Counts how many
+		// times one normalized failure text has come back this turn, across
+		// ANY call that produced it — the signal the signature-keyed guards
+		// above miss when the model varies its arguments between attempts.
+		for _, w := range work {
+			if !results[w.index].IsError {
+				continue
+			}
+			shape := normalizeFailureShape(results[w.index].Content)
+			if shape == "" {
+				continue
+			}
+			errShapeCount[shape]++
+			n := errShapeCount[shape]
+			// Say it plainly, once. The model can see each failure but not
+			// that it has now hit the SAME one from several directions —
+			// which is the fact that should change its approach.
+			if n >= errShapeNudgeAt && !errShapeNudged[shape] {
+				errShapeNudged[shape] = true
+				Debug("[agent_loop] failure-shape guard: %q seen %d times this turn — nudging", oneLineShape(shape), n)
+				history = append(history, Message{
+					Role: "user",
+					Content: fmt.Sprintf(
+						"You have now hit this SAME failure %d times this turn, from different calls and different arguments: %q. The arguments are not what's wrong. Stop retrying variations of it — diagnose the failure itself, take a different approach, or tell the user plainly what is blocked and what you tried.",
+						n, oneLineShape(shape)),
+				})
+			}
+			// Still hitting it. The turn has stopped being worth frontier
+			// tokens — finish it on the worker. De-escalating rather than
+			// terminating keeps the failure mode safe: worst case on a false
+			// positive is a cheaper model, not a truncated turn.
+			if n >= errShapeDeescalateAt && deescalated == "" {
+				deescalated = "no-progress"
+				Log("[agent_loop] failure-shape guard: %q hit %d times with no progress — remaining rounds run on the worker tier", oneLineShape(shape), n)
+				if cfg.OnDiag != nil {
+					cfg.OnDiag("tier_deescalated", fmt.Sprintf("Hit the same failure %d times with no progress (%q) — the rest of this turn ran on the worker model instead of the lead model.", n, oneLineShape(shape)))
+				}
+			}
 		}
 
 		// BREADCRUMB: tool dispatch complete. If we see this line but
