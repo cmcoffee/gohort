@@ -427,7 +427,7 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	sections = append(sections,
 		ui.Section{
 			Title:    "API keys (personal access)",
-			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Put the token in the client's X-API-Key header. Shown once at creation; revoke any time.",
+			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\" for clients that only offer that field. Shown once at creation; revoke any time.",
 			Body:     ui.Card{HTML: tokensHTML},
 		},
 	)

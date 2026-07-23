@@ -7,16 +7,21 @@ package main
 import (
 	. "github.com/cmcoffee/gohort/core"
 
+	_ "github.com/cmcoffee/gohort/apps/account"
 	_ "github.com/cmcoffee/gohort/apps/admin"
 	_ "github.com/cmcoffee/gohort/apps/agents"
 	_ "github.com/cmcoffee/gohort/apps/bridges"
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
-	_ "github.com/cmcoffee/gohort/apps/account"
 	_ "github.com/cmcoffee/gohort/apps/customapps"
 	_ "github.com/cmcoffee/gohort/apps/gateways"
 	_ "github.com/cmcoffee/gohort/apps/guides"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/mcpserver"
+	// OpenAI-compatible /v1 for external clients (a voice platform's custom-LLM
+	// setting, an OpenAI SDK). NOTE: /v1/ is a public path — it bypasses cookie
+	// auth and is guarded only by a personal access token, with no rate limit
+	// yet. Comment this out to unmount it entirely.
+	_ "github.com/cmcoffee/gohort/apps/openaiapi"
 	_ "github.com/cmcoffee/gohort/apps/orchestrate"
 	_ "github.com/cmcoffee/gohort/apps/prompts"
 	// apps/phantom retired: transport + PhantomLink moved to apps/bridges, and

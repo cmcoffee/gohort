@@ -258,11 +258,26 @@ func RegisterAPIKeyValidator(fn func(key string) (user string, ok bool)) {
 	apiKeyValidatorsMu.Unlock()
 }
 
-// userFromAPIKey resolves the X-API-Key header to a username via the
-// registered validators. Returns "" when the header is absent or no
-// validator recognizes the key.
+// APIKeyUser resolves a request's API credential to a username. Exported for
+// apps that serve a header-authenticated (non-cookie) endpoint of their own.
+func APIKeyUser(r *http.Request) string { return userFromAPIKey(r) }
+
+// userFromAPIKey resolves the request's API credential to a username via the
+// registered validators. Returns "" when no credential is present or no
+// validator recognizes it.
+//
+// Two spellings are accepted: X-API-Key (gohort's own clients — desktop
+// bridge, MCP) and "Authorization: Bearer <token>", which is what most
+// third-party integrations send and the only thing some of them CAN send
+// (an OpenAI-compatible client library, a voice platform's custom-LLM
+// config). Same token either way; only the envelope differs.
 func userFromAPIKey(r *http.Request) string {
 	key := r.Header.Get("X-API-Key")
+	if key == "" {
+		if a := strings.TrimSpace(r.Header.Get("Authorization")); len(a) > 7 && strings.EqualFold(a[:7], "bearer ") {
+			key = strings.TrimSpace(a[7:])
+		}
+	}
 	if key == "" {
 		return ""
 	}
