@@ -4147,7 +4147,17 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// then answers from the stale summary alone. Keep sess.Messages full; the
 	// dispatch path (agent_dispatch.go) already uses this run-only pattern.
 	planMsgs := sess.Messages
-	if agent.Cortex && sess.ID == cortexSessionID(agent.ID) {
+	// Bound any PERSISTENT thread — the Cortex home thread AND every channel
+	// room. Both are keyed "channel:<id>" and both accumulate turn after turn
+	// with no fresh-session reset, so both grow until they blow the context
+	// window (observed: a channel room reached 299k tokens against a 262k
+	// window, force-compact couldn't recover, and the turn died at round 0).
+	// The gate used to require agent.Cortex, so a channel agent with the Cortex
+	// FEATURE off ran this whole path unbounded — and context_depth read as
+	// "default (12)" while never taking effect, because the code that applies
+	// that default is exactly what the gate skipped. A normal chat session is
+	// safe unbounded: it gets a fresh id per conversation and is short-lived.
+	if strings.HasPrefix(sess.ID, "channel:") {
 		planMsgs = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
 		// Bound STORAGE too (not just the run-view): drop leading messages already
 		// folded into the summary AND archived to the recall index, keeping the
