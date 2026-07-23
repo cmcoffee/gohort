@@ -430,8 +430,16 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					recordChannelPost(sess.DB, owner, chatID, handle, text)
 					return fmt.Sprintf("Sent to %s (authorized sender for this channel).", label), nil
 				}
+				// Agent rides the queued record so the approved send tags with
+				// this agent's name (if it opted into TagName). The direct-send
+				// paths above pass agentID straight to operatorDeliverMessage, but
+				// this approval-gated path delivers LATER from the stored
+				// Authorization — and it dropped agentID, so an approved proactive
+				// message went out UNsigned while an authorized one to the same
+				// contact was signed. The delivery reads a.Agent (console.go
+				// send_message approval), so populate it.
 				a := SaveAuthorization(RootDB, Authorization{
-					Owner: owner, Action: "send_message", ChatID: chatID, Handle: handle, Text: text, Images: images,
+					Owner: owner, Action: "send_message", Agent: agentID, ChatID: chatID, Handle: handle, Text: text, Images: images,
 				})
 				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s) — it sends once approved.", label, a.ID), nil
 			},
