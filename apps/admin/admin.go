@@ -1800,8 +1800,14 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		switch r.Method {
 		case http.MethodGet:
 			if name := r.URL.Query().Get("audit"); name != "" {
+				// owner selects the namespace: empty = the global credential of
+				// that name (the admin page's usual subject), a username = that
+				// user's own credential. Without it the audit view could only
+				// ever read the global ring, which is the bare-name collision
+				// this keying fixes — a per-user audit view passes owner here.
+				owner := strings.TrimSpace(r.URL.Query().Get("owner"))
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(Secure().LoadAudit(name))
+				json.NewEncoder(w).Encode(Secure().LoadAudit(owner, name))
 				return
 			}
 			// Declaring-tools list for a credential — what a secured cred is

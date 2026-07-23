@@ -459,7 +459,13 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			// refused dispatch against reality instead of guessing config
 			// from error strings and sending the admin on fix-it loops.
 			cfg := ""
+			// The RESOLVED owner, which may differ from the requested one: a
+			// user with no credential of this name resolves to the GLOBAL cred
+			// (Owner ""), and dispatch recorded the audit under that resolved
+			// owner — so the ledger read below must key on it, not on `owner`.
+			auditOwner := owner
 			if c, ok := Secure().Resolve(name, owner); ok {
+				auditOwner = c.Owner
 				cfg = fmt.Sprintf("\nConfig (authoritative): type=%s", c.Type)
 				// Grant only means something on oauth2 — a leftover grant
 				// value on a bearer credential misled the model into
@@ -490,7 +496,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			// allowlist should have blocked. A row whose URL host isn't the
 			// provider's real domain means the secret reached that host —
 			// treat it as exposed and tell the user to ROTATE the key.
-			if audit := Secure().LoadAudit(name); len(audit) > 0 {
+			if audit := Secure().LoadAudit(auditOwner, name); len(audit) > 0 {
 				n := len(audit)
 				if n > 5 {
 					n = 5

@@ -274,13 +274,20 @@ func (s *SecureAPI) loadPassword(name string) (string, bool) {
 // SecureAPIAuditEntry is one row in the audit log. Kept short to
 // avoid bloating storage; the full response body is NOT recorded.
 type SecureAPIAuditEntry struct {
-	CredentialName string    `json:"credential_name"`
-	Method         string    `json:"method"`
-	URL            string    `json:"url"`
-	Status         int       `json:"status"`
-	ResponseBytes  int       `json:"response_bytes"`
-	Timestamp      time.Time `json:"timestamp"`
-	Error          string    `json:"error,omitempty"`
+	CredentialName string `json:"credential_name"`
+	// Owner is the credential's namespace — empty for a GLOBAL credential, the
+	// username for a USER-OWNED one. It is what makes the audit ring's key
+	// unique: without it, a global "vapi" and alice's own "vapi" both wrote to
+	// the bare-name ring, so one user's dispatch ledger showed another user's
+	// calls (and the daily-cap counter counted across users). Keyed the same
+	// way credentials themselves are — credStoreKey(Owner, CredentialName).
+	Owner         string    `json:"owner,omitempty"`
+	Method        string    `json:"method"`
+	URL           string    `json:"url"`
+	Status        int       `json:"status"`
+	ResponseBytes int       `json:"response_bytes"`
+	Timestamp     time.Time `json:"timestamp"`
+	Error         string    `json:"error,omitempty"`
 }
 
 // secureAPIMaxResponseBytes caps response bodies returned to the
@@ -982,33 +989,40 @@ func (s *SecureAPI) Delete(name string) error {
 // immediately. nil = no notification.
 var CredentialDeletedHook func(cred string)
 
-// LoadAudit returns the most recent audit entries for a credential,
-// newest first.
-func (s *SecureAPI) LoadAudit(name string) []SecureAPIAuditEntry {
+// LoadAudit returns the most recent audit entries for a credential in owner's
+// namespace, newest first. owner empty = the GLOBAL credential of that name.
+// Keyed the same way credentials are stored, so a user-owned credential's
+// ledger can never be read (or written) under another namespace's name.
+func (s *SecureAPI) LoadAudit(owner, name string) []SecureAPIAuditEntry {
 	if !s.ready() || name == "" {
 		return nil
 	}
 	var entries []SecureAPIAuditEntry
-	if s.db.Get(secureAPIAuditTable, name, &entries) {
+	if s.db.Get(secureAPIAuditTable, credStoreKey(owner, name), &entries) {
 		return entries
 	}
 	return nil
 }
 
-// recordAudit prepends an entry, capping ring size.
+// recordAudit prepends an entry, capping ring size. Keyed by
+// credStoreKey(Owner, CredentialName): a global cred (Owner "") keeps the bare
+// name — so existing global ledgers are preserved unchanged — while a
+// user-owned cred writes to its own @u:<owner>:<name> ring instead of colliding
+// on the bare name.
 func (s *SecureAPI) recordAudit(e SecureAPIAuditEntry) {
 	if !s.ready() {
 		return
 	}
+	key := credStoreKey(e.Owner, e.CredentialName)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var entries []SecureAPIAuditEntry
-	s.db.Get(secureAPIAuditTable, e.CredentialName, &entries)
+	s.db.Get(secureAPIAuditTable, key, &entries)
 	entries = append([]SecureAPIAuditEntry{e}, entries...)
 	if ringSize := auditRingSize(); len(entries) > ringSize {
 		entries = entries[:ringSize]
 	}
-	s.db.Set(secureAPIAuditTable, e.CredentialName, entries)
+	s.db.Set(secureAPIAuditTable, key, entries)
 }
 
 // touch bumps LastUsedAt for the named credential. Best-effort.
@@ -1513,7 +1527,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if c.MaxCallsPerDay > 0 {
 		cutoff := time.Now().Add(-24 * time.Hour)
 		count := 0
-		for _, e := range s.LoadAudit(c.Name) {
+		for _, e := range s.LoadAudit(c.Owner, c.Name) {
 			if e.Timestamp.Before(cutoff) {
 				continue
 			}
@@ -1724,6 +1738,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	}
 	auditEntry := SecureAPIAuditEntry{
 		CredentialName: c.Name,
+		Owner:          c.Owner,
 		Method:         method,
 		URL:            rawURL,
 		Timestamp:      time.Now(),
