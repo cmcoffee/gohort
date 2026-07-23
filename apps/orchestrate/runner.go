@@ -1749,13 +1749,20 @@ func (t *chatTurn) newToolSession() *ToolSession {
 			// Done here rather than in a migration script because this is where
 			// drafts are consumed: they drain as conversations resume, and a
 			// conversation nobody reopens has nothing worth keeping.
-			if AttachToolToAgent != nil && t.agent.ID != "" {
+			// A draft authored FOR another agent belongs to that agent, not
+			// to the one running the turn — the same distinction
+			// ToolSession.AuthoringAgentFn draws for fresh authoring. The
+			// prune above catches drafts already committed somewhere, so what
+			// lands here is uncommitted work; without the focus check every
+			// such draft settles on the authoring agent (Builder) and it
+			// carries another agent's tool schema in its prompt from then on.
+			if target := migrationTargetAgent(t.agent.ID, t.authoringFocus()); AttachToolToAgent != nil && target != "" {
 				migrated := tool
 				migrated.Trial = true
 				migrated.TrialSince = time.Now()
-				if err := AttachToolToAgent(t.udb, t.user, t.agent.ID, migrated); err == nil {
+				if err := AttachToolToAgent(t.udb, t.user, target, migrated); err == nil {
 					RemoveSessionTempTool(t.udb, t.session.ID, tool.Name)
-					Log("[orchestrate.tools] migrated session draft %q onto agent %q as a trial tool", tool.Name, t.agent.Name)
+					Log("[orchestrate.tools] migrated session draft %q onto agent %q as a trial tool", tool.Name, target)
 				} else {
 					Debug("[orchestrate.tools] could not migrate session draft %q: %v", tool.Name, err)
 				}
@@ -1772,6 +1779,29 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		}
 	}
 	return sess
+}
+
+// authoringFocus reports the agent this turn is authoring FOR, or "" when the
+// turn is authoring for itself. Mirrors ToolSession.AuthoringAgentFn.
+func (t *chatTurn) authoringFocus() string {
+	if t == nil || t.session == nil {
+		return ""
+	}
+	return strings.TrimSpace(t.session.AuthoringAgentID)
+}
+
+// migrationTargetAgent picks which agent an uncommitted session draft settles
+// on: the authoring focus when the turn is building for someone else,
+// otherwise the running agent. Returns "" when neither is known, which the
+// caller treats as "leave the draft alone" — the failure mode here must be
+// "left something behind", never "attached it to the wrong agent", since a
+// misplaced tool both hides from its owner and inflates the prompt of an agent
+// that never asked for it.
+func migrationTargetAgent(runningID, authoringID string) string {
+	if authoringID != "" {
+		return authoringID
+	}
+	return runningID
 }
 
 // loadToolToolDef builds the load_tool meta-tool. Custom (temp) tools
@@ -4502,13 +4532,27 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// text. If all three: surface a visible warning AND inject a
 	// corrective note into the session so the next turn's history
 	// shows the LLM exactly what it claimed vs what actually fired.
-	if injectAuthoringMismatchWarning(&sess, turnToolCalls, reply) {
+	mismatchFired := injectAuthoringMismatchWarning(&sess, turnToolCalls, reply)
+	if mismatchFired {
 		_, _ = saveChatSession(udb, sess)
 		sse.Send(map[string]any{
 			"kind": "activity",
 			"type": "error",
 			"id":   activityCheapID(),
 			"text": "Build plan still has pending steps but no authoring tool fired this turn — the reply may be describing work that didn't actually happen. Next turn will be re-prompted.",
+		})
+	}
+	// The third quadrant: no build plan at all, nothing errored because nothing
+	// fired, and the reply is a forward-looking PROMISE to author rather than a
+	// claim it's done. Suppressed when the mismatch check already fired so a
+	// planless promise gets exactly one notice.
+	if !mismatchFired && injectPromisedAuthoringWarning(&sess, turnToolCalls, reply) {
+		_, _ = saveChatSession(udb, sess)
+		sse.Send(map[string]any{
+			"kind": "activity",
+			"type": "error",
+			"id":   activityCheapID(),
+			"text": "The reply promised to create or update a tool or agent but no authoring call fired this turn — nothing was saved. Next turn is re-prompted to actually make the call.",
 		})
 	}
 	// The other half of hallucinated authoring: an authoring tool DID fire but
@@ -4681,6 +4725,97 @@ func injectFailedAuthoringWarning(sess *ChatSession, turnToolCalls []PersistedTo
 		Hidden:  true,
 	})
 	return true
+}
+
+// injectPromisedAuthoringWarning catches the THIRD hallucinated-authoring
+// quadrant, the one the other two miss by construction:
+// injectAuthoringMismatchWarning needs a BuildPlan with pending steps, and
+// injectFailedAuthoringWarning needs an authoring call that fired and errored.
+// A turn that describes a toolbox in prose, calls nothing, and sets no plan
+// satisfies neither — it closes clean and the work silently evaporates.
+//
+// The tell is tense. claimsSuccessWithoutAck looks for a past-tense claim
+// ("Done! I've rebuilt it"); this looks for the forward-looking promise that
+// precedes it ("Great! I will now create the vapi_calls toolbox") and is never
+// followed by the call. Both observed shapes are lead-side, not a small-model
+// artifact, so the check is deliberately tense-driven rather than model-gated.
+//
+// Conservative, in the same spirit as its siblings — a missed catch beats a
+// false one, since a spurious notice trains the model to ignore all three:
+//   - any authoring tool fired → not this pattern, stay quiet
+//   - ask_user or plan_set fired → "I'll create X" is a legitimate promise
+//     about a turn that hasn't happened yet (the approval and plan-card paths)
+//   - the reply is a question → it's proposing, not promising
+func injectPromisedAuthoringWarning(sess *ChatSession, turnToolCalls []PersistedToolCall, reply string) bool {
+	if sess == nil || strings.TrimSpace(reply) == "" {
+		return false
+	}
+	for _, tc := range turnToolCalls {
+		if agentAuthoringToolNames[tc.Name] {
+			return false
+		}
+		switch tc.Name {
+		case "ask_user", "plan_set":
+			return false
+		}
+	}
+	if strings.HasSuffix(strings.TrimSpace(reply), "?") {
+		return false
+	}
+	if !promisesAuthoringWithoutAction(reply) {
+		return false
+	}
+	sess.Messages = append(sess.Messages, ChatMessage{
+		Role: "user",
+		Content: "FRAMEWORK NOTICE: your previous reply said you were about to create or update a tool or agent, but no authoring call fired during that turn — tool_def / add_tool / create_agent / update_agent never ran, so nothing was saved and the user is waiting on work that never started. Describing the change is not making it. Make ONE concrete authoring call now with real arguments. If you need the user to approve first, call ask_user — do not promise in prose and end the turn.",
+		Created: time.Now(),
+		Hidden:  true,
+	})
+	return true
+}
+
+// promisesAuthoringWithoutAction reports whether reply contains a forward-
+// looking promise to author something. Requires a promise marker, an authoring
+// verb, and an authoring object in the SAME sentence — all three, or "I'll use
+// the get_weather tool" (promise + object, ordinary dispatch) would trip it.
+func promisesAuthoringWithoutAction(reply string) bool {
+	promise := []string{
+		"i will", "i'll", "i am going to", "i'm going to", "let me",
+		"going to now", "next i", "now i", "proceeding to",
+	}
+	verbs := []string{
+		"create", "creating", "build", "building", "author", "authoring",
+		"add", "adding", "set up", "setting up", "define", "defining",
+		"register", "registering", "make", "making", "update", "updating",
+		"wire up", "wiring up",
+	}
+	objects := []string{
+		"tool", "toolbox", "agent", "action", "pipeline", "skill",
+	}
+	for _, s := range sentencesOf(strings.ToLower(reply)) {
+		if containsAnyOf(s, promise) && containsAnyOf(s, verbs) && containsAnyOf(s, objects) {
+			return true
+		}
+	}
+	return false
+}
+
+// sentencesOf splits text on sentence terminators and newlines. Crude by
+// design — it exists so the three-signal test above can't match across
+// unrelated clauses, not to parse prose correctly.
+func sentencesOf(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return r == '.' || r == '!' || r == '?' || r == '\n' || r == ';'
+	})
+}
+
+func containsAnyOf(hay string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(hay, n) {
+			return true
+		}
+	}
+	return false
 }
 
 // claimsSuccessWithoutAck reports whether reply asserts authoring success while
@@ -4878,8 +5013,22 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 	t.lazyCustomToolDefs = map[string]AgentToolDef{}
 	agentKit := t.agentOwnTools // nil on the dispatch path → has-args customs go lazy
 	var lazyCustomTools []AgentToolDef
+	var trialDemoted int
 	for _, td := range allCustomTools {
-		if len(td.Tool.Parameters) == 0 || agentKit[td.Tool.Name] {
+		// The agent-kit bypass exists so an agent's CURATED kit is callable
+		// without a load_tool round-trip — worth the schema's prompt cost
+		// because someone chose to put it there. A Trial tool is the opposite:
+		// it landed on this agent because an authoring turn had to put it
+		// somewhere, and nobody has vouched for it yet. Letting those through
+		// the bypass means an authoring agent's prompt grows by a full JSON
+		// schema for every tool it has ever drafted — the whole reason the
+		// lazy split exists. Trial tools take the lazy path until confirmed.
+		kit := agentKit[td.Tool.Name]
+		if kit && isTrialTool(sess, td.Tool.Name) {
+			kit = false
+			trialDemoted++
+		}
+		if len(td.Tool.Parameters) == 0 || kit {
 			direct = append(direct, td)
 			t.staticTempToolNames[td.Tool.Name] = true
 		} else {
@@ -4887,6 +5036,11 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 			t.lazyCustomToolNames[td.Tool.Name] = true
 			t.lazyCustomToolDefs[td.Tool.Name] = td
 		}
+	}
+	if trialDemoted > 0 {
+		// Not silent: a tool moving out of the always-loaded catalog changes
+		// how the LLM must reach it (load_tool first), so leave a trail.
+		Log("[orchestrate.tools] agent=%s: %d unconfirmed (trial) tool(s) kept out of the inline catalog — reachable via load_tool; Confirm them in My tools to pin their schemas", t.agent.ID, trialDemoted)
 	}
 	if len(lazyCustomTools) > 0 {
 		var b strings.Builder
@@ -4902,6 +5056,20 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 		lazyPromptSection = b.String()
 	}
 	return direct, lazyPromptSection
+}
+
+// isTrialTool reports whether the session's live record for name is an
+// unconfirmed (Trial) tool — authored on some turn and attached to an agent
+// because it needed a durable home, not because anyone chose to keep it.
+// Absent record → false: the caller's fallback is the existing behavior.
+func isTrialTool(sess *ToolSession, name string) bool {
+	if sess == nil {
+		return false
+	}
+	if lt := sess.LookupTempTool(name); lt != nil {
+		return lt.Trial
+	}
+	return false
 }
 
 // runPlan asks the orchestrator (thinking LLM) to decide its next

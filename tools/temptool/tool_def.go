@@ -709,6 +709,11 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			Disabled:        BoolArg(m, "disabled"),
 		})
 	}
+	// Every action mints a "<toolbox>_<action>" catalog name, so the collision
+	// check waits until the action list is final and tests all of them at once.
+	if err := CheckCatalogNameCollision(sess, name, actions); err != nil {
+		return "", err
+	}
 	tool := &TempTool{
 		Name:        name,
 		Description: desc,

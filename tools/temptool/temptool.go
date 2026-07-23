@@ -237,6 +237,10 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	if IsReservedToolName(name) {
 		return "", fmt.Errorf("name %q is a built-in tool (channel/operator) — pick another; don't recreate it", name)
 	}
+	// And reject a name an existing toolbox action already publishes.
+	if err := CheckCatalogNameCollision(sess, name, nil); err != nil {
+		return "", err
+	}
 
 	desc := strings.TrimSpace(StringArg(args, "description"))
 	if desc == "" {
@@ -920,6 +924,67 @@ func expandedToolboxDefs(sess *ToolSession, tt *TempTool) []AgentToolDef {
 		out = append(out, perActionToolDef(sess, tt, tt.Actions[i]))
 	}
 	return out
+}
+
+// catalogNamesOf returns every catalog name one temp-tool record contributes.
+// Usually just the record's own name — but a TOOLBOX also mints
+// "<toolbox>_<action>" per action (see perActionToolDef), and those synthesized
+// names share one namespace with ordinary tools.
+//
+// Actions count whether or not Expand is currently set: the flag is a display
+// choice that can be toggled later, and a name that becomes a collision the
+// moment someone flips a switch is a collision now.
+func catalogNamesOf(tt *TempTool) []string {
+	if tt == nil {
+		return nil
+	}
+	out := []string{tt.Name}
+	if tt.Mode == TempToolModeToolbox {
+		for _, a := range tt.Actions {
+			if n := strings.TrimSpace(a.Name); n != "" {
+				out = append(out, tt.Name+"_"+n)
+			}
+		}
+	}
+	return out
+}
+
+// CheckCatalogNameCollision rejects an authoring call whose resulting catalog
+// names would collide with a DIFFERENT record already registered on the
+// session. AppendTempTool only compares record names, which misses the whole
+// class: a toolbox named "x" with action "y" and a standalone tool named "x_y"
+// have different record names and identical catalog names. The loser is then
+// shadowed silently at dispatch, so the author sees two successful creates and
+// one tool that behaves like the other.
+//
+// A record with the SAME name is skipped — re-authoring over an existing name
+// is the canonical iteration path (it overwrites), not a collision.
+func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToolAction) error {
+	if sess == nil || name == "" {
+		return nil
+	}
+	proposed := map[string]bool{name: true}
+	for _, a := range actions {
+		if n := strings.TrimSpace(a.Name); n != "" {
+			proposed[name+"_"+n] = true
+		}
+	}
+	for _, tt := range sess.CopyTempTools() {
+		if tt == nil || tt.Name == name {
+			continue
+		}
+		for _, existing := range catalogNamesOf(tt) {
+			if !proposed[existing] {
+				continue
+			}
+			if existing == tt.Name {
+				return fmt.Errorf("name %q is already taken by an existing tool — pick another name, or use action=\"update\" to change that tool in place", existing)
+			}
+			return fmt.Errorf("name %q collides with toolbox %q, whose action %q already publishes that exact name — two tools cannot share one catalog name (one would silently shadow the other). Either pick a different name, or use action=\"update\" on toolbox %q to change the action itself",
+				existing, tt.Name, strings.TrimPrefix(existing, tt.Name+"_"), tt.Name)
+		}
+	}
+	return nil
 }
 
 // perActionToolDef builds the standalone AgentToolDef for one expanded
@@ -2482,6 +2547,9 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		if ct.Name() == name {
 			return "", fmt.Errorf("name %q collides with a registered tool", name)
 		}
+	}
+	if err := CheckCatalogNameCollision(sess, name, nil); err != nil {
+		return "", err
 	}
 	desc := strings.TrimSpace(StringArg(args, "description"))
 	if desc == "" {

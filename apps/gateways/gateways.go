@@ -214,15 +214,28 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		// Single-record fetch (?name=) — powers the "View" RecordView and the
 		// "Set category" form prefill. Returns the raw TempTool, whose json tags
 		// already expose every field (category, command_template, script_body,
-		// actions, …). Scoped to this user's own tools: their pool first, then
-		// their session drafts so View works on a draft row instead of 404ing.
-		// (The two can't collide — the draft lister already drops any draft
+		// actions, …). Scoped to this user's own tools, and it must read the SAME
+		// three sources the row listing below builds from — pool, agent-scoped,
+		// then session drafts — or View 404s on a row the table just rendered.
+		// Agent-scoped was the miss: once an authored tool started committing to
+		// the agent that asked for it rather than to a session pool, nearly every
+		// row was agent-scoped and every View failed.
+		// (Sources can't collide — the scoped/draft listers drop anything
 		// shadowed by a committed tool of the same name — but the pool is the
 		// source of truth, so it answers first regardless.)
 		if name != "" {
 			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 				if p.Tool.Name == name {
 					writeJSON(w, p.Tool)
+					return
+				}
+			}
+			for _, st := range ListScopedTools(user) {
+				if st.Shadowed || st.Scope != ScopeAgentTool {
+					continue
+				}
+				if st.Tool.Name == name {
+					writeJSON(w, st.Tool)
 					return
 				}
 			}
@@ -517,7 +530,48 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if tt == nil {
-			http.Error(w, "not found", http.StatusNotFound)
+			// Agent-scoped fallback. The tool has no pool record — it lives on one
+			// or more agent records — so the pool lookup above legitimately misses
+			// it. Category is a property of the TOOL, not of one attachment, so it
+			// writes to every agent holding a copy; the same reasoning confirm uses
+			// above, and leaving copies on other agents under the old label would
+			// scatter one tool across two headings.
+			//
+			// Only set_category crosses over. The governance flags are pool-only
+			// (the table gates them with OnlyIf:"pool") and have no per-agent
+			// meaning yet — refuse them by name rather than 404ing, which would
+			// read as "no such tool" for a tool the user is looking straight at.
+			if action != "set_category" {
+				http.Error(w, "this action applies to pool tools only — "+name+" is scoped to an agent", http.StatusBadRequest)
+				return
+			}
+			if AttachToolToAgent == nil {
+				http.Error(w, "agent-scoped update unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			var body struct {
+				Category string `json:"category"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			cat := strings.TrimSpace(body.Category)
+			updated := 0
+			for _, st := range ListScopedTools(user) {
+				if st.Shadowed || st.Scope != ScopeAgentTool || st.Tool.Name != name {
+					continue
+				}
+				t := st.Tool // copy; Attach replaces the whole record on that agent
+				t.Category = cat
+				if err := AttachToolToAgent(AuthDB(), user, st.AgentID, t); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				updated++
+			}
+			if updated == 0 {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		switch action {

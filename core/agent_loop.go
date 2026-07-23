@@ -661,6 +661,25 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			delete(serialFireTools, k)
 		}
 		for _, td := range active {
+			// Name collision. Two defs can reach here under one name without any
+			// earlier check firing — an EXPANDED toolbox synthesizes
+			// "<toolbox>_<action>" at catalog-build time, long after the
+			// registration-time uniqueness check compared record names. Before
+			// this, the later def silently overwrote the handler while BOTH
+			// schemas were shown to the model: it saw one name described two
+			// ways and had no way to tell which it would actually get.
+			//
+			// FIRST registration wins, and the duplicate is dropped from the
+			// catalog so the model sees exactly the def it will dispatch to.
+			// First rather than last because the leading entry is the one
+			// already described to the model, and because static built-ins are
+			// prepended — the same direction IsReservedToolName enforces.
+			// Loud, not silent: a shadowed tool is invisible by nature, so the
+			// only way it gets noticed is a line naming it.
+			if _, dup := handlers[td.Tool.Name]; dup {
+				Log("[agent_loop] tool name collision: %q is registered twice — keeping the first definition, ignoring the later one (an expanded toolbox action and a standalone tool can mint the same name)", td.Tool.Name)
+				continue
+			}
 			toolDefs = append(toolDefs, td.Tool)
 			handlers[td.Tool.Name] = td.Handler
 			if td.NeedsConfirm {
