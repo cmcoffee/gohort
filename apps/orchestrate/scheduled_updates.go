@@ -287,9 +287,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// the panic guard below only falls back to reschedule() when the pre-arm
 	// itself hadn't happened yet.
 	armedID := ""
+	retireReason := ""
 	var armed orchUpdatePayload
 	if reArm {
-		armedID, armed, _ = preArmNextFire(p)
+		var ok bool
+		armedID, armed, ok, retireReason = preArmNextFire(p)
+		if !ok {
+			// Visible where the user reads the task, not just in the log.
+			appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-retired",
+				fmt.Sprintf("Recurring task %q is retiring after this fire: %s. It will not run again — recreate it if you still want it.", recurringName(p), retireReason))
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				if armedID != "" {
@@ -540,6 +547,15 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if hitCap {
 		detail += fmt.Sprintf(" · hit round cap (%d) — may be incomplete", softCap)
 	}
+	// FINAL fire: the pre-arm declined to schedule a successor, so this task
+	// stops here. Say so on the card. Retirement used to be a single log line
+	// and a row that quietly stopped existing — indistinguishable, from the
+	// outside, from a schedule the framework had dropped, which is exactly how
+	// it got read. The last thing a task posts should be the fact that it is
+	// the last thing it will post.
+	if retireReason != "" {
+		detail += " · FINAL FIRE — " + retireReason + "; this task will not run again"
+	}
 
 	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the
 	// same distinct-bubble treatment standing-agent reports and monitor wakes
@@ -591,28 +607,28 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 // exhaustion — each logged; on any of them the chain intentionally ends here
 // while the current (final) fire still runs. Returns the armed task id and
 // the payload it was armed with.
-func preArmNextFire(p orchUpdatePayload) (string, orchUpdatePayload, bool) {
+func preArmNextFire(p orchUpdatePayload) (string, orchUpdatePayload, bool, string) {
 	if idleDays := orchUpdateIdleDays(); p.idleReapDue(time.Now(), idleDays) {
-		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days — recurring task auto-cancelled", p.SessionID, idleDays)
-		return "", p, false
+		Log("[orchestrate/scheduled] task %q (session=%s) reaped: idle > %d days — recurring task auto-cancelled", recurringName(p), p.SessionID, idleDays)
+		return "", p, false, fmt.Sprintf("idle for more than %d days", idleDays)
 	}
 	armed := p
 	armed.FireCount++
 	if armed.FireCount >= armed.effectiveMaxFires() {
-		Log("[orchestrate/scheduled] session=%s retiring: this fire reaches the fire cap %d (recurring task auto-cancelled after it)", p.SessionID, armed.effectiveMaxFires())
-		return "", p, false
+		Log("[orchestrate/scheduled] task %q (session=%s) retiring: this fire reaches the fire cap %d (recurring task auto-cancelled after it)", recurringName(p), p.SessionID, armed.effectiveMaxFires())
+		return "", p, false, fmt.Sprintf("reached its %d-fire cap (max_fires)", armed.effectiveMaxFires())
 	}
 	next, err := computeNextFire(&armed, time.Now().In(UserLocation(p.Username)))
 	if err != nil {
-		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v — stopping after this fire", p.SessionID, err)
-		return "", p, false
+		Log("[orchestrate/scheduled] cannot compute next fire for task %q (session=%s): %v — stopping after this fire", recurringName(p), p.SessionID, err)
+		return "", p, false, fmt.Sprintf("no next fire could be computed (%v)", err)
 	}
 	id, err := ScheduleTask(OrchestrateScheduledUpdateKind, armed, next)
 	if err != nil {
-		Log("[orchestrate/scheduled] pre-arm failed for session %s: %v", p.SessionID, err)
-		return "", p, false
+		Log("[orchestrate/scheduled] pre-arm failed for task %q (session=%s): %v", recurringName(p), p.SessionID, err)
+		return "", p, false, fmt.Sprintf("the next fire could not be scheduled (%v)", err)
 	}
-	return id, armed, true
+	return id, armed, true, ""
 }
 
 // RunOrchestrateUpdateNow fires one recurring task immediately by its scheduler

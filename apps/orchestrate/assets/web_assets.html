@@ -3898,6 +3898,15 @@
         var fromI = timeI(task.has_window ? task.active_from : '');
         var toI = timeI(task.has_window ? task.active_to : '');
         var maxFires = num(task.max_fires);
+        // Indefinite is stored as max_fires = 0. That is invisible in a blank
+        // number field, which reads as "unset" rather than as a decision — and
+        // a cap someone else set (an agent authoring the task through the
+        // recurring tool) looks identical to no cap at all until you open this
+        // modal. A checkbox makes the current state legible at a glance and
+        // makes "run forever" an explicit choice rather than an empty input.
+        var indefinite = document.createElement('input');
+        indefinite.type = 'checkbox';
+        indefinite.checked = !(parseInt(task.max_fires, 10) > 0);
 
         var fixedRow = labeled('Every N minutes', interval);
         var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
@@ -3906,7 +3915,15 @@
         [fixedRow, timesRow, minGapRow, maxGapRow].forEach(function(x) { m.body.appendChild(x); });
         m.body.appendChild(labeled('Active window from (HH:MM, optional)', fromI));
         m.body.appendChild(labeled('Active window to (HH:MM, optional)', toI));
-        m.body.appendChild(labeled('Max total fires (blank = default)', maxFires));
+        var indefRow = labeled('Run indefinitely (no total-fire cap)', indefinite);
+        m.body.appendChild(indefRow);
+        var maxFiresRow = labeled('Max total fires (stop after this many)', maxFires);
+        m.body.appendChild(maxFiresRow);
+        function syncIndefinite() {
+          maxFiresRow.style.display = indefinite.checked ? 'none' : '';
+        }
+        indefinite.addEventListener('change', syncIndefinite);
+        syncIndefinite();
 
         function syncPattern() {
           var isRandom = patternSel.value === 'random';
@@ -3930,7 +3947,9 @@
             max_gap_minutes: iv(maxGap),
             active_from: fromI.value.trim(),
             active_to: toI.value.trim(),
-            max_fires: iv(maxFires)
+            // Checked → 0, the stored form of "indefinite". Explicit rather
+            // than relying on a blank field, so the intent round-trips.
+            max_fires: indefinite.checked ? 0 : iv(maxFires)
           };
         };
       }
