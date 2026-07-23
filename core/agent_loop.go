@@ -51,6 +51,38 @@ var ErrToolDenied = fmt.Errorf("tool call denied by user")
 // bite only on a genuine flail. Set to 0 to disable the cap entirely.
 var LeadTurnTokenBudget = 500_000
 
+// failureShapeCorrection builds the message injected when a turn has hit the
+// same failure shape repeatedly. Two forms:
+//
+//   - With a working consult: the wall's raw text goes to a model that can
+//     ANSWER, and its reply rides back as explicitly-labelled advice. Telling a
+//     stuck model "stop retrying variations" only names the problem; advice can
+//     supply the fix.
+//   - Without one (nil, error, or an empty reply): the generic directive, which
+//     is still correct on its own. A consult that fails must never cost the
+//     turn its correction.
+//
+// Advice is labelled advice in both the prose and the ADVICE prefix. Both tiers
+// have been confidently wrong about the same API inside one session, so the
+// model is told to verify before reporting anything as working.
+//
+// Returns the message and whether a consult actually supplied it.
+func failureShapeCorrection(n int, shape, evidence string, consult func(question, evidence string) (string, error)) (string, bool) {
+	if consult != nil {
+		q := fmt.Sprintf("An agent has hit this same failure %d times from different calls and different arguments, so its arguments are not what is wrong. Diagnose the failure itself and give the concrete fix — exact field names and nesting if this is a request-shape problem. If the evidence does not settle it, say so and name what would.", n)
+		if advice, err := consult(q, evidence); err == nil && strings.TrimSpace(advice) != "" {
+			return fmt.Sprintf(
+				"You have hit this SAME failure %d times this turn: %q. The arguments are not what's wrong, so a stronger model was consulted with the failure text. Its ADVICE follows — it is advice, not fact: apply it and VERIFY with a real call before reporting anything as working.\n\n%s",
+				n, shape, strings.TrimSpace(advice)), true
+		} else if err != nil {
+			Debug("[agent_loop] failure-shape guard: consult failed, falling back to directive: %v", err)
+		}
+	}
+	return fmt.Sprintf(
+		"You have now hit this SAME failure %d times this turn, from different calls and different arguments: %q. The arguments are not what's wrong. Stop retrying variations of it — diagnose the failure itself, take a different approach, or tell the user plainly what is blocked and what you tried.",
+		n, shape), false
+}
+
 // normalizeFailureShape reduces a failed tool result to a comparable
 // fingerprint of WHAT went wrong, so the same wall is recognized across
 // different calls and different arguments. Case and whitespace are flattened,
@@ -189,6 +221,25 @@ type AgentLoopConfig struct {
 	// stable slug; detail is one human-readable sentence. Optional; nil means
 	// the loop still corrects, just without a breadcrumb.
 	OnDiag func(kind, detail string)
+
+	// Consult asks a stronger model ONE self-contained question on the loop's
+	// behalf and returns its answer, which the caller injects into history as
+	// advice. Wired by the app (orchestrate routes it through
+	// app.orchestrate.consult); core stays ignorant of tiers and routes, the
+	// same way OnDiag keeps it ignorant of session trails.
+	//
+	// Used by the failure-shape guard below: three hits on one wall means the
+	// arguments aren't what's wrong, and a model that can ANSWER — given just
+	// the failure text, with no tool catalog or history to lose track of — is
+	// worth more there than another variation from the model that's stuck.
+	// Note the symmetry: the same fingerprint DE-escalates a lead-driven turn
+	// to the worker at six hits, and ESCALATES a worker-driven turn to a
+	// consult at three. One signal, direction depending on who is driving.
+	//
+	// Optional; nil means the guard falls back to its generic directive. An
+	// error or empty answer falls back the same way — a consult that fails
+	// must never cost the turn its correction.
+	Consult func(question, evidence string) (string, error)
 
 	// SettleRound is called by a correction guard right before it re-prompts
 	// and continues, so the app can FINALIZE whatever the just-rejected round
@@ -2194,12 +2245,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if n >= errShapeNudgeAt && !errShapeNudged[shape] {
 				errShapeNudged[shape] = true
 				Debug("[agent_loop] failure-shape guard: %q seen %d times this turn — nudging", oneLineShape(shape), n)
-				history = append(history, Message{
-					Role: "user",
-					Content: fmt.Sprintf(
-						"You have now hit this SAME failure %d times this turn, from different calls and different arguments: %q. The arguments are not what's wrong. Stop retrying variations of it — diagnose the failure itself, take a different approach, or tell the user plainly what is blocked and what you tried.",
-						n, oneLineShape(shape)),
-				})
+				msg, consulted := failureShapeCorrection(n, oneLineShape(shape), results[w.index].Content, cfg.Consult)
+				history = append(history, Message{Role: "user", Content: msg})
+				if consulted {
+					Log("[agent_loop] failure-shape guard: consulted on %q after %d hits", oneLineShape(shape), n)
+					if cfg.OnDiag != nil {
+						cfg.OnDiag("consulted", fmt.Sprintf("Hit the same failure %d times (%q) — a stronger model was consulted and its advice was given to the agent.", n, oneLineShape(shape)))
+					}
+				}
 			}
 			// Still hitting it. The turn has stopped being worth frontier
 			// tokens — finish it on the worker. De-escalating rather than

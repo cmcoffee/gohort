@@ -382,6 +382,12 @@ type chatTurn struct {
 	// the schema + mark it loaded without rebuilding the temp-tool set.
 	lazyCustomToolDefs map[string]AgentToolDef
 
+	// consultCount counts one-shot advice calls spent this turn, across BOTH
+	// surfaces that make them (the consult tool and the agent loop's
+	// failure-shape guard), so the per-turn cap can't be doubled by using one
+	// of each. See consult.go.
+	consultCount int
+
 	// agentOwnTools is the set of custom tools UNIQUELY attached to this
 	// agent (appended from agent.Tools), excluding ones skipped because
 	// they're already in the user's persistent pool. The agent's deliberate
@@ -6213,6 +6219,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// behalf (e.g. named-a-tool-but-didn't-call-it) leaves a breadcrumb
 		// instead of vanishing into Debug logs.
 		OnDiag: t.turnDiag,
+		// One-shot advice for the failure-shape guard: three hits on one wall
+		// means the arguments aren't what's wrong, so ask a model that can
+		// ANSWER instead of nudging the one that's stuck. See consult.go.
+		Consult: t.consult,
 		// Settle the rejected round's streamed bubble before a correction
 		// re-prompts, so the retry opens a fresh bubble instead of
 		// concatenating into an orphaned one (the double-emit fix).
@@ -6848,6 +6858,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// the orchestrator loop — a silent re-prompt during a plan step is
 		// still a framework decision the user should be able to see.
 		OnDiag: t.turnDiag,
+		// One-shot advice for the failure-shape guard: three hits on one wall
+		// means the arguments aren't what's wrong, so ask a model that can
+		// ANSWER instead of nudging the one that's stuck. See consult.go.
+		Consult: t.consult,
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at
 		// the top of runWorkerStep.

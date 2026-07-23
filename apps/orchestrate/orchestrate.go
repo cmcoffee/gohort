@@ -86,6 +86,21 @@ func init() {
 		Group:   "Agents",
 	})
 	RegisterRouteStage(RouteStage{
+		Key:   ConsultRouteKey,
+		Label: "Agents: Consultation (one-shot advice)",
+		// The inverse of escalating a whole turn: the worker keeps the loop
+		// and asks the lead ONE self-contained question — an API's request
+		// shape, a wall it has hit three times. The call carries the question
+		// and its evidence and nothing else (no tool catalog, no history), so
+		// it costs a few thousand tokens rather than the turn's full prompt,
+		// and there is no long context for a weaker lead to lose track of.
+		// Answering is what leads are reliably good at; acting is where they
+		// stall. NOT Private — it must be able to escalate; degrades to worker
+		// automatically when no lead is configured.
+		Default: "lead",
+		Group:   "Agents",
+	})
+	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.worker",
 		Label:   "Agents: Worker (no-think)",
 		Default: "worker",

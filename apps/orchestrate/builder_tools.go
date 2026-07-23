@@ -64,6 +64,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		ChatToolToAgentToolDefWithSession(addToolTool{}, sess),
 		ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess),
 		ChatToolToAgentToolDefWithSession(skillDefTool(), sess),
+		// consult — ask a stronger model ONE self-contained question (an API's
+		// request shape, a wall hit repeatedly) without handing it the turn.
+		// Paired with authoring because that is where an unknown request shape
+		// costs the most rounds; see consult.go.
+		consultTool(t),
 		// bridge — wire a registered API credential to a schedule so an
 		// agent gets woken when an external service changes. Pure
 		// composition over SecureAPI credentials + watch-kind event
