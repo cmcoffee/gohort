@@ -1230,6 +1230,22 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 						for k, v := range am {
 							existingAM[k] = v
 						}
+						// Dropping a param has to drop its required entry too.
+						// params is REPLACED by the merge above, required is only
+						// replaced if the caller re-sent it — so removing a param
+						// while leaving required alone strands a name that no
+						// longer exists. Dispatch then demands a param the schema
+						// doesn't declare ("requires param phone_number_id" for a
+						// tool whose help lists no such param), which is
+						// unfixable from the model's side: every subsequent
+						// update reproduces it, and the tool reads as haunted.
+						// The intent is unambiguous — the param is gone — so
+						// prune rather than erroring.
+						if _, sentParams := am["params"]; sentParams {
+							if _, sentRequired := am["required"]; !sentRequired {
+								existingAM["required"] = pruneRequired(existingAM["required"], existingAM["params"])
+							}
+						}
 						cur[idx] = existingAM
 					} else {
 						cur[idx] = am
@@ -2889,3 +2905,37 @@ common pitfalls
   doesn't match, you get nothing. Test the filter against a real
   response first.
 `
+
+// pruneRequired drops entries from a required list that no longer name a param.
+// Used when an action update replaces params without re-sending required: the
+// caller removed a param, so the required entry naming it is dead weight that
+// would otherwise block every dispatch.
+//
+// Conservative about shapes it doesn't recognize — a nil or non-list required,
+// or a non-map params, is returned untouched. This runs inside an edit path; a
+// helper that discards data it merely failed to parse would be worse than the
+// bug it fixes.
+func pruneRequired(required, params any) any {
+	reqList, ok := required.([]any)
+	if !ok || len(reqList) == 0 {
+		return required
+	}
+	paramMap, ok := params.(map[string]any)
+	if !ok {
+		return required
+	}
+	kept := make([]any, 0, len(reqList))
+	for _, r := range reqList {
+		name, ok := r.(string)
+		if !ok {
+			kept = append(kept, r) // unrecognized entry: leave it alone
+			continue
+		}
+		if _, exists := paramMap[strings.TrimSpace(name)]; exists {
+			kept = append(kept, r)
+		} else {
+			Debug("[temptool] update: dropped required %q — the action no longer declares that param", name)
+		}
+	}
+	return kept
+}
