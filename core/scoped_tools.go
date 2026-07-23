@@ -66,6 +66,11 @@ type ScopedTool struct {
 
 	AgentID   string `json:"agent_id,omitempty"`
 	AgentName string `json:"agent_name,omitempty"`
+	// ParentName is set when the holding agent is a SUB-AGENT, so a listing can
+	// say which parent's specialist holds the tool. Two agents can reasonably
+	// share a short name ("Research") when one is a top-level agent and the
+	// other someone's sub-agent; without the parent, the two are indistinguishable.
+	ParentName string `json:"parent_name,omitempty"`
 
 	// Session fields are set for ScopeSessionTool only.
 	SessionID    string `json:"session_id,omitempty"`

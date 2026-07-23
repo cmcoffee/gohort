@@ -53,6 +53,16 @@ type ToolScopeAgent struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	On   bool   `json:"on"`
+	// ParentID is set for a SUB-AGENT and names the agent that owns it, so a
+	// picker can show the relationship instead of a flat list in which a
+	// specialist and its parent look like peers.
+	//
+	// Sub-agents are scope targets in their own right: they run their own turns
+	// with their own Tools, and inheriting the parent's kit is opt-in
+	// (AgentRecord.InheritParentTools). Excluding them from the picker made a
+	// sub-agent's tools unreachable from any UI — the only way to give one a
+	// tool was to have the assistant author it there.
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 // ToolScopeState is the full scope picture for one tool, driving the pill

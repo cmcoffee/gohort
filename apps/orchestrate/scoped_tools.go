@@ -54,14 +54,28 @@ func (T *OrchestrateApp) listScopedTools(user string) []ScopedTool {
 		pooled[p.Tool.Name] = true
 	}
 
+	// Parent names for sub-agents, resolved once: a listing shows "Parent > Sub"
+	// so a specialist reads as one, not as a peer of its parent.
+	agents := listAgents(udb, user)
+	nameByID := map[string]string{}
+	for _, a := range agents {
+		nameByID[a.ID] = a.Name
+	}
+
 	var out []ScopedTool
-	for _, agent := range listAgents(udb, user) {
+	for _, agent := range agents {
+		parent := ""
+		if agent.OwnedBy != "" {
+			if n := nameByID[agent.OwnedBy]; n != "" {
+				parent = n
+			}
+		}
 		bundled := map[string]bool{}
 		for _, t := range agent.Tools {
 			bundled[t.Name] = true
 			out = append(out, ScopedTool{
 				Tool: t, Scope: ScopeAgentTool,
-				AgentID: agent.ID, AgentName: agent.Name,
+				AgentID: agent.ID, AgentName: agent.Name, ParentName: parent,
 				Trial: t.Trial,
 				// An agent copy duplicated in the user's pool is redundant, but
 				// it is NOT stale the way a draft is — the agent genuinely holds
@@ -73,7 +87,7 @@ func (T *OrchestrateApp) listScopedTools(user string) []ScopedTool {
 			for _, t := range LoadSessionTempTools(udb, s.ID) {
 				out = append(out, ScopedTool{
 					Tool: t, Scope: ScopeSessionTool,
-					AgentID: agent.ID, AgentName: agent.Name,
+					AgentID: agent.ID, AgentName: agent.Name, ParentName: parent,
 					SessionID: s.ID, SessionTitle: strings.TrimSpace(s.Title),
 					Shadowed: bundled[t.Name] || pooled[t.Name],
 				})

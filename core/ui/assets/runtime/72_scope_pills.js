@@ -6,9 +6,15 @@
 // knows nothing about tools or agents — just labels and on/off.
 //
 //   uiRenderScopePills(container, {
-//     load:   function() -> Promise<{ primary?:{label,on,disabled?}, items:[{key,label,on}], note?:string }>,
+//     load:   function() -> Promise<{ primary?:{label,on,disabled?}, items:[{key,label,on,under?}], note?:string }>,
 //     toggle: function(key, on) -> Promise,   // key === '__primary__' for the primary pill
 //   })
+//
+// An item may carry `under: <key of another item>`, which renders it on an
+// indented row beneath that item instead of inline. Each pill is still an
+// independent toggle — nesting is presentation, not containment, so switching
+// a parent on says nothing about its children. Items whose `under` names no
+// known key fall back to the top row rather than disappearing.
 (function () {
   function makePill(label, on, primary, onToggle) {
     var b = document.createElement('button');
@@ -49,28 +55,53 @@
           container.appendChild(n);
         }
         var wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center';
+        wrap.style.cssText = 'display:flex;flex-direction:column;align-items:stretch';
+        var top = document.createElement('div');
+        top.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center';
+        wrap.appendChild(top);
         if (state.primary) {
           var p = makePill(state.primary.label, state.primary.on, true, function (newOn) {
             return Promise.resolve(opts.toggle('__primary__', newOn)).then(render);
           });
           if (state.primary.disabled) { p.disabled = true; p.style.opacity = '0.5'; p.style.cursor = 'not-allowed'; }
-          wrap.appendChild(p);
+          top.appendChild(p);
           // A thin divider between the primary pill and the per-item pills.
           var sep = document.createElement('span');
           sep.style.cssText = 'width:1px;align-self:stretch;background:var(--border,#3a3a4a);margin:0.3rem 0.5rem';
-          wrap.appendChild(sep);
+          top.appendChild(sep);
         }
-        (state.items || []).forEach(function (it) {
-          wrap.appendChild(makePill(it.label, it.on, false, function (newOn) {
-            return Promise.resolve(opts.toggle(it.key, newOn)).then(render);
-          }));
+        var items = state.items || [];
+        var known = {}, kids = {};
+        items.forEach(function (it) { known[it.key] = true; });
+        items.forEach(function (it) {
+          if (it.under && known[it.under]) (kids[it.under] = kids[it.under] || []).push(it);
         });
-        if (!(state.items && state.items.length) && !state.primary) {
+        function pillFor(it) {
+          return makePill(it.label, it.on, false, function (newOn) {
+            return Promise.resolve(opts.toggle(it.key, newOn)).then(render);
+          });
+        }
+        items.forEach(function (it) {
+          if (it.under && known[it.under]) return;   // rendered under its parent
+          if (!kids[it.key]) { top.appendChild(pillFor(it)); return; }
+          // Parent with children gets its own block so the indented child row
+          // sits directly beneath it instead of wrapping into the top row.
+          var block = document.createElement('div');
+          block.style.cssText = 'margin:0.35rem 0 0.1rem 0';
+          block.appendChild(pillFor(it));
+          var row = document.createElement('div');
+          row.style.cssText =
+            'display:flex;flex-wrap:wrap;align-items:center;margin:0.1rem 0 0 0.9rem;' +
+            'padding-left:0.6rem;border-left:1px solid var(--border,#3a3a4a)';
+          kids[it.key].forEach(function (k) { row.appendChild(pillFor(k)); });
+          block.appendChild(row);
+          wrap.appendChild(block);
+        });
+        if (!items.length && !state.primary) {
           var empty = document.createElement('div');
           empty.style.cssText = 'color:var(--text-mute,#888);font-size:0.82rem';
           empty.textContent = '(nothing to configure)';
-          wrap.appendChild(empty);
+          top.appendChild(empty);
         }
         container.appendChild(wrap);
       }).catch(function (err) {

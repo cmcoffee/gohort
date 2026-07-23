@@ -320,15 +320,24 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		// Shadowed rows are dropped: a draft already committed under the same
 		// name would invite an action that does nothing.
 		scoped := ListScopedTools(user)
+		// A sub-agent is labelled with its parent so it doesn't read as a
+		// top-level agent of the same name.
+		agentLabel := func(st ScopedTool) string {
+			n := strings.TrimSpace(st.AgentName)
+			if n == "" {
+				n = st.AgentID
+			}
+			if p := strings.TrimSpace(st.ParentName); p != "" {
+				return p + " ▸ " + n
+			}
+			return n
+		}
 		byName := map[string]int{} // tool name -> index into rows
 		for _, st := range scoped {
 			if st.Shadowed || st.Scope != ScopeAgentTool {
 				continue
 			}
-			agent := strings.TrimSpace(st.AgentName)
-			if agent == "" {
-				agent = st.AgentID
-			}
+			agent := agentLabel(st)
 			if i, seen := byName[st.Tool.Name]; seen {
 				rows[i].Agents = append(rows[i].Agents, agent)
 				rows[i].AgentList = strings.Join(rows[i].Agents, ", ")
@@ -359,10 +368,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			if st.Shadowed || st.Scope != ScopeSessionTool {
 				continue
 			}
-			agent := strings.TrimSpace(st.AgentName)
-			if agent == "" {
-				agent = st.AgentID
-			}
+			agent := agentLabel(st)
 			group := "Session drafts (legacy) — " + agent
 			if t := strings.TrimSpace(st.SessionTitle); t != "" {
 				group += " · " + t
@@ -1367,33 +1373,32 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 		// Shape for uiRenderScopePills: a PRIMARY pill (the user-wide pool —
 		// "All my agents", which is also what puts a tool in the shared list
 		// every agent draws from) plus one pill per agent the user owns.
+		// Under nests a SUB-AGENT's pill beneath its parent's. Each pill is
+		// still its own toggle: a sub-agent runs its own turns off its own
+		// tools, and picking up the parent's kit is opt-in per sub-agent, so
+		// switching the parent on grants the child nothing by itself.
 		type pill struct {
 			Key   string `json:"key"`
 			Label string `json:"label"`
 			On    bool   `json:"on"`
+			Under string `json:"under,omitempty"`
 		}
 		out := map[string]any{}
 		st, found := prov.State(db, user, name)
 		items := []pill{}
-		if found {
-			out["primary"] = map[string]any{"label": "All my agents", "on": st.Global}
-			for _, a := range st.Agents {
-				items = append(items, pill{Key: a.ID, Label: a.Name, On: a.On})
+		// The pill list comes from the provider whether or not the tool is
+		// currently in any scope: an orphan or an unkept draft needs the SAME
+		// set of targets to be re-homed onto, and it is the only place that
+		// knows the parent/child shape. Falling back to the agents that already
+		// hold something keeps the picker usable if the provider yields none.
+		subs := false
+		for _, a := range st.Agents {
+			if a.ParentID != "" {
+				subs = true
 			}
-			if st.Global {
-				out["note"] = "Shared with every one of your agents. Turn an agent off to deny it there, or turn All my agents off to keep it only on the agents left on."
-			} else {
-				out["note"] = "Available only on the agents switched on. Turn on All my agents to share it with every agent you own."
-			}
-			if len(st.Missing) > 0 {
-				out["note"] = "⚠ Missing dependency: " + strings.Join(st.Missing, ", ") + ". " + out["note"].(string)
-			}
-		} else {
-			// Neither a session draft nor an orphan is in any scope yet, so there
-			// is nothing to toggle OFF — the first pill switched ON is what keeps
-			// (or re-homes) it. Both need the same pill list, so build it from the
-			// user's agents rather than from the tool's own state.
-			out["primary"] = map[string]any{"label": "All my agents", "on": false}
+			items = append(items, pill{Key: a.ID, Label: a.Name, On: a.On, Under: a.ParentID})
+		}
+		if len(items) == 0 {
 			seen := map[string]bool{}
 			for _, d := range ListScopedTools(user) {
 				if d.AgentID == "" || seen[d.AgentID] {
@@ -1402,6 +1407,12 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 				seen[d.AgentID] = true
 				items = append(items, pill{Key: d.AgentID, Label: d.AgentName})
 			}
+		}
+		out["primary"] = map[string]any{"label": "All my agents", "on": found && st.Global}
+		switch {
+		case !found:
+			// Nothing exists to toggle OFF — the first pill switched ON is what
+			// keeps (or re-homes) the tool.
 			out["note"] = "Not kept yet — switch on an agent (or All my agents) to keep it."
 			for _, o := range LoadOrphanedTempTools(db, user) {
 				if o.Tool.Name == name {
@@ -1409,6 +1420,17 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 					break
 				}
 			}
+		case st.Global:
+			out["note"] = "Shared with every one of your agents. Turn an agent off to deny it there, or turn All my agents off to keep it only on the agents left on."
+		default:
+			out["note"] = "Available only on the agents switched on. Turn on All my agents to share it with every agent you own."
+		}
+		if subs {
+			out["note"] = out["note"].(string) +
+				" Indented pills are sub-agents — each is its own switch, so turning a parent on does not give its sub-agents the tool."
+		}
+		if len(st.Missing) > 0 {
+			out["note"] = "⚠ Missing dependency: " + strings.Join(st.Missing, ", ") + ". " + out["note"].(string)
 		}
 		out["items"] = items
 		// No-store: the pills re-GET immediately after each toggle to re-render,

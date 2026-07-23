@@ -247,7 +247,7 @@ func TestScopeTargetsIncludeHiddenAgents(t *testing.T) {
 	}
 	mk("visible", false, "")
 	mk("hidden_util", true, "") // a user's own hidden agent — must be offered
-	mk("sub", false, "visible") // sub-agents are managed via their parent
+	mk("sub", false, "visible") // a sub-agent — its own scope target, nested
 	if err := AdminPersistTempTool(db, "alice", TempTool{Name: "get_weather"}); err != nil {
 		t.Fatal(err)
 	}
@@ -257,8 +257,12 @@ func TestScopeTargetsIncludeHiddenAgents(t *testing.T) {
 		t.Fatal("expected scope state for a pooled tool")
 	}
 	seen := map[string]bool{}
+	order := []string{}
+	parent := map[string]string{}
 	for _, a := range st.Agents {
 		seen[a.ID] = true
+		order = append(order, a.ID)
+		parent[a.ID] = a.ParentID
 	}
 	if !seen["hidden_util"] {
 		t.Error("a user's own HIDDEN agent must still be a tool-scope target")
@@ -266,8 +270,65 @@ func TestScopeTargetsIncludeHiddenAgents(t *testing.T) {
 	if !seen["visible"] {
 		t.Error("a visible agent must be a tool-scope target")
 	}
-	if seen["sub"] {
-		t.Error("sub-agents are managed via their parent, not scoped directly")
+	// A sub-agent runs its own turns off its own Tools and inherits the parent's
+	// kit only if InheritParentTools is set, so it needs its own switch.
+	if !seen["sub"] {
+		t.Error("a sub-agent must be a tool-scope target in its own right")
+	}
+	if parent["sub"] != "visible" {
+		t.Errorf("sub-agent must carry ParentID for nested display, got %q", parent["sub"])
+	}
+	if parent["visible"] != "" {
+		t.Errorf("a top-level agent must have no ParentID, got %q", parent["visible"])
+	}
+	// Children are emitted directly after their parent so a consumer that just
+	// walks the slice renders the tree in order.
+	for i, id := range order {
+		if id == "visible" {
+			if i+1 >= len(order) || order[i+1] != "sub" {
+				t.Errorf("sub-agent must follow its parent, got order %v", order)
+			}
+		}
+	}
+}
+
+// A sub-agent's tools must be reachable for scope changes, not just listable:
+// toggling one on writes to the sub-agent's own record.
+func TestScopeToggleTargetsSubAgent(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+
+	udb := agentUserDB(db, "alice")
+	for _, a := range []AgentRecord{
+		{ID: "parent", Owner: "alice", Name: "Parent", OrchestratorPrompt: "x"},
+		{ID: "kid", Owner: "alice", Name: "Kid", OrchestratorPrompt: "x", OwnedBy: "parent"},
+	} {
+		if _, err := saveAgent(udb, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := AdminPersistTempTool(db, "alice", TempTool{Name: "get_weather"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := setToolScope(db, "alice", "get_weather", "kid", false); err != nil {
+		t.Fatalf("deny on sub-agent: %v", err)
+	}
+	st, _ := toolScopeState(db, "alice", "get_weather")
+	for _, a := range st.Agents {
+		if a.ID == "kid" && a.On {
+			t.Error("sub-agent still sees the tool after being switched off")
+		}
+	}
+	if err := setToolScope(db, "alice", "get_weather", "kid", true); err != nil {
+		t.Fatalf("allow on sub-agent: %v", err)
+	}
+	st, _ = toolScopeState(db, "alice", "get_weather")
+	for _, a := range st.Agents {
+		if a.ID == "kid" && !a.On {
+			t.Error("sub-agent does not see the tool after being switched on")
+		}
 	}
 }
 

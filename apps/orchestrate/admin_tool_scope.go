@@ -166,8 +166,15 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	// can hold tools. Hidden means "keep this out of the fleet/dispatch picker",
 	// not "this agent may not have tools", so a user hiding an agent should not
 	// make it impossible to give that agent a tool.
+	//
+	// Sub-agents (OwnedBy set) ARE targets. They run their own turns off their
+	// own Tools, and picking up the parent's kit is opt-in per sub-agent
+	// (InheritParentTools), so "scoped to the parent" does not imply the
+	// specialist can call it. Leaving them out made a whole tier of agents
+	// unreachable from the picker. They carry ParentID so the UI can nest them
+	// under their parent rather than listing a specialist as a peer.
 	scopeTarget := func(a AgentRecord) bool {
-		return a.OwnedBy == "" && !isAppAgent(a.ID) && !isCloneOnlySeed(a.ID)
+		return !isAppAgent(a.ID) && !isCloneOnlySeed(a.ID)
 	}
 	agentHas := map[string]bool{}
 	var scopedDef *TempTool
@@ -185,9 +192,6 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 			}
 		}
 	}
-	if !st.Global && len(agentHas) == 0 {
-		return st, false
-	}
 	def := globalDef
 	if def == nil {
 		def = scopedDef
@@ -195,15 +199,42 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	if def != nil {
 		st.Missing = missingDeps(*def)
 	}
+	// Emit parents first, then each parent's children directly beneath it, so a
+	// consumer that just walks the slice renders the tree in order. Sub-agents
+	// whose parent is not itself a target (an app agent's helper, say) are
+	// emitted at top level rather than dropped.
+	emit := func(a AgentRecord, parent string) {
+		on := agentHas[a.ID]
+		if st.Global {
+			on = agentSeesGlobalTool(a, toolName)
+		}
+		st.Agents = append(st.Agents, ToolScopeAgent{
+			ID: a.ID, Name: a.Name, On: on, ParentID: parent,
+		})
+	}
+	isTarget := map[string]bool{}
 	for i := range agents {
-		if !scopeTarget(agents[i]) {
+		if scopeTarget(agents[i]) {
+			isTarget[agents[i].ID] = true
+		}
+	}
+	for i := range agents {
+		if !scopeTarget(agents[i]) || (agents[i].OwnedBy != "" && isTarget[agents[i].OwnedBy]) {
 			continue
 		}
-		on := agentHas[agents[i].ID]
-		if st.Global {
-			on = agentSeesGlobalTool(agents[i], toolName)
+		emit(agents[i], "")
+		for j := range agents {
+			if scopeTarget(agents[j]) && agents[j].OwnedBy == agents[i].ID {
+				emit(agents[j], agents[i].ID)
+			}
 		}
-		st.Agents = append(st.Agents, ToolScopeAgent{ID: agents[i].ID, Name: agents[i].Name, On: on})
+	}
+	// The agent list is filled in even when the tool is in NO scope (found=false):
+	// an orphan or an unkept draft still needs somewhere to be re-homed, and the
+	// caller can only offer that choice if it gets the targets. Every pill is
+	// simply off.
+	if !st.Global && len(agentHas) == 0 {
+		return st, false
 	}
 	return st, true
 }
