@@ -27,6 +27,9 @@ func TestToolboxActionContentType(t *testing.T) {
 	sess := &ToolSession{
 		Username: "alice", ChatSessionID: "s1",
 		WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()},
+		// Offline-only: this test targets the render/content_type path; REPORT is
+		// now live-probed and the fake host would fail DNS.
+		Network: NewNetworkConnector(true),
 	}
 
 	create := map[string]any{

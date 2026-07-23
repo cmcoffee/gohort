@@ -1348,6 +1348,14 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if noTools {
 			continue
 		}
+		// Governance visibility: a Disabled tool (turned off in My tools) and a
+		// Builder-only tool are both hidden from every agent EXCEPT Builder.
+		// Builder always loads the full pool so it can load, RUN, test, fix, and
+		// re-enable them — building AND verifying is its whole job; a disabled
+		// tool it couldn't run would be unfixable.
+		if (p.Tool.Disabled || p.Tool.BuilderOnly) && !isBuilderAgent(t.agent.ID) {
+			continue
+		}
 		// Private mode hides API-mode temp tools (network side effects);
 		// shell-mode stays (sandboxed local).
 		if t.privateMode && p.Tool.Mode == TempToolModeAPI {

@@ -110,10 +110,19 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 	// user already has access to at runtime).
 	if user != "" {
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			// Carry the tool's self-declared Category so it groups under that
+			// header; default the user's OWN Builder-authored tools to a clear
+			// "My Tools" group instead of the generic "Other" bucket, where they
+			// were easy to miss when enabling them on an agent.
+			cat := p.Tool.Category
+			if cat == "" {
+				cat = "My Tools"
+			}
 			defs = append(defs, AgentToolDef{
 				Tool: Tool{
 					Name:        p.Tool.Name,
 					Description: p.Tool.Description,
+					Category:    cat,
 				},
 			})
 		}

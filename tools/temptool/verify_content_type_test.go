@@ -32,6 +32,10 @@ func TestVerifyHonorsContentType(t *testing.T) {
 		ChatSessionID: "s1",
 		WorkspaceDir:  t.TempDir(),
 		DB:            &DBase{Store: kvlite.MemStore()},
+		// Block network so verify runs OFFLINE checks only — this test targets
+		// the body-render/content_type path, not a live call (REPORT is now
+		// live-probed, and the fake host would fail DNS).
+		Network: NewNetworkConnector(true),
 	}
 
 	create := map[string]any{
