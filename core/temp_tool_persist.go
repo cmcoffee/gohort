@@ -75,10 +75,11 @@ var AdminToolScopeState func(db Database, owner, toolName string) (ToolScopeStat
 // AdminSetToolScope, when set, applies ONE pill toggle. target is either
 // "global" (the Global pill) or an agent id; on is the desired state.
 // The orchestrate impl interprets the transition against current state:
-//   target=global, on=true  → promote agent-scoped → user-wide pool
-//   target=global, on=false → demote: descope to the currently-ON agents
-//   target=<agent>, on=true  → enable (global: un-deny / allow; scoped: add copy)
-//   target=<agent>, on=false → disable (global: deny/de-allow; scoped: drop copy)
+//
+//	target=global, on=true  → promote agent-scoped → user-wide pool
+//	target=global, on=false → demote: descope to the currently-ON agents
+//	target=<agent>, on=true  → enable (global: un-deny / allow; scoped: add copy)
+//	target=<agent>, on=false → disable (global: deny/de-allow; scoped: drop copy)
 var AdminSetToolScope func(db Database, owner, toolName, target string, on bool) error
 
 // ToolVerifyRecorder, when set, records whether an authored tool currently
@@ -422,6 +423,7 @@ func SharedToolAllowedUsers(db Database, name string) (allowed []string, found b
 //   - A name NOT in the shared pool is permitted (true): pre-adopting an
 //     unpublished name is harmless (it simply won't resolve until published), and
 //     no ACL exists to deny it. Existence is a separate concern from permission.
+//
 // Anonymous ("") is never permitted.
 func CanAdoptGlobalTool(db Database, user, name string) bool {
 	if user == "" {
@@ -624,7 +626,17 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	for i := range approved {
 		if approved[i].Tool.Name != t.Name {
 			rest = append(rest, approved[i])
+			continue
 		}
+		// Preserve the USER-set governance flags across an AI re-persist. These
+		// are set from Extensions › My tools, never through tool_def's
+		// create-args, so a Builder edit that reconstructs the record would
+		// otherwise silently clear them (e.g. re-enable a disabled tool). Locked
+		// tools can't be re-persisted at all (the tool_def guard blocks it), but
+		// carry it too for completeness.
+		t.Locked = approved[i].Tool.Locked
+		t.Disabled = approved[i].Tool.Disabled
+		t.BuilderOnly = approved[i].Tool.BuilderOnly
 	}
 	rest = append(rest, PersistentTempTool{
 		Tool:       t,
@@ -654,7 +666,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	// ApprovePendingTempTool: prevent the new persistent entry from
 	// being shadowed by any stale draft of the same name in any of
 	// the user's chat sessions.
-	if n := cleanupSessionDraftsByName(db, t.Name); n > 0 {
+	if n := cleanupSessionDraftsByName(db, username, t.Name); n > 0 {
 		Debug("[temp_tool_persist] persist %q: cleaned %d stale session draft(s)", t.Name, n)
 	}
 	if OnTempToolApproved != nil {
@@ -723,7 +735,7 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 	// also queued one). The lazy filter at handleSessionToolsList
 	// catches these on next modal open, but eager cleanup here makes
 	// the "exactly one of session/persistent" invariant immediate.
-	if n := cleanupSessionDraftsByName(db, name); n > 0 {
+	if n := cleanupSessionDraftsByName(db, username, name); n > 0 {
 		Debug("[temp_tool_persist] approve %q: cleaned %d stale session draft(s)", name, n)
 	}
 	if OnTempToolApproved != nil {
@@ -858,48 +870,37 @@ func cleanupToolGroupMemberRefs(toolName string) {
 	}
 }
 
-// cleanupSessionDraftsByName walks every session_temp_tools entry in
-// the given DB and removes any draft whose name matches toolName. Used
-// by the approve / persist paths so a tool that's been promoted to
-// the user-wide persistent pool doesn't linger as a stale duplicate
-// in any chat session's "Session tools" view. The list-time filter
-// in handleSessionToolsList already deduplicates lazily, but it only
-// runs when the modal is opened — eager cleanup here guarantees the
-// invariant immediately, including for any session modal currently
-// open showing cached data. db is expected to be the user's per-user
-// DB (different users live in different DBs); cleanup is naturally
-// scoped to the user.
+// cleanupSessionDraftsByName removes stale drafts of toolName from THIS USER's
+// chat sessions — the drafts a freshly committed tool of the same name has just
+// superseded. Returns the number cleaned.
 //
-// Returns the number of session-draft entries cleaned.
-func cleanupSessionDraftsByName(db Database, toolName string) int {
+// TENANCY: it must enumerate the user's sessions through the registered draft
+// lister, NOT by walking the session_temp_tools table. That table is global,
+// keyed by chat-session id with no owner on the row (tempToolStore resolves to
+// RootDB), so a bare walk cleans by NAME ACROSS EVERY USER: one user persisting
+// a tool called "get_weather" would silently delete another user's unrelated
+// session draft of the same name. The previous implementation did exactly that,
+// while its own comment claimed to be "naturally scoped to the user" because it
+// expected a per-user DB that tempToolStore had already overridden. Same class
+// of bug as the credential audit log keyed on a bare name.
+//
+// With no lister registered (a deployment without the sessions app) there are
+// no sessions to clean, so this is a no-op rather than a global sweep.
+func cleanupSessionDraftsByName(db Database, username, toolName string) int {
 	db = tempToolStore(db)
-	if db == nil || toolName == "" {
+	if db == nil || strings.TrimSpace(username) == "" || toolName == "" {
 		return 0
 	}
 	cleaned := 0
-	for _, sid := range db.Keys(sessionTempToolsTable) {
-		var drafts []TempTool
-		if !db.Get(sessionTempToolsTable, sid, &drafts) {
+	seen := map[string]bool{} // a session is cleaned once even if it held duplicates
+	for _, d := range ListSessionDrafts(username) {
+		if d.Tool.Name != toolName || seen[d.SessionID] {
 			continue
 		}
-		var rest []TempTool
-		removed := false
-		for _, t := range drafts {
-			if t.Name == toolName {
-				removed = true
-				continue
-			}
-			rest = append(rest, t)
+		seen[d.SessionID] = true
+		if RemoveSessionTempTool(db, d.SessionID, toolName) {
+			cleaned++
 		}
-		if !removed {
-			continue
-		}
-		if len(rest) == 0 {
-			db.Unset(sessionTempToolsTable, sid)
-		} else {
-			db.Set(sessionTempToolsTable, sid, rest)
-		}
-		cleaned++
 	}
 	return cleaned
 }

@@ -107,83 +107,114 @@ func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "dropped", "name": name})
 
 	case "persist":
-		global := strings.EqualFold(r.URL.Query().Get("global"), "true")
-		if global {
-			if err := AdminPersistTempTool(udb, user, *found); err != nil {
-				http.Error(w, "persist: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			RemoveSessionTempTool(udb, sid, name)
-			// add_tool writes BOTH to agent.Tools and session_temp_tools
-			// so the new tool is callable mid-turn for verification.
-			// When the user promotes that draft to the user-wide pool,
-			// the agent-bundled copy becomes redundant — it would still
-			// surface under "Custom tools bundled with this agent" AND
-			// in the regular catalog (via persistent_temp_tools), as a
-			// duplicate. Strip the agent-bundled entry so the user-wide
-			// copy is the single source of truth.
-			if agentID != "" {
-				if agent, ok := loadAgent(udb, agentID); ok && agent.Owner == user {
-					strippedToolBundle := agent.Tools[:0]
-					removed := false
-					for _, t := range agent.Tools {
-						if t.Name == name {
-							removed = true
-							continue
-						}
-						strippedToolBundle = append(strippedToolBundle, t)
-					}
-					if removed {
-						agent.Tools = strippedToolBundle
-						if _, err := saveAgent(udb, agent); err != nil {
-							Log("[orchestrate.session_tools] warn: persisted %q globally but could not strip agent-bundled copy on %q: %v", name, agent.Name, err)
-						} else {
-							Log("[orchestrate.session_tools] stripped redundant agent-bundled %q from agent %q after global persist", name, agent.Name)
-						}
-					}
-				}
-			}
-			Log("[orchestrate.session_tools] user %q persisted %q to USER-WIDE pool (session %s)", user, name, sid)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "persisted", "scope": "global", "name": name})
+		// Target: the user-wide pool, or the session's own agent. Both paths live
+		// in promoteSessionDraft so this handler and the Extensions > My tools
+		// surface promote identically — the agent-copy stripping and ownership
+		// checks are exactly the parts you do not want two copies of.
+		target := ScopeTargetAgent
+		if strings.EqualFold(r.URL.Query().Get("global"), "true") {
+			target = ScopeTargetGlobal
+		}
+		scope, err := T.promoteSessionDraft(udb, user, agentID, sid, name, target)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Agent-attached: append (or replace by name) into the focused
-		// agent's bundled Tools[]. The session's agent_id is the target.
-		agent, ok := loadAgent(udb, agentID)
-		if !ok {
-			http.Error(w, "agent not found", http.StatusNotFound)
-			return
-		}
-		if agent.Owner != user {
-			http.Error(w, "cannot attach a tool to an agent you don't own", http.StatusForbidden)
-			return
-		}
-		replaced := false
-		for i := range agent.Tools {
-			if agent.Tools[i].Name == name {
-				agent.Tools[i] = *found
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			agent.Tools = append(agent.Tools, *found)
-		}
-		if _, err := saveAgent(udb, agent); err != nil {
-			http.Error(w, "save agent: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		RemoveSessionTempTool(udb, sid, name)
-		verb := "attached"
-		if replaced {
-			verb = "replaced"
-		}
-		Log("[orchestrate.session_tools] user %q %s %q to agent %q (session %s)", user, verb, name, agent.Name, sid)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "persisted", "scope": "agent", "name": name})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "persisted", "scope": scope, "name": name})
 
 	default:
 		http.Error(w, fmt.Sprintf("unknown action %q (expected persist or drop)", action), http.StatusBadRequest)
 	}
+}
+
+// promoteSessionDraft moves a session draft out of its per-session pool into a
+// durable scope and clears the draft.
+//
+// target ScopeTargetGlobal → the user-wide pool; anything else → the session's
+// own agent record. Shared by the in-chat Tools modal and Extensions > My tools
+// so both promote identically: the ownership check and the strip-the-redundant-
+// agent-copy step are exactly the parts you do not want a second, drifting copy
+// of. Returns the scope actually written ("global" | "agent").
+func (T *OrchestrateApp) promoteSessionDraft(udb Database, user, agentID, sid, name, target string) (string, error) {
+	tools := LoadSessionTempTools(udb, sid)
+	var found *TempTool
+	for i := range tools {
+		if tools[i].Name == name {
+			tmp := tools[i]
+			found = &tmp
+			break
+		}
+	}
+	if found == nil {
+		return "", fmt.Errorf("no session tool named %q", name)
+	}
+	if target == ScopeTargetGlobal {
+		if err := AdminPersistTempTool(udb, user, *found); err != nil {
+			return "", fmt.Errorf("persist: %w", err)
+		}
+		RemoveSessionTempTool(udb, sid, name)
+		// add_tool writes BOTH to agent.Tools and session_temp_tools
+		// so the new tool is callable mid-turn for verification.
+		// When the user promotes that draft to the user-wide pool,
+		// the agent-bundled copy becomes redundant — it would still
+		// surface under "Custom tools bundled with this agent" AND
+		// in the regular catalog (via persistent_temp_tools), as a
+		// duplicate. Strip the agent-bundled entry so the user-wide
+		// copy is the single source of truth.
+		if agentID != "" {
+			if agent, ok := loadAgent(udb, agentID); ok && agent.Owner == user {
+				strippedToolBundle := agent.Tools[:0]
+				removed := false
+				for _, t := range agent.Tools {
+					if t.Name == name {
+						removed = true
+						continue
+					}
+					strippedToolBundle = append(strippedToolBundle, t)
+				}
+				if removed {
+					agent.Tools = strippedToolBundle
+					if _, err := saveAgent(udb, agent); err != nil {
+						Log("[orchestrate.session_tools] warn: persisted %q globally but could not strip agent-bundled copy on %q: %v", name, agent.Name, err)
+					} else {
+						Log("[orchestrate.session_tools] stripped redundant agent-bundled %q from agent %q after global persist", name, agent.Name)
+					}
+				}
+			}
+		}
+		Log("[orchestrate.session_tools] user %q persisted %q to USER-WIDE pool (session %s)", user, name, sid)
+		return "global", nil
+	}
+	// Agent-attached: append (or replace by name) into the focused
+	// agent's bundled Tools[]. The session's agent_id is the target.
+	agent, ok := loadAgent(udb, agentID)
+	if !ok {
+		return "", fmt.Errorf("agent not found")
+	}
+	if agent.Owner != user {
+		return "", fmt.Errorf("cannot attach a tool to an agent you don't own")
+	}
+	replaced := false
+	for i := range agent.Tools {
+		if agent.Tools[i].Name == name {
+			agent.Tools[i] = *found
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		agent.Tools = append(agent.Tools, *found)
+	}
+	if _, err := saveAgent(udb, agent); err != nil {
+		return "", fmt.Errorf("save agent: %w", err)
+	}
+	RemoveSessionTempTool(udb, sid, name)
+	verb := "attached"
+	if replaced {
+		verb = "replaced"
+	}
+	Log("[orchestrate.session_tools] user %q %s %q to agent %q (session %s)", user, verb, name, agent.Name, sid)
+	return "agent", nil
+
 }

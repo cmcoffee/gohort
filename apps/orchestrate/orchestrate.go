@@ -273,6 +273,10 @@ func (T *OrchestrateApp) Routes() {
 	// Channel wake-rule gatekeeper: the transport calls this before dispatching
 	// an inbound, so master (admin) + per-channel rules gate the agent run.
 	registerChannelGatekeeper(T)
+	// Cross-scope tool enumeration (agent-bundled + session drafts) for
+	// surfaces outside this app (Extensions > My tools). Only this app can map
+	// agents and sessions to a user.
+	registerScopedToolLister(T)
 	// Recorded-only mirror: when the gatekeeper BLOCKS an inbound (no wake), the
 	// transport calls this to append the message into the bound agent's own
 	// transcript, so it shows in the agent's chat and is in-context on the next

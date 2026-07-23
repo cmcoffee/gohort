@@ -154,14 +154,21 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 
 	agents := listAgents(udb, owner)
 	// scopeTarget: only top-level, user-managed agents are tool-scope targets.
-	// App-specific agents (Guide Author, Servitor Investigator, …) are Hidden
-	// with curated kits, and sub-agents (OwnedBy) are managed via their parent —
-	// neither belongs in the pill or the derived state.
-	// App agents are excluded by IDENTITY (not the Hidden proxy, which leaks for
-	// a VISIBLE app agent like Casefile's "Case Analyzer" was): their kit is
-	// app-declared, so they're never a tool-scope target. Sub-agents (OwnedBy)
-	// are managed via their parent.
-	scopeTarget := func(a AgentRecord) bool { return !a.Hidden && a.OwnedBy == "" && !isAppAgent(a.ID) }
+	// Exclusions are by IDENTITY, never by the Hidden flag:
+	//   - app-specific agents (Guide Author, Servitor Investigator, …) carry an
+	//     app-declared kit, so they're never a tool-scope target;
+	//   - clone-only seeds are templates you clone, not agents you run;
+	//   - sub-agents (OwnedBy) are managed through their parent.
+	//
+	// Hidden was previously part of this test and that was wrong in both
+	// directions: it LEAKED for a visible app agent (Casefile's "Case Analyzer"),
+	// and it SUPPRESSED a user's own hidden agent — which is a real agent that
+	// can hold tools. Hidden means "keep this out of the fleet/dispatch picker",
+	// not "this agent may not have tools", so a user hiding an agent should not
+	// make it impossible to give that agent a tool.
+	scopeTarget := func(a AgentRecord) bool {
+		return a.OwnedBy == "" && !isAppAgent(a.ID) && !isCloneOnlySeed(a.ID)
+	}
 	agentHas := map[string]bool{}
 	var scopedDef *TempTool
 	for i := range agents {

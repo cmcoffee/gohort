@@ -437,7 +437,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("configure_tool", configureToolAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
-			ClientAction("tool_scope_manage", toolScopeManageAction).
+			ClientAction("tool_promote_global", toolPromoteGlobalAction).
 			ClientAction("pipeline_scope_manage", pipelineScopeManageAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
@@ -1960,7 +1960,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Agent-Scoped Tools",
-				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown — a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Access\" opens the pill editor to promote a tool to global (all your agents) or add it to other agents. A ⚠ badge marks a missing credential dependency.",
+				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown — a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Promote to Global\" moves one into its owner's user-wide pool, where it can be shared and its per-USER access set. Which of a user's own agents load a tool is their choice in the agent editor, not an admin control. A ⚠ badge marks a missing credential dependency.",
 				Body: ui.Table{
 					Source:       "api/persistent-tools",
 					RecordsField: "bundled",
@@ -1993,11 +1993,19 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
 							},
 						}),
-						// Access — the pill editor. Promoting to global and
-						// attaching to other agents both happen here now (Global pill
-						// on = promote; agent pills add copies).
-						{Type: "button", Label: "Access", Method: "client",
-							PostTo: "tool_scope_manage"},
+						// Promote — move this agent-scoped tool into the owner's
+						// user-wide pool, where the tier-1 user ACL ("Access" on
+						// Global Tools) governs who may adopt it.
+						//
+						// This used to be an "Access" button opening the per-AGENT
+						// pill editor, which is the wrong control at this level:
+						// admin governs WHICH USERS may reach a tool, while which of
+						// a user's own agents load it is that user's choice in their
+						// agent editor. Global Tools' Access says exactly this in its
+						// own comment; this row was the last place still contradicting
+						// it. Promote is the on-ramp to that model, not a second one.
+						{Type: "button", Label: "Promote to Global", Method: "client",
+							PostTo: "tool_promote_global"},
 					},
 					EmptyText: "No agent-scoped tools.",
 				},
@@ -2935,16 +2943,37 @@ func scopeManageActionJS(kind, idExpr, labelExpr, decorate string) string {
 // mapAgentsPillsJS is the shared items mapper: st.agents → per-agent pills.
 const mapAgentsPillsJS = `(st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on }; })`
 
-// toolScopeManageAction — Global pill (user-wide pool) + one pill per agent.
-var toolScopeManageAction = scopeManageActionJS("tool",
-	`(r.tool && r.tool.name) || r.name`, `(r.tool && r.tool.name) || r.name`,
-	`function(st){
-    var note = (st.missing && st.missing.length) ? ('⚠ Missing dependency: ' + st.missing.join(', ') + '. ') : '';
-    note += st.global
-      ? 'Global: every agent gets this tool. Turn an agent off to deny it there; turn Global off to descope it down to the agents left on.'
-      : 'Agent-scoped: available only on the agents shown. Turn Global on to share it with all your agents.';
-    return { primary: { label: 'Global (all agents)', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
-  }`)
+// toolPromoteGlobalAction moves an agent-scoped tool into its owner's user-wide
+// pool — the on-ramp to the tier-1 user ACL, which is the only access control
+// this page should be offering.
+//
+// It deliberately does ONE thing. The button it replaced opened the per-agent
+// pill editor, which let an admin attach another user's tool to that user's
+// agents — the wrong level: admin governs which USERS may reach a tool, and
+// which of their own agents load it is the user's call in their agent editor.
+// Promote reaches the user-ACL model; it doesn't reimplement a second one.
+const toolPromoteGlobalAction = `function(ctx){
+  var r = ctx && ctx.record; if(!r) return;
+  var name = (r.tool && r.tool.name) || r.name;
+  var owner = r.owner || '';
+  if(!name){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
+  var who = owner ? (owner + "'s") : 'the owner' + "'s";
+  var msg = 'Move "' + name + '" into ' + who + ' user-wide pool? Every one of their '
+          + 'agents can then use it, and you can Share it and set which users may '
+          + 'adopt it from Global Tools.';
+  if(!window.confirm(msg)) return;
+  fetch('api/tool-scope?name=' + encodeURIComponent(name) + '&owner=' + encodeURIComponent(owner), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({target: 'global', on: true})
+  }).then(function(res){
+    if(!res.ok) return res.text().then(function(t){ throw new Error(t || res.status); });
+    if(ctx.refresh) ctx.refresh();
+    window.uiToast && window.uiToast('Promoted "' + name + '" to the global pool.');
+  }).catch(function(err){
+    window.uiAlert && window.uiAlert('Promote failed: ' + (err && err.message || err));
+  });
+}`
 
 // pipelineScopeManageAction — Global (all agents run it) + per-agent attach.
 var pipelineScopeManageAction = scopeManageActionJS("pipeline",

@@ -51,6 +51,7 @@ func (T *Gateways) HubTab() (string, int) { return "Extensions", 40 }
 func (T *Gateways) Routes() {
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
+	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
@@ -213,11 +214,24 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		// Single-record fetch (?name=) — powers the "View" RecordView and the
 		// "Set category" form prefill. Returns the raw TempTool, whose json tags
 		// already expose every field (category, command_template, script_body,
-		// actions, …). Own pool only, so a user can only inspect their own tools.
+		// actions, …). Scoped to this user's own tools: their pool first, then
+		// their session drafts so View works on a draft row instead of 404ing.
+		// (The two can't collide — the draft lister already drops any draft
+		// shadowed by a committed tool of the same name — but the pool is the
+		// source of truth, so it answers first regardless.)
 		if name != "" {
 			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 				if p.Tool.Name == name {
 					writeJSON(w, p.Tool)
+					return
+				}
+			}
+			for _, d := range ListSessionDrafts(user) {
+				if d.Shadowed {
+					continue
+				}
+				if d.Tool.Name == name {
+					writeJSON(w, d.Tool)
 					return
 				}
 			}
@@ -233,9 +247,31 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Missing     bool   `json:"missing"`
 			Shared      bool   `json:"shared"`
 			LastUsed    string `json:"last_used,omitempty"`
+			// User-managed governance flags (My tools toggles).
+			Locked      bool `json:"locked"`       // frozen — AI can't modify/delete
+			Disabled    bool `json:"disabled"`     // off for every agent
+			BuilderOnly bool `json:"builder_only"` // exposed to Builder only
 			// Promotion (publish-to-catalog) request state for this tool.
 			Requested  bool `json:"requested"`   // a promotion request is pending admin review
 			CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
+			// Session drafts — tools the assistant authored mid-conversation with
+			// persist=false. They are real and callable for the life of their chat
+			// session, but they vanish when it is deleted, and they were only ever
+			// visible from inside that session's Tools modal. Listing them here is
+			// the difference between "what has been built for me?" and "what have I
+			// kept?" — a user could otherwise lose work they never knew existed.
+			Pool      bool `json:"pool"`       // lives in the persistent pool
+			Session   bool `json:"session"`    // draft, not kept anywhere
+			AgentTool bool `json:"agent_tool"` // bundled onto an agent record
+			Orphan    bool `json:"orphan"`     // owning agent was deleted
+			// Deletable = has a record of its own to delete (pool or orphan). A
+			// session draft is excluded: Discard is its verb, and DELETE would
+			// 404 on a tool that lives only in a chat session.
+			Deletable bool   `json:"deletable"`
+			SessionID string `json:"session_id,omitempty"` // for the keep/drop actions
+			AgentID   string `json:"agent_id,omitempty"`
+			// Group is the heading this row renders under (ui.Table group_by).
+			Group string `json:"group"`
 		}
 		rows := []row{}
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
@@ -259,29 +295,134 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Category: p.Tool.Category,
 				Missing: missing, Shared: p.Shared, LastUsed: last,
+				Locked: p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly,
 				Requested: pending, CanRequest: !p.Shared && !pending,
+				Pool: true,
+			})
+		}
+		// Everything attached to an agent, after the pool: tools bundled onto an
+		// agent record, then that agent's session drafts. The pool is what a user
+		// normally manages, so it leads; the rest is grouped by what it's
+		// connected to, because "which agent is this on?" is how you actually
+		// navigate a list like this.
+		//
+		// Shadowed rows are dropped: a draft already committed under the same
+		// name would invite a "Keep" that does nothing.
+		for _, st := range ListScopedTools(user) {
+			if st.Shadowed {
+				continue
+			}
+			agent := strings.TrimSpace(st.AgentName)
+			if agent == "" {
+				agent = st.AgentID
+			}
+			group := "Attached to — " + agent
+			if st.Scope == ScopeSessionTool {
+				group = "Session drafts — " + agent
+				if t := strings.TrimSpace(st.SessionTitle); t != "" {
+					group += " · " + t
+				}
+			}
+			missing := false
+			if cred := strings.TrimSpace(st.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+				if _, found := Secure().Resolve(cred, user); !found {
+					missing = true
+				}
+			}
+			rows = append(rows, row{
+				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
+				Credential: st.Tool.Credential, Category: st.Tool.Category, Missing: missing,
+				Session:   st.Scope == ScopeSessionTool,
+				AgentTool: st.Scope == ScopeAgentTool,
+				SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
+			})
+		}
+		// Orphans last: a tool whose agent was deleted is still the user's, and it
+		// was captured precisely so it wouldn't vanish with the record — but it is
+		// attached to nothing, so it needs re-homing (Access) or deleting. Without
+		// this it was visible only on the admin page.
+		for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
+			former := strings.TrimSpace(o.FormerAgentName)
+			if former == "" {
+				former = o.FormerAgentID
+			}
+			missing := false
+			if cred := strings.TrimSpace(o.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+				if _, found := Secure().Resolve(cred, user); !found {
+					missing = true
+				}
+			}
+			rows = append(rows, row{
+				Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
+				Credential: o.Tool.Credential, Category: o.Tool.Category, Missing: missing,
+				Orphan: true, Deletable: true,
+				Group: "Orphaned — agent " + former + " was deleted",
 			})
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
-		// set_category — the user CLAIMS (or clears) a grouping label on their
-		// OWN tool. Free-form: a tool may coin a new category by name; the admin
-		// ToolGroup registry only supplies optional descriptions for categories
-		// that have a registered entry. Because the label lives on the user's own
-		// tool record, this touches nothing outside their namespace — no per-user
-		// group store needed. See Tool.Category.
-		if r.URL.Query().Get("action") != "set_category" {
-			http.Error(w, "unknown action", http.StatusBadRequest)
-			return
-		}
+		// Governance toggles + category, all on the user's OWN tool record (own
+		// namespace, nothing shared):
+		//   set_category — claim/clear a grouping label (see Tool.Category).
+		//   lock / unlock — freeze the definition against AI modify/delete.
+		//   disable / enable — hide from / restore to every agent's catalog.
+		//   builder_only_on / builder_only_off — expose to Builder agent only.
+		//   keep_draft / drop_draft — resolve a session draft (see below).
+		action := r.URL.Query().Get("action")
 		if name == "" {
 			http.Error(w, "missing name", http.StatusBadRequest)
 			return
 		}
-		var body struct {
-			Category string `json:"category"`
+		// Session-draft actions run BEFORE the pool lookup: a draft is by
+		// definition not in the persistent pool, so that lookup would 404 it.
+		if action == "keep_draft" || action == "drop_draft" {
+			sid := strings.TrimSpace(r.URL.Query().Get("session_id"))
+			if sid == "" {
+				http.Error(w, "missing session_id", http.StatusBadRequest)
+				return
+			}
+			// Resolve from the session that owns it, not by name alone: two
+			// sessions can hold different drafts under the same name.
+			found := false
+			for _, d := range ListSessionDrafts(user) {
+				if !d.Shadowed && d.SessionID == sid && d.Tool.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				http.Error(w, "no session draft "+name+" in that session", http.StatusNotFound)
+				return
+			}
+			if action == "drop_draft" {
+				RemoveSessionTempTool(AuthDB(), sid, name)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			// Where a kept draft lands — the user-wide pool (every agent) or the
+			// agent whose session built it. This is the same session-vs-global
+			// choice the in-chat Tools modal offers, routed through the same
+			// implementation so both behave identically (including stripping a
+			// now-redundant agent copy on a global keep). Default global: it is
+			// the answer for most keeps and the one with no agent dependency.
+			target := ScopeTargetGlobal
+			if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), ScopeTargetAgent) {
+				target = ScopeTargetAgent
+			}
+			agentID := ""
+			for _, d := range ListSessionDrafts(user) {
+				if d.SessionID == sid && d.Tool.Name == name {
+					agentID = d.AgentID
+					break
+				}
+			}
+			if _, err := PromoteScopedTool(user, agentID, sid, name, target); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
 		var tt *TempTool
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			if p.Tool.Name == name {
@@ -294,7 +435,34 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		tt.Category = strings.TrimSpace(body.Category)
+		switch action {
+		case "set_category":
+			// Free-form: a tool may coin a new category by name; the admin
+			// ToolGroup registry only supplies optional descriptions for
+			// categories that have a registered entry. The label lives on the
+			// user's own tool record, so this touches nothing outside their
+			// namespace — no per-user group store needed.
+			var body struct {
+				Category string `json:"category"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			tt.Category = strings.TrimSpace(body.Category)
+		case "lock":
+			tt.Locked = true
+		case "unlock":
+			tt.Locked = false
+		case "disable":
+			tt.Disabled = true
+		case "enable":
+			tt.Disabled = false
+		case "builder_only_on":
+			tt.BuilderOnly = true
+		case "builder_only_off":
+			tt.BuilderOnly = false
+		default:
+			http.Error(w, "unknown action", http.StatusBadRequest)
+			return
+		}
 		if !UpdatePersistentTempTool(AuthDB(), user, *tt) {
 			http.Error(w, "update failed", http.StatusBadRequest)
 			return
@@ -304,6 +472,19 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			http.Error(w, "missing name", http.StatusBadRequest)
 			return
+		}
+		// An orphan isn't in the pool, so the pool delete would 404 it — discard
+		// it from the orphan store instead. Checked first because that is the
+		// only place it lives.
+		for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
+			if o.Tool.Name == name {
+				if !RemoveOrphanedTempTool(AuthDB(), user, name) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 		}
 		if err := DeletePersistentTempTool(AuthDB(), user, name); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -766,12 +947,21 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "My tools",
-			Subtitle: "Tools you've had the assistant build for you, in your own pool. Ask in chat to create or change one; delete here to retire any that misbehave.",
+			Subtitle: "Everything built for you, grouped by what it's attached to. \"My pool\" is yours across every agent; \"Attached to\" are tools living on one agent's record; \"Session drafts\" were built mid-conversation and are NOT kept — they work for the life of that chat and disappear with it; \"Orphaned\" lost their agent when it was deleted. Access sets which of your agents can use a tool — switching one on is also what keeps a draft or re-homes an orphan.",
 			Body: ui.Table{
 				Source: "api/tools",
 				RowKey: "name",
+				// Rows arrive pre-ordered (pool, then per-agent tools, then that
+				// agent's session drafts) and render under a heading per scope —
+				// "which agent is this attached to?" is how this list is actually
+				// read. Grouping follows record order, so the server owns it.
+				GroupBy: "group",
 				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
+					// Tool names run long (create_apple_calendar_event) and this row
+					// carries several status badges, so give the name the largest
+					// share and keep the mute description narrow — otherwise the name
+					// ellipsizes.
+					{Field: "name", Flex: 3},
 					{Field: "category", Label: "Category", Mute: true},
 					{Field: "mode", Mute: true},
 					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
@@ -783,14 +973,34 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "⚠ missing", Color: "danger"},
 					}},
-					{Field: "description", Mute: true, Flex: 2},
+					{Field: "locked", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "🔒 Locked", Color: "info"},
+					}},
+					{Field: "disabled", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Disabled", Color: "danger"},
+					}},
+					{Field: "builder_only", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Builder-only", Color: "warning"},
+					}},
+					// Session drafts are the one row type here that is NOT kept —
+					// badge it plainly rather than letting it read as pool membership.
+					{Field: "session", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Session draft", Color: "warning"},
+					}},
+					{Field: "agent_tool", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "On agent", Color: "info"},
+					}},
+					{Field: "orphan", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Orphaned", Color: "danger"},
+					}},
+					{Field: "description", Mute: true, Flex: 1},
 				},
 				RowActions: []ui.RowAction{
 					// View the full tool definition (read parity with the admin's
 					// tool RecordView, scoped to the user's own pool). Source fetches
 					// the single record so heavy fields (script body, command
 					// template, actions) don't bloat the list payload.
-					ui.Expand("View", ui.RecordView{
+					ui.ExpandIf("View", "", "", ui.RecordView{
 						Source: "api/tools?name={name}",
 						Pairs: []ui.DisplayPair{
 							{Label: "Name", Field: "name", Mono: true},
@@ -816,7 +1026,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					}),
 					// Set category — the user claims a grouping label on their own
 					// tool. Free-form; Source prefills the current value.
-					ui.Expand("Set category", ui.FormPanel{
+					ui.ExpandIf("Set category", "pool", "", ui.FormPanel{
 						Source:      "api/tools?name={name}",
 						PostURL:     "api/tools?action=set_category&name={name}",
 						SubmitLabel: "Save category",
@@ -839,9 +1049,51 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						},
 						Invalidate: []string{"api/tools"},
 					}),
+					// Session drafts: keep moves the tool into the pool (where every
+					// control above starts applying); discard throws it away. Both
+					// only appear on draft rows, and every pool-only action below is
+					// hidden from them — a draft has no pool record to lock, disable,
+					// publish or delete, so those would just fail confusingly.
+					// Access — which of the user's OWN agents can use this tool,
+					// with "All my agents" as one more chip (the user-wide pool).
+					// The same control serves a session draft: picking anything is
+					// what KEEPS it, so a draft doesn't need its own verb.
+					// Access — the pill list: "All my agents" (the shared pool every
+					// agent draws from) plus one pill per agent the user owns.
+					// Same control the admin page used to carry, now where it
+					// belongs: an admin has no business choosing which of your
+					// agents load your own tool.
+					{Type: "button", Label: "Access", Method: "client",
+						PostTo: "tool_access_pills"},
+					{Type: "button", Label: "Discard", Method: "POST",
+						PostTo:     "api/tools?action=drop_draft&name={name}&session_id={session_id}",
+						OnlyIf:     "session",
+						Confirm:    "Discard this draft? It disappears from the chat session that built it.",
+						Variant:    "danger",
+						Optimistic: true},
+					// Lock freezes the definition — the assistant can't modify or
+					// delete a locked tool (unlock first). Running is unaffected.
+					{Type: "button", Label: "Lock", Method: "POST",
+						PostTo: "api/tools?action=lock&name={name}", HideIf: "locked", OnlyIf: "pool"},
+					{Type: "button", Label: "Unlock", Method: "POST",
+						PostTo: "api/tools?action=unlock&name={name}", OnlyIf: "locked"},
+					// Disable hides the tool from every agent's catalog (Builder still
+					// loads it to test/fix). Enable restores it.
+					{Type: "button", Label: "Disable", Method: "POST",
+						PostTo: "api/tools?action=disable&name={name}", HideIf: "disabled", OnlyIf: "pool"},
+					{Type: "button", Label: "Enable", Method: "POST",
+						PostTo: "api/tools?action=enable&name={name}", OnlyIf: "disabled"},
+					// Builder-only exposes the tool to the Builder agent only.
+					{Type: "button", Label: "Builder-only", Method: "POST",
+						PostTo: "api/tools?action=builder_only_on&name={name}", HideIf: "builder_only", OnlyIf: "pool"},
+					{Type: "button", Label: "All agents", Method: "POST",
+						PostTo: "api/tools?action=builder_only_off&name={name}", OnlyIf: "builder_only"},
+					// Delete is hidden while locked — unlock first.
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "api/tools?name={name}",
 						Variant:    "danger",
+						HideIf:     "locked",
+						OnlyIf:     "deletable",
 						Confirm:    "Delete this tool? Agents using it lose it.",
 						Optimistic: true},
 				},
@@ -968,5 +1220,218 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		MaxWidth:   "1200px",            // wide, admin-style: full-width tables in the content pane
 		SectionNav: true,                // left-rail sub-nav: one section (credentials/tools/…) at a time
 		Sections:   sections,
+		// App-specific behavior stays in the app: core/ui supplies the generic
+		// pill renderer (uiRenderScopePills), this supplies the endpoint it
+		// talks to. No copy of the renderer lives here.
+		Head: ui.NewHead().ClientAction("tool_access_pills", toolAccessPillsJS),
 	}.ServeHTTP(w, r)
 }
+
+// handleUserToolAccess is the user's own tool-scope control: which of THEIR
+// agents can use a tool, plus an "all agents" option for the user-wide pool.
+//
+// This is tier 2 of tool access, and it belongs to the user. Tier 1 — which
+// USERS may reach a shared tool — stays on the admin page, where the per-agent
+// pill editor used to live confusingly alongside it. An admin has no business
+// deciding which of someone's own agents load their own tool.
+//
+// GET  ?name=  → {agents: [{id,name}], attached: [ids]} for the chip picker.
+//
+//	"global" is offered as a pseudo-agent meaning the user-wide
+//	pool (every agent), because that is how it reads to a user:
+//	one more place the tool can be turned on.
+//
+// POST ?name=  → {agents: [ids]} — the full desired selection. The handler
+//
+//	diffs against current state and applies one toggle per change
+//	through the shared ScopeProvider, so this behaves exactly like
+//	the admin control it replaces.
+//
+// scopeAllAgents is the ScopeProvider's target for the user-wide pool. It rides
+// in the chip list as a pseudo-agent because that is how it reads to a user:
+// one more place a tool can be switched on, not a separate concept.
+const scopeAllAgents = "global"
+
+func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+	prov, ok := ScopeProviderFor("tool")
+	if !ok {
+		http.Error(w, "tool scope unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	db := AuthDB()
+
+	switch r.Method {
+	case http.MethodGet:
+		// Shape for uiRenderScopePills: a PRIMARY pill (the user-wide pool —
+		// "All my agents", which is also what puts a tool in the shared list
+		// every agent draws from) plus one pill per agent the user owns.
+		type pill struct {
+			Key   string `json:"key"`
+			Label string `json:"label"`
+			On    bool   `json:"on"`
+		}
+		out := map[string]any{}
+		st, found := prov.State(db, user, name)
+		items := []pill{}
+		if found {
+			out["primary"] = map[string]any{"label": "All my agents", "on": st.Global}
+			for _, a := range st.Agents {
+				items = append(items, pill{Key: a.ID, Label: a.Name, On: a.On})
+			}
+			if st.Global {
+				out["note"] = "Shared with every one of your agents. Turn an agent off to deny it there, or turn All my agents off to keep it only on the agents left on."
+			} else {
+				out["note"] = "Available only on the agents switched on. Turn on All my agents to share it with every agent you own."
+			}
+			if len(st.Missing) > 0 {
+				out["note"] = "⚠ Missing dependency: " + strings.Join(st.Missing, ", ") + ". " + out["note"].(string)
+			}
+		} else {
+			// Neither a session draft nor an orphan is in any scope yet, so there
+			// is nothing to toggle OFF — the first pill switched ON is what keeps
+			// (or re-homes) it. Both need the same pill list, so build it from the
+			// user's agents rather than from the tool's own state.
+			out["primary"] = map[string]any{"label": "All my agents", "on": false}
+			seen := map[string]bool{}
+			for _, d := range ListScopedTools(user) {
+				if d.AgentID == "" || seen[d.AgentID] {
+					continue
+				}
+				seen[d.AgentID] = true
+				items = append(items, pill{Key: d.AgentID, Label: d.AgentName})
+			}
+			out["note"] = "Not kept yet — switch on an agent (or All my agents) to keep it."
+			for _, o := range LoadOrphanedTempTools(db, user) {
+				if o.Tool.Name == name {
+					out["note"] = "Orphaned — the agent that held this tool was deleted. Switch on an agent (or All my agents) to re-home it, or Delete to discard."
+					break
+				}
+			}
+		}
+		out["items"] = items
+		// No-store: the pills re-GET immediately after each toggle to re-render,
+		// and a cached body makes a just-toggled pill snap back.
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, out)
+
+	case http.MethodPost:
+		// One toggle: {target, on}. target "global" = the user-wide pool,
+		// otherwise an agent id. Same contract as the admin scope endpoint, so
+		// the shared pill renderer drives both unchanged.
+		var body struct {
+			Target string `json:"target"`
+			On     bool   `json:"on"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		target := strings.TrimSpace(body.Target)
+		if target == "" {
+			http.Error(w, "missing target", http.StatusBadRequest)
+			return
+		}
+		if _, found := prov.State(db, user, name); !found {
+			// Nothing exists to toggle, so switching a pill ON is what keeps or
+			// re-homes it. Switching one OFF is a no-op.
+			if !body.On {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			// Orphan first: it is already a committed tool that simply lost its
+			// agent, so it re-homes rather than promotes.
+			for _, o := range LoadOrphanedTempTools(db, user) {
+				if o.Tool.Name != name {
+					continue
+				}
+				if AdminRehomeOrphanTool == nil {
+					http.Error(w, "re-homing unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				if err := AdminRehomeOrphanTool(db, user, name, target); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			sid, agentID := "", ""
+			for _, d := range ListScopedTools(user) {
+				if d.Scope == ScopeSessionTool && d.Tool.Name == name {
+					sid, agentID = d.SessionID, d.AgentID
+					break
+				}
+			}
+			if sid == "" {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			promoteTarget := ScopeTargetGlobal
+			if target != scopeAllAgents {
+				promoteTarget = ScopeTargetAgent
+				agentID = target // keep it on the agent whose pill was switched on
+			}
+			if _, err := PromoteScopedTool(user, agentID, sid, name, promoteTarget); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if err := prov.Set(db, user, name, target, body.On); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// toolAccessPillsJS drives the Access pill list on My tools. The generic
+// renderer lives in core/ui (uiRenderScopePills); this only knows which
+// endpoint to talk to — the app-specific half, per the extension-registry rule.
+const toolAccessPillsJS = `function(ctx){
+  var r = (ctx && ctx.record) || {};
+  var name = r.name;
+  if(!name){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
+  var reload = ctx && ctx.reload;
+  var qs = 'name=' + encodeURIComponent(name);
+  window.uiOpenSimpleModal({
+    title: 'Access: ' + name,
+    width: '560px',
+    mount: function(body){
+      var host = document.createElement('div');
+      body.appendChild(host);
+      window.uiRenderScopePills(host, {
+        load: function(){
+          return fetch('api/tool-access?' + qs, {cache:'no-store'}).then(function(res){
+            if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+            return res.json();
+          });
+        },
+        toggle: function(key, on){
+          var target = (key === '__primary__') ? 'global' : key;
+          return fetch('api/tool-access?' + qs, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ target: target, on: on })
+          }).then(function(res){
+            if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+            if(reload) reload();
+          });
+        }
+      });
+    }
+  });
+}`
