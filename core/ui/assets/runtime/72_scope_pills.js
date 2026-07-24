@@ -40,6 +40,12 @@
   }
 
   window.uiRenderScopePills = function (container, opts) {
+    // Individual pills collapse behind an expander while the PRIMARY pill is
+    // ON — when "everything" is granted, per-item overrides are the rare case
+    // and a wall of pills is noise. Expansion sticks for this panel instance
+    // (survives the re-render after each toggle). Generic: knows nothing
+    // about what the items are.
+    var itemsExpanded = false;
     function render() {
       container.innerHTML = '';
       var loading = document.createElement('div');
@@ -71,6 +77,18 @@
           top.appendChild(sep);
         }
         var items = state.items || [];
+        if (state.primary && state.primary.on && items.length && !itemsExpanded) {
+          var more = document.createElement('button');
+          more.type = 'button';
+          more.style.cssText =
+            'border:none;background:none;color:var(--text-mute,#888);cursor:pointer;' +
+            'font-size:0.78rem;padding:0.28rem 0.4rem;text-decoration:underline dotted';
+          more.textContent = '▸ Per-item overrides (' + items.length + ')';
+          more.addEventListener('click', function () { itemsExpanded = true; render(); });
+          top.appendChild(more);
+          container.appendChild(wrap);
+          return;
+        }
         var known = {}, kids = {};
         items.forEach(function (it) { known[it.key] = true; });
         items.forEach(function (it) {

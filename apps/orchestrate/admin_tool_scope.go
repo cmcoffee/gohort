@@ -173,13 +173,28 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	// specialist can call it. Leaving them out made a whole tier of agents
 	// unreachable from the picker. They carry ParentID so the UI can nest them
 	// under their parent rather than listing a specialist as a peer.
-	scopeTarget := func(a AgentRecord) bool {
-		return !isAppAgent(a.ID) && !isCloneOnlySeed(a.ID)
-	}
+	// agentHas is built FIRST, over every non-app agent (seeds included), so
+	// the pill filter below can keep a seed listed when it already holds the
+	// tool — an existing grant must stay visible and revocable even though
+	// seeds are no longer OFFERED as targets.
 	agentHas := map[string]bool{}
+	scopeTarget := func(a AgentRecord) bool {
+		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+			return false
+		}
+		// Framework seeds (Builder, the retired Chat seed, Research, …) are
+		// not offered as per-agent targets for USER tools: Builder always
+		// loads the full pool (its pill would be a no-op), and seeds reach
+		// pool tools through "All my agents" like everything else. Exception:
+		// a seed that already HOLDS this tool stays listed (see agentHas).
+		if a.Owner == seedOwner {
+			return agentHas[a.ID]
+		}
+		return true
+	}
 	var scopedDef *TempTool
 	for i := range agents {
-		if !scopeTarget(agents[i]) {
+		if isAppAgent(agents[i].ID) {
 			continue
 		}
 		for j := range agents[i].Tools {
