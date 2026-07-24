@@ -404,6 +404,21 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 	if draft == nil {
 		return ""
 	}
+	// In-place edit redirect: an update of a tool that lives on ANOTHER of the
+	// user's agents writes back to THAT agent's record, taking precedence over
+	// both Builder-global pooling and self-bundle. This keeps a repair from
+	// silently promoting an agent-private tool into the shared pool — Builder
+	// fixes the tool where it lives, its scope unchanged. Clean up the pending
+	// mirror the same way the agent-scope branch does.
+	if target := strings.TrimSpace(sess.BundleAuthoredToolTo); target != "" && AttachToolToAgent != nil {
+		if err := AttachToolToAgent(sess.DB, sess.Username, target, *draft); err != nil {
+			Log("[temptool.scope] in-place write-back of %q to agent %s failed: %v", toolName, target, err)
+			return "Available for this session; saving the edit back to the owning agent failed (see server logs)."
+		}
+		DequeuePendingTempTool(sess.DB, sess.Username, toolName)
+		Log("[temptool.scope] wrote %q back in place to agent %s (in-place edit)", toolName, target)
+		return "Saved back to the owning agent's tools — edited in place, scope unchanged."
+	}
 	// Global scope (Builder only): auto-persist to the user-wide pool,
 	// skipping the pending-approval queue. AdminPersistTempTool replaces
 	// by name (so LLM iteration updates in place), dedupes any stale
@@ -946,7 +961,18 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
 		}
 	}
-	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, and live session tools)", name)
+	// Bundled to another of the user's agents — the case Builder hits when
+	// inspecting a tool it doesn't hold itself (e.g. before an in-place edit).
+	if FindUserAgentTool != nil {
+		if tt, ownerAgent, found := FindUserAgentTool(sess.DB, sess.Username, name); found {
+			body, err := json.MarshalIndent(tt, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("marshal tool %q: %w", name, err)
+			}
+			return fmt.Sprintf("source: agent-bundled (on agent %s — action=\"update\" edits it there in place)\n%s", ownerAgent, string(body)), nil
+		}
+	}
+	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, live session tools, and your other agents' bundled tools)", name)
 }
 
 // loadExistingToolRecord resolves a tool by name to its full TempTool record,
@@ -1156,6 +1182,21 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return fmt.Sprintf(lockedToolMsg, name), nil
 	}
 	existing, ok := loadExistingToolRecord(sess, name)
+	if !ok {
+		// Not in the user-wide pool, pending queue, this session's drafts, or
+		// this agent's own live tools — but it may be bundled to ANOTHER of the
+		// user's agents (e.g. Builder repairing a tool that lives on a channel
+		// agent's record). Resolve it there and redirect the write-back to that
+		// agent so the edit lands IN PLACE, not promoted to the shared pool.
+		if FindUserAgentTool != nil {
+			if tt, ownerAgent, found := FindUserAgentTool(sess.DB, sess.Username, name); found {
+				existing = tt
+				ok = true
+				sess.BundleAuthoredToolTo = ownerAgent
+				defer func() { sess.BundleAuthoredToolTo = "" }()
+			}
+		}
+	}
 	if !ok {
 		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}

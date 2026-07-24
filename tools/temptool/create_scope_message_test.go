@@ -51,3 +51,49 @@ func TestCreateScopeMessage(t *testing.T) {
 		t.Fatalf("non-global create should report session scope; got:\n%s", out)
 	}
 }
+
+// TestBuilderPoolsNotBundlesWithAgentID reproduces the real-world strand the
+// scope-message test above missed: a live Builder session has AgentID SET, and
+// the old persistUnapprovedTool agent-bundled to it and returned before saving
+// the session draft finalizeAuthoredTool needs — so the tool was stuck
+// agent-bundled (Trial) instead of reaching the user-wide pool, and edits never
+// propagated to the user's other agents. Builder must POOL, never bundle.
+func TestBuilderPoolsNotBundlesWithAgentID(t *testing.T) {
+	prev := AttachToolToAgent
+	defer func() { AttachToolToAgent = prev }()
+	bundled := false
+	AttachToolToAgent = func(db Database, owner, agentID string, tt TempTool) error {
+		bundled = true // Builder must NOT reach this
+		return nil
+	}
+
+	db := &DBase{Store: kvlite.MemStore()}
+	sess := &ToolSession{
+		Username: "alice", ChatSessionID: "s1", WorkspaceDir: t.TempDir(),
+		DB:             db,
+		AgentID:        "seed-builder", // the field that triggered the strand
+		CanScopeGlobal: true,
+	}
+	out, err := createGrouped(map[string]any{
+		"action": "create", "name": "vapi_calls", "description": "d", "mode": "shell",
+		"command_template": "python3 {workspace_dir}/z.py", "script_body": "print('hi')", "script_name": "z.py",
+	}, sess)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if bundled {
+		t.Error("Builder must not agent-bundle — its tools go to the user-wide pool")
+	}
+	if !strings.Contains(out, "Saved to your tools") {
+		t.Errorf("expected pool-save message; got:\n%s", out)
+	}
+	found := false
+	for _, p := range LoadPersistentTempTools(db, "alice") {
+		if p.Tool.Name == "vapi_calls" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("tool should be in the user-wide pool, reachable by every one of alice's agents")
+	}
+}

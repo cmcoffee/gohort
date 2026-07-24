@@ -1419,6 +1419,16 @@ type ToolSession struct {
 	// between AdminPersistTempTool (global) and BundleTool (agent).
 	CanScopeGlobal bool
 
+	// BundleAuthoredToolTo, when non-empty, overrides the normal authoring
+	// scope: the freshly authored/updated tool is written back to THIS agent's
+	// own record (via AttachToolToAgent), not the user-wide pool and not the
+	// running agent's own bundle. It's how Builder edits a tool that lives on
+	// ANOTHER of the user's agents IN PLACE — repairing it where it lives
+	// without silently promoting it to the shared pool. Set for the duration of
+	// one update call and cleared after. Empty ⇒ normal scope (CanScopeGlobal
+	// vs BundleTool) applies.
+	BundleAuthoredToolTo string
+
 	// Network is the framework-managed network-access gate for this
 	// session and every descendant spawned from it. Top-level turns
 	// build it from privacy mode; sub-agent dispatches

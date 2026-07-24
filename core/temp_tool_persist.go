@@ -112,6 +112,25 @@ var ConfirmAgentTool func(db Database, owner, agentID, toolName string) error
 // by the normal access controls — none of which was true of a session draft.
 var AttachToolToAgent func(db Database, owner, agentID string, t TempTool) error
 
+// ListUserAgentTools returns every tool bundled to any of the owner's agents'
+// own records (AgentRecord.Tools), across all agents. It's what makes the tool
+// namespace UNIQUE PER USER: the create-time collision guard checks a proposed
+// name against these too, so one agent can't author a name another agent
+// already holds — which is the invariant that makes "the tool Builder edits is
+// the tool the agent runs" true by construction. Nil ⇒ no agent enumeration
+// wired, and the guard falls back to session + pool scope only.
+var ListUserAgentTools func(db Database, owner string) []TempTool
+
+// FindUserAgentTool resolves a tool by name across ALL of the owner's agents'
+// own records (AgentRecord.Tools), returning the tool, the id of the agent that
+// holds it, and whether it was found. It's the read half of in-place editing:
+// Builder's own resolver only sees the user-wide pool and its own session
+// tools, so a tool bundled to another of the user's agents is invisible to it
+// without this. Returns the FIRST match; a name carried by more than one agent
+// is ambiguous and the caller decides how to disambiguate. Nil ⇒ no agent-tool
+// lookup wired (host without orchestrate), so bundled tools stay unreachable.
+var FindUserAgentTool func(db Database, owner, name string) (TempTool, string, bool)
+
 // AdminSetToolScope, when set, applies ONE pill toggle. target is either
 // "global" (the Global pill) or an agent id; on is the desired state.
 // The orchestrate impl interprets the transition against current state:

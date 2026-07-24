@@ -299,6 +299,43 @@ func (T *OrchestrateApp) Routes() {
 	AttachToolToAgent = func(db Database, owner, agentID string, t TempTool) error {
 		return bundleAgentToolByID(agentUserDB(db, owner), owner, agentID, t)
 	}
+	// FindUserAgentTool lets Builder's update path resolve a tool that lives on
+	// ANOTHER of the user's agents (its own resolver only sees the user-wide pool
+	// + its own tools). Scans every agent's own record; returns the first match
+	// and the agent that holds it. App agents are skipped — their kit is
+	// app-declared, not editable here.
+	FindUserAgentTool = func(db Database, owner, name string) (TempTool, string, bool) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return TempTool{}, "", false
+		}
+		udb := agentUserDB(db, owner)
+		for _, rec := range listAgents(udb, owner) {
+			if isAppAgent(rec.ID) {
+				continue
+			}
+			for _, t := range rec.Tools {
+				if t.Name == name {
+					return t, rec.ID, true
+				}
+			}
+		}
+		return TempTool{}, "", false
+	}
+	// ListUserAgentTools enumerates every tool bundled to any of the user's
+	// agents — the collision guard checks proposed names against these so the
+	// tool namespace is unique across the whole user, not just per session.
+	ListUserAgentTools = func(db Database, owner string) []TempTool {
+		udb := agentUserDB(db, owner)
+		var out []TempTool
+		for _, rec := range listAgents(udb, owner) {
+			if isAppAgent(rec.ID) {
+				continue
+			}
+			out = append(out, rec.Tools...)
+		}
+		return out
+	}
 	// Confirming a trial tool is the user vouching for it: the tool does not
 	// move or change, only the "nobody has looked at this" mark clears.
 	ConfirmAgentTool = func(db Database, owner, agentID, toolName string) error {

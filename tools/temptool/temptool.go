@@ -845,7 +845,17 @@ func persistUnapprovedTool(sess *ToolSession, tool *TempTool) {
 			target = focus
 		}
 	}
-	if target != "" && AttachToolToAgent != nil {
+	// Builder does NOT agent-bundle: its tools belong in the user-wide pool
+	// (finalizeAuthoredTool runs right after create and pools them, so every one
+	// of the user's agents loads the single canonical copy and an edit propagates
+	// to all of them). Bundling to Builder's own record here stranded the tool on
+	// one agent AND returned before saving the session draft finalizeAuthoredTool
+	// needs — so the pool step no-op'd and the tool was stuck agent-bundled. That
+	// was invisible to the create-scope unit test, which leaves AgentID empty and
+	// so never hit this branch. Fall through to the session-draft save; the pool
+	// re-home is finalizeAuthoredTool's job. Non-Builder agents still bundle onto
+	// their own record — they can't write the shared pool.
+	if target != "" && AttachToolToAgent != nil && !sess.CanScopeGlobal {
 		t := *tool
 		t.Trial = true
 		t.TrialSince = time.Now()
@@ -959,6 +969,15 @@ func catalogNamesOf(tt *TempTool) []string {
 //
 // A record with the SAME name is skipped — re-authoring over an existing name
 // is the canonical iteration path (it overwrites), not a collision.
+//
+// Scope is the WHOLE USER, not just this session: the session's loaded catalog,
+// the user-wide pool, the pending queue, AND every tool bundled to any of the
+// user's other agents. That makes the tool namespace unique per user — one
+// agent can't author a name another agent already holds — which is the
+// invariant that guarantees an in-place edit targets the one true tool by that
+// name (see updateGrouped / finalizeAuthoredTool). Without the cross-agent
+// scan, agent A and agent B could each hold a differently-defined "moltbook"
+// and an edit would ambiguously pick one.
 func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToolAction) error {
 	if sess == nil || name == "" {
 		return nil
@@ -969,8 +988,17 @@ func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToo
 			proposed[name+"_"+n] = true
 		}
 	}
+	inSession := make(map[string]bool)
+	// Check 1 — catalog-name SHADOWING within this session (the original purpose:
+	// a toolbox "x"/action "y" vs a standalone "x_y" have distinct record names
+	// but identical catalog names). A same-NAME record is the iteration/overwrite
+	// path, skipped.
 	for _, tt := range sess.CopyTempTools() {
-		if tt == nil || tt.Name == name {
+		if tt == nil {
+			continue
+		}
+		inSession[tt.Name] = true
+		if tt.Name == name {
 			continue
 		}
 		for _, existing := range catalogNamesOf(tt) {
@@ -982,6 +1010,41 @@ func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToo
 			}
 			return fmt.Errorf("name %q collides with toolbox %q, whose action %q already publishes that exact name — two tools cannot share one catalog name (one would silently shadow the other). Either pick a different name, or use action=\"update\" on toolbox %q to change the action itself",
 				existing, tt.Name, strings.TrimPrefix(existing, tt.Name+"_"), tt.Name)
+		}
+	}
+	// Check 2 — GLOBAL top-level-name uniqueness across the user. The proposed
+	// name must not already belong to a DIFFERENT home (user-wide pool, pending
+	// queue, or another of the user's agents) that this authoring call won't
+	// overwrite. inSession is the overwrite set — a name this session already
+	// loads/owns is legitimate iteration, not a duplicate. Skipped when
+	// BundleAuthoredToolTo is set: that's an in-place edit of an existing tool,
+	// which is SUPPOSED to write over the same name. This is the invariant that
+	// keeps the namespace unique per user, so a name resolves to exactly one tool.
+	if sess.BundleAuthoredToolTo == "" && sess.DB != nil && sess.Username != "" && !inSession[name] {
+		holds := func(tt TempTool) bool {
+			for _, existing := range catalogNamesOf(&tt) {
+				if proposed[existing] {
+					return true
+				}
+			}
+			return false
+		}
+		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+			if holds(p.Tool) {
+				return fmt.Errorf("name %q is already taken by a tool in your user-wide pool — names are unique across all your agents; pick another name, or use action=\"update\" to change that tool", name)
+			}
+		}
+		for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
+			if holds(p.Tool) {
+				return fmt.Errorf("name %q is already taken by a pending tool of yours — pick another name, or use action=\"update\"", name)
+			}
+		}
+		if ListUserAgentTools != nil {
+			for _, at := range ListUserAgentTools(sess.DB, sess.Username) {
+				if holds(at) {
+					return fmt.Errorf("name %q is already taken by another of your agents' tools — names are unique across all your agents; pick another name, or use action=\"update\" to edit that tool in place", name)
+				}
+			}
 		}
 	}
 	return nil
