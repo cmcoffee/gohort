@@ -5896,6 +5896,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if len(workerTools) > 0 {
 		sys += "\n\n" + buildToolUseDirective(workerTools)
 	}
+	sys += noWebAccessNotice(allTools)
 	// Append per-tool prompt fragments (opt-in via AgentToolDef.Prompt).
 	// Lands between the framework directive and any subsequent
 	// dynamic additions — close to the catalog so the model reads
@@ -6876,6 +6877,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	if len(tools) > 0 {
 		sysPrompt += "\n\n" + buildToolUseDirective(tools)
 	}
+	sysPrompt += noWebAccessNotice(tools)
 	if frag := RenderToolPromptFragments(tools); frag != "" {
 		sysPrompt += "\n\n" + frag
 	}
@@ -7517,6 +7519,25 @@ const (
 	toolsDirectiveKey     = "framework.tools_directive"
 	toolsDirectiveDefault = "## Tools available\n\n{tool_list}"
 )
+
+// noWebAccessNotice returns a short system-prompt line when the assembled
+// catalog carries NO web tools (no-network / force-private agents, curated
+// allowlists). Without it, a web-shaped question sends the model hunting
+// through whatever tools it DOES have — the Barebones failure: "Let me search
+// for OpenClaw's limits" → recall junk → tool_def(list) ×5 → round cap → the
+// canned cap message as the user-facing reply. One honest sentence up front
+// beats ten rounds of flailing. Complement of searchOrderGuidanceBlock's
+// corpus gate: that block reorders search when both corpus and web exist;
+// this one closes the door when web doesn't.
+func noWebAccessNotice(tools []AgentToolDef) string {
+	for _, td := range tools {
+		switch td.Tool.Name {
+		case "web_search", "fetch_url", "browse_page":
+			return ""
+		}
+	}
+	return "\n\nYou have NO web or internet access in this session. If a question needs information you'd have to look up online, say so plainly and answer from what you already know — do NOT go hunting through your other tools for a substitute; none of them reach the web."
+}
 
 func buildToolUseDirective(tools []AgentToolDef) string {
 	tpl := EffectivePromptText(toolsDirectiveKey, toolsDirectiveDefault)

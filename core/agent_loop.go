@@ -2634,11 +2634,17 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				// it, name what it was about to do, and replace with a clear
 				// "ran out of steps" note so the result reads as incomplete, not
 				// gibberish.
+				// First-person, user-safe wording: this string can surface as a
+				// LIVE CHAT reply, not just a scheduled report card, and telling a
+				// chat user to "raise this agent's worker-round limit" is operator
+				// language in the wrong mouth (observed: Barebones answered a
+				// simple question with exactly that). Operators still get the
+				// signal via HitRoundCap + the rounds_used exit log.
 				if strings.Contains(forced.Content, "<function=") || strings.Contains(forced.Content, "<tool_call>") {
 					if name, _ := parseFunctionTagToolCall(forced.Content); strings.TrimSpace(name) != "" {
-						forced.Content = "Ran out of steps before finishing — it was about to call \"" + name + "\", which did NOT run. Raise this agent's worker-round limit or narrow its task."
+						forced.Content = "I ran out of steps before finishing — I was about to call \"" + name + "\" but it did NOT run. Say \"continue\" and I'll pick up where I left off, or narrow the request."
 					} else {
-						forced.Content = "Ran out of steps before finishing — an action it was about to take did NOT run. Raise this agent's worker-round limit or narrow its task."
+						forced.Content = "I ran out of steps before finishing — an action I was about to take did NOT run. Say \"continue\" and I'll pick up where I left off, or narrow the request."
 					}
 				}
 				lastResp = forced
