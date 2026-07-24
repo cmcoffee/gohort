@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/cmcoffee/snugforge/kvlite"
+	"github.com/cmcoffee/gohort/core/appagents"
+	"strings"
 )
 
 func TestFeatureAllowedForUser(t *testing.T) {
@@ -55,5 +57,43 @@ func TestShareableFeatureRegistry(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("idempotent registration expected 1 entry, got %d", n)
+	}
+}
+
+// Per-app key gate: an app-owned agent dispatched through a key-authenticated
+// surface requires the app's feature on the key; ordinary agents never gate;
+// nil-scope legacy keys grandfather.
+func TestKeyAllowsAppAgent(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "test-app-agent-x", OwningApp: "Testify", Name: "T", Hidden: true,
+	})
+	db := &DBase{Store: kvlite.MemStore()}
+
+	// Ordinary agent: no gate.
+	if ok, _ := KeyAllowsAppAgent(db, "alice", &AccountToken{Scope: &TokenScope{}}, "some-user-agent"); !ok {
+		t.Fatal("non-app agents must never be gated")
+	}
+	// Scoped key WITHOUT the app feature: denied, message names the app.
+	tok := &AccountToken{Scope: &TokenScope{Features: []string{"openai"}}}
+	ok, msg := KeyAllowsAppAgent(db, "alice", tok, "test-app-agent-x")
+	if ok {
+		t.Fatal("scoped key without app:testify must be denied")
+	}
+	if !strings.Contains(msg, "Testify") {
+		t.Errorf("denial should name the app: %q", msg)
+	}
+	// Scoped key WITH it: allowed.
+	tok2 := &AccountToken{Scope: &TokenScope{Features: []string{"app:testify"}}}
+	if ok, _ := KeyAllowsAppAgent(db, "alice", tok2, "test-app-agent-x"); !ok {
+		t.Fatal("key with app:testify must pass")
+	}
+	// Legacy nil-scope key: grandfathered.
+	if ok, _ := KeyAllowsAppAgent(db, "alice", &AccountToken{}, "test-app-agent-x"); !ok {
+		t.Fatal("nil-scope legacy key must grandfather")
+	}
+	// Admin deny wins over everything.
+	SetFeatureAllowedUsers(db, "app:testify", []string{"bob"})
+	if ok, _ := KeyAllowsAppAgent(db, "alice", tok2, "test-app-agent-x"); ok {
+		t.Fatal("admin allow-list without alice must deny")
 	}
 }

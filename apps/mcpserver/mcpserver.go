@@ -297,7 +297,7 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 			resp.Result = toolText("Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", true)
 			break
 		}
-		text, err := T.callTool(r.Context(), owner, req.Params)
+		text, err := T.callTool(r.Context(), owner, AccountTokenFromRequest(r), req.Params)
 		if err != nil {
 			Log("[mcpserver] tools/call error (owner=%s): %v", owner, err)
 			resp.Result = toolText("error: "+err.Error(), true)
@@ -371,7 +371,7 @@ func toolDefs() []map[string]any {
 	return defs
 }
 
-func (T *MCPServer) callTool(ctx context.Context, owner string, raw json.RawMessage) (string, error) {
+func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountToken, raw json.RawMessage) (string, error) {
 	var p struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -381,7 +381,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, raw json.RawMess
 	}
 	switch p.Name {
 	case "ask_agent":
-		return T.askAgent(ctx, owner, p.Arguments)
+		return T.askAgent(ctx, owner, token, p.Arguments)
 	case "recent_results":
 		return T.recentResults(owner, p.Arguments)
 	default:
@@ -399,7 +399,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, raw json.RawMess
 	}
 }
 
-func (T *MCPServer) askAgent(ctx context.Context, owner string, args map[string]any) (string, error) {
+func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountToken, args map[string]any) (string, error) {
 	msg, _ := args["message"].(string)
 	if strings.TrimSpace(msg) == "" {
 		return "", fmt.Errorf("message is required")
@@ -415,6 +415,13 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, args map[string]
 	// bridge key can't reach every agent. Fails closed.
 	if !MCPAgentExposed(owner, agent) {
 		return "", fmt.Errorf("agent %q is not reachable over MCP — turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
+	}
+	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, …)
+	// needs the app enabled for this user (admin) AND on this key (user scope).
+	// No-op for ordinary agents; nil token (session/bridge-key auth) skips the
+	// key tier, same as the endpoint-level mcp gate.
+	if ok, msg := KeyAllowsAppAgent(T.DB, owner, token, agent); !ok {
+		return "", fmt.Errorf("%s", msg)
 	}
 	// Synchronous: blocks until the agent finishes, returns its reply. Exactly
 	// the MCP tools/call contract. SenderName attributes the turn to the

@@ -207,6 +207,21 @@ func gateTarget(w http.ResponseWriter, user string, token *AccountToken, canonic
 	return true
 }
 
+// gateAppTarget applies the per-APP feature gate (gate 4) when the canonical
+// target is an app-owned agent (Servitor investigator, Guide Author, …):
+// admin tier + key tier via KeyAllowsAppAgent. No-op for every other target.
+func (T *OpenAIAPI) gateAppTarget(w http.ResponseWriter, user string, token *AccountToken, canonical string) bool {
+	if !strings.HasPrefix(canonical, "agent:") {
+		return true
+	}
+	ok, msg := KeyAllowsAppAgent(T.DB, user, token, strings.TrimPrefix(canonical, "agent:"))
+	if !ok {
+		writeErr(w, http.StatusForbidden, msg)
+		Log("[openai_api] %s: app-feature gate denied target %q: %s", user, canonical, msg)
+	}
+	return ok
+}
+
 // --- handlers ----------------------------------------------------------------
 
 // handleModels answers the catalog probe most OpenAI clients make before their
@@ -236,6 +251,11 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
 	for _, a := range orchestrate.ExternalAgents(T.DB, user) {
+		// App-owned agents the admin or this key's scope denies are dropped from
+		// the catalog — same "list only working choices" rule as targets.
+		if ok, _ := KeyAllowsAppAgent(T.DB, user, token, a.ID); !ok {
+			continue
+		}
 		if allow("agent:" + a.ID) {
 			data = append(data, map[string]any{
 				"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
@@ -298,6 +318,9 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 		if !gateTarget(w, user, token, canon) {
 			return
 		}
+		if !T.gateAppTarget(w, user, token, canon) {
+			return
+		}
 		T.serveChannel(w, r, user, chatKey, req)
 		return
 	}
@@ -308,6 +331,9 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 			canon = "agent:" + id
 		}
 		if !gateTarget(w, user, token, canon) {
+			return
+		}
+		if !T.gateAppTarget(w, user, token, canon) {
 			return
 		}
 		T.serveAgent(w, r, user, agentKey, req)
@@ -333,6 +359,9 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 		}
 		if id, ok := orchestrate.ResolveExternalAgent(T.DB, user, target); ok {
 			if !gateTarget(w, user, token, "agent:"+id) {
+				return
+			}
+			if !T.gateAppTarget(w, user, token, "agent:"+id) {
 				return
 			}
 			Log("[openai_api] %s: model %q resolved as an AGENT (no prefix) — prefer \"agent:%s\"", user, target, target)
@@ -519,15 +548,38 @@ func callerName(r *http.Request, req chatReq) string {
 
 // turnInput picks the turn's input (the last user message) and the caller's
 // system instructions out of an OpenAI message array.
+//
+// FALLBACK when no user message is present: use the last non-empty message of
+// ANY role. Some clients — and Vapi's validation ping in particular — send a
+// single message that isn't role "user" (a lone system/prompt message). The
+// passthrough route already tolerates this (it streams whatever messages it's
+// given, regardless of role); before this, the agent/channel route rejected it
+// with "no user message to answer" (an HTTP 400), so merely prefixing the model
+// with channel:/agent: to scope a key turned a request the worker tier had been
+// answering into a hard error. A well-formed request now always has something to
+// answer; only a truly empty message set yields no input.
 func turnInput(req chatReq) (input, system string) {
+	var lastAny string
 	for _, m := range req.Messages {
+		c := textContent(m.Content)
 		switch strings.ToLower(m.Role) {
 		case "user":
-			input = textContent(m.Content)
+			input = c
 		case "system":
 			if system == "" {
-				system = textContent(m.Content)
+				system = c
 			}
+		}
+		if strings.TrimSpace(c) != "" {
+			lastAny = c
+		}
+	}
+	if strings.TrimSpace(input) == "" {
+		input = lastAny
+		// If the only content WAS the system message, don't also feed it as the
+		// system prompt — that would double it into the turn.
+		if strings.TrimSpace(input) == strings.TrimSpace(system) {
+			system = ""
 		}
 	}
 	return strings.TrimSpace(input), system

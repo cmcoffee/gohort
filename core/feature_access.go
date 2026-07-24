@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 // Feature access: the ADMIN gate on outward-facing surfaces a user can expose
@@ -55,6 +56,7 @@ func RegisterShareableFeature(f ShareableFeature) {
 
 // ShareableFeatures lists declared features in registration order.
 func ShareableFeatures() []ShareableFeature {
+	foldAppAgentFeatures()
 	shareableFeaturesMu.RLock()
 	defer shareableFeaturesMu.RUnlock()
 	out := make([]ShareableFeature, len(shareableFeatures))
@@ -64,6 +66,7 @@ func ShareableFeatures() []ShareableFeature {
 
 // IsShareableFeature reports whether a key names a registered feature.
 func IsShareableFeature(key string) bool {
+	foldAppAgentFeatures()
 	shareableFeaturesMu.RLock()
 	defer shareableFeaturesMu.RUnlock()
 	return shareableFeatureKey[strings.TrimSpace(key)]
@@ -162,4 +165,80 @@ func ListExternalTargets(db Database, user string) []ExternalTarget {
 		out = append(out, ListExternalTargetsFn(db, user)...)
 	}
 	return out
+}
+
+// --- Per-app features (auto-derived from the app-agent registry) --------------
+//
+// Each app that registers app agents (Servitor, Guides, …) becomes a shareable
+// feature "app:<slug>" with zero per-app code: the admin gates WHICH users may
+// reach that app's agents from external clients, and the user toggles it per
+// API key next to "openai"/"mcp" — the same two-tier control, extended to app
+// surfaces. Derived lazily (sync.Once) because app agents register in each
+// app's init() and the fold must run after all of them.
+
+// AppFeatureKey maps an app-agent OwningApp label to its feature key
+// ("Servitor" → "app:servitor"). Empty label → "".
+func AppFeatureKey(owningApp string) string {
+	slug := strings.ToLower(strings.TrimSpace(owningApp))
+	slug = strings.ReplaceAll(slug, " ", "-")
+	if slug == "" {
+		return ""
+	}
+	return "app:" + slug
+}
+
+var appFeatureFoldOnce sync.Once
+
+// foldAppAgentFeatures registers one feature per distinct OwningApp. Idempotent
+// and lazy — called from every read path that needs the full feature list.
+func foldAppAgentFeatures() {
+	appFeatureFoldOnce.Do(func() {
+		seen := map[string]bool{}
+		for _, s := range appagents.AppAgents() {
+			k := AppFeatureKey(s.OwningApp)
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			RegisterShareableFeature(ShareableFeature{
+				Key:   k,
+				Label: strings.TrimSpace(s.OwningApp) + " (app agents)",
+				Desc:  "Let a user's API keys dispatch " + strings.TrimSpace(s.OwningApp) + "'s agents from external clients (/v1 endpoint, MCP).",
+			})
+		}
+	})
+}
+
+// AppFeatureKeyForAgent returns the feature key for an APP-owned agent id, or
+// "" for every other agent. The "" return is what keeps the gate a no-op for
+// normal user agents.
+func AppFeatureKeyForAgent(agentID string) string {
+	if s, ok := appagents.AppAgentByID(strings.TrimSpace(agentID)); ok {
+		foldAppAgentFeatures()
+		return AppFeatureKey(s.OwningApp)
+	}
+	return ""
+}
+
+// KeyAllowsAppAgent is the shared enforcement for dispatching an app-owned
+// agent through a key-authenticated EXTERNAL surface (/v1, MCP): admin tier
+// (FeatureAllowedForUser, default-open) then key tier (AllowsFeature,
+// deny-by-default on scoped keys, nil-scope legacy grandfather). Always ok for
+// non-app agents. The denial string is user-actionable and names the app.
+func KeyAllowsAppAgent(db Database, user string, token *AccountToken, agentID string) (bool, string) {
+	k := AppFeatureKeyForAgent(agentID)
+	if k == "" {
+		return true, ""
+	}
+	label := strings.TrimPrefix(k, "app:")
+	if s, ok := appagents.AppAgentByID(strings.TrimSpace(agentID)); ok {
+		label = s.OwningApp
+	}
+	if !FeatureAllowedForUser(db, k, user) {
+		return false, "an admin has not enabled " + label + " access for your account (Admin > Feature Access)"
+	}
+	if token != nil && !token.AllowsFeature(k) {
+		return false, "this API key is not allowed to reach " + label + " — enable \"" + label + "\" on the key (Account > keys > Configure access)"
+	}
+	return true, ""
 }
