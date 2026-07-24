@@ -199,12 +199,28 @@ func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *Accou
 // gateTarget applies gate 3 for a resolved canonical target. Returns false (and
 // writes a 403) when the key may not reach it.
 func gateTarget(w http.ResponseWriter, user string, token *AccountToken, canonical string) bool {
+	// App agents skip the per-target tier: the app is the callable unit and its
+	// per-key FEATURE checkbox (gateAppTarget) is the grant — the implementing
+	// agent is invisible and never appears in the target picker.
+	if id, isAgent := strings.CutPrefix(canonical, "agent:"); isAgent && AppFeatureKeyForAgent(id) != "" {
+		return true
+	}
 	if token != nil && !token.AllowsTarget(canonical) {
 		writeErr(w, http.StatusForbidden, "this API key is not scoped to reach "+canonical+" — grant it under Account → API keys → Scope, or use a target the key allows (GET /v1/models lists them)")
 		Log("[openai_api] %s: key %q denied target %q (not in scope)", user, token.ID, canonical)
 		return false
 	}
 	return true
+}
+
+// tokenGrant adapts a (possibly nil) key to the resolver's explicit-grant
+// callback: a deliberate per-key target grant is consent to reach an agent
+// that isn't otherwise exposed.
+func tokenGrant(token *AccountToken) func(string) bool {
+	if token == nil {
+		return nil
+	}
+	return token.ExplicitTarget
 }
 
 // gateAppTarget applies the per-APP feature gate (gate 4) when the canonical
@@ -251,9 +267,16 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
 	for _, a := range orchestrate.ExternalAgents(T.DB, user) {
-		// App-owned agents the admin or this key's scope denies are dropped from
-		// the catalog — same "list only working choices" rule as targets.
-		if ok, _ := KeyAllowsAppAgent(T.DB, user, token, a.ID); !ok {
+		// App-owned agents live behind their app's FEATURE checkbox, not the
+		// per-target scope: list them on the feature alone (denied ones drop),
+		// mirroring gateTarget's app bypass.
+		if k := AppFeatureKeyForAgent(a.ID); k != "" {
+			if ok, _ := KeyAllowsAppAgent(T.DB, user, token, a.ID); ok {
+				data = append(data, map[string]any{
+					"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
+					"description": a.Name,
+				})
+			}
 			continue
 		}
 		if allow("agent:" + a.ID) {
@@ -327,7 +350,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	if agentKey, isAgent := strings.CutPrefix(target, "agent:"); isAgent {
 		agentKey = strings.TrimSpace(agentKey)
 		canon := "agent:" + agentKey
-		if id, ok := orchestrate.ResolveExternalAgent(T.DB, user, agentKey); ok {
+		if id, ok := orchestrate.ResolveExternalAgentGranted(T.DB, user, agentKey, tokenGrant(token)); ok {
 			canon = "agent:" + id
 		}
 		if !gateTarget(w, user, token, canon) {
@@ -357,7 +380,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
-		if id, ok := orchestrate.ResolveExternalAgent(T.DB, user, target); ok {
+		if id, ok := orchestrate.ResolveExternalAgentGranted(T.DB, user, target, tokenGrant(token)); ok {
 			if !gateTarget(w, user, token, "agent:"+id) {
 				return
 			}

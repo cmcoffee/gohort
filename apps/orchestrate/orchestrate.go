@@ -381,8 +381,8 @@ func (T *OrchestrateApp) Routes() {
 	// Canonical external resolution for the MCP server: name-or-id → agent ID,
 	// only when reachable. mcpserver needs the ID (not the caller's raw string)
 	// so its per-app KEY gate can identify app agents.
-	ResolveExternalAgentFn = func(db Database, owner, key string) (string, bool) {
-		return ResolveExternalAgent(db, owner, key)
+	ResolveExternalAgentFn = func(db Database, owner, key string, granted func(canonical string) bool) (string, bool) {
+		return ResolveExternalAgentGranted(db, owner, key, granted)
 	}
 
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a

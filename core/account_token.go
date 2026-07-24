@@ -166,6 +166,18 @@ func AccountTokenFromRequest(r *http.Request) *AccountToken {
 	return nil
 }
 
+// ExplicitTarget reports whether this key's scope names the canonical target
+// EXPLICITLY. Unlike AllowsTarget it is false for a nil-scope legacy key —
+// used where a deliberate per-key grant is itself the CONSENT (e.g. making a
+// not-otherwise-exposed agent reachable through this key), which a
+// grandfathered wildcard must not imply.
+func (t *AccountToken) ExplicitTarget(canonical string) bool {
+	if t == nil || t.Scope == nil {
+		return false
+	}
+	return containsFold(t.Scope.Targets, canonical)
+}
+
 // ListAccountTokens returns owner's tokens (secret masked, never the real value),
 // newest first.
 func ListAccountTokens(owner string) []AccountToken {

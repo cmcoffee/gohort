@@ -418,7 +418,14 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	// enabled the app under Feature Access — they have no editor page, so the
 	// feature grant IS their exposure consent.
 	if ResolveExternalAgentFn != nil {
-		id, ok := ResolveExternalAgentFn(T.DB, owner, agent)
+		// An agent this key EXPLICITLY grants is reachable through it even
+		// without the MCPExposed toggle — the grant on the access menu is the
+		// consent (nil-scope legacy keys grant nothing extra here).
+		var granted func(string) bool
+		if token != nil {
+			granted = token.ExplicitTarget
+		}
+		id, ok := ResolveExternalAgentFn(T.DB, owner, agent, granted)
 		if !ok {
 			return "", fmt.Errorf("agent %q is not reachable over MCP — for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
 		}

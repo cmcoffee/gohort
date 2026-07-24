@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 // ExternalAgent is the minimal public view of an externally-reachable agent:
@@ -47,6 +48,23 @@ func externallyReachable(a AgentRecord, owner string) bool {
 	return false
 }
 
+// resolveAppByLabel maps an APP label ("Servitor", "Guides") to that app's
+// agent. The app is the CALLABLE UNIT for external callers — which agent
+// implements it is deliberately invisible — so "agent":"Servitor" resolves
+// without the caller ever learning the investigator's internal name. First
+// registered agent wins when an app registers several (today each has one).
+func resolveAppByLabel(key string) (AgentRecord, bool) {
+	k := strings.TrimSpace(key)
+	for _, sp := range appagents.AppAgents() {
+		if strings.EqualFold(strings.TrimSpace(sp.OwningApp), k) {
+			if a, ok := appagents.AppAgentByID(sp.ID); ok {
+				return appAgentSpecToRecord(a), true
+			}
+		}
+	}
+	return AgentRecord{}, false
+}
+
 func ExternalAgents(db Database, owner string) []ExternalAgent {
 	if db == nil || strings.TrimSpace(owner) == "" {
 		return nil
@@ -69,12 +87,32 @@ func ResolveExternalAgent(db Database, owner, key string) (string, bool) {
 	if db == nil || strings.TrimSpace(owner) == "" || strings.TrimSpace(key) == "" {
 		return "", false
 	}
-	udb := UserDB(db, owner)
-	a, ok := findAgentByNameOrID(udb, owner, key)
-	if !ok || !externallyReachable(a, owner) {
+	return ResolveExternalAgentGranted(db, owner, key, nil)
+}
+
+// ResolveExternalAgentGranted is ResolveExternalAgent with the calling key's
+// explicit-grant test: an agent the key EXPLICITLY names is reachable through
+// that key even without the MCPExposed toggle — the deliberate grant on the
+// access menu IS the consent, the same shape as the app feature grant. nil
+// granted (or a nil-scope legacy key upstream) adds nothing beyond the
+// owner-level consents.
+func ResolveExternalAgentGranted(db Database, owner, key string, granted func(canonical string) bool) (string, bool) {
+	if db == nil || strings.TrimSpace(owner) == "" || strings.TrimSpace(key) == "" {
 		return "", false
 	}
-	return a.ID, true
+	udb := UserDB(db, owner)
+	a, ok := findAgentByNameOrID(udb, owner, key)
+	if !ok {
+		// App-label fallback: the app is the callable unit.
+		a, ok = resolveAppByLabel(key)
+	}
+	if !ok {
+		return "", false
+	}
+	if externallyReachable(a, owner) || (granted != nil && granted("agent:"+a.ID)) {
+		return a.ID, true
+	}
+	return "", false
 }
 
 // ExternalChannelTarget is a live conversation an external caller can join: the
@@ -205,8 +243,19 @@ func init() {
 			}
 			out = append(out, ExternalTarget{Value: "agent:" + id, Label: label, Group: "Agents"})
 		}
-		// Own exposed agents.
-		for _, a := range ExternalAgents(db, user) {
+		// Own agents — ALL of them, not just MCPExposed ones: ticking an agent
+		// here is itself the consent that makes it reachable through THIS key
+		// (ResolveExternalAgentGranted), mirroring the app feature grant. App
+		// agents are deliberately NOT listed — the app's own feature checkbox
+		// covers them, the implementing agent stays invisible. Framework seeds
+		// are skipped like the tool-access pills unless already exposed.
+		for _, a := range listAgents(UserDB(db, user), user) {
+			if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+				continue
+			}
+			if a.Owner == seedOwner && !a.MCPExposed {
+				continue
+			}
 			addAgent(a.ID, a.Name, "")
 		}
 		// Agents shared TO this user (by another owner) that are exposed. Walk

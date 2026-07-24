@@ -158,7 +158,10 @@ var ListExternalTargetsFn func(db Database, user string) []ExternalTarget
 // feature the admin enabled). The MCP server uses it so its per-app key gate
 // sees the real id, not whatever string the client typed. Nil ⇒ orchestrate
 // not loaded; callers fall back to their legacy gate.
-var ResolveExternalAgentFn func(db Database, owner, key string) (string, bool)
+// The granted callback (nil ok) reports whether the CALLING KEY explicitly
+// names a canonical target — an explicit grant is consent enough to reach an
+// agent that isn't otherwise exposed.
+var ResolveExternalAgentFn func(db Database, owner, key string, granted func(canonical string) bool) (string, bool)
 
 // ListExternalTargets returns the targets a user may grant to one of their keys:
 // the raw tiers plus every exposed agent/channel they own or one is shared to
