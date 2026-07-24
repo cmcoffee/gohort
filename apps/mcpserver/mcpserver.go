@@ -34,7 +34,24 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-func init() { RegisterApp(new(MCPServer)) }
+func init() {
+	RegisterApp(new(MCPServer))
+	// Declare the MCP endpoint as an admin-gateable, per-key feature — the
+	// same two-tier control the /v1 endpoint has. Without this, a personal
+	// access token the user scoped to NOTHING (or to openai only) still
+	// dispatched agents over MCP: the endpoint authenticated the key but
+	// never consulted its scope. Admin gate defaults open (live feature,
+	// non-breaking); the per-key gate honors AccountToken.Scope.Features
+	// with the usual nil-scope legacy grandfather.
+	RegisterShareableFeature(ShareableFeature{
+		Key:   MCPFeatureKey,
+		Label: "MCP endpoint (external clients)",
+		Desc:  "Let a user's personal access tokens dispatch their MCP-exposed agents from an external MCP client (e.g. Claude Desktop).",
+	})
+}
+
+// MCPFeatureKey gates the /mcp/ endpoint per admin policy and per key scope.
+const MCPFeatureKey = "mcp"
 
 // defaultAgent is where an un-targeted ask lands. seed-chat absorbed the
 // Operator, so it carries the scheduling tools (create_standing_agent, etc).
@@ -261,6 +278,23 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		if owner == "" {
 			Log("[mcpserver] tools/call REJECTED — no valid X-API-Key (mint a bridge key in Bridges admin)")
 			resp.Result = toolText("Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", true)
+			break
+		}
+		// Feature gates, mirroring the /v1 endpoint's two tiers:
+		//   1. admin — may this USER use the MCP endpoint at all
+		//   2. key   — did the user enable "mcp" on THIS key (nil scope =
+		//      legacy unscoped key, grandfathered by AllowsFeature)
+		// A session-cookie or bridge-key request has no account token and
+		// skips tier 2 — those are the user themselves / an admin-minted
+		// bridge key, not a scoped personal token.
+		if !FeatureAllowedForUser(T.DB, MCPFeatureKey, owner) {
+			Log("[mcpserver] tools/call REJECTED — admin policy denies MCP for user=%s", owner)
+			resp.Result = toolText("Forbidden: an admin has not enabled MCP access for your account (Admin > Feature Access).", true)
+			break
+		}
+		if tok := AccountTokenFromRequest(r); tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
+			Log("[mcpserver] tools/call REJECTED — key %q lacks the mcp feature (owner=%s)", tok.Name, owner)
+			resp.Result = toolText("Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", true)
 			break
 		}
 		text, err := T.callTool(r.Context(), owner, req.Params)
