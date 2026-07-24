@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // TestTextContentShapes: clients send message content either as a plain string
@@ -181,5 +183,46 @@ func TestIsTierName(t *testing.T) {
 		if isTierName(m) {
 			t.Errorf("%q should NOT name a tier", m)
 		}
+	}
+}
+
+func TestCanonicalTier(t *testing.T) {
+	cases := map[string]string{
+		"worker": "worker", "gohort-worker": "worker", "gohort": "worker",
+		"default": "worker", "": "worker",
+		"lead": "lead", "GOHORT-LEAD": "lead", " Lead ": "lead",
+	}
+	for in, want := range cases {
+		if got := canonicalTier(in); got != want {
+			t.Errorf("canonicalTier(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// gateTarget is the per-key allow-list check (gate 3). A specific agent must be
+// on the key's Targets to pass; a legacy or nil token grandfathers through.
+func TestGateTarget(t *testing.T) {
+	scoped := &AccountToken{ID: "k1", Scope: &TokenScope{Targets: []string{"agent:abc", "worker"}}}
+	legacy := &AccountToken{ID: "k2"} // nil Scope
+
+	check := func(tok *AccountToken, canon string) int {
+		w := httptest.NewRecorder()
+		gateTarget(w, "alice", tok, canon)
+		return w.Code
+	}
+	if c := check(scoped, "agent:abc"); c != 200 {
+		t.Errorf("listed agent should pass, got %d", c)
+	}
+	if c := check(scoped, "agent:xyz"); c != http.StatusForbidden {
+		t.Errorf("unlisted agent must be 403, got %d", c)
+	}
+	if c := check(scoped, "lead"); c != http.StatusForbidden {
+		t.Errorf("unlisted tier must be 403, got %d", c)
+	}
+	if c := check(legacy, "agent:anything"); c != 200 {
+		t.Errorf("legacy key grandfathers through, got %d", c)
+	}
+	if c := check(nil, "agent:anything"); c != 200 {
+		t.Errorf("nil token (non-account auth) skips per-key gate, got %d", c)
 	}
 }

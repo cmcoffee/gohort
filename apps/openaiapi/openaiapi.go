@@ -48,7 +48,23 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-func init() { RegisterApp(new(OpenAIAPI)) }
+// OpenAIFeatureKey is the shareable-feature id gating the /v1 endpoint. The
+// admin controls which users may use it (FeatureAllowedForUser); a user's key
+// then opts in per key via TokenScope.Features. Exported so the enforcement
+// path and any test reference one constant.
+const OpenAIFeatureKey = "openai"
+
+func init() {
+	RegisterApp(new(OpenAIAPI))
+	// Declare the /v1 endpoint as an admin-gateable feature. Absent an admin
+	// policy it's open to all users (non-breaking on the live integration); the
+	// admin narrows it under Admin → Feature Access.
+	RegisterShareableFeature(ShareableFeature{
+		Key:   OpenAIFeatureKey,
+		Label: "OpenAI-compatible /v1 endpoint",
+		Desc:  "Let a user expose their agents to external clients (voice platforms, OpenAI SDKs) through their own personal access tokens.",
+	})
+}
 
 // OpenAIAPI is the app entry point.
 type OpenAIAPI struct {
@@ -138,6 +154,59 @@ func isTierName(m string) bool {
 	return false
 }
 
+// canonicalTier maps a tier name (with its aliases) to the exact string the key
+// scope stores — "worker" or "lead". "lead"/"gohort-lead" → "lead"; everything
+// else that isTierName accepts → "worker".
+func canonicalTier(m string) string {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "lead", "gohort-lead":
+		return "lead"
+	default:
+		return "worker"
+	}
+}
+
+// --- access gates ------------------------------------------------------------
+//
+// Three gates, in order (see core/feature_access.go + core/account_token.go):
+//   1. admin — may this USER use the /v1 endpoint at all (FeatureAllowedForUser)
+//   2. key   — is the feature enabled on THIS key (token.AllowsFeature)
+//   3. key   — is the resolved TARGET in the key's scope (token.AllowsTarget)
+//
+// A nil token is a non-account-token auth path (a bridge/desktop key reaching
+// /v1); those have their own governance, so the per-KEY gates (2, 3) are skipped
+// for them — only the per-USER admin gate applies. A legacy key (nil Scope,
+// minted before scoping) grandfathers through gates 2/3 (AllowsFeature/
+// AllowsTarget return true), logged once so the silent allow is visible.
+
+// gateFeature applies gates 1 and 2. Returns false (and writes a 403) when the
+// request may not use the endpoint.
+func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *AccountToken) bool {
+	if !FeatureAllowedForUser(T.DB, OpenAIFeatureKey, user) {
+		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint is not enabled for your account — ask an admin to grant it under Feature Access")
+		return false
+	}
+	if token != nil && !token.AllowsFeature(OpenAIFeatureKey) {
+		writeErr(w, http.StatusForbidden, "this API key is not scoped for the OpenAI endpoint — enable it under Account → API keys → Scope")
+		return false
+	}
+	if token != nil && token.IsLegacyUnscoped() {
+		Log("[openai_api] %s: key %q predates scoping — allowed unrestricted (set a scope under Account → API keys to lock it down)", user, token.ID)
+	}
+	return true
+}
+
+// gateTarget applies gate 3 for a resolved canonical target. Returns false (and
+// writes a 403) when the key may not reach it.
+func gateTarget(w http.ResponseWriter, user string, token *AccountToken, canonical string) bool {
+	if token != nil && !token.AllowsTarget(canonical) {
+		writeErr(w, http.StatusForbidden, "this API key is not scoped to reach "+canonical+" — grant it under Account → API keys → Scope, or use a target the key allows (GET /v1/models lists them)")
+		Log("[openai_api] %s: key %q denied target %q (not in scope)", user, token.ID, canonical)
+		return false
+	}
+	return true
+}
+
 // --- handlers ----------------------------------------------------------------
 
 // handleModels answers the catalog probe most OpenAI clients make before their
@@ -149,23 +218,40 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "missing or invalid API key — send a personal access token from /account as X-API-Key or Authorization: Bearer")
 		return
 	}
-	data := []map[string]any{
-		{"id": "worker", "object": "model", "owned_by": "gohort"},
-		{"id": "lead", "object": "model", "owned_by": "gohort"},
+	token := AccountTokenFromRequest(r)
+	// Gates 1 + 2: if the endpoint isn't enabled for this user or this key, the
+	// catalog is empty of choices to make — 403 rather than a misleading list.
+	if !T.gateFeature(w, user, token) {
+		return
+	}
+	// A model is listed only when the key may actually reach it, so a client's
+	// dropdown shows working choices and nothing it would be 403'd for. A legacy
+	// (nil-scope) key lists everything (AllowsTarget → true).
+	allow := func(canonical string) bool { return token == nil || token.AllowsTarget(canonical) }
+	data := []map[string]any{}
+	if allow("worker") {
+		data = append(data, map[string]any{"id": "worker", "object": "model", "owned_by": "gohort"})
+	}
+	if allow("lead") {
+		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
 	for _, a := range orchestrate.ExternalAgents(T.DB, user) {
-		data = append(data, map[string]any{
-			"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
-			"description": a.Name,
-		})
+		if allow("agent:" + a.ID) {
+			data = append(data, map[string]any{
+				"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
+				"description": a.Name,
+			})
+		}
 	}
 	// Live conversations, so a config UI can offer "join THIS room" directly.
 	if orch := findOrchestrate(); orch != nil {
 		for _, c := range orch.ExternalChannels(user) {
-			data = append(data, map[string]any{
-				"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
-				"description": c.Name + " — " + c.AgentName,
-			})
+			if allow("channel:" + c.ChatID) {
+				data = append(data, map[string]any{
+					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
+					"description": c.Name + " — " + c.AgentName,
+				})
+			}
 		}
 	}
 	writeJSON(w, map[string]any{"object": "list", "data": data})
@@ -181,6 +267,11 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusUnauthorized, "missing or invalid API key — send a personal access token from /account as X-API-Key or Authorization: Bearer")
 		return
 	}
+	token := AccountTokenFromRequest(r)
+	// Gates 1 + 2 (admin permits user; key has the feature enabled).
+	if !T.gateFeature(w, user, token) {
+		return
+	}
 	var req chatReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad request body: "+err.Error())
@@ -194,12 +285,32 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	target := strings.TrimSpace(req.Model)
 	Log("[openai_api] %s model=%q stream=%v msgs=%d", user, target, req.Stream, len(req.Messages))
 
+	// Gate 3 is applied against the RESOLVED CANONICAL target, so a key scoped to
+	// "agent:<id>" also authorizes the bare agent name that resolves to it.
 	if chatKey, isChan := strings.CutPrefix(target, "channel:"); isChan {
-		T.serveChannel(w, r, user, strings.TrimSpace(chatKey), req)
+		chatKey = strings.TrimSpace(chatKey)
+		canon := "channel:" + chatKey
+		if orch := findOrchestrate(); orch != nil {
+			if tgt, ok := orch.ResolveExternalChannel(user, chatKey); ok {
+				canon = "channel:" + tgt.ChatID
+			}
+		}
+		if !gateTarget(w, user, token, canon) {
+			return
+		}
+		T.serveChannel(w, r, user, chatKey, req)
 		return
 	}
 	if agentKey, isAgent := strings.CutPrefix(target, "agent:"); isAgent {
-		T.serveAgent(w, r, user, strings.TrimSpace(agentKey), req)
+		agentKey = strings.TrimSpace(agentKey)
+		canon := "agent:" + agentKey
+		if id, ok := orchestrate.ResolveExternalAgent(T.DB, user, agentKey); ok {
+			canon = "agent:" + id
+		}
+		if !gateTarget(w, user, token, canon) {
+			return
+		}
+		T.serveAgent(w, r, user, agentKey, req)
 		return
 	}
 	// Unprefixed. A caller that pastes a bare chat id or agent name means the
@@ -211,18 +322,29 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	// back, and log the fallback so the next one is visible.
 	if target != "" && !isTierName(target) {
 		if orch := findOrchestrate(); orch != nil {
-			if _, ok := orch.ResolveExternalChannel(user, target); ok {
+			if tgt, ok := orch.ResolveExternalChannel(user, target); ok {
+				if !gateTarget(w, user, token, "channel:"+tgt.ChatID) {
+					return
+				}
 				Log("[openai_api] %s: model %q resolved as a CHANNEL (no prefix) — prefer \"channel:%s\"", user, target, target)
 				T.serveChannel(w, r, user, target, req)
 				return
 			}
 		}
-		if _, ok := orchestrate.ResolveExternalAgent(T.DB, user, target); ok {
+		if id, ok := orchestrate.ResolveExternalAgent(T.DB, user, target); ok {
+			if !gateTarget(w, user, token, "agent:"+id) {
+				return
+			}
 			Log("[openai_api] %s: model %q resolved as an AGENT (no prefix) — prefer \"agent:%s\"", user, target, target)
 			T.serveAgent(w, r, user, target, req)
 			return
 		}
 		Log("[openai_api] %s: model %q matched no channel or agent — answering from the WORKER tier (no persona, tools, memory or thread). If you meant a conversation, check the id and that its agent has \"Reachable over MCP\" on.", user, target)
+	}
+	// Tier passthrough (worker/lead, or an unresolved bare name that falls back
+	// to worker). Gate on the canonical tier.
+	if !gateTarget(w, user, token, canonicalTier(target)) {
+		return
 	}
 	T.servePassthrough(w, r, user, req)
 }

@@ -279,6 +279,63 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		w.Write(UserCandidatesJSON(a.db))
 	})
 
+	// API: feature access — the admin gate on outward-facing surfaces a user can
+	// expose through their own keys (the OpenAI /v1 endpoint is the first). Reads
+	// the generic shareable-feature registry; writes the per-feature allow-list.
+	// GET (list) rows one per registered feature; GET ?feature= one policy record
+	// for the ACLPicker; POST ?feature= sets its allowed_users. Generic over the
+	// registry — an app declares a feature, this renders and stores it, with no
+	// per-feature code here.
+	sub.HandleFunc("/api/feature-access", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		feature := strings.TrimSpace(r.URL.Query().Get("feature"))
+		switch r.Method {
+		case http.MethodGet:
+			if feature != "" {
+				p := LoadFeaturePolicy(a.db, feature)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"feature": feature, "allowed_users": p.AllowedUsers})
+				return
+			}
+			type row struct {
+				Feature      string   `json:"feature"` // RowKey
+				Label        string   `json:"label"`
+				Desc         string   `json:"desc"`
+				AllowedUsers []string `json:"allowed_users,omitempty"`
+				Access       string   `json:"access"` // human summary for the table
+			}
+			rows := []row{}
+			for _, f := range ShareableFeatures() {
+				p := LoadFeaturePolicy(a.db, f.Key)
+				access := "All users"
+				if len(p.AllowedUsers) > 0 {
+					access = fmt.Sprintf("%d user(s)", len(p.AllowedUsers))
+				}
+				rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: access})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			if feature == "" || !IsShareableFeature(feature) {
+				http.Error(w, "unknown feature", http.StatusBadRequest)
+				return
+			}
+			var body struct {
+				AllowedUsers []string `json:"allowed_users"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			SetFeatureAllowedUsers(a.db, feature, body.AllowedUsers)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// API: user-owned credentials — the governance view over the user plane. The
 	// admin API Credentials page shows only GLOBAL creds; this surfaces the ones
 	// users create for themselves, with owner-aware revoke (disable) + delete.

@@ -47,6 +47,7 @@ func (T *Account) Routes() {
 	// the Gateways app (which calls these by absolute /account path).
 	T.HandleFunc("/api/connections", T.handleConnections)
 	T.HandleFunc("/api/tokens", T.handleTokens)
+	T.HandleFunc("/api/token-targets", T.handleTokenTargets)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
 	T.HandleFunc("/mcp/connect", T.handleMCPConnect)
@@ -427,7 +428,7 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	sections = append(sections,
 		ui.Section{
 			Title:    "API keys (personal access)",
-			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\" for clients that only offer that field. Shown once at creation; revoke any time.",
+			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint — to your own gohort agents. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". Shown once at creation; revoke any time. Each key is SCOPED: a new key reaches nothing until you grant it features and targets (Configure access). Keys created before scoping existed are marked Unrestricted — set a scope to lock them down.",
 			Body:     ui.Card{HTML: tokensHTML},
 		},
 	)
@@ -452,11 +453,36 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, ListAccountTokens(user))
 	case http.MethodPost:
+		// action=scope rescopes an existing key; default POST mints a new one.
+		if strings.TrimSpace(r.URL.Query().Get("action")) == "scope" {
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			var body struct {
+				Scope TokenScope `json:"scope"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if !SetAccountTokenScope(user, id, &body.Scope) {
+				http.Error(w, "token not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		var req struct {
-			Name string `json:"name"`
+			Name  string      `json:"name"`
+			Scope *TokenScope `json:"scope"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeJSON(w, MintAccountToken(user, req.Name)) // secret returned once
+		// New keys are minted deny-by-default: an explicit (possibly empty)
+		// scope, never the nil legacy-unrestricted case. A client that sends no
+		// scope still gets an empty one, so it reaches nothing until scoped.
+		scope := req.Scope
+		if scope == nil {
+			scope = &TokenScope{}
+		}
+		writeJSON(w, MintAccountTokenScoped(user, req.Name, scope)) // secret returned once
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
@@ -468,6 +494,33 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleTokenTargets feeds the per-key scope editor: which FEATURES this user
+// may enable on a key (the registered shareable features the admin permits
+// them), and which TARGETS a key may reach (their own + shared-to-them exposed
+// agents, channels, and the raw tiers). A feature the admin has NOT granted
+// this user is omitted, so the editor can't offer a key something the admin
+// gate would reject anyway.
+func (T *Account) handleTokenTargets(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	type feat struct {
+		Key   string `json:"key"`
+		Label string `json:"label"`
+	}
+	feats := []feat{}
+	for _, f := range ShareableFeatures() {
+		if FeatureAllowedForUser(T.DB, f.Key, user) {
+			feats = append(feats, feat{Key: f.Key, Label: f.Label})
+		}
+	}
+	writeJSON(w, map[string]any{
+		"features": feats,
+		"targets":  ListExternalTargets(T.DB, user),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -542,44 +595,145 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 .acct-tok-reveal { border:1px solid var(--accent); border-radius:8px; padding:0.7rem 0.8rem; background:var(--bg-2); }
 .acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.82rem; color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }
 .acct-tok-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
+.acct-tok-badge { font-size:0.66rem; font-weight:600; padding:0.08rem 0.45rem; border-radius:999px; margin-left:0.4rem; }
+.acct-tok-badge.warn { background:rgba(220,160,40,0.18); color:#c88a1e; }
+.acct-tok-scope { border:1px solid var(--border); border-radius:8px; padding:0.6rem 0.75rem; margin-top:0.35rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.5rem; }
+.acct-tok-scope h4 { margin:0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-mute); }
+.acct-tok-scope-grp { display:flex; flex-direction:column; gap:0.2rem; }
+.acct-tok-chk { display:flex; align-items:center; gap:0.45rem; font-size:0.83rem; color:var(--text); }
+.acct-tok-chk input { margin:0; }
+.acct-tok-scope-note { font-size:0.75rem; color:var(--text-mute); font-style:italic; }
+.acct-tok-scope-actions { display:flex; gap:0.5rem; align-items:center; }
 </style>
 <script>
 (function(){
   var root = document.getElementById('acct-tokens');
   if (!root) return;
+  var CAT = null; // {features:[{key,label}], targets:[{value,label,group}]} — loaded once
   function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
+  function targets(){ return fetch('api/token-targets',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){ CAT=d||{features:[],targets:[]}; }).catch(function(){ CAT={features:[],targets:[]}; }); }
   function load(){ return fetch('api/tokens',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render).catch(function(){ root.textContent='Failed to load.'; }); }
+
+  // checkbox helper: returns {row, checked()} for one option.
+  function chk(label, value, on){ var box=el('input',{type:'checkbox'}); if(on) box.checked=true; box.setAttribute('data-v',value); return { row: el('label',{class:'acct-tok-chk'},[box, document.createTextNode(label)]), box: box }; }
+
+  // Build the feature + target picker. selected = {features:[], targets:[]} or null.
+  // Returns {node, collect()} where collect() reads the ticked values.
+  function scopeEditor(selected){
+    selected = selected || {features:[], targets:[]};
+    var selF = {}, selT = {};
+    (selected.features||[]).forEach(function(f){ selF[f]=true; });
+    (selected.targets||[]).forEach(function(t){ selT[t]=true; });
+    var boxes = { features: [], targets: [] };
+    var wrap = el('div',{class:'acct-tok-scope'});
+
+    // Features
+    wrap.appendChild(el('h4',{text:'Features this key may use'}));
+    if(!CAT.features || !CAT.features.length){
+      wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'No features available to you. An admin grants access under Feature Access.'}));
+    } else {
+      var fg = el('div',{class:'acct-tok-scope-grp'});
+      CAT.features.forEach(function(f){ var c=chk(f.label||f.key, f.key, !!selF[f.key]); boxes.features.push(c); fg.appendChild(c.row); });
+      wrap.appendChild(fg);
+    }
+
+    // Targets, grouped by their Group header (Tiers / Agents / Channels).
+    wrap.appendChild(el('h4',{text:'Agents & tiers this key may reach'}));
+    if(!CAT.targets || !CAT.targets.length){
+      wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'No agents or channels are exposed. Turn on "Reachable over MCP" on an agent to offer it here.'}));
+    } else {
+      var groups = {}; var order = [];
+      CAT.targets.forEach(function(t){ var g=t.group||'Other'; if(!groups[g]){ groups[g]=[]; order.push(g); } groups[g].push(t); });
+      order.forEach(function(g){
+        wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:g}));
+        var tg = el('div',{class:'acct-tok-scope-grp'});
+        groups[g].forEach(function(t){ var c=chk(t.label||t.value, t.value, !!selT[t.value]); boxes.targets.push(c); tg.appendChild(c.row); });
+        wrap.appendChild(tg);
+      });
+    }
+    function collect(){
+      var f=[], t=[];
+      boxes.features.forEach(function(c){ if(c.box.checked) f.push(c.box.getAttribute('data-v')); });
+      boxes.targets.forEach(function(c){ if(c.box.checked) t.push(c.box.getAttribute('data-v')); });
+      return { features: f, targets: t };
+    }
+    return { node: wrap, collect: collect };
+  }
+
+  // One-line summary of a key's scope for the row.
+  function scopeSummary(t){
+    if(!t.scope){ return null; } // legacy: rendered as a badge instead
+    var f=(t.scope.features||[]).length, tg=(t.scope.targets||[]).length;
+    if(!f && !tg) return 'Reaches nothing yet — set a scope';
+    return (f?f+' feature'+(f>1?'s':''):'no features')+' · '+(tg?tg+' target'+(tg>1?'s':''):'no targets');
+  }
+
   function render(list){
     root.innerHTML='';
     list = list || [];
     if(!list.length){ root.appendChild(el('div',{class:'acct-tok-empty',text:'No API keys yet. Create one to connect an external client.'})); }
     list.forEach(function(t){
-      var meta = el('div',{class:'acct-tok-meta'},[
-        el('div',{class:'acct-tok-name',text: t.name || '(unnamed)'}),
-        el('div',{class:'acct-tok-sub'},[ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  ·  created '+String(t.created||'').slice(0,10)) ])
-      ]);
+      var nameRow = el('div',{class:'acct-tok-name'},[ document.createTextNode(t.name || '(unnamed)') ]);
+      if(!t.scope){ nameRow.appendChild(el('span',{class:'acct-tok-badge warn',text:'Unrestricted'})); }
+      var subKids = [ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  ·  created '+String(t.created||'').slice(0,10)) ];
+      var sum = scopeSummary(t);
+      if(sum){ subKids.push(document.createTextNode('  ·  '+sum)); }
+      else if(!t.scope){ subKids.push(document.createTextNode('  ·  reaches everything (set a scope to restrict)')); }
+      var meta = el('div',{class:'acct-tok-meta'},[ nameRow, el('div',{class:'acct-tok-sub'}, subKids) ]);
+
+      var scopeBtn = el('button',{class:'acct-tok-btn',style:'color:var(--text-mute)',text:'Scope'});
       var del = el('button',{class:'acct-tok-btn',text:'Revoke'});
+      var rowEl = el('div',{class:'acct-tok'},[meta,scopeBtn,del]);
+      var holder = el('div',{},[rowEl]); // row + (optional) inline editor
       del.addEventListener('click',function(){
         var go = window.uiConfirm ? window.uiConfirm('Revoke this API key? Any client using it stops working.') : Promise.resolve(true);
         go.then(function(ok){ if(!ok) return; fetch('api/tokens?id='+encodeURIComponent(t.id),{method:'DELETE',credentials:'same-origin'}).then(load); });
       });
-      root.appendChild(el('div',{class:'acct-tok'},[meta,del]));
+      scopeBtn.addEventListener('click',function(){
+        var existing = holder.querySelector('.acct-tok-scope');
+        if(existing){ existing.parentNode.removeChild(existing); return; }
+        var ed = scopeEditor(t.scope);
+        var save = el('button',{class:'acct-tok-create',text:'Save scope'});
+        save.addEventListener('click',function(){
+          save.disabled=true; save.textContent='Saving…';
+          fetch('api/tokens?action=scope&id='+encodeURIComponent(t.id),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope: ed.collect()})})
+            .then(function(r){ if(r.status===204){ load(); } else { save.disabled=false; save.textContent='Save scope'; } })
+            .catch(function(){ save.disabled=false; save.textContent='Save scope'; });
+        });
+        ed.node.appendChild(el('div',{class:'acct-tok-scope-actions'},[save]));
+        holder.appendChild(ed.node);
+      });
+      root.appendChild(holder);
     });
+
+    // Create row: name + a "Configure access" expander (deny-by-default), then Create.
     var nameInput = el('input',{type:'text',class:'acct-tok-input',placeholder:'Name (e.g. Claude Desktop)'});
     var create = el('button',{class:'acct-tok-create',text:'Create key'});
+    var newHolder = el('div',{});
+    var pendingScope = null;
+    var cfgBtn = el('button',{class:'acct-tok-btn',style:'color:var(--text-mute)',text:'Configure access'});
+    cfgBtn.addEventListener('click',function(){
+      var existing = newHolder.querySelector('.acct-tok-scope');
+      if(existing){ existing.parentNode.removeChild(existing); pendingScope=null; return; }
+      pendingScope = scopeEditor(null);
+      newHolder.appendChild(pendingScope.node);
+    });
     create.addEventListener('click',function(){
+      // Deny-by-default: an empty scope reaches nothing until the user ticks options.
+      var scope = pendingScope ? pendingScope.collect() : {features:[], targets:[]};
       create.disabled=true; create.textContent='Creating…';
-      fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameInput.value.trim()})})
+      fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameInput.value.trim(), scope: scope})})
         .then(function(r){return r.json();}).then(function(t){ load().then(function(){ reveal(t); }); })
         .catch(function(){ create.disabled=false; create.textContent='Create key'; });
     });
-    root.appendChild(el('div',{class:'acct-tok-newrow'},[nameInput,create]));
+    root.appendChild(el('div',{class:'acct-tok-newrow'},[nameInput,cfgBtn,create]));
+    root.appendChild(newHolder);
   }
   function reveal(t){
     if(!t || !t.token) return;
     root.insertBefore(el('div',{class:'acct-tok-reveal'},[ el('div',{class:'acct-tok-sub',text:'Copy this now — it will not be shown again:'}), el('code',{text:t.token}) ]), root.firstChild);
   }
-  load();
+  targets().then(load);
 })();
 </script>`
 

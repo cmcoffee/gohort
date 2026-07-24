@@ -594,6 +594,32 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Feature Access",
+				Subtitle: "Which users may expose outward-facing surfaces through their own personal access tokens. Reaching the OpenAI /v1 endpoint bypasses cookie auth (it's guarded only by a token), so this is the gate on who may use it at all. Empty = every user (the surface's own per-key scope still applies); listing users restricts it to them. Each feature is declared by its app.",
+				Body: ui.Table{
+					Source: "api/feature-access",
+					RowKey: "feature",
+					Columns: []ui.Col{
+						{Field: "label", Flex: 1},
+						{Field: "access", Label: "Allowed", Flex: 0},
+						{Field: "desc", Flex: 2, Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						ui.Expand("Set users", ui.ACLPicker(ui.ACLPickerConfig{
+							OptionsSource: "api/user-candidates",
+							RecordSource:  "api/feature-access?feature={feature}",
+							Field:         "allowed_users",
+							PostTo:        "api/feature-access?feature={feature}",
+							Method:        "POST",
+							Noun:          "user",
+							Intro:         "Which users may use this feature. Empty = every user. Each granted user then decides which of THEIR keys use it and what each key may reach.",
+							EmptyText:     "No users to grant yet.",
+						})),
+					},
+					EmptyText: "No shareable features are registered.",
+				},
+			},
+			{
 				Title:    "Default Apps",
 				Subtitle: "Apps every newly-approved user gets access to by default. Per-user overrides above take precedence.",
 				Body: ui.ChipPicker{
