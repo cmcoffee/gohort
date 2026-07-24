@@ -456,10 +456,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		lockHead = agentLockIconHTML(id, agentLocked)
 	}
 	page := ui.Page{
-		Title:         title,
-		ShowTitle:     true,
-		BackURL:       backURL,
-		MaxWidth:      "900px",
+		Title:     title,
+		ShowTitle: true,
+		BackURL:   backURL,
+		// Left-rail section nav, one section at a time — same shape as admin and
+		// Extensions. The editor has grown several sections (Agent, dispatch list,
+		// credentials, sharing, delete); stacking them made the page a long scroll.
+		MaxWidth:      "1100px",
+		SectionNav:    true,
 		Sections:      sections,
 		ExtraHeadHTML: lockHead,
 	}
@@ -475,9 +479,12 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 // (it lives in a Go raw string downstream); JS uses plain quotes + concatenation.
 func agentLockIconHTML(id string, locked bool) string {
 	return fmt.Sprintf(`<style>
-#agent-lock{cursor:pointer;border:none;background:none;font-size:1.35rem;line-height:1;opacity:.85;padding:0 .25rem;align-self:center;margin-left:.55rem}
+#agent-lock{cursor:pointer;border:none;background:none;font-size:1.2rem;line-height:1;opacity:.85;padding:0 .2rem}
 #agent-lock:hover{opacity:1;transform:scale(1.1)}
 #agent-lock[disabled]{opacity:.4;cursor:wait}
+/* Greyed controls when the record is locked — non-interactive + visibly dimmed,
+   but readable. The lock button itself is excluded so it stays clickable. */
+.agent-locked-ctl{opacity:.5;pointer-events:none}
 </style>
 <script>
 (function(){
@@ -488,20 +495,38 @@ func agentLockIconHTML(id string, locked bool) string {
     b.textContent=locked?'🔒':'🔓';
     b.title=locked?'Locked — only you can edit or delete (click to unlock)':'Unlocked — click to lock so other agents cannot edit or delete';
   }
+  // Grey out (or restore) every change control on the page when locked. Covers
+  // inputs/selects/textareas/buttons across ALL editor sections (the section
+  // nav swaps which one is visible, so hidden sections must be disabled too),
+  // skipping the lock button and the section-nav rail so you can still read the
+  // record, flip the lock, and move between sections.
+  function applyLock(){
+    var ctls=document.querySelectorAll('input,select,textarea,button,[contenteditable]');
+    for(var i=0;i<ctls.length;i++){
+      var c=ctls[i];
+      if(c.id==='agent-lock') continue;
+      if(c.closest && (c.closest('.ui-section-nav')||c.closest('nav'))) continue;
+      if(locked){ c.setAttribute('disabled','disabled'); c.classList.add('agent-locked-ctl'); }
+      else { c.removeAttribute('disabled'); c.classList.remove('agent-locked-ctl'); }
+    }
+  }
   draw();
   b.onclick=function(){
     var next=!locked; b.disabled=true;
     fetch('../api/agents/'+id+'/lock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({locked:next})})
-      .then(function(r){ if(!r.ok) throw new Error('request failed'); locked=next; draw(); })
+      .then(function(r){ if(!r.ok) throw new Error('request failed'); locked=next; draw(); applyLock(); })
       .catch(function(e){ alert('Could not change lock: '+(e&&e.message||e)); })
       .then(function(){ b.disabled=false; });
   };
   var tries=0;
   function mount(){
-    if(document.getElementById('agent-lock')) return;
-    var title=document.querySelector('.ui-page-title');
-    if(title){ title.insertAdjacentElement('afterend', b); return; }
-    if(tries++ < 120) requestAnimationFrame(mount);
+    if(document.getElementById('agent-lock')){ applyLock(); return; }
+    // FIRST section card's header-right slot — the lock belongs on the record,
+    // not on the page banner. Falls back to the page title only if the section
+    // hasn't rendered (it always does, but keep the loop honest).
+    var slot=document.querySelector('.ui-section .ui-section-h-r');
+    if(slot){ slot.appendChild(b); applyLock(); return; }
+    if(tries++ < 180) requestAnimationFrame(mount);
   }
   mount();
 })();
