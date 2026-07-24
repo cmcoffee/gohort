@@ -5206,14 +5206,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			sys += cortexContextBlock(t.udb, t.agent.ID)
 		}
 	}
-	// Credential-first authoring guidance — capability-tied. Every non-Builder
-	// agent is granted tool_def + the credential-draft tools later in this
-	// function (same condition), so it gets the matching guidance here. Builder
-	// carries the equivalent in its own persona, so it's excluded to avoid
-	// doubling.
-	if !isBuilderAgent(t.agent.ID) {
-		sys += "\n\n" + credentialFirstGuidance
-	}
+	// (credentialFirstGuidance is Builder-persona territory now: the
+	// credential-draft tools were pulled from the non-Builder catalog — see the
+	// tool-count note at the tool_def append below — so the 4K guidance block
+	// that taught every agent how to use them left with them. Builder carries
+	// the equivalent doctrine in its own persona.)
 	// Any skill the LLM activated mid-turn via activate_skill is
 	// re-injected here as well — the orchestrator round sees the
 	// skill via the tool result in conversation history naturally,
@@ -5767,14 +5764,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// PIPELINE authoring still route to Builder; only tools are self-serve.
 	if !isBuilderAgent(t.agent.ID) {
 		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess))
-		// Credential-first authoring: an agent that can author API tools must be
-		// able to create the credential it routes through (a DISABLED, secretless
-		// draft the admin later completes), instead of soliciting secrets in
-		// chat. Builder has these via its authoring catalog; every other
-		// self-serve authoring agent gets them here. The matching
-		// credentialFirstGuidance is injected into the system prompt above under
-		// the same !isBuilderAgent condition.
-		knowTools = append(knowTools, draftOAuthCredentialToolDef(t), draftAPICredentialToolDef(t), updateAPICredentialToolDef(t), storeCredentialSecretToolDef(), checkCredentialToolDef(t))
+		// Tool authoring stays self-serve, but CREDENTIAL authoring is Builder's
+		// job: the five credential tools (draft_oauth_credential /
+		// draft_api_credential / update_api_credential / store_credential_secret
+		// / check_credential) used to ride along here for every agent — 5 schemas
+		// + the 4K credentialFirstGuidance block on every single turn — and were
+		// essentially never used outside Builder (tool-count audit). An agent
+		// whose api-mode tool_def needs a credential that doesn't exist gets a
+		// clear error and points the user at Builder, which carries the full
+		// credential suite + doctrine in its authoring catalog.
 	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.
