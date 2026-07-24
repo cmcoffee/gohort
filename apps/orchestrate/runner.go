@@ -1392,6 +1392,14 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if t.privateMode && tool.Mode == TempToolModeAPI {
 			continue
 		}
+		// Per-agent disable: a bundled tool the user turned OFF for this agent
+		// (from the tool's Access panel) stays on the record — so its definition
+		// survives and Builder can still repair it in place — but doesn't load
+		// into the agent's kit. Non-destructive, unlike unscoping.
+		if tool.Disabled {
+			agentToolsSkipped++
+			continue
+		}
 		if sess.HasTempTool(tool.Name) {
 			agentToolsSkipped++
 			continue

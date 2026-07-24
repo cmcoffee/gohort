@@ -281,6 +281,11 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			AgentTool bool `json:"agent_tool"` // bundled onto an agent record
 			Orphan    bool `json:"orphan"`     // owning agent was deleted
 			Trial     bool `json:"trial"`      // authored mid-chat, unconfirmed
+			// DisableOK: this row supports the Disable/Enable toggle. True for pool
+			// tools (global governance) AND agent-scoped tools (non-destructive
+			// per-agent off) — the two the endpoint honors. Lock / Builder-only stay
+			// pool-only, so they keep their own OnlyIf:"pool" gate.
+			DisableOK bool `json:"disable_ok"`
 			// Agents / AgentList name every agent this tool is scoped to. One row
 			// per TOOL, not per (tool, agent) pair — Access is where the
 			// per-agent state is changed; this is the at-a-glance version.
@@ -319,7 +324,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Missing: missing, Shared: p.Shared, LastUsed: last,
 				Locked: p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly,
 				Requested: pending, CanRequest: !p.Shared && !pending,
-				Pool: true, Deletable: true,
+				Pool: true, Deletable: true, DisableOK: true,
 				Group: "All Agents (Global tools)",
 			})
 		}
@@ -360,6 +365,9 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				// Unconfirmed only while EVERY copy is unconfirmed: vouching for
 				// it on one agent is vouching for the tool.
 				rows[i].Trial = rows[i].Trial && st.Trial
+				// Disabled only while EVERY copy is off — if it's live on any agent,
+				// the row reads enabled (and Enable/Disable acts on all copies).
+				rows[i].Disabled = rows[i].Disabled && st.Tool.Disabled
 				continue
 			}
 			missing := false
@@ -372,7 +380,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row{
 				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
 				Credential: st.Tool.Credential, Category: st.Tool.Category, Missing: missing,
-				AgentTool: true, Trial: st.Trial,
+				AgentTool: true, Trial: st.Trial, Disabled: st.Tool.Disabled, DisableOK: true,
 				AgentID: st.AgentID, Agents: []string{agent}, AgentList: agent,
 				Group: "Scoped Tools",
 			})
@@ -589,11 +597,16 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			// above, and leaving copies on other agents under the old label would
 			// scatter one tool across two headings.
 			//
-			// Only set_category crosses over. The governance flags are pool-only
-			// (the table gates them with OnlyIf:"pool") and have no per-agent
-			// meaning yet — refuse them by name rather than 404ing, which would
-			// read as "no such tool" for a tool the user is looking straight at.
-			if action != "set_category" {
+			// set_category, disable, and enable apply to a scoped tool by writing
+			// the changed field back onto the agent record(s) that hold it (the
+			// same load→patch→Attach the pool path uses via UpdatePersistentTempTool,
+			// but owner-scoped to the agent). disable/enable are non-destructive:
+			// the tool stays bundled — its definition survives and Builder can still
+			// repair it — it just stops loading into the agent's kit (see the
+			// tool.Disabled skip in runner.go). Lock / Builder-only remain pool-only.
+			switch action {
+			case "set_category", "disable", "enable":
+			default:
 				http.Error(w, "this action applies to pool tools only — "+name+" is scoped to an agent", http.StatusBadRequest)
 				return
 			}
@@ -612,7 +625,14 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				t := st.Tool // copy; Attach replaces the whole record on that agent
-				t.Category = cat
+				switch action {
+				case "set_category":
+					t.Category = cat
+				case "disable":
+					t.Disabled = true
+				case "enable":
+					t.Disabled = false
+				}
 				if err := AttachToolToAgent(AuthDB(), user, st.AgentID, t); err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
@@ -1343,7 +1363,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					// Disable hides the tool from every agent's catalog (Builder still
 					// loads it to test/fix). Enable restores it.
 					{Type: "button", Label: "Disable", Method: "POST",
-						PostTo: "api/tools?action=disable&name={name}", HideIf: "disabled", OnlyIf: "pool"},
+						PostTo: "api/tools?action=disable&name={name}", HideIf: "disabled", OnlyIf: "disable_ok"},
 					{Type: "button", Label: "Enable", Method: "POST",
 						PostTo: "api/tools?action=enable&name={name}", OnlyIf: "disabled"},
 					// Builder-only exposes the tool to the Builder agent only.
