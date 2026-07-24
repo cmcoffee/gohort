@@ -6232,6 +6232,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// tangentially-related chunks getting silently injected, and saves
 	// an Embed call per turn for every agent with a corpus.)
 
+	// Dedupe by catalog name, keeping the FIRST occurrence. The framework
+	// control tools (find_tools / send_status / stay_silent / keep_going) are
+	// force-added by frameworkConversationalTools AND already present in an
+	// open-pool agent's base catalog, so they'd otherwise arrive twice and the
+	// loop would dedupe them noisily every turn. Both copies are session-wired
+	// (the base catalog is built via GetAgentToolsWithSession), so keeping the
+	// first is harmless — this just moves the dedupe upstream of the log spam.
+	allTools = dedupeToolDefsByName(allTools)
+
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{

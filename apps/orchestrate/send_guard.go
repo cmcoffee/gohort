@@ -31,3 +31,21 @@ func sendGuardKey(toolName string, args map[string]any) string {
 	}
 	return ""
 }
+
+// dedupeToolDefsByName drops later AgentToolDefs whose catalog name already
+// appeared, keeping the first. The agent-loop dedupes identically but logs a
+// "registered twice" line per collision every turn; deduping here keeps that
+// noise out of the logs for the framework control tools that are legitimately
+// added from two paths (base catalog + frameworkConversationalTools).
+func dedupeToolDefsByName(in []AgentToolDef) []AgentToolDef {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, td := range in {
+		if seen[td.Tool.Name] {
+			continue
+		}
+		seen[td.Tool.Name] = true
+		out = append(out, td)
+	}
+	return out
+}
