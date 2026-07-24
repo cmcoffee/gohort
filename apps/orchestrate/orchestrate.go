@@ -373,9 +373,17 @@ func (T *OrchestrateApp) Routes() {
 		// Agents live in the orchestrate app's per-user store (UserDB(T.DB, owner)),
 		// NOT RootDB — read the SAME store the editor saves to, or every lookup
 		// falls back to the in-code seed (MCPExposed=false) and nothing is reachable.
-		a, ok := loadAgent(UserDB(T.DB, owner), agentID)
-		return ok && a.MCPExposed
+		// Name-or-id, matching the dispatch path's own resolution; reachability
+		// covers app agents via their feature grant (see externallyReachable).
+		a, ok := findAgentByNameOrID(UserDB(T.DB, owner), owner, agentID)
+		return ok && externallyReachable(a, owner)
 	})
+	// Canonical external resolution for the MCP server: name-or-id → agent ID,
+	// only when reachable. mcpserver needs the ID (not the caller's raw string)
+	// so its per-app KEY gate can identify app agents.
+	ResolveExternalAgentFn = func(db Database, owner, key string) (string, bool) {
+		return ResolveExternalAgent(db, owner, key)
+	}
 
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
 	// channel agent (inject into its home thread + run a turn) when something

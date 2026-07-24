@@ -411,9 +411,19 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	if !ChannelAgentRunnerReady() {
 		return "", fmt.Errorf("agent runner not ready (orchestrate not loaded)")
 	}
-	// Only agents the owner has marked reachable-over-MCP can be dispatched, so a
-	// bridge key can't reach every agent. Fails closed.
-	if !MCPAgentExposed(owner, agent) {
+	// Only reachable agents can be dispatched, so a bridge key can't reach every
+	// agent. Fails closed. Resolution goes name-or-id → canonical ID so the
+	// per-app gate below sees the real id: for USER agents reachable means the
+	// MCPExposed toggle; for APP agents (Servitor, Guides, …) it means the admin
+	// enabled the app under Feature Access — they have no editor page, so the
+	// feature grant IS their exposure consent.
+	if ResolveExternalAgentFn != nil {
+		id, ok := ResolveExternalAgentFn(T.DB, owner, agent)
+		if !ok {
+			return "", fmt.Errorf("agent %q is not reachable over MCP — for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
+		}
+		agent = id
+	} else if !MCPAgentExposed(owner, agent) {
 		return "", fmt.Errorf("agent %q is not reachable over MCP — turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
 	}
 	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, …)

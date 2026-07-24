@@ -28,6 +28,25 @@ type ExternalAgent struct {
 // ExternalAgents lists the owner's agents that are reachable from outside
 // gohort. db is the app's base store; the per-user store is resolved here so
 // callers don't have to know the layering.
+// externallyReachable answers "may external key-authenticated surfaces (/v1,
+// MCP) see and resolve this agent at all". For USER agents that consent is the
+// per-agent MCPExposed toggle (agent editor → Access & visibility). APP agents
+// (Servitor Investigator, Guide Author, …) have NO editor page — they're
+// Hidden, registry-owned — so their consent is the app FEATURE grant: the
+// admin enabled the app for this user under Feature Access. The per-KEY tier
+// is enforced downstream (KeyAllowsAppAgent at both surfaces); this is only
+// the visibility/resolution gate. Without this, enabling Servitor at admin AND
+// key level still dead-ended on an MCPExposed flag nobody could flip.
+func externallyReachable(a AgentRecord, owner string) bool {
+	if a.MCPExposed {
+		return true
+	}
+	if k := AppFeatureKeyForAgent(a.ID); k != "" {
+		return FeatureAllowedForUser(RootDB, k, owner)
+	}
+	return false
+}
+
 func ExternalAgents(db Database, owner string) []ExternalAgent {
 	if db == nil || strings.TrimSpace(owner) == "" {
 		return nil
@@ -35,7 +54,7 @@ func ExternalAgents(db Database, owner string) []ExternalAgent {
 	udb := UserDB(db, owner)
 	var out []ExternalAgent
 	for _, a := range listAgents(udb, owner) {
-		if a.MCPExposed {
+		if externallyReachable(a, owner) {
 			out = append(out, ExternalAgent{ID: a.ID, Name: a.Name})
 		}
 	}
@@ -52,7 +71,7 @@ func ResolveExternalAgent(db Database, owner, key string) (string, bool) {
 	}
 	udb := UserDB(db, owner)
 	a, ok := findAgentByNameOrID(udb, owner, key)
-	if !ok || !a.MCPExposed {
+	if !ok || !externallyReachable(a, owner) {
 		return "", false
 	}
 	return a.ID, true

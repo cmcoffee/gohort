@@ -152,6 +152,14 @@ type ExternalTarget struct {
 // on a deployment without orchestrate → no agent/channel targets, only tiers.
 var ListExternalTargetsFn func(db Database, user string) []ExternalTarget
 
+// ResolveExternalAgentFn resolves a caller-supplied agent NAME or ID to the
+// canonical agent id, only when that agent is reachable from external
+// key-authenticated surfaces (MCPExposed user agents, or app agents whose app
+// feature the admin enabled). The MCP server uses it so its per-app key gate
+// sees the real id, not whatever string the client typed. Nil ⇒ orchestrate
+// not loaded; callers fall back to their legacy gate.
+var ResolveExternalAgentFn func(db Database, owner, key string) (string, bool)
+
 // ListExternalTargets returns the targets a user may grant to one of their keys:
 // the raw tiers plus every exposed agent/channel they own or one is shared to
 // them. The candidate set for the scope picker; enforcement matches against the
