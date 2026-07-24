@@ -222,12 +222,19 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 		b.WriteString(core.EffectivePromptText(key, def))
 	}
 	// How-to-decide — the top-level reply/tool/delegate framework, interactive.
-	add(hasPlanSet, "framework.how_to_decide", howToDecideSectionHeading, frameworkHowToDecideBlock)
+	// Builder is EXCLUDED (here and on clarifying/work-honestly below): its
+	// 25K phased persona carries its own intake, questioning, and honesty
+	// doctrine, and this block's "delegate to a specialist" framing outright
+	// contradicts Builder's authoring-only mandate — ~4.7K of contradictory
+	// duplication on every Builder turn (prompt audit). plan_set mechanics
+	// STAY for Builder: it drives phased builds through plan_set, and the
+	// mechanics block is the shared contract for that tool.
+	add(hasPlanSet && !isBuilderAgent(agent.ID), "framework.how_to_decide", howToDecideSectionHeading, frameworkHowToDecideBlock)
 	// plan_set guidance — only where the surface actually offers plan_set.
 	add(hasPlanSet, "framework.plan_set", planSetSectionHeading, frameworkPlanSetBlock)
 	// Clarifying-questions guidance — ask_user rides the same interactive-web
 	// signal as plan_set; a dispatch/worker surface can't prompt the user.
-	add(hasPlanSet, "framework.clarifying", clarifyingSectionHeading, frameworkClarifyingBlock)
+	add(hasPlanSet && !isBuilderAgent(agent.ID), "framework.clarifying", clarifyingSectionHeading, frameworkClarifyingBlock)
 	// Tools-self-serve and document-export — gated on the agent actually having
 	// the tool (tool_def / export), not on the surface: unlike plan_set these
 	// tools can exist off the interactive surface too, so capability is the gate.
@@ -248,7 +255,7 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// the original single "## Your channel and the fleet" section.
 	add(agent.Fleet, "framework.fleet", fleetSupervisionMarker, frameworkFleetBlock)
 	// Work-it-honestly — user-facing answer discipline for hard, under-grounded
-	// questions; interactive surface only.
-	add(hasPlanSet, "framework.work_honestly", workHonestlyMarker, frameworkWorkHonestlyBlock)
+	// questions; interactive surface only. Builder excluded (see how_to_decide).
+	add(hasPlanSet && !isBuilderAgent(agent.ID), "framework.work_honestly", workHonestlyMarker, frameworkWorkHonestlyBlock)
 	return b.String()
 }

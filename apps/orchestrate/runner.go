@@ -113,7 +113,7 @@ func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, us
 		sys += "\n\n## Plan guidance\n" + g
 	}
 	sys += availableSkillsBlock(agent, udb, user)
-	sys += searchOrderGuidanceBlock(agent)
+	sys += searchOrderGuidanceBlock(agent, agentRecordHasRetrievableContent(agent))
 	// Plan-first + pre-mortem discipline. On for an explicit PreMortem opt-in AND
 	// by default for any Cortex agent: a persistent channel/home-thread presence
 	// IS an orchestrator that accomplishes goals over a channel, which is exactly
@@ -3389,14 +3389,39 @@ func (t *chatTurn) agentHasRetrievableContent() bool {
 //   - the agent has no web tools in its catalog (no choice to reorder)
 //   - the agent is Builder (its persona has its own search rhythm)
 func (t *chatTurn) appendSearchOrderGuidance(sys string) string {
-	return sys + searchOrderGuidanceBlock(t.agent)
+	return sys + searchOrderGuidanceBlock(t.agent, t.agentHasRetrievableContent())
+}
+
+// agentRecordHasRetrievableContent is the chatTurn-free approximation of
+// agentHasRetrievableContent — the static signals readable off the record
+// alone (own collections, uploaded-file ingestion, the deployment-scope
+// auto-attach fallback). It can't see active skills' collections (a mid-turn
+// state), which only means a skill-corpus-only agent misses this block on the
+// channel path — harmless, vs. the old bug of PROMISING knowledge_search to
+// agents that don't carry it.
+func agentRecordHasRetrievableContent(agent AgentRecord) bool {
+	if len(agent.AttachedCollections) > 0 || agent.IngestAttachments {
+		return true
+	}
+	if len(agent.AttachedCollections) == 0 {
+		for _, c := range ListCollections(nil, "") {
+			if IsDeploymentScope(c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // searchOrderGuidanceBlock is the chatTurn-free form so the shared capability
 // assembler can render it for the channel/dispatch path too. Returns "" when
-// the agent has no web tools (nothing to reorder) or is Builder.
-func searchOrderGuidanceBlock(agent AgentRecord) string {
-	if isBuilderAgent(agent.ID) {
+// the agent has no web tools (nothing to reorder), no retrievable corpus
+// (hasCorpus — without it the block told the agent to call knowledge_search
+// FIRST while the corpus gate kept that tool OUT of its catalog: a prompt
+// naming a tool the agent doesn't carry, burning an unknown-tool round; prompt
+// audit finding #6), or is Builder.
+func searchOrderGuidanceBlock(agent AgentRecord, hasCorpus bool) string {
+	if isBuilderAgent(agent.ID) || !hasCorpus {
 		return ""
 	}
 	// Only fire when web tools are actually in the agent's effective
