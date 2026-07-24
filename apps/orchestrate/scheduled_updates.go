@@ -447,6 +447,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// silently bypassed every tool's "Require confirm" contract on a schedule.
 	gate := app.newAutonomousGate(p.Username, agent.ID)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
+		SendGuardKey:  sendGuardKey,
 		SystemPrompt:  sysPrompt,
 		Tools:         tools,
 		MaxRounds:     softCap,

@@ -6235,6 +6235,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
+		SendGuardKey:         sendGuardKey,
 		SystemPrompt:         sys,
 		Tools:                allTools,
 		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
@@ -6876,6 +6877,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	}
 	roundsUsed := 0
 	resp, _, err := t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: stepUser}}, AgentLoopConfig{
+		SendGuardKey:         sendGuardKey,
 		SystemPrompt:         sysPrompt,
 		Tools:                tools,
 		DynamicTools:         t.dynamicNewTempTools(sess),

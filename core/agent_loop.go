@@ -274,6 +274,19 @@ type AgentLoopConfig struct {
 	// must never cost the turn its correction.
 	Consult func(question, evidence string) (string, error)
 
+	// SendGuardKey identifies a SIDE-EFFECTING send to a recipient — a message
+	// delivered to a chat/contact — and returns a stable key for it (e.g.
+	// "message_contact\x00Group Message"). Empty ⇒ not a guarded send. The loop
+	// blocks the SECOND+ send to the same key in one turn: a model that drafts
+	// several variations and fires them all (the "sent all 4 jokes to the group
+	// chat" failure) delivers only the first; the rest come back as held drafts
+	// with a note to pick one and send next turn. Keyed on recipient, NOT the
+	// message text, so intentionally-varied duplicates are still caught — unlike
+	// the identical-args loop guard, which they slip past. Nil ⇒ no send guard.
+	// The app supplies it because recipient extraction is tool-specific and core
+	// stays domain-agnostic.
+	SendGuardKey func(toolName string, args map[string]any) string
+
 	// SettleRound is called by a correction guard right before it re-prompts
 	// and continues, so the app can FINALIZE whatever the just-rejected round
 	// already streamed into its own bubble and open a fresh one for the retry.
@@ -1034,6 +1047,10 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// progress, until the round cap). repeatSame counts consecutive BYTE-
 	// IDENTICAL results per signature regardless of error status; a changed
 	// result (genuine polling) resets it, so real polling is never penalized.
+	// sentThisTurn keys the recipients a side-effecting send has already reached
+	// this turn (see SendGuardKey). A second send to the same recipient is held,
+	// not delivered.
+	sentThisTurn := map[string]bool{}
 	repeatSame := map[string]int{}
 	lastToolContent := map[string]string{}
 	const repeatSameLimit = 4
@@ -1969,8 +1986,15 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			tc      ToolCall
 			handler ToolHandlerFunc
 			sig     string
+			sendKey string
 		}
 		var work []toolWork
+		// batchSend claims recipients WITHIN this round — the sends a model
+		// batches into one response (the "fired all 4 jokes at once" case) share
+		// a round, so sentThisTurn (marked only post-execution) wouldn't yet see
+		// the first when the second is checked. Claimed pre-execution here so the
+		// second in the same batch is held too.
+		batchSend := map[string]bool{}
 
 		for i, tc := range resp.ToolCalls {
 			if tc.Name == "stay_silent" {
@@ -2062,7 +2086,30 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				continue
 			}
 
-			work = append(work, toolWork{index: i, tc: tc, handler: handler, sig: sig})
+			// Duplicate-send guard: a second delivery to the same recipient this
+			// turn is HELD, not sent. Catches the "drafted several messages and
+			// fired them all" mistake that the identical-args guards miss (the
+			// drafts differ). Keyed on recipient, not text.
+			sendKey := ""
+			if cfg.SendGuardKey != nil {
+				sendKey = cfg.SendGuardKey(tc.Name, tc.Args)
+			}
+			if sendKey != "" && (sentThisTurn[sendKey] || batchSend[sendKey]) {
+				Debug("[agent_loop] send-guard: %s held (already sent to this recipient this turn)", tc.Name)
+				guardBlockedThisRound = true
+				results[i] = ToolResult{
+					ID:      tc.ID,
+					Content: fmt.Sprintf("HELD — you already sent a message to this recipient this turn via '%s', so this additional send was NOT delivered (it would double-message them). If you drafted several variations, that's expected: pick the ONE you want and send it on your NEXT turn. If you genuinely need to send a distinct follow-up, do it next turn, not batched with the first.", tc.Name),
+					IsError: true,
+				}
+				toolErrors++
+				continue
+			}
+
+			if sendKey != "" {
+				batchSend[sendKey] = true // claim so a same-batch duplicate is held
+			}
+			work = append(work, toolWork{index: i, tc: tc, handler: handler, sig: sig, sendKey: sendKey})
 		}
 
 		// RoundAbortTools: when a control tool (ask_user, respond_directly,
@@ -2269,6 +2316,11 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				repeatFail[w.sig]++
 			} else {
 				delete(repeatFail, w.sig)
+			}
+			// Mark the recipient reached only on a SUCCESSFUL send — a failed
+			// delivery shouldn't block a legitimate retry to the same recipient.
+			if w.sendKey != "" && !results[w.index].IsError {
+				sentThisTurn[w.sendKey] = true
 			}
 			// Identical-repeat tracking (see repeatSame decl). Count byte-identical
 			// results per signature on success OR error; a changed result resets.

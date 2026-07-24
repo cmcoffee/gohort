@@ -638,6 +638,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
 	resp, _, runErr := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: deliveredMessage}}, AgentLoopConfig{
+		SendGuardKey:  sendGuardKey,
 		SystemPrompt:  sysPrompt,
 		Tools:         tools,
 		MaxRounds:     resolveMaxWorkerRounds(target),
@@ -1282,6 +1283,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		think = *run.Think
 	}
 	loopCfg := AgentLoopConfig{
+		SendGuardKey: sendGuardKey,
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
