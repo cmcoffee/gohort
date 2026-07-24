@@ -17,6 +17,10 @@ type tierStubLLM struct {
 	calls int
 	log   *[]string
 	reply func(n int) []ToolCall
+	// content overrides the default "done" final text (loop-boundary tests).
+	content string
+	// onOpts, when set, receives each call's ChatOptions (sampling assertions).
+	onOpts func([]ChatOption)
 }
 
 func (s *tierStubLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
@@ -26,12 +30,18 @@ func (s *tierStubLLM) Chat(ctx context.Context, messages []Message, opts ...Chat
 	*s.log = append(*s.log, s.name)
 	s.mu.Unlock()
 
+	if s.onOpts != nil {
+		s.onOpts(opts)
+	}
 	resp := &Response{InputTokens: 100_000, OutputTokens: 200}
 	if tcs := s.reply(n); len(tcs) > 0 {
 		resp.ToolCalls = tcs
 		return resp, nil
 	}
 	resp.Content = "done"
+	if s.content != "" {
+		resp.Content = s.content
+	}
 	return resp, nil
 }
 

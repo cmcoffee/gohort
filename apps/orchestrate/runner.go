@@ -576,6 +576,17 @@ type chatTurn struct {
 	// behavior-skill glob triggers (e.g. "*.pdf") can match against them.
 	docNames  []string
 	toolCache map[string]string // canonical(name, args) → result
+	// cacheServes counts how many times each cached result has been RE-SERVED
+	// this turn. The first cache hit re-serves the full body (compaction's
+	// "re-run the tool if you still need it" marker depends on that); the
+	// second+ returns a short stub instead. Serving identical bytes again is
+	// what turns a repetitive model into a STABLE loop — near-identical
+	// context in, identical round out, five times over (the "That's a real
+	// concept…" ×5 transcript) — and each re-serve stuffed duplicate result
+	// bodies into history (~10K tokens across that loop). The stub changes
+	// the context and says stop, breaking the orbit at round 2 instead of
+	// waiting for repeatSame to bite at round 6.
+	cacheServes map[string]int
 	// dispatchCounts tracks how many times each unique (name, args)
 	// pair has been DISPATCHED this turn — regardless of whether the
 	// result was successful or errored. Distinct from toolCache, which
@@ -2677,6 +2688,22 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			hidden := hiddenToolChips[name]
 			callLabel := prefix + formatToolCall(name, args)
 			if cached, ok := t.lookupToolCache(name, args); ok {
+				// Second+ re-serve of the same cached body → stub, not the body.
+				// See the cacheServes field comment: identical re-served bytes
+				// make a repetition loop perfectly stable and double-bill the
+				// context; the stub breaks the fixed point and says stop.
+				t.toolMu.Lock()
+				if t.cacheServes == nil {
+					t.cacheServes = map[string]int{}
+				}
+				ck := toolCallKey(name, args)
+				t.cacheServes[ck]++
+				serves := t.cacheServes[ck]
+				t.toolMu.Unlock()
+				if serves > 1 {
+					cached = "♻ You already have this exact result from earlier THIS TURN — it has not changed, and it is not being repeated here. Do NOT make this call again: scroll up and use the result you already received, or take a genuinely different action (different tool, different arguments, or answer the user now)."
+					Debug("[orchestrate.tools] cache stub for %s (re-serve #%d this turn)", name, serves)
+				}
 				if !hidden {
 					t.sse.Send(map[string]any{
 						"kind": "activity",

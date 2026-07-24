@@ -124,6 +124,27 @@ func StripThinkTags(s string) (string, bool) {
 	return strings.TrimSpace(s), true
 }
 
+// thinkTagOutsideCode reports whether a think delimiter appears OUTSIDE
+// inline-backtick spans and ``` fences. A genuine leak has raw tags in prose
+// (strip it); an answer that merely DISCUSSES think tags carries them inside
+// code markup (leave it alone — StripThinkTags' keep-one-side heuristics would
+// clip legitimate content around them). The masking is a line-tolerant
+// approximation: fenced blocks are removed first, then inline spans; good
+// enough for a boundary guard whose false-negative cost is one cosmetic leak.
+var (
+	codeFenceRE  = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeRE = regexp.MustCompile("`[^`\n]*`")
+)
+
+func thinkTagOutsideCode(s string) bool {
+	if !strings.Contains(s, "<think>") && !strings.Contains(s, "</think>") {
+		return false
+	}
+	masked := codeFenceRE.ReplaceAllString(s, "")
+	masked = inlineCodeRE.ReplaceAllString(masked, "")
+	return strings.Contains(masked, "<think>") || strings.Contains(masked, "</think>")
+}
+
 // openAIClient implements the LLM interface for OpenAI-compatible APIs.
 type openAIClient struct {
 	apiKey               string

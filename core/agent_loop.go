@@ -615,6 +615,13 @@ func formatArgs(args map[string]any) string {
 // of recent turns; a success anywhere in the window clears it).
 const repeatFailHistoryWindow = 40
 
+// shakeoutTemperature is the one-shot sampling temperature applied to the
+// round right after a repeat guard fires. High enough to break a greedy
+// fixed point (Qwen 3.x route defaults are ~0.6-0.7), low enough to stay
+// out of degeneration territory. Per-call, so it never touches the server
+// config and costs nothing when no guard has tripped.
+const shakeoutTemperature = 0.9
+
 // seedRepeatFailFromHistory pre-arms the loop-guard from the conversation
 // tail so a fixation spanning separate turns is caught. It walks the
 // recent messages in order, mapping each tool call's ID to its signature,
@@ -691,6 +698,29 @@ func (T *AppCore) Run(ctx context.Context, messages []Message, opts ...ChatOptio
 // The returned Response is from the final LLM call. The returned []Message
 // contains the full conversation history including all tool interactions.
 func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
+	resp, history, err := T.runAgentLoopInner(ctx, messages, cfg)
+	// Think-tag leak backstop at THE loop boundary, so every surface (web
+	// chat, dispatch, scheduled fires) is covered by one seam — the channel
+	// path additionally strips at phantom outbound, but web chat had no strip
+	// at all and a leak reached the bubble + stored transcript verbatim
+	// ("blocks\n6. …\n</think>\nQwen3.6-27B works…"). Only fires when a
+	// delimiter appears OUTSIDE inline/fenced code: an answer that merely
+	// MENTIONS `<think>` in backticks (any conversation about thinking modes)
+	// is legit prose and must not be clipped by the stripper's
+	// keep-one-side-of-the-closer heuristics.
+	if resp != nil && strings.TrimSpace(resp.Content) != "" {
+		if thinkTagOutsideCode(resp.Content) {
+			cleaned, leaked := StripThinkTags(resp.Content)
+			if leaked {
+				Log("[agent_loop] think-tag leak stripped from final content (%d -> %d chars) — upstream reasoning/content separation failed", len(resp.Content), len(cleaned))
+				resp.Content = cleaned
+			}
+		}
+	}
+	return resp, history, err
+}
+
+func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
 	if T.LLM == nil {
 		return nil, messages, fmt.Errorf("LLM is not configured")
 	}
@@ -1051,6 +1081,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// this turn (see SendGuardKey). A second send to the same recipient is held,
 	// not delivered.
 	sentThisTurn := map[string]bool{}
+	// shakeoutNextRound: a repeat guard fired last round, so the model is
+	// provably stuck re-emitting the same call. The NEXT LLM call gets a
+	// one-shot temperature bump (shakeoutTemperature) to jolt it off the
+	// fixed point — near-greedy sampling on near-identical context is what
+	// makes these orbits stable. One round only, then back to route defaults;
+	// zero cost in the steady state (unlike a global penalty sampler, which
+	// measured ~23% tok/s on this rig).
+	shakeoutNextRound := false
 	repeatSame := map[string]int{}
 	lastToolContent := map[string]string{}
 	const repeatSameLimit = 4
@@ -1371,6 +1409,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// control-tool rejection).
 		if cfg.RoundChatOptions != nil {
 			opts = append(opts, cfg.RoundChatOptions()...)
+		}
+		// One-shot sampling shake-out after a repeat-guard trip (see the
+		// shakeoutNextRound decl). Appended last so it wins over static opts.
+		if shakeoutNextRound {
+			shakeoutNextRound = false
+			opts = append(opts, WithTemperature(shakeoutTemperature))
+			Debug("[agent_loop] shake-out round: one-shot temperature %.2f after a repeat-guard trip", shakeoutTemperature)
 		}
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
@@ -2455,6 +2500,9 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// couple of these in a row, stop looping and force a clean final answer
 		// instead of burning the rest of the budget. (Any successful tool call resets
 		// the streak via the else branch.)
+		if guardBlockedThisRound {
+			shakeoutNextRound = true
+		}
 		if guardBlockedThisRound && allFailed {
 			guardBlockedStreak++
 			if guardBlockedStreak >= guardBlockedBreakLimit {
