@@ -66,6 +66,19 @@ const frameworkBuilderRoutingBlock = `**An APP goes to Builder — a gohort "app
 
 For a complex or open-ended design ("help me figure out what I even want"), you don't need one perfect dispatch: go BACK AND FORTH with Builder in this thread. Dispatch what you have; if it needs a decision it can't assume, it says so — relay that, get the answer, dispatch again in the SAME thread (it remembers the prior exchange). Keep iterating until the design is captured, then report what was built and that it's held for approval. (Tools you still make yourself.)`
 
+// cannotAuthorMarker dedup-keys the can't-author block.
+const cannotAuthorMarker = "**You cannot author agents"
+
+// frameworkCannotAuthorBlock is the COMPLEMENT of frameworkBuilderRoutingBlock:
+// a non-Fleet agent can't hand work to Builder (dispatch is Fleet-gated) and has
+// no authoring tools, so when asked to build an agent/pipeline/skill/app it has
+// no valid path — and, told nothing, it discovers that by flailing: it tries to
+// dispatch (often to itself), malforms a search, does the work inline, or tells
+// the user to edit files. Flag the limit UP FRONT so the very first response is
+// a clean handoff, not a dead-end loop. Gated on not-Fleet and not-Builder — the
+// exact set that gets no authoring guidance otherwise.
+const frameworkCannotAuthorBlock = `**You cannot author agents, pipelines, skills, or apps yourself — but you CAN request a sub-agent.** Authoring is Builder's job and you can't dispatch Builder directly. When the user asks you to create a SUB-AGENT, call ` + "`request_build`" + ` with a complete spec (its job, persona, the tools/sources it needs, any schedule): that queues the build for the user's approval, and on approval Builder authors it as your sub-agent. Do this instead of trying to dispatch (least of all to yourself), improvising with searches, or telling the user to edit files. After calling it, tell the user it's queued for their approval and what it will do. For a pipeline, skill, or full app (not a sub-agent), you have no request path — say plainly you can't build those and point them to Builder in their agent picker.`
+
 // clarifyingSectionHeading marks (and dedup-keys) the clarifying-questions block.
 const clarifyingSectionHeading = "## Asking the user clarifying questions"
 
@@ -223,6 +236,11 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// Builder routing — only a delegating (Fleet) agent that is NOT Builder
 	// itself. Builder is the authoring agent; routing it to itself is nonsense.
 	add(agent.Fleet && !isBuilderAgent(agent.ID), "framework.builder_routing", builderRoutingMarker, frameworkBuilderRoutingBlock)
+	// The complement: an agent that CAN'T route to Builder (not Fleet) and isn't
+	// Builder itself is told, up front, that it cannot author — so a "create an
+	// agent" request produces a clean handoff instead of the self-dispatch /
+	// malformed-search flail.
+	add(!agent.Fleet && !isBuilderAgent(agent.ID), "framework.cannot_author", cannotAuthorMarker, frameworkCannotAuthorBlock)
 	// Channel home thread — Cortex agents only (carries the section heading).
 	add(agent.Cortex, "framework.channel", channelSectionHeading, frameworkChannelBlock())
 	// Fleet supervision, monitors, notify, phantom reach — Fleet agents. Ordered

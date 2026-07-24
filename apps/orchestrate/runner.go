@@ -2318,6 +2318,17 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// bypasses the fleet.
 		tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
 	}
+	// request_build — the COMPLEMENT of Fleet's live Builder dispatch. A Fleet
+	// agent hands authoring to Builder directly; a non-Fleet agent can't, so
+	// without this it has no path to "create a sub-agent" and flails. This gives
+	// it one: queue the build as an approval the user sees, and on approve Builder
+	// authors it OwnedBy this agent. Owner-run conversational turn only, and not
+	// Builder itself (Builder authors directly).
+	if forOrchestrator && ownerRun && !t.agent.Fleet && !isBuilderAgent(t.agent.ID) {
+		rb := requestBuildTool(t.user, t.agent.ID, t.agent.Name)
+		tools = append(tools, rb)
+		toolNames = append(toolNames, rb.Tool.Name)
+	}
 	// Channel-scoped chat tools — ANY agent that has channels gets list_chats /
 	// read_chat over ITS channels (a whole-service binding widens to the global
 	// view). Gated on having channels, independent of Fleet; conversational turn

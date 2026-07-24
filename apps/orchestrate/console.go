@@ -1654,6 +1654,16 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 			who = rec.Name
 		}
 		detail = "activate sub-agent: " + a.Brief
+	case buildAgentAction:
+		// The REQUESTER is who's asking; the build itself is the detail.
+		if a.FromAgent != "" {
+			if rec, found := loadAgent(udb, a.FromAgent); found {
+				who = rec.Name
+			} else {
+				who = a.FromAgent
+			}
+		}
+		detail = "build a sub-agent: " + a.Brief
 	case "bind_thread":
 		who = operatorApprovalRecipient(user, a)
 		detail = "bind 1:1 thread so the agent can read replies"
@@ -1871,6 +1881,21 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 				Log("[operator.approval] activate_sub_agent %s save failed: %v", a.Agent, err)
 			}
 		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// build_agent: a non-Fleet agent asked (via request_build) to have a sub-agent
+	// built. The user approving THIS is the human-in-the-loop the Fleet gate
+	// protects — so now run Builder on the requester's behalf. a.FromAgent rides
+	// as the dispatch origin, which runAgentSyncConfirm turns into the sub-session
+	// DispatchParentAgentID, so Builder's create_agent stamps OwnedBy=<requester>
+	// exactly as a live Fleet dispatch would. Builder's own creation then queues
+	// its usual activate_sub_agent approval, so the built agent still lands
+	// held-for-activation — this approval authorizes the BUILD, the next the
+	// switch-on. Async, like the delegate approval below.
+	if a.Action == buildAgentAction {
+		go RunDelegation(context.Background(), RootDB, a.Owner, "builder", a.Brief, a.FromAgent)
+		Log("[operator.approval] build_agent approved — dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

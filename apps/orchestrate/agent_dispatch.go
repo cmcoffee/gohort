@@ -500,6 +500,17 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
 		subSess.WorkspaceDir = ws
 	}
+	// A Builder run dispatched ON SOMEONE'S BEHALF — the async twin of a live
+	// Fleet dispatch — must stamp its creations OwnedBy the requester, or an
+	// approved build_agent request would produce a loose top-level agent instead
+	// of a sub-agent of the agent that asked. The requester rides the dispatch
+	// chain (via); its origin is the parent. Non-Builder delegations are
+	// unaffected (this only sets the field for Builder).
+	if isBuilderAgent(target.ID) && len(via) > 0 {
+		if p := strings.TrimSpace(via[len(via)-1]); p != "" {
+			subSess.DispatchParentAgentID = p
+		}
+	}
 	defer clearAuthoringInProgress(runtimeDB, subSessID)
 	defer DeleteSessionTempTools(runtimeDB, subSessID)
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.

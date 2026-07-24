@@ -299,3 +299,27 @@ func TestFrameworkDoesNotDuplicateBlockAlreadyInPersona(t *testing.T) {
 		t.Fatalf("framework injected a duplicate plan_set block; got:\n%s", got)
 	}
 }
+
+// A non-Fleet, non-Builder agent (e.g. a channel agent) can't route authoring to
+// Builder and has no authoring tools — so it must be TOLD it can't create
+// agents, up front, or it flails (self-dispatch loop, malformed search) when
+// asked to. Chat (Fleet) must NOT get this block; it gets Builder-routing.
+func TestFrameworkFlagsCannotAuthorOnNonFleetAgent(t *testing.T) {
+	channelAgent := AgentRecord{ID: "chan1", Name: "Moltbook", Cortex: true, Fleet: false}
+	got := frameworkPromptBlocks("", channelAgent, true)
+	if !strings.Contains(got, cannotAuthorMarker) {
+		t.Error("a non-Fleet agent must be flagged that it cannot author")
+	}
+	if strings.Contains(got, builderRoutingMarker) {
+		t.Error("a non-Fleet agent has no Builder-routing path — that block must not appear")
+	}
+
+	// The Fleet Chat seed is the inverse: routes to Builder, never told it can't.
+	chat := frameworkPromptBlocks("", chatSeed(t), true)
+	if strings.Contains(chat, cannotAuthorMarker) {
+		t.Error("a Fleet agent CAN route to Builder — must not get the can't-author block")
+	}
+	if !strings.Contains(chat, builderRoutingMarker) {
+		t.Error("a Fleet agent should get the Builder-routing block")
+	}
+}
