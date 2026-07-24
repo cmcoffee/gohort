@@ -20,4 +20,12 @@ func init() {
 	reg("framework.builder_routing", "Apps / agents / pipelines → Builder", "Authoring", "Fleet, not Builder", frameworkBuilderRoutingBlock)
 	reg("framework.channel", "Your channel", "Fleet", "Cortex", frameworkChannelBlock())
 	reg("framework.fleet", "Supervising the fleet", "Fleet", "Fleet", frameworkFleetBlock)
+	// The tools-available digest — a TEMPLATE, unlike the static blocks above.
+	// Placeholders render at prompt-build time: {tool_list} = the bulleted
+	// name+description digest (≈200 chars/tool, the legacy shape); {tool_names}
+	// = comma-separated bare names (≈15 chars/tool). Overriding this key is the
+	// live A/B lever for slimming the biggest always-on prompt contributor.
+	reg("framework.tools_directive", "Tools available (digest)", "Orchestration",
+		"Always, when tools are in the catalog. Template — placeholders: {tool_list} = bulleted name+description digest; {tool_names} = comma-separated bare names.",
+		toolsDirectiveDefault)
 }

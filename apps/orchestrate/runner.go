@@ -7492,15 +7492,51 @@ func emitIntentBlock(sse *sseWriter, blockID string, step PlanStep) {
 // it has. The "prefer tools over guessing" language is the load-bearing
 // nudge — models are good at picking the right tool when told to look
 // before answering.
+// toolsDirectiveKey / toolsDirectiveDefault: the "## Tools available" digest is
+// the single largest always-on prompt contributor (≈5–13K chars — it re-lists
+// every tool's description first-line even though the model receives the full
+// schemas in the same request; prompt-audit finding #1). Rather than hard-cut
+// it — the digest may be an accidental index the small models lean on — the
+// directive is now a TEMPLATE behind an operator-overridable prompt key, so the
+// slim variant can be A/B'd live from the admin Prompts page with no rebuild.
+// Placeholders:
+//
+//	{tool_list}  — the legacy bulleted "**name** — first-line-of-description"
+//	               digest (≈200 chars/tool)
+//	{tool_names} — a comma-separated list of bare tool names (≈15 chars/tool)
+//
+// The in-code default renders BYTE-IDENTICAL to the legacy output. Suggested
+// slim override to paste for the A/B:
+//
+//	## Tools available
+//
+//	Prefer calling a tool over guessing or answering from memory — every tool
+//	named here is live and callable this turn, and each one's full parameter
+//	schema accompanies this request. Available: {tool_names}
+const (
+	toolsDirectiveKey     = "framework.tools_directive"
+	toolsDirectiveDefault = "## Tools available\n\n{tool_list}"
+)
+
 func buildToolUseDirective(tools []AgentToolDef) string {
-	var b strings.Builder
-	b.WriteString("## Tools available\n\n")
-	for _, t := range tools {
-		desc := strings.SplitN(t.Tool.Description, "\n", 2)[0]
-		if len(desc) > 200 {
-			desc = desc[:200] + "…"
+	tpl := EffectivePromptText(toolsDirectiveKey, toolsDirectiveDefault)
+	if strings.Contains(tpl, "{tool_list}") {
+		var b strings.Builder
+		for _, t := range tools {
+			desc := strings.SplitN(t.Tool.Description, "\n", 2)[0]
+			if len(desc) > 200 {
+				desc = desc[:200] + "…"
+			}
+			fmt.Fprintf(&b, "- **%s** — %s\n", t.Tool.Name, desc)
 		}
-		fmt.Fprintf(&b, "- **%s** — %s\n", t.Tool.Name, desc)
+		tpl = strings.ReplaceAll(tpl, "{tool_list}", b.String())
 	}
-	return b.String()
+	if strings.Contains(tpl, "{tool_names}") {
+		names := make([]string, 0, len(tools))
+		for _, t := range tools {
+			names = append(names, t.Tool.Name)
+		}
+		tpl = strings.ReplaceAll(tpl, "{tool_names}", strings.Join(names, ", "))
+	}
+	return tpl
 }
