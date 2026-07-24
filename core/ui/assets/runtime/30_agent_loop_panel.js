@@ -1927,8 +1927,8 @@
       }
       var copyBtn = el('button', {
         class: 'ui-agent-msg-act',
-        title: 'Copy this message to the clipboard',
-        onclick: function(){ copyAssistantMessage(bubble, copyBtn); },
+        title: 'Copy this exchange — the request, this reply, and its tool calls',
+        onclick: function(){ copySubSession(bubble, copyBtn); },
       }, ['Copy']);
       bar.appendChild(copyBtn);
       maybeAppendScrub(bar, bubble);
@@ -2008,32 +2008,43 @@
       }
     }
 
-    // copyTurnForTuning was the per-bubble "Copy turn" handler — its
-    // button has been removed in favor of the bottom-row Copy session
-    // button (which captures the same conversation in one click rather
-    // than per-turn). Function kept below for reference but unreachable;
-    // delete it once the prompt-tuning flow has been on Copy session
-    // for a release and no caller has been added back.
-    function copyTurnForTuning(bubble, btn) {
-      // Walk back to the user bubble that started this turn.
+    // copySubSession copies ONE exchange as a short, self-contained transcript —
+    // the request, the reply(-ies), and their tool calls with args + results.
+    // It's "Copy session" scoped to a single turn: the sub-session you paste to
+    // show what happened in one fire or one answer without dumping the whole
+    // thread. Wired to the per-message Copy button.
+    //
+    // Starts by walking back to the user bubble that opened the turn. A REPORT
+    // CARD (a scheduled fire) has no preceding user bubble — the request is the
+    // card's own report label/brief — so when none is found we start from the
+    // card itself and use its report heading as the request rather than bailing.
+    function copySubSession(bubble, btn) {
+      var lines = [];
+      var startBubble = bubble;
       var userBubble = bubble;
       while (userBubble && !userBubble.classList.contains('ui-agent-msg-user')) {
         userBubble = userBubble.previousElementSibling;
       }
-      if (!userBubble) {
-        window.uiAlert('No user prompt found for this turn.');
-        return;
+      if (userBubble) {
+        var userEntry = msgEntryForBubble(userBubble);
+        var userText = (userEntry && userEntry.rawText) ||
+          (userBubble.querySelector(':scope > .ui-agent-msg-body') &&
+            userBubble.querySelector(':scope > .ui-agent-msg-body').innerText) || '';
+        lines.push('## Request', '', userText.trim(), '');
+        startBubble = userBubble;
+      } else {
+        // Report card (fire / monitor wake): the request is the card's label.
+        var entry = msgEntryForBubble(bubble);
+        var label = (entry && (entry.report_from || entry.reportFrom)) || '';
+        var detail = (entry && (entry.report_detail || entry.reportDetail)) || '';
+        lines.push('## Request', '', ('Scheduled: ' + (label || 'automated fire') + (detail ? ' — ' + detail : '')).trim(), '');
+        startBubble = bubble.previousElementSibling || bubble; // include from just before this card
       }
-      var userEntry = msgEntryForBubble(userBubble);
-      var userText = (userEntry && userEntry.rawText) ||
-        (userBubble.querySelector(':scope > .ui-agent-msg-body') &&
-          userBubble.querySelector(':scope > .ui-agent-msg-body').innerText) || '';
-      var lines = ['## User', '', userText.trim(), ''];
-      // Walk forward from the user bubble through assistant bubbles
+      // Walk forward from the request through assistant bubbles
       // until the next user (or end). Each assistant bubble becomes
       // a round; tools attached to the bubble become subsections.
       var roundNum = 0;
-      var next = userBubble.nextElementSibling;
+      var next = (startBubble === bubble ? bubble : startBubble.nextElementSibling);
       while (next && !next.classList.contains('ui-agent-msg-user')) {
         if (next.classList.contains('ui-agent-msg-assistant')) {
           roundNum++;

@@ -432,6 +432,15 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// allowance and had to be forced to wrap up (its work is likely incomplete).
 	softCap := resolveMaxWorkerRounds(agent)
 	lastRound := 0
+	// liveCalls accumulates the tool calls the model actually requested each
+	// round, straight from OnStep — the SAME stream the live activity card
+	// renders. This is the faithful record: a text-based-tool-call model (the
+	// A3B emits calls as text, not native structures) doesn't always round-trip
+	// every call into the transcript's structured ToolCalls, so reconstructing
+	// the trace from the post-hoc transcript under-counts — the export then
+	// showed fewer calls than the card. Recording live off OnStep closes that
+	// gap; results get stitched back on from the transcript below.
+	var liveCalls []ToolCall
 	// Unattended fire: same pre-authorization policy as the standing runner — a
 	// NeedsConfirm tool runs only if the owner pre-authorized it (AutoApproveTools),
 	// else it's refused and queued. Replaces the old blanket auto-approve that
@@ -448,6 +457,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			if s.Round > lastRound {
 				lastRound = s.Round
 			}
+			liveCalls = append(liveCalls, s.ToolCalls...)
 		},
 		// Custom-tool resolution, same as the dispatch path: resolve a direct
 		// call to a has-args custom tool and surface tools loaded via load_tool.
@@ -475,11 +485,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if strings.TrimSpace(agentLabel) == "" {
 		agentLabel = agent.ID
 	}
-	// Tool trace, reconstructed once from the loop transcript: the card renders
-	// it as chips, the ledger stores it as Steps, and the preamble guard keys on
-	// whether it's empty. A scheduled fire has no live chatTurn to snapshot from,
-	// so this reconstruction IS the record of what the fire did.
-	toolTrace := persistedToolCallsFromTranscript(transcript)
+	// Tool trace: the card renders it as chips, the ledger stores it as Steps,
+	// and the preamble guard keys on whether it's empty. Prefer the LIVE OnStep
+	// calls (faithful to what actually ran, including a text-based model's calls)
+	// and stitch result bodies back on from the transcript. Fall back to pure
+	// transcript reconstruction only if OnStep captured nothing (e.g. a run that
+	// errored before its first round).
+	toolTrace := persistedToolCallsFromLiveCalls(liveCalls, transcript)
+	if len(toolTrace) == 0 {
+		toolTrace = persistedToolCallsFromTranscript(transcript)
+	}
 	steps := runStepsFromToolCalls(toolTrace)
 	record := func(status RunStatus, summary, raw, errStr string) {
 		RecordRun(RootDB, RunRecord{
@@ -836,6 +851,41 @@ func CancelOrchestrateUpdate(sessionID, taskID string) error {
 		return nil
 	}
 	return errors.New("task not found")
+}
+
+// persistedToolCallsFromLiveCalls builds the fire's tool trace from the calls
+// OnStep observed live — the authoritative record of what the model requested
+// each round — and stitches each call's result body back on from the transcript
+// (results land in tool-role messages keyed by call ID). This is faithful where
+// the pure-transcript reconstruction is lossy: a text-based-tool-call model
+// doesn't always record every call in an assistant message's structured
+// ToolCalls, so reconstructing from the transcript alone under-counts, and the
+// export showed fewer calls than the live card. A call whose ID doesn't match a
+// transcript result (a text-parsed call may carry no stable ID) is still kept —
+// better a call with no result body than a missing call.
+func persistedToolCallsFromLiveCalls(calls []ToolCall, transcript []Message) []PersistedToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	results := map[string]ToolResult{}
+	for _, m := range transcript {
+		for _, tr := range m.ToolResults {
+			results[tr.ID] = tr
+		}
+	}
+	out := make([]PersistedToolCall, 0, len(calls))
+	for _, tc := range calls {
+		pc := PersistedToolCall{Name: tc.Name, Args: tc.Args}
+		if tr, ok := results[tc.ID]; ok {
+			if tr.IsError {
+				pc.Err = tr.Content
+			} else {
+				pc.Result = tr.Content
+			}
+		}
+		out = append(out, pc)
+	}
+	return out
 }
 
 // persistedToolCallsFromTranscript reconstructs the per-message tool trace from
