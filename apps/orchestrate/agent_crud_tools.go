@@ -84,14 +84,10 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		// nil AllowedTools as the default pool, so map back.
 		rec.AllowedTools = nil
 	}
-	// Auto-copy session tools into the new agent's Tools[]: any name in
-	// allowed_tools that matches a session-pool draft is copied into
-	// the agent's bundled tools so the agent owns its dependencies
-	// (per-agent scope, independent of the originating session). Without
-	// this, the LLM's "make a tool then make an agent that uses it"
-	// flow saves an agent whose allowlist references a name that
-	// vanishes at session end.
-	copied := autoCopySessionToolsForAgent(sess, &rec)
+	// LLM-supplied inline tools commit to the user's unified store AFTER the
+	// record is saved (scoping a store row needs the assigned agent ID) — the
+	// record no longer carries embedded tool copies.
+	inlineTools := agentScopedToolsFromArgs(args)
 	rec.ID = "" // force fresh assignment
 	rec.Owner = sess.Username
 	// Dispatched-Builder authoring: a Fleet parent (e.g. Chat) dispatched Builder
@@ -108,6 +104,24 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if err != nil {
 		return "", err
 	}
+	// Commit the inline tools as store rows scoped to the new agent.
+	committedTools := make([]TempTool, 0, len(inlineTools))
+	for _, t := range inlineTools {
+		if err := bundleAgentToolByID(sess.DB, sess.Username, saved.ID, t); err != nil {
+			Log("[orchestrate.agent_crud] could not scope inline tool %q to agent %q: %v", t.Name, saved.Name, err)
+			continue
+		}
+		committedTools = append(committedTools, t)
+	}
+	// Auto-copy session drafts: any name in allowed_tools that matches a
+	// session-pool draft is committed to the store scoped to this agent, so
+	// the agent owns its dependencies independent of the originating session.
+	// Without this, the LLM's "make a tool then make an agent that uses it"
+	// flow saves an agent whose allowlist references a name that vanishes at
+	// session end.
+	copiedTools := autoCopySessionToolsForAgent(sess, &saved)
+	copied := len(copiedTools)
+	committedTools = append(committedTools, copiedTools...)
 	if dispatchedBuild {
 		// Queue the parent owner's approval. Agent holds the created id; the
 		// console's activate handler flips PendingApproval off on approve.
@@ -132,24 +146,22 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	// Register each inline-bundled tool IN MEMORY on this session so the LLM can
 	// dispatch it BY NAME to verify before declaring success. The canonical copy
-	// lives on the new agent's record; this is purely a verification handle for
-	// the authoring turn.
+	// is the store row scoped to the new agent; this is purely a verification
+	// handle for the authoring turn.
 	//
 	// In-memory, not a persisted session draft: the authoring agent is not the
 	// agent that owns the tool, so it has no kit to load it from — but it only
 	// needs it while it is verifying, and a persisted copy outlived the turn as
 	// a ghost in a parallel scope that then had to be shadowed and pruned.
 	installedDrafts := 0
-	if len(saved.Tools) > 0 {
-		for i := range saved.Tools {
-			t := saved.Tools[i]
-			sess.RemoveTempTool(t.Name)
-			if err := sess.AppendTempTool(&t); err != nil {
-				Log("[orchestrate.agent_crud] in-session registration failed for bundled tool %q: %v", t.Name, err)
-				continue
-			}
-			installedDrafts++
+	for i := range committedTools {
+		t := committedTools[i]
+		sess.RemoveTempTool(t.Name)
+		if err := sess.AppendTempTool(&t); err != nil {
+			Log("[orchestrate.agent_crud] in-session registration failed for bundled tool %q: %v", t.Name, err)
+			continue
 		}
+		installedDrafts++
 	}
 	b, _ := json.Marshal(saved)
 	toolWarn := unresolvedToolsWarning(sess, &saved)
@@ -191,49 +203,33 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	), nil
 }
 
-// autoCopySessionToolsForAgent scans rec.AllowedTools for names that
-// match either (a) this session's session_temp_tools entries or
-// (b) the user's persistent_temp_tools pool, and appends each as a
-// copy into rec.Tools (deduped by name — pre-existing inline tools
-// win, no overwrite). Returns the number of tools copied.
+// autoCopySessionToolsForAgent scans rec.AllowedTools for names that match
+// this session's session_temp_tools drafts and commits each to the user's
+// unified tool store scoped to the agent (rec.ID must already be assigned —
+// call it after saveAgent). Returns the tools it committed.
 //
-// Copy-always (not reference-by-name) is the contract for both
-// source pools:
-//   - Session tools die at session end, so they MUST be copied.
-//   - Persistent tools could be referenced by name at runtime, but
-//     that creates fragility: admin cleanup of the persistent pool
-//     silently breaks downstream agents. Snapshotting at create/
-//     update time makes agents self-contained — admin pool
-//     management can't break them. Tradeoff: persistent-tool
-//     updates don't auto-propagate; admin can run a "sync from
-//     pool" action to pick up changes explicitly.
+// Session drafts die at session end, so they MUST be committed. Pool-sourced
+// names need no copy anymore: shared rows in the unified store are already
+// visible to every agent, including this one — the old snapshot-onto-the-
+// record contract is obsolete along with the embedded copies it protected.
 //
-// Session takes precedence over persistent when both pools have a
-// tool by the same name (the session version is what the LLM just
-// authored / iterated on; persistent is the older approved copy).
-func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) int {
-	if sess == nil {
-		return 0
+// Names already in the store are left alone (a shared row already serves the
+// agent; a scoped row was just authored inline and pre-existing inline tools
+// win, no overwrite).
+func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) []TempTool {
+	if sess == nil || rec == nil || strings.TrimSpace(rec.ID) == "" {
+		return nil
 	}
 	// An "everything" surface (empty / nil AllowedTools — including the "*"
 	// sentinel that create_agent already collapsed to nil) STILL needs its
-	// freshly-authored tools snapshotted. Otherwise the LLM's documented "make a
-	// tool, then make an agent that uses it" flow silently loses the tool when the
-	// agent is given the full pool: the session draft dies at session end and was
-	// never copied onto the record. For that case we snapshot the SESSION DRAFTS
-	// only — persistent-pool tools load via the default pool anyway, so copying
-	// them would just bloat the record.
+	// freshly-authored tools committed. Otherwise the LLM's documented "make a
+	// tool, then make an agent that uses it" flow silently loses the tool when
+	// the agent is given the full pool: the session draft dies at session end
+	// and was never kept anywhere durable.
 	everything := len(rec.AllowedTools) == 0
 
 	byName := make(map[string]*TempTool)
 	draftNames := []string{}
-	// Persistent pool first; session overrides.
-	if sess.Username != "" {
-		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
-			t := p.Tool
-			byName[t.Name] = &t
-		}
-	}
 	if sess.ChatSessionID != "" {
 		for _, draft := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
 			t := draft
@@ -242,47 +238,40 @@ func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) int {
 		}
 	}
 	if len(byName) == 0 {
-		return 0
+		return nil
 	}
-	// Which names to snapshot: a specific allowlist snapshots its named tools
-	// (persistent OR session, for self-containment); an everything surface
-	// snapshots the session drafts authored this session.
+	// Which names to commit: a specific allowlist commits its named drafts; an
+	// everything surface commits every draft authored this session.
 	names := rec.AllowedTools
 	if everything {
-		sort.Strings(draftNames) // deterministic Tools[] order
+		sort.Strings(draftNames) // deterministic commit order
 		names = draftNames
 	}
-	already := make(map[string]bool, len(rec.Tools))
-	for _, t := range rec.Tools {
-		already[t.Name] = true
-	}
-	copied := 0
+	var copied []TempTool
 	for _, name := range names {
-		if already[name] {
-			continue
-		}
 		t, ok := byName[name]
 		if !ok {
 			continue
 		}
-		rec.Tools = append(rec.Tools, *t)
-		already[name] = true
-		copied++
-		Log("[orchestrate.agent_crud] snapshotted tool %q into agent %q", name, rec.Name)
+		if _, exists := UserToolByName(sess.DB, sess.Username, name); exists {
+			continue // already in the store (shared or just-committed inline)
+		}
+		if err := bundleAgentToolByID(sess.DB, sess.Username, rec.ID, *t); err != nil {
+			Log("[orchestrate.agent_crud] could not scope session tool %q to agent %q: %v", name, rec.Name, err)
+			continue
+		}
+		copied = append(copied, *t)
+		Log("[orchestrate.agent_crud] committed session tool %q scoped to agent %q", name, rec.Name)
 		// Dequeue from admin pending-review pool — this tool is now
-		// owned by an agent record and doesn't need separate
-		// promotion. No-op when the name isn't in the queue (e.g.
-		// the tool came from the persistent pool which was already
-		// admin-approved).
+		// committed to an agent's kit and doesn't need separate
+		// promotion. No-op when the name isn't in the queue.
 		if sess.Username != "" {
 			DequeuePendingTempTool(sess.DB, sess.Username, name)
 		}
-		// Drop the session draft too — the tool is now owned by the
-		// agent record, so the session-scoped copy is just stale
-		// duplication that confuses the Session-tools UI and the
-		// runtime loader's "already loaded" tracking. The persistent
-		// pool already has its own dedup path (line 244-249); only
-		// session drafts need explicit removal.
+		// Drop the session draft too — the tool is now in the unified
+		// store, so the session-scoped copy is just stale duplication
+		// that confuses the Session-tools UI and the runtime loader's
+		// "already loaded" tracking.
 		if sess.ChatSessionID != "" {
 			RemoveSessionTempTool(sess.DB, sess.ChatSessionID, name)
 		}
@@ -292,8 +281,8 @@ func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) int {
 
 // unresolvedAllowedTools returns the allowed_tools names that won't resolve
 // to any tool the agent can actually reach at run time: a registered tool,
-// the agent's own bundled tools (rec.Tools — which already includes any
-// session/persistent drafts auto-copied by autoCopySessionToolsForAgent), or
+// the user's unified tool store (shared rows plus agent-scoped rows — which
+// already includes anything committed by autoCopySessionToolsForAgent), or
 // this session's credential tools (fetch_url_<cred>, plus the legacy
 // call_<cred> alias the runtime accepts). Names that resolve to nothing are
 // silently dropped at dispatch (see GetAgentToolsWithSession's per-name
@@ -307,8 +296,13 @@ func unresolvedAllowedTools(sess *ToolSession, rec *AgentRecord) []string {
 		return nil
 	}
 	known := make(map[string]bool)
-	for _, t := range rec.Tools {
-		known[t.Name] = true
+	if sess != nil && sess.Username != "" {
+		// Flattened namespace: the agent's authored tools are store rows, not
+		// embedded record copies — any row counts (shared rows are visible to
+		// every agent; scoped rows were committed for this agent above).
+		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+			known[p.Tool.Name] = true
+		}
 	}
 	if sess != nil {
 		for _, td := range Secure().BuildTools(sess) {
@@ -386,32 +380,43 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", errors.New(msg)
 	}
 	mergeAgentArgs(&existing, args)
+	// LLM-supplied inline tools commit via the unified store (scoped to this
+	// agent) after the record saves — mergeAgentArgs no longer writes them
+	// onto the record.
+	var inlineTools []TempTool
+	if v, ok := args["tools"]; ok && v != nil {
+		inlineTools = agentScopedToolsFromArgs(args)
+	}
 	// Auto-copy session tools into the agent when allowed_tools picks up
 	// a name that exists in this session's draft pool — same rule as
 	// create_agent. Lets the LLM extend an agent's tool set across the
 	// "make a session tool, then add it to my agent" flow without the
 	// reference going stale at session end.
-	copied := autoCopySessionToolsForAgent(sess, &existing)
+	copiedTools := autoCopySessionToolsForAgent(sess, &existing)
+	copied := len(copiedTools)
 	saved, err := saveAgent(sess.DB, existing)
 	if err != nil {
 		return "", err
 	}
+	for _, t := range inlineTools {
+		if err := bundleAgentToolByID(sess.DB, sess.Username, saved.ID, t); err != nil {
+			Log("[orchestrate.agent_crud] could not scope inline tool %q to agent %q: %v", t.Name, saved.Name, err)
+		}
+	}
 	// If tools[] was in the update, register each in memory so the LLM can
 	// dispatch them by name to verify before ending the turn. Same testability
 	// principle as create_agent, and the same reason it isn't persisted: the
-	// canonical copy is on the target agent, and this handle is only needed for
-	// the authoring turn.
+	// canonical copy is the store row scoped to the target agent, and this
+	// handle is only needed for the authoring turn.
 	installedDrafts := 0
-	if _, supplied := args["tools"]; supplied {
-		for i := range saved.Tools {
-			t := saved.Tools[i]
-			sess.RemoveTempTool(t.Name)
-			if err := sess.AppendTempTool(&t); err != nil {
-				Log("[orchestrate.agent_crud] in-session registration failed for updated tool %q: %v", t.Name, err)
-				continue
-			}
-			installedDrafts++
+	for i := range inlineTools {
+		t := inlineTools[i]
+		sess.RemoveTempTool(t.Name)
+		if err := sess.AppendTempTool(&t); err != nil {
+			Log("[orchestrate.agent_crud] in-session registration failed for updated tool %q: %v", t.Name, err)
+			continue
 		}
+		installedDrafts++
 	}
 	verifyHint := ""
 	if installedDrafts > 0 {
@@ -611,8 +616,10 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 		MaxWorkerRounds:    intFromArgs(args, "max_worker_rounds"),
 		ThinkBudget:        intFromArgs(args, "think_budget"),
 		IntakeForm:         intakeFormFromArgs(args),
-		Tools:              agentScopedToolsFromArgs(args),
-		Evals:              evalsFromArgs(args),
+		// Tools deliberately NOT set: LLM-supplied inline tools commit to the
+		// unified store scoped to the agent (see create_agent, post-save) —
+		// the record no longer embeds tool copies.
+		Evals: evalsFromArgs(args),
 	}
 	if v, ok := args["gap_check"].(bool); ok {
 		rec.GapCheck = v
@@ -816,9 +823,8 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	if v, ok := args["intake_form"]; ok && v != nil {
 		rec.IntakeForm = intakeFormFromArgs(args)
 	}
-	if v, ok := args["tools"]; ok && v != nil {
-		rec.Tools = agentScopedToolsFromArgs(args)
-	}
+	// "tools" deliberately NOT merged onto the record: inline tools commit to
+	// the unified store scoped to the agent (see update_agent, post-save).
 	if v, ok := args["evals"]; ok && v != nil {
 		rec.Evals = evalsFromArgs(args)
 	}

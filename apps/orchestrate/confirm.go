@@ -103,6 +103,9 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 func (t *chatTurn) escalateToolConfirm(toolName, cred, argsPreview string) bool {
 	if t == nil || t.sse == nil {
 		Log("[orchestrate.confirm] %s via credential %q requires approval but this run has no interactive viewer — denied (fail closed)", toolName, cred)
+		if t != nil {
+			t.turnDiag("tool-denied", fmt.Sprintf("%s requires approval (credential %q) but this run had no interactive viewer — denied fail-closed.", toolName, cred))
+		}
 		return false
 	}
 	if len(argsPreview) > 600 {
@@ -124,9 +127,20 @@ func (t *chatTurn) escalateToolConfirm(toolName, cred, argsPreview string) bool 
 	})
 	select {
 	case v := <-p.ch:
+		if !v {
+			t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (credential %q).", toolName, cred))
+		}
 		return v
 	case <-time.After(toolConfirmTimeout):
 		Log("[orchestrate.confirm] approval for %s (credential %q) timed out after %s — denied", toolName, cred, toolConfirmTimeout)
+		// Breadcrumb + a persistent in-conversation note. The silent version
+		// of this deny is exactly the "said 'go for it', got one sentence,
+		// then five minutes of dead air" incident: the approval card sat
+		// unanswered, the timeout killed the call, and nothing on screen
+		// said why. The user should never have to ask "what happened?".
+		t.turnDiag("tool-denied", fmt.Sprintf("Approval for %s (credential %q) timed out after %s — the call was denied. Re-ask to retry; the approval card must be answered within the window.", toolName, cred, toolConfirmTimeout))
+		t.sse.Send(map[string]any{"kind": "status_note",
+			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s — the call was denied.", toolName, toolConfirmTimeout)})
 		return false
 	}
 }

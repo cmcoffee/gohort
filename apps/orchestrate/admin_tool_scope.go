@@ -142,15 +142,10 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	if udb == nil {
 		return st, false
 	}
-	var globalDef *TempTool
-	for _, p := range LoadPersistentTempTools(db, owner) {
-		if p.Tool.Name == toolName {
-			t := p.Tool
-			globalDef = &t
-			break
-		}
-	}
-	st.Global = globalDef != nil
+	// Flattened namespace: ONE record answers everything. Empty ScopeAgents =
+	// the Global pill; a non-empty list = exactly the agents carrying it.
+	row, rowFound := UserToolByName(db, owner, toolName)
+	st.Global = rowFound && len(row.ScopeAgents) == 0
 
 	agents := listAgents(udb, owner)
 	// scopeTarget: only top-level, user-managed agents are tool-scope targets.
@@ -178,6 +173,11 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	// tool — an existing grant must stay visible and revocable even though
 	// seeds are no longer OFFERED as targets.
 	agentHas := map[string]bool{}
+	if rowFound {
+		for _, id := range row.ScopeAgents {
+			agentHas[id] = true
+		}
+	}
 	scopeTarget := func(a AgentRecord) bool {
 		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
 			return false
@@ -192,27 +192,8 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 		}
 		return true
 	}
-	var scopedDef *TempTool
-	for i := range agents {
-		if isAppAgent(agents[i].ID) {
-			continue
-		}
-		for j := range agents[i].Tools {
-			if agents[i].Tools[j].Name == toolName {
-				agentHas[agents[i].ID] = true
-				if scopedDef == nil {
-					t := agents[i].Tools[j]
-					scopedDef = &t
-				}
-			}
-		}
-	}
-	def := globalDef
-	if def == nil {
-		def = scopedDef
-	}
-	if def != nil {
-		st.Missing = missingDeps(*def)
+	if rowFound {
+		st.Missing = missingDeps(row.Tool)
 	}
 	// Emit parents first, then each parent's children directly beneath it, so a
 	// consumer that just walks the slice renders the tree in order. Sub-agents
@@ -291,57 +272,25 @@ func setToolScope(db Database, owner, toolName, target string, on bool) error {
 		}
 		return bundleAgentToolByID(udb, owner, target, *def)
 	}
-	// OFF at agent scope. Snapshot the definition + the agent name BEFORE the
-	// remove so that if this is the LAST agent carrying a non-global tool, we
-	// can rehome it into the orphan pool instead of letting it vanish — same
-	// survival guarantee agent-delete gives via captureOrphanedTools. Without
-	// this, unselecting the final scope pill silently destroyed the only copy.
-	def := scopedDefOf(udb, owner, toolName)
-	formerName := target
-	for _, ag := range st.Agents {
-		if ag.ID == target {
-			formerName = ag.Name
-			break
-		}
-	}
-	if err := unbundleAgentToolByID(udb, owner, target, toolName); err != nil {
-		return err
-	}
-	// st.Global is false here (the global branch returned above), so a tool
-	// with no remaining agent copy now lives nowhere: orphan it.
-	if def != nil && scopedDefOf(udb, owner, toolName) == nil {
-		AddOrphanedTempTools(db, owner, []OrphanedTempTool{{
-			Tool:            *def,
-			FormerAgentID:   target,
-			FormerAgentName: formerName,
-			OrphanedAt:      time.Now(),
-		}})
-		Log("[temptool.scope] orphaned %q after unselecting its last scope (was on %q)", toolName, formerName)
-	}
-	return nil
+	// OFF at agent scope: drop this agent from the record's ScopeAgents.
+	// unbundleAgentToolByID orphans the record when this was the LAST
+	// carrier — same survival guarantee agent-delete gives — so no
+	// snapshot/re-check dance is needed here anymore.
+	return unbundleAgentToolByID(udb, owner, target, toolName)
 }
 
 // promoteScopedToGlobal lifts an agent-scoped tool into the pool and strips
 // every agent copy — the Global-pill ON transition from agent scope.
 func promoteScopedToGlobal(db, udb Database, owner, toolName string) error {
-	def := scopedDefOf(udb, owner, toolName)
-	if def == nil {
-		return fmt.Errorf("no agent copy of %q to promote", toolName)
+	p, ok := UserToolByName(db, owner, toolName)
+	if !ok || len(p.ScopeAgents) == 0 {
+		return fmt.Errorf("no agent-scoped %q to promote", toolName)
 	}
-	if err := AdminPersistTempTool(db, owner, *def); err != nil {
-		return err
-	}
-	for _, a := range listAgents(udb, owner) {
-		for _, t := range a.Tools {
-			if t.Name == toolName {
-				if err := unbundleAgentToolByID(udb, owner, a.ID, toolName); err != nil {
-					// Don't silently leave a scoped copy behind: that's the
-					// "promoted to global but it came back on Case Analyzer" bug.
-					Log("[temptool.scope] promote %q: strip from %q failed: %v", toolName, a.Name, err)
-				}
-				break
-			}
-		}
+	// Flattened namespace: promote = clear the scope restriction. One record,
+	// nothing to copy, nothing to strip — the "promoted but it came back on
+	// Case Analyzer" class of bug is structurally impossible now.
+	if !SetUserToolScopeAgents(db, owner, toolName, nil) {
+		return fmt.Errorf("promote %q: scope update failed", toolName)
 	}
 	return nil
 }
@@ -350,38 +299,33 @@ func promoteScopedToGlobal(db, udb Database, owner, toolName string) error {
 // every agent that currently sees it (Global-pill OFF = descope to the ON
 // agents). Disabled/denied agents are left without a copy.
 func demoteGlobalToScoped(db, udb Database, owner, toolName string, st ToolScopeState) error {
-	var def *TempTool
-	for _, p := range LoadPersistentTempTools(db, owner) {
-		if p.Tool.Name == toolName {
-			t := p.Tool
-			def = &t
-			break
-		}
-	}
-	if def == nil {
+	p, ok := UserToolByName(db, owner, toolName)
+	if !ok || len(p.ScopeAgents) != 0 {
 		return fmt.Errorf("%q is not a global tool", toolName)
 	}
-	landed := 0
+	// Flattened namespace: demote = restrict the ONE record to the currently-ON
+	// agents. No copies land anywhere.
+	var onAgents []string
 	for _, ag := range st.Agents {
 		if ag.On {
-			if err := bundleAgentToolByID(udb, owner, ag.ID, *def); err != nil {
-				Log("[temptool.scope] demote %q: could not bundle onto %q: %v", toolName, ag.Name, err)
-			} else {
-				landed++
-			}
+			onAgents = append(onAgents, ag.ID)
 		}
 	}
 	// Global OFF with no agent to descope onto would otherwise hard-delete the
 	// only copy. Orphan it instead so it stays re-homeable — same guarantee the
 	// agent-scope OFF path gives.
-	if landed == 0 {
+	if len(onAgents) == 0 {
 		AddOrphanedTempTools(db, owner, []OrphanedTempTool{{
-			Tool:       *def,
+			Tool:       p.Tool,
 			OrphanedAt: time.Now(),
 		}})
 		Log("[temptool.scope] orphaned %q on global-OFF with no descope target", toolName)
+		return DeletePersistentTempTool(db, owner, toolName)
 	}
-	return DeletePersistentTempTool(db, owner, toolName)
+	if !SetUserToolScopeAgents(db, owner, toolName, onAgents) {
+		return fmt.Errorf("demote %q: scope update failed", toolName)
+	}
+	return nil
 }
 
 // disableGlobalToolForAgent hides a global tool from one agent: drop it from
@@ -423,16 +367,12 @@ func disableGlobalToolForAgent(udb Database, owner, agentID, toolName string) er
 	return err
 }
 
-// scopedDefOf returns the definition of an agent-scoped tool from whichever
-// agent currently carries it.
+// scopedDefOf returns the definition of an agent-scoped tool from the
+// unified store (a record whose ScopeAgents restricts it to specific agents).
 func scopedDefOf(udb Database, owner, toolName string) *TempTool {
-	for _, a := range listAgents(udb, owner) {
-		for _, t := range a.Tools {
-			if t.Name == toolName {
-				tt := t
-				return &tt
-			}
-		}
+	if p, ok := UserToolByName(udb, owner, toolName); ok && len(p.ScopeAgents) > 0 {
+		t := p.Tool
+		return &t
 	}
 	return nil
 }
@@ -456,21 +396,28 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 	// tool onto ANY of the owner's agents — including SEED agents like Builder
 	// (Owner==seedOwner) and sub-agents whose .Owner differs. The equality check
 	// wrongly rejected exactly those with "not your agent" (mirrors the
-	// credential/pipeline scope fix). Saving writes the user's per-user shadow.
-	_ = owner
-	replaced := false
-	for i := range rec.Tools {
-		if rec.Tools[i].Name == t.Name {
-			rec.Tools[i] = t
-			replaced = true
-			break
-		}
+	// credential/pipeline scope fix).
+	//
+	// Flattened namespace: the definition lives in the user's unified store —
+	// "bundling" = upsert the ONE record and make sure this agent is in its
+	// scope. A shared record (empty ScopeAgents) is already visible to the
+	// agent; only its definition updates. AgentRecord.Tools is no longer
+	// written.
+	existing, had := UserToolByName(udb, owner, t.Name)
+	if err := AdminPersistTempTool(udb, owner, t); err != nil {
+		return err
 	}
-	if !replaced {
-		rec.Tools = append(rec.Tools, t)
+	if had && len(existing.ScopeAgents) == 0 {
+		return nil // shared — def updated in place, visibility unchanged
 	}
-	_, err := saveAgent(udb, rec)
-	return err
+	if existing.ScopedToAgent(rec.ID) {
+		return nil // def updated; scope already includes this agent
+	}
+	scope := append(append([]string{}, existing.ScopeAgents...), rec.ID)
+	if !SetUserToolScopeAgents(udb, owner, t.Name, scope) {
+		return fmt.Errorf("bundle %q: scope update failed", t.Name)
+	}
+	return nil
 }
 
 // unbundleAgentToolByID removes a tool from an agent's record — the OFF twin of
@@ -488,22 +435,34 @@ func unbundleAgentToolByID(udb Database, owner, agentID, toolName string) error 
 	if !ok {
 		return fmt.Errorf("agent %q not found", agentID)
 	}
-	_ = owner
-	kept := rec.Tools[:0]
-	found := false
-	for _, tl := range rec.Tools {
-		if tl.Name == toolName {
-			found = true
-			continue
-		}
-		kept = append(kept, tl)
-	}
-	if !found {
+	// Flattened namespace: drop this agent from the record's ScopeAgents.
+	// The LAST carrier orphans the record instead of deleting it (or silently
+	// promoting it to shared) — the same survival guarantee the old
+	// last-scope-pill-OFF path implemented at its call sites.
+	p, found := UserToolByName(udb, owner, toolName)
+	if !found || !p.ScopedToAgent(agentID) {
 		return fmt.Errorf("tool %q is not bundled on agent %q", toolName, rec.Name)
 	}
-	rec.Tools = kept
-	_, err := saveAgent(udb, rec)
-	return err
+	kept := make([]string, 0, len(p.ScopeAgents))
+	for _, id := range p.ScopeAgents {
+		if id != agentID {
+			kept = append(kept, id)
+		}
+	}
+	if len(kept) == 0 {
+		AddOrphanedTempTools(udb, owner, []OrphanedTempTool{{
+			Tool:            p.Tool,
+			FormerAgentID:   agentID,
+			FormerAgentName: rec.Name,
+			OrphanedAt:      time.Now(),
+		}})
+		Log("[temptool.scope] orphaned %q after removing its last carrier %q", toolName, rec.Name)
+		return DeletePersistentTempTool(udb, owner, toolName)
+	}
+	if !SetUserToolScopeAgents(udb, owner, toolName, kept) {
+		return fmt.Errorf("unbundle %q: scope update failed", toolName)
+	}
+	return nil
 }
 
 // rehomeOrphanTool moves an orphaned tool to global or onto an agent, then
@@ -543,24 +502,34 @@ func rehomeOrphanTool(db Database, owner, toolName, target string) error {
 // global copy remains, so it isn't orphaned). Best-effort; never blocks the
 // delete.
 func captureOrphanedTools(db Database, owner string, agent AgentRecord) {
-	if db == nil || owner == "" || len(agent.Tools) == 0 {
+	if db == nil || owner == "" {
 		return
 	}
-	global := map[string]bool{}
-	for _, p := range LoadPersistentTempTools(db, owner) {
-		global[p.Tool.Name] = true
-	}
+	// Flattened namespace: walk the unified store for records scoped to the
+	// dying agent. Sole carrier → orphan the record; co-carried → just drop
+	// this agent from the scope list (the other agents keep the tool).
 	var orphans []OrphanedTempTool
-	for _, t := range agent.Tools {
-		if global[t.Name] {
+	for _, p := range LoadPersistentTempTools(db, owner) {
+		if !p.ScopedToAgent(agent.ID) {
 			continue
 		}
-		orphans = append(orphans, OrphanedTempTool{
-			Tool:            t,
-			FormerAgentID:   agent.ID,
-			FormerAgentName: agent.Name,
-			OrphanedAt:      time.Now(),
-		})
+		if len(p.ScopeAgents) == 1 {
+			orphans = append(orphans, OrphanedTempTool{
+				Tool:            p.Tool,
+				FormerAgentID:   agent.ID,
+				FormerAgentName: agent.Name,
+				OrphanedAt:      time.Now(),
+			})
+			_ = DeletePersistentTempTool(db, owner, p.Tool.Name)
+			continue
+		}
+		kept := make([]string, 0, len(p.ScopeAgents)-1)
+		for _, id := range p.ScopeAgents {
+			if id != agent.ID {
+				kept = append(kept, id)
+			}
+		}
+		SetUserToolScopeAgents(db, owner, p.Tool.Name, kept)
 	}
 	if len(orphans) > 0 {
 		AddOrphanedTempTools(db, owner, orphans)

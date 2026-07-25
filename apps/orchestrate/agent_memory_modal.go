@@ -66,6 +66,127 @@ const agentMemoryModalTemplate = `<script>
       disabledNotice.textContent = 'Both Explicit and Reference Memory are disabled for this agent — nothing to manage.';
       body.appendChild(disabledNotice);
 
+      // --- Search section (base + 'memsearch') ---
+      // Two modes: 'grep' sweeps everything stored; 'recall' runs the
+      // agent's own recall pipeline and shows what a turn would inject.
+      // Deletable hits carry an inline remove. Mirrors the admin modal.
+      var searchSection = document.createElement('div');
+      searchSection.style.cssText = 'margin-bottom:1rem;padding-bottom:0.8rem;border-bottom:1px solid var(--border)';
+      var searchRow = document.createElement('div');
+      searchRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center';
+      var searchInput = document.createElement('input');
+      searchInput.type = 'text';
+      searchInput.placeholder = 'Search this agent’s memory…';
+      searchInput.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit';
+      searchRow.appendChild(searchInput);
+      var searchMode = 'grep';
+      function modeBtn(label, mode, title) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.textContent = label; b.title = title; b._mode = mode;
+        b.style.cssText = 'padding:0.3rem 0.6rem;border:1px solid var(--border);border-radius:4px;font-size:0.76rem;cursor:pointer;background:var(--bg-1);color:var(--text-mute)';
+        b.onclick = function() { searchMode = mode; styleModeBtns(); if (searchInput.value.trim()) runMemSearch(); };
+        return b;
+      }
+      var grepBtn = modeBtn('Stored text', 'grep', 'Literal search of everything stored: facts, findings, knowledge, cortex observations, working notes.');
+      var recallBtn = modeBtn('Recall preview', 'recall', 'Run the agent’s own recall pipeline for this query and show exactly what a turn would inject, ranked.');
+      function styleModeBtns() {
+        [grepBtn, recallBtn].forEach(function(b) {
+          var on = b._mode === searchMode;
+          b.style.background = on ? 'var(--accent, #6366f1)' : 'var(--bg-1)';
+          b.style.color = on ? '#fff' : 'var(--text-mute)';
+        });
+      }
+      styleModeBtns();
+      searchRow.appendChild(grepBtn); searchRow.appendChild(recallBtn);
+      searchSection.appendChild(searchRow);
+      var searchHelp = document.createElement('p');
+      searchHelp.style.cssText = 'margin:0.35rem 0 0;color:var(--text-mute);font-size:0.78rem';
+      searchHelp.textContent = 'Find memories steering this agent. “Stored text” greps every layer; “Recall preview” shows what the agent actually sees for a query.';
+      searchSection.appendChild(searchHelp);
+      var searchResults = document.createElement('div');
+      searchResults.style.cssText = 'margin-top:0.5rem;display:none;max-height:16rem;overflow-y:auto';
+      searchSection.appendChild(searchResults);
+      body.appendChild(searchSection);
+      function layerChip(layer) {
+        var colors = { pinned: '#6366f1', finding: '#0ea5e9', knowledge: '#10b981', history: '#a855f7', cortex: '#f59e0b', notes: '#64748b' };
+        var c = document.createElement('span');
+        c.textContent = layer;
+        c.style.cssText = 'display:inline-block;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.4rem;border-radius:3px;color:#fff;flex:0 0 auto;background:' + (colors[layer] || '#64748b');
+        return c;
+      }
+      function renderMemSearch(d) {
+        searchResults.innerHTML = '';
+        searchResults.style.display = '';
+        var items = (d && d.items) || [];
+        if (!items.length) {
+          var empty = document.createElement('div');
+          empty.style.cssText = 'color:var(--text-mute);font-style:italic;font-size:0.82rem;padding:0.3rem 0;white-space:pre-wrap';
+          empty.textContent = (d && d.note) ? d.note : 'No matches.';
+          searchResults.appendChild(empty);
+          return;
+        }
+        items.forEach(function(item) {
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:0.5rem;align-items:flex-start;padding:0.4rem 0;border-bottom:1px solid var(--border)';
+          row.appendChild(layerChip(item.layer));
+          var col = document.createElement('div');
+          col.style.cssText = 'flex:1;font-size:0.82rem;line-height:1.4;min-width:0';
+          if (item.title) {
+            var tt = document.createElement('div');
+            tt.style.fontWeight = '600'; tt.textContent = item.title;
+            col.appendChild(tt);
+          }
+          var tx = document.createElement('div');
+          tx.style.cssText = 'white-space:pre-wrap;word-break:break-word';
+          tx.textContent = item.text || '';
+          col.appendChild(tx);
+          if (item.date || item.note) {
+            var meta = document.createElement('div');
+            meta.style.cssText = 'color:var(--text-mute);font-size:0.7rem;margin-top:0.1rem';
+            meta.textContent = [item.date, item.note].filter(Boolean).join(' · ');
+            col.appendChild(meta);
+          }
+          row.appendChild(col);
+          if (item.deletable && item.id) {
+            var del = document.createElement('button');
+            del.type = 'button';
+            del.textContent = String.fromCharCode(215);
+            del.title = 'Delete this memory (' + item.id + ')';
+            del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:1rem;padding:0 0.4rem;align-self:flex-start';
+            del.onclick = function() {
+              if (!confirm('Delete this ' + item.layer + ' memory?\n\n' + (item.text || item.title || item.id).slice(0, 200))) return;
+              fetch(MEMBASE + 'memsearch?id=' + encodeURIComponent(item.id), {method: 'DELETE'})
+                .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); })
+                .catch(function(err) { alert('Delete failed: ' + (err && err.message || err)); });
+            };
+            row.appendChild(del);
+          }
+          searchResults.appendChild(row);
+        });
+      }
+      var memSearchBusy = false;
+      function runMemSearch() {
+        var q = searchInput.value.trim();
+        if (!q || memSearchBusy) return;
+        memSearchBusy = true;
+        searchResults.style.display = '';
+        searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:0.82rem;padding:0.3rem 0">Searching…</div>';
+        fetch(MEMBASE + 'memsearch?q=' + encodeURIComponent(q) + '&mode=' + searchMode)
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(renderMemSearch)
+          .catch(function(err) {
+            searchResults.innerHTML = '';
+            var e = document.createElement('div');
+            e.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.82rem;padding:0.3rem 0';
+            e.textContent = 'Search failed: ' + (err && err.message || err);
+            searchResults.appendChild(e);
+          })
+          .then(function() { memSearchBusy = false; });
+      }
+      searchInput.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); runMemSearch(); }
+      });
+
       function renderRowList(container, arr, addLabel, emptyText) {
         container.innerHTML = '';
         arr.forEach(function(text, idx) {

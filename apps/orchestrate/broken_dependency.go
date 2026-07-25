@@ -32,10 +32,10 @@ func agentExists(owner, id string) bool {
 }
 
 // toolResolvable reports whether a named tool exists anywhere it could live: the
-// static chat-tool registry, the shared deployment pool, the owner's global
-// pool, or any of the owner's agents' scoped tools. Mirrors the credential-tool
-// scan (credential_tools.go) so a tool that genuinely still exists is never
-// flagged missing.
+// static chat-tool registry, the shared deployment pool, or the owner's unified
+// tool store (one lookup covers shared AND agent-scoped rows — any scope counts
+// as "exists"). Mirrors the credential-tool scan (credential_tools.go) so a
+// tool that genuinely still exists is never flagged missing.
 func toolResolvable(owner, name string) bool {
 	if _, ok := LookupChatTool(name); ok {
 		return true
@@ -45,17 +45,8 @@ func toolResolvable(owner, name string) bool {
 			return true
 		}
 	}
-	for _, pt := range LoadPersistentTempTools(RootDB, owner) {
-		if pt.Tool.Name == name {
-			return true
-		}
-	}
-	for _, a := range listAgents(agentUserDB(RootDB, owner), owner) {
-		for _, tt := range a.Tools {
-			if tt.Name == name {
-				return true
-			}
-		}
+	if _, ok := UserToolByName(RootDB, owner, name); ok {
+		return true
 	}
 	return false
 }

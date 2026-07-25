@@ -397,6 +397,9 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		ownerUser: ownerUser,
 		ownerDB:   ownerDB,
 	}
+	// Intent-aware catalog assembly (Tier-1 tool elevation): the caller
+	// stamps the turn's driving text on the session it built.
+	subTurn.intentText = subSess.IntentText
 	// Shared sub-agent dispatch catalog — framework conversational tools, the
 	// agents grouped tool, attached pipelines, and the agent's custom tools
 	// (hydrated from the OWNER's pool: the runtime user may be a synthetic channel
@@ -493,6 +496,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		DB:            runtimeDB,
 		ChatSessionID: subSessID,
 		AgentID:       target.ID,
+		IntentText:    message, // Tier-1 tool elevation matches against the brief
 		// Credential scope travels with the agent — a dispatched run can
 		// fetch_url too, so enforce the same deny-set here.
 		DeniedCredentials: credentialDenySet(target, runtimeUser),
@@ -1020,6 +1024,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		DB:                 runtimeDB,
 		ChatSessionID:      subSessionID,
 		AgentID:            target.ID,
+		IntentText:         message, // Tier-1 tool elevation matches against the brief
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}

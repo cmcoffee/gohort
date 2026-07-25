@@ -27,10 +27,14 @@ func TestUnbundleAgentToolByIDStripsSeedOwnedAgent(t *testing.T) {
 		Name:               "Case Analyzer",
 		OrchestratorPrompt: "p",
 		Owner:              seedOwner,
-		Tools:              []TempTool{{Name: "ts3_list_clients"}},
 	})
 	if err != nil {
 		t.Fatalf("save agent: %v", err)
+	}
+	// Flattened namespace: the mis-scoped tool is a store row scoped to the
+	// seed-owned agent, not an embedded record copy.
+	if err := bundleAgentToolByID(udb, owner, rec.ID, TempTool{Name: "ts3_list_clients"}); err != nil {
+		t.Fatalf("seed scoped tool: %v", err)
 	}
 
 	// The guarded runtime path rejects it — documents why the bug existed.
@@ -42,14 +46,8 @@ func TestUnbundleAgentToolByIDStripsSeedOwnedAgent(t *testing.T) {
 	if err := unbundleAgentToolByID(udb, owner, rec.ID, "ts3_list_clients"); err != nil {
 		t.Fatalf("unbundleAgentToolByID must strip the mis-scoped tool, got: %v", err)
 	}
-	got, ok := loadAgent(udb, rec.ID)
-	if !ok {
-		t.Fatal("agent vanished after unbundle")
-	}
-	for _, tl := range got.Tools {
-		if tl.Name == "ts3_list_clients" {
-			t.Fatal("tool still bundled after unbundleAgentToolByID — it would resurrect")
-		}
+	if p, ok := UserToolByName(udb, owner, "ts3_list_clients"); ok && p.ScopedToAgent(rec.ID) {
+		t.Fatal("tool still scoped after unbundleAgentToolByID — it would resurrect")
 	}
 
 	// Idempotent: a second strip reports not-bundled rather than succeeding

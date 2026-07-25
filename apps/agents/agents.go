@@ -156,6 +156,8 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleAgentKnowledge(w, r, agent.ID)
 	case rest == "api/agent":
 		orch.PublicHandleAgentRecord(w, r, agent)
+	case rest == "api/memsearch":
+		orch.PublicHandleAgentMemorySearch(w, r, agent.ID)
 	case rest == "api/inferred":
 		orch.PublicHandleAgentInferredList(w, r, agent.ID)
 	case strings.HasPrefix(rest, "api/inferred/"):

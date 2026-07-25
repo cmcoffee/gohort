@@ -154,6 +154,43 @@ func TestTurnInputPicksLastUserAndFirstSystem(t *testing.T) {
 	}
 }
 
+// TestTurnInputFallsBackWhenNoUser: some clients (Vapi's validation ping) send a
+// single message that isn't role "user". Rejecting it with "no user message"
+// turned a request the passthrough tier answered into an HTTP 400 the moment a
+// model was prefixed with channel:/agent: to scope a key. The agent path must be
+// as tolerant as passthrough: answer the last non-empty message of any role.
+func TestTurnInputFallsBackWhenNoUser(t *testing.T) {
+	// Lone system message (the msgs=1 shape seen live). It becomes the input,
+	// and is NOT also fed back as the system prompt (which would double it).
+	sysOnly := chatReq{Messages: []struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}{{Role: "system", Content: "You are a helpful assistant."}}}
+	if in, sys := turnInput(sysOnly); in != "You are a helpful assistant." || sys != "" {
+		t.Errorf("lone system: input=%q system=%q, want the system text as input and empty system", in, sys)
+	}
+	// An assistant-only tail (no user turn) still yields something to answer.
+	asstTail := chatReq{Messages: []struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}{{Role: "system", Content: "be terse"}, {Role: "assistant", Content: "How can I help?"}}}
+	if in, sys := turnInput(asstTail); in != "How can I help?" || sys != "be terse" {
+		t.Errorf("assistant tail: input=%q system=%q", in, sys)
+	}
+	// A real user turn still wins over the fallback.
+	withUser := chatReq{Messages: []struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}{{Role: "system", Content: "be terse"}, {Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}}}
+	if in, sys := turnInput(withUser); in != "hello" || sys != "be terse" {
+		t.Errorf("with user: input=%q system=%q, want the user turn to win", in, sys)
+	}
+	// Truly empty message set → no input (the one case that still 400s).
+	if in, _ := turnInput(chatReq{}); in != "" {
+		t.Errorf("empty: input=%q, want empty", in)
+	}
+}
+
 // TestCallerNamePrecedence: the speaker is labeled in the thread, so a group
 // transcript reads as who-said-what rather than attributing a call to the room.
 func TestCallerNamePrecedence(t *testing.T) {

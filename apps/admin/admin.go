@@ -3016,7 +3016,10 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					for _, p := range LoadPendingTempTools(a.db, u) {
 						pending = append(pending, pendingWithOwner{Owner: u, PendingTempTool: p})
 					}
-					for _, p := range LoadPersistentTempTools(a.db, u) {
+					// Shared rows only — agent-scoped rows in the same unified
+					// store render in the "bundled" section below, not as
+					// user-wide pool tools.
+					for _, p := range SharedUserTools(a.db, u) {
 						m := toolMissingDeps(p.Tool)
 						active = append(active, activeWithOwner{Owner: u, Missing: m, HasMissing: len(m) > 0, PersistentTempTool: p})
 					}
@@ -3037,12 +3040,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				pending = nil
 				active = nil
 			}
-			// Agent-bundled tools — authored via add_tool, they ride
-			// inside an agent record's .Tools (NOT the temp-tool pools),
-			// so they never surfaced on this page before ("hidden tools").
-			// Read-only here: they're removed via Builder, not the admin.
-			// Walk every user's agent records and surface each bundled tool
-			// with its owning agent so nothing is invisible in the DB.
+			// Agent-bundled tools — rows in each user's unified tool store
+			// whose ScopeAgents restricts them to specific agents (the
+			// flattened replacement for the old embedded AgentRecord.Tools
+			// copies). Read-only here: they're removed via Builder, not the
+			// admin. Surface each with its carrying agents so nothing is
+			// invisible in the DB.
 			type bundledAgent struct {
 				ID   string `json:"id"`
 				Name string `json:"name"`
@@ -3058,73 +3061,60 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				HasMissing bool           `json:"has_missing"`
 				Tool       TempTool       `json:"tool"`
 			}
-			// Global SUPERSEDES agent scope in this listing. A tool that
-			// lives in the owner's global pool AND on an agent record (a
-			// leftover copy from before promotion, or a name collision)
-			// belongs under Global — every one of the owner's agents already
-			// sees it there, so also listing it as "agent-scoped" is a
-			// confusing duplicate that invites descoping the wrong copy.
-			// Skip those names below; they reappear as agent-scoped only when
-			// the Global pill is turned off (demoteGlobalToScoped bundles the
-			// copies back). Mirrors captureOrphanedTools, which drops the same
-			// global-covered names from the orphan store on agent delete.
-			globalByOwner := map[string]map[string]bool{}
-			for _, aw := range active {
-				m := globalByOwner[aw.Owner]
-				if m == nil {
-					m = map[string]bool{}
-					globalByOwner[aw.Owner] = m
-				}
-				m[aw.Tool.Name] = true
-			}
 			var bundled []bundledWithOwner
-			// Group by (owner, tool name) so a tool scoped to N agents is one row
-			// listing all N — not N duplicate rows sharing the same tool.name key.
-			type bundleKey struct{ owner, name string }
-			bundleIdx := map[bundleKey]int{}
+			// One unified store per user: a tool is either shared (listed under
+			// "active" above) or scoped, so the old global-supersedes-scoped
+			// duplicate handling is gone by construction. Each scoped row is
+			// one entry listing every carrying agent; agent names resolve from
+			// the owner's agent records.
 			orchestrateBase := a.db.Bucket("orchestrate")
 			for _, u := range AuthListUsers(a.db) {
 				udb := UserDB(orchestrateBase, u.Username)
 				if udb == nil {
 					continue
 				}
+				// id → record probe for name resolution + the visibility rule
+				// below. Minimal struct — gob matches by field NAME, so ID /
+				// Name / Hidden / OwnedBy decode out of the full AgentRecord.
+				type agentProbe struct {
+					ID      string
+					Name    string
+					Hidden  bool
+					OwnedBy string
+				}
+				probes := map[string]agentProbe{}
 				for _, key := range udb.Keys("orchestrate_agents") {
-					// Minimal struct — gob matches by field NAME, so ID /
-					// Name / Tools decode out of the full AgentRecord and
-					// the rest is ignored. TempTool is a core type.
-					var rec struct {
-						ID      string
-						Name    string
-						Hidden  bool
-						OwnedBy string
-						Tools   []TempTool
+					var rec agentProbe
+					if udb.Get("orchestrate_agents", key, &rec) {
+						probes[rec.ID] = rec
 					}
-					if !udb.Get("orchestrate_agents", key, &rec) {
-						continue
+				}
+				for _, p := range LoadPersistentTempTools(a.db, u.Username) {
+					if len(p.ScopeAgents) == 0 {
+						continue // shared — already listed under "active"
 					}
-					// App-specific agents (Guide Author, Servitor Investigator, …)
-					// are Hidden, and sub-agents carry OwnedBy — both have curated,
-					// purpose-built kits and aren't user tool-scope targets. Keep
-					// them out of this list; only top-level user-managed agents show.
-					if rec.Hidden || rec.OwnedBy != "" {
-						continue
-					}
-					for _, t := range rec.Tools {
-						if globalByOwner[u.Username][t.Name] {
-							continue // global copy supersedes this agent-scoped duplicate
-						}
-						bk := bundleKey{u.Username, t.Name}
-						i, ok := bundleIdx[bk]
+					entry := bundledWithOwner{Owner: u.Username, Tool: p.Tool}
+					for _, id := range p.ScopeAgents {
+						rec, ok := probes[id]
 						if !ok {
-							m := toolMissingDeps(t)
-							bundled = append(bundled, bundledWithOwner{
-								Owner: u.Username, Missing: m, HasMissing: len(m) > 0, Tool: t,
-							})
-							i = len(bundled) - 1
-							bundleIdx[bk] = i
+							continue // scoped to an agent that no longer exists
 						}
-						bundled[i].Agents = append(bundled[i].Agents, bundledAgent{ID: rec.ID, Name: rec.Name})
+						// App-specific agents (Guide Author, Servitor
+						// Investigator, …) are Hidden, and sub-agents carry
+						// OwnedBy — both have curated, purpose-built kits and
+						// aren't user tool-scope targets. Keep them out of
+						// this list; only top-level user-managed agents show.
+						if rec.Hidden || rec.OwnedBy != "" {
+							continue
+						}
+						entry.Agents = append(entry.Agents, bundledAgent{ID: rec.ID, Name: rec.Name})
 					}
+					if len(entry.Agents) == 0 {
+						continue // no visible carriers — nothing to show
+					}
+					m := toolMissingDeps(p.Tool)
+					entry.Missing, entry.HasMissing = m, len(m) > 0
+					bundled = append(bundled, entry)
 				}
 			}
 			// Comma-join each row's agent names for the display column.
@@ -3731,6 +3721,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		// route there rather than 404 here.
 		if rest == "registry" {
 			http.NotFound(w, r) // ServeMux's longest-prefix wins; this branch shouldn't fire
+			return
+		}
+		// /api/tool-groups/{id}/members — the Categories pills editor
+		// (GET options+selection, POST the new member set).
+		if id, found := strings.CutSuffix(rest, "/members"); found {
+			a.handleToolGroupMembers(w, r, id)
 			return
 		}
 		if r.Method != http.MethodGet {

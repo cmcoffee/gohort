@@ -104,23 +104,15 @@ func toolTemplateCreate(args map[string]any, sess *ToolSession) (string, error) 
 		tt.Description = tpl.Description
 	}
 
-	// Attach to the focused agent + persist — mirrors add_tool's tail.
-	replaced := false
-	for i, existing := range target.Tools {
-		if existing.Name == tt.Name {
-			target.Tools[i] = tt
-			replaced = true
-			break
-		}
+	// Attach to the focused agent + persist — mirrors add_tool's tail: one row
+	// in the unified store, scoped to the target agent (idempotent replace by
+	// name; a shared row keeps its pool visibility).
+	_, replaced := UserToolByName(sess.DB, sess.Username, tt.Name)
+	if err := bundleAgentToolByID(sess.DB, sess.Username, target.ID, tt); err != nil {
+		return "", fmt.Errorf("save tool for agent: %w", err)
 	}
-	if !replaced {
-		target.Tools = append(target.Tools, tt)
-	}
-	if _, err := saveAgent(sess.DB, target); err != nil {
-		return "", fmt.Errorf("save agent: %w", err)
-	}
-	// In-memory verification handle only — the canonical copy is on the target
-	// agent's record just above. A persisted session copy outlived the turn in a
+	// In-memory verification handle only — the canonical copy is the store row
+	// committed just above. A persisted session copy outlived the turn in a
 	// parallel scope that had to be shadowed and pruned on every read.
 	sess.RemoveTempTool(tt.Name)
 	if err := sess.AppendTempTool(&tt); err != nil {

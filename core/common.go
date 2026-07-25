@@ -1465,6 +1465,13 @@ type ToolSession struct {
 	// stock-tracker style features). Empty for non-chat apps.
 	ChatSessionID string
 
+	// IntentText is the turn's driving text — the user message, standing
+	// mission, or dispatch brief this session was built to serve. Hosts set
+	// it so catalog assembly can make intent-aware choices (e.g. elevating a
+	// lazily-listed tool the intent literally names). Optional; empty means
+	// no intent-derived behavior.
+	IntentText string
+
 	// AgentID is the agent whose turn this is. Set by the host app that owns
 	// agents; empty for hosts that have none.
 	//

@@ -307,28 +307,20 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		return "", fmt.Errorf("unknown mode %q — add_tool supports \"shell\" and \"api\". For a MULTI-action toolbox, use the `tool_def` tool (mode=\"toolbox\"); for a multi-stage workflow, use the `pipeline` tool", mode)
 	}
 
-	// Attach to the focused agent's tools[]. Idempotent replace by name.
-	replaced := false
-	for i, existing := range target.Tools {
-		if existing.Name == tt.Name {
-			target.Tools[i] = tt
-			replaced = true
-			break
-		}
+	// Commit to the user's unified tool store, scoped to the focused agent.
+	// Idempotent replace by name (bundleAgentToolByID upserts the ONE row and
+	// ensures this agent is in its scope; a shared row keeps pool visibility).
+	_, replaced := UserToolByName(sess.DB, sess.Username, tt.Name)
+	if err := bundleAgentToolByID(sess.DB, sess.Username, target.ID, tt); err != nil {
+		return "", fmt.Errorf("save tool for focused agent: %v", err)
 	}
-	if !replaced {
-		target.Tools = append(target.Tools, tt)
-	}
-	if _, err := saveAgent(sess.DB, target); err != nil {
-		return "", fmt.Errorf("save focused agent: %v", err)
-	}
-	// No session-draft copy: the tool was just committed to the agent's own
-	// record above, and an agent always loads its own kit — so it is callable
-	// by name from the next round without a second copy in a parallel pool.
-	// The duplicate is what forced a shadow-reconciliation pass on every read
-	// and what the runner had to prune turn after turn.
-	// Dequeue from admin pending-review pool — tool is now owned by
-	// the focused agent record, so it doesn't need separate admin
+	// No session-draft copy: the tool was just committed to the unified store
+	// scoped to the agent above, and an agent always loads its own kit — so it
+	// is callable by name from the next round without a second copy in a
+	// parallel pool. The duplicate is what forced a shadow-reconciliation pass
+	// on every read and what the runner had to prune turn after turn.
+	// Dequeue from admin pending-review pool — tool is now committed to
+	// the focused agent's kit, so it doesn't need separate admin
 	// promotion. Mirrors the autoCopy hook in create_agent.
 	if sess.Username != "" {
 		DequeuePendingTempTool(sess.DB, sess.Username, tt.Name)

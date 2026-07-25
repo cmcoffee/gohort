@@ -29,12 +29,16 @@ func TestListScopedToolsShadowing(t *testing.T) {
 
 	agent := AgentRecord{
 		ID: "a1", Owner: "alice", Name: "Chat", OrchestratorPrompt: "x",
-		Tools: []TempTool{{Name: "bundled_tool"}}, // shadows a draft of the same name
 	}
 	if _, err := saveAgent(UserDB(db, "alice"), agent); err != nil {
 		t.Fatalf("save agent: %v", err)
 	}
 	udb := UserDB(db, "alice")
+	// Flattened namespace: the agent's tool is a store row scoped to it — it
+	// shadows a draft of the same name.
+	if err := bundleAgentToolByID(udb, "alice", "a1", TempTool{Name: "bundled_tool"}); err != nil {
+		t.Fatalf("bundle: %v", err)
+	}
 	sess := ChatSession{ID: "s1", AgentID: "a1", Title: "Tuesday"}
 	if _, err := saveChatSession(udb, sess); err != nil {
 		t.Fatalf("save session: %v", err)
@@ -172,9 +176,8 @@ func TestPromoteSessionDraftTargets(t *testing.T) {
 	if scope, err := app.promoteSessionDraft(udb, "alice", "a1", "s1", "to_agent", ScopeTargetAgent); err != nil || scope != "agent" {
 		t.Fatalf("agent promote: scope=%q err=%v", scope, err)
 	}
-	rec, _ := loadAgent(udb, "a1")
-	if len(rec.Tools) != 1 || rec.Tools[0].Name != "to_agent" {
-		t.Fatalf("tool not attached to the agent: %+v", rec.Tools)
+	if p, ok := UserToolByName(udb, "alice", "to_agent"); !ok || !p.ScopedToAgent("a1") {
+		t.Fatalf("tool not scoped to the agent in the unified store: %+v", p)
 	}
 
 	// Global target: lands in the user-wide pool, draft cleared.
@@ -376,15 +379,15 @@ func TestAuthoredToolLandsOnFocusedAgent(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 
-	tgt, _ := loadAgent(udb, "target")
-	if len(tgt.Tools) != 1 || tgt.Tools[0].Name != "probe_thing" {
-		t.Fatalf("tool should land on the FOCUSED agent, target has %+v", tgt.Tools)
+	p, ok := UserToolByName(udb, "alice", "probe_thing")
+	if !ok || !p.ScopedToAgent("target") {
+		t.Fatalf("tool should land on the FOCUSED agent, got %+v", p)
 	}
-	if !tgt.Tools[0].Trial {
+	if !p.Tool.Trial {
 		t.Error("an authored, unapproved tool must be marked Trial")
 	}
-	if b, _ := loadAgent(udb, "seed-builder"); len(b.Tools) != 0 {
-		t.Errorf("nothing should land on the authoring agent itself, got %+v", b.Tools)
+	if p.ScopedToAgent("seed-builder") {
+		t.Errorf("nothing should land on the authoring agent itself, got %v", p.ScopeAgents)
 	}
 
 	// Confirming clears the mark without moving the tool.
@@ -395,24 +398,25 @@ func TestAuthoredToolLandsOnFocusedAgent(t *testing.T) {
 		if !ok {
 			return fmt.Errorf("no agent")
 		}
-		for i := range rec.Tools {
-			if rec.Tools[i].Name == toolName {
-				rec.Tools[i].Trial = false
-				_, err := saveAgent(u, rec)
-				return err
-			}
+		_ = rec
+		// Flattened namespace: confirm clears Trial on the store row.
+		pt, ok := UserToolByName(u, owner, toolName)
+		if !ok {
+			return fmt.Errorf("no tool")
 		}
-		return fmt.Errorf("no tool")
+		tt := pt.Tool
+		tt.Trial = false
+		return AdminReconfigureTempTool(u, owner, tt)
 	}
 	t.Cleanup(func() { ConfirmAgentTool = prevConfirm })
 	if err := ConfirmAgentTool(db, "alice", "target", "probe_thing"); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	tgt2, _ := loadAgent(udb, "target")
-	if tgt2.Tools[0].Trial {
+	p2, _ := UserToolByName(udb, "alice", "probe_thing")
+	if p2.Tool.Trial {
 		t.Error("confirm must clear the Trial mark")
 	}
-	if len(tgt2.Tools) != 1 {
+	if len(p2.ScopeAgents) != 1 {
 		t.Error("confirm must not move or duplicate the tool")
 	}
 }
@@ -432,24 +436,28 @@ func TestReapTrialTools(t *testing.T) {
 	old := time.Now().Add(-30 * 24 * time.Hour)
 	if _, err := saveAgent(udb, AgentRecord{
 		ID: "a1", Owner: "alice", Name: "Chat", OrchestratorPrompt: "x",
-		Tools: []TempTool{
-			{Name: "expired", Trial: true, TrialSince: old},
-			{Name: "fresh", Trial: true, TrialSince: time.Now()},
-			{Name: "confirmed"},
-			// Pre-dates the stamp: unconfirmed but ageless, so never reaped.
-			{Name: "unstamped", Trial: true},
-		},
 	}); err != nil {
 		t.Fatal(err)
+	}
+	// Flattened namespace: trial tools are store rows scoped to the agent.
+	for _, tl := range []TempTool{
+		{Name: "expired", Trial: true, TrialSince: old},
+		{Name: "fresh", Trial: true, TrialSince: time.Now()},
+		{Name: "confirmed"},
+		// Pre-dates the stamp: unconfirmed but ageless, so never reaped.
+		{Name: "unstamped", Trial: true},
+	} {
+		if err := bundleAgentToolByID(udb, "alice", "a1", tl); err != nil {
+			t.Fatalf("bundle %s: %v", tl.Name, err)
+		}
 	}
 
 	if n := app.reapTrialTools(db, "alice"); n != 1 {
 		t.Fatalf("reaped %d, want 1", n)
 	}
-	rec, _ := loadAgent(udb, "a1")
 	left := map[string]bool{}
-	for _, tl := range rec.Tools {
-		left[tl.Name] = true
+	for _, pt := range AgentScopedTools(udb, "alice", "a1") {
+		left[pt.Tool.Name] = true
 	}
 	if left["expired"] {
 		t.Error("an expired unconfirmed tool must be reaped")

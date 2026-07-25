@@ -2084,7 +2084,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Categories",
-				Subtitle: "Give a group of tools a named category — the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves (custom tools via their own setting in Gateways/Builder; built-in tools are framework-assigned), so here you just define the category's name and the description the model reads. A tool's claimed label is matched to a category by name.",
+				Subtitle: "Give a group of tools a named category — the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves (custom tools via their own setting in Gateways/Builder; built-in tools are framework-assigned). Define the name + description here, and use Members to stamp the claim onto your custom tools as pills instead of editing each tool by hand.",
 				Body: ui.Stack{
 					Children: []ui.Component{
 						// Table of existing groups with per-row editor + delete.
@@ -2097,10 +2097,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							},
 							RowActions: []ui.RowAction{
 								// Edit the category definition (name + the description
-								// the model reads). Membership isn't set here — custom
-								// tools self-claim their category and built-in members
-								// are framework-defined; the POST handler preserves the
-								// member list across a name/description save.
+								// the model reads). Built-in members stay framework-
+								// defined; the POST handler preserves the legacy member
+								// list across a name/description save.
 								ui.Expand("Edit", ui.FormPanel{
 									Source:  "api/tool-groups/{id}",
 									PostURL: "api/tool-groups",
@@ -2110,6 +2109,25 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 										{Field: "description", Type: "textarea", Label: "Description", Rows: 3,
 											Help: "Shown to the model as the category's purpose (it appears in the tool catalog). Write it as a decision shape: when tools under this heading should come into play."},
 									},
+								}),
+								// Members — bulk-edit which of YOUR custom tools claim
+								// this category, as removable pills. Adding a pill
+								// stamps the tool's own Category field with this
+								// category's name; removing clears it (self-claim
+								// model unchanged, just edited in one place instead
+								// of per-tool). Built-in tools are framework-assigned
+								// and don't appear.
+								ui.Expand("Members", ui.ChipPicker{
+									Mode:          "attach",
+									OptionsSource: "api/tool-groups/{id}/members",
+									AttachedField: "selected",
+									SaveKey:       "members",
+									PostTo:        "api/tool-groups/{id}/members",
+									Noun:          "tool",
+									DescField:     "desc",
+									MetaFields:    []string{"scope"},
+									Intro:         "Your custom tools claiming this category. Add a tool to stamp its Category with this name; remove to clear the claim.",
+									EmptyText:     "No custom tools yet — author one via Builder or Gateways first.",
 								}),
 								// Admin-curated categories: Delete drops the row.
 								{Type: "button", Label: "Delete",

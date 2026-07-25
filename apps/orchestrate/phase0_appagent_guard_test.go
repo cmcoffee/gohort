@@ -46,12 +46,19 @@ func TestBundleAgentToolByIDRefusesAppAgent(t *testing.T) {
 func TestUnbundleFromAppAgentStillWorks(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	udb := agentUserDB(root, "alice")
-	// Seed a stuck tool directly onto the app agent's shadow (as the old bug did).
+	// Seed a stuck tool: flattened namespace, so the mis-scope is a store row
+	// whose ScopeAgents names the app agent (bundleAgentToolByID refuses app
+	// agents, so write the bad state directly, as the old bug did).
 	if _, err := saveAgent(udb, AgentRecord{
 		ID: phase0AppID, Name: "Phase0App", OrchestratorPrompt: "p", Owner: seedOwner,
-		Tools: []TempTool{{Name: "ts3_list_clients"}},
 	}); err != nil {
-		t.Fatalf("seed stuck tool: %v", err)
+		t.Fatalf("seed app agent: %v", err)
+	}
+	if err := AdminPersistTempTool(udb, "alice", TempTool{Name: "ts3_list_clients"}); err != nil {
+		t.Fatalf("seed tool: %v", err)
+	}
+	if !SetUserToolScopeAgents(udb, "alice", "ts3_list_clients", []string{phase0AppID}) {
+		t.Fatal("seed mis-scope failed")
 	}
 	if err := unbundleAgentToolByID(udb, "alice", phase0AppID, "ts3_list_clients"); err != nil {
 		t.Fatalf("must be able to strip a mis-scoped tool off an app agent; got %v", err)

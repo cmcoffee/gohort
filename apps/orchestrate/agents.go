@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -435,68 +436,11 @@ func (T *OrchestrateApp) migrateSeedChatFrozenAllowedTools() {
 // detected and skipped on re-run. Builder is skipped — its Tools[]
 // is managed by the overlay path, not user state.
 func (T *OrchestrateApp) migrateAgentPersistentTools() {
-	if T == nil || T.DB == nil || AuthDB == nil {
-		return
-	}
-	authDB := AuthDB()
-	if authDB == nil {
-		return
-	}
-	totalAgents := 0
-	totalSnapshots := 0
-	for _, u := range AuthListUsers(authDB) {
-		udb := UserDB(T.DB, u.Username)
-		if udb == nil {
-			continue
-		}
-		persistent := LoadPersistentTempTools(T.DB, u.Username)
-		if len(persistent) == 0 {
-			continue
-		}
-		byName := make(map[string]TempTool, len(persistent))
-		for _, p := range persistent {
-			byName[p.Tool.Name] = p.Tool
-		}
-		for _, k := range udb.Keys(agentsTable) {
-			if k == "seed-builder" {
-				continue
-			}
-			var rec AgentRecord
-			if !udb.Get(agentsTable, k, &rec) {
-				continue
-			}
-			if len(rec.AllowedTools) == 0 {
-				continue
-			}
-			already := make(map[string]bool, len(rec.Tools))
-			for _, t := range rec.Tools {
-				already[t.Name] = true
-			}
-			snapshotted := 0
-			for _, name := range rec.AllowedTools {
-				if already[name] {
-					continue
-				}
-				t, ok := byName[name]
-				if !ok {
-					continue
-				}
-				rec.Tools = append(rec.Tools, t)
-				already[name] = true
-				snapshotted++
-			}
-			if snapshotted > 0 {
-				rec.Updated = time.Now()
-				udb.Set(agentsTable, k, rec)
-				totalAgents++
-				totalSnapshots += snapshotted
-				Log("[orchestrate.migrate] snapshotted %d persistent tool(s) into agent %q (user=%s)", snapshotted, rec.Name, u.Username)
-			}
-		}
-	}
-	if totalAgents > 0 {
-		Log("[orchestrate.migrate] migrateAgentPersistentTools: snapshotted %d tool(s) across %d agent(s)", totalSnapshots, totalAgents)
-	}
+	// NEUTERED by the namespace flatten: this pre-flatten migration COPIED
+	// pool tools into AgentRecord.Tools — under the unified store that would
+	// recreate the exact duplicate-homes problem the flatten removes (the
+	// lazy fold would then merge them back out, churning every record).
+	// Kept as a stub so the call site and history stay legible.
 }
 
 // migrateLegacyOrchestratorMode rewrites every remaining Mode=="orchestrator"
@@ -1068,10 +1012,23 @@ func cloneAgent(db Database, srcID, owner, newName string, promote bool) (AgentR
 	clone.Owner = owner
 	clone.Name = strings.TrimSpace(newName)
 	clone.Created = time.Time{}
+	clone.Tools = nil // flattened namespace: kit membership is store scope, not record copies
 	if promote {
 		clone.OwnedBy = ""
 	}
-	return saveAgent(db, clone)
+	saved, err := saveAgent(db, clone)
+	if err != nil {
+		return saved, err
+	}
+	// The source's agent-scoped tools are SHARED with the clone by extending
+	// each record's ScopeAgents — one name is one tool, so a clone cannot get
+	// its own diverging copy. (To specialize a clone's tool, author a new
+	// name for it via Builder.)
+	for _, p := range AgentScopedTools(db, owner, src.ID) {
+		SetUserToolScopeAgents(db, owner, p.Tool.Name,
+			append(append([]string{}, p.ScopeAgents...), saved.ID))
+	}
+	return saved, nil
 }
 
 // seedOwner is the Owner string the in-code seeds carry. Returned
@@ -1222,6 +1179,14 @@ You're the only agent in the fleet that can author — every other agent dispatc
 ### Pick the right shape — decision tree
 
 CHECK THESE IN ORDER. The first matching branch is your destination.
+
+**Before composing an agent, check the archetype library.** For the common
+shapes — a research agent, a knowledge-base agent, a general/conversational
+assistant — call archetype(action="list") and read the matching recipe with
+archetype(action="read", slug="..."). Each recipe carries the vetted toolset,
+memory configuration, prompt beats, and caps for that shape; compose the new
+(user-owned) agent from it via create_agent instead of reinventing the shape.
+No archetype matches? Build from scratch as below.
 
 **Branch 1 — "X expert" / "X consultant" / "X specialist" / "X advisor" / "X brain" / "someone to consult about X" / "a full agent that handles X"**
 → Use **create_agent**. An agent IS the expert primitive: persona + tools + optional attached collections + its own conversational surface. The host agent (Chat, etc.) sees it in its "Available agents" prompt block and dispatches to it via agents(action="run", agent="X", message=...). The user can also chat with it directly at /chat/<agent>.
@@ -1909,7 +1874,25 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(listAgents(udb, user))
+		agents := listAgents(udb, user)
+		// role=dispatch-target scopes the list to agents that can actually be
+		// dispatch TARGETS — for the editor's "Dispatch target list" picker.
+		// Drops what agents(action="run") would refuse anyway: Builder (never
+		// dispatchable), retired framework seeds (seed-chat), and the agent
+		// being edited (self-dispatch is impossible). Listing them let a user
+		// pick a target the dispatch gate then silently ignores.
+		if strings.EqualFold(r.URL.Query().Get("role"), "dispatch-target") {
+			self := strings.TrimSpace(r.URL.Query().Get("self"))
+			kept := agents[:0]
+			for _, a := range agents {
+				if a.ID == self || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+					continue
+				}
+				kept = append(kept, a)
+			}
+			agents = kept
+		}
+		_ = json.NewEncoder(w).Encode(agents)
 	case http.MethodPost:
 		var req AgentRecord
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1979,6 +1962,10 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.DisabledPersistentTools = foldUncheckedIntoDenyList(T.DB, user, req.AllowedTools, req.DisabledPersistentTools)
 			}
 		}
+		// Flattened namespace: tools live in the unified store; the GET view
+		// synthesizes them onto the record, so a full-form save must never
+		// write that view back into storage.
+		req.Tools = nil
 		saved, err := saveAgent(udb, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2036,9 +2023,29 @@ func buildAgentExport(udb Database, id, user string) (agentExport, bool) {
 		if s.OwnedBy != id || (s.Owner != user && s.Owner != seedOwner) {
 			continue
 		}
+		// Sub-agents carry their scoped tools inline the same way the parent
+		// does, so the recipe stays self-contained.
+		s.Tools = toolsOfScoped(AgentScopedTools(udb, user, s.ID))
 		subs = append(subs, stripAgentIdentity(s))
 	}
+	// Flattened namespace: the record no longer embeds tools, but the RECIPE
+	// still carries them inline (same wire shape as pre-flatten exports) so a
+	// bundle is portable across installs. Import folds them back into the
+	// store scoped to the reborn agent.
+	a.Tools = toolsOfScoped(AgentScopedTools(udb, user, a.ID))
 	return agentExport{AgentRecord: stripAgentIdentity(a), SubAgents: subs}, true
+}
+
+// toolsOfScoped unwraps store rows to their tool definitions.
+func toolsOfScoped(rows []PersistentTempTool) []TempTool {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]TempTool, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, p.Tool)
+	}
+	return out
 }
 
 // handleAgentImport accepts a JSON agent record (the shape produced by
@@ -2092,10 +2099,16 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 	rec.OwnedBy = ""
 	rec.Created = time.Time{}
 	rec.Updated = time.Time{}
+	// Recipes carry tools inline (both pre- and post-flatten exports). Hold
+	// them aside: they fold into the unified store AFTER the save assigns the
+	// reborn agent its id — the record itself stays tool-free.
+	inlineTools := rec.Tools
+	rec.Tools = nil
 	saved, err := saveAgent(udb, rec)
 	if err != nil {
 		return AgentRecord{}, 0, err
 	}
+	foldImportedTools(udb, owner, &saved, inlineTools)
 	subCount := 0
 	for _, s := range imp.SubAgents {
 		if strings.TrimSpace(s.Name) == "" || strings.TrimSpace(s.OrchestratorPrompt) == "" {
@@ -2107,13 +2120,34 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 		s.OwnedBy = saved.ID
 		s.Created = time.Time{}
 		s.Updated = time.Time{}
-		if _, serr := saveAgent(udb, s); serr != nil {
+		subTools := s.Tools
+		s.Tools = nil
+		savedSub, serr := saveAgent(udb, s)
+		if serr != nil {
 			Log("[orchestrate.agents] import: sub-agent %q failed: %v", s.Name, serr)
 			continue
 		}
+		foldImportedTools(udb, owner, &savedSub, subTools)
 		subCount++
 	}
 	return saved, subCount, nil
+}
+
+// foldImportedTools lands a recipe's inline tools in the unified store scoped
+// to the reborn agent, via the same conflict policy the flatten migration
+// uses (identical dup → merge, diverged → orphan with provenance).
+func foldImportedTools(udb Database, owner string, saved *AgentRecord, tools []TempTool) {
+	if len(tools) == 0 {
+		return
+	}
+	carrier := *saved
+	carrier.Tools = tools
+	moved, merged, orphaned := foldAgentToolsIntoStore(udb, owner, &carrier)
+	if orphaned > 0 {
+		Log("[orchestrate.agents] import %q: %d tool(s) diverged from your existing tools — imported copies are in Orphaned tools", saved.Name, orphaned)
+	}
+	_ = moved
+	_ = merged
 }
 
 // safeFilename returns a slug suitable for the Content-Disposition
@@ -2185,6 +2219,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	}
 	if action == "facts" {
 		T.handleAgentFacts(w, r, user, id)
+		return
+	}
+	if action == "memsearch" {
+		T.handleAgentMemorySearch(w, r, user, id)
 		return
 	}
 	if action == "inferred" {
@@ -2299,6 +2337,14 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// Flattened namespace: the record stores no tools; the GET response
+		// synthesizes the `tools` array from the unified store (rows scoped to
+		// this agent) as a VIEW — the Tools modal renders it unchanged. A fork
+		// between a pool copy and a record copy is structurally impossible
+		// now, so the old pool_diverged_tools computation is gone. The POST
+		// below strips Tools before save, so the fetch-modify-post round-trip
+		// can't write the view back into storage.
+		a.Tools = toolsOfScoped(AgentScopedTools(udb, user, a.ID))
 		_ = json.NewEncoder(w).Encode(a)
 	case http.MethodPost:
 		// PARTIAL update of one existing agent. The full edit form posts the
@@ -2323,6 +2369,9 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		existing.ID = id
 		existing.Owner = user
 		existing.Locked = locked
+		// Flattened namespace: tools live in the unified store, and the GET
+		// view synthesizes them onto the record — never write that view back.
+		existing.Tools = nil
 		saved, err := saveAgent(udb, existing)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2339,6 +2388,21 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// (poolDivergedTools is gone: under the flattened namespace a pool/record
+// fork is structurally impossible — one name is one store row.)
+// tempToolDefEqual compares two TempTool definitions ignoring the
+// user-governance / provenance fields (lock, disable, builder-only, trial
+// clock) that legitimately differ between a pool copy and a record copy of
+// the same tool. Only a difference in what the tool DOES counts as a fork.
+func tempToolDefEqual(a, b TempTool) bool {
+	neutralize := func(t TempTool) TempTool {
+		t.Locked, t.Disabled, t.BuilderOnly, t.Trial = false, false, false, false
+		t.TrialSince = time.Time{}
+		return t
+	}
+	return reflect.DeepEqual(neutralize(a), neutralize(b))
 }
 
 // handleAgentLock toggles the per-agent edit/delete lock — POST /api/agents/{id}/lock

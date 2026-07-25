@@ -2106,6 +2106,10 @@ type OrchestratorNavItem struct {
 	// rows where that field is truthy (e.g. "_pending" counts just the pending
 	// approvals on a page that also lists granted ones). Empty = count all rows.
 	BadgeField string `json:"badge_field,omitempty"`
+	// AutoRefreshMS re-fetches this item's Source on an interval while its
+	// view is open, for live data (an activity feed, a queue). 0 = static
+	// (fetch once per open). Mirrors Table.AutoRefreshMS.
+	AutoRefreshMS int `json:"auto_refresh_ms,omitempty"`
 	// Layout picks how the source rows render: "" / "table" (default, dense
 	// grid) or "cards" (one card per row — first field bold as the title, the
 	// rest as detail lines, row actions as buttons). Cards suit an approval

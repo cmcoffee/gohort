@@ -425,8 +425,15 @@
         var hs = altPinnedSession(window.GOHORT_AGENT_ID);
         if (hs) openSession(hs);
       }
+      // Auto-refresh timer for the currently-open nav data view (items with
+      // auto_refresh_ms). One at a time: cleared whenever the view changes.
+      var orchViewTimer = null;
+      function clearOrchViewTimer() {
+        if (orchViewTimer) { clearInterval(orchViewTimer); orchViewTimer = null; }
+      }
       function selectOrchNav(idx) {
         var item = (cfg.orchestrator_nav || [])[idx] || {};
+        clearOrchViewTimer();
         // Action items are buttons (clear / decommission): POST to the URL
         // for the current agent after an optional confirm, then refresh.
         if (item.action_url) {
@@ -481,6 +488,21 @@
           fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) { renderOrchTable(rows, item, reload); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
+          // Live views: silently re-fetch + re-render on the configured
+          // interval while this view stays open. No "Loading…" flash; a
+          // failed poll keeps the last rendered rows. Stops itself when the
+          // overlay is hidden or detached (view switched / chat resumed).
+          if (item.auto_refresh_ms > 0) {
+            orchViewTimer = setInterval(function() {
+              if (!orchView || orchView.style.display === 'none' || !document.body.contains(orchView)) {
+                clearOrchViewTimer();
+                return;
+              }
+              fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(rows) { if (rows) renderOrchTable(rows, item, reload); })
+                .catch(function() {});
+            }, item.auto_refresh_ms);
+          }
         } else {
           // The Channel (chat) row: hide the overlay so the conversation
           // shows, and resume this agent's pinned home thread.
@@ -2047,16 +2069,22 @@
       var next = (startBubble === bubble ? bubble : startBubble.nextElementSibling);
       while (next && !next.classList.contains('ui-agent-msg-user')) {
         if (next.classList.contains('ui-agent-msg-assistant')) {
+          var body = next.querySelector(':scope > .ui-agent-msg-body');
+          var txt = body ? (body.innerText || body.textContent || '').trim() : '';
+          var tools = next.tools || [];
+          if (!txt && !tools.length) {
+            // Empty bubble (opened mid-stream / settled without content) —
+            // a bare "## Assistant (round N)" header adds noise to the paste.
+            next = next.nextElementSibling;
+            continue;
+          }
           roundNum++;
           lines.push('## Assistant (round ' + roundNum + ')');
           lines.push('');
-          var body = next.querySelector(':scope > .ui-agent-msg-body');
-          var txt = body ? (body.innerText || body.textContent || '').trim() : '';
           if (txt) {
             lines.push(txt);
             lines.push('');
           }
-          var tools = next.tools || [];
           var fence = '```';
           tools.forEach(function(t) {
             lines.push('### Tool call: ' + (t.name || '(unnamed)'));

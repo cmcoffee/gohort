@@ -222,6 +222,17 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// every thread, not only the home thread). What remains is the
 					// fleet-management views + the channel-wide actions.
 					OrchestratorNav: []ui.OrchestratorNavItem{
+						// Live fleet activity — what the AI is doing RIGHT NOW. The
+						// per-session live card only covers the thread you're looking
+						// at; this view lists every in-flight run for the user (chat
+						// turns, scheduled fires, standing fires) plus the recently
+						// completed ones, refreshed while open. The badge counts
+						// currently-running work; Cancel is the kill switch for a
+						// runaway cycle.
+						{Label: "Active now", Source: "api/console/activity", Layout: "cards",
+							AutoRefreshMS: 3000, BadgeField: "_running", RowActions: []ui.OrchestratorRowAction{
+								{Label: "Cancel", Method: "POST", URL: "api/console/activity/cancel", OnlyIf: "_running", Variant: "danger", Confirm: "Cancel this in-flight run? The agent stops mid-turn; anything it already did stays done."},
+							}},
 						// Cards layout so each agent's mission (the standing brief it
 						// runs with — "what it's told to do") renders as a detail line
 						// under the name, alongside its schedule / status / next run.

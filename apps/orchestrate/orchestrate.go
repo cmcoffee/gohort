@@ -299,63 +299,59 @@ func (T *OrchestrateApp) Routes() {
 	AttachToolToAgent = func(db Database, owner, agentID string, t TempTool) error {
 		return bundleAgentToolByID(agentUserDB(db, owner), owner, agentID, t)
 	}
+	// Delete half of the in-place edit pair: drops a tool from the owning
+	// agent's record so tool_def delete works on tools bundled to another of
+	// the user's agents, not just session/pool copies.
+	DetachToolFromAgent = func(db Database, owner, agentID, toolName string) error {
+		return unbundleAgentToolByID(agentUserDB(db, owner), owner, agentID, toolName)
+	}
 	// FindUserAgentTool lets Builder's update path resolve a tool that lives on
 	// ANOTHER of the user's agents (its own resolver only sees the user-wide pool
-	// + its own tools). Scans every agent's own record; returns the first match
-	// and the agent that holds it. App agents are skipped — their kit is
-	// app-declared, not editable here.
+	// + its own tools). Flattened namespace: every user tool is ONE row in the
+	// unified store; a row with a non-empty ScopeAgents is "agent-bundled".
+	// Shared rows (pool semantics) are NOT agent-bundled — the caller's own
+	// resolver already sees those, so they report not-found here.
 	FindUserAgentTool = func(db Database, owner, name string) (TempTool, string, bool) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return TempTool{}, "", false
 		}
-		udb := agentUserDB(db, owner)
-		for _, rec := range listAgents(udb, owner) {
-			if isAppAgent(rec.ID) {
-				continue
-			}
-			for _, t := range rec.Tools {
-				if t.Name == name {
-					return t, rec.ID, true
-				}
-			}
+		p, ok := UserToolByName(agentUserDB(db, owner), owner, name)
+		if !ok || len(p.ScopeAgents) == 0 {
+			return TempTool{}, "", false
 		}
-		return TempTool{}, "", false
+		return p.Tool, p.ScopeAgents[0], true
 	}
-	// ListUserAgentTools enumerates every tool bundled to any of the user's
+	// ListUserAgentTools enumerates every tool scoped to any of the user's
 	// agents — the collision guard checks proposed names against these so the
 	// tool namespace is unique across the whole user, not just per session.
 	ListUserAgentTools = func(db Database, owner string) []TempTool {
 		udb := agentUserDB(db, owner)
 		var out []TempTool
-		for _, rec := range listAgents(udb, owner) {
-			if isAppAgent(rec.ID) {
-				continue
+		for _, p := range LoadPersistentTempTools(udb, owner) {
+			if len(p.ScopeAgents) > 0 {
+				out = append(out, p.Tool)
 			}
-			out = append(out, rec.Tools...)
 		}
 		return out
 	}
 	// Confirming a trial tool is the user vouching for it: the tool does not
-	// move or change, only the "nobody has looked at this" mark clears.
+	// move or change, only the "nobody has looked at this" mark clears. The
+	// tool is ONE row in the user's unified store, so the name resolves it
+	// directly — agentID no longer picks a per-agent copy.
 	ConfirmAgentTool = func(db Database, owner, agentID, toolName string) error {
 		udb := agentUserDB(db, owner)
-		rec, ok := loadAgent(udb, agentID)
+		p, ok := UserToolByName(udb, owner, toolName)
 		if !ok {
-			return fmt.Errorf("agent %q not found", agentID)
+			return fmt.Errorf("no tool named %q", toolName)
 		}
-		for i := range rec.Tools {
-			if rec.Tools[i].Name == toolName {
-				if !rec.Tools[i].Trial {
-					return nil // already confirmed; nothing to do
-				}
-				rec.Tools[i].Trial = false
-				rec.Tools[i].TrialSince = time.Time{}
-				_, err := saveAgent(udb, rec)
-				return err
-			}
+		if !p.Tool.Trial {
+			return nil // already confirmed; nothing to do
 		}
-		return fmt.Errorf("agent %q has no tool named %q", rec.Name, toolName)
+		t := p.Tool
+		t.Trial = false
+		t.TrialSince = time.Time{}
+		return AdminReconfigureTempTool(udb, owner, t)
 	}
 	// Recorded-only mirror: when the gatekeeper BLOCKS an inbound (no wake), the
 	// transport calls this to append the message into the bound agent's own
@@ -430,6 +426,13 @@ func (T *OrchestrateApp) Routes() {
 	// Cortex + Fleet flags + clear the marker, so a legacy cortex agent's
 	// Fleet flag can actually be turned off (and the agent published).
 	T.migrateLegacyOrchestratorMode()
+
+	// Namespace flatten: fold every agent record's embedded Tools into the
+	// unified per-user store (ScopeAgents rows). Idempotent — folded agents
+	// carry no embedded tools, so re-runs are one read per agent. Lazy
+	// re-checks in loadAgentTempTools + import cover records written by old
+	// binaries after this sweep. See tool_flatten_migration.go.
+	migrateAllAgentToolsToStore(T.DB)
 
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
 	// tools used to auto-load for everyone; now they load only after a user

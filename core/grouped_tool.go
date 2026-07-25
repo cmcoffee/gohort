@@ -32,6 +32,7 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -304,24 +305,40 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	if !ok {
 		return "", fmt.Errorf("unknown action %q for tool %q. Available: %s. Call with action=\"help\" for the full usage spec", action, g.name, strings.Join(g.sortedActionNames(), ", "))
 	}
+	// Validate required params in ONE pass and report EVERY problem at once.
+	// The old first-miss-returns loop made the model discover its mistakes
+	// serially: fix the named param, get told about the next one, and often
+	// DROP a previously-correct param while refitting (observed live: a
+	// reply_to_comment call missing post_id was "fixed" into one missing
+	// content, and after two rounds of that the model abandoned the action).
+	// One complete report — all missing, all empty, plus the typo hint for
+	// unknown keys — converges in a single round.
+	var missing, empty []string
 	for _, r := range def.Required {
 		v, ok := args[r]
 		if !ok || v == nil {
-			// A missing required param is often a TYPO on that very param
-			// (submolt_name → submolta_name), not an omission. The bare
-			// "requires param X" message never names the wrong key the
-			// model actually sent, so the model can't see its mistake and
-			// re-emits the identical misspelled call — observed as three
-			// byte-identical submolta_name calls in a row before it gave
-			// up. Name the near-miss so the correction is unmistakable.
-			if hint := def.typoHint(args); hint != "" {
-				return "", fmt.Errorf("action %q requires param %q — %s (call %q with action=\"help\" for the full param list)", action, r, hint, g.name)
-			}
-			return "", fmt.Errorf("action %q requires param %q (call %q with action=\"help\" for the full param list)", action, r, g.name)
+			missing = append(missing, strconv.Quote(r))
+			continue
 		}
 		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
-			return "", fmt.Errorf("action %q requires non-empty %q", action, r)
+			empty = append(empty, strconv.Quote(r))
 		}
+	}
+	if len(missing)+len(empty) > 0 {
+		var parts []string
+		if len(missing) > 0 {
+			parts = append(parts, "requires param(s) "+strings.Join(missing, ", "))
+		}
+		if len(empty) > 0 {
+			parts = append(parts, "requires non-empty "+strings.Join(empty, ", "))
+		}
+		// A missing required param is often a TYPO on that very param
+		// (submolt_name → submolta_name, comment_id → parent_id), not an
+		// omission. Name the near-miss so the correction is unmistakable.
+		if hint := def.typoHint(args); hint != "" {
+			parts = append(parts, hint)
+		}
+		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call — every required param in one go)", action, strings.Join(parts, " — "), g.name)
 	}
 	return def.Handler(args, sess)
 }

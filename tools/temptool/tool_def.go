@@ -709,6 +709,23 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			bodyTpl = scaffoldBodyTemplate(unsent)
 			scaffoldedActions = append(scaffoldedActions, actName)
 		}
+		// Every identifier-shaped {placeholder} in the templates must name a
+		// declared param — the same gate the standalone api create has had all
+		// along, previously MISSING here. Without it, dropping a param while a
+		// template still references it passed authoring and died at DISPATCH
+		// ("body template substitution produced invalid JSON: … {comment_id} …"
+		// — the Moltbook reply_to_comment regression); worse, a raw
+		// content_type body would send the unresolved placeholder to the API
+		// verbatim. Validated AFTER scaffolding so the auto-built body is
+		// covered too.
+		if err := validateTemplate(urlTpl, actParams); err != nil {
+			return "", fmt.Errorf("actions[%d] (%q): url_template: %w — every {placeholder} must name a declared param. If you removed a param, update the template in the same call", i, actName, err)
+		}
+		if bodyTpl != "" {
+			if err := validateTemplate(bodyTpl, actParams); err != nil {
+				return "", fmt.Errorf("actions[%d] (%q): body_template: %w — every {placeholder} must name a declared param. If you removed a param, update the body_template in the same call (otherwise dispatch dies substituting the template)", i, actName, err)
+			}
+		}
 		actions = append(actions, TempToolAction{
 			Name:            actName,
 			Description:     actDesc,
@@ -1009,6 +1026,40 @@ func loadExistingToolRecord(sess *ToolSession, name string) (TempTool, bool) {
 	return TempTool{}, false
 }
 
+// toolInUserPools reports whether the name has a durable home in the user's
+// persistent pool or pending-approval queue. Used to pick the write-back /
+// delete target when the same name also lives on an agent record: the pool
+// outranks the record (matching loadExistingToolRecord's resolution order).
+func toolInUserPools(sess *ToolSession, name string) bool {
+	if sess == nil || sess.DB == nil || sess.Username == "" {
+		return false
+	}
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			return true
+		}
+	}
+	for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// toolInSessionDrafts reports whether the name exists as a per-session draft.
+func toolInSessionDrafts(sess *ToolSession, name string) bool {
+	if sess == nil || sess.DB == nil || sess.ChatSessionID == "" {
+		return false
+	}
+	for _, t := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // actionToArgs serializes one toolbox action back to the create-arg map shape
 // (the same keys createToolboxGrouped reads), so update can rebuild the actions
 // array. required is emitted explicitly (present) so the presence-honoring
@@ -1200,6 +1251,20 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}
+	// Scope-preserving write-back (flattened namespace): when the resolved
+	// record is AGENT-scoped, pin the write-back to a carrying agent so
+	// finalize routes through AttachToolToAgent — which updates the ONE store
+	// row in place with its ScopeAgents intact. Without this, a non-Builder
+	// session's finalize falls to sess.BundleTool, which would extend the
+	// tool's scope to the EDITING agent — an edit must never be a grant.
+	// (Builder's AdminPersistTempTool path also preserves scope; the redirect
+	// just makes every session take the same explicit route.)
+	if sess.BundleAuthoredToolTo == "" {
+		if row, found := UserToolByName(sess.DB, sess.Username, name); found && len(row.ScopeAgents) > 0 {
+			sess.BundleAuthoredToolTo = row.ScopeAgents[0]
+			defer func() { sess.BundleAuthoredToolTo = "" }()
+		}
+	}
 	merged := tempToolToCreateArgs(existing)
 
 	// Secured-credential bindings are AUTO-RESOLVED on the re-run create below:
@@ -1383,6 +1448,38 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			DequeuePendingTempTool(sess.DB, sess.Username, name)
 		}
 		return fmt.Sprintf("Unbundled %q from this agent's record and dropped it from the session — it will not reload next turn.", name), nil
+	}
+	// Bundled to ANOTHER of the user's agents: the durable copy lives on that
+	// agent's record. update already resolves + writes back there in place
+	// (FindUserAgentTool → BundleAuthoredToolTo); without the same reach here,
+	// delete either reported "no temp tool named X" or removed only a session
+	// shadow while the record copy reloaded next turn. Mirror the in-place
+	// semantics: remove from the owning agent's record, then clear any
+	// session/pending shadows so nothing resurrects the name. Gated on the
+	// name having NO higher-precedence durable home (pool / pending / session
+	// draft) — when a duplicate exists in both the pool and an agent record,
+	// delete peels the copy that actually WINS resolution first; a second
+	// delete then reaches the record copy.
+	if sess != nil && sess.DB != nil && sess.Username != "" && FindUserAgentTool != nil &&
+		!toolInUserPools(sess, name) && !toolInSessionDrafts(sess, name) {
+		if rec, ownerAgent, found := FindUserAgentTool(sess.DB, sess.Username, name); found {
+			if DetachToolFromAgent == nil {
+				return "", fmt.Errorf("tool %q lives on agent %s's record; this surface can't remove it — remove it from that agent in its editor (Tools modal → Remove)", name, ownerAgent)
+			}
+			for cred := range securedBindingCreds(rec) {
+				_ = Secure().ForgetToolBinding(cred, name)
+			}
+			if err := DetachToolFromAgent(sess.DB, sess.Username, ownerAgent, name); err != nil {
+				return "", fmt.Errorf("remove %q from agent %s's record: %w", name, ownerAgent, err)
+			}
+			sess.RemoveTempTool(name)
+			if sess.ChatSessionID != "" {
+				RemoveSessionTempTool(sess.DB, sess.ChatSessionID, name)
+			}
+			DequeuePendingTempTool(sess.DB, sess.Username, name)
+			Log("[temptool.scope] removed %q from agent %s's record (in-place delete)", name, ownerAgent)
+			return fmt.Sprintf("Removed %q from the owning agent's record (it lived on agent %s, not this session) — it will not reload next turn.", name, ownerAgent), nil
+		}
 	}
 	t := &DeleteTempToolTool{}
 	res, err := t.RunWithSession(args, sess)
@@ -2957,6 +3054,15 @@ common pitfalls
 // helper that discards data it merely failed to parse would be worse than the
 // bug it fixes.
 func pruneRequired(required, params any) any {
+	// The merge base comes from actionToArgs, which emits required as a native
+	// []string — normalize so a round-tripped list still prunes.
+	if rs, ok := required.([]string); ok {
+		conv := make([]any, len(rs))
+		for i, s := range rs {
+			conv[i] = s
+		}
+		required = conv
+	}
 	reqList, ok := required.([]any)
 	if !ok || len(reqList) == 0 {
 		return required

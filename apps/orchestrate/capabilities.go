@@ -19,9 +19,9 @@ import (
 //
 // Deliberately scoped to the scary tier first. Autonomous (schedules/monitors/
 // delegation) and Network (web) tiers come later; so does folding in paid tools
-// the agent reaches through the user's shared persistent pool (here we report
-// the agent's DELIBERATELY-attached kit — a.Tools — which is the accurate
-// per-agent spending surface).
+// the agent reaches through the user's shared pool (here we report the agent's
+// DELIBERATELY-attached kit — the store rows scoped to it — which is the
+// accurate per-agent spending surface).
 
 // CapChannel is one messaging surface the agent can reach real people on.
 type CapChannel struct {
@@ -104,11 +104,12 @@ func outwardCapabilities(owner string, a AgentRecord) OutwardCapability {
 		cap.MsgTools = append(cap.MsgTools, "message_contact (via Delegation tools)")
 	}
 
-	// Paid APIs — the agent's deliberately-attached api-mode tools that dispatch
-	// through a credential priced > 0. Dedup by tool+credential.
+	// Paid APIs — the agent's deliberately-attached api-mode tools (store rows
+	// scoped to this agent) that dispatch through a credential priced > 0.
+	// Dedup by tool+credential.
 	credSeen := map[string]bool{}
-	for i := range a.Tools {
-		t := a.Tools[i]
+	for _, p := range AgentScopedTools(RootDB, owner, a.ID) {
+		t := p.Tool
 		if t.Mode != TempToolModeAPI || strings.TrimSpace(t.Credential) == "" {
 			continue
 		}

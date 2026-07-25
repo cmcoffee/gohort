@@ -553,6 +553,12 @@ type chatTurn struct {
 	// the log on first call and short-circuit to the cached result
 	// on every subsequent identical call. Subsequent step prompts
 	// include the log so the LLM can see "web_search('X latest')
+	// intentText is the turn's driving text (the latest user message, a
+	// standing mission, a dispatch brief) — what Tier-1 tool elevation
+	// matches lazy tool names against so a tool the intent literally names
+	// rides the direct catalog this turn. Set by each surface before
+	// setupCustomTools runs; empty disables mention-based elevation.
+	intentText string
 	// already returned Y" and skip the round entirely.
 	toolMu    sync.Mutex
 	toolCalls []toolCallRecord
@@ -853,6 +859,16 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	var available []AgentRecord
 	for _, a := range all {
 		if a.ID == t.agent.ID || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+			continue
+		}
+		// A target BLOCKED in the Permissions pane must not be advertised.
+		// The dispatch gate refuses it, but the fleet catalog feeds the
+		// available-agents block, the per-turn trigger hints ("dispatch to
+		// X FIRST"), and the open-dispatch-threads cue — leaving a blocked
+		// agent in those keeps nudging the model into calls the gate then
+		// refuses, a wedge of pure refusal noise. Drop it here so every
+		// steering surface goes quiet together.
+		if IsDelegationBlocked(RootDB, fleetUser, a.Name) || IsDelegationBlocked(RootDB, fleetUser, a.ID) {
 			continue
 		}
 		// A sub-agent owned by ANOTHER agent is private to its owner — never surface
@@ -1350,6 +1366,12 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	// wins). The per-agent gates below (private-mode, disabled list, user-crafted
 	// allow-list) then apply uniformly. Existing users were grandfathered into
 	// their previously auto-loaded shared tools by migrateGlobalToolAdoption.
+	// Namespace-flatten stragglers: an agent record still carrying embedded
+	// Tools (written by an old binary or an old import) folds into the
+	// unified store before hydration, so the rows below are complete.
+	if len(t.agent.Tools) > 0 {
+		migrateAgentToolsToStore(t.udb, poolUser, &t.agent)
+	}
 	loaded := LoadPersistentTempTools(poolDB, poolUser)
 	own := make(map[string]bool, len(loaded))
 	for _, p := range loaded {
@@ -1360,6 +1382,9 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if !own[p.Tool.Name] && adoptedGlobal[p.Tool.Name] {
 			loaded = append(loaded, p)
 		}
+	}
+	if t.agentOwnTools == nil {
+		t.agentOwnTools = map[string]bool{}
 	}
 	for _, p := range loaded {
 		if noTools {
@@ -1378,6 +1403,22 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if t.privateMode && p.Tool.Mode == TempToolModeAPI {
 			continue
 		}
+		// Agent-scoped record (flattened namespace — the old AgentRecord.Tools
+		// kit): part of THIS agent's own kit when scoped to it, with NO
+		// allow/deny gates (it's attached by intent). Other agents' scoped
+		// tools stay out of the catalog — except for Builder, which loads
+		// everything so it can run, test, and fix any tool it can edit.
+		if len(p.ScopeAgents) > 0 {
+			if !p.ScopedToAgent(t.agent.ID) && !isBuilderAgent(t.agent.ID) {
+				continue
+			}
+			tool := p.Tool
+			t.agentOwnTools[tool.Name] = true // the agent's deliberate kit (first-classed in setupCustomTools)
+			if err := sess.AppendTempTool(&tool); err != nil {
+				Log("[orchestrate.tools] agent-scoped tool %q failed to load: %v", tool.Name, err)
+			}
+			continue
+		}
 		if disabledPersistent[p.Tool.Name] { // per-agent opt-out
 			continue
 		}
@@ -1392,39 +1433,11 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if n := len(loaded); n > 0 {
 		Log("[orchestrate.tools] loaded %d persistent temp tool(s) for %s", n, poolUser)
 	}
-	// Agent-scoped tools (AgentRecord.Tools) layer on top — attached directly to
-	// the record, so NO AllowedTools gate; deduped against the persistent pool.
-	agentToolsSkipped := 0
-	if t.agentOwnTools == nil {
-		t.agentOwnTools = map[string]bool{}
-	}
-	for i := range t.agent.Tools {
-		tool := t.agent.Tools[i]
-		if t.privateMode && tool.Mode == TempToolModeAPI {
-			continue
-		}
-		// Per-agent disable: a bundled tool the user turned OFF for this agent
-		// (from the tool's Access panel) stays on the record — so its definition
-		// survives and Builder can still repair it in place — but doesn't load
-		// into the agent's kit. Non-destructive, unlike unscoping.
-		if tool.Disabled {
-			agentToolsSkipped++
-			continue
-		}
-		if sess.HasTempTool(tool.Name) {
-			agentToolsSkipped++
-			continue
-		}
-		t.agentOwnTools[tool.Name] = true // the agent's deliberate kit (first-classed in setupCustomTools)
-		if err := sess.AppendTempTool(&tool); err != nil {
-			Log("[orchestrate.tools] agent-scoped tool %q failed to load: %v", tool.Name, err)
-		}
-	}
-	if agentToolsSkipped > 0 {
-		Debug("[orchestrate.tools] %d agent-scoped tool(s) already present from the persistent pool (not re-loaded) for agent=%s", agentToolsSkipped, t.agent.ID)
-	}
+	// Agent-scoped tools now ride the unified store (ScopeAgents on the
+	// record) and were folded into the pool loop above — AgentRecord.Tools is
+	// no longer a runtime source (see migrateAgentToolsToStore).
 	if n := len(t.agentOwnTools); n > 0 {
-		Log("[orchestrate.tools] attached %d uniquely-agent-scoped tool(s) for agent=%s", n, t.agent.ID)
+		Log("[orchestrate.tools] attached %d agent-scoped tool(s) for agent=%s", n, t.agent.ID)
 	}
 	// Expose the bundled set + an unbundle path to tool_def so a
 	// record-attached tool is legible as such (list/get tag it) and
@@ -1451,10 +1464,10 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	sess.UnbundleTool = func(name string) error {
 		return unbundleAgentTool(poolDBRef, owner, agentID, name)
 	}
-	if len(t.agent.Tools) > 0 {
-		bundled := make(map[string]bool, len(t.agent.Tools))
-		for i := range t.agent.Tools {
-			bundled[t.agent.Tools[i].Name] = true
+	if scoped := AgentScopedTools(poolDB, poolUser, t.agent.ID); len(scoped) > 0 {
+		bundled := make(map[string]bool, len(scoped))
+		for _, p := range scoped {
+			bundled[p.Tool.Name] = true
 		}
 		sess.BundledToolNames = bundled
 	}
@@ -1476,21 +1489,11 @@ func unbundleAgentTool(db Database, owner, agentID, name string) error {
 	if rec.Owner != "" && owner != "" && rec.Owner != owner {
 		return fmt.Errorf("not your agent")
 	}
-	kept := rec.Tools[:0]
-	found := false
-	for _, tl := range rec.Tools {
-		if tl.Name == name {
-			found = true
-			continue
-		}
-		kept = append(kept, tl)
-	}
-	if !found {
-		return fmt.Errorf("tool %q is not bundled on agent %q", name, rec.Name)
-	}
-	rec.Tools = kept
-	_, err := saveAgent(db, rec)
-	return err
+	// Flattened namespace: delegate to the store-backed unbundle (drop this
+	// agent from ScopeAgents; last carrier → orphan). The owner guard above is
+	// this runtime path's extra check — the scope-pill twin deliberately
+	// doesn't carry it.
+	return unbundleAgentToolByID(db, owner, agentID, name)
 }
 
 // bundleAgentTool attaches (or replaces by name) a tool on an agent's
@@ -1522,19 +1525,26 @@ func bundleAgentTool(db Database, owner string, base AgentRecord, t TempTool) er
 	if rec.Owner != "" && owner != "" && rec.Owner != owner {
 		return fmt.Errorf("not your agent")
 	}
-	replaced := false
-	for i := range rec.Tools {
-		if rec.Tools[i].Name == t.Name {
-			rec.Tools[i] = t
-			replaced = true
-			break
-		}
+	// Flattened namespace: the tool lands in the unified store scoped to this
+	// agent — no record write, no shadow needed (the store row IS the durable
+	// home, whether or not the agent record has ever been saved — which is
+	// also why this doesn't delegate to bundleAgentToolByID: that path
+	// requires a loadable record).
+	existing, had := UserToolByName(db, owner, t.Name)
+	if err := AdminPersistTempTool(db, owner, t); err != nil {
+		return err
 	}
-	if !replaced {
-		rec.Tools = append(rec.Tools, t)
+	if had && len(existing.ScopeAgents) == 0 {
+		return nil // shared — def updated in place, visibility unchanged
 	}
-	_, err := saveAgent(db, rec)
-	return err
+	if existing.ScopedToAgent(rec.ID) {
+		return nil
+	}
+	scope := append(append([]string{}, existing.ScopeAgents...), rec.ID)
+	if !SetUserToolScopeAgents(db, owner, t.Name, scope) {
+		return fmt.Errorf("bundle %q: scope update failed", t.Name)
+	}
+	return nil
 }
 
 // wireLiveCallbacks attaches the mid-turn user-facing hooks (send_status and the
@@ -1732,11 +1742,11 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		// so the listAgents walk doesn't tax draft-free agents.
 		var committed map[string]bool
 		if len(drafts) > 0 {
+			// Flattened namespace: every durable commit (shared OR
+			// agent-scoped) is one store row — no per-agent record walk.
 			committed = map[string]bool{}
-			for _, a := range listAgents(t.udb, t.user) {
-				for _, tl := range a.Tools {
-					committed[tl.Name] = true
-				}
+			for _, p := range LoadPersistentTempTools(t.udb, t.user) {
+				committed[p.Tool.Name] = true
 			}
 		}
 		var cleaned int
@@ -1892,6 +1902,11 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 				}
 				t.loadedCustomTools[n] = true
 				loaded = append(loaded, n)
+				// Tier-2 elevation signal: an agent that loads the same tool
+				// across enough distinct sessions is declaring its kit —
+				// recorded per (agent, tool, session), promoted in
+				// elevatedToolSet, surfaced as a scope suggestion.
+				recordToolLoads(t.udb, t.agent.ID, sess.ChatSessionID, []string{n})
 				schemas = append(schemas, map[string]any{
 					"name":        td.Tool.Name,
 					"description": td.Tool.Description,
@@ -3079,7 +3094,7 @@ func summarizeToolArgs(args map[string]any) string {
 		case []any:
 			elems := make([]string, 0, len(vv))
 			for _, e := range vv {
-				elems = append(elems, fmt.Sprintf("%v", e))
+				elems = append(elems, compactArgElem(e))
 			}
 			s = "[" + strings.Join(elems, ", ") + "]"
 		case map[string]any:
@@ -3096,6 +3111,21 @@ func summarizeToolArgs(args map[string]any) string {
 		parts = append(parts, fmt.Sprintf("%s=%q", k, s))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// compactArgElem renders one element of an []any arg value for the tool-chip
+// summary. Scalars keep the plain %v form; maps/slices (e.g. tool_def's
+// actions array) render as compact JSON — %v on those produced Go-syntax
+// "map[method:POST name:…]" in the chip and in copied transcripts, which
+// reads like corrupted args to anyone (or any model) inspecting the paste.
+func compactArgElem(e any) string {
+	switch e.(type) {
+	case map[string]any, []any:
+		if b, err := json.Marshal(e); err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprintf("%v", e)
 }
 
 // lastUserContent returns the .Content of the last user-role message
@@ -4128,7 +4158,8 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// so a fresh /api/runs/<id>/stream subscriber after a reconnect
 	// can replay the conversation from any sequence number.
 	ctx, cancel := context.WithCancel(context.Background())
-	run := T.runsRegistry().Create(user, agent.ID, sess.ID, cancel)
+	run := T.runsRegistry().Create(user, agent.ID, sess.ID, cancel).
+		Describe("chat", agent.Name, truncateObs(req.Message, 100))
 	sse := newTeeSSEWriter(w, run)
 
 	// SSE response headers — handleSend streams frames inline off this response.
@@ -5098,7 +5129,16 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 	t.lazyCustomToolNames = map[string]bool{}
 	t.loadedCustomTools = map[string]bool{}
 	t.lazyCustomToolDefs = map[string]AgentToolDef{}
-	agentKit := t.agentOwnTools // nil on the dispatch path → has-args customs go lazy
+	// agentOwnTools is populated by loadAgentTempTools on EVERY surface (web,
+	// channel, dispatch, scheduled) — the agent's scoped kit rides the direct
+	// catalog everywhere. Only shared-pool has-args tools take the lazy path.
+	agentKit := t.agentOwnTools
+	// Auto-elevation (visibility only, never access): a lazy shared tool the
+	// turn's intent literally names (Tier 1) or that this agent load_tool's
+	// every run (Tier 2) joins the direct catalog for this turn — the
+	// fetch_url-over-moltbook class dies here instead of relying on the
+	// owner noticing and scoping.
+	elevated := t.elevatedToolSet(sess, allCustomTools, agentKit)
 	var lazyCustomTools []AgentToolDef
 	var trialDemoted int
 	for _, td := range allCustomTools {
@@ -5115,7 +5155,10 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 			kit = false
 			trialDemoted++
 		}
-		if len(td.Tool.Parameters) == 0 || kit {
+		if reason := elevated[td.Tool.Name]; reason != "" && !kit {
+			Log("[orchestrate.elevate] agent=%s: %q elevated to the direct catalog (%s)", t.agent.ID, td.Tool.Name, reason)
+		}
+		if len(td.Tool.Parameters) == 0 || kit || elevated[td.Tool.Name] != "" {
 			direct = append(direct, td)
 			t.staticTempToolNames[td.Tool.Name] = true
 		} else {
@@ -5848,6 +5891,17 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// surfaces present them identically (zero-arg → direct, has-args → load_tool
 	// + prompt section). The staticTempToolNames snapshot it populates is what
 	// the DynamicTools feed below uses to surface only NEW mid-turn temp tools.
+	// Tier-1 tool elevation matches against the latest user message on the
+	// interactive surface (dispatch/scheduled surfaces stamp IntentText on
+	// their sessions instead).
+	if t.intentText == "" {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == "user" && strings.TrimSpace(msgs[i].Content) != "" {
+				t.intentText = msgs[i].Content
+				break
+			}
+		}
+	}
 	directCustomTools, lazyCustomPrompt := t.setupCustomTools(sess)
 	sys += lazyCustomPrompt
 	allTools := append(controlTools, knowTools...)
@@ -7380,7 +7434,7 @@ func formatToolCall(name string, args map[string]any) string {
 		case []any:
 			elems := make([]string, 0, len(vv))
 			for _, e := range vv {
-				elems = append(elems, fmt.Sprintf("%v", e))
+				elems = append(elems, compactArgElem(e))
 			}
 			s = "[" + strings.Join(elems, ", ") + "]"
 		case map[string]any:

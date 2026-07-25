@@ -131,6 +131,16 @@ var ListUserAgentTools func(db Database, owner string) []TempTool
 // lookup wired (host without orchestrate), so bundled tools stay unreachable.
 var FindUserAgentTool func(db Database, owner, name string) (TempTool, string, bool)
 
+// DetachToolFromAgent removes a tool from an agent's record by name — the
+// delete half of in-place editing. Update resolves a tool bundled to another
+// of the user's agents via FindUserAgentTool and writes back with
+// AttachToolToAgent; without this seam, delete had no symmetric path: it
+// removed only the session copy ("Removed temp tool from this session") while
+// the durable copy on the agent record survived and reloaded next turn — or
+// reported "no temp tool named X" outright. Wired by the app that owns agent
+// records; nil ⇒ cross-agent delete unavailable.
+var DetachToolFromAgent func(db Database, owner, agentID, toolName string) error
+
 // AdminSetToolScope, when set, applies ONE pill toggle. target is either
 // "global" (the Global pill) or an agent id; on is the desired state.
 // The orchestrate impl interprets the transition against current state:
@@ -323,6 +333,89 @@ type PersistentTempTool struct {
 	// this is ignored when Shared is false. Mirrors SecureCredential.AllowedUsers
 	// — one ACL concept across creds and tools. See docs/sharing-governance.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// ScopeAgents restricts the tool to the listed agent IDs (the FLATTENED
+	// namespace: one record per (user, name), scope as data). Empty/nil = the
+	// legacy pool semantics — visible to ALL the user's agents, subject to the
+	// per-agent allow/deny lists. Non-empty = the tool is part of ONLY those
+	// agents' kits: the replacement for the old AgentRecord.Tools embedded
+	// copies, which let the same name live in two homes and fork (the Moltbook
+	// "Builder fixed it but the agent ran the other copy" failure). Gob/JSON
+	// compatible: records written before this field decode as nil ⇒ shared.
+	ScopeAgents []string `json:"scope_agents,omitempty"`
+}
+
+// ScopedToAgent reports whether the record is agent-scoped AND includes the
+// given agent. Shared records (empty ScopeAgents) return false — visibility
+// of shared tools is decided by the per-agent allow/deny lists, not here.
+func (p PersistentTempTool) ScopedToAgent(agentID string) bool {
+	for _, id := range p.ScopeAgents {
+		if id == agentID {
+			return true
+		}
+	}
+	return false
+}
+
+// SharedUserTools returns only the records with pool semantics — empty
+// ScopeAgents, visible to all the user's agents (subject to per-agent
+// allow/deny lists). Consumers that used LoadPersistentTempTools to mean
+// "the user-wide pool" switch to this under the flattened namespace, so an
+// agent-scoped record never leaks into another agent's catalog.
+func SharedUserTools(db Database, username string) []PersistentTempTool {
+	var out []PersistentTempTool
+	for _, p := range LoadPersistentTempTools(db, username) {
+		if len(p.ScopeAgents) == 0 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// AgentScopedTools returns the user's tools whose ScopeAgents lists the given
+// agent — the agent's own kit under the flattened namespace (what
+// AgentRecord.Tools used to hold as embedded copies).
+func AgentScopedTools(db Database, username, agentID string) []PersistentTempTool {
+	if agentID == "" {
+		return nil
+	}
+	var out []PersistentTempTool
+	for _, p := range LoadPersistentTempTools(db, username) {
+		if p.ScopedToAgent(agentID) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// UserToolByName resolves one tool in the user's unified store by name,
+// regardless of scope.
+func UserToolByName(db Database, username, name string) (PersistentTempTool, bool) {
+	for _, p := range LoadPersistentTempTools(db, username) {
+		if p.Tool.Name == name {
+			return p, true
+		}
+	}
+	return PersistentTempTool{}, false
+}
+
+// SetUserToolScopeAgents replaces a tool's ScopeAgents list (nil = shared
+// with all agents). Returns false when no tool of that name exists.
+func SetUserToolScopeAgents(db Database, username, name string, agents []string) bool {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return false
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	list := LoadPersistentTempTools(db, username)
+	for i := range list {
+		if list[i].Tool.Name == name {
+			list[i].ScopeAgents = agents
+			db.Set(persistentTempToolsTable, username, list)
+			return true
+		}
+	}
+	return false
 }
 
 // LoadPendingTempTools returns the pending-approval queue for a user,
@@ -682,6 +775,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	rest := approved[:0]
+	next := PersistentTempTool{Tool: t, ApprovedAt: time.Now()}
 	for i := range approved {
 		if approved[i].Tool.Name != t.Name {
 			rest = append(rest, approved[i])
@@ -693,14 +787,21 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		// otherwise silently clear them (e.g. re-enable a disabled tool). Locked
 		// tools can't be re-persisted at all (the tool_def guard blocks it), but
 		// carry it too for completeness.
-		t.Locked = approved[i].Tool.Locked
-		t.Disabled = approved[i].Tool.Disabled
-		t.BuilderOnly = approved[i].Tool.BuilderOnly
+		next.Tool.Locked = approved[i].Tool.Locked
+		next.Tool.Disabled = approved[i].Tool.Disabled
+		next.Tool.BuilderOnly = approved[i].Tool.BuilderOnly
+		// Wrapper-level state survives a re-persist too. ScopeAgents is the
+		// flattened namespace's scope — dropping it would silently promote an
+		// agent-scoped tool to shared on every Builder edit. Shared /
+		// AllowedUsers were ALSO silently dropped here before the flatten (a
+		// published tool became unpublished on any edit); LastUsedAt is
+		// telemetry worth keeping.
+		next.ScopeAgents = approved[i].ScopeAgents
+		next.Shared = approved[i].Shared
+		next.AllowedUsers = approved[i].AllowedUsers
+		next.LastUsedAt = approved[i].LastUsedAt
 	}
-	rest = append(rest, PersistentTempTool{
-		Tool:       t,
-		ApprovedAt: time.Now(),
-	})
+	rest = append(rest, next)
 	db.Set(persistentTempToolsTable, username, rest)
 	// Dedupe against the pending queue — the tool was likely also
 	// auto-queued by tool_def(create) when first authored. Without

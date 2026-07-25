@@ -7,7 +7,8 @@ import (
 )
 
 // credentialTools returns every tool that declares cred — scanning the shared
-// deployment pool, then each user's agents and per-user global pool. Wired into
+// deployment pool, then each user's unified tool store (shared and
+// agent-scoped rows alike). Wired into
 // core.CredentialToolsResolver at startup so the admin credential UI (which
 // can't reach agent records itself) can list a credential's bound tools and warn
 // on a secured-but-unused one. A tool declares a credential via its api-mode
@@ -63,14 +64,27 @@ func credentialTools(cred string) []CredentialToolRef {
 		add("deployment pool", pt.Tool.Name, via(pt.Tool))
 	}
 	for _, u := range AuthListUsers(RootDB) {
-		udb := agentUserDB(RootDB, u.Username)
-		for _, a := range listAgents(udb, u.Username) {
-			for _, tt := range a.Tools {
-				add(a.Name, tt.Name, via(tt))
-			}
+		// One walk over the user's unified store: a scoped row attributes to
+		// each agent carrying it, a shared row to the user's pool — no second
+		// per-agent walk, so nothing double-counts.
+		agentName := map[string]string{}
+		for _, a := range listAgents(agentUserDB(RootDB, u.Username), u.Username) {
+			agentName[a.ID] = a.Name
 		}
 		for _, pt := range LoadPersistentTempTools(RootDB, u.Username) {
-			add(u.Username+" pool", pt.Tool.Name, via(pt.Tool))
+			v := via(pt.Tool)
+			if v == "" {
+				continue
+			}
+			if len(pt.ScopeAgents) == 0 {
+				add(u.Username+" pool", pt.Tool.Name, v)
+				continue
+			}
+			for _, id := range pt.ScopeAgents {
+				if n := agentName[id]; n != "" {
+					add(n, pt.Tool.Name, v)
+				}
+			}
 		}
 	}
 	// Connectors bind a credential too, but the tool they generate

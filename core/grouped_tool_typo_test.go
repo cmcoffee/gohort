@@ -81,3 +81,33 @@ func TestGroupedTool_UnrelatedExtraKeyNotFlagged(t *testing.T) {
 		t.Errorf("titel should suggest title; got %q", got)
 	}
 }
+
+// TestGroupedTool_AllMissingParamsReportedAtOnce pins the batch validation:
+// every missing required param lands in ONE error, with the typo hint, so
+// the model converges in a single retry instead of discovering its mistakes
+// serially (observed live: a reply_to_comment missing post_id was "fixed"
+// into one missing content, and the model abandoned the action after two
+// rounds of one-at-a-time errors).
+func TestGroupedTool_AllMissingParamsReportedAtOnce(t *testing.T) {
+	gt := newTestPostTool()
+	_, err := gt.Run(map[string]any{
+		"action":        "post",
+		"submolta_name": "general", // typo — the real param is missing
+		"title":         "",        // present but empty
+	})
+	if err == nil {
+		t.Fatal("expected error for missing/empty required params")
+	}
+	msg := err.Error()
+	for _, want := range []string{`"submolt_name"`, `"client_id"`, `non-empty "title"`, `"submolta_name"`, "did you mean"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("batch error should mention %s; got: %s", want, msg)
+		}
+	}
+	// And the fixed call goes straight through.
+	if out, err := gt.Run(map[string]any{
+		"action": "post", "submolt_name": "general", "title": "hi", "client_id": "abc",
+	}); err != nil || out != "ok" {
+		t.Fatalf("complete call should succeed; out=%q err=%v", out, err)
+	}
+}

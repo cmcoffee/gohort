@@ -1070,7 +1070,10 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 			Caps:        []Capability{CapNetwork, CapExecute},
 			Category:    tt.Category, // expanded actions inherit the toolbox's claimed category
 		},
-		NeedsConfirm: true,
+		// Same tier resolution as the collapsed group: the credential's
+		// Require-confirm toggle decides, not a blanket true — an expanded
+		// action must not be stricter than the toolbox it came from.
+		NeedsConfirm: tempToolNeedsConfirm(tt),
 		Handler: func(args map[string]any) (string, error) {
 			a2 := make(map[string]any, len(args)+1)
 			for k, v := range args {
@@ -1117,7 +1120,11 @@ func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
 			live++
 		}
 	}
-	gtDesc := tt.Description + fmt.Sprintf(" (toolbox — wraps credential %q with %d action(s), defined this session via tool_def)", tt.Credential, live)
+	// Provenance-neutral suffix: this builder serves EVERY toolbox — the
+	// user's persistent/scoped kit included — so the description must not
+	// claim "defined this session" (it taught the model, and anyone reading
+	// a session export, a false provenance for long-lived tools).
+	gtDesc := tt.Description + fmt.Sprintf(" (toolbox — wraps credential %q with %d action(s); manage via tool_def)", tt.Credential, live)
 	gt := NewGroupedTool(tt.Name, gtDesc)
 	for i := range tt.Actions {
 		if tt.Actions[i].Disabled {
@@ -1183,16 +1190,24 @@ func capsSubset(want, have []Capability) bool {
 }
 
 // tempToolNeedsConfirm reports whether a temp tool is consequential enough to
-// require per-call approval. Credential/api tools reach a real endpoint;
-// RawNetwork leaves the sandbox; a hook capability outside the read-only set
-// (secret:<name>, fetch_via:<name>, …) grants more than a benign fetch. A plain
-// shell tool that at most does an audited read-only fetch/log/browse is not
-// consequential and runs freely.
+// require per-call approval. RawNetwork leaves the sandbox; a hook capability
+// outside the read-only set (secret:<name>, fetch_via:<name>, …) grants more
+// than a benign fetch; a credential-less api tool is a raw endpoint with no
+// admin-declared tier. A plain shell tool that at most does an audited
+// read-only fetch/log/browse is not consequential and runs freely.
+//
+// A CREDENTIAL-backed tool (api / toolbox / shell-with-credential) defers to
+// the credential's own "Require confirm before each call" toggle — the same
+// contract the auto-generated call_<cred> / fetch_url_<cred> bridge tools
+// already honor (secure_api sets their NeedsConfirm to c.RequiresConfirm).
+// Blanket-marking every credentialed temp tool made the SAME credential behave
+// two ways: its bridge tool ran unattended while its toolbox was refused on
+// every scheduled/standing fire ("tools enabled on the agent but the scheduler
+// can't call them") — interactive turns hid the split because their confirm
+// hook only escalates RequiresConfirm credentials anyway. Unknown credential
+// fails closed.
 func tempToolNeedsConfirm(tt *TempTool) bool {
 	if tt == nil {
-		return true
-	}
-	if tt.Mode == TempToolModeAPI || strings.TrimSpace(tt.Credential) != "" {
 		return true
 	}
 	if tt.RawNetwork {
@@ -1205,6 +1220,15 @@ func tempToolNeedsConfirm(tt *TempTool) bool {
 		default:
 			return true // secret:<name>, fetch_via:<name>, or any other capability
 		}
+	}
+	if cred := strings.TrimSpace(tt.Credential); cred != "" {
+		if c, ok := Secure().Load(cred); ok {
+			return c.RequiresConfirm
+		}
+		return true // credential named but not resolvable — fail closed
+	}
+	if tt.Mode == TempToolModeAPI {
+		return true // api mode with no credential: raw endpoint, no declared tier
 	}
 	return false
 }
@@ -1244,9 +1268,11 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	// Caps depend on execution mode (see tempToolCaps). The AllowedCaps
 	// filter then hides the tool from sessions that don't grant the tier.
 	caps := tempToolCaps(tt)
-	descSuffix := " (temp tool — defined this session via create_temp_tool)"
+	// Same provenance-neutral rule as the toolbox suffix above: persistent
+	// pool tools flow through here too, so no "defined this session" claim.
+	descSuffix := " (custom shell tool — manage via tool_def)"
 	if tt.Mode == TempToolModeAPI {
-		descSuffix = fmt.Sprintf(" (api tool — wraps credential %q, defined this session via create_api_tool)", tt.Credential)
+		descSuffix = fmt.Sprintf(" (custom api tool — wraps credential %q; manage via tool_def)", tt.Credential)
 	}
 	return AgentToolDef{
 		Tool: Tool{
@@ -1973,6 +1999,20 @@ func parseParamsArg(v any) (map[string]ToolParam, error) {
 func stringSliceArg(v any) []string {
 	if v == nil {
 		return nil
+	}
+	// Already a string slice — the shape actionToArgs / tempToolToCreateArgs
+	// emit when an update round-trips a stored tool. Missing this case is how
+	// every action's required list silently became empty on any partial edit
+	// (remove_actions, single-action upsert), which the path-placeholder gate
+	// then rejected — an unfixable-from-the-model's-side loop.
+	if arr, ok := v.([]string); ok {
+		var out []string
+		for _, s := range arr {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
 	if arr, ok := v.([]any); ok {
 		var out []string
@@ -3081,6 +3121,13 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	// guarantee that gates web_search / fetch_url / the sandbox.
 	if !sess.NetworkAllowed() {
 		return "", fmt.Errorf("api tool %q refused: network is blocked for this turn (private mode is on)", tt.Name)
+	}
+	// Empty URL template = a broken DEFINITION, not a bad call. Without this,
+	// the HTTP layer's bare "url is required" gave the model nothing to act
+	// on — observed burning whole autonomous cycles retrying an action whose
+	// stored url_template was empty, misreading it as a missing parameter.
+	if strings.TrimSpace(tt.CommandTemplate) == "" {
+		return "", fmt.Errorf("tool %q has an EMPTY url_template — its stored definition is broken, and NO arguments will make this call work. Do not retry. Fix the definition: tool_def(action=\"update\", name=%q, url_template=\"https://...\") — or for a toolbox action, actions=[{name:\"<action>\", url_template:\"https://...\"}]", tt.Name, tt.Name)
 	}
 	urlStr, err := substituteURL(tt.CommandTemplate, tt.Params, tt.Required, args)
 	if err != nil {

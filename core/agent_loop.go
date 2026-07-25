@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -175,6 +176,136 @@ func normalizeFailureShape(content string) string {
 		out = out[:160]
 	}
 	return out
+}
+
+// Failure-streak collapse — the in-context repetition damper.
+//
+// One failure fact carries signal; thirty-eight verbatim copies carry a
+// BEHAVIOR: by mid-turn, "call the tool, get the error, note it, continue" is
+// the dominant pattern in the context and the model imitates the pattern it
+// sees (observed live: a standing agent re-firing one broken tool 38× per
+// cycle, cycle after cycle — the storms were self-teaching). The damper keeps
+// the model's knowledge of a failure while deleting the repetition: once one
+// normalized failure shape has recurred errShapeCollapseAt times, the MIDDLE
+// occurrences in the accumulated history are rewritten to a one-line marker —
+// the FIRST occurrence keeps its full text (the informative copy) and the
+// newest occurrence stays full (the current state). Rewrite-in-place, never
+// remove: tool-result messages must keep their ids and ordering for the
+// provider's chat template.
+//
+// This also applies to INCOMING history at loop start (prior turns' tool
+// results ride back in via toLLMMessages), so a storm that already happened
+// stops re-teaching every later turn. Stored sessions are only affected for
+// results produced after the streak tripped — the first full occurrence is
+// always preserved for exports/debugging.
+const errShapeCollapseAt = 3
+
+// collapsedFailureMarker names the collapsed shape so the marker is
+// self-describing — in the live context AND in a session export, a collapsed
+// row should say WHICH error it was without scrolling for the first
+// occurrence. Markers of one shape are byte-identical (cache-friendly), and
+// the marker's own shape never matches the original (the prefix text differs),
+// so sweeps stay idempotent.
+func collapsedFailureMarker(shape string) string {
+	return "(repeated failure collapsed — same as the earlier full result: \"" + oneLineShape(shape) + "\")"
+}
+
+// resolvedFailureMarker replaces a failure result whose tool LATER succeeded
+// this turn — the failure is stale the moment the 200 lands, and a context
+// carrying both teaches the model to arbitrate; models side with whatever
+// appears more often, which is the failure.
+func resolvedFailureMarker(toolName string) string {
+	return "(earlier " + toolName + " failure collapsed — a later " + toolName + " call SUCCEEDED this turn; treat the failure as resolved)"
+}
+
+// collapseRepeatedFailureResults rewrites duplicate occurrences of one
+// failure shape across history's tool results. The first occurrence is always
+// kept in full; keepLast additionally preserves the newest one (used for
+// incoming history, where the latest copy IS the current state — during a
+// live turn the current round's full result is appended after the sweep, so
+// keepLast is false there). Copy-on-write per message: history is a shallow
+// copy of the caller's slice, so the ToolResults backing arrays are shared —
+// clone before mutating so the rewrite never reaches the caller's messages.
+func collapseRepeatedFailureResults(history []Message, shape string, keepLast bool) int {
+	type pos struct{ mi, ri int }
+	var found []pos
+	for mi := range history {
+		for ri := range history[mi].ToolResults {
+			r := &history[mi].ToolResults[ri]
+			if r.IsError && normalizeFailureShape(r.Content) == shape {
+				found = append(found, pos{mi, ri})
+			}
+		}
+	}
+	end := len(found)
+	if keepLast {
+		end--
+	}
+	if end <= 1 {
+		return 0
+	}
+	n := 0
+	cloned := map[int]bool{}
+	for _, p := range found[1:end] {
+		if !cloned[p.mi] {
+			history[p.mi].ToolResults = append([]ToolResult(nil), history[p.mi].ToolResults...)
+			cloned[p.mi] = true
+		}
+		history[p.mi].ToolResults[p.ri].Content = collapsedFailureMarker(shape)
+		n++
+	}
+	return n
+}
+
+// collapseIncomingFailureStreaks applies the damper to the history a turn
+// STARTS with: prior turns' failure storms ride back in through the rebuilt
+// tool rounds, and without this each new turn re-reads the whole wall.
+func collapseIncomingFailureStreaks(history []Message) int {
+	counts := map[string]int{}
+	for mi := range history {
+		for _, r := range history[mi].ToolResults {
+			if r.IsError {
+				if s := normalizeFailureShape(r.Content); s != "" {
+					counts[s]++
+				}
+			}
+		}
+	}
+	total := 0
+	for shape, c := range counts {
+		if c >= errShapeCollapseAt {
+			total += collapseRepeatedFailureResults(history, shape, true)
+		}
+	}
+	return total
+}
+
+// retireResolvedFailureResults is the success half of the damper: when a tool
+// that failed earlier this turn SUCCEEDS, every prior failure result matching
+// one of that tool's recorded failure shapes is rewritten to a resolved
+// marker — including the first occurrence, because a resolved failure's full
+// text is no longer information, it's a contradiction of the current state.
+func retireResolvedFailureResults(history []Message, shapes map[string]bool, toolName string) int {
+	if len(shapes) == 0 {
+		return 0
+	}
+	n := 0
+	cloned := map[int]bool{}
+	for mi := range history {
+		for ri := range history[mi].ToolResults {
+			r := &history[mi].ToolResults[ri]
+			if !r.IsError || !shapes[normalizeFailureShape(r.Content)] {
+				continue
+			}
+			if !cloned[mi] {
+				history[mi].ToolResults = append([]ToolResult(nil), history[mi].ToolResults...)
+				cloned[mi] = true
+			}
+			history[mi].ToolResults[ri].Content = resolvedFailureMarker(toolName)
+			n++
+		}
+	}
+	return n
 }
 
 // oneLineShape renders a failure shape for a log line or a directive.
@@ -826,6 +957,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 
 	history := make([]Message, len(messages))
 	copy(history, messages)
+	// Damp prior-turn failure storms before the model re-reads them: rebuilt
+	// tool rounds carry every old error verbatim, and a wall of identical
+	// failures is in-context training data for producing more of them. Keeps
+	// the first and newest copy of each repeated shape, collapses the middle.
+	if n := collapseIncomingFailureStreaks(history); n > 0 {
+		Debug("[agent_loop] failure-streak collapse: %d repeated failure result(s) in incoming history collapsed", n)
+	}
 
 	// Stamp the current date+time onto the latest user turn (the human message
 	// that opened this turn — tool-result user messages get appended below, so at
@@ -1110,6 +1248,10 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	errShapeNudged := map[string]bool{}
 	const errShapeNudgeAt = 3    // say it plainly, once per shape
 	const errShapeDeescalateAt = 6 // stop paying lead rates to keep hitting it
+	// toolFailShapes records which failure shapes each TOOL produced this
+	// turn, so a later success of that tool can retire its stale failure
+	// residue from the context (retireResolvedFailureResults).
+	toolFailShapes := map[string]map[string]bool{}
 	// Seed the guard from prior-turn history so a fixation that spans
 	// SEPARATE user turns is caught. repeatFail is otherwise turn-local, so
 	// a model that re-issues the SAME wrong+erroring call every turn resets
@@ -1254,7 +1396,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				history = append(history, Message{
 					Role: "user",
 					Content: fmt.Sprintf(
-						"Fresh budget window: you have %d rounds for this phase. The framework will nudge you at the halfway mark and again near the cap — pace this phase as if starting clean. (Hard MaxRounds cap is still %d total for the turn.)",
+						frameworkNoticeTag+"Fresh budget window: you have %d rounds for this phase. The framework will nudge you at the halfway mark and again near the cap — pace this phase as if starting clean. (Hard MaxRounds cap is still %d total for the turn.)",
 						remaining, maxRounds),
 				})
 			}
@@ -1286,7 +1428,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			history = append(history, Message{
 				Role: "user",
 				Content: fmt.Sprintf(
-					"Halfway checkpoint: you're at round %d of %d for this phase. Taking stock is worth a moment — if you're making real progress, keep going; if not, consider switching tools, trying a different angle, or asking the user for clarification before the remaining budget gets spent.",
+					frameworkNoticeTag+"Halfway checkpoint: you're at round %d of %d for this phase. Taking stock is worth a moment — if you're making real progress, keep going; if not, consider switching tools, trying a different angle, or asking the user for clarification before the remaining budget gets spent.",
 					phaseRound, phaseTotal),
 			})
 			midpointNudgeFired = true
@@ -1335,7 +1477,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			if left <= 1 {
 				msg = "[ROUND LIMIT — HARD STOP after this round. Produce your final answer NOW from what you already have. Start no new work; make a tool call only if it is the single step needed to finish, then answer.]"
 			} else {
-				msg = fmt.Sprintf("[Round limit reached — wrap up and give your final answer. %d round(s) left before a hard stop. Finish in-flight work only; start nothing new.]", left)
+				msg = fmt.Sprintf(frameworkNoticeTag+"[Round limit reached — wrap up and give your final answer. %d round(s) left before a hard stop. Finish in-flight work only; start nothing new.]", left)
 			}
 			history = append(history, Message{Role: "user", Content: msg})
 		}
@@ -1773,7 +1915,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
-						Content: "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
+						Content: frameworkNoticeTag+"Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
 					})
 					promiseCorrectionsTotal++
 					continue
@@ -1810,7 +1952,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
-						Content: "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
+						Content: frameworkNoticeTag+"Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
 					})
 					promiseCorrectionsTotal++
 					continue
@@ -1837,7 +1979,30 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
 				history = append(history, Message{
 					Role:    "user",
-					Content: "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
+					Content: frameworkNoticeTag+"You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
+				})
+				promiseCorrectionsTotal++
+				continue
+			}
+
+			// Announced-call correction: the reply ENDS on a colon
+			// introducing a call that never came — "Here's the
+			// `update_agent` call to implement these changes:" and the turn
+			// stops (observed: Builder settled a turn exactly there and the
+			// user watched nothing happen). Unlike the disabled
+			// actionPromiseCorrection above, the trailing-colon +
+			// call-announcement shape doesn't occur in complete replies, so
+			// it's safe to re-prompt on. No !toolFiredThisTurn gate:
+			// announcing a follow-up call and stopping is just as broken
+			// after earlier tools succeeded. Budget-shared with the other
+			// promise corrections so it can't loop.
+			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && endsWithCallAnnouncement(resp.Content) {
+				Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
+				emitDiag("announced-call-corrected", "The reply ended by announcing a tool call it never made; re-prompted to actually make the call or finish the reply.")
+				settleRound() // finalize the announcement so the retry doesn't concatenate into it
+				history = append(history, Message{
+					Role:    "user",
+					Content: frameworkNoticeTag+"Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
 				})
 				promiseCorrectionsTotal++
 				continue
@@ -1878,7 +2043,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					settleRound() // finalize the preamble so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
-						Content: fmt.Sprintf("Your previous response referred to the %q tool but did not actually call it (it takes no arguments, so there was nothing to run). If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name),
+						Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (it takes no arguments, so there was nothing to run). If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name),
 					})
 					promiseCorrectionsTotal++
 					continue
@@ -1911,7 +2076,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
 				history = append(history, Message{
 					Role:    "user",
-					Content: "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
+					Content: frameworkNoticeTag+"Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
 				})
 				promiseCorrectionsTotal++
 				continue
@@ -2041,7 +2206,24 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// second in the same batch is held too.
 		batchSend := map[string]bool{}
 
+		// Round batch cap. A model can emit an arbitrarily large tool batch in
+		// ONE round (observed: ~120 agent dispatches in a single response) —
+		// per-tool guards then block each call individually, but all of them
+		// still execute-or-STOP and the round takes the full hit. Cap the
+		// batch: calls past the cap get an error result (the API still needs a
+		// result per call id) and never reach a handler. Counts as a guard
+		// block so repeated capped rounds feed the wedge break-out below.
+		const maxToolCallsPerRound = 24
+		if len(resp.ToolCalls) > maxToolCallsPerRound {
+			emitDiag("round-batch-capped", fmt.Sprintf("The model emitted %d tool calls in one round; only the first %d ran.", len(resp.ToolCalls), maxToolCallsPerRound))
+			guardBlockedThisRound = true
+		}
 		for i, tc := range resp.ToolCalls {
+			if i >= maxToolCallsPerRound {
+				results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap — a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
+				toolErrors++
+				continue
+			}
 			if tc.Name == "stay_silent" {
 				if dropAllSilent {
 					Debug("[agent_loop] stay_silent dropped — bundled with %d real tool call(s)", realCount)
@@ -2093,7 +2275,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			if needsConfirm[tc.Name] {
 				if !confirmFn(tc.Name, formatArgs(tc.Args)) {
 					Debug("[agent_loop] tool call denied by user: %s", tc.Name)
-					results[i] = ToolResult{ID: tc.ID, Content: "Error: tool call denied by user", IsError: true}
+					// The bare "denied by user" line TAUGHT a workaround:
+					// agents whose governed tool was denied on scheduled
+					// fires learned to reach the same service through
+					// ungoverned tools instead (hand-rolled fetch_url
+					// against a guessed API — a habit that outlived the
+					// gate). A denial denies the OPERATION, not one route
+					// to it — say so.
+					results[i] = ToolResult{ID: tc.ID, Content: "Error: tool call denied by user — this operation was not authorized to run. Do NOT work around the denial by attempting the same operation through a different tool (raw fetch_url, shell, or a dispatch); proceed without it, or report that it needs the owner's authorization.", IsError: true}
 					toolErrors++
 					continue
 				}
@@ -2361,6 +2550,16 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				repeatFail[w.sig]++
 			} else {
 				delete(repeatFail, w.sig)
+				// Success half of the failure-streak damper: this tool worked,
+				// so its earlier failure results are stale — rewrite them to
+				// resolved markers before the model has to arbitrate between
+				// "it's broken" (repeated) and "it works" (said once).
+				if shapes := toolFailShapes[w.tc.Name]; len(shapes) > 0 {
+					if n := retireResolvedFailureResults(history, shapes, w.tc.Name); n > 0 {
+						Debug("[agent_loop] failure-streak collapse: %s succeeded — %d earlier failure result(s) marked resolved", w.tc.Name, n)
+					}
+					delete(toolFailShapes, w.tc.Name)
+				}
 			}
 			// Mark the recipient reached only on a SUCCESSFUL send — a failed
 			// delivery shouldn't block a legitimate retry to the same recipient.
@@ -2391,6 +2590,20 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 			errShapeCount[shape]++
 			n := errShapeCount[shape]
+			if m := toolFailShapes[w.tc.Name]; m == nil {
+				toolFailShapes[w.tc.Name] = map[string]bool{shape: true}
+			} else {
+				m[shape] = true
+			}
+			// Streak damper: from the errShapeCollapseAt-th recurrence on,
+			// collapse the earlier duplicates in the accumulated history.
+			// The first occurrence stays full; this round's copy is appended
+			// after this loop, so the model always sees first + latest.
+			if n >= errShapeCollapseAt {
+				if c := collapseRepeatedFailureResults(history, shape, false); c > 0 {
+					Debug("[agent_loop] failure-streak collapse: %q — %d earlier duplicate result(s) collapsed", oneLineShape(shape), c)
+				}
+			}
 			// Say it plainly, once. The model can see each failure but not
 			// that it has now hit the SAME one from several directions —
 			// which is the fact that should change its approach.
@@ -2469,9 +2682,19 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// failure rounds, inject the pivot nudge once per streak.
 		allFailed := len(results) > 0
 		for i := range results {
-			if !results[i].IsError {
+			if !results[i].IsError && !isGuardStopResult(results[i].Content) {
 				allFailed = false
 				break
+			}
+			if isGuardStopResult(results[i].Content) {
+				// Inner guards (the agents tool's dispatch ceiling, the
+				// identical-dispatch check) return their STOP verdict as a
+				// SUCCESSFUL result string — without this, a wall of STOPs
+				// read as progress, the wedge streak reset every round, and
+				// the model could burn hundreds of rounds re-dispatching
+				// into the same ceiling (observed with 120+ blocked
+				// Comedian dispatches).
+				guardBlockedThisRound = true
 			}
 		}
 		if allFailed {
@@ -2481,7 +2704,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				history = append(history, Message{
 					Role: "user",
 					Content: fmt.Sprintf(
-						"You've hit %d rounds in a row where every tool call failed. Recommending checking other vectors first before resuming this approach — a different tool, a different angle, or asking the user for clarification is often faster than continuing to iterate here.",
+						frameworkNoticeTag+"You've hit %d rounds in a row where every tool call failed. Recommending checking other vectors first before resuming this approach — a different tool, a different angle, or asking the user for clarification is often faster than continuing to iterate here.",
 						failureStreak),
 				})
 				failureStreakWarned = true
@@ -2536,7 +2759,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// real tool, so the promise-correction path never ran.
 			history = append(history, Message{
 				Role:    "user",
-				Content: "You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
+				Content: frameworkNoticeTag+"You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
 			})
 		} else {
 			keepGoingStreak = 0
@@ -3157,6 +3380,63 @@ func containsActionPromise(content string) bool {
 	}
 	return false
 }
+
+// frameworkNoticeTag prefixes every loop-injected corrective/pacing message.
+// These ride the user ROLE (the only reliable mid-conversation carrier), so
+// small models kept attributing them to the human and answering THEM
+// ("You're right, I dispatched Comedian 120 times. My bad.") instead of the
+// actual user. The tag makes the origin explicit and forbids replying to it.
+const frameworkNoticeTag = "[AUTOMATED FRAMEWORK NOTICE — not written by the user, who cannot see it. Do not reply to it, apologize, or address anyone about it; silently adjust and continue.] "
+
+// isGuardStopResult reports whether a nominally-successful tool result is
+// actually a framework guard verdict ("STOP — you have already…") rather than
+// real output. Inner guards return STOP as a plain string; the loop's
+// progress accounting must not mistake that for a working tool call. The scan
+// tolerates the untrusted-content fence prefix on dispatch results.
+func isGuardStopResult(content string) bool {
+	head := content
+	if len(head) > 600 {
+		head = head[:600]
+	}
+	return strings.Contains(head, "STOP — you")
+}
+
+// endsWithCallAnnouncement detects the announce-then-stop failure: the reply's
+// LAST line ends with a colon introducing a call that never followed —
+// "Here's the `update_agent` call to implement these changes:" and then the
+// turn ends. Far narrower than the disabled containsActionPromise (which
+// false-positived on conversational "I'll try next time" closes): a complete
+// reply essentially never terminates on a colon, and the colon alone still
+// isn't enough — the line must also read like a call announcement, either by
+// containing a snake_case token (tool-ish names like update_agent don't occur
+// in ordinary prose; the announced name may be INVENTED, so matching against
+// the real catalog would miss exactly the worst case) or the words
+// "call"/"tool". A legit turn-ending colon ("Paste the error here:") carries
+// neither signal.
+func endsWithCallAnnouncement(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if !strings.HasSuffix(trimmed, ":") {
+		return false
+	}
+	line := trimmed
+	if i := strings.LastIndexByte(trimmed, '\n'); i >= 0 {
+		line = strings.TrimSpace(trimmed[i+1:])
+	}
+	lower := strings.ToLower(line)
+	if callWordRe.MatchString(lower) {
+		return true
+	}
+	return snakeCaseTokenRe.MatchString(lower)
+}
+
+// callWordRe word-bounds the announcement keywords so "basically:" /
+// "technically:" (which CONTAIN "call") can't false-fire the guard.
+var callWordRe = regexp.MustCompile(`\b(?:call|calls|calling|tool|tools|toolbox)\b`)
+
+// snakeCaseTokenRe matches a multi-word snake_case identifier — the shape of
+// tool/action names ("update_agent", "reply_to_comment") and essentially
+// nothing in natural prose.
+var snakeCaseTokenRe = regexp.MustCompile(`\b[a-z0-9]+(?:_[a-z0-9]+)+\b`)
 
 // DynamicThinkBudget scales the model's thinking budget based on the
 // input token count. Short queries stay cheap; large/dense inputs get

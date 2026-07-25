@@ -51,11 +51,30 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if mission == "" {
 			mission = "Run your standing task now."
 		}
+		// Live-activity registration: a standing fire has no HTTP client, so
+		// without this it was invisible while running — only its completed
+		// RunRecord ever surfaced. Name prefers the schedule's own label
+		// (sa.Name) over the target agent id.
+		display := strings.TrimSpace(sa.Name)
+		if display == "" {
+			if rec, ok := loadAgent(UserDB(app.DB, sa.Owner), sa.AgentID); ok {
+				display = rec.Name
+			}
+		}
+		liveRun := app.runsRegistry().Create(sa.Owner, sa.AgentID, "", nil).
+			Describe("standing", display, truncateObs(mission, 100))
+		defer liveRun.Complete(RunStatusFailed) // safety net; explicit calls below win (idempotent)
+
 		// Standing agents run as their owner (no separate runtime user).
 		// sa.DispatchedBy is set only on a DELEGATION (a transient record built
 		// by RunDelegation) — it hands the delegate the delegator's channel
 		// reach. A stored schedule leaves it empty and keeps its own scope.
 		out, hitRoundCap, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
+		if err != nil {
+			liveRun.Complete(RunStatusFailed)
+		} else {
+			liveRun.Complete(RunStatusCompleted)
+		}
 		if err != nil {
 			return StandingRunResult{
 				Status:  RunFailed,

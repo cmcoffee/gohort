@@ -247,10 +247,11 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// reach — not just the admin-promoted global pool. A watch tool (e.g. the
 		// api-mode wrapper ts3_list_clients, which dispatches through a credential)
 		// need not be promoted to global: it may live in the shared/deployment
-		// pool or be AGENT-SCOPED (authored on/for one agent, on its record). All
-		// three live in the temp-tool store, not the static chat-tool registry, so
-		// InvokeWatcherTool can't reach them. Load them all here; de-dup by name so
-		// a tool present in more than one scope is built once (first scope wins).
+		// pool or be AGENT-SCOPED (a unified-store row whose ScopeAgents names
+		// its agents). All of these live in the temp-tool store, not the static
+		// chat-tool registry, so InvokeWatcherTool can't reach them. Load them
+		// all here; de-dup by name so a tool present in more than one scope is
+		// built once (first scope wins).
 		seen := map[string]bool{}
 		addTool := func(tt TempTool) {
 			if seen[tt.Name] {
@@ -260,18 +261,15 @@ func registerOperatorWake(app *OrchestrateApp) {
 			c := tt
 			sess.TempTools = append(sess.TempTools, &c)
 		}
-		for _, p := range LoadPersistentTempTools(AuthDB(), owner) { // owner's own pool
+		// Owner's unified store — one walk covers the pool AND agent-scoped
+		// rows (flattened namespace; no separate per-agent walk needed).
+		for _, p := range LoadPersistentTempTools(AuthDB(), owner) {
 			addTool(p.Tool)
 		}
 		adoptedGlobal := LoadAdoptedGlobalTools(AuthDB(), owner)
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) { // global pool: opt-in only
 			if adoptedGlobal[p.Tool.Name] {
 				addTool(p.Tool)
-			}
-		}
-		for _, a := range listAgents(agentUserDB(RootDB, owner), owner) { // agent-scoped tools
-			for _, tt := range a.Tools {
-				addTool(tt)
 			}
 		}
 		for _, td := range temptool.BuildAgentToolDefs(sess) {

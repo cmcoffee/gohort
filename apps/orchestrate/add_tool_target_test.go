@@ -69,14 +69,14 @@ func TestAddToolExplicitAgentBeatsStolenFocus(t *testing.T) {
 	if !ok {
 		t.Fatal("loadAgent parent failed")
 	}
-	if !agentHasTool(gotParent, "sentiment_analyzer") {
-		t.Fatalf("tool did not land on the explicitly named agent %q; its tools=%v", parent.Name, toolNames(gotParent))
+	if !agentHasTool(sess, gotParent, "sentiment_analyzer") {
+		t.Fatalf("tool did not land on the explicitly named agent %q; its tools=%v", parent.Name, toolNames(sess, gotParent))
 	}
 	gotHelper, ok := loadAgent(sess.DB, helper.ID)
 	if !ok {
 		t.Fatal("loadAgent helper failed")
 	}
-	if agentHasTool(gotHelper, "sentiment_analyzer") {
+	if agentHasTool(sess, gotHelper, "sentiment_analyzer") {
 		t.Fatal("tool ALSO landed on the focused helper — explicit agent must not fall through to focus")
 	}
 }
@@ -90,7 +90,7 @@ func TestAddToolResolvesAgentByID(t *testing.T) {
 		t.Fatalf("add_tool by id: %v", err)
 	}
 	got, _ := loadAgent(sess.DB, parent.ID)
-	if !agentHasTool(got, "sentiment_analyzer") {
+	if !agentHasTool(sess, got, "sentiment_analyzer") {
 		t.Fatal("tool did not land on the agent named by id")
 	}
 }
@@ -104,11 +104,11 @@ func TestAddToolFallsBackToFocus(t *testing.T) {
 		t.Fatalf("add_tool via focus: %v", err)
 	}
 	gotHelper, _ := loadAgent(sess.DB, helper.ID)
-	if !agentHasTool(gotHelper, "sentiment_analyzer") {
+	if !agentHasTool(sess, gotHelper, "sentiment_analyzer") {
 		t.Fatal("tool did not land on the focused agent when no agent argument was passed")
 	}
 	gotParent, _ := loadAgent(sess.DB, parent.ID)
-	if agentHasTool(gotParent, "sentiment_analyzer") {
+	if agentHasTool(sess, gotParent, "sentiment_analyzer") {
 		t.Fatal("tool leaked onto the unfocused parent")
 	}
 }
@@ -122,24 +122,21 @@ func TestAddToolUnknownAgentErrors(t *testing.T) {
 		t.Fatal("expected an error for an unknown agent name, got nil")
 	}
 	gotHelper, _ := loadAgent(sess.DB, helper.ID)
-	if agentHasTool(gotHelper, "sentiment_analyzer") {
+	if agentHasTool(sess, gotHelper, "sentiment_analyzer") {
 		t.Fatal("unknown agent name fell back to focus and attached the tool — must error instead")
 	}
 }
 
-func agentHasTool(a AgentRecord, name string) bool {
-	for _, t := range a.Tools {
-		if t.Name == name {
-			return true
-		}
-	}
-	return false
+// Flattened namespace: kit membership is store scope, not record copies.
+func agentHasTool(sess *ToolSession, a AgentRecord, name string) bool {
+	p, ok := UserToolByName(sess.DB, sess.Username, name)
+	return ok && p.ScopedToAgent(a.ID)
 }
 
-func toolNames(a AgentRecord) []string {
+func toolNames(sess *ToolSession, a AgentRecord) []string {
 	var out []string
-	for _, t := range a.Tools {
-		out = append(out, t.Name)
+	for _, p := range AgentScopedTools(sess.DB, sess.Username, a.ID) {
+		out = append(out, p.Tool.Name)
 	}
 	return out
 }

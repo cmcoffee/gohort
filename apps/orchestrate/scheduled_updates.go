@@ -370,6 +370,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		DB:                udb,
 		ChatSessionID:     schedSessID,
 		AgentID:           agent.ID,
+		IntentText:        p.Prompt, // Tier-1 tool elevation matches against the mission
 		DeniedCredentials: credentialDenySet(agent, p.Username),
 	}
 	if ws, werr := EnsureWorkspaceDir(p.Username); werr == nil {
@@ -446,6 +447,17 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// else it's refused and queued. Replaces the old blanket auto-approve that
 	// silently bypassed every tool's "Require confirm" contract on a schedule.
 	gate := app.newAutonomousGate(p.Username, agent.ID)
+	// Live-activity registration: a recurring fire runs with no HTTP client
+	// attached, so without this it was invisible while running — the "Active
+	// now" surface only knew about interactive turns. No SSE ring is tailed;
+	// the run exists for its snapshot (status / round / last tool).
+	liveRun := app.runsRegistry().Create(p.Username, agent.ID, "", nil).
+		Describe("scheduled", agent.Name, truncateObs(p.Prompt, 100))
+	// Safety net only — Complete is idempotent (first call sticks), and the
+	// explicit call right after the loop below lands first with the real
+	// status. This catches a panic/early-return path so the run can't be
+	// stuck "running" until the sweeper's retention window.
+	defer liveRun.Complete(RunStatusFailed)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		SendGuardKey:  sendGuardKey,
 		SystemPrompt:  sysPrompt,
@@ -459,6 +471,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 				lastRound = s.Round
 			}
 			liveCalls = append(liveCalls, s.ToolCalls...)
+			liveRun.SetProgress(s.Round, s.ToolCalls)
 		},
 		// Custom-tool resolution, same as the dispatch path: resolve a direct
 		// call to a has-args custom tool and surface tools loaded via load_tool.
@@ -470,6 +483,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			WithThink(think),
 		},
 	})
+
+	if runErr != nil {
+		liveRun.Complete(RunStatusFailed)
+	} else {
+		liveRun.Complete(RunStatusCompleted)
+	}
 
 	// Record every fire in the run-ledger — the same store standing agents and
 	// event monitors write to (RootDB, owner=username), so recurring fires show

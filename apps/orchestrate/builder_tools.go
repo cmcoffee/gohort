@@ -59,6 +59,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	tools := []AgentToolDef{
 		ChatToolToAgentToolDefWithSession(&createAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&updateAgentTool{}, sess),
+		// archetype — build recipes for the common shapes (research, KB,
+		// conversational). The successors to the Chat/Research/KB seeds:
+		// Builder reads a recipe and composes a user-owned agent from it
+		// instead of a fixed framework persona living in the fleet.
+		ChatToolToAgentToolDefWithSession(archetypeTool(), sess),
 		ChatToolToAgentToolDefWithSession(&cloneAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&deleteAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(addToolTool{}, sess),

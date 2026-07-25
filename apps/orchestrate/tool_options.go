@@ -109,7 +109,9 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 	// gating doesn't apply here (these are admin-approved tools the
 	// user already has access to at runtime).
 	if user != "" {
-		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		// Shared rows only — agent-scoped rows belong to specific agents' kits
+		// and must not surface as user-wide picker options.
+		for _, p := range SharedUserTools(AuthDB(), user) {
 			// Carry the tool's self-declared Category so it groups under that
 			// header; default the user's OWN Builder-authored tools to a clear
 			// "My Tools" group instead of the generic "Other" bucket, where they

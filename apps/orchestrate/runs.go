@@ -29,6 +29,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 
@@ -99,6 +100,67 @@ type Run struct {
 	nextSubID   uint64
 	cancel      context.CancelFunc
 	closed      bool
+
+	// Activity metadata — what the live "Active now" surface renders. kind
+	// says which surface started the turn (chat | scheduled | standing |
+	// dispatch); agentName/label are display strings resolved at create
+	// time so the surface never has to join against the agent store.
+	// round/lastTool are best-effort progress fed from the loop's OnStep.
+	kind      string
+	agentName string
+	label     string
+	round     int
+	lastTool  string
+}
+
+// Describe stamps the activity metadata onto a run (chainable, set-once at
+// creation). Separate from Create so the signature stays stable.
+func (r *Run) Describe(kind, agentName, label string) *Run {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.kind, r.agentName, r.label = kind, agentName, label
+	return r
+}
+
+// SetProgress records best-effort live progress (current round + the tools
+// the model just fired) for the activity surface. Safe from OnStep hooks.
+func (r *Run) SetProgress(round int, tools []ToolCall) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if round > r.round {
+		r.round = round
+	}
+	if n := len(tools); n > 0 {
+		r.lastTool = tools[n-1].Name
+	}
+}
+
+// RunSnapshot is a lock-free copy of a run's activity view.
+type RunSnapshot struct {
+	ID        string
+	UserID    string
+	AgentID   string
+	SessionID string
+	Kind      string
+	AgentName string
+	Label     string
+	Status    string
+	Round     int
+	LastTool  string
+	StartedAt time.Time
+	EndedAt   time.Time
+}
+
+// Snapshot returns the activity view of this run.
+func (r *Run) Snapshot() RunSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return RunSnapshot{
+		ID: r.ID, UserID: r.UserID, AgentID: r.AgentID, SessionID: r.SessionID,
+		Kind: r.kind, AgentName: r.agentName, Label: r.label,
+		Status: r.status, Round: r.round, LastTool: r.lastTool,
+		StartedAt: r.startedAt, EndedAt: r.endedAt,
+	}
 }
 
 // Status returns the current run status (snapshot — caller doesn't
@@ -307,6 +369,35 @@ func (rr *RunRegistry) BySession(sessionID string) *Run {
 		return nil
 	}
 	return r
+}
+
+// Activity returns the user's runs for the live "Active now" surface:
+// every running run first (oldest first — longest-running on top reads as
+// "what's been going on"), then recently-completed ones newest first. The
+// sweeper's retention (runCleanupAge) is the natural history window.
+func (rr *RunRegistry) Activity(userID string) []RunSnapshot {
+	rr.mu.Lock()
+	all := make([]*Run, 0, len(rr.runs))
+	for _, r := range rr.runs {
+		all = append(all, r)
+	}
+	rr.mu.Unlock() // snapshot below takes each run's own lock
+
+	var active, done []RunSnapshot
+	for _, r := range all {
+		s := r.Snapshot()
+		if s.UserID != userID {
+			continue
+		}
+		if s.Status == RunStatusRunning {
+			active = append(active, s)
+		} else {
+			done = append(done, s)
+		}
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].StartedAt.Before(active[j].StartedAt) })
+	sort.Slice(done, func(i, j int) bool { return done[i].EndedAt.After(done[j].EndedAt) })
+	return append(active, done...)
 }
 
 // startSweeper lazily starts the background cleanup loop. Each

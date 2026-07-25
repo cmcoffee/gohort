@@ -416,6 +416,8 @@ func (T *Servitor) handleApplianceMemory(w http.ResponseWriter, r *http.Request)
 		default:
 			orch.PublicHandleAgentGraphEntityDeleteForScope(w, r, scope, id, sub)
 		}
+	case suffix == "memsearch":
+		orch.PublicHandleAgentMemorySearchForScope(w, r, scope, id)
 	case suffix == "inferred":
 		orch.PublicHandleAgentInferredListForScope(w, r, scope, id)
 	case strings.HasPrefix(suffix, "inferred/"):

@@ -229,20 +229,12 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 				}
 			}
 
-			// Attach to the agent's tools[]. Idempotent replace by name.
-			replaced := false
-			for i, existing := range target.Tools {
-				if existing.Name == tt.Name {
-					target.Tools[i] = tt
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				target.Tools = append(target.Tools, tt)
-			}
-			if _, err := saveAgent(t.udb, target); err != nil {
-				return "", fmt.Errorf("save agent: %v", err)
+			// Commit to the user's unified tool store, scoped to the agent.
+			// Idempotent replace by name (bundleAgentToolByID upserts the ONE
+			// row and ensures this agent is in its scope).
+			_, replaced := UserToolByName(t.udb, t.user, tt.Name)
+			if err := bundleAgentToolByID(t.udb, t.user, target.ID, tt); err != nil {
+				return "", fmt.Errorf("save tool for agent: %v", err)
 			}
 			verb := "attached"
 			if replaced {

@@ -421,6 +421,17 @@ func (T *OrchestrateApp) PublicHandleAgentFacts(w http.ResponseWriter, r *http.R
 	T.handleAgentFacts(w, r, user, agentID)
 }
 
+// PublicHandleAgentMemorySearch exposes the Memory modal's search
+// (grep + recall-preview + per-hit delete) on the public agents surface,
+// scoped to the logged-in user like the facts handler above.
+func (T *OrchestrateApp) PublicHandleAgentMemorySearch(w http.ResponseWriter, r *http.Request, agentID string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentMemorySearch(w, r, user, agentID)
+}
+
 // --- per-SCOPE memory handlers (the agent-as-template display) ----------------
 //
 // These serve an agent's facts / graph / knowledge / Reference Memory for an
@@ -493,6 +504,17 @@ func (T *OrchestrateApp) PublicHandleAgentInferredDeleteForScope(w http.Response
 		return
 	}
 	T.handleAgentInferredDelete(w, r, scopeUser, agentID, chunkID)
+}
+
+// PublicHandleAgentMemorySearchForScope mounts the memory search on an
+// explicit scope (e.g. a servitor appliance) — session gate proves a
+// logged-in user; the CALLER authorizes the scope, same contract as the
+// other ForScope handlers.
+func (T *OrchestrateApp) PublicHandleAgentMemorySearchForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentMemorySearch(w, r, scopeUser, agentID)
 }
 
 // PublicHandleAgentKnowledgeAutoInferredWipeForScope is the "Wipe all"

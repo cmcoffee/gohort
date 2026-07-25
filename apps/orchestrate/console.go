@@ -70,6 +70,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/monitors/update", gw(T.handleConsoleMonitorUpdate))
 	T.HandleFunc("/api/console/agents/get", g(T.handleConsoleAgentGet))
 	T.HandleFunc("/api/console/agents/update", gw(T.handleConsoleAgentUpdate))
+	T.HandleFunc("/api/console/activity", g(T.handleConsoleActivity))
+	T.HandleFunc("/api/console/activity/cancel", gw(T.handleConsoleActivityCancel))
 	T.HandleFunc("/api/console/runs", g(T.handleConsoleRuns))
 	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
 	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))
@@ -1596,6 +1598,97 @@ func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, runs)
 }
 
+// consoleActivityRow is one row of the live "Active now" pane. Cards layout:
+// Agent renders bold as the title, the rest as detail lines. _id / _running
+// are hidden plumbing for the Cancel row action.
+type consoleActivityRow struct {
+	Agent    string `json:"agent"`
+	Activity string `json:"activity"`
+	Brief    string `json:"brief,omitempty"`
+	Surface  string `json:"surface"`
+	ID       string `json:"_id"`
+	Running  bool   `json:"_running,omitempty"`
+}
+
+// handleConsoleActivity serves the live agent-activity view: every run the
+// in-memory registry knows about for this user — interactive chat turns,
+// scheduled fires, and standing-agent fires — running ones first, then the
+// recently completed (the registry's reconnect-retention window doubles as
+// the history horizon). This is the "what is the AI doing right now" pane
+// the per-session live card can't provide: it only ever shows the session
+// you're looking at, while the fleet works in the background.
+func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	rows := []consoleActivityRow{}
+	now := time.Now()
+	for _, s := range T.runsRegistry().Activity(user) {
+		name := s.AgentName
+		if name == "" {
+			name = s.AgentID
+		}
+		var activity string
+		switch s.Status {
+		case RunStatusRunning:
+			activity = "● running — " + shortElapsed(now.Sub(s.StartedAt))
+			if s.Round > 0 {
+				activity += fmt.Sprintf(", round %d", s.Round)
+			}
+			if s.LastTool != "" {
+				activity += ", last tool: " + s.LastTool
+			}
+		default:
+			activity = s.Status + " " + shortElapsed(now.Sub(s.EndedAt)) + " ago — took " + shortElapsed(s.EndedAt.Sub(s.StartedAt))
+			if s.Round > 0 {
+				activity += fmt.Sprintf(" (%d rounds)", s.Round)
+			}
+		}
+		rows = append(rows, consoleActivityRow{
+			Agent:    name,
+			Activity: activity,
+			Brief:    s.Label,
+			Surface:  s.Kind,
+			ID:       s.ID,
+			Running:  s.Status == RunStatusRunning,
+		})
+	}
+	writeJSON(w, rows)
+}
+
+// handleConsoleActivityCancel cancels one in-flight run from the Active-now
+// pane — the UI kill switch for a runaway cycle. Owner-checked against the
+// run's recorded user; canceling an already-finished run is a no-op.
+func (T *OrchestrateApp) handleConsoleActivityCancel(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	run := T.runsRegistry().Get(r.URL.Query().Get("id"))
+	if run == nil || run.UserID != user {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	run.Cancel()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// shortElapsed renders a duration for the activity pane: 42s, 3m10s, 1h04m.
+func shortElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
 // handleConsoleRunDetail returns one run's full record (encrypted raw fetched
 // on demand).
 func (T *OrchestrateApp) handleConsoleRunDetail(w http.ResponseWriter, r *http.Request) {
@@ -1923,6 +2016,38 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 				if _, err := saveAgent(udb, rec); err != nil {
 					Log("[operator.approval] autonomous_tool %s/%s save failed: %v", grantTo, a.Brief, err)
 				}
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// scope_tool: the Tier-2 elevation suggestion — this agent load_tool'd the
+	// same shared tool across enough sessions that it's evidently kit.
+	// Approving ADDS the agent to the tool's ScopeAgents: first-class in its
+	// catalog from then on, and (when the tool was shared) withdrawn from the
+	// general pool — the approval text says so.
+	if a.Action == "scope_tool" {
+		if a.Brief != "" {
+			p, ok := UserToolByName(udb, user, a.Brief)
+			if !ok {
+				http.Error(w, "tool no longer exists", http.StatusNotFound)
+				return
+			}
+			scope := p.ScopeAgents
+			has := false
+			for _, id := range scope {
+				if id == a.Agent {
+					has = true
+					break
+				}
+			}
+			if !has {
+				scope = append(scope, a.Agent)
+				if !SetUserToolScopeAgents(udb, user, a.Brief, scope) {
+					http.Error(w, "scope update failed", http.StatusInternalServerError)
+					return
+				}
+				Log("[orchestrate.elevate] approved: scoped %q to agent=%s", a.Brief, a.Agent)
 			}
 		}
 		w.WriteHeader(http.StatusNoContent)

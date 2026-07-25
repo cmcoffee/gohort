@@ -2,10 +2,10 @@
 // surfaces outside this app (Extensions > My tools) can show everything built
 // for a user and what it's attached to.
 //
-// Two scopes live behind this app's knowledge: tools bundled onto an agent
-// record, and session drafts (persist=false) keyed by chat-session id in a
-// global table with no owner on the row. Both can only be scoped to a user by
-// walking that user's agents.
+// Two scopes live behind this app's knowledge: agent-scoped rows in the
+// user's unified tool store (non-empty ScopeAgents), and session drafts
+// (persist=false) keyed by chat-session id in a global table with no owner on
+// the row. Resolving either to agent NAMES requires this app's agent records.
 
 package orchestrate
 
@@ -34,8 +34,9 @@ func registerScopedToolLister(app *OrchestrateApp) {
 	})
 }
 
-// listScopedTools walks the user's agents, collecting each agent's bundled
-// tools and the drafts in each of its chat sessions.
+// listScopedTools walks the user's unified tool store, emitting one row per
+// (agent-scoped tool, carrying agent), plus the drafts in each agent's chat
+// sessions.
 //
 // Shadowing is MARKED, not filtered (see ScopeTool.Shadowed): the UI hides
 // shadowed rows so nobody is invited to "keep" a tool they already have, while
@@ -48,48 +49,61 @@ func (T *OrchestrateApp) listScopedTools(user string) []ScopedTool {
 	if udb == nil {
 		return nil
 	}
-	// The user-wide pool shadows every scope below it; read it once.
-	pooled := map[string]bool{}
-	for _, p := range LoadPersistentTempTools(udb, user) {
-		pooled[p.Tool.Name] = true
-	}
-
 	// Parent names for sub-agents, resolved once: a listing shows "Parent > Sub"
 	// so a specialist reads as one, not as a peer of its parent.
 	agents := listAgents(udb, user)
+	agentByID := map[string]AgentRecord{}
 	nameByID := map[string]string{}
 	for _, a := range agents {
+		agentByID[a.ID] = a
 		nameByID[a.ID] = a.Name
 	}
-
-	var out []ScopedTool
-	for _, agent := range agents {
-		parent := ""
-		if agent.OwnedBy != "" {
-			if n := nameByID[agent.OwnedBy]; n != "" {
-				parent = n
-			}
+	parentOf := func(a AgentRecord) string {
+		if a.OwnedBy != "" {
+			return nameByID[a.OwnedBy]
 		}
-		bundled := map[string]bool{}
-		for _, t := range agent.Tools {
-			bundled[t.Name] = true
+		return ""
+	}
+
+	// One walk over the unified store: shared rows (empty ScopeAgents — pool
+	// semantics) shadow same-named drafts everywhere; agent-scoped rows emit
+	// one ScopedTool per carrying agent.
+	pooled := map[string]bool{}
+	bundled := map[string]map[string]bool{} // agent id → tool names scoped to it
+	var out []ScopedTool
+	for _, p := range LoadPersistentTempTools(udb, user) {
+		if len(p.ScopeAgents) == 0 {
+			pooled[p.Tool.Name] = true
+			continue
+		}
+		for _, id := range p.ScopeAgents {
+			agent, ok := agentByID[id]
+			if !ok {
+				continue // scoped to an agent that no longer exists
+			}
+			if bundled[id] == nil {
+				bundled[id] = map[string]bool{}
+			}
+			bundled[id][p.Tool.Name] = true
 			out = append(out, ScopedTool{
-				Tool: t, Scope: ScopeAgentTool,
-				AgentID: agent.ID, AgentName: agent.Name, ParentName: parent,
-				Trial: t.Trial,
-				// An agent copy duplicated in the user's pool is redundant, but
-				// it is NOT stale the way a draft is — the agent genuinely holds
-				// it. Marked so a UI can choose; nothing deletes it.
-				Shadowed: pooled[t.Name],
+				Tool: p.Tool, Scope: ScopeAgentTool,
+				AgentID: agent.ID, AgentName: agent.Name, ParentName: parentOf(agent),
+				Trial: p.Tool.Trial,
+				// One unified store: a scoped row can no longer coexist with a
+				// pool row of the same name, so nothing shadows it.
+				Shadowed: false,
 			})
 		}
+	}
+	for _, agent := range agents {
+		parent := parentOf(agent)
 		for _, s := range listChatSessions(udb, agent.ID) {
 			for _, t := range LoadSessionTempTools(udb, s.ID) {
 				out = append(out, ScopedTool{
 					Tool: t, Scope: ScopeSessionTool,
 					AgentID: agent.ID, AgentName: agent.Name, ParentName: parent,
 					SessionID: s.ID, SessionTitle: strings.TrimSpace(s.Title),
-					Shadowed: bundled[t.Name] || pooled[t.Name],
+					Shadowed: bundled[agent.ID][t.Name] || pooled[t.Name],
 				})
 			}
 		}
@@ -133,28 +147,22 @@ func (T *OrchestrateApp) reapTrialTools(db Database, owner string) int {
 		return 0
 	}
 	cutoff := time.Now().Add(-TrialToolTTL)
-	reaped := 0
-	for _, agent := range listAgents(udb, owner) {
-		kept := agent.Tools[:0:0]
-		dropped := []string{}
-		for _, tl := range agent.Tools {
-			if tl.Trial && !tl.TrialSince.IsZero() && tl.TrialSince.Before(cutoff) {
-				dropped = append(dropped, tl.Name)
-				continue
-			}
-			kept = append(kept, tl)
-		}
-		if len(dropped) == 0 {
+	// Flattened namespace: unconfirmed tools are rows in the unified store
+	// (any scope — shared or agent-scoped), not copies on agent records.
+	dropped := []string{}
+	for _, p := range LoadPersistentTempTools(udb, owner) {
+		if !p.Tool.Trial || p.Tool.TrialSince.IsZero() || !p.Tool.TrialSince.Before(cutoff) {
 			continue
 		}
-		agent.Tools = kept
-		if _, err := saveAgent(udb, agent); err != nil {
-			Log("[orchestrate.tools] reap failed for agent %q: %v", agent.Name, err)
+		if err := DeletePersistentTempTool(udb, owner, p.Tool.Name); err != nil {
+			Log("[orchestrate.tools] reap failed for tool %q: %v", p.Tool.Name, err)
 			continue
 		}
-		reaped += len(dropped)
-		Log("[orchestrate.tools] reaped %d unconfirmed tool(s) from agent %q after %s: %s",
-			len(dropped), agent.Name, TrialToolTTL, strings.Join(dropped, ", "))
+		dropped = append(dropped, p.Tool.Name)
 	}
-	return reaped
+	if len(dropped) > 0 {
+		Log("[orchestrate.tools] reaped %d unconfirmed tool(s) after %s: %s",
+			len(dropped), TrialToolTTL, strings.Join(dropped, ", "))
+	}
+	return len(dropped)
 }

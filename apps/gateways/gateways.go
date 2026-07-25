@@ -301,7 +301,9 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Group string `json:"group"`
 		}
 		rows := []row{}
-		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		// Shared rows only: agent-scoped rows live in the same store now, but
+		// they render under "Scoped Tools" (via ListScopedTools), not here.
+		for _, p := range SharedUserTools(AuthDB(), user) {
 			// Dependency check resolves in the USER's namespace (a tool may lean
 			// on the user's own credential, which the global-only CredentialStatus
 			// wouldn't find).
@@ -1772,7 +1774,9 @@ func knownToolCategories(db Database, user string) []string {
 		add(g.Name)
 	}
 	if user != "" {
-		for _, p := range LoadPersistentTempTools(db, user) {
+		// Shared rows here; agent-scoped rows contribute via ListScopedTools
+		// below (same unified store, split to avoid double-adding).
+		for _, p := range SharedUserTools(db, user) {
 			add(p.Tool.Category)
 		}
 		for _, st := range ListScopedTools(user) {
@@ -1842,7 +1846,9 @@ func userToolCategories(user string) map[string][]string {
 		}
 		out[cat] = append(out[cat], name)
 	}
-	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+	// Shared rows here; agent-scoped rows contribute via ListScopedTools below
+	// (same unified store, split so a scoped tool isn't counted twice).
+	for _, p := range SharedUserTools(AuthDB(), user) {
 		add(p.Tool.Category, p.Tool.Name)
 	}
 	seen := map[string]bool{}
@@ -1900,7 +1906,10 @@ func (T *Gateways) handleUserToolCategories(w http.ResponseWriter, r *http.Reque
 				}
 				opts = append(opts, opt{Value: n, Label: n, Desc: desc})
 			}
-			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			// Shared rows here; agent-scoped rows come from ListScopedTools
+			// below (same unified store — addOpt's seen map would dedup, but
+			// keep the sourcing symmetric with the category listers).
+			for _, p := range SharedUserTools(AuthDB(), user) {
 				addOpt(p.Tool.Name, p.Tool.Description, p.Tool.Category)
 			}
 			for _, st := range ListScopedTools(user) {

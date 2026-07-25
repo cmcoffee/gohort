@@ -22,11 +22,11 @@ import (
 // the given session as a JSON array. Used by the chat Tools modal to
 // render the "Session tools" section.
 //
-// Filters out drafts whose name is already shadowed by either the
-// agent's bundled Tools[] or the user's persistent pool. add_tool
-// writes BOTH a session draft AND a committed copy so the tool is
-// callable mid-turn — but once the committed copy exists, the draft
-// is just stale duplication. The runtime cleans it up in
+// Filters out drafts whose name is already shadowed by a committed
+// row in the user's unified tool store (shared or agent-scoped).
+// add_tool writes BOTH a session draft AND a committed copy so the
+// tool is callable mid-turn — but once the committed copy exists,
+// the draft is just stale duplication. The runtime cleans it up in
 // newToolSession when the next turn runs, but the chat Tools modal
 // can open between turns and see the stale draft. Filter (and clean
 // up on the fly) here too so the UI matches what's actually live.
@@ -37,17 +37,10 @@ func (T *OrchestrateApp) handleSessionToolsList(w http.ResponseWriter, r *http.R
 	}
 	drafts := LoadSessionTempTools(udb, sid)
 
-	// Build the "already committed" name set: agent.Tools entries
-	// (agent-scoped) + persistent_temp_tools (user-wide). Either
-	// shadows a draft of the same name.
+	// Build the "already committed" name set from the user's unified tool
+	// store — one loop covers both scopes (shared rows AND agent-scoped rows;
+	// names are unique per user). Either shadows a draft of the same name.
 	committed := make(map[string]bool)
-	if agentID != "" {
-		if agent, ok := loadAgent(udb, agentID); ok {
-			for _, t := range agent.Tools {
-				committed[t.Name] = true
-			}
-		}
-	}
 	if user != "" {
 		for _, p := range LoadPersistentTempTools(udb, user) {
 			committed[p.Tool.Name] = true
@@ -69,8 +62,8 @@ func (T *OrchestrateApp) handleSessionToolsList(w http.ResponseWriter, r *http.R
 // handleSessionToolAction processes a POST against a single named
 // session tool. Two actions:
 //
-//	action=persist&global=true  → copy into user-wide persistent_temp_tools
-//	action=persist&global=false → append to AgentRecord.Tools (agent-attached)
+//	action=persist&global=true  → shared row in the user's unified tool store
+//	action=persist&global=false → store row scoped to the session's agent
 //	action=drop                 → just remove from session_temp_tools
 //
 // Persist actions also clear the session draft on success so the
@@ -131,11 +124,11 @@ func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.
 // promoteSessionDraft moves a session draft out of its per-session pool into a
 // durable scope and clears the draft.
 //
-// target ScopeTargetGlobal → the user-wide pool; anything else → the session's
-// own agent record. Shared by the in-chat Tools modal and Extensions > My tools
-// so both promote identically: the ownership check and the strip-the-redundant-
-// agent-copy step are exactly the parts you do not want a second, drifting copy
-// of. Returns the scope actually written ("global" | "agent").
+// target ScopeTargetGlobal → a shared row in the unified store; anything else →
+// a row scoped to the session's agent. Shared by the in-chat Tools modal and
+// Extensions > My tools so both promote identically: the ownership check and
+// the scoping step are exactly the parts you do not want a second, drifting
+// copy of. Returns the scope actually written ("global" | "agent").
 func (T *OrchestrateApp) promoteSessionDraft(udb Database, user, agentID, sid, name, target string) (string, error) {
 	tools := LoadSessionTempTools(udb, sid)
 	var found *TempTool
@@ -154,40 +147,13 @@ func (T *OrchestrateApp) promoteSessionDraft(udb Database, user, agentID, sid, n
 			return "", fmt.Errorf("persist: %w", err)
 		}
 		RemoveSessionTempTool(udb, sid, name)
-		// add_tool writes BOTH to agent.Tools and session_temp_tools
-		// so the new tool is callable mid-turn for verification.
-		// When the user promotes that draft to the user-wide pool,
-		// the agent-bundled copy becomes redundant — it would still
-		// surface under "Custom tools bundled with this agent" AND
-		// in the regular catalog (via persistent_temp_tools), as a
-		// duplicate. Strip the agent-bundled entry so the user-wide
-		// copy is the single source of truth.
-		if agentID != "" {
-			if agent, ok := loadAgent(udb, agentID); ok && agent.Owner == user {
-				strippedToolBundle := agent.Tools[:0]
-				removed := false
-				for _, t := range agent.Tools {
-					if t.Name == name {
-						removed = true
-						continue
-					}
-					strippedToolBundle = append(strippedToolBundle, t)
-				}
-				if removed {
-					agent.Tools = strippedToolBundle
-					if _, err := saveAgent(udb, agent); err != nil {
-						Log("[orchestrate.session_tools] warn: persisted %q globally but could not strip agent-bundled copy on %q: %v", name, agent.Name, err)
-					} else {
-						Log("[orchestrate.session_tools] stripped redundant agent-bundled %q from agent %q after global persist", name, agent.Name)
-					}
-				}
-			}
-		}
+		// No agent-copy stripping anymore: the flattened store holds ONE row
+		// per tool, so a redundant agent-bundled duplicate can't exist.
 		Log("[orchestrate.session_tools] user %q persisted %q to USER-WIDE pool (session %s)", user, name, sid)
 		return "global", nil
 	}
-	// Agent-attached: append (or replace by name) into the focused
-	// agent's bundled Tools[]. The session's agent_id is the target.
+	// Agent-attached: the tool becomes ONE row in the user's unified store,
+	// scoped to the session's agent. The session's agent_id is the target.
 	agent, ok := loadAgent(udb, agentID)
 	if !ok {
 		return "", fmt.Errorf("agent not found")
@@ -195,23 +161,20 @@ func (T *OrchestrateApp) promoteSessionDraft(udb Database, user, agentID, sid, n
 	if agent.Owner != user {
 		return "", fmt.Errorf("cannot attach a tool to an agent you don't own")
 	}
-	replaced := false
-	for i := range agent.Tools {
-		if agent.Tools[i].Name == name {
-			agent.Tools[i] = *found
-			replaced = true
-			break
+	_, existed := UserToolByName(udb, user, name)
+	if err := AdminPersistTempTool(udb, user, *found); err != nil {
+		return "", fmt.Errorf("persist: %w", err)
+	}
+	// A fresh row lands shared by default — scope it to the target agent. A
+	// pre-existing shared row stays shared (the agent already sees it there).
+	if p, ok := UserToolByName(udb, user, name); ok && len(p.ScopeAgents) == 0 && !existed {
+		if !SetUserToolScopeAgents(udb, user, name, []string{agent.ID}) {
+			Log("[orchestrate.session_tools] warn: persisted %q but could not scope it to agent %q", name, agent.Name)
 		}
-	}
-	if !replaced {
-		agent.Tools = append(agent.Tools, *found)
-	}
-	if _, err := saveAgent(udb, agent); err != nil {
-		return "", fmt.Errorf("save agent: %w", err)
 	}
 	RemoveSessionTempTool(udb, sid, name)
 	verb := "attached"
-	if replaced {
+	if existed {
 		verb = "replaced"
 	}
 	Log("[orchestrate.session_tools] user %q %s %q to agent %q (session %s)", user, verb, name, agent.Name, sid)
