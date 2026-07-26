@@ -858,7 +858,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	}
 	var available []AgentRecord
 	for _, a := range all {
-		if a.ID == t.agent.ID || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+		if a.ID == t.agent.ID || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 			continue
 		}
 		// A target BLOCKED in the Permissions pane must not be advertised.
@@ -4884,7 +4884,7 @@ func injectPromisedAuthoringWarning(sess *ChatSession, turnToolCalls []Persisted
 		return false
 	}
 	sess.Messages = append(sess.Messages, ChatMessage{
-		Role: "user",
+		Role:    "user",
 		Content: "FRAMEWORK NOTICE: your previous reply said you were about to create or update a tool or agent, but no authoring call fired during that turn — tool_def / add_tool / create_agent / update_agent never ran, so nothing was saved and the user is waiting on work that never started. Describing the change is not making it. Make ONE concrete authoring call now with real arguments. If you need the user to approve first, call ask_user — do not promise in prose and end the turn.",
 		Created: time.Now(),
 		Hidden:  true,
@@ -6026,6 +6026,25 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// occasional double, so we err toward emitting: suppress only on an
 	// exact repeat of the last shown bubble.
 	var lastFinalizedText string
+	// holdStream: agents with an OUTPUT guardrail (pre_output/periodic) must not
+	// paint tokens live — a blocked reply would flash on screen before the
+	// verdict exists. Buffer silently and paint the whole bubble at round close,
+	// AFTER the guardrail has passed it (paintHeldBubble); a blocked round is
+	// retracted having shown nothing. streamFreshBubble tracks whether THIS
+	// round's bubble was minted here (so paint must open it) vs adopted from a
+	// tool bubble already on screen (paint only appends). No-op for agents with
+	// no output guardrail — they stream live exactly as before.
+	holdStream := agentHasOutputGuardrail(t.agent)
+	streamFreshBubble := false
+	paintHeldBubble := func(id, text string) {
+		if !holdStream || id == "" || text == "" {
+			return
+		}
+		if streamFreshBubble {
+			t.sse.Send(map[string]any{"kind": "message", "role": "assistant", "id": id, "text": ""})
+		}
+		t.sse.Send(map[string]any{"kind": "chunk", "id": id, "text": text})
+	}
 	streamHandler := func(chunk string) {
 		if chunk == "" {
 			return
@@ -6037,23 +6056,29 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		if streamMsgID == "" {
 			if existing := t.getCurrentMsgID(); existing != "" {
 				streamMsgID = existing
+				streamFreshBubble = false // already on screen (tool made it)
 			} else {
 				streamMsgID = fmt.Sprintf("orch-%d", time.Now().UnixNano())
-				t.sse.Send(map[string]any{
-					"kind": "message",
-					"role": "assistant",
-					"id":   streamMsgID,
-					"text": "",
-				})
+				streamFreshBubble = true
+				if !holdStream {
+					t.sse.Send(map[string]any{
+						"kind": "message",
+						"role": "assistant",
+						"id":   streamMsgID,
+						"text": "",
+					})
+				}
 				t.setCurrentMsgID(streamMsgID)
 			}
 		}
 		streamedBuf.WriteString(chunk)
-		t.sse.Send(map[string]any{
-			"kind": "chunk",
-			"id":   streamMsgID,
-			"text": chunk,
-		})
+		if !holdStream {
+			t.sse.Send(map[string]any{
+				"kind": "chunk",
+				"id":   streamMsgID,
+				"text": chunk,
+			})
+		}
 	}
 	// Telemetry record fires at the top of the onStep callback; the
 	// telem var is declared at function entry and summarized in the
@@ -6129,6 +6154,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				streamedBuf.Reset()
 				return
 			}
+			paintHeldBubble(id, cleaned) // held stream: paint the (now-cleared) lead-in
 			t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 			t.captureMidTurnBubble(cleaned)
 			streamMsgID = ""
@@ -6145,6 +6171,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			streamedBuf.Reset()
 			return
 		}
+		paintHeldBubble(id, cleaned) // held stream: paint the answer now that pre_output has passed it
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 		lastFinalizedID = id
 		lastFinalizedText = cleaned
@@ -6187,10 +6214,34 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		if cleaned != strings.TrimSpace(raw) {
 			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
 		}
+		paintHeldBubble(id, cleaned) // held stream: this settled round passed (non-guardrail correction) — show it
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 		lastFinalizedID = id
 		lastFinalizedText = cleaned
 		t.captureMidTurnBubble(cleaned)
+		streamMsgID = ""
+		streamedBuf.Reset()
+		t.setCurrentMsgID("")
+	}
+
+	// retractRound DISCARDS the current round's streamed bubble instead of
+	// settling it — the agent loop calls it (via AgentLoopConfig.RetractRound)
+	// when a guardrail BLOCKS a round. Unlike settleRound it must NOT persist or
+	// deliver the text: it's the very content the rule protects. So it rewrites
+	// the open bubble to empty in the client (chunk_replace, same primitive the
+	// over-long lead-in clear uses) and drops the buffer WITHOUT
+	// captureMidTurnBubble — nothing reaches t.midTurnBubbles or sess.Messages.
+	// The retry opens a fresh bubble. (Tokens streamed live before the round
+	// closed already reached the client; chunk_replace clears them — a brief
+	// flicker is the residual cost of streaming ahead of the output check.)
+	retractRound := func() {
+		id := streamMsgID
+		if id == "" {
+			id = t.getCurrentMsgID()
+		}
+		if id != "" {
+			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+		}
 		streamMsgID = ""
 		streamedBuf.Reset()
 		t.setCurrentMsgID("")
@@ -6346,6 +6397,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// first is harmless — this just moves the dedupe upstream of the log spam.
 	allTools = dedupeToolDefsByName(allTools)
 
+	// pre_input guardrail: judge the incoming request before round 1 so a
+	// topical/disclosure rule ("never mention salary") is caught at the door,
+	// not after the model has already narrated the answer in an interim turn.
+	llmMsgs = t.applyInputGuardrail(llmMsgs)
+
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
@@ -6370,7 +6426,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Settle the rejected round's streamed bubble before a correction
 		// re-prompts, so the retry opens a fresh bubble instead of
 		// concatenating into an orphaned one (the double-emit fix).
-		SettleRound: settleRound,
+		SettleRound:  settleRound,
+		RetractRound: retractRound,
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.
 		DrainViewImages: sess.DrainViewImages,
@@ -6456,7 +6513,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// credential flagged "Require confirm" park on an in-chat
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
-		Confirm: t.confirmFuncFor(sess),
+		Confirm:        t.confirmFuncFor(sess),
+		GuardrailCheck: t.guardrailCheckHook(),
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
 		// fires and the turn pauses for the user's actual answer.
@@ -7028,7 +7086,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// orchestrator loop: flagged-credential calls park on the
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
-		Confirm: t.confirmFuncFor(sess),
+		Confirm:        t.confirmFuncFor(sess),
+		GuardrailCheck: t.guardrailCheckHook(),
 		// (No SingleFireGroups for image/video producers — same
 		// rationale as the orchestrator round above. Multi-fire is
 		// intentional under the write-to-workspace + workspace(attach)

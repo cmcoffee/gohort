@@ -341,7 +341,7 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		// by id/name through the tool. Direct chat with Builder via
 		// the Agency picker / /chat/seed-builder still works — those
 		// are human-facing surfaces, not LLM-facing.
-		if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+		if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 			continue
 		}
 		// Sub-agents held for approval aren't live — keep them out of the
@@ -382,7 +382,7 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	}
 	// Builder and retired seeds are hidden from this surface — see
 	// agentsRunAction and agentsListAction for the rationale.
-	if isBuilderAgent(key) || isFleetRetiredSeed(key) {
+	if isBuilderAgent(key) || isFleetRetiredSeed(key) || isRetiringArchetypeSeed(key) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
 	fleetDB, fleetUser := t.fleetView()
@@ -394,7 +394,7 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
-	if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+	if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
 	if t.session != nil && t.session.ID != "" {
@@ -571,6 +571,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
 	}
+	// A dispatch to a retiring archetype seed (Research / KB) materializes the
+	// user's own copy and runs that — retirement never breaks a live dispatch.
+	target = materializeIfRetiringSeed(fleetDB, fleetUser, target)
 	// A sub-agent held for approval is not live yet — refuse to dispatch it until
 	// the owner activates it from the Authorizations pane.
 	if target.PendingApproval {

@@ -361,6 +361,39 @@ type StepInfo struct {
 type StepCallback func(step StepInfo)
 
 // AgentLoopConfig configures a RunAgentLoop invocation.
+// Guardrail interception points — the canonical hook labels shared between
+// core (which calls GuardrailCheck at these moments) and the app (which
+// resolves which points an agent enabled). One source of truth so the two
+// can't drift.
+const (
+	GuardHookPreInput  = "pre_input"  // judges the incoming request before round 1 (app-layer pre-pass, not called by the loop)
+	GuardHookPreAction = "pre_action" // before a consequential tool call
+	GuardHookPreOutput = "pre_output" // before the final reply is returned
+	GuardHookPeriodic  = "periodic"   // sampling narration mid-turn
+)
+
+// guardPeriodicRounds is how often the periodic guardrail check samples the
+// turn (every Nth round with fresh narration).
+const guardPeriodicRounds = 4
+
+// maxGuardrailOutputCorrections bounds how many times one turn may be sent
+// back to revise a guardrail-blocked reply, so a reply the model can't make
+// compliant can't loop forever. The app's own per-turn block counter
+// escalates independently; this is the core-side backstop.
+const maxGuardrailOutputCorrections = 2
+
+// guardrailRedactedDraft replaces a blocked assistant draft in history so the
+// withheld content is never persisted or delivered. Kept generic (no rule text)
+// — it stands in for the scrubbed turn in the transcript.
+const guardrailRedactedDraft = "[a draft reply was withheld here: it violated an enforced guardrail and was never shown to the user]"
+
+// guardrailSafeFallbackReply is the neutral decline substituted for the reply
+// when the model cannot produce a guardrail-compliant one within the correction
+// budget — a determined push. It reveals no rule and is the hard floor that
+// makes pre_output a real guarantee (an input check can always be talked
+// around; the output check cannot release the protected content).
+const guardrailSafeFallbackReply = "Sorry — I can't help with that one."
+
 type AgentLoopConfig struct {
 	// SystemPrompt sets the system prompt for the LLM.
 	SystemPrompt string
@@ -433,6 +466,18 @@ type AgentLoopConfig struct {
 	// nothing streamed this round.
 	SettleRound func()
 
+	// RetractRound is like SettleRound but DISCARDS the current round's streamed
+	// bubble instead of finalizing it — the app must NOT persist or deliver it.
+	// Called when a guardrail BLOCKS a round: the streamed text is the very
+	// content the rule protects, so settling it (which both flushes it to the
+	// client and appends it to the session, see the orchestrate captureMidTurn
+	// path) would leak it even though the loop then re-prompts. The app should
+	// clear the open bubble in the client and drop it without capturing. Falls
+	// back to SettleRound when nil (concatenation-safe but NOT leak-safe — only
+	// wire the retract on paths that persist per-round bubbles). Must reset the
+	// stream buffer like SettleRound so the retry doesn't concatenate.
+	RetractRound func()
+
 	// DrainViewImages, when set, is called after each tool-execution round to
 	// pull any frames a tool queued for the model to look at (e.g. view_video's
 	// sampled video frames, held on sess.PendingViewImages). Returned images are
@@ -458,6 +503,19 @@ type AgentLoopConfig struct {
 	// Confirm is called when a tool with NeedsConfirm is about to execute.
 	// If nil, a default terminal prompt is used (y/n).
 	Confirm ConfirmFunc
+
+	// GuardrailCheck, when set, lets the app enforce owner-authored guardrails
+	// at fixed interception points. hookPoint is one of GuardHook* below;
+	// candidate is what's being judged (a tool call + args for pre_action, the
+	// reply text for pre_output, recent narration for periodic). It returns
+	// blocked=true with a message to hand back when the candidate violates a
+	// guardrail. The loop delivers that message as a TRUSTED framework result
+	// — never wrapped in the untrusted-content fence (a fenced guard is one
+	// the model is licensed to ignore) — and does NOT run the blocked action.
+	// The app owns the warden call, the block/escalation policy, and the
+	// breadcrumb; core just calls the hook at the right moments and honors the
+	// verdict. nil ⇒ no guardrails (zero overhead). Optional.
+	GuardrailCheck func(hookPoint, candidate string) (blocked bool, message string)
 
 	// ChatOptions are additional options passed to every LLM call.
 	ChatOptions []ChatOption
@@ -1115,6 +1173,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// rounds without progress.
 	promiseCorrectionsTotal := 0
 	const maxPromiseCorrections = 2
+	guardrailOutputCorrections := 0    // pre_output revise passes used this turn
+	lastPeriodicGuardRound := 0        // last round the periodic guard sampled
 
 	// emitDiag breadcrumbs a silent correction into the app's session-diag
 	// trail (nil-safe). Kept here so every correction guard below records the
@@ -1133,6 +1193,40 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	settleRound := func() {
 		if cfg.SettleRound != nil {
 			cfg.SettleRound()
+		}
+	}
+
+	// retractRound discards the current round's streamed bubble on a guardrail
+	// block (never persisted/delivered). Falls back to settleRound when the app
+	// wired no retract — that's concatenation-safe but still persists the bubble,
+	// so only paths that set RetractRound get the leak-proof behavior.
+	retractRound := func() {
+		if cfg.RetractRound != nil {
+			cfg.RetractRound()
+			return
+		}
+		settleRound()
+	}
+
+	// replaceBlockedDraft overwrites the most-recent assistant turn's content
+	// after a guardrail blocks it. The draft is appended to history the moment
+	// the model produces it (see "Record assistant response" below), BEFORE the
+	// pre_output/periodic gate runs — so a blocked reply is already in the slice
+	// the caller will persist to the session and may deliver to the user. Left
+	// intact it leaks the very content the guardrail protects (observed: a salary
+	// figure blocked by pre_output was still recorded and delivered because the
+	// block only re-prompts, it doesn't retract). Overwrite in place rather than
+	// popping the turn, so user/assistant alternation survives. `with` is the
+	// redaction placeholder on a re-prompt, or the safe fallback reply when the
+	// budget is spent and we return a substitute.
+	replaceBlockedDraft := func(with string) {
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].Role == "assistant" {
+				history[i].Content = with
+				history[i].Reasoning = ""
+				history[i].ToolCalls = nil
+				return
+			}
 		}
 	}
 
@@ -2147,6 +2241,44 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				}
 			}
 
+			// Guardrail pre-output gate: before the final reply is returned, an
+			// independent warden judges the OUTPUT against the agent's guardrails
+			// (for "never say/reveal X" rules). This is the REAL guarantee — an
+			// input check (pre_input) can always be talked around with an
+			// innocuous-looking follow-up ("go ahead and show me"), but the output
+			// check judges the actual reply, where "contains the protected thing"
+			// is unambiguous regardless of how it was asked. So it runs on EVERY
+			// terminal reply (no budget guard on the CHECK). A violation re-prompts
+			// for a revise pass while corrections/rounds remain; once the budget is
+			// spent and the reply STILL violates, the draft is NOT released — a
+			// neutral decline is substituted so a determined push can't leak on the
+			// attempt after the budget runs out (the old escape hatch).
+			if cfg.GuardrailCheck != nil && strings.TrimSpace(resp.Content) != "" {
+				if blocked, gmsg := cfg.GuardrailCheck(GuardHookPreOutput, resp.Content); blocked {
+					if guardrailOutputCorrections < maxGuardrailOutputCorrections && round < maxRounds {
+						Debug("[agent_loop] guardrail blocked pre-output, re-prompting (correction %d/%d)", guardrailOutputCorrections+1, maxGuardrailOutputCorrections)
+						emitDiag("guardrail-blocked-output", "The reply was withheld by an enforced guardrail; re-prompted to revise.")
+						retractRound()                              // DISCARD the withheld bubble — not persisted or delivered (settle would commit it)
+						replaceBlockedDraft(guardrailRedactedDraft) // scrub the leaked draft from history — never persisted or delivered
+						history = append(history, Message{Role: "user", Content: frameworkNoticeTag + gmsg})
+						guardrailOutputCorrections++
+						continue
+					}
+					// Budget/rounds spent and the reply STILL violates. Do not
+					// release it — overwrite the draft in place with the safe
+					// decline and return that. The floor is a canned reply, not
+					// the leak, no matter how hard the turn was pushed.
+					Debug("[agent_loop] guardrail pre-output still blocked at budget exhaustion — substituting safe reply")
+					emitDiag("guardrail-output-substituted", "A reply kept violating an enforced guardrail after retries; a neutral decline was substituted so nothing protected was released.")
+					retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
+					replaceBlockedDraft(guardrailSafeFallbackReply)
+					resp.Content = guardrailSafeFallbackReply
+					resp.Reasoning = ""
+					resp.ToolCalls = nil
+					return resp, history, nil
+				}
+			}
+
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{
 					Round:   round,
@@ -2155,6 +2287,28 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				})
 			}
 			return resp, history, nil
+		}
+
+		// Guardrail periodic gate: every few rounds, sample this round's
+		// narration (the model's own words as it works) against the
+		// guardrails — catches slow drift/persuasion that neither the
+		// per-action nor the final-output check sees. Only fires on rounds
+		// that actually produced narration; a violation redirects the turn
+		// (the pending tool calls are skipped this round) with a trusted
+		// correction, bounded by the same output-correction budget.
+		if cfg.GuardrailCheck != nil && strings.TrimSpace(resp.Content) != "" &&
+			round-lastPeriodicGuardRound >= guardPeriodicRounds &&
+			guardrailOutputCorrections < maxGuardrailOutputCorrections && round < maxRounds {
+			lastPeriodicGuardRound = round
+			if blocked, gmsg := cfg.GuardrailCheck(GuardHookPeriodic, resp.Content); blocked {
+				Debug("[agent_loop] guardrail periodic block at round %d, redirecting", round)
+				emitDiag("guardrail-periodic-block", "An enforced guardrail flagged the turn mid-flight; redirected before running this round's tools.")
+				retractRound()
+				replaceBlockedDraft(guardrailRedactedDraft) // scrub the leaked narration (and its unexecuted tool calls) from history
+				history = append(history, Message{Role: "user", Content: frameworkNoticeTag + gmsg})
+				guardrailOutputCorrections++
+				continue
+			}
 		}
 
 		// Execute tool calls and collect results.
@@ -2270,6 +2424,22 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				results[i] = ToolResult{ID: tc.ID, Content: errMsg, IsError: true}
 				toolErrors++
 				continue
+			}
+
+			// Guardrail pre-action gate: before a CONSEQUENTIAL tool call
+			// (the NeedsConfirm set — sends, posts, deletes, spends) runs, an
+			// independent warden judges it against the agent's guardrails. A
+			// violation blocks the call and hands back the app's trusted
+			// message (never fenced). guardBlockedThisRound feeds the wedge
+			// machinery so repeated blocks settle the turn.
+			if cfg.GuardrailCheck != nil && needsConfirm[tc.Name] {
+				if blocked, gmsg := cfg.GuardrailCheck(GuardHookPreAction, tc.Name+" "+formatArgs(tc.Args)); blocked {
+					Debug("[agent_loop] guardrail blocked pre-action: %s", tc.Name)
+					guardBlockedThisRound = true
+					results[i] = ToolResult{ID: tc.ID, Content: gmsg, IsError: true}
+					toolErrors++
+					continue
+				}
 			}
 
 			if needsConfirm[tc.Name] {

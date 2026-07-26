@@ -3640,8 +3640,12 @@
           var m = openOrchModal('Rules — ' + (agent.name || id));
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
-          help.textContent = 'Non-negotiable operating policy. Applied to BOTH the orchestrator and worker on every turn. Use for hard constraints like "always cite a URL" or "never quote prices from training".';
+          help.textContent = 'Guidance the agent follows — prepended to BOTH the orchestrator and worker every turn. Use for soft constraints like "always cite a URL" or "prefer concise replies". The agent (and Builder) can edit these; for hard limits an independent check enforces, use Enforced guardrails below.';
           m.body.appendChild(help);
+          var rulesTitle = document.createElement('div');
+          rulesTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+          rulesTitle.textContent = 'Rules';
+          m.body.appendChild(rulesTitle);
           var list = document.createElement('div');
           list.className = 'ui-orch-list';
           m.body.appendChild(list);
@@ -3662,6 +3666,27 @@
               input.value = text;
               input.placeholder = 'rule…';
               input.addEventListener('input', function() { rules[idx] = input.value; });
+              // Elevate: promote this soft rule into the protected, enforced
+              // guardrails band below. It MOVES (a rule and its guardrail would
+              // otherwise drift as two editable copies); the warden then hard-
+              // checks it, and the agent can no longer edit it away.
+              var up = document.createElement('button');
+              up.className = 'ui-orch-list-del';
+              up.type = 'button';
+              up.textContent = '⤓';
+              up.title = 'Elevate to an enforced guardrail';
+              up.onclick = function() {
+                var t = (rules[idx] || '').trim();
+                if (!t) { window.uiAlert('Type the rule first, then elevate it.'); return; }
+                // Drop blank guardrail rows and de-dupe before adding.
+                grules = grules.filter(function(s) { return s.trim().length > 0; });
+                if (grules.indexOf(t) === -1) grules.push(t);
+                rules.splice(idx, 1);
+                if (!rules.length) rules.push('');
+                render();
+                renderG();
+                gWrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+              };
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del';
               del.type = 'button';
@@ -3672,6 +3697,7 @@
                 render();
               };
               row.appendChild(input);
+              row.appendChild(up);
               row.appendChild(del);
               list.appendChild(row);
             });
@@ -3690,6 +3716,126 @@
           }
           render();
 
+          // --- Enforced guardrails band ---
+          // Hard limits checked by an INDEPENDENT warden (a separate model
+          // call in fresh context), not merely prompted. Owner-only: saved
+          // via the dedicated api/agents/<id>/guardrails endpoint, which is
+          // the ONLY path allowed to change them — the whole-record save
+          // above preserves them, and no agent tool can write them, so a
+          // persuaded agent can't rewrite the rule it's about to be checked
+          // against.
+          var gWrap = document.createElement('div');
+          gWrap.style.cssText = 'margin-top:1.2rem;padding-top:0.9rem;border-top:1px solid var(--border)';
+          var gTitle = document.createElement('div');
+          gTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+          gTitle.textContent = 'Enforced guardrails';
+          gWrap.appendChild(gTitle);
+          var gHelp = document.createElement('div');
+          gHelp.className = 'ui-orch-modal-help';
+          gHelp.textContent = 'Hard limits an independent check (the "warden") enforces — a separate model call, in fresh context that never saw the conversation, judges what the agent is about to do against these. Only you can set them; no agent (not even Builder) can. Leave empty and the check is off.';
+          gWrap.appendChild(gHelp);
+          var gList = document.createElement('div');
+          gList.className = 'ui-orch-list';
+          gWrap.appendChild(gList);
+          var grules = (agent.guardrails || '').split('\n')
+            .map(function(s) { return s.trim(); })
+            .filter(function(s) { return s.length > 0; });
+          function renderG() {
+            gList.innerHTML = '';
+            grules.forEach(function(text, idx) {
+              var row = document.createElement('div');
+              row.className = 'ui-orch-list-row';
+              var input = document.createElement('input');
+              input.type = 'text'; input.value = text; input.placeholder = 'guardrail rule…';
+              input.addEventListener('input', function() { grules[idx] = input.value; });
+              var del = document.createElement('button');
+              del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
+              del.onclick = function() { grules.splice(idx, 1); renderG(); };
+              row.appendChild(input); row.appendChild(del);
+              gList.appendChild(row);
+            });
+            var addBtn = document.createElement('button');
+            addBtn.type = 'button'; addBtn.className = 'ui-orch-list-add'; addBtn.textContent = '+ Add guardrail';
+            addBtn.onclick = function() {
+              grules.push(''); renderG();
+              var inputs = gList.querySelectorAll('input');
+              if (inputs.length) inputs[inputs.length - 1].focus();
+            };
+            gList.appendChild(addBtn);
+          }
+          renderG();
+
+          // Hook points — where the warden runs.
+          var hookDefs = [
+            {v: 'pre_input', label: 'On the incoming request (best for "never mention / don’t reveal X")'},
+            {v: 'pre_action', label: 'Before a consequential action (default)'},
+            {v: 'pre_output', label: 'Before the final reply'},
+            {v: 'periodic', label: 'Periodically during the turn'}
+          ];
+          var activeHooks = {};
+          (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
+          var hookWrap = document.createElement('div');
+          hookWrap.style.cssText = 'margin-top:0.6rem';
+          var hookLbl = document.createElement('div');
+          hookLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
+          hookLbl.textContent = 'Check at (each point is a separate model round-trip):';
+          hookWrap.appendChild(hookLbl);
+          hookDefs.forEach(function(hd) {
+            var row = document.createElement('label');
+            row.style.cssText = 'display:flex;align-items:center;gap:0.45rem;font-size:0.85rem;padding:0.12rem 0;cursor:pointer';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = !!activeHooks[hd.v];
+            cb.onchange = function() { activeHooks[hd.v] = cb.checked; };
+            row.appendChild(cb);
+            row.appendChild(document.createTextNode(hd.label));
+            hookWrap.appendChild(row);
+          });
+          gWrap.appendChild(hookWrap);
+
+          // Test box — run the warden against a sample candidate now, without
+          // any live interception, so the owner can feel the check.
+          var testWrap = document.createElement('div');
+          testWrap.style.cssText = 'margin-top:0.7rem;padding-top:0.6rem;border-top:1px dashed var(--border)';
+          var testLbl = document.createElement('div');
+          testLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
+          testLbl.textContent = 'Test: paste an action/output and see the warden judge it against the guardrails above.';
+          testWrap.appendChild(testLbl);
+          var testIn = document.createElement('textarea');
+          testIn.rows = 2;
+          testIn.placeholder = "e.g. Post: 'Jane Doe lives at 12 Elm St.'";
+          testIn.style.cssText = 'width:100%;box-sizing:border-box;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.5rem;font:inherit';
+          testWrap.appendChild(testIn);
+          var testBtn = document.createElement('button');
+          testBtn.type = 'button'; testBtn.className = 'ui-orch-list-add'; testBtn.textContent = 'Test guardrails';
+          testBtn.style.marginTop = '0.35rem';
+          var testOut = document.createElement('div');
+          testOut.style.cssText = 'margin-top:0.4rem;font-size:0.82rem;white-space:pre-wrap';
+          testBtn.onclick = function() {
+            var cand = testIn.value.trim();
+            if (!cand) { return; }
+            testOut.textContent = 'Checking…'; testBtn.disabled = true;
+            fetch('api/agents/' + encodeURIComponent(id) + '/guardrail-test', {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({candidate: cand, hook: 'pre_action'})
+            }).then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
+              .then(function(d) {
+                if (d.note) { testOut.textContent = d.note; return; }
+                var colors = {violate: 'var(--danger,#ff7b72)', unsure: '#f59e0b', comply: '#10b981'};
+                var lines = ['Verdict: ' + (d.status || '?').toUpperCase()];
+                (d.verdicts || []).forEach(function(v) {
+                  lines.push('• [' + v.status + '] ' + (v.rule || '') + (v.reason ? ' — ' + v.reason : ''));
+                });
+                testOut.textContent = lines.join('\n');
+                testOut.style.color = colors[d.status] || 'var(--text)';
+              })
+              .catch(function(err) { testOut.textContent = 'Test failed: ' + (err && err.message || err); testOut.style.color = 'var(--danger,#ff7b72)'; })
+              .then(function() { testBtn.disabled = false; });
+          };
+          testWrap.appendChild(testBtn);
+          testWrap.appendChild(testOut);
+          gWrap.appendChild(testWrap);
+          m.body.appendChild(gWrap);
+
           var cancelBtn = document.createElement('button');
           cancelBtn.className = 'ui-orch-modal-btn';
           cancelBtn.textContent = 'Cancel';
@@ -3701,13 +3847,23 @@
             var clean = rules.map(function(r) { return r.trim(); })
                              .filter(function(r) { return r.length > 0; });
             agent.rules = clean.join('\n');
+            var gclean = grules.map(function(r) { return r.trim(); })
+                               .filter(function(r) { return r.length > 0; });
+            var hooks = hookDefs.map(function(h){ return h.v; }).filter(function(v){ return activeHooks[v]; });
             saveBtn.disabled = true;
-            fetch('api/agents', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify(agent),
-            }).then(function(r) {
-              if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+            // Two saves: the soft Rules ride the whole-record POST (which
+            // PRESERVES guardrails server-side); the guardrails go through
+            // their dedicated protected endpoint. Both must land.
+            Promise.all([
+              fetch('api/agents', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(agent),
+              }).then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); }),
+              fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks}),
+              }).then(function(r) { if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); }); })
+            ]).then(function() {
               m.close();
               refreshAgentCounts();
             }).catch(function(err) {

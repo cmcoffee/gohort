@@ -477,6 +477,9 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if !ok {
 		return "", false, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
+	// Standing fire / monitor wake / external dispatch to a retiring archetype
+	// seed → materialize the owner's own copy and run that.
+	target = materializeIfRetiringSeed(ownerDB, agentOwner, target)
 	runtimeDB := ownerDB
 	if runtimeUser != agentOwner {
 		runtimeDB = UserDB(T.DB, runtimeUser)
@@ -641,15 +644,17 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// in the log. Without this, pipeline-internal tool calls are a
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
-	resp, _, runErr := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: deliveredMessage}}, AgentLoopConfig{
-		SendGuardKey:  sendGuardKey,
-		SystemPrompt:  sysPrompt,
-		Tools:         tools,
-		MaxRounds:     resolveMaxWorkerRounds(target),
-		StampLocation: UserLocation(runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:   target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		OnStep:        func(info StepInfo) { telem.record(info) },
-		Confirm:       confirm,
+	dispatchMsgs := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
+	resp, _, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
+		SendGuardKey:   sendGuardKey,
+		SystemPrompt:   sysPrompt,
+		Tools:          tools,
+		MaxRounds:      resolveMaxWorkerRounds(target),
+		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
+		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		OnStep:         func(info StepInfo) { telem.record(info) },
+		Confirm:        confirm,
+		GuardrailCheck: subTurn.guardrailCheckHook(),
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
@@ -1004,6 +1009,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if !ok {
 		return AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
+	target = materializeIfRetiringSeed(ownerDB, agentOwner, target)
 	runtimeDB := ownerDB
 	if runtimeUser != agentOwner {
 		runtimeDB = UserDB(T.DB, runtimeUser)
@@ -1024,7 +1030,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		DB:                 runtimeDB,
 		ChatSessionID:      subSessionID,
 		AgentID:            target.ID,
-		IntentText:         message, // Tier-1 tool elevation matches against the brief
+		IntentText:         message,                // Tier-1 tool elevation matches against the brief
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}
@@ -1288,12 +1294,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		think = *run.Think
 	}
 	loopCfg := AgentLoopConfig{
-		SendGuardKey: sendGuardKey,
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    resolveMaxWorkerRounds(target),
-		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Confirm:      func(name, args string) bool { return true },
+		SendGuardKey:   sendGuardKey,
+		SystemPrompt:   sysPrompt,
+		Tools:          tools,
+		MaxRounds:      resolveMaxWorkerRounds(target),
+		ThinkBudget:    target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Confirm:        func(name, args string) bool { return true },
+		GuardrailCheck: subTurn.guardrailCheckHook(),
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
@@ -1335,6 +1342,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Feed view_video's sampled frames to the model on the next round.
 	loopCfg.DrainViewImages = subSess.DrainViewImages
 	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
+	llmMessages = subTurn.applyInputGuardrail(llmMessages)
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)

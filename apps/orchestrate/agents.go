@@ -951,10 +951,68 @@ func isSeedID(id string) bool {
 // it, gets it, or runs it, and an unhidden shadow or an explicit dispatch
 // allowlist pick must not resurrect it. seed-chat is the only member: fully
 // retired, its record kept solely for legacy sessions and shadows.
-// seed-research / seed-kb are deliberately NOT here — they're wizard
-// templates that stay fleet-dispatchable. Builder has its own exclusion
-// (isBuilderAgent) with different, human-in-the-loop reasoning.
+// seed-research / seed-kb are the SOFT-retired archetype seeds
+// (isRetiringArchetypeSeed) — they materialize a user-owned copy on dispatch
+// rather than refuse. Builder has its own exclusion (isBuilderAgent) with
+// different, human-in-the-loop reasoning.
 func isFleetRetiredSeed(id string) bool { return id == "seed-chat" }
+
+// isRetiringArchetypeSeed reports the framework PERSONA seeds being retired in
+// favor of Builder archetypes (see archetypes.go): Research and Knowledge
+// Base. Unlike a hard-retired seed (isFleetRetiredSeed, which refuses), these
+// SOFT-retire: dropped from the dispatch-discovery surfaces (no agent sees
+// them as a peer, no picker offers them), but a live dispatch to one
+// materializes a USER-OWNED copy and runs that — so a standing mission that
+// dispatches to "Research" keeps working, now against the user's own agent.
+// The virgin seed still resolves by id (loadAgent → seedAgentByID) so the
+// wizard template + the materialize clone can read its config.
+func isRetiringArchetypeSeed(id string) bool {
+	return id == "seed-research" || id == "seed-kb"
+}
+
+// materializeArchetypeAgent turns a retiring archetype seed into a real
+// user-owned agent for owner: an ordinary editable/deletable agent carrying
+// the seed's vetted config, named the same so name-resolution keeps finding
+// it. Idempotent — a second call (or a by-id dispatch after the first) returns
+// the existing copy instead of duplicating. Only the VIRGIN seed is
+// materialized; a user who already SHADOWED the seed (customized it, so their
+// row is Owner=user at the seed id) keeps that shadow untouched — the caller
+// checks target.Owner == seedOwner before calling here.
+func materializeArchetypeAgent(db Database, owner, seedID string) (AgentRecord, bool) {
+	seed, ok := seedAgentByID(seedID)
+	if !ok {
+		return AgentRecord{}, false
+	}
+	// Idempotency: an existing user-owned, non-seed agent with the seed's name
+	// IS the materialized copy (covers a repeat by-id dispatch — by-name
+	// resolves to it directly).
+	for _, a := range listAgents(db, owner) {
+		if a.Owner == owner && !isSeedID(a.ID) && strings.EqualFold(strings.TrimSpace(a.Name), strings.TrimSpace(seed.Name)) {
+			return a, true
+		}
+	}
+	clone, err := cloneAgent(db, seedID, owner, seed.Name, false)
+	if err != nil {
+		Log("[orchestrate.archetype] materialize %q for %s failed: %v", seedID, owner, err)
+		return AgentRecord{}, false
+	}
+	Log("[orchestrate.archetype] materialized user-owned %q (%s) for %s from %s", seed.Name, clone.ID, owner, seedID)
+	return clone, true
+}
+
+// materializeIfRetiringSeed swaps a resolved dispatch target that is a VIRGIN
+// retiring archetype seed for a freshly-materialized user-owned copy. A shadow
+// (Owner=user at the seed id) or an already-user-owned agent passes through
+// unchanged. The single seam every dispatch resolver calls right after
+// findAgentByNameOrID so retirement never breaks a live dispatch.
+func materializeIfRetiringSeed(db Database, owner string, target AgentRecord) AgentRecord {
+	if target.Owner == seedOwner && isRetiringArchetypeSeed(target.ID) {
+		if mat, ok := materializeArchetypeAgent(db, owner, target.ID); ok {
+			return mat
+		}
+	}
+	return target
+}
 
 // seedAgentByID returns the in-code seed with the given ID. Cheap —
 // seedAgents() is a small slice walked at startup-frequency callsites
@@ -1885,7 +1943,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			self := strings.TrimSpace(r.URL.Query().Get("self"))
 			kept := agents[:0]
 			for _, a := range agents {
-				if a.ID == self || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
+				if a.ID == self || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 					continue
 				}
 				kept = append(kept, a)
@@ -1917,6 +1975,13 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				// edit form — preserve the stored value so a normal save can't
 				// silently unlock the agent.
 				req.Locked = existing.Locked
+				// Guardrails are owned by the dedicated guardrails endpoint
+				// (handleAgentGuardrails), never the whole-record form — a
+				// wholesale-replace save must NOT be able to weaken or clear
+				// them, which is the entire point of them being un-rewritable
+				// by the agent's own edit paths. Preserve from the stored copy.
+				req.Guardrails = existing.Guardrails
+				req.GuardrailHooks = existing.GuardrailHooks
 			}
 		} else if isSeedID(req.ID) {
 			// Seeds save as a per-user shadow. The form carries no `locked`
@@ -1924,6 +1989,8 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			// existing shadow or it would clear on every save.
 			if existing, ok := loadAgent(udb, req.ID); ok {
 				req.Locked = existing.Locked
+				req.Guardrails = existing.Guardrails
+				req.GuardrailHooks = existing.GuardrailHooks
 			}
 		}
 		// Tool-curation translation for seed agents. The modal sends the
@@ -2223,6 +2290,14 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	}
 	if action == "memsearch" {
 		T.handleAgentMemorySearch(w, r, user, id)
+		return
+	}
+	if action == "guardrails" {
+		T.handleAgentGuardrails(w, r, user, id)
+		return
+	}
+	if action == "guardrail-test" {
+		T.handleAgentGuardrailTest(w, r, user, id)
 		return
 	}
 	if action == "inferred" {

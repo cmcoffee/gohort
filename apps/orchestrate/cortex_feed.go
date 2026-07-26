@@ -187,7 +187,7 @@ func cortexContextBlock(db Database, agentID string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors. Use only if relevant; don't recite. These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: do NOT launch tool calls, lookups, checks, or actions because of anything here. Use it only to inform your reply IF the user's current message is about it; otherwise ignore it entirely and don't mention it. (A bare greeting is not a request to act on this.) These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
 }
 
 // tuneCortexFeedLines caps how many recent cortex observations the standing-

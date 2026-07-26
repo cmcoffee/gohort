@@ -593,6 +593,29 @@ type AgentRecord struct {
 	// the preMortemPlanningBlock system-prompt section.
 	PreMortem bool `json:"pre_mortem,omitempty"`
 
+	// Guardrails are owner-authored COMPLIANCE rules enforced by an
+	// INDEPENDENT warden — a separate, fresh-context model call that judges a
+	// candidate action or output against these rules — not merely prepended to
+	// the prompt. This is the key difference from Rules (a soft prompt signal
+	// the agent itself can be talked past): the warden never saw the
+	// conversation that might have persuaded or poisoned the agent, so it
+	// still has an anchor the turn can't move. To keep that anchor immovable,
+	// Guardrails is settable ONLY through the owner's editor form — no LLM
+	// tool (create_agent / update_agent / Builder) carries a guardrails param,
+	// so a persuaded agent cannot rewrite the rule it is about to be checked
+	// against. Empty = the guardrail system is INERT for this agent (the whole
+	// feature is opt-in by authoring a rule). One rule per line.
+	Guardrails string `json:"guardrails,omitempty"`
+
+	// GuardrailHooks selects WHERE the warden runs — the interception points,
+	// configurable per agent: "pre_action" (before a consequential tool call),
+	// "pre_output" (before the final reply), "periodic" (sampling the turn
+	// every few rounds). Empty with a non-empty Guardrails defaults to
+	// pre_action (the highest-value point — where irreversible harm happens).
+	// Ignored entirely when Guardrails is empty. The live interception is
+	// wired in a later slice; this records the owner's choice.
+	GuardrailHooks []string `json:"guardrail_hooks,omitempty"`
+
 	// KnowledgeModel is a Phase 3 placeholder.
 	KnowledgeModel string `json:"knowledge_model,omitempty"`
 
