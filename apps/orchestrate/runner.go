@@ -2308,7 +2308,19 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	//             back. They get the worker-research extras only
 	//             (raw call_<credential> for API probing); authoring
 	//             tools stay with the orchestrator.
-	if isBuilderAgent(t.agent.ID) {
+	// Owner-only, same guarantee as the Fleet/operator block below: the
+	// authoring toolset mutates the OWNER's gohort (creates agents/tools/apps,
+	// drafts credentials) and reaches owner-scoped stores, so it attaches ONLY
+	// when the runtime user IS the agent's owner. Without this an EXPOSED Author
+	// agent would hand create_agent / tool_def / draft_*_credential to a public
+	// visitor — the hole the de-silo opened once authoring stopped being pinned
+	// to the never-published Builder seed. Seeds load with Owner unset until
+	// shadowed; treat that as the caller's own so the owner keeps authoring on
+	// their own Builder seed. publiclyExposable stays permissive (Publish means
+	// published) precisely because this gate, not the publish gate, is where the
+	// owner-only concern lives.
+	ownerRun := t.agent.Owner == "" || t.agent.Owner == t.user
+	if agentCanAuthor(t.agent) && ownerRun {
 		var extra []AgentToolDef
 		if forOrchestrator {
 			extra = builderAuthoringTools(sess, t)
@@ -2332,8 +2344,13 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// what lets publiclyExposable honor Publish on a Fleet agent without leaking
 	// owner controls. Seeds load with Owner unset until shadowed; treat that as
 	// the caller's own so the owner keeps Fleet on their own seed.
-	ownerRun := t.agent.Owner == "" || t.agent.Owner == t.user
-	if t.agent.Fleet && forOrchestrator && ownerRun {
+	// (ownerRun computed above, alongside the authoring-grant gate.)
+	// The Builder gets the operator toolset too — create_event_monitor,
+	// recurring, create_standing_agent — so it can WIRE a tool it just authored
+	// into a schedule/watch. "Build X and run it every 30s" was structurally
+	// impossible for an author-only agent: it could build the tool and then had
+	// no way to schedule it, so it stopped half-done or handed off.
+	if (t.agent.Fleet || agentCanAuthor(t.agent)) && forOrchestrator && ownerRun {
 		om := operatorManagementTools(sess, t.agent.ID)
 		// History drill-in is its own pair (recall_history / expand_history) in
 		// legacy mode; the unified `recall` tool already spans folded-away
@@ -2345,12 +2362,15 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		for _, td := range om {
 			toolNames = append(toolNames, td.Tool.Name)
 		}
-		// Drop the generic interval scheduler — the Operator schedules through
-		// the fleet (create_standing_agent), which does proper cron / start+
-		// interval timing and surfaces in Enabled agents. Without this the LLM
-		// reaches for "recurring" (interval-from-now → "not exactly 8am") and
-		// bypasses the fleet.
-		tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
+		// FLEET drops the generic interval scheduler — the Operator schedules
+		// through the fleet (create_standing_agent, proper cron / start+interval
+		// timing, surfaces in Enabled agents); without this the LLM reaches for
+		// "recurring" and bypasses the fleet. The BUILDER keeps recurring: it's
+		// authoring a scheduled TOOL, and recurring / create_event_monitor are
+		// exactly the right primitives for "run this tool on an interval".
+		if t.agent.Fleet {
+			tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
+		}
 	}
 	// request_build — the COMPLEMENT of Fleet's live Builder dispatch. A Fleet
 	// agent hands authoring to Builder directly; a non-Fleet agent can't, so
@@ -4160,6 +4180,10 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithCancel(context.Background())
 	run := T.runsRegistry().Create(user, agent.ID, sess.ID, cancel).
 		Describe("chat", agent.Name, truncateObs(req.Message, 100))
+	// Tag the ctx with this run's ID so any sub-agent dispatched during the turn
+	// records it as parent — the chain the live surface renders as a tree. This
+	// ctx flows into turn.ctx below, which the dispatch tools inherit.
+	ctx = withParentRun(ctx, run.ID)
 	sse := newTeeSSEWriter(w, run)
 
 	// SSE response headers — handleSend streams frames inline off this response.
@@ -5782,7 +5806,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// rhythm Builder follows. Other agents (Chat, Research, etc.)
 	// don't need a build-plan card. Reduces their tool surface
 	// without touching Builder's authoring flow.
-	if isBuilderAgent(t.agent.ID) {
+	if agentCanAuthor(t.agent) {
 		knowTools = append(knowTools,
 			t.presentBuildPlanToolDef(),
 			t.markStepInProgressToolDef(),

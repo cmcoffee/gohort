@@ -29,6 +29,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -44,6 +45,24 @@ const (
 	RunStatusFailed    = "failed"
 	RunStatusCanceled  = "canceled"
 )
+
+// runOutcomeStatus maps a loop's exit error to a run status. A context
+// cancellation (the turn was SUPERSEDED by a newer send, or the process is
+// shutting down) is CANCELED, not FAILED — otherwise a dispatched sub-agent
+// whose parent turn was replaced gets stamped "failed" when it did nothing
+// wrong. A genuine error, or a turn that produced no result at all, is FAILED;
+// everything else (incl. hitting the round cap, which returns a nil error) is
+// COMPLETED.
+func runOutcomeStatus(runErr error, hasResult bool) string {
+	switch {
+	case runErr != nil && (errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)):
+		return RunStatusCanceled
+	case runErr != nil || !hasResult:
+		return RunStatusFailed
+	default:
+		return RunStatusCompleted
+	}
+}
 
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_run_max_events", Category: "Limits", Label: "Run event ring size", Help: "Max in-memory SSE events buffered per run.", Kind: KindInt, Default: 500, Min: 100, Max: 5000})
@@ -111,6 +130,40 @@ type Run struct {
 	label     string
 	round     int
 	lastTool  string
+	parentID  string // the run that spawned this one (a delegating turn); "" for a top-level turn
+}
+
+// runCtxKey carries the enclosing run's ID down the context so a nested
+// dispatch can record its parent — the chain the live surface renders as a
+// tree (turn → sub-agents it called → what they're doing).
+type runCtxKeyT struct{}
+
+var runCtxKey runCtxKeyT
+
+// withParentRun tags ctx with the ID of the run currently executing under it.
+// Every run-creation site calls this on the ctx it hands to the loop, so any
+// dispatch that fires inside inherits the ID as its parent.
+func withParentRun(ctx context.Context, runID string) context.Context {
+	return context.WithValue(ctx, runCtxKey, runID)
+}
+
+// parentRunFromCtx returns the enclosing run ID tagged on ctx, or "" at the top.
+func parentRunFromCtx(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(runCtxKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// Parent records which run spawned this one (chainable, set-once at creation).
+func (r *Run) Parent(parentID string) *Run {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.parentID = parentID
+	return r
 }
 
 // Describe stamps the activity metadata onto a run (chainable, set-once at
@@ -149,6 +202,8 @@ type RunSnapshot struct {
 	LastTool  string
 	StartedAt time.Time
 	EndedAt   time.Time
+	ParentID  string // "" for a top-level turn
+	Depth     int    // levels below a top-level turn (set by tree ordering, not stored)
 }
 
 // Snapshot returns the activity view of this run.
@@ -159,7 +214,7 @@ func (r *Run) Snapshot() RunSnapshot {
 		ID: r.ID, UserID: r.UserID, AgentID: r.AgentID, SessionID: r.SessionID,
 		Kind: r.kind, AgentName: r.agentName, Label: r.label,
 		Status: r.status, Round: r.round, LastTool: r.lastTool,
-		StartedAt: r.startedAt, EndedAt: r.endedAt,
+		StartedAt: r.startedAt, EndedAt: r.endedAt, ParentID: r.parentID,
 	}
 }
 
@@ -395,9 +450,82 @@ func (rr *RunRegistry) Activity(userID string) []RunSnapshot {
 			done = append(done, s)
 		}
 	}
-	sort.Slice(active, func(i, j int) bool { return active[i].StartedAt.Before(active[j].StartedAt) })
+	active = orderRunsByTree(active) // parent→child DFS with Depth for the nested view
 	sort.Slice(done, func(i, j int) bool { return done[i].EndedAt.After(done[j].EndedAt) })
 	return append(active, done...)
+}
+
+// ActiveSnapshots returns a snapshot of every currently-running run across all
+// users — for the global live ribbon (the pill that shows running apps), which
+// has no per-user scope, matching the app-side LiveProviders and the untenanted
+// /api/live handler. Done and not-yet-started runs are excluded.
+func (rr *RunRegistry) ActiveSnapshots() []RunSnapshot {
+	rr.mu.Lock()
+	all := make([]*Run, 0, len(rr.runs))
+	for _, r := range rr.runs {
+		all = append(all, r)
+	}
+	rr.mu.Unlock() // snapshot below takes each run's own lock
+
+	var out []RunSnapshot
+	for _, r := range all {
+		if s := r.Snapshot(); s.Status == RunStatusRunning {
+			out = append(out, s)
+		}
+	}
+	return orderRunsByTree(out)
+}
+
+// orderRunsByTree returns snaps in parent→child DFS order with Depth set on
+// each, so the live surface can render nesting: a delegating turn, then the
+// sub-agents it spawned indented beneath it, recursively. A run whose parent
+// isn't in the set (parent already finished, or a top-level turn) is a root at
+// depth 0. Cycle-safe via a visited set; ties break by start time.
+func orderRunsByTree(snaps []RunSnapshot) []RunSnapshot {
+	present := make(map[string]bool, len(snaps))
+	for _, s := range snaps {
+		present[s.ID] = true
+	}
+	children := make(map[string][]RunSnapshot)
+	var roots []RunSnapshot
+	for _, s := range snaps {
+		if s.ParentID != "" && present[s.ParentID] {
+			children[s.ParentID] = append(children[s.ParentID], s)
+		} else {
+			roots = append(roots, s)
+		}
+	}
+	byStart := func(list []RunSnapshot) {
+		sort.Slice(list, func(i, j int) bool { return list[i].StartedAt.Before(list[j].StartedAt) })
+	}
+	byStart(roots)
+	for k := range children {
+		byStart(children[k])
+	}
+	out := make([]RunSnapshot, 0, len(snaps))
+	visited := make(map[string]bool, len(snaps))
+	var walk func(s RunSnapshot, depth int)
+	walk = func(s RunSnapshot, depth int) {
+		if visited[s.ID] {
+			return
+		}
+		visited[s.ID] = true
+		s.Depth = depth
+		out = append(out, s)
+		for _, c := range children[s.ID] {
+			walk(c, depth+1)
+		}
+	}
+	for _, r := range roots {
+		walk(r, 0)
+	}
+	for _, s := range snaps { // any cycle stragglers — append flat
+		if !visited[s.ID] {
+			s.Depth = 0
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // startSweeper lazily starts the background cleanup loop. Each

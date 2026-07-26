@@ -1978,22 +1978,79 @@ func parseParamsArg(v any) (map[string]ToolParam, error) {
 	if err != nil {
 		return nil, fmt.Errorf("re-marshal failed: %w", err)
 	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, fmt.Errorf("must be an object of {name: {type, description}}: %w", err)
+	// Lenient per-value coercion. Models routinely emit the WRONG shape for a
+	// param value — a bare bool ({"sid": true}), a bare type string ({"sid":
+	// "string"}), or a description string ({"sid": "the server id"}) — instead
+	// of a {type, description} object. A hard reject sends tool_def into a retry
+	// loop that never converges (observed: a turn grinding 500k+ lead tokens on
+	// "cannot unmarshal bool into ToolParam"), so coerce each value instead.
+	var loose map[string]any
+	if err := json.Unmarshal(b, &loose); err != nil {
+		return nil, fmt.Errorf("params must be an object mapping each name to {type, description} (a type or description string, or true, also works) — could not read it as an object: %w", err)
 	}
-	for k, p := range out {
+	for k, val := range loose {
 		if !validToolName(k) {
 			return nil, fmt.Errorf("param name %q must be lowercase letters/digits/underscores only", k)
 		}
-		switch p.Type {
-		case "string", "integer", "number", "boolean":
-		case "":
-			return nil, fmt.Errorf("param %q has no type — set type to string/integer/number/boolean", k)
-		default:
-			return nil, fmt.Errorf("param %q type %q not supported (use string/integer/number/boolean)", k, p.Type)
+		p, perr := coerceToolParam(val)
+		if perr != nil {
+			return nil, fmt.Errorf("param %q: %w", k, perr)
 		}
+		out[k] = p
 	}
 	return out, nil
+}
+
+// coerceToolParam turns whatever the model put as a param's value into a
+// ToolParam. Accepts the correct {type, description} object, a bare type name,
+// a bare description string, or a scalar (bool/number → a plain string param) —
+// so a wrong-but-close SHAPE doesn't hard-fail tool_def into a grind loop. An
+// object that EXPLICITLY names an unsupported type (e.g. "widget", "array") is
+// still an error — the model chose a type, it's just wrong, so guide it.
+func coerceToolParam(val any) (ToolParam, error) {
+	switch t := val.(type) {
+	case map[string]any:
+		p := ToolParam{}
+		if s, _ := t["type"].(string); s != "" {
+			ct := canonicalParamType(s)
+			if ct == "" {
+				return ToolParam{}, fmt.Errorf("type %q not supported (use string/integer/number/boolean)", s)
+			}
+			p.Type = ct
+		}
+		if s, _ := t["description"].(string); s != "" {
+			p.Description = s
+		} else if s, _ := t["desc"].(string); s != "" {
+			p.Description = s
+		}
+		if p.Type == "" {
+			p.Type = "string" // object with a description but no type → default
+		}
+		return p, nil
+	case string:
+		if ct := canonicalParamType(t); ct != "" {
+			return ToolParam{Type: ct}, nil // a bare type name
+		}
+		return ToolParam{Type: "string", Description: t}, nil // a bare description
+	default:
+		return ToolParam{Type: "string"}, nil // bool/number/null placeholder
+	}
+}
+
+// canonicalParamType maps a loosely-specified type to one of the four supported
+// types (tolerating common synonyms), or "" if it isn't recognizably a type.
+func canonicalParamType(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "string", "str", "text":
+		return "string"
+	case "integer", "int":
+		return "integer"
+	case "number", "float", "double", "decimal":
+		return "number"
+	case "boolean", "bool":
+		return "boolean"
+	}
+	return ""
 }
 
 func stringSliceArg(v any) []string {

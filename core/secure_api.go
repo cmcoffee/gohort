@@ -1845,6 +1845,16 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			return sb.String(), nil
 		}
 	}
+	// A request-shape 4xx (400/404/405/422 — not auth) means the server IS
+	// reachable and speaking HTTP; the PATH/QUERY/BODY are wrong, not the
+	// protocol or credential. Say the correct read outright — the observed
+	// failure: a model gets a 400, concludes from generic web research that
+	// "this service must be telnet/impossible," and ABANDONS a working HTTP
+	// credential (rebuilds as a shell tool, or blocks the user for the
+	// endpoint) instead of just fixing the path.
+	if s := resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
+		fmt.Fprintf(&sb, "[The server RESPONDED with HTTP %d — it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT — iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]\n", s, s)
+	}
 	if strings.Contains(ct, "json") {
 		var anyVal interface{}
 		if json.Unmarshal(bodyBytes, &anyVal) == nil {

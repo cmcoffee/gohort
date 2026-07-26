@@ -584,5 +584,19 @@ func sandboxEnv() []string {
 	if !hasPath {
 		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	}
+	// Prepend the gohort shim bin dir so a script can invoke fetch_url /
+	// fetch_via / browse_page as ordinary commands (they proxy to the hook,
+	// which still enforces capabilities). It's a subpath of the RO lib mount
+	// and only exists inside a bwrap sandbox; on the non-bwrap fallback it's a
+	// dead PATH entry, which the kernel's PATH search simply skips.
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			rest := kv[len("PATH="):]
+			if !strings.HasPrefix(rest, SandboxGohortBinMountPath+":") {
+				env[i] = "PATH=" + SandboxGohortBinMountPath + ":" + rest
+			}
+			break
+		}
+	}
 	return env
 }

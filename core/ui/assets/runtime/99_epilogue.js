@@ -102,7 +102,7 @@
       // is where the count is visible — the pill itself stays terse
       // ("LIVE" reads at a glance, a number doesn't).
       var liveBtn = el('button', {class: 'ui-live-pill', title: 'Active sessions across all apps', style: 'display:none'},
-        [el('span', {class: 'ui-live-dot'}), el('span', {class: 'ui-live-text'}, ['LIVE'])]);
+        [el('span', {class: 'ui-live-dot'}), el('span', {class: 'ui-live-text'}, ['Live'])]);
       var liveMenu = el('div', {class: 'ui-live-menu', style: 'display:none'});
       liveWrap.appendChild(liveBtn);
       liveWrap.appendChild(liveMenu);
@@ -117,7 +117,9 @@
         liveItems.forEach(function(it) {
           var row = el('a', {
             class: 'ui-live-item' + (it.queued ? ' queued' : ' running'),
-            href: it.url || '#',
+            // Each entry opens the framework-supplied live view (cfg.live_url);
+            // core/ui names no specific app. '#' when none is configured.
+            href: cfg.live_url || '#',
           });
           row.appendChild(el('span', {class: 'ui-live-app'}, [it.app || '?']));
           row.appendChild(el('span', {class: 'ui-live-state'}, [it.queued ? 'Queued' : 'Running']));

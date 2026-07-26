@@ -37,6 +37,17 @@ func Run(user string, db Database, slug, kind, name, language, script string, ca
 	if caps == nil {
 		caps = []string{"fetch", "log"} // sensible default: read external data + log
 	}
+	// Auto-grant fetch_via for every credential the app OWNER may use. A custom-
+	// app script always runs in the owner's context (handleData/handleAction pass
+	// the owner as `user`), and the owner can already call fetch_via on these
+	// credentials from a hand-authored temptool — so an app data source shouldn't
+	// have to redeclare capabilities:["fetch_via:<cred>"] just to reach one. The
+	// omission failed SILENTLY: the hook denied fetch_via, the script's try/except
+	// swallowed the error, and the panel rendered an empty table that even passed
+	// verify (the roster-app trap). fetch_url already reaches a credential-covered
+	// host via auto-routing; this brings fetch_via to the same parity. Merged +
+	// deduped so an explicit declaration is preserved and never doubled.
+	caps = mergeCaps(caps, ownerFetchViaCaps(user))
 	params := map[string]ToolParam{}
 	for k := range args {
 		params[k] = ToolParam{Type: "string"}
@@ -60,6 +71,49 @@ func Run(user string, db Database, slug, kind, name, language, script string, ca
 		Network: NewNetworkConnector(false),
 	}
 	return temptool.DispatchTempToolDirect(sess, tt, args)
+}
+
+// ownerFetchViaCaps returns a fetch_via:<name> capability for every credential
+// the owner may use (their own + globals they're permitted). Empty owner → none.
+func ownerFetchViaCaps(owner string) []string {
+	if strings.TrimSpace(owner) == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, "fetch_via:"+name)
+	}
+	for _, c := range Secure().ListUser(owner) {
+		add(c.Name)
+	}
+	for _, c := range Secure().List() {
+		if Secure().UserMayUse(c, owner) {
+			add(c.Name)
+		}
+	}
+	return out
+}
+
+// mergeCaps concatenates two capability lists, dropping duplicates and empties so
+// an explicitly-declared cap is preserved but never doubled.
+func mergeCaps(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range append(append([]string{}, a...), b...) {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 // SanitizeName reduces a slug/name to a safe filename fragment (alnum + _).

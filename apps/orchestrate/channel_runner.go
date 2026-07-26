@@ -280,6 +280,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			RuntimeUser:   in.Owner,
 			AgentKey:      in.AgentID,
 			SubSessionID:  sessionID,
+			Kind:          "channel",
 			Title:         title,
 			MessageSender: in.SenderName,
 			Message:       in.Text + videoNote + attachNote,

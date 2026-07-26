@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	httppprof "net/http/pprof"
 	"sort"
 	"strings"
 	"sync"
@@ -449,9 +450,8 @@ const liveRibbonJS = `(function(){
         var it=items[i];
         var badge=it.queued?'<span class="badge q">Queued</span>':'<span class="badge run">Running</span>';
         var app=it.app?'<span class="badge">'+esc(it.app)+'</span>':'';
-        var url=it.url||'';
-        if(url&&url.charAt(0)==='/')url=location.origin+url;
-        h+='<a class="item" href="'+url+'">'+app+badge+'<span class="label">'+esc(it.topic||it.label||'Untitled')+'</span></a>';
+        // Every live item opens the central Monitor page (the expanded view).
+        h+='<a class="item" href="'+location.origin+'/monitor">'+app+badge+'<span class="label">'+esc(it.topic||it.label||'Untitled')+'</span></a>';
       }
       box.innerHTML=h;el.style.display='block';
     }).catch(function(){});
@@ -908,6 +908,31 @@ func ServeDashboard(addr string) error {
 		json.NewEncoder(w).Encode(AllLiveSessions())
 	})
 
+	// Admin-gated pprof — live runtime introspection WITHOUT restarting. The
+	// key one for diagnosing a hang ("a run shows running but nothing is
+	// happening — no GPU, no tool, no output"): GET /debug/pprof/goroutine?debug=2
+	// dumps every goroutine's stack, which names the wedged handler / blocked
+	// channel in seconds instead of an elimination exercise. Gated to admins on
+	// top of the AuthMiddleware login, since pprof exposes internal state.
+	mux.HandleFunc("/debug/pprof/", func(w http.ResponseWriter, r *http.Request) {
+		if AuthDB == nil || !AuthIsAdmin(AuthDB(), r) {
+			http.Error(w, "admin only", http.StatusForbidden)
+			return
+		}
+		switch strings.TrimPrefix(r.URL.Path, "/debug/pprof/") {
+		case "cmdline":
+			httppprof.Cmdline(w, r)
+		case "profile":
+			httppprof.Profile(w, r)
+		case "symbol":
+			httppprof.Symbol(w, r)
+		case "trace":
+			httppprof.Trace(w, r)
+		default:
+			httppprof.Index(w, r) // index + named profiles (goroutine, heap, ...)
+		}
+	})
+
 	// Persistent notify preference: GET returns it, POST toggles and persists.
 	mux.HandleFunc("/api/notify-preference", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1305,7 +1330,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
  \____|\___/|_| |_|\___/|_|   \__|</div>
   <p class="subtitle">Agent Dashboard</p>
   <div class="grid">%CARDS%</div>
-  <div id="live-panel"><h3 onclick="toggleLive()">Live Sessions</h3><div id="live-list"></div></div>
+  <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
 <script>
 var liveHidden = false;
 function toggleLive() {
@@ -1334,8 +1359,8 @@ function refreshLive() {
       var it = items[i];
       var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
       var app = it.app ? '<span class="live-badge" style="background:#30363d;color:#8b949e">' + it.app + '</span>' : '';
-      var url = it.url || '';
-      html += '<a class="live-item" href="' + url + '">';
+      // Every live item opens the central Monitor page (the expanded view).
+      html += '<a class="live-item" href="/monitor">';
       html += app + badge;
       html += '<span class="live-label">' + (it.topic || it.label || 'Untitled') + '</span>';
       if (it.status) html += '<span class="live-status">' + it.status + '</span>';

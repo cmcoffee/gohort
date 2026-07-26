@@ -1033,6 +1033,162 @@ func randomHookToken() (string, error) {
 // of where the running script lives within the workspace.
 const SandboxGohortLibMountPath = "/opt/gohort-lib"
 
+// SandboxGohortBinMountPath is a shim bin dir under the RO-mounted gohort
+// lib, prepended to PATH inside every sandbox. It holds tiny executables
+// (fetch_url / fetch_via / browse_page) so a script can call gohort's
+// fetch family as ORDINARY COMMANDS instead of subprocessing an LLM tool
+// name (fetch_url_<cred>, send_message, ...) — which is not a shell binary
+// and only fails with FileNotFoundError, the exact footgun that sent
+// authored watch scripts down a "the API is impossible" rewrite spiral.
+// The shims proxy to the SAME hook that `from gohort import ...` uses, so
+// the hook still enforces this tool's granted capabilities: an ungranted
+// credential is denied at the hook, not the shim. No new privilege — just
+// symmetry between "call the tool" and "shell out to the tool".
+const SandboxGohortBinMountPath = SandboxGohortLibMountPath + "/bin"
+
+// sandboxToolShim is one executable file dropped into the bin dir.
+type sandboxToolShim struct {
+	name    string
+	content string
+}
+
+// sandboxToolShims are written (0755) into <lib>/bin by EnsureGohortLibDir.
+// _gohort_shim.py carries the logic; the three bare-named wrappers are what
+// a script actually invokes (fetch_url, fetch_via, browse_page). A wrapper
+// runs from the bin dir, so `from _gohort_shim import main` resolves the
+// sibling, and `import gohort` inside it resolves via PYTHONPATH.
+var sandboxToolShims = []sandboxToolShim{
+	{"_gohort_shim.py", gohortShimDispatcher},
+	{"fetch_url", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_url\", sys.argv[1:]))\n"},
+	{"fetch_via", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_via\", sys.argv[1:]))\n"},
+	{"browse_page", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"browse_page\", sys.argv[1:]))\n"},
+}
+
+// gohortShimDispatcher is the shared logic behind the bin-dir wrappers. It
+// parses a small curl-ish arg surface (--url / --method / --header / --body
+// / --credential, or a bare positional URL), calls the matching gohort hook
+// method, prints the response body to stdout, and exits non-zero on a non-2xx
+// upstream status so a shell caller can branch on it. No backticks (keeps
+// this a clean Go raw string).
+const gohortShimDispatcher = `#!/usr/bin/env python3
+# gohort tool shims: let a sandboxed script call gohort's fetch family as
+# ordinary commands -- fetch_url / fetch_via / browse_page -- instead of
+# subprocessing an LLM tool name (fetch_url_<cred>, send_message, ...),
+# which is NOT a shell binary and only fails with FileNotFoundError. These
+# proxy to the SAME hook that "from gohort import ..." uses, so the hook
+# still enforces this tool's granted capabilities. No new privilege.
+import sys
+import json
+
+try:
+    import gohort
+except Exception as e:
+    sys.stderr.write("gohort shim: cannot import gohort helper (%s)\n" % e)
+    raise SystemExit(2)
+
+_USAGE = {
+    "fetch_url": "fetch_url [--credential NAME] [--method M] [--header 'K: V'] [--body DATA] URL",
+    "fetch_via": "fetch_via CREDENTIAL [--method M] [--header 'K: V'] [--body DATA] URL",
+    "browse_page": "browse_page URL",
+}
+
+
+def _die(msg, code=2):
+    sys.stderr.write(str(msg).rstrip("\n") + "\n")
+    return code
+
+
+def _val(argv, i):
+    return argv[i + 1] if i + 1 < len(argv) else ""
+
+
+def _parse(argv):
+    url = None
+    method = "GET"
+    body = None
+    cred = None
+    headers = {}
+    positional = []
+    i = 0
+    n = len(argv)
+    while i < n:
+        a = argv[i]
+        if a in ("--url", "-u"):
+            url = _val(argv, i); i += 2; continue
+        if a in ("--credential", "--cred", "-c"):
+            cred = _val(argv, i); i += 2; continue
+        if a in ("--method", "-X"):
+            method = _val(argv, i).upper() or "GET"; i += 2; continue
+        if a in ("--body", "--data", "-d"):
+            body = _val(argv, i); i += 2; continue
+        if a in ("--header", "-H"):
+            h = _val(argv, i); i += 2
+            if ":" in h:
+                k, v = h.split(":", 1)
+                headers[k.strip()] = v.strip()
+            continue
+        positional.append(a)
+        i += 1
+    if url is None and positional:
+        url = positional[0]
+    return url, method, body, cred, headers
+
+
+def main(op, argv):
+    argv = list(argv)
+    if op == "fetch_via":
+        cred = None
+        if argv and not argv[0].startswith("-"):
+            cred = argv[0]
+            argv = argv[1:]
+        url, method, body, credflag, headers = _parse(argv)
+        cred = cred or credflag
+        if not cred or not url:
+            return _die("usage: " + _USAGE["fetch_via"])
+        try:
+            r = gohort.fetch_via(cred, url, method=method, body=body, headers=headers)
+        except Exception as e:
+            return _die("fetch_via error: %s" % e)
+    elif op == "browse_page":
+        url, _, _, _, _ = _parse(argv)
+        if not url:
+            return _die("usage: " + _USAGE["browse_page"])
+        try:
+            r = gohort.browse_page(url)
+        except Exception as e:
+            return _die("browse_page error: %s" % e)
+    else:
+        url, method, body, cred, headers = _parse(argv)
+        if not url:
+            return _die("usage: " + _USAGE["fetch_url"])
+        try:
+            if cred:
+                r = gohort.fetch_via(cred, url, method=method, body=body, headers=headers)
+            else:
+                r = gohort.fetch_url(url, method=method, headers=headers, body=body)
+        except Exception as e:
+            return _die("fetch_url error: %s" % e)
+    if isinstance(r, dict):
+        body_out = r.get("body", "")
+        status = r.get("status")
+    else:
+        body_out = r
+        status = None
+    if not isinstance(body_out, str):
+        body_out = json.dumps(body_out)
+    sys.stdout.write(body_out)
+    if not body_out.endswith("\n"):
+        sys.stdout.write("\n")
+    if isinstance(status, int) and not (200 <= status < 300):
+        sys.stderr.write("gohort: upstream HTTP %s\n" % status)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "fetch_url", sys.argv[2:]))
+`
+
 // gohortLibDirOnce caches the host-side path to the gohort library
 // dir so EnsureGohortLibDir doesn't redo the filesystem work on
 // every sandbox dispatch.
@@ -1100,8 +1256,35 @@ func EnsureGohortLibDir() string {
 		}
 		Debug("[hook/helpers] deployed gohort package (%dB) at %s (host) — mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxGohortLibMountPath)
 	}
+	ensureGohortShims(libBase)
 	gohortLibDirPath = libBase
 	return libBase
+}
+
+// ensureGohortShims writes the executable fetch-family shims into
+// <libBase>/bin (mounted RO at SandboxGohortBinMountPath, on PATH). Content-
+// idempotent like the package file; best-effort — a write failure just means
+// scripts fall back to `from gohort import ...` (still works), so failures are
+// logged at Debug, never fatal. The exec bit is re-asserted even on a content
+// match so a prior umask-clobbered file self-heals.
+func ensureGohortShims(libBase string) {
+	binDir := filepath.Join(libBase, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		Debug("[hook/helpers] failed to mkdir shim bin %s: %v", binDir, err)
+		return
+	}
+	for _, s := range sandboxToolShims {
+		p := filepath.Join(binDir, s.name)
+		if existing, err := os.ReadFile(p); err == nil && string(existing) == s.content {
+			_ = os.Chmod(p, 0755)
+			continue
+		}
+		if err := os.WriteFile(p, []byte(s.content), 0755); err != nil {
+			Debug("[hook/helpers] failed to write shim %s: %v", p, err)
+			continue
+		}
+		_ = os.Chmod(p, 0755) // WriteFile mode is pre-umask; force the exec bit
+	}
 }
 
 // SandboxHookPythonShim is the canonical helper file, deployed as

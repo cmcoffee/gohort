@@ -654,6 +654,7 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 		RuntimeUser:   t.owner,
 		AgentKey:      t.agent,
 		SubSessionID:  t.session,
+		Kind:          "openai", // labels the turn in the live ribbon / "Active now"
 		Message:       t.input,
 		Title:         t.title,
 		MessageSender: t.sender,

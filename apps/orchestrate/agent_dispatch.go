@@ -520,6 +520,18 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	}
 	defer clearAuthoringInProgress(runtimeDB, subSessID)
 	defer DeleteSessionTempTools(runtimeDB, subSessID)
+	// Register this dispatch in the runs ledger so a delegated sub-agent shows
+	// in the live ribbon / "Active now" like any other run, nested under the run
+	// that spawned it (parentRunFromCtx). Created HERE — before the sub-agent's
+	// tools are built below — and the ctx re-tagged with THIS run's ID, so a
+	// dispatch the sub-agent makes in turn captures this ID and nests one level
+	// deeper. defer marks Failed; the success path marks Completed first
+	// (idempotent — first call wins).
+	liveRun := T.runsRegistry().Create(runtimeUser, target.ID, subSessID, nil).
+		Describe("dispatch", target.Name, truncateObs(message, 100)).
+		Parent(parentRunFromCtx(ctx))
+	defer liveRun.Complete(RunStatusFailed)
+	ctx = withParentRun(ctx, liveRun.ID)
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
 	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
@@ -556,18 +568,19 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 			}
 		}
 	}
-	// Builder gets its unregistered authoring tools appended here on
-	// the sync-dispatch path. Identity-gated against the Builder
-	// seed ID — a non-Builder target never receives the appendage.
-	if isBuilderAgent(target.ID) {
+	// Any authoring-capable target (the Builder seed OR an Author-flagged agent)
+	// gets its unregistered authoring tools appended here on the sync-dispatch
+	// path, so a dispatched/woken author behaves the same as on its own surface.
+	if agentCanAuthor(target) {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 	}
 	// Fleet targets get their exclusive fleet-management + delegation +
 	// event-monitor catalog here too, so a dispatched/woken fleet agent
 	// behaves the same as on its own chat surface. Mirrors the runner.go
 	// catalog hook. Drop the generic interval scheduler (it schedules
-	// through the fleet instead).
-	if target.Fleet {
+	// through the fleet instead). Authors also get these so a delegated
+	// build can wire its tool into a schedule/monitor (create_event_monitor).
+	if target.Fleet || agentCanAuthor(target) {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		// Unified recall spans folded-away history; skip the standalone
 		// recall_history / expand_history pair when it's active.
@@ -652,7 +665,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		MaxRounds:      resolveMaxWorkerRounds(target),
 		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
 		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		OnStep:         func(info StepInfo) { telem.record(info) },
+		OnStep:         func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
 		Confirm:        confirm,
 		GuardrailCheck: subTurn.guardrailCheckHook(),
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
@@ -683,6 +696,10 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if line := telem.toolCallSummary(label); line != "" {
 		Log("%s", line)
 	}
+	// Status reflects the real outcome: a superseded/cancelled turn is CANCELED,
+	// not FAILED (the deferred RunStatusFailed only stands if we returned before
+	// reaching here — a genuine setup failure).
+	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
 	if runErr != nil {
 		return "", false, runErr
 	}
@@ -726,7 +743,11 @@ type AgentSyncRun struct {
 	InjectionQueueID string
 	Message          string
 	FreshSession     bool
-	StatusCallback   func(string) // optional: wired to the sub-session's StatusCallback
+	// Kind labels this run in the live-activity ribbon / "Active now" pane
+	// ("channel" for an inbound channel/iMessage turn, else it defaults to
+	// "dispatch"). Cosmetic only — how the run is described, not how it runs.
+	Kind           string
+	StatusCallback func(string) // optional: wired to the sub-session's StatusCallback
 	// Stream, when set, receives assistant text deltas AS THEY GENERATE, wired
 	// straight to the agent loop's stream handler. Without it a caller only
 	// gets AgentSyncResult.Text when the whole turn is done — fine for a
@@ -1045,6 +1066,21 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	defer clearAuthoringInProgress(runtimeDB, subSessionID)
 	defer DeleteSessionTempTools(runtimeDB, subSessionID)
+	// Register this channel/dispatch turn in the runs ledger, nested under the
+	// run that spawned it (parentRunFromCtx). Created BEFORE the sub-agent's
+	// tools build below, with ctx re-tagged to THIS run's ID, so a dispatch the
+	// sub-agent makes nests one level deeper. Kind defaults to "dispatch"; the
+	// channel caller passes "channel". defer marks Failed; success marks
+	// Completed first (idempotent — first call wins).
+	liveKind := run.Kind
+	if liveKind == "" {
+		liveKind = "dispatch"
+	}
+	liveRun := T.runsRegistry().Create(runtimeUser, target.ID, subSessionID, nil).
+		Describe(liveKind, target.Name, truncateObs(message, 100)).
+		Parent(parentRunFromCtx(ctx))
+	defer liveRun.Complete(RunStatusFailed)
+	ctx = withParentRun(ctx, liveRun.ID)
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
 	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
@@ -1081,15 +1117,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			}
 		}
 	}
-	if isBuilderAgent(target.ID) {
+	if agentCanAuthor(target) {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 	}
 	// Fleet targets get their fleet-management + delegation + event-monitor
 	// catalog here too — this is the WAKE path (event monitors run the
 	// channel agent on its channel thread through RunAgentSyncContinuing),
 	// so without it a woken fleet agent would have no delegate / monitor
-	// tools.
-	if target.Fleet {
+	// tools. Authors also get these so a delegated build can schedule/monitor.
+	if target.Fleet || agentCanAuthor(target) {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		// Unified recall spans folded-away history; skip the standalone
 		// recall_history / expand_history pair when it's active.
@@ -1342,10 +1378,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Feed view_video's sampled frames to the model on the next round.
 	loopCfg.DrainViewImages = subSess.DrainViewImages
 	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
+	loopCfg.OnStep = func(info StepInfo) { liveRun.SetProgress(info.Round, info.ToolCalls) }
 	llmMessages = subTurn.applyInputGuardrail(llmMessages)
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
+	// A superseded/cancelled turn is CANCELED, not FAILED.
+	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
 	if runErr != nil {
 		return AgentSyncResult{}, runErr
 	}
@@ -1425,6 +1464,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			}
 		}
 	}
+	// Status already finalized above (runOutcomeStatus) — reaching here is the
+	// success case, already marked Completed.
 	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap}, nil
 }
 

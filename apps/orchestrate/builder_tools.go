@@ -27,6 +27,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -57,6 +58,11 @@ import (
 // nil is fine — drafting still works, the card just doesn't render.
 func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	tools := []AgentToolDef{
+		// survey — Builder's "read the repo" move: one call maps the user's whole
+		// gohort (agents, tools, credentials + wired tools, apps, pipelines,
+		// monitors). Listed FIRST so it reads as the natural orient-before-build
+		// reflex the lean prompt now asks for.
+		surveyWorkspaceToolDef(t),
 		ChatToolToAgentToolDefWithSession(&createAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&updateAgentTool{}, sess),
 		// archetype — build recipes for the common shapes (research, KB,
@@ -501,7 +507,38 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			} else if cfg != "" {
 				cfg += "\nRecent dispatches: none recorded — nothing has been sent through this credential yet."
 			}
+			// Tools ALREADY wired to this credential — the canonical working
+			// endpoint shapes. When authoring a NEW tool against a credential
+			// other tools already use, copying a sibling's url_template is the
+			// fastest correct path. This exists to break the observed failure:
+			// the model guesses a path (/api/v1/x → 400), concludes from generic
+			// web research that "the whole protocol is wrong / impossible," and
+			// interrogates the user for an endpoint its own sibling tools already
+			// prove. A 4xx on a credential means WRONG PATH, not dead protocol.
+			var siblings []string
+			for _, pt := range LoadPersistentTempTools(RootDB, auditOwner) {
+				tt := pt.Tool
+				if tt.Mode != TempToolModeAPI || !strings.EqualFold(strings.TrimSpace(tt.Credential), name) {
+					continue
+				}
+				m := strings.TrimSpace(tt.Method)
+				if m == "" {
+					m = "GET"
+				}
+				siblings = append(siblings, fmt.Sprintf("\n  %s — %s %s", tt.Name, m, tt.CommandTemplate))
+			}
+			if len(siblings) > 0 {
+				cfg += "\nTools ALREADY wired to this credential — REUSE these endpoint shapes (they work); do NOT re-guess paths or ask the user for endpoints these already prove:"
+				for _, s := range siblings {
+					cfg += s
+				}
+			}
 			if enabled && hasSecret {
+				// Self-serve discovery: a READY credential is a LIVE API you can
+				// probe. The failure to break: the model guesses ONE path, gets a
+				// 4xx, and asks the user (or concludes "no API exists") instead of
+				// TRYING more paths. Tell it to map the API by probing first.
+				cfg += fmt.Sprintf("\nNeed an endpoint you don't have yet? MAP IT YOURSELF — this credential is LIVE. Probe candidate paths with fetch_url_%s(url=\"/try/this\") and read what returns 2xx; a 4xx just means THAT path is wrong, so try another (/x, /1/x, /serverinfo, list a base path, …). Discover the working endpoints AND the response shape by TRYING them before you ask the user or conclude anything — only ask for what a probe genuinely can't reveal (which instance/account, what the built thing should do).", name)
 				return fmt.Sprintf("Credential %q is READY — enabled and its secret is set. Safe to wire the tool/agent to it and finish.%s", name, cfg), nil
 			}
 			var missing []string
@@ -514,6 +551,257 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			return fmt.Sprintf("Credential %q is NOT READY (%s). Tell the user to open Admin > APIs, finish it (paste the secret, enable it), then come back — do NOT declare the build complete or wire anything to it yet.%s", name, strings.Join(missing, "; "), cfg), nil
 		},
 	}
+}
+
+// surveyWorkspaceToolDef is Builder's "read the repo" move — the one thing that
+// made Builder feel unlike Claude Code was the lack of a cheap way to ORIENT
+// before building. Claude Code greps first because grep is one action; without
+// this, orienting meant firing list_agents + tool_def(list) + list credentials +
+// list_apps + list_pipelines + list_event_monitors separately, so the model
+// skipped it and guessed/rebuilt instead. This returns a compact inventory of
+// the user's whole gohort world in one call: agents (+ their tool surface),
+// tools (mode + credential), credentials (+ which tools are wired to each), apps,
+// pipelines, monitors, standing agents. The reflex it enables — survey, reuse,
+// stay consistent — is behind most of the friction the user surfaced (guessing an
+// endpoint a sibling tool already proves, rebuilding what exists).
+func surveyWorkspaceToolDef(t *chatTurn) AgentToolDef {
+	owner := ""
+	if t != nil {
+		owner = t.user
+	}
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "survey",
+			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort — agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move — call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
+			Parameters:  map[string]ToolParam{},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			return surveyWorkspace(owner), nil
+		},
+	}
+}
+
+// surveyWorkspace renders the inventory. Kept as a standalone so a test (or a
+// future /survey surface) can call it without a chatTurn. Sections are capped so
+// a large deployment can't blow the context window; a cap that trims announces
+// how many were dropped rather than silently truncating.
+func surveyWorkspace(owner string) string {
+	const cap = 60
+	udb := agentUserDB(RootDB, owner)
+	var b strings.Builder
+	fmt.Fprintf(&b, "gohort workspace for %s — orient before you build; REUSE what already exists rather than re-guessing or rebuilding.\n", owner)
+
+	// Map credential -> the api tools already wired to it, so both the TOOLS
+	// and CREDENTIALS sections can show the working endpoint shapes.
+	tools := LoadPersistentTempTools(RootDB, owner)
+	credTools := map[string][]string{}
+	for _, pt := range tools {
+		if pt.Tool.Mode == TempToolModeAPI {
+			c := strings.TrimSpace(pt.Tool.Credential)
+			if c != "" {
+				credTools[c] = append(credTools[c], pt.Tool.Name)
+			}
+		}
+	}
+
+	section := func(title string, n int) {
+		fmt.Fprintf(&b, "\n%s (%d):\n", title, n)
+	}
+	capNote := func(n int) {
+		if n > cap {
+			fmt.Fprintf(&b, "  … and %d more (showing first %d)\n", n-cap, cap)
+		}
+	}
+
+	agents := listAgents(udb, owner)
+	section("AGENTS", len(agents))
+	for i, a := range agents {
+		if i >= cap {
+			break
+		}
+		tags := ""
+		if a.Fleet {
+			tags += " [Fleet]"
+		}
+		if a.Cortex {
+			tags += " [Cortex]"
+		}
+		surface := "all tools"
+		if len(a.AllowedTools) > 0 {
+			surface = strings.Join(a.AllowedTools, ", ")
+			if len(surface) > 120 {
+				surface = fmt.Sprintf("%d tools", len(a.AllowedTools))
+			}
+		}
+		fmt.Fprintf(&b, "  • %s%s (id %s) — %s | tools: %s\n", a.Name, tags, a.ID, oneLine(a.Description, 80), surface)
+	}
+	capNote(len(agents))
+
+	section("TOOLS", len(tools))
+	fmt.Fprintf(&b, "  (author/edit with tool_def; to reuse a credential's working paths, copy a sibling below)\n")
+	for i, pt := range tools {
+		if i >= cap {
+			break
+		}
+		tt := pt.Tool
+		scope := "shared"
+		if len(pt.ScopeAgents) > 0 {
+			scope = fmt.Sprintf("scoped:%d", len(pt.ScopeAgents))
+		}
+		switch tt.Mode {
+		case TempToolModeAPI:
+			m := strings.TrimSpace(tt.Method)
+			if m == "" {
+				m = "GET"
+			}
+			fmt.Fprintf(&b, "  • %s [api cred=%s %s] %s %s\n", tt.Name, orNone(tt.Credential), scope, m, tt.CommandTemplate)
+		default:
+			mode := tt.Mode
+			if mode == "" {
+				mode = "shell"
+			}
+			fmt.Fprintf(&b, "  • %s [%s] (%s)\n", tt.Name, mode, scope)
+		}
+	}
+	capNote(len(tools))
+
+	// Credentials: user-owned + globals the user may use, deduped by name.
+	creds := surveyCredentials(owner)
+	section("CREDENTIALS", len(creds))
+	fmt.Fprintf(&b, "  (draft_api_credential / draft_oauth_credential; a READY one is a LIVE API — PROBE it with fetch_url_<name>)\n")
+	for i, c := range creds {
+		if i >= cap {
+			break
+		}
+		state := "DISABLED"
+		if _, enabled, hasSecret := Secure().CredentialStatusOwned(owner, c.Name); enabled && hasSecret {
+			state = "READY"
+		}
+		fmt.Fprintf(&b, "  • %s [%s] %s base_url=%s\n", c.Name, orNone(c.Type), state, orNone(c.BaseURL))
+		if wired := credTools[c.Name]; len(wired) > 0 {
+			fmt.Fprintf(&b, "      wired tools (reuse their paths): %s\n", strings.Join(wired, ", "))
+		}
+	}
+	capNote(len(creds))
+
+	apps := ListAppSpecs(owner)
+	section("APPS", len(apps))
+	fmt.Fprintf(&b, "  (author with app_def -> /custom/<slug>/)\n")
+	for i, a := range apps {
+		if i >= cap {
+			break
+		}
+		agentNote := ""
+		if a.AgentID != "" {
+			agentNote = " agent=" + a.AgentID
+		}
+		fmt.Fprintf(&b, "  • %s (/custom/%s/)%s — %s\n", a.Name, a.Slug, agentNote, oneLine(a.Desc, 70))
+	}
+	capNote(len(apps))
+
+	pipes := ListPipelineDefs(udb, owner)
+	section("PIPELINES", len(pipes))
+	for i, p := range pipes {
+		if i >= cap {
+			break
+		}
+		fmt.Fprintf(&b, "  • %s (%d stages) — %s\n", p.Name, len(p.Stages), oneLine(p.Description, 70))
+	}
+	capNote(len(pipes))
+
+	monitors := ListEventMonitors(RootDB, owner)
+	section("EVENT MONITORS", len(monitors))
+	fmt.Fprintf(&b, "  (create_event_monitor)\n")
+	for i, m := range monitors {
+		if i >= cap {
+			break
+		}
+		wake := orNone(m.WakeAgent)
+		if m.WakeChannel != "" {
+			wake = "channel:" + m.WakeChannel
+		}
+		state := ""
+		if m.Broken {
+			state = " [BROKEN — needs relink: " + m.BrokenReason + "]"
+		} else if m.Paused {
+			state = " [paused]"
+		}
+		src := ""
+		if m.ToolName != "" {
+			src = " src=" + m.ToolName
+		}
+		fmt.Fprintf(&b, "  • %s [%s]%s -> wake %s%s\n", m.Name, orNone(m.Kind), src, wake, state)
+	}
+	capNote(len(monitors))
+
+	standing := ListStandingAgents(RootDB, owner)
+	section("STANDING AGENTS", len(standing))
+	for i, s := range standing {
+		if i >= cap {
+			break
+		}
+		when := s.Cron
+		if when == "" && s.IntervalSeconds > 0 {
+			when = fmt.Sprintf("every %ds", s.IntervalSeconds)
+		}
+		state := ""
+		if s.Paused {
+			state = " [paused]"
+		}
+		fmt.Fprintf(&b, "  • %s -> agent %s @ %s%s\n", s.Name, orNone(s.AgentID), orNone(when), state)
+	}
+	capNote(len(standing))
+
+	return b.String()
+}
+
+// surveyCredentials returns the user-usable credentials (own + permitted
+// globals), deduped by name, sorted — including DISABLED ones, which the survey
+// wants to surface (a drafted-but-unfinished credential is exactly what Builder
+// needs to see). Distinct from userScopableCredentials, which hides disabled.
+func surveyCredentials(owner string) []SecureCredential {
+	seen := map[string]bool{}
+	var out []SecureCredential
+	emit := func(c SecureCredential) {
+		if c.Name == "" || seen[c.Name] {
+			return
+		}
+		seen[c.Name] = true
+		out = append(out, c)
+	}
+	if owner != "" {
+		for _, c := range Secure().ListUser(owner) {
+			emit(c)
+		}
+	}
+	for _, c := range Secure().List() {
+		if Secure().UserMayUse(c, owner) {
+			emit(c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// oneLine collapses whitespace and truncates for a compact survey row.
+func oneLine(s string, max int) string {
+	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	if s == "" {
+		return "(no description)"
+	}
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
+}
+
+// orNone renders an empty string as "(none)" so a survey row never shows a
+// dangling "cred= " that reads as a bug.
+func orNone(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "(none)"
+	}
+	return s
 }
 
 // builderWorkerResearchTools is the small set of EXTRA tools workers
@@ -552,6 +840,19 @@ func builderWorkerResearchTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 // have to be made in three places.
 func isBuilderAgent(agentID string) bool {
 	return agentID == "seed-builder"
+}
+
+// agentCanAuthor reports whether an agent should receive the authoring toolset —
+// the de-silo predicate. TRUE for the Builder seed (authoring is its identity)
+// OR any agent with the Author flag set (authoring granted as a capability).
+// Every tool-GRANT site (append builderAuthoringTools / app_def / operator
+// tools) consults this; the seed-IDENTITY checks (lead-model routing, picker
+// exclusion, the cannot-author prompt block) stay on isBuilderAgent, since those
+// are about the seed's special ROLE, not the authoring capability. Takes the
+// record because the flag lives on it — the ID alone can't answer the question
+// anymore, which is the whole point.
+func agentCanAuthor(a AgentRecord) bool {
+	return isBuilderAgent(a.ID) || a.Author
 }
 
 // isCloneOnlySeed reports whether an agent ID is a TEMPLATE seed: one Builder

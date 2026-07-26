@@ -17,6 +17,7 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/guides"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/mcpserver"
+	_ "github.com/cmcoffee/gohort/apps/monitor"
 	// OpenAI-compatible /v1 for external clients (a voice platform's custom-LLM
 	// setting, an OpenAI SDK). NOTE: /v1/ is a public path — it bypasses cookie
 	// auth and is guarded only by a personal access token, with no rate limit

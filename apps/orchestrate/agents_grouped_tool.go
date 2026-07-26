@@ -813,13 +813,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 			}
 		}
 	}
-	if isBuilderAgent(target.ID) {
+	if agentCanAuthor(target) {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
-		// Dispatched Builder reaches here only from a Fleet parent (guarded at
-		// the top of this function). Inherit that parent's non-consequential
-		// catalog so Builder can inspect the parent's world while authoring —
-		// read_phantom_chat, web_search, etc. — but never the parent's texting /
-		// delegation / fleet tools. Deduped so shared names don't double-add.
+		// A dispatched authoring agent (Builder seed, or an Author-flagged agent)
+		// inherits the parent's non-consequential catalog so it can inspect the
+		// parent's world while authoring — read_phantom_chat, web_search, etc. —
+		// but never the parent's texting / delegation / fleet tools. Deduped so
+		// shared names don't double-add.
 		tools = mergeToolsDedup(tools, t.inheritableParentTools(t.agent, subSess))
 	}
 

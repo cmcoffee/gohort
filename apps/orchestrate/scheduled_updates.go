@@ -486,11 +486,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		},
 	})
 
-	if runErr != nil {
-		liveRun.Complete(RunStatusFailed)
-	} else {
-		liveRun.Complete(RunStatusCompleted)
-	}
+	// CANCELED (superseded / shutdown) is distinct from FAILED — see runOutcomeStatus.
+	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
 
 	// Record every fire in the run-ledger — the same store standing agents and
 	// event monitors write to (RootDB, owner=username), so recurring fires show

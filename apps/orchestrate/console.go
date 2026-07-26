@@ -21,10 +21,25 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// liveProviderOnce guards one-time registration of the agent-activity
+// LiveProvider into the global live ribbon.
+var liveProviderOnce sync.Once
+
+// runIndentPrefix renders a run's tree depth as a text indent, so a sub-agent
+// a turn dispatched shows nested under it in the flat live surfaces (no
+// renderer change needed). Depth 0 (top-level) gets no prefix.
+func runIndentPrefix(depth int) string {
+	if depth <= 0 {
+		return ""
+	}
+	return strings.Repeat("  ", depth-1) + "↳ "
+}
 
 // cortexSessionID is the session id of a channel agent's persistent home
 // thread. Per-agent so every channel agent has its own ongoing conversation.
@@ -52,6 +67,41 @@ func consoleAgentID(r *http.Request) string {
 func (T *OrchestrateApp) registerConsoleRoutes() {
 	g := T.adminGated
 	gw := T.adminGatedWrite // admin + rejects safe methods (mutating actions)
+
+	// Feed live AGENT activity into the global live ribbon — the same pill that
+	// shows running apps. Agents were invisible there because they run through
+	// the runs registry, not the app TaskQueue; this maps every active run
+	// (chat / scheduled / standing) into a LiveEntry so "what the AI is doing"
+	// shows in the same place as app work. sync.Once so a re-mount can't
+	// double-register. Global scope matches the other LiveProviders.
+	liveProviderOnce.Do(func() {
+		RegisterLiveProvider(func() []LiveEntry {
+			var out []LiveEntry
+			// ActiveSnapshots is tree-ordered (parent→child) with Depth set.
+			for i, s := range T.runsRegistry().ActiveSnapshots() {
+				name := s.AgentName
+				if name == "" {
+					name = s.AgentID
+				}
+				status := s.Kind
+				if s.Round > 0 {
+					status += fmt.Sprintf(" · round %d", s.Round)
+				}
+				if s.LastTool != "" {
+					status += " · " + s.LastTool
+				}
+				label := s.Label
+				if label == "" {
+					label = name
+				}
+				out = append(out, LiveEntry{
+					ID: s.ID, Label: runIndentPrefix(s.Depth) + label, App: name, Status: status,
+					Order: 100 + i, // after in-view app tasks (default 0), preserving tree order
+				})
+			}
+			return out
+		})
+	})
 	T.HandleFunc("/api/console/agents", g(T.handleConsoleAgents))
 	T.HandleFunc("/api/console/agents/delete", gw(T.handleConsoleAgentDelete))
 	T.HandleFunc("/api/console/agents/pause", gw(T.handleConsoleAgentPause))
@@ -1646,7 +1696,7 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 			}
 		}
 		rows = append(rows, consoleActivityRow{
-			Agent:    name,
+			Agent:    runIndentPrefix(s.Depth) + name,
 			Activity: activity,
 			Brief:    s.Label,
 			Surface:  s.Kind,

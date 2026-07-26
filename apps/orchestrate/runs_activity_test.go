@@ -1,6 +1,9 @@
 package orchestrate
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -44,5 +47,65 @@ func TestRunRegistryActivity(t *testing.T) {
 	sched.Cancel()
 	if sched.Status() != RunStatusRunning {
 		t.Fatal("Cancel without a cancel func must not force-complete the run")
+	}
+}
+
+// TestOrderRunsByTree pins the nested-activity ordering: a run is placed
+// directly after its parent and one level deeper, recursively; a run whose
+// parent isn't in the set is a root at depth 0.
+func TestOrderRunsByTree(t *testing.T) {
+	// root -> child -> grandchild, plus a second root and an orphan.
+	snaps := []RunSnapshot{
+		{ID: "gc", ParentID: "child"},
+		{ID: "root2"},
+		{ID: "child", ParentID: "root"},
+		{ID: "root"},
+		{ID: "orphan", ParentID: "gone"}, // parent not present -> root at depth 0
+	}
+	got := orderRunsByTree(snaps)
+	depth := map[string]int{}
+	pos := map[string]int{}
+	for i, s := range got {
+		depth[s.ID] = s.Depth
+		pos[s.ID] = i
+	}
+	if len(got) != len(snaps) {
+		t.Fatalf("tree order must preserve every run; got %d of %d", len(got), len(snaps))
+	}
+	if depth["root"] != 0 || depth["child"] != 1 || depth["gc"] != 2 {
+		t.Fatalf("depths wrong: root=%d child=%d gc=%d", depth["root"], depth["child"], depth["gc"])
+	}
+	if depth["orphan"] != 0 {
+		t.Fatalf("an orphan (missing parent) must be a depth-0 root; got %d", depth["orphan"])
+	}
+	// Child follows its root; grandchild follows the child.
+	if !(pos["root"] < pos["child"] && pos["child"] < pos["gc"]) {
+		t.Fatalf("child/grandchild must follow the parent in order: %v", got)
+	}
+}
+
+// TestRunOutcomeStatus pins the fix for "marked failed when it didn't": a
+// context cancellation (superseded turn / shutdown) is CANCELED, not FAILED;
+// hitting the round cap (nil error, has a reply) is COMPLETED; a real error or
+// no result is FAILED.
+func TestRunOutcomeStatus(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		hasResp bool
+		want    string
+	}{
+		{"clean success", nil, true, RunStatusCompleted},
+		{"round cap (nil err, has reply)", nil, true, RunStatusCompleted},
+		{"superseded", context.Canceled, false, RunStatusCanceled},
+		{"deadline", context.DeadlineExceeded, true, RunStatusCanceled},
+		{"real error", errors.New("llm exploded"), false, RunStatusFailed},
+		{"no result, no error", nil, false, RunStatusFailed},
+		{"wrapped cancel", fmt.Errorf("dispatch: %w", context.Canceled), false, RunStatusCanceled},
+	}
+	for _, c := range cases {
+		if got := runOutcomeStatus(c.err, c.hasResp); got != c.want {
+			t.Errorf("%s: runOutcomeStatus(%v, %v) = %q, want %q", c.name, c.err, c.hasResp, got, c.want)
+		}
 	}
 }

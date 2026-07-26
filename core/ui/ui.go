@@ -102,6 +102,11 @@ type Page struct {
 	Footer string
 	// FooterURL turns Footer into a link.
 	FooterURL string
+	// LiveURL is where the global live-activity pill's entries link — the
+	// expanded live view. Generic on purpose: core/ui names no app. Falls back
+	// to DefaultLiveURL (set by whichever app provides the live view) when empty,
+	// so every page's pill points there without each page wiring it.
+	LiveURL string
 	// Head is the typed builder for app-specific browser behavior injected
 	// into the <head> — client actions, block renderers, markdown extensions,
 	// CSS, etc. Prefer this over ExtraHeadHTML: the framework assembles the
@@ -161,10 +166,16 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 		Footer:     p.Footer,
 		FooterURL:  p.FooterURL,
 		BackURL:    p.BackURL,
+		LiveURL:    p.LiveURL,
 		ShowTitle:  p.ShowTitle,
 	}
 	if cfg.MaxWidth == "" {
 		cfg.MaxWidth = "600px"
+	}
+	// The live pill's link target: page override, else the framework default
+	// that the live-view app registers (keeps the app's route out of core/ui).
+	if cfg.LiveURL == "" {
+		cfg.LiveURL = DefaultLiveURL
 	}
 	for _, n := range p.Nav {
 		cfg.Nav = append(cfg.Nav, navLinkConfig{Label: n.Label, URL: n.URL, Active: n.Active})
@@ -318,7 +329,13 @@ type pageConfig struct {
 	SectionNav bool   `json:"section_nav,omitempty"`
 	Footer     string `json:"footer,omitempty"`
 	FooterURL string          `json:"footer_url,omitempty"`
+	LiveURL   string          `json:"live_url,omitempty"`
 }
+
+// DefaultLiveURL is the fallback link target for the global live-activity pill
+// when a Page doesn't set LiveURL. The app that provides the central live view
+// sets this from its OWN package (e.g. an init()), so core/ui names no app.
+var DefaultLiveURL string
 
 type navLinkConfig struct {
 	Label  string `json:"label"`
