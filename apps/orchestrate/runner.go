@@ -7708,14 +7708,27 @@ func emitIntentBlock(sse *sseWriter, blockID string, step PlanStep) {
 // The in-code default renders BYTE-IDENTICAL to the legacy output. Suggested
 // slim override to paste for the A/B:
 //
-//	## Tools available
+// FLIPPED to the slim variant (v0.5.565). The A/B this was staged for now
+// has its cost side measured, from a real traced request body: on a
+// 70-tool agent the fat digest was 15,203 chars (~3,800 tok) and 38 of
+// the 38 tools it named ALSO carried a full schema in the same request —
+// zero were prose-only. It was a verbatim second copy, not an index of
+// anything the model lacked.
 //
-//	Prefer calling a tool over guessing or answering from memory — every tool
-//	named here is live and callable this turn, and each one's full parameter
-//	schema accompanies this request. Available: {tool_names}
+// The "accidental index" worry the fat form was kept for survives the
+// cut: {tool_names} still answers "what do I have?" in ~15 chars/tool
+// instead of ~200, and the load-bearing "prefer a tool over guessing"
+// nudge is kept word-for-word. What goes is only the first line of each
+// description — which is in the schema the model is already reading.
+//
+// Reverting is one edit on the admin Prompts page, no rebuild: set
+// framework.tools_directive back to "## Tools available\n\n{tool_list}".
+// Do that if small-model tool SELECTION degrades — that is the half of
+// the A/B still unmeasured.
 const (
 	toolsDirectiveKey     = "framework.tools_directive"
-	toolsDirectiveDefault = "## Tools available\n\n{tool_list}"
+	toolsDirectiveFat     = "## Tools available\n\n{tool_list}"
+	toolsDirectiveDefault = "## Tools available\n\nPrefer calling a tool over guessing or answering from memory — every tool named here is live and callable this turn, and each one's full parameter schema accompanies this request. Available: {tool_names}"
 )
 
 // noWebAccessNotice returns a short system-prompt line when the assembled
@@ -7738,7 +7751,14 @@ func noWebAccessNotice(tools []AgentToolDef) string {
 }
 
 func buildToolUseDirective(tools []AgentToolDef) string {
-	tpl := EffectivePromptText(toolsDirectiveKey, toolsDirectiveDefault)
+	return renderDirectiveTemplate(EffectivePromptText(toolsDirectiveKey, toolsDirectiveDefault), tools)
+}
+
+// renderDirectiveTemplate substitutes the digest placeholders. Split out
+// from buildToolUseDirective so BOTH templates stay testable — the fat
+// form is the documented revert path, so it has to keep rendering even
+// while the slim one is the default.
+func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 	if strings.Contains(tpl, "{tool_list}") {
 		var b strings.Builder
 		for _, t := range tools {
