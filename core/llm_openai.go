@@ -1860,6 +1860,13 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		InputTokens:     result.Usage.PromptTokens,
 		OutputTokens:    result.Usage.CompletionTokens,
 		ReasoningTokens: reasoningTokens,
+		// finish_reason was read above but only ever reached the Debug
+		// line, so StopReason was empty for every OpenAI-compatible
+		// backend — the whole local fleet. Callers were left inferring
+		// "the model is done" from an empty ToolCalls slice, which is
+		// exactly what the field's doc comment says not to do, and what
+		// let a cleanly-finished answer get re-read as a tool call.
+		StopReason: finishReason,
 	}
 	if result.Timings != nil {
 		out.PredictedPerSecond = result.Timings.PredictedPerSecond
@@ -2227,5 +2234,9 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		ReasoningTokens:    reasoningTokens,
 		PredictedPerSecond: predictedPerSecond,
 		PromptPerSecond:    promptPerSecond,
+		// See the non-streaming path: finish_reason reached the Debug
+		// line and nowhere else, leaving StopReason empty for every
+		// OpenAI-compatible backend.
+		StopReason: finishReason,
 	}, nil
 }

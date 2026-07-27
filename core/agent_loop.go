@@ -1302,6 +1302,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// a success resets the counter so legitimate polling isn't penalized.
 	repeatFail := map[string]int{}
 	const repeatFailLimit = 3
+	// How much content makes a clean "stop" finish read as an ANSWER rather
+	// than a lead-in to a narrated tool call, for the prose-scan gate below.
+	// Under it the scan still runs, so a model that only ever describes its
+	// calls keeps working; over it we trust the model that said it was done.
+	// The case this comes from was 8366 chars; narrated intents run a few
+	// hundred. Wide margin on both sides on purpose.
+	const cleanFinishProseFloor = 2000
 	// Identical-repeat guard. repeatFail above only counts ERRORS (it resets
 	// on success), so a model that re-issues the same call and keeps getting a
 	// valid-but-useless SAME result never trips it (observed live: inspect_run
@@ -1381,6 +1388,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	const guardBlockedBreakLimit = 2
 	forceFinal := false
 
+	// synthesizedFrom holds the model's own text for a round whose tool
+	// call was READ OUT OF that text rather than emitted structurally.
+	// If the loop-guard then blocks the synthesized call, the wedge would
+	// regenerate an answer we already have — so it returns this instead.
+	// Reset each round and cleared the moment a real tool executes, so it
+	// can only ever short-circuit a round that did no actual work.
+	synthesizedFrom := ""
+
 	// Lead-tier spend guard. Escalation to lead is decided per ROUTE (an
 	// agent's stage resolves to lead and every round of its turn goes
 	// there), so a turn that goes badly spends frontier tokens on every
@@ -1431,6 +1446,10 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// the hang is in iteration restart (Debug fires) or pre-
 		// iteration bookkeeping (Debug does NOT fire).
 		Log("[agent_loop] round %d: top of iteration", round)
+		// Per-round: only a call synthesized THIS round may short-circuit
+		// the wedge. A stale value from an earlier round would let a real
+		// blocked call return someone else's text.
+		synthesizedFrom = ""
 		// Soft cap hook — apps that want a budget cap depending on
 		// runtime state (e.g. orchestrate's explorer-mode flag) wire
 		// StopRound. Called EXACTLY ONCE per round (it has side effects,
@@ -1959,14 +1978,41 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// to invoke. Try Content first, then fall back to Reasoning so
 		// those calls don't slip through and render as visible text.
 		if len(resp.ToolCalls) == 0 {
-			parsed := ParseTextToolCall(resp.Content, handlers, toolDefs)
+			// Clean-finish gate on the PROSE scan only. A model that
+			// reports "stop" with a substantial body has answered; reading
+			// a tool call out of that body turns a finished turn into a
+			// tool round, and if the loop-guard then blocks the phantom
+			// call the real answer is replaced by a regenerated one.
+			// Observed: an 8366-char final answer re-read as a moltbook
+			// call, blocked as a repeat, then regenerated over 39s.
+			//
+			// Length matters as well as the stop reason: a model that
+			// only ever NARRATES its calls emits a short lead-in ("I'll
+			// call X with…") and still finishes with "stop", so gating on
+			// the stop reason alone would silently stop doing its work.
+			// Short + stop stays extractable; long + stop does not.
+			allowProse := true
+			if resp.StopReason == "stop" && len(resp.Content) >= cleanFinishProseFloor {
+				allowProse = false
+				Debug("[agent_loop] prose tool-call scan skipped — model finished cleanly with %d chars (stop_reason=%q)", len(resp.Content), resp.StopReason)
+			}
+			parsed := ParseTextToolCall(resp.Content, handlers, toolDefs, allowProse)
 			if parsed == nil && resp.Reasoning != "" && strings.Contains(resp.Reasoning, "<function=") {
-				if reasoningCall := ParseTextToolCall(resp.Reasoning, handlers, toolDefs); reasoningCall != nil {
+				// Reasoning-channel markup only — never the prose scan.
+				if reasoningCall := ParseTextToolCall(resp.Reasoning, handlers, toolDefs, false); reasoningCall != nil {
 					Debug("[agent_loop] parsed tool call out of reasoning channel: %s", reasoningCall.Name)
 					parsed = reasoningCall
 				}
 			}
 			if parsed != nil {
+				// Keep the answer the model actually produced. If this
+				// synthesized call turns out to be a phantom (the loop-guard
+				// blocks it), the turn ends with this instead of paying to
+				// regenerate something already in hand. Cleared as soon as a
+				// tool really runs.
+				if txt := strings.TrimSpace(StripToolCallMarkup(resp.Content)); txt != "" {
+					synthesizedFrom = txt
+				}
 				Debug("[agent_loop] parsed text-based tool call: %s", parsed.Name)
 				resp.ToolCalls = []ToolCall{*parsed}
 				// Strip the synthesized tool-call markup (XML <tool_call>
@@ -2897,6 +2943,20 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			shakeoutNextRound = true
 		}
 		if guardBlockedThisRound && allFailed {
+			// The blocked call was read out of the model's own prose and
+			// the answer that prose came from is still in hand — so the
+			// wedge would spend a whole extra generation rebuilding
+			// something we already have. Return it and end the turn.
+			// (Observed: 39s and 3162 output tokens to regenerate a
+			// finished 8366-char answer.) Only fires when the round's
+			// ONLY calls were synthesized and every one of them failed,
+			// so a real tool call is never short-circuited.
+			if synthesizedFrom != "" {
+				Debug("[agent_loop] loop-guard: blocked call was synthesized from prose — returning the model's own answer (%d chars) instead of regenerating", len(synthesizedFrom))
+				resp.Content = synthesizedFrom
+				resp.ToolCalls = nil
+				return resp, history, nil
+			}
 			guardBlockedStreak++
 			if guardBlockedStreak >= guardBlockedBreakLimit {
 				Debug("[agent_loop] loop-guard wedge: %d blocked-with-no-progress rounds — forcing final answer", guardBlockedStreak)
@@ -3124,7 +3184,10 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 // tool but doesn't emit structured args), it's rejected — better to let the
 // loop count the round as "model produced content but didn't act" than to
 // fire a guaranteed-to-fail tool call and burn a round on the error.
-func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) *ToolCall {
+// allowProse governs only the last-resort natural-language scan; the
+// XML and JSON branches always run, since those are unambiguous machine
+// output rather than a reading of English.
+func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool, allowProse bool) *ToolCall {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil
@@ -3181,6 +3244,14 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 	// Last-resort: scan for a known tool name mentioned in the text.
 	// Thinking models often reason like "call run_healthcheck with args ..."
 	// without emitting the actual structured call.
+	//
+	// This branch is a GUESS, unlike the markup branches above — English
+	// that announces a call and English that reports a finished one scrape
+	// identically. allowProse is how the caller says the guess is worth
+	// making; see the clean-finish gate in the agent loop.
+	if !allowProse {
+		return nil
+	}
 	if tc := parseNaturalToolCall(content, handlers); tc != nil {
 		if hasRequired(tc, toolDefs) {
 			return tc
