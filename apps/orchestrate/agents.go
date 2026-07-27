@@ -1291,12 +1291,16 @@ FINISH THE JOB: an api/toolbox tool isn't done until tool_def(action="test") pas
 				Name:  "start",
 				Label: "What do you want to build?",
 				Type:  "button",
+				// Bare nouns, not "An agent" / "A tool": these render as a
+				// row of buttons the eye scans rather than a sentence it
+				// reads, so the target word carries the whole option. The
+				// fix entry leads with its verb for the same reason.
 				Options: []string{
-					"An agent",
-					"An app",
-					"A tool",
-					"A pipeline",
-					"Fix or change something I already have",
+					"Agent",
+					"App",
+					"Tool",
+					"Pipeline",
+					"Fix something",
 				},
 			}},
 		},
