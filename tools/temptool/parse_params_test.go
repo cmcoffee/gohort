@@ -1,6 +1,9 @@
 package temptool
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestParseParamsArgCoerces pins the fix for the tool_def grind loop: a
 // wrong-but-close param shape (bare bool / bare type / bare description /
@@ -81,5 +84,71 @@ func TestParseParamsArgCoerces(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestParseParamsArgRejectsMisplacedActionFields pins the OTHER half of
+// the coercion rule: leniency covers a wrong-shaped param VALUE, never a
+// key that names no param at all.
+//
+// The live failure this comes from: an agent fixing a toolbox action sent
+// body_template / response_pipe / required nested inside params. Every one
+// was coerced into a parameter, the update reported success, the action's
+// real required list vanished, and the write-action scaffold rebuilt a
+// wrong body from what was left. Eight "successful" updates later the
+// toolbox was destroyed and the model had concluded the scaffold was the
+// bug. One precise error at the first call ends that.
+func TestParseParamsArgRejectsMisplacedActionFields(t *testing.T) {
+	misplaced := []struct {
+		name string
+		in   map[string]any
+	}{
+		{"body_template", map[string]any{"content": "the body", "body_template": `{"content": {content}}`}},
+		{"response_pipe", map[string]any{"content": "the body", "response_pipe": "jq -c '.'"}},
+		{"url_template", map[string]any{"content": "the body", "url_template": "/api/v1/posts"}},
+		{"command_template", map[string]any{"x": "a value", "command_template": "echo hi"}},
+		{"script_body", map[string]any{"x": "a value", "script_body": "print('hi')"}},
+		// The exact shape that destroyed the live toolbox.
+		{"required list", map[string]any{
+			"content":  map[string]any{"type": "string", "description": "Reply content"},
+			"post_id":  map[string]any{"type": "string", "description": "Post ID"},
+			"required": []any{"post_id", "content"},
+		}},
+	}
+	for _, c := range misplaced {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parseParamsArg(c.in)
+			if err == nil {
+				t.Fatalf("expected a rejection, got params %v", got)
+			}
+			// The error has to say where the field belongs, or the model
+			// retries the same shape.
+			if !strings.Contains(err.Error(), "params") {
+				t.Errorf("error should point at the right shape, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestParseParamsArgKeepsPlausibleParamNames guards the false-positive
+// edge: "description", "method", and "name" are real parameter names on
+// real APIs, and "required" as a param DESCRIPTOR (not a list) is a
+// different thing from the action's required list. None may be rejected.
+func TestParseParamsArgKeepsPlausibleParamNames(t *testing.T) {
+	ok := map[string]any{
+		"description": map[string]any{"type": "string", "description": "Issue description"},
+		"method":      "string",
+		"name":        "the display name",
+		"url":         "string",
+		"required":    map[string]any{"type": "boolean", "description": "Is this field mandatory"},
+	}
+	got, err := parseParamsArg(ok)
+	if err != nil {
+		t.Fatalf("plausible param names must survive: %v", err)
+	}
+	for _, k := range []string{"description", "method", "name", "url", "required"} {
+		if _, present := got[k]; !present {
+			t.Errorf("param %q was dropped", k)
+		}
 	}
 }

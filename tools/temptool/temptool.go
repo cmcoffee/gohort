@@ -1948,6 +1948,60 @@ func validToolName(s string) bool {
 // parseParamsArg accepts the LLM's `params` object and converts it to
 // our typed ToolParam map. Tolerates two shapes the LLM commonly emits:
 // a real JSON object, or a JSON-encoded string of one.
+// actionOnlyFields names fields that belong to a tool or a toolbox
+// ACTION, never to one of its params, mapped to how the error describes
+// them. Every entry is a framework-specific compound name, which is what
+// makes rejecting by name safe: no real API has a parameter called
+// "body_template".
+//
+// Deliberately EXCLUDED: description, name, method, content_type,
+// headers, url. Those are plausible parameter names — a create-issue
+// endpoint really does take a "description" — and rejecting them would
+// break working tools to catch a rarer mistake.
+var actionOnlyFields = map[string]string{
+	"body_template":    "the request body template",
+	"response_pipe":    "the response post-processor",
+	"url_template":     "the endpoint path",
+	"command_template": "the shell command",
+	"script_body":      "the script source",
+	"script_name":      "the script file name",
+	"pipeline_steps":   "the pipeline step list",
+	"pipeline_tools":   "the pipeline tool list",
+}
+
+// checkMisplacedActionField rejects a params entry that is really an
+// action-level field nested one level too deep.
+//
+// This mirrors the top-level guard in tool_def.go, which catches the same
+// fields placed one level too SHALLOW ("%q is a PER-ACTION field on a
+// toolbox, not a top-level one"). Without the inverse, the lenient
+// coercion below cheerfully turns "body_template" into a param NAMED
+// body_template: the update reports success, the real field is never set,
+// and an action's "required" list is absorbed the same way — after which
+// the write-action scaffold regenerates a body template from whatever
+// params survived. Observed live: a working toolbox degraded across eight
+// consecutive "successful" updates into a delete-and-recreate, with the
+// model concluding the scaffold was at fault.
+//
+// The lenient value coercion below stays exactly as it is — it exists to
+// stop a real, expensive retry loop over param-descriptor shape. What it
+// cannot do is repair a key that names no parameter at all, so that case
+// gets a pointer to the right shape instead of a silent guess.
+func checkMisplacedActionField(k string, val any) error {
+	if what, bad := actionOnlyFields[k]; bad {
+		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params — it is nested one level too deep. Move it out alongside params: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}", k, what, k)
+	}
+	// "required" is a plausible param name on a real API, so the name
+	// alone can't decide. The action's required list is an ARRAY and a
+	// param descriptor never is, so the shape disambiguates.
+	if k == "required" {
+		if _, isList := val.([]any); isList {
+			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params — move it out alongside params: {name: …, params: {…}, required: ["a","b"]}`)
+		}
+	}
+	return nil
+}
+
 func parseParamsArg(v any) (map[string]ToolParam, error) {
 	out := map[string]ToolParam{}
 	// A no-param tool/action is legitimate — a GET with no query string, a
@@ -1989,6 +2043,9 @@ func parseParamsArg(v any) (map[string]ToolParam, error) {
 		return nil, fmt.Errorf("params must be an object mapping each name to {type, description} (a type or description string, or true, also works) — could not read it as an object: %w", err)
 	}
 	for k, val := range loose {
+		if err := checkMisplacedActionField(k, val); err != nil {
+			return nil, err
+		}
 		if !validToolName(k) {
 			return nil, fmt.Errorf("param name %q must be lowercase letters/digits/underscores only", k)
 		}
