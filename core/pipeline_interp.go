@@ -80,19 +80,68 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 	if err := def.Validate(); err != nil {
 		return "", err
 	}
-	outputs := make(map[string]stageOutput, len(def.Stages))
-	prev := input
-	for i, stage := range def.Stages {
+	r := &pipelineRun{
+		app:       T,
+		input:     input,
+		dispatch:  dispatch,
+		status:    status,
+		inherited: inheritedTools,
+		outputs:   make(map[string]stageOutput, len(def.Stages)),
+	}
+	return r.runList(ctx, def.Stages, input, "Stage")
+}
+
+// pipelineRun is one execution of a pipeline definition — the state every
+// stage needs, gathered so the stage runner isn't an eight-argument
+// function. Created by executePipelineDef and threaded through loop
+// bodies unchanged, which is what lets a body stage read outer stages.
+type pipelineRun struct {
+	app       *AppCore
+	input     string
+	dispatch  PipelineDispatch
+	status    func(string)
+	inherited []AgentToolDef
+	outputs   map[string]stageOutput
+}
+
+// runList executes a stage list in order and returns the last stage's
+// output. label prefixes the progress lines ("Stage" at the top level,
+// "  Stage" inside a loop pass) so the activity pane reads as a tree.
+// extra carries per-pass template values such as {iteration}.
+func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev, label string, extra ...map[string]string) (string, error) {
+	var vars map[string]string
+	if len(extra) > 0 {
+		vars = extra[0]
+	}
+	for i, stage := range stages {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
+		out, err := r.runStage(ctx, stage, prev, fmt.Sprintf("%s %d/%d: %s", label, i+1, len(stages), stage.Name), vars)
+		if err != nil {
+			return "", err
+		}
+		prev = out
+	}
+	return prev, nil
+}
+
+// runStage executes ONE stage: resolve its tools and prompt, run it,
+// record its output under its name, and report progress. Extracted from
+// the old inline loop so a loop body runs through exactly the same path
+// the top level does — the alternative was a second copy of the kind
+// switch, which would have drifted.
+func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, stageLabel string, vars map[string]string) (string, error) {
+	T, dispatch, status, outputs := r.app, r.dispatch, r.status, r.outputs
+	input := r.input
+	inheritedTools := r.inherited
+	{
 		// Emit start event with stage kind so the activity pane reader
 		// can tell at a glance whether a slow stage is a worker LLM
 		// call (cheap) or an agent dispatch (full sub-agent run). When
 		// the worker stage has tools (inherited or explicit), tag the
 		// kind so the operator can see at a glance which stages do
 		// real I/O vs pure transforms.
-		stageLabel := fmt.Sprintf("Stage %d/%d: %s", i+1, len(def.Stages), stage.Name)
 		kindLabel := string(stage.Kind)
 		if kindLabel == "" {
 			kindLabel = "worker"
@@ -121,6 +170,9 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			status(stageLabel + " [" + kindLabel + "] starting")
 		}
 		prompt := resolveStageTemplate(stage.Prompt, input, prev, outputs)
+		for k, v := range vars {
+			prompt = strings.ReplaceAll(prompt, k, v)
+		}
 
 		stageStart := time.Now()
 		var out string
@@ -156,6 +208,9 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			// FanOver stage's JSON-array output, in parallel, then collect
 			// into one labeled block for the next stage to consume.
 			out, err = T.runFanoutStage(ctx, stage, input, prev, outputs, stageTools, dispatch, status)
+		case StageLoop:
+			// Repeat the body, threading each pass's result into the next.
+			out, err = r.runLoopStage(ctx, stage, prev)
 		default:
 			return "", Error("stage " + stage.Name + ": unknown kind " + string(stage.Kind))
 		}
@@ -175,7 +230,6 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 		}
 		out = strings.TrimSpace(out)
 		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
-		prev = out
 		if status != nil {
 			// Tail preview lets the user see WHAT the stage produced
 			// without having to wait for the whole pipeline to finish.
@@ -191,8 +245,8 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			}
 			status(fmt.Sprintf("%s done in %s (%d chars): %s", stageLabel, elapsed, len(out), preview))
 		}
+		return out, nil
 	}
-	return prev, nil
 }
 
 // stageOutput is one completed stage's result. Text is always populated
@@ -591,6 +645,74 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 	var b strings.Builder
 	for i, item := range items {
 		fmt.Fprintf(&b, "## Item %d: %s\n%s\n\n", i+1, strings.TrimSpace(item), results[i])
+	}
+	return strings.TrimSpace(b.String()), nil
+}
+
+// runLoopStage repeats the stage's Body, threading each pass's last
+// output into the next pass's {prev}. That carry is what separates loop
+// from fanout: fanout runs N INDEPENDENT branches in parallel, a loop
+// runs passes that each see what the last one produced.
+//
+// Termination is guaranteed by Count (validated 1..loopMaxIterations at
+// save time); Until is an early exit checked after each full pass, never
+// a substitute for the ceiling. A pipeline runs unattended, so "the
+// model decides when to stop" is not on its own an acceptable bound.
+//
+// Body stage outputs land in the shared outputs map, so {stage:NAME}
+// inside the body reads THIS pass's value and is overwritten by the
+// next. Nothing after the loop can reference them — Validate rejects
+// that, since such a reference would silently mean "whatever the last
+// pass happened to leave."
+func (r *pipelineRun) runLoopStage(ctx context.Context, stage PipelineStage, prev string) (string, error) {
+	collectAll := strings.TrimSpace(stage.Collect) == "all"
+	untilStage, untilField := SplitStageRef(stage.Until)
+
+	var passes []string
+	carry := prev
+	for i := 1; i <= stage.Count; i++ {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if r.status != nil {
+			r.status(fmt.Sprintf("%s: pass %d/%d", stage.Name, i, stage.Count))
+		}
+		vars := map[string]string{
+			"{iteration}":  strconv.Itoa(i),
+			"{iterations}": strconv.Itoa(stage.Count),
+		}
+		out, err := r.runList(ctx, stage.Body, carry, "  "+stage.Name+" pass "+strconv.Itoa(i), vars)
+		if err != nil {
+			return "", err
+		}
+		carry = out
+		passes = append(passes, out)
+
+		if untilField == "" {
+			continue
+		}
+		src, ok := r.outputs[untilStage]
+		if !ok {
+			// Body validated, so the stage exists — it just hasn't run
+			// this pass (a body whose earlier stage errored can't reach
+			// here, so this is defensive).
+			continue
+		}
+		done, _ := src.Fields[untilField].(bool)
+		if done {
+			if r.status != nil {
+				r.status(fmt.Sprintf("%s: %s went true after pass %d — stopping early", stage.Name, stage.Until, i))
+			}
+			break
+		}
+	}
+
+	if !collectAll {
+		return carry, nil
+	}
+	var b strings.Builder
+	for i, p := range passes {
+		fmt.Fprintf(&b, "## Pass %d\n%s\n\n", i+1, p)
 	}
 	return strings.TrimSpace(b.String()), nil
 }

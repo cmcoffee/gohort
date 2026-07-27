@@ -64,7 +64,22 @@ const (
 	// StageSynthesize (Phase 2 semantic; Phase 1 expressible as a
 	// worker stage) combines multiple prior stage outputs into one.
 	StageSynthesize PipelineStageKind = "synthesize"
+
+	// StageLoop runs its Body stages repeatedly — Count times, or
+	// fewer when Until goes true. Where fanout does BREADTH (the same
+	// prompt across N independent items, in parallel), loop does DEPTH:
+	// each pass sees what the previous pass produced. That carry is the
+	// whole point, and it's why the two can't be collapsed into one
+	// primitive.
+	StageLoop PipelineStageKind = "loop"
 )
+
+// loopMaxIterations bounds any single loop stage. A pipeline is
+// unattended, and a loop whose Until never fires would otherwise burn
+// LLM calls until the context is cancelled. Count is validated against
+// this at save time, so the ceiling is a definition error rather than a
+// run-time surprise.
+const loopMaxIterations = 25
 
 // PipelineStage is one step of a pipeline. Stages run in order; each
 // stage's output is captured under its Name and made available to
@@ -124,6 +139,36 @@ type PipelineStage struct {
 	// Not valid on kind="fanout": a fanout's output is the joined
 	// per-branch block, not a single JSON object.
 	Output []PipelineField `json:"output,omitempty"`
+
+	// Body is the stage list a kind="loop" stage repeats. Runs in order
+	// once per iteration; ONE level only (a loop may not contain a
+	// loop), the same depth rule PipelineField follows.
+	//
+	// Body stages are scoped to the loop: they may read outer stages
+	// that ran before it, and each other, but nothing AFTER the loop can
+	// reference them by name — they hold a different value every pass,
+	// so a reference from outside would silently mean "whatever the last
+	// iteration happened to leave." The loop's own name is what later
+	// stages read.
+	Body []PipelineStage `json:"body,omitempty"`
+
+	// Count is how many times a loop runs: required for kind="loop",
+	// 1..loopMaxIterations. With Until set this is the CEILING rather
+	// than the exact count, which is what guarantees termination.
+	Count int `json:"count,omitempty"`
+
+	// Until optionally ends a loop early, as a "NAME.field" reference to
+	// a bool field declared by one of the Body stages. Checked after
+	// each full pass; true means stop. Requires that stage to declare
+	// the field via Output — which is exactly why structured outputs had
+	// to land before loop.
+	Until string `json:"until,omitempty"`
+
+	// Collect chooses a loop's output: "last" (default) is the final
+	// pass's last stage, "all" joins every iteration into one labeled
+	// block the way fanout does. Refinement loops want last; a loop
+	// building a transcript wants all.
+	Collect string `json:"collect,omitempty"`
 }
 
 // PipelineFieldType is the declared type of a structured output field.
@@ -215,7 +260,16 @@ func (d PipelineDef) Validate() error {
 	// fields. Built as the walk proceeds, so a lookup miss IS the
 	// forward/unknown-reference error.
 	done := make(map[string]map[string]PipelineFieldType, len(d.Stages))
-	for i, s := range d.Stages {
+	return validateStageList(d.Stages, done, false)
+}
+
+// validateStageList validates one stage list against the scope built so
+// far, recursing once into a loop's Body. done accumulates every
+// validated stage's declared fields, so a lookup miss IS the
+// forward/unknown-reference error. inLoop marks the recursive call, which
+// is how the one-level depth rule is enforced.
+func validateStageList(stages []PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) error {
+	for i, s := range stages {
 		if s.Name == "" {
 			return Error("stage " + strconv.Itoa(i+1) + " has no name")
 		}
@@ -240,6 +294,14 @@ func (d PipelineDef) Validate() error {
 		if s.Kind == StageFanout && len(s.Output) > 0 {
 			return Error("stage " + s.Name + ": output is not valid on kind=fanout (a fanout produces a joined per-branch block, not one JSON object)")
 		}
+		if s.Kind != StageLoop && len(s.Body) > 0 {
+			return Error("stage " + s.Name + ": body is only valid on kind=loop")
+		}
+		if s.Kind == StageLoop {
+			if err := validateLoopStage(s, done, inLoop); err != nil {
+				return err
+			}
+		}
 		for _, ref := range stageRefs(s.Prompt) {
 			if err := checkStageRef(s.Name, "prompt", ref, done); err != nil {
 				return err
@@ -262,6 +324,60 @@ func (d PipelineDef) Validate() error {
 			return err
 		}
 		done[s.Name] = own
+	}
+	return nil
+}
+
+// validateLoopStage checks a kind="loop" stage and its Body. The body is
+// validated against a COPY of the outer scope: body stages can read
+// what ran before the loop and each other, but their names never reach
+// the caller's scope, so a later stage referencing one is an unknown-
+// stage error rather than a silent read of whichever value the last
+// iteration left behind.
+func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) error {
+	if inLoop {
+		return Error("stage " + s.Name + ": loops do not nest — one level only (put the inner work in its own pipeline and call it from a stage)")
+	}
+	if len(s.Body) == 0 {
+		return Error("stage " + s.Name + " is kind=loop but has no body stages to repeat")
+	}
+	if len(s.Output) > 0 {
+		return Error("stage " + s.Name + ": output is not valid on kind=loop (a loop's output is its last pass, or the joined passes when collect=all)")
+	}
+	if s.Count < 1 {
+		return Error("stage " + s.Name + ": kind=loop needs count (how many times to repeat, 1-" + strconv.Itoa(loopMaxIterations) + ")")
+	}
+	if s.Count > loopMaxIterations {
+		return Error("stage " + s.Name + ": count " + strconv.Itoa(s.Count) + " exceeds the maximum of " + strconv.Itoa(loopMaxIterations) + " — a pipeline runs unattended, so the ceiling is fixed")
+	}
+	switch strings.TrimSpace(s.Collect) {
+	case "", "last", "all":
+	default:
+		return Error("stage " + s.Name + ": collect must be \"last\" or \"all\", got " + strconv.Quote(s.Collect))
+	}
+	// Body scope starts as a copy of the outer one so the body can read
+	// earlier stages without leaking its own names back out.
+	inner := make(map[string]map[string]PipelineFieldType, len(done)+len(s.Body))
+	for k, v := range done {
+		inner[k] = v
+	}
+	if err := validateStageList(s.Body, inner, true); err != nil {
+		return err
+	}
+	if ref := strings.TrimSpace(s.Until); ref != "" {
+		name, field := SplitStageRef(ref)
+		if field == "" {
+			return Error("stage " + s.Name + ": until must name a BOOL FIELD of a body stage (e.g. \"check.done\"), not just a stage")
+		}
+		if err := checkStageRef(s.Name, "until", ref, inner); err != nil {
+			return err
+		}
+		if t := inner[name][field]; t != FieldBool {
+			return Error("stage " + s.Name + ": until references " + ref + ", which is declared " + string(t) + ", not bool")
+		}
+		if _, outer := done[name]; outer {
+			return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop — its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
+		}
 	}
 	return nil
 }

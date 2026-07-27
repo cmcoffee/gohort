@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -42,7 +43,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				"input":       {Type: "string", Description: "(run) The input fed to the pipeline's first stage and available as {input} in every stage prompt."},
 				"stages": {
 					Type:        "array",
-					Description: "(create/update) Ordered stages. Each is an object: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\", \"prompt\": instruction, \"agent\": agent name/id (for kind=agent, or optionally kind=fanout), \"tools\": optional array of tool names, \"think\": optional boolean, \"fan_over\": earlier stage name or stage.field (for kind=fanout), \"output\": optional declared result shape}. Prompt templating: {input} = pipeline input, {prev} = previous stage's output, {stage:NAME} = a named earlier stage's output, {stage:NAME.field} = one declared field of an earlier stage, {item} = the current element (fanout only). Stages run in order; each output is captured under its name.\n\nSTRUCTURED OUTPUT — set a stage's \"output\" to an array of field objects [{\"name\": lowercase_key, \"type\": \"string\"|\"number\"|\"bool\"|\"list\"|\"object\", \"desc\": what goes in it, \"required\": bool}] and the stage is asked for JSON with exactly those keys, validated, and each field becomes addressable downstream as {stage:NAME.field}. Use it when a later stage needs ONE PIECE of an earlier result rather than its whole text — a list to fan over, a count, a verdict, a title. Without it a stage returns free text and everything downstream gets the whole blob. Note a stage that declares output is asked for JSON, so its {stage:NAME} (no field) renders as JSON; point fan_over at the field (\"plan.queries\"), not the stage. Not valid on kind=fanout. Skip it for stages whose output is genuinely prose (a draft, a summary, an answer) — declaring a shape there only forces the model to wrap prose in a JSON envelope.\n\nWorker stages INHERIT the calling agent's tool catalog by default — if a pipeline is invoked from an agent with web_search and fetch_url, its worker stages have those automatically. Set a stage's \"tools\" array to RESTRICT to a subset of the inherited pool (e.g. a synthesis stage that should not be tempted to fetch sets tools=[]). Agent stages dispatch to a named agent (full persona + that agent's catalog) — use when you want a sub-agent's complete behavior, not just a focused tool-equipped step.\n\nFANOUT does breadth: it runs its prompt once PER ELEMENT of an earlier stage's list output, in parallel, then collects the results into one labeled block for the next stage. Point \"fan_over\" at the earlier stage (whose prompt should emit a JSON array, e.g. 'Return a JSON array of sub-questions'), and use {item} in the fanout prompt for the current element. A fanout branch runs as a worker over the stage's resolved tools by default (so it can search/fetch per item); name an \"agent\" to dispatch each branch to a full agent instead. Branches are capped (12 items, 6 concurrent) and per-branch errors are non-fatal. Canonical shape: decompose (worker, emits JSON list) → fanout (worker[web_search,fetch_url], prompt 'Research: {item}') → synthesize (worker, tools=[], think).\n\nThe \"think\" flag (default false) enables thinking for synthesis / verification / decomposition stages that benefit from deliberation. Leave it off (default) for cheap transforms, format conversions, and tool-equipped fetches where reasoning is procedural. Setting think=true on every stage burns tokens for marginal value; turn it on selectively where the work genuinely needs reasoning.",
+					Description: "(create/update) Ordered stages. Each is an object: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"loop\", \"prompt\": instruction, \"agent\": agent name/id (for kind=agent, or optionally kind=fanout), \"tools\": optional array of tool names, \"think\": optional boolean, \"fan_over\": earlier stage name or stage.field (for kind=fanout), \"output\": optional declared result shape}. Prompt templating: {input} = pipeline input, {prev} = previous stage's output, {stage:NAME} = a named earlier stage's output, {stage:NAME.field} = one declared field of an earlier stage, {item} = the current element (fanout only). Stages run in order; each output is captured under its name.\n\nSTRUCTURED OUTPUT — set a stage's \"output\" to an array of field objects [{\"name\": lowercase_key, \"type\": \"string\"|\"number\"|\"bool\"|\"list\"|\"object\", \"desc\": what goes in it, \"required\": bool}] and the stage is asked for JSON with exactly those keys, validated, and each field becomes addressable downstream as {stage:NAME.field}. Use it when a later stage needs ONE PIECE of an earlier result rather than its whole text — a list to fan over, a count, a verdict, a title. Without it a stage returns free text and everything downstream gets the whole blob. Note a stage that declares output is asked for JSON, so its {stage:NAME} (no field) renders as JSON; point fan_over at the field (\"plan.queries\"), not the stage. Not valid on kind=fanout. Skip it for stages whose output is genuinely prose (a draft, a summary, an answer) — declaring a shape there only forces the model to wrap prose in a JSON envelope.\n\nWorker stages INHERIT the calling agent's tool catalog by default — if a pipeline is invoked from an agent with web_search and fetch_url, its worker stages have those automatically. Set a stage's \"tools\" array to RESTRICT to a subset of the inherited pool (e.g. a synthesis stage that should not be tempted to fetch sets tools=[]). Agent stages dispatch to a named agent (full persona + that agent's catalog) — use when you want a sub-agent's complete behavior, not just a focused tool-equipped step.\n\nFANOUT does breadth: it runs its prompt once PER ELEMENT of an earlier stage's list output, in parallel, then collects the results into one labeled block for the next stage. Point \"fan_over\" at the earlier stage (whose prompt should emit a JSON array, e.g. 'Return a JSON array of sub-questions'), and use {item} in the fanout prompt for the current element. A fanout branch runs as a worker over the stage's resolved tools by default (so it can search/fetch per item); name an \"agent\" to dispatch each branch to a full agent instead. Branches are capped (12 items, 6 concurrent) and per-branch errors are non-fatal. Canonical shape: decompose (worker, emits JSON list) → fanout (worker[web_search,fetch_url], prompt 'Research: {item}') → synthesize (worker, tools=[], think).\n\nLOOP does DEPTH, where fanout does breadth: it repeats its \"body\" stages, and each pass sees what the previous pass produced via {prev}. Set \"count\" (required, 1-25 — the hard ceiling, since a pipeline runs unattended) and \"body\" (an ordered stage list, same shape as these stages; loops do not nest). Inside the body, {iteration} is the 1-based pass number and {iterations} the count. Optionally set \"until\" to a body stage's declared BOOL field (\"check.done\") to stop early once it goes true — count still bounds it. \"collect\" chooses the loop's output: \"last\" (default, the final pass) or \"all\" (every pass joined into one labeled block — what you want when building a transcript). Body stage names are per-pass and CANNOT be referenced after the loop; read the loop's own name instead. Use loop for refine-until-good-enough, multi-round exchanges, and accumulate-over-passes; use fanout when the items are independent and order doesn't matter.\n\nThe \"think\" flag (default false) enables thinking for synthesis / verification / decomposition stages that benefit from deliberation. Leave it off (default) for cheap transforms, format conversions, and tool-equipped fetches where reasoning is procedural. Setting think=true on every stage burns tokens for marginal value; turn it on selectively where the work genuinely needs reasoning.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -95,7 +96,9 @@ When building a pipeline FOR an agent, pass attach_to_agents in the same call �
 In-place edit vs. retire-and-replace: use action=update when iterating on the SAME pipeline (same name/id, new stages — attachments stay automatically). Use action=create with replaces=<old-name|id> when the new pipeline has a different name/design and the old one should be retired (swaps every agent's attachment from old to new, deletes the old). Don't create a v2 without replaces — that leaves v1 attached as dead weight on every agent that had it.
 
 Stage prompt templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item} (fanout only).
-Stage kinds: worker (plain LLM step) | agent (dispatch to one of your agents) | fanout (run the prompt per element of an earlier stage's JSON list, in parallel; set fan_over=<stage> or <stage>.<field>, use {item}; worker by default, or name an agent). Canonical breadth shape: decompose → fanout → synthesize.
+Stage kinds: worker (plain LLM step) | agent (dispatch to one of your agents) | fanout (run the prompt per element of an earlier stage's JSON list, in parallel; set fan_over=<stage> or <stage>.<field>, use {item}; worker by default, or name an agent) | loop (repeat a body, each pass seeing the last via {prev}). Canonical breadth shape: decompose → fanout → synthesize.
+
+Loop: set count (1-25) + body (nested stage list); {iteration}/{iterations} inside. Optional until=<body-stage>.<bool field> stops early; collect="last" (default) or "all" joins every pass. Loops don't nest, and body stage names can't be referenced after the loop. Breadth = fanout, depth = loop.
 
 Structured output: give a stage "output": [{name, type, desc, required}] to have it return validated JSON, then read one field downstream as {stage:NAME.field} or fan over it with fan_over=NAME.field. Types: string | number | bool | list | object. Use it when a later stage needs one piece of an earlier result; leave it off for prose stages.`
 
@@ -496,6 +499,14 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 		if err != nil {
 			return nil, err
 		}
+		// A loop's body is a nested stage list, parsed by the same
+		// function — one level, which Validate enforces.
+		var body []PipelineStage
+		if raw, ok := m["body"]; ok && raw != nil {
+			if body, err = parsePipelineStages(raw); err != nil {
+				return nil, fmt.Errorf("stage %d (%s) body: %w", i+1, mapStr(m, "name"), err)
+			}
+		}
 		out = append(out, PipelineStage{
 			Name:    strings.TrimSpace(mapStr(m, "name")),
 			Kind:    kind,
@@ -505,6 +516,10 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 			Tools:   mapStrList(m, "tools"),
 			Think:   mapBoolPtr(m, "think"),
 			Output:  fields,
+			Body:    body,
+			Count:   mapInt(m, "count"),
+			Until:   strings.TrimSpace(mapStr(m, "until")),
+			Collect: strings.ToLower(strings.TrimSpace(mapStr(m, "collect"))),
 		})
 	}
 	return out, nil
@@ -545,6 +560,26 @@ func parsePipelineFields(stageNum int, raw any) ([]PipelineField, error) {
 		}
 	}
 	return out, nil
+}
+
+// mapInt reads an integer, tolerating the float form JSON decoding
+// produces and the string form models sometimes send.
+func mapInt(m map[string]any, key string) int {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case float64:
+		return int(t)
+	case int:
+		return t
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(t)); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // mapStrList pulls a string array from a decoded JSON object, tolerating

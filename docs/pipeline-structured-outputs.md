@@ -208,11 +208,40 @@ LLM call.
   paths, and have the parser accept native types — dropping the field on update
   is the exact bug that shape has produced before.
 
+## Follow-on: `loop` (SHIPPED v0.5.554)
+
+`loop` landed on top of this, and needed it: `until` is a reference to a body
+stage's declared **bool** field, which is only expressible because a stage can
+declare a shape. That is the sequencing argument from the top of this document,
+paid off in one feature.
+
+| Field | Meaning |
+|---|---|
+| `body` | ordered stage list, repeated each pass; one level (loops don't nest) |
+| `count` | required, 1–25 — the hard ceiling, since a pipeline runs unattended |
+| `until` | optional `NAME.field` bool on a **body** stage; stops early when true |
+| `collect` | `last` (default) or `all` (passes joined as `## Pass N`) |
+
+`{prev}` carries each pass into the next — that carry is what separates loop
+(depth) from fanout (breadth), and is why the two can't be one primitive.
+`{iteration}` / `{iterations}` template inside the body.
+
+Two scope rules that Validate enforces rather than leaving to run time: body
+stage names are invisible after the loop (a reference from outside would
+silently mean "whatever the last pass left"), and `until` must point INSIDE the
+loop (an outer field can't change between passes, so the loop would run once or
+all N times — never what the author meant).
+
+Implementation note: the per-stage execution was extracted from
+`executePipelineDef` into `pipelineRun.runStage`, so a loop body runs the exact
+path the top level does. The alternative was a second copy of the kind switch,
+which would have drifted.
+
 ## Out of scope
 
-`loop`, `branch`, a `tool` stage kind, per-stage model tier, nested field
-addressing (`{stage:plan.calcs.0.expr}`), and streaming a structured stage.
-Each is a separate change on top of this one.
+`branch`, a `tool` stage kind, per-stage model tier, nested field addressing
+(`{stage:plan.calcs.0.expr}`), and streaming a structured stage. Each is a
+separate change on top of this one.
 
 ## Files
 
