@@ -15,7 +15,10 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -77,7 +80,7 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 	if err := def.Validate(); err != nil {
 		return "", err
 	}
-	outputs := make(map[string]string, len(def.Stages))
+	outputs := make(map[string]stageOutput, len(def.Stages))
 	prev := input
 	for i, stage := range def.Stages {
 		if ctx.Err() != nil {
@@ -121,7 +124,14 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 
 		stageStart := time.Now()
 		var out string
+		var fields map[string]any
 		var err error
+		// call runs the stage's underlying LLM work once against a
+		// resolved prompt. Declared-output stages need to run it more
+		// than once (the repair retry), so the two kinds that can carry
+		// an Output contract hand it over as a closure instead of
+		// executing inline. Fanout has no single call to wrap.
+		var call func(string) (string, error)
 		switch stage.Kind {
 		case StageWorker, StageSynthesize:
 			// Resolve per-stage think: nil = default off, &true = on,
@@ -131,12 +141,16 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			if stage.Think != nil {
 				think = *stage.Think
 			}
-			out, err = T.runWorkerStage(ctx, prompt, stageTools, think)
+			// JSON mode only helps the tool-less path — see runWorkerStage.
+			jsonMode := len(stage.Output) > 0
+			call = func(p string) (string, error) {
+				return T.runWorkerStage(ctx, p, stageTools, think, jsonMode)
+			}
 		case StageAgent:
 			if dispatch == nil {
 				return "", Error("stage " + stage.Name + ": agent stage but no dispatch hook provided")
 			}
-			out, err = dispatch(ctx, stage.Agent, prompt)
+			call = func(p string) (string, error) { return dispatch(ctx, stage.Agent, p) }
 		case StageFanout:
 			// Run the stage's inner work across each element of the
 			// FanOver stage's JSON-array output, in parallel, then collect
@@ -144,6 +158,13 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			out, err = T.runFanoutStage(ctx, stage, input, prev, outputs, stageTools, dispatch, status)
 		default:
 			return "", Error("stage " + stage.Name + ": unknown kind " + string(stage.Kind))
+		}
+		if call != nil {
+			if len(stage.Output) > 0 {
+				out, fields, err = T.runDeclaredStage(ctx, stage, prompt, call, status)
+			} else {
+				out, err = call(prompt)
+			}
 		}
 		elapsed := time.Since(stageStart).Round(time.Millisecond * 100)
 		if err != nil {
@@ -153,7 +174,7 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			return "", fmt.Errorf("stage %q: %w", stage.Name, err)
 		}
 		out = strings.TrimSpace(out)
-		outputs[stage.Name] = out
+		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
 		prev = out
 		if status != nil {
 			// Tail preview lets the user see WHAT the stage produced
@@ -174,6 +195,251 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 	return prev, nil
 }
 
+// stageOutput is one completed stage's result. Text is always populated
+// and is what {stage:NAME} and {prev} render — for a declared-output
+// stage that's the raw JSON reply. Fields is populated only when the
+// stage declared an Output contract, and is what {stage:NAME.field}
+// reads. Keeping both means adding structure took nothing away: a
+// downstream stage can still consume the whole reply as text.
+type stageOutput struct {
+	Text   string
+	Fields map[string]any
+}
+
+// runDeclaredStage runs a stage that declared an Output contract:
+// append the contract to the prompt, run, decode, and on a shape
+// mismatch retry ONCE with the failure fed back before giving up.
+//
+// This is the one place in the pipeline layer that fails closed rather
+// than degrading. A stage that promised a shape and didn't deliver it
+// breaks every downstream {stage:X.field} anyway, and the fail-open
+// alternative is a prompt carrying the literal text "{stage:plan.queries}"
+// into an LLM call three stages later. Failing at the source is the
+// debuggable behavior — and the breadcrumb rule still holds: both the
+// repair attempt and the final failure land on the status line.
+func (T *AppCore) runDeclaredStage(ctx context.Context, stage PipelineStage, prompt string, call func(string) (string, error), status func(string)) (string, map[string]any, error) {
+	contract := renderOutputContract(stage.Output)
+	out, err := call(prompt + contract)
+	if err != nil {
+		return "", nil, err
+	}
+	fields, derr := decodeStageOutput(out, stage.Output)
+	if derr == nil {
+		return out, fields, nil
+	}
+	if status != nil {
+		status("stage " + stage.Name + ": reply did not match the declared shape (" + derr.Error() + ") — retrying once")
+	}
+	if ctx.Err() != nil {
+		return "", nil, ctx.Err()
+	}
+	repair := prompt + contract +
+		"\n\nYour previous reply could not be used: " + derr.Error() +
+		"\nIt was:\n" + previewForRepair(out) +
+		"\nReply again with ONLY the JSON object described above."
+	out, err = call(repair)
+	if err != nil {
+		return "", nil, err
+	}
+	if fields, derr = decodeStageOutput(out, stage.Output); derr != nil {
+		return "", nil, Error("reply did not match the declared shape after one repair attempt: " + derr.Error())
+	}
+	return out, fields, nil
+}
+
+// previewForRepair bounds how much of a failed reply is quoted back in
+// the repair prompt. Enough to show the model what it did wrong,
+// not so much that a runaway reply doubles the stage's token cost.
+func previewForRepair(s string) string {
+	const max = 600
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…(truncated)"
+}
+
+// renderOutputContract turns a stage's declared fields into the prompt
+// instruction that asks for them. Fields render in DECLARED order, not
+// map order, so the same def produces a byte-identical prompt on every
+// run — a prompt that reshuffles itself never hits the cache.
+func renderOutputContract(fields []PipelineField) string {
+	var b strings.Builder
+	b.WriteString("\n\nReply with a single JSON object and nothing else, using these keys:\n")
+	writeContractFields(&b, fields, "")
+	b.WriteString("\nNo prose, no markdown, no code fences — the JSON object only.")
+	return b.String()
+}
+
+func writeContractFields(b *strings.Builder, fields []PipelineField, indent string) {
+	for _, f := range fields {
+		b.WriteString(indent + "- \"" + f.Name + "\" (" + string(f.resolved()))
+		if f.Required {
+			b.WriteString(", required")
+		} else {
+			b.WriteString(", optional")
+		}
+		b.WriteString(")")
+		if f.Desc != "" {
+			b.WriteString(": " + f.Desc)
+		}
+		b.WriteString("\n")
+		if len(f.Fields) > 0 {
+			if f.resolved() == FieldList {
+				b.WriteString(indent + "  each element is an object with:\n")
+			} else {
+				b.WriteString(indent + "  an object with:\n")
+			}
+			writeContractFields(b, f.Fields, indent+"    ")
+		}
+	}
+}
+
+// decodeStageOutput parses a stage reply against its declared fields.
+// DecodeJSON does the tolerant extraction (code fences, surrounding
+// prose, trailing commas, stray comments — the three things local
+// models actually get wrong); this layer handles presence and type.
+//
+// Coercion is deliberately lenient in the obvious directions — a number
+// returned as "42", a single string where a list was asked for. Same
+// posture as tool_def's parameter coercion: reshape what the model
+// plainly meant instead of bouncing the whole stage over a quoting
+// choice. What it will NOT do is invent a missing required field.
+func decodeStageOutput(text string, decl []PipelineField) (map[string]any, error) {
+	var raw map[string]any
+	if err := DecodeJSON(text, &raw); err != nil {
+		return nil, Error("reply was not a JSON object")
+	}
+	out := make(map[string]any, len(decl))
+	for _, f := range decl {
+		v, present := raw[f.Name]
+		if !present || v == nil {
+			if f.Required {
+				return nil, Error("missing required field \"" + f.Name + "\"")
+			}
+			out[f.Name] = zeroForFieldType(f.resolved())
+			continue
+		}
+		cv, err := coerceField(f.resolved(), v)
+		if err != nil {
+			return nil, Error("field \"" + f.Name + "\": " + err.Error())
+		}
+		out[f.Name] = cv
+	}
+	return out, nil
+}
+
+// coerceField reshapes one decoded value to its declared type.
+func coerceField(t PipelineFieldType, v any) (any, error) {
+	switch t {
+	case FieldString:
+		if s, ok := v.(string); ok {
+			return s, nil
+		}
+		// A structure where a string was asked for still carries the
+		// information — hand it over as JSON rather than losing it.
+		return renderFieldValue(v), nil
+	case FieldNumber:
+		switch n := v.(type) {
+		case float64:
+			return n, nil
+		case string:
+			f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+			if err != nil {
+				return nil, Error("expected a number, got " + strconv.Quote(n))
+			}
+			return f, nil
+		}
+		return nil, Error("expected a number")
+	case FieldBool:
+		switch b := v.(type) {
+		case bool:
+			return b, nil
+		case float64:
+			return b != 0, nil
+		case string:
+			switch strings.ToLower(strings.TrimSpace(b)) {
+			case "true", "yes", "y", "1":
+				return true, nil
+			case "false", "no", "n", "0":
+				return false, nil
+			}
+			return nil, Error("expected true or false, got " + strconv.Quote(b))
+		}
+		return nil, Error("expected true or false")
+	case FieldList:
+		switch l := v.(type) {
+		case []any:
+			return l, nil
+		case string:
+			// Models hand back a list as a JSON string more often than
+			// they should; and a bare string is a one-element list.
+			var inner []any
+			if DecodeJSON(l, &inner) == nil {
+				return inner, nil
+			}
+			return []any{l}, nil
+		}
+		return nil, Error("expected a list")
+	case FieldObject:
+		switch o := v.(type) {
+		case map[string]any:
+			return o, nil
+		case string:
+			var inner map[string]any
+			if DecodeJSON(o, &inner) == nil {
+				return inner, nil
+			}
+		}
+		return nil, Error("expected an object")
+	}
+	return v, nil
+}
+
+// zeroForFieldType is what an absent optional field resolves to, so a
+// downstream {stage:X.field} renders as empty rather than as the
+// literal placeholder text.
+func zeroForFieldType(t PipelineFieldType) any {
+	switch t {
+	case FieldNumber:
+		return float64(0)
+	case FieldBool:
+		return false
+	case FieldList:
+		return []any{}
+	case FieldObject:
+		return map[string]any{}
+	}
+	return ""
+}
+
+// renderFieldValue turns a decoded field back into prompt text.
+// Scalars render bare; lists and objects render as compact JSON, which
+// keeps them re-parseable by DecodeJSONList downstream and avoids
+// inventing a second list encoding nobody else reads.
+func renderFieldValue(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case bool:
+		return strconv.FormatBool(t)
+	case float64:
+		// JSON has one number type, so a count comes back as 3.0 —
+		// render it as "3" so a templated prompt doesn't read oddly.
+		if t == math.Trunc(t) && math.Abs(t) < 1e15 {
+			return strconv.FormatInt(int64(t), 10)
+		}
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
+}
+
 // runWorkerStage runs a single worker-tier LLM call with the resolved
 // prompt. When tools is empty, this is the original prompt-in-text-out
 // cheap path — one LLM completion, no dispatch loop, no persona. When
@@ -184,10 +450,21 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 // gets a deliberation budget — default false (cheap), set true on
 // synthesis / verification / decomposition stages that benefit from
 // reasoning.
-func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []AgentToolDef, think bool) (string, error) {
+//
+// jsonMode asks the backend to constrain the reply to a JSON object
+// (declared-output stages). It applies ONLY on the tool-less path:
+// response_format alongside tool definitions is inconsistently
+// supported across backends, and a tool-equipped structured stage has
+// the prompt contract, DecodeJSON's tolerance, and the repair retry to
+// fall back on — three softer mechanisms beat one that may 400.
+func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []AgentToolDef, think, jsonMode bool) (string, error) {
 	if len(tools) == 0 {
 		// Cheap path — pure LLM transform.
-		resp, err := T.WorkerChat(ctx, []Message{{Role: "user", Content: prompt}}, WithThink(think))
+		opts := []ChatOption{WithThink(think)}
+		if jsonMode {
+			opts = append(opts, WithJSONMode())
+		}
+		resp, err := T.WorkerChat(ctx, []Message{{Role: "user", Content: prompt}}, opts...)
 		if err != nil {
 			return "", err
 		}
@@ -245,15 +522,14 @@ const (
 // into the stage prompt as {item}. Per-branch errors are non-fatal —
 // the branch records an error marker and the rest proceed — so one bad
 // search doesn't sink the whole fan.
-func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input, prev string, outputs map[string]string, stageTools []AgentToolDef, dispatch PipelineDispatch, status func(string)) (string, error) {
-	src, ok := outputs[stage.FanOver]
-	if !ok {
-		return "", Error("fanout stage " + stage.Name + ": fan_over stage " + stage.FanOver + " has no output")
-	}
+func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input, prev string, outputs map[string]stageOutput, stageTools []AgentToolDef, dispatch PipelineDispatch, status func(string)) (string, error) {
 	// Parse uncapped first so we can report honest truncation.
-	items := DecodeJSONList(src, 0)
+	items, err := fanoutItems(stage.FanOver, outputs)
+	if err != nil {
+		return "", Error("fanout stage " + stage.Name + ": " + err.Error())
+	}
 	if len(items) == 0 {
-		return "", Error("fanout stage " + stage.Name + ": fan_over stage " + stage.FanOver + " produced no list items")
+		return "", Error("fanout stage " + stage.Name + ": fan_over " + stage.FanOver + " produced no list items")
 	}
 	if len(items) > fanoutMaxItems {
 		if status != nil {
@@ -292,7 +568,10 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 					out, err = dispatch(ctx, agent, p)
 				}
 			} else {
-				out, err = T.runWorkerStage(ctx, p, stageTools, think)
+				// No jsonMode: a fanout branch produces free text that
+				// gets joined into the labeled block, not a declared
+				// shape (Validate rejects Output on kind=fanout).
+				out, err = T.runWorkerStage(ctx, p, stageTools, think, false)
 			}
 			if err != nil {
 				results[idx] = fmt.Sprintf("(branch error: %v)", err)
@@ -314,6 +593,41 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 		fmt.Fprintf(&b, "## Item %d: %s\n%s\n\n", i+1, strings.TrimSpace(item), results[i])
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+// fanoutItems resolves a fan_over reference to the list of elements the
+// fanout runs over.
+//
+//	"NAME"        the whole stage output, parsed leniently as a list
+//	              (the historic form — a stage prompted to "return a
+//	              JSON array" whose text IS that array)
+//	"NAME.field"  a declared list field of a structured stage
+//
+// The field form isn't sugar: once a stage declares an Output contract
+// its text is a JSON *object*, so the whole-output form would fail to
+// parse and fall through to scraping prose out of JSON.
+func fanoutItems(ref string, outputs map[string]stageOutput) ([]string, error) {
+	name, field := SplitStageRef(ref)
+	src, ok := outputs[name]
+	if !ok {
+		return nil, Error("fan_over stage " + name + " has no output")
+	}
+	if field == "" {
+		return DecodeJSONList(src.Text, 0), nil
+	}
+	v, ok := src.Fields[field]
+	if !ok {
+		return nil, Error("stage " + name + " declares no output field " + field)
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return nil, Error("fan_over field " + ref + " is not a list")
+	}
+	items := make([]string, 0, len(list))
+	for _, it := range list {
+		items = append(items, renderFieldValue(it))
+	}
+	return items, nil
 }
 
 // resolveStageTools picks the tool set a worker stage gets. Stage's
@@ -345,18 +659,29 @@ func resolveStageTools(stageTools []string, inheritedTools []AgentToolDef) []Age
 // resolveStageTemplate substitutes the pipeline templating vocabulary
 // into a stage prompt:
 //
-//	{input}       — the pipeline's top-level input
-//	{prev}        — the immediately-preceding stage's output
-//	{stage:NAME}  — a named prior stage's output
+//	{input}             — the pipeline's top-level input
+//	{prev}              — the immediately-preceding stage's output
+//	{stage:NAME}        — a named prior stage's output
+//	{stage:NAME.field}  — one declared field of a structured stage
+//
+// Plain literal replacement is enough even with the field form:
+// {stage:plan} can't match inside {stage:plan.queries} because the
+// closing brace is part of the literal, so there's no ordering hazard
+// and no scanner to get wrong.
 //
 // Unknown placeholders (a typo'd stage name, a literal brace) are left
 // untouched rather than blanked, so a mistake degrades to a visible
-// prompt artifact instead of silently dropping context.
-func resolveStageTemplate(tmpl, input, prev string, outputs map[string]string) string {
+// prompt artifact instead of silently dropping context. Validate now
+// catches the typo at save time, so this is a second line of defense
+// rather than the only one.
+func resolveStageTemplate(tmpl, input, prev string, outputs map[string]stageOutput) string {
 	s := strings.ReplaceAll(tmpl, "{input}", input)
 	s = strings.ReplaceAll(s, "{prev}", prev)
 	for name, out := range outputs {
-		s = strings.ReplaceAll(s, "{stage:"+name+"}", out)
+		s = strings.ReplaceAll(s, "{stage:"+name+"}", out.Text)
+		for field, v := range out.Fields {
+			s = strings.ReplaceAll(s, "{stage:"+name+"."+field+"}", renderFieldValue(v))
+		}
 	}
 	return s
 }

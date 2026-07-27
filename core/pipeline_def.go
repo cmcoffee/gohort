@@ -32,6 +32,7 @@ package core
 import (
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -106,7 +107,73 @@ type PipelineStage struct {
 	Think *bool `json:"think,omitempty"`
 	// FanOver names a prior stage whose output is a JSON array; the
 	// fanout stage runs once per element, in parallel. Phase 2.
+	// Accepts "NAME" (the whole stage output, parsed as a list) or
+	// "NAME.field" (a declared list field of a structured stage — see
+	// Output). The field form is what a stage with an Output contract
+	// needs, since its raw text is a JSON *object*, not a bare array.
 	FanOver string `json:"fan_over,omitempty"`
+	// Output declares the shape of this stage's result. Empty (the
+	// default) = the stage returns free text and behaves exactly as it
+	// always has. Non-empty = the interpreter appends a field contract
+	// to the prompt, asks for JSON, validates the reply against these
+	// fields, and exposes each one to later stages as
+	// {stage:NAME.field}. Turns stage-to-stage threading from string
+	// interpolation into data threading — which is what a predicate, a
+	// loop carry, or a fan-over-one-field all need.
+	//
+	// Not valid on kind="fanout": a fanout's output is the joined
+	// per-branch block, not a single JSON object.
+	Output []PipelineField `json:"output,omitempty"`
+}
+
+// PipelineFieldType is the declared type of a structured output field.
+// A closed set on purpose: each value has to render into a prompt
+// contract, validate a decoded reply, and render back into a later
+// stage's template, and every addition costs all three.
+type PipelineFieldType string
+
+const (
+	FieldString PipelineFieldType = "string"
+	FieldNumber PipelineFieldType = "number"
+	FieldBool   PipelineFieldType = "bool"
+	FieldList   PipelineFieldType = "list"
+	FieldObject PipelineFieldType = "object"
+)
+
+// PipelineField is one declared field of a stage's structured output.
+//
+// This is a field list rather than a JSON Schema because of who writes
+// it: Builder authors these and a user edits them in a form. A field
+// list renders to a prompt instruction, to a validator, and to a UI
+// table without any of them having to understand JSON Schema. The cost
+// is depth — see Fields.
+type PipelineField struct {
+	// Name is the JSON key and the handle in {stage:NAME.name}.
+	// Lowercase [a-z0-9_]+ so the templating stays unambiguous.
+	Name string `json:"name"`
+	// Type is one of the PipelineFieldType constants. Empty defaults to
+	// string.
+	Type PipelineFieldType `json:"type,omitempty"`
+	// Desc is rendered into the prompt contract — this is how the model
+	// learns what belongs in the field. Worth writing.
+	Desc string `json:"desc,omitempty"`
+	// Fields describes the element shape for Type=list and the member
+	// shape for Type=object. ONE level only: a nested field may not
+	// itself declare Fields. Deeper structure is still expressible, just
+	// not addressable — it renders as JSON into the consuming prompt.
+	Fields []PipelineField `json:"fields,omitempty"`
+	// Required fails the stage when the model omits the field. Default
+	// false: an absent optional field resolves to its type's zero value.
+	Required bool `json:"required,omitempty"`
+}
+
+// resolved returns the field's effective type, defaulting empty to
+// string so a half-filled authoring call still produces a usable field.
+func (f PipelineField) resolved() PipelineFieldType {
+	if f.Type == "" {
+		return FieldString
+	}
+	return f.Type
 }
 
 // PipelineDef is the declarative, serializable definition of a
@@ -129,23 +196,37 @@ type PipelineDef struct {
 }
 
 // Validate checks a pipeline def is runnable: at least one stage,
-// unique non-empty stage names, agent stages name an agent, and
-// {stage:NAME} references point at earlier stages (no forward refs or
-// cycles — stages run strictly in order). Returns the first problem
-// found, or nil.
+// unique non-empty stage names, agent stages name an agent, declared
+// output fields are well-formed, and every {stage:NAME} /
+// {stage:NAME.field} / fan_over reference points at an EARLIER stage
+// (no forward refs or cycles — stages run strictly in order). Returns
+// the first problem found, or nil.
+//
+// Reference checking happens before the current stage is registered, so
+// a self-reference fails the same way a forward reference does. (The
+// previous implementation registered the stage first and then tried to
+// special-case self-fanout, which let `fan_over: <self>` through to a
+// runtime error.)
 func (d PipelineDef) Validate() error {
 	if len(d.Stages) == 0 {
 		return Error("pipeline has no stages")
 	}
-	seen := map[string]bool{}
+	// done maps an already-validated stage name to its declared output
+	// fields. Built as the walk proceeds, so a lookup miss IS the
+	// forward/unknown-reference error.
+	done := make(map[string]map[string]PipelineFieldType, len(d.Stages))
 	for i, s := range d.Stages {
 		if s.Name == "" {
 			return Error("stage " + strconv.Itoa(i+1) + " has no name")
 		}
-		if seen[s.Name] {
+		if _, dup := done[s.Name]; dup {
 			return Error("duplicate stage name: " + s.Name)
 		}
-		seen[s.Name] = true
+		if strings.Contains(s.Name, ".") {
+			// A dot would make {stage:a.b} ambiguous between a stage
+			// named "a.b" and field "b" of stage "a".
+			return Error("stage name may not contain a dot: " + s.Name)
+		}
 		if s.Kind == StageAgent && s.Agent == "" {
 			return Error("stage " + s.Name + " is kind=agent but names no agent")
 		}
@@ -156,17 +237,140 @@ func (d PipelineDef) Validate() error {
 		if s.Kind == StageFanout && s.FanOver == "" {
 			return Error("stage " + s.Name + " is kind=fanout but names no fan_over stage")
 		}
-		if s.FanOver != "" && !seen[s.FanOver] {
-			// FanOver must reference an EARLIER stage (already in seen,
-			// minus the current one we just added — so check before add
-			// would be cleaner, but a stage can't fan over itself and
-			// seen[self] was just set, so compare explicitly).
-			if s.FanOver == s.Name || !seen[s.FanOver] {
-				return Error("stage " + s.Name + " fans over unknown/forward stage: " + s.FanOver)
+		if s.Kind == StageFanout && len(s.Output) > 0 {
+			return Error("stage " + s.Name + ": output is not valid on kind=fanout (a fanout produces a joined per-branch block, not one JSON object)")
+		}
+		for _, ref := range stageRefs(s.Prompt) {
+			if err := checkStageRef(s.Name, "prompt", ref, done); err != nil {
+				return err
 			}
 		}
+		if s.FanOver != "" {
+			if err := checkStageRef(s.Name, "fan_over", s.FanOver, done); err != nil {
+				return err
+			}
+			// A field reference has to BE a list; the whole-output form
+			// is parsed leniently at run time and can't be checked here.
+			if src, field := SplitStageRef(s.FanOver); field != "" {
+				if t := done[src][field]; t != FieldList {
+					return Error("stage " + s.Name + " fans over " + s.FanOver + ", which is declared " + string(t) + ", not list")
+				}
+			}
+		}
+		own, err := validateOutputFields(s.Name, s.Output, false)
+		if err != nil {
+			return err
+		}
+		done[s.Name] = own
 	}
 	return nil
+}
+
+// checkStageRef verifies one "NAME" or "NAME.field" reference resolves
+// to an already-validated stage (and, for the field form, to a field
+// that stage actually declares). where names the site of the reference
+// so the error tells the author which part of the stage to fix.
+func checkStageRef(stage, where, ref string, done map[string]map[string]PipelineFieldType) error {
+	name, field := SplitStageRef(ref)
+	fields, ok := done[name]
+	if !ok {
+		return Error("stage " + stage + " " + where + " references unknown or later stage: " + name)
+	}
+	if field == "" {
+		return nil
+	}
+	if _, ok := fields[field]; !ok {
+		return Error("stage " + stage + " " + where + " references " + ref + ", but stage " + name + " declares no output field " + field)
+	}
+	return nil
+}
+
+// SplitStageRef splits a stage reference into its stage name and
+// optional field. "plan" → ("plan", ""); "plan.queries" → ("plan",
+// "queries"). Only the first dot separates — stage names can't contain
+// one (Validate enforces that), so anything after it is the field.
+func SplitStageRef(ref string) (name, field string) {
+	ref = strings.TrimSpace(ref)
+	if i := strings.Index(ref, "."); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	return ref, ""
+}
+
+// stageRefs extracts the inner text of every {stage:...} occurrence in a
+// template — "plan" from {stage:plan}, "plan.queries" from
+// {stage:plan.queries}. Unterminated occurrences are ignored (they can't
+// resolve at run time either, and they're left in the prompt verbatim).
+func stageRefs(tmpl string) []string {
+	const open = "{stage:"
+	var out []string
+	rest := tmpl
+	for {
+		i := strings.Index(rest, open)
+		if i < 0 {
+			return out
+		}
+		rest = rest[i+len(open):]
+		j := strings.Index(rest, "}")
+		if j < 0 {
+			return out
+		}
+		out = append(out, strings.TrimSpace(rest[:j]))
+		rest = rest[j+1:]
+	}
+}
+
+// validateOutputFields checks one stage's declared output shape and
+// returns its field-name → type map for later reference checking.
+// nested guards the one-level depth limit.
+func validateOutputFields(stage string, fields []PipelineField, nested bool) (map[string]PipelineFieldType, error) {
+	out := make(map[string]PipelineFieldType, len(fields))
+	for i, f := range fields {
+		if f.Name == "" {
+			return nil, Error("stage " + stage + ": output field " + strconv.Itoa(i+1) + " has no name")
+		}
+		if !isFieldName(f.Name) {
+			return nil, Error("stage " + stage + ": output field " + f.Name + " must be lowercase letters, digits, or underscore")
+		}
+		if _, dup := out[f.Name]; dup {
+			return nil, Error("stage " + stage + ": duplicate output field " + f.Name)
+		}
+		switch f.resolved() {
+		case FieldString, FieldNumber, FieldBool, FieldList, FieldObject:
+		default:
+			return nil, Error("stage " + stage + ": output field " + f.Name + " has unknown type " + string(f.Type))
+		}
+		if len(f.Fields) > 0 {
+			if nested {
+				return nil, Error("stage " + stage + ": output field " + f.Name + " nests too deep — one level only (deeper structure still renders as JSON, it just isn't addressable)")
+			}
+			if k := f.resolved(); k != FieldList && k != FieldObject {
+				return nil, Error("stage " + stage + ": output field " + f.Name + " is type " + string(k) + " and cannot declare nested fields")
+			}
+			if _, err := validateOutputFields(stage, f.Fields, true); err != nil {
+				return nil, err
+			}
+		}
+		out[f.Name] = f.resolved()
+	}
+	return out, nil
+}
+
+// isFieldName reports whether s is a safe output-field handle:
+// lowercase letters, digits, and underscore. Keeps {stage:X.field}
+// unambiguous and the JSON keys predictable. Hand-rolled rather than a
+// regexp — it's three comparisons and avoids a package-level compile.
+func isFieldName(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '_':
+		default:
+			return false
+		}
+	}
+	return s != ""
 }
 
 // --- storage (per-user) ---------------------------------------------
