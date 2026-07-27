@@ -115,10 +115,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))
 	T.HandleFunc("/api/console/monitors/resume", gw(T.handleConsoleMonitorResume))
 	T.HandleFunc("/api/console/monitors/relink", gw(T.handleConsoleMonitorRelink))
-	// Card destination: static picker source + in-place setter (edit the live
-	// monitor's trace-card routing without a delete+recreate).
-	T.HandleFunc("/api/console/card-to-options", g(T.handleConsoleCardToOptions))
-	T.HandleFunc("/api/console/monitors/card-to", gw(T.handleConsoleMonitorCardTo))
+	// Move a monitor's home in place (cortex home thread / background) — static
+	// picker source + in-place setter, no delete+recreate.
+	T.HandleFunc("/api/console/monitor-move-options", g(T.handleConsoleMonitorMoveOptions))
+	T.HandleFunc("/api/console/monitors/move", gw(T.handleConsoleMonitorMove))
 	T.HandleFunc("/api/console/monitors/run", gw(T.handleConsoleMonitorRun))
 	T.HandleFunc("/api/console/monitors/get", g(T.handleConsoleMonitorGet))
 	T.HandleFunc("/api/console/monitors/update", gw(T.handleConsoleMonitorUpdate))
@@ -423,11 +423,11 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleConsoleCardToOptions is the static picker source for the monitor
-// "Card to…" action: where the trace card lands when the alert is delivered to
-// an external chat. Static (unlike the agent-relink source) — the choices don't
-// depend on the owner's data.
-func (T *OrchestrateApp) handleConsoleCardToOptions(w http.ResponseWriter, r *http.Request) {
+// handleConsoleMonitorMoveOptions is the static picker source for the monitor
+// "Move to…" action: where the monitor is HOMED — the single place its trace
+// card, rail badge, and (for a channel-wake) its LLM turn all surface. Static;
+// the choices don't depend on the owner's data.
+func (T *OrchestrateApp) handleConsoleMonitorMoveOptions(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
 	}
@@ -436,40 +436,37 @@ func (T *OrchestrateApp) handleConsoleCardToOptions(w http.ResponseWriter, r *ht
 		Label string `json:"label"`
 	}
 	writeJSON(w, []opt{
-		{Value: "__auto__", Label: "Default (cortex if the agent has one, else the session)"},
 		{Value: "cortex", Label: "Cortex home thread"},
-		{Value: "session", Label: "This session"},
-		{Value: "none", Label: "None — external chat only"},
+		{Value: "background", Label: "Background (No Agent Visibility)"},
 	})
 }
 
-// handleConsoleMonitorCardTo sets a monitor's trace-card destination in place —
-// the UI counterpart to the create_event_monitor card_to param, so the live
-// monitor's card routing is editable without a delete+recreate. Value is one of
-// __auto__ (stored as ""), cortex, session, none.
-func (T *OrchestrateApp) handleConsoleMonitorCardTo(w http.ResponseWriter, r *http.Request) {
+// handleConsoleMonitorMove relocates a monitor's HOME in place — the UI way to
+// move the whole monitor (card + rail badge + wake all follow) without a
+// delete+recreate. "cortex" homes it on the agent's cortex home thread;
+// "background" gives it no agent visibility (external delivery only).
+func (T *OrchestrateApp) handleConsoleMonitorMove(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	val := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("value")))
-	if val == "__auto__" {
-		val = ""
-	}
-	switch val {
-	case "", "cortex", "session", "none":
-		// valid
-	default:
-		http.Error(w, "card_to must be one of: cortex, session, none, or default", http.StatusBadRequest)
-		return
-	}
 	m, found := GetEventMonitor(RootDB, user, name)
 	if !found {
 		http.Error(w, "no such monitor", http.StatusNotFound)
 		return
 	}
-	m.CardTo = val
+	switch val {
+	case "cortex":
+		m.Background = false
+		m.WakeSession = cortexSessionID(m.WakeAgent)
+	case "background":
+		m.Background = true
+	default:
+		http.Error(w, "move target must be \"cortex\" or \"background\"", http.StatusBadRequest)
+		return
+	}
 	SaveEventMonitor(RootDB, m)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1509,10 +1506,6 @@ type consoleMonitorRow struct {
 	// monitors have a check to run on demand — a webhook is push-only.
 	Schedulable bool `json:"_schedulable"`
 	Broken      bool `json:"_broken,omitempty"` // hidden; dependency gone → needs relink
-	// External gates the "Card to…" action: card destination only matters when
-	// the alert is delivered to an external chat/channel (deliver_to / wake_channel);
-	// for a plain in-thread monitor there's no separate card to route.
-	External bool `json:"_external,omitempty"`
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -1594,14 +1587,12 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			if !hasWake {
 				detail += " (no LLM)"
 			}
-			// When the alert goes to an external chat, show WHERE the trace card
-			// lands (card_to) so the user can see + change it via the row action.
-			if m.DeliverChatID != "" || m.WakeChannel != "" {
-				card := strings.TrimSpace(m.CardTo)
-				if card == "" {
-					card = "auto (cortex if any, else session)"
-				}
-				detail += " · card: " + card
+			// Show where the monitor is HOMED so the user can see + change it via
+			// the Move-to action (its card/badge/wake all surface here).
+			if m.Background {
+				detail += " · background (no agent visibility)"
+			} else if m.WakeSession != "" && m.WakeSession == cortexSessionID(m.WakeAgent) {
+				detail += " · homed on cortex"
 			}
 		}
 		last := ""
@@ -1619,7 +1610,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken, External: m.DeliverChatID != "" || m.WakeChannel != ""})
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken})
 	}
 	writeJSON(w, rows)
 }

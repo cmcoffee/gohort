@@ -140,26 +140,11 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
-		// Resolve WHERE the trace card lands (CardTo), independently of the external
-		// alert. The alert still goes to deliver_to; this only routes the card that
-		// records "the monitor fired". Default (empty): the cortex home thread when
-		// the wake agent HAS a cortex, else the creating session. "none" drops the
-		// card so an externally-delivered alert doesn't ALSO land in a thread — the
-		// fix for "output ended up in my session".
+		// The trace card follows the monitor's HOME (wakeSession) — move the monitor
+		// to the cortex home thread and the card moves with it. A Background monitor
+		// has no home: it delivers externally only, with no card in any thread.
 		cardSession := wakeSession
-		recordCard := true
-		switch strings.TrimSpace(m.CardTo) {
-		case "none":
-			recordCard = false
-		case "cortex":
-			cardSession = cortexSessionID(wakeAgent)
-		case "session":
-			// keep the creating session (wakeSession)
-		default: // auto
-			if a, ok := loadAgent(agentUserDB(RootDB, owner), wakeAgent); ok && a.Cortex {
-				cardSession = cortexSessionID(wakeAgent)
-			}
-		}
+		recordCard := !m.Background
 
 		// direct: post the change verbatim, no LLM, WHERE the watcher was created
 		// — a phantom-origin watcher (DeliverChatID set) into that conversation
@@ -213,8 +198,8 @@ func registerOperatorWake(app *OrchestrateApp) {
 					Log("[operator.wake] %s/%s notify=direct but phantom bridge unavailable", owner, monitorName)
 				}
 			} else if recordCard && recordMonitorCard(summary) {
-				// No external target: the trace card IS the delivery. (When CardTo is
-				// "none" with no external target, nothing delivered here — the
+				// No external target: the trace card IS the delivery. (A Background
+				// monitor with no external target records nothing here — the
 				// never-drop fallback below wakes the agent so the alert isn't lost.)
 				delivered = true
 			}

@@ -101,19 +101,15 @@ type EventMonitor struct {
 	// own home thread as before.
 	WakeChannel string `json:"wake_channel,omitempty"`
 
-	// CardTo controls WHERE the monitor's trace card lands on a direct/external
-	// delivery (deliver_to set): the alert goes out to the chat regardless, but
-	// the card that records "the monitor fired" is separately routed. Values:
-	//   ""        — auto: the cortex home thread if the wake agent HAS a cortex,
-	//               else the creating session. (The sensible default.)
-	//   "cortex"  — force the cortex home thread.
-	//   "session" — force the creating session (WakeSession).
-	//   "none"    — no card at all; the external chat is the only destination.
-	// Solves the "output ended up in my session" trap: previously a direct fire
-	// ALWAYS recorded a card into the creating session, with no way to redirect
-	// it to the cortex (or drop it). Interpreted in operator_wake (which can see
-	// the agent's Cortex flag); core just carries the string.
-	CardTo string `json:"card_to,omitempty"`
+	// Background, when true, gives the monitor NO agent visibility: it runs and
+	// delivers externally (deliver_to / wake_channel) but leaves no trace card in
+	// any agent thread and no "background work" rail badge. The complement is a
+	// monitor HOMED on a thread via WakeSession — its card/wake/badge all surface
+	// in that session (move it to the cortex home thread to relocate all three at
+	// once). This replaced the finer-grained "card_to" routing: the card isn't a
+	// separate destination, it follows the monitor's home; Background is the one
+	// case where there is no home at all.
+	Background bool `json:"background,omitempty"`
 
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition

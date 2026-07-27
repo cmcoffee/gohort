@@ -1079,7 +1079,14 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		if ip != nil {
 			ip_str = ip.String()
 		}
-		Log("[http] %s %s %s %d (%s)", ip_str, r.Method, fullPath, lw.status, time.Since(start).Round(time.Millisecond))
+		// 2xx access lines go to the log FILE only (AuxLog) so a watched terminal
+		// isn't flooded by routine success (UI auto-refresh/poll endpoints fire
+		// constantly); anything non-2xx stays on the terminal where it's the signal.
+		httpLog := Log
+		if lw.status >= 200 && lw.status < 300 {
+			httpLog = AuxLog
+		}
+		httpLog("[http] %s %s %s %d (%s)", ip_str, r.Method, fullPath, lw.status, time.Since(start).Round(time.Millisecond))
 	})
 }
 

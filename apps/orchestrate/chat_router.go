@@ -142,7 +142,12 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 	// hosted by a session, each make that session "active" in the rail.
 	watcherCounts := map[string]int{}
 	for _, m := range ListEventMonitors(RootDB, user) {
-		if !m.Paused && m.WakeSession != "" {
+		// A Background monitor has NO agent visibility — it never surfaces in a
+		// session, so it's excluded from the rail's "background work" count.
+		// Otherwise the monitor surfaces in its home (WakeSession), which moves
+		// when the user relocates it (e.g. to the cortex home thread) — so the
+		// badge follows the move.
+		if !m.Paused && !m.Background && m.WakeSession != "" {
 			watcherCounts[m.WakeSession]++
 		}
 	}

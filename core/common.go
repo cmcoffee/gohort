@@ -2438,6 +2438,11 @@ type Options = nfo.Options
 var (
 	NewOptions      = nfo.NewOptions
 	Log             = nfo.Log             // Standard Log Output
+	// AuxLog writes to the log FILE only, never the terminal (init_logging routes
+	// nfo.AUX2 there). Use for high-volume success noise — HTTP 2xx access lines,
+	// successful fetch completions — that should stay auditable in the log but not
+	// flood a terminal someone is watching. Non-success stays on Log (terminal).
+	AuxLog          = nfo.Aux2
 	Fatal           = nfo.Fatal           // Fatal Log Output & Exit.
 	Critical        = nfo.Critical        // err-or-nil → Fatal helper
 	Notice          = nfo.Notice          // Notice Log Output

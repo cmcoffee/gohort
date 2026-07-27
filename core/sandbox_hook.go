@@ -308,6 +308,17 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 	return 10 * time.Second
 }
 
+// fetchDoneLog picks the sink for a fetch-completion line: a 2xx success goes to
+// the log FILE only (AuxLog), so a watched terminal isn't flooded by routine
+// polling; a non-2xx stays on the terminal where it's the actual signal. Both
+// still land in the log file.
+func fetchDoneLog(status int) func(...interface{}) {
+	if status >= 200 && status < 300 {
+		return AuxLog
+	}
+	return Log
+}
+
 // granted is the first-pass gate: does any capability entry name this
 // method? Matches both bare ("fetch") and qualified ("secret:openweather")
 // forms — the per-method handler does the qualifier check when needed
@@ -641,7 +652,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			writeHookError(conn, "save_to: response exceeded 100MB cap")
 			return
 		}
-		Log("[hook/fetch] done elapsed=%s status=%d saved=%dB path=%s", time.Since(callStart).Round(time.Millisecond), resp.StatusCode, written, saveTo)
+		fetchDoneLog(resp.StatusCode)("[hook/fetch] done elapsed=%s status=%d saved=%dB path=%s", time.Since(callStart).Round(time.Millisecond), resp.StatusCode, written, saveTo)
 		headers := make(map[string]string, len(resp.Header))
 		for k, vs := range resp.Header {
 			if len(vs) > 0 {
@@ -667,7 +678,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// doesn't require sandbox-side print debugging. A 200 with 0
 	// bytes is rare but legitimate; a 4xx/5xx with 0 bytes is the
 	// "site blocked us" shape — both are now visible in the trace.
-	Log("[hook/fetch] done elapsed=%s status=%d bytes=%d", time.Since(callStart).Round(time.Millisecond), resp.StatusCode, len(respBody))
+	fetchDoneLog(resp.StatusCode)("[hook/fetch] done elapsed=%s status=%d bytes=%d", time.Since(callStart).Round(time.Millisecond), resp.StatusCode, len(respBody))
 	headers := make(map[string]string, len(resp.Header))
 	for k, vs := range resp.Header {
 		if len(vs) > 0 {

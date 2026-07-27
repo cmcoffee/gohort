@@ -1687,6 +1687,12 @@ func init_logging() {
 	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/%s.log", logs_dir, APPNAME)), 10, 10)
 	Critical(err)
 	nfo.SetFile(nfo.STD|nfo.AUX, file)
+	// AUX2 = a file-ONLY channel (nfo.AuxLog / core.AuxLog): it writes to the log
+	// file (via the STD file sink above, which includes AUX2) but its terminal
+	// output is silenced, so high-volume success noise (HTTP 2xx access lines,
+	// successful fetch completions) stays in the log without flooding a watched
+	// terminal. Non-success lines keep using Log (terminal + file).
+	nfo.SetOutput(nfo.AUX2, nfo.None)
 	if global.debug {
 		nfo.SetOutput(nfo.DEBUG, os.Stderr)
 		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
