@@ -101,6 +101,20 @@ type EventMonitor struct {
 	// own home thread as before.
 	WakeChannel string `json:"wake_channel,omitempty"`
 
+	// CardTo controls WHERE the monitor's trace card lands on a direct/external
+	// delivery (deliver_to set): the alert goes out to the chat regardless, but
+	// the card that records "the monitor fired" is separately routed. Values:
+	//   ""        — auto: the cortex home thread if the wake agent HAS a cortex,
+	//               else the creating session. (The sensible default.)
+	//   "cortex"  — force the cortex home thread.
+	//   "session" — force the creating session (WakeSession).
+	//   "none"    — no card at all; the external chat is the only destination.
+	// Solves the "output ended up in my session" trap: previously a direct fire
+	// ALWAYS recorded a card into the creating session, with no way to redirect
+	// it to the cortex (or drop it). Interpreted in operator_wake (which can see
+	// the agent's Cortex flag); core just carries the string.
+	CardTo string `json:"card_to,omitempty"`
+
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition
 	Check           string `json:"check,omitempty"`          // the brief/question given to the checker
@@ -130,10 +144,11 @@ type EventMonitor struct {
 	LastHash string         `json:"last_hash,omitempty"` // sha256 of the last output (the change baseline)
 	LastBody string         `json:"last_body,omitempty"` // prior output (capped) — diffed against the new output to show WHAT changed
 	// FormatScript (watch kind, optional) is sandboxed python that shapes the
-	// alert. It receives {"prior":...,"current":...} JSON on stdin and prints
-	// the notification text to stdout — empty stdout means "this change isn't
-	// worth alerting" (suppress). No network, no LLM. Empty = use the built-in
-	// diff summary.
+	// alert. It receives {"prior":...,"current":...} JSON on stdin (both STRINGS —
+	// the raw tool output, not parsed) and prints the notification text to stdout.
+	// Empty stdout FAILS OPEN to the built-in diff (so a broken script can't
+	// silently eat a change); print the sentinel "SKIP" (or {"skip":true}) to
+	// intentionally drop a change. No network, no LLM. Empty field = built-in diff.
 	FormatScript string `json:"format_script,omitempty"`
 
 	// MatchNew (watch kind, optional) scopes the fire: when set, a change only
@@ -945,16 +960,23 @@ func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, cur
 		if res.Err != nil {
 			Log("[event] watch %s/%s format_script error: %v (stderr=%q) — using built-in summary",
 				owner, name, res.Err, truncateEvent(res.Stderr, 200))
-		} else if out := strings.TrimSpace(res.Stdout); out != "" {
+		} else if out := strings.TrimSpace(res.Stdout); isSkipSentinel(out) {
+			// EXPLICIT suppression: the script asked to drop this change (it emitted
+			// the skip sentinel). This is the ONLY way a format_script suppresses —
+			// so an intentional skip is unmistakable and can't be confused with a bug.
+			Debug("[event] watch %s/%s: format_script emitted the skip sentinel — dropping this change", owner, name)
+			return "", true
+		} else if out != "" {
 			return out, false
 		} else {
-			// Empty stdout is the script's INTENTIONAL "this change isn't worth
-			// notifying" signal — suppress the wake. This is the documented
-			// format_script contract. (A script CRASH is different: res.Err above
-			// logs and falls through to the built-in diff below, so a bug can't
-			// silently eat real changes — only a clean empty exit suppresses.)
-			Debug("[event] watch %s/%s: format_script printed nothing — suppressing this change per the empty=skip contract", owner, name)
-			return "", true
+			// Empty stdout no longer suppresses. It USED to (the "empty=skip"
+			// contract), but that failed SILENTLY: a broken or unconfirmed script
+			// that printed nothing looked identical to one that chose to skip, so
+			// real changes were eaten with no trace. Fail OPEN instead — fall
+			// through to the built-in diff so a change is always delivered as
+			// SOMETHING (ugly-but-visible beats silent). To intentionally drop a
+			// change, a script emits the skip sentinel (see isSkipSentinel).
+			Log("[event] watch %s/%s: format_script printed nothing — delivering the built-in summary (emit \"SKIP\" to intentionally drop a change)", owner, name)
 		}
 	}
 	// Direct/no-LLM delivery: post the tool's output verbatim, no diagnostic
@@ -977,6 +999,30 @@ func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, cur
 	}
 	summary += "\n\nCurrent output:\n" + truncateEvent(current, 1200)
 	return summary, false
+}
+
+// isSkipSentinel reports whether a format_script's stdout is the EXPLICIT
+// "drop this change" signal. Empty output no longer suppresses (it now fails open
+// to the built-in summary, so a broken script can't silently eat a change); a
+// script that genuinely wants to ignore a change prints this sentinel instead.
+// Accepts a bare SKIP token (case-insensitive) or a JSON object with a truthy
+// "skip" field, so both plain-print and JSON-shaped scripts have a clean way to
+// say "not this one".
+func isSkipSentinel(out string) bool {
+	t := strings.TrimSpace(out)
+	if t == "" {
+		return false
+	}
+	if strings.EqualFold(t, "SKIP") {
+		return true
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(t), &m) == nil {
+		if b, ok := m["skip"].(bool); ok {
+			return b
+		}
+	}
+	return false
 }
 
 // SplitHTTPStatus splits a tool response into its leading "HTTP <code> <text>"

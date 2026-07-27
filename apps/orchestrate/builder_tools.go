@@ -436,12 +436,14 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			Name:        "check_credential",
 			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Resolves in the user's OWN namespace too, so a credential the user set up in Extensions > My API credentials is found (not just admin globals). Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
 			Parameters: map[string]ToolParam{
-				"name": {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
+				"name":           {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
+				"all_dispatches": {Type: "boolean", Description: "Include SUCCESSFUL (2xx) calls in the Recent dispatches list. Default false shows only FAILURES (non-2xx + errors) — the signal when you're debugging a wiring problem; the 2xx rows are hidden with a count. The full audit is always recorded regardless; this only filters what's shown."},
 			},
 			Required: []string{"name"},
 		},
 		Handler: func(args map[string]any) (string, error) {
 			name := strings.TrimSpace(stringArg(args, "name"))
+			allDispatches := boolArg(args, "all_dispatches")
 			if name == "" {
 				return "", fmt.Errorf("name is required")
 			}
@@ -492,17 +494,41 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			// provider's real domain means the secret reached that host —
 			// treat it as exposed and tell the user to ROTATE the key.
 			if audit := Secure().LoadAudit(auditOwner, name); len(audit) > 0 {
-				n := len(audit)
+				// Filter to FAILURES unless all_dispatches: when debugging a wiring
+				// problem the 2xx rows are noise and the non-2xx rows are the signal.
+				// The full audit is still RECORDED (recordAudit is untouched) — this
+				// only filters the VIEW; all_dispatches=true shows successes too.
+				var shown []SecureAPIAuditEntry
+				hidden := 0
+				for _, e := range audit {
+					if allDispatches || e.Error != "" || e.Status < 200 || e.Status >= 300 {
+						shown = append(shown, e)
+					} else {
+						hidden++
+					}
+				}
+				n := len(shown)
 				if n > 5 {
 					n = 5
 				}
-				cfg += fmt.Sprintf("\nRecent dispatches (newest first, %d of %d recorded — every row was SENT with auth attached):", n, len(audit))
-				for _, e := range audit[:n] {
-					line := fmt.Sprintf("\n  %s %s %s → %d", e.Timestamp.Local().Format("Jan 2 15:04"), e.Method, e.URL, e.Status)
-					if e.Error != "" {
-						line += " (" + e.Error + ")"
+				if n > 0 {
+					label := "Recent FAILED dispatches"
+					if allDispatches {
+						label = "Recent dispatches"
 					}
-					cfg += line
+					cfg += fmt.Sprintf("\n%s (newest first, %d of %d recorded — every row was SENT with auth attached):", label, n, len(audit))
+					for _, e := range shown[:n] {
+						line := fmt.Sprintf("\n  %s %s %s → %d", e.Timestamp.Local().Format("Jan 2 15:04"), e.Method, e.URL, e.Status)
+						if e.Error != "" {
+							line += " (" + e.Error + ")"
+						}
+						cfg += line
+					}
+				}
+				if hidden > 0 {
+					cfg += fmt.Sprintf("\n  (%d successful 2xx call(s) hidden — pass all_dispatches=true to include them)", hidden)
+				} else if n == 0 {
+					cfg += fmt.Sprintf("\nRecent dispatches: %d recorded, all succeeded (2xx) — pass all_dispatches=true to list them.", len(audit))
 				}
 			} else if cfg != "" {
 				cfg += "\nRecent dispatches: none recorded — nothing has been sent through this credential yet."

@@ -140,6 +140,27 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
+		// Resolve WHERE the trace card lands (CardTo), independently of the external
+		// alert. The alert still goes to deliver_to; this only routes the card that
+		// records "the monitor fired". Default (empty): the cortex home thread when
+		// the wake agent HAS a cortex, else the creating session. "none" drops the
+		// card so an externally-delivered alert doesn't ALSO land in a thread — the
+		// fix for "output ended up in my session".
+		cardSession := wakeSession
+		recordCard := true
+		switch strings.TrimSpace(m.CardTo) {
+		case "none":
+			recordCard = false
+		case "cortex":
+			cardSession = cortexSessionID(wakeAgent)
+		case "session":
+			// keep the creating session (wakeSession)
+		default: // auto
+			if a, ok := loadAgent(agentUserDB(RootDB, owner), wakeAgent); ok && a.Cortex {
+				cardSession = cortexSessionID(wakeAgent)
+			}
+		}
+
 		// direct: post the change verbatim, no LLM, WHERE the watcher was created
 		// — a phantom-origin watcher (DeliverChatID set) into that conversation
 		// (e.g. the group); otherwise into the Agency channel thread.
@@ -156,9 +177,9 @@ func registerOperatorWake(app *OrchestrateApp) {
 				if udb == nil {
 					return false
 				}
-				sess, ok := loadChatSession(udb, wakeAgent, wakeSession)
+				sess, ok := loadChatSession(udb, wakeAgent, cardSession)
 				if !ok {
-					sess = ChatSession{ID: wakeSession, AgentID: wakeAgent}
+					sess = ChatSession{ID: cardSession, AgentID: wakeAgent}
 				}
 				sess.Messages = append(sess.Messages, ChatMessage{
 					Role:       "assistant",
@@ -182,15 +203,19 @@ func registerOperatorWake(app *OrchestrateApp) {
 					if err := link.SendToChat(owner, chatTarget, summary); err == nil {
 						delivered = true
 						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
-						recordMonitorCard(fmt.Sprintf("%s\n\n(auto-posted directly to %s — no reply needed)", summary, chatTarget))
+						if recordCard {
+							recordMonitorCard(fmt.Sprintf("%s\n\n(auto-posted directly to %s — no reply needed)", summary, chatTarget))
+						}
 					} else {
 						Log("[operator.wake] %s/%s notify=direct send to chat %s failed: %v", owner, monitorName, chatTarget, err)
 					}
 				} else {
 					Log("[operator.wake] %s/%s notify=direct but phantom bridge unavailable", owner, monitorName)
 				}
-			} else if recordMonitorCard(summary) {
-				// No external target: the cortex card IS the delivery.
+			} else if recordCard && recordMonitorCard(summary) {
+				// No external target: the trace card IS the delivery. (When CardTo is
+				// "none" with no external target, nothing delivered here — the
+				// never-drop fallback below wakes the agent so the alert isn't lost.)
 				delivered = true
 			}
 		}

@@ -477,7 +477,7 @@ func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bo
 		s, suppress := formatWatchAlert(ctx, cur.Owner, cur.Name, cur.FormatScript, prior, body, directNotify)
 		SaveScheduledTrigger(db, cur) // advance baseline regardless
 		if suppress {
-			return false, "" // format_script printed nothing — intentional skip
+			return false, "" // format_script emitted the explicit skip sentinel
 		}
 		return true, s
 

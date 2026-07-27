@@ -362,6 +362,13 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 		Label string `json:"label"`
 	}
 	opts := []opt{}
+	// with_default=1 (the monitor relink picker only) leads with a "use the
+	// deployment default" choice so relinking a monitor never REQUIRES naming a
+	// specific agent — you pick one only when the persona matters. Standing/
+	// recurring relink omit the param: those genuinely need a real target.
+	if r.URL.Query().Get("with_default") == "1" {
+		opts = append(opts, opt{Value: "__default__", Label: "Default agent (recommended)"})
+	}
 	for _, a := range listAgents(UserDB(T.DB, user), user) {
 		label := strings.TrimSpace(a.Name)
 		if label == "" {
@@ -382,16 +389,29 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
-	if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
-		http.Error(w, "no such agent", http.StatusBadRequest)
-		return
+	// The agent is OPTIONAL for a monitor: an empty WakeAgent resolves to the
+	// deployment default channel agent, and a direct-delivery monitor doesn't use
+	// the agent for delivery at all — so "" / the __default__ sentinel means
+	// "just use the default", and the picker no longer forces a specific choice.
+	// A real id is still validated + used when the user DOES want a specific
+	// persona (the case that actually matters, notify=channel).
+	useDefault := newAgent == "" || newAgent == "__default__"
+	if !useDefault {
+		if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
+			http.Error(w, "no such agent", http.StatusBadRequest)
+			return
+		}
 	}
 	m, found := GetEventMonitor(RootDB, user, name)
 	if !found {
 		http.Error(w, "no such monitor", http.StatusNotFound)
 		return
 	}
-	m.WakeAgent = newAgent
+	if useDefault {
+		m.WakeAgent = "" // deployment default channel agent
+	} else {
+		m.WakeAgent = newAgent
+	}
 	m.Broken = false
 	m.BrokenReason = ""
 	// Paused stays true on purpose — the user resumes explicitly.
@@ -1481,9 +1501,9 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			}
 			detail += " for changes"
 			if strings.TrimSpace(m.FormatScript) != "" {
-				// A format_script that emits nothing silently suppresses every
-				// alert (advances baseline, never fires). Flag it so a
-				// "updates-but-never-fires" watcher is obvious.
+				// A format_script only suppresses now when it emits the explicit
+				// SKIP sentinel; empty output fails open to the built-in diff. Flag
+				// its presence so a custom-formatted watcher is still visible here.
 				detail += " [format_script]"
 			}
 		case EventKindWebhook:

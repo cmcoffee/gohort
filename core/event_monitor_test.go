@@ -161,3 +161,21 @@ func TestExecuteEventPollFiresAndDebounces(t *testing.T) {
 		t.Fatalf("expected a wake on the next onset after re-arm, got %d", len(wakes))
 	}
 }
+
+// isSkipSentinel: only an EXPLICIT skip token suppresses now. Empty (the old
+// silent-suppress default) must NOT be treated as skip — it fails open to the
+// built-in summary instead, so a broken script can't quietly eat a change.
+func TestIsSkipSentinel(t *testing.T) {
+	skip := []string{"SKIP", "skip", " Skip \n", `{"skip":true}`, `{"skip": true}`}
+	for _, s := range skip {
+		if !isSkipSentinel(s) {
+			t.Errorf("isSkipSentinel(%q) = false, want true", s)
+		}
+	}
+	deliver := []string{"", "   ", "\n", "SouthPawn joined", "skipper", `{"skip":false}`, `{"other":true}`, "no", "0"}
+	for _, s := range deliver {
+		if isSkipSentinel(s) {
+			t.Errorf("isSkipSentinel(%q) = true, want false (must deliver, not suppress)", s)
+		}
+	}
+}
