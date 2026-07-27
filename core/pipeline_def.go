@@ -182,6 +182,22 @@ type PipelineStage struct {
 	// branch, false falls through to the next stage.
 	When string `json:"when,omitempty"`
 
+	// Model picks the LLM tier a worker stage runs on: "" or "worker"
+	// (default, the local/primary tier) or "lead" (the precision tier).
+	// The declarative equivalent of the RouteStage keys compiled apps
+	// register — a pipeline's decompose and judge stages want the
+	// stronger model while its transforms do not, and paying lead rates
+	// for every stage is how a cheap pipeline stops being cheap.
+	//
+	// Applies to kind="worker"/"synthesize" and to a worker-mode
+	// fanout. NOT valid on an agent stage (the dispatched agent's own
+	// configuration decides its tier), nor on branch (no LLM call) or
+	// loop (its body stages carry their own).
+	//
+	// Falls back to worker when no separate lead is configured, the
+	// same as every other lead call.
+	Model string `json:"model,omitempty"`
+
 	// SkipTo is where a taken branch goes: the name of a LATER stage in
 	// the same list. Empty means end the pipeline, returning whatever
 	// the last stage produced.
@@ -331,6 +347,9 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 		} else if s.When != "" || s.SkipTo != "" {
 			return Error("stage " + s.Name + ": when/skip_to are only valid on kind=branch")
 		}
+		if err := validateStageModel(s); err != nil {
+			return err
+		}
 		for _, ref := range stageRefs(s.Prompt) {
 			if err := checkStageRef(s.Name, "prompt", ref, done); err != nil {
 				return err
@@ -407,6 +426,37 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 		if _, outer := done[name]; outer {
 			return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop — its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
 		}
+	}
+	return nil
+}
+
+// validateStageModel checks the per-stage tier: a closed set, and only
+// on the kinds that actually make a worker call. Rejecting it elsewhere
+// rather than ignoring it is the point — a tier silently dropped on an
+// agent stage would read as "I asked for lead and got worker", which is
+// indistinguishable from a routing bug.
+func validateStageModel(s PipelineStage) error {
+	tier := strings.ToLower(strings.TrimSpace(s.Model))
+	if tier == "" {
+		return nil
+	}
+	if tier != "worker" && tier != "lead" {
+		return Error("stage " + s.Name + ": model must be \"worker\" or \"lead\", got " + strconv.Quote(s.Model))
+	}
+	switch s.Kind {
+	case StageWorker, StageSynthesize, "":
+		return nil
+	case StageFanout:
+		if strings.TrimSpace(s.Agent) != "" {
+			return Error("stage " + s.Name + ": model does not apply to a fanout that dispatches to an agent — the agent's own configuration decides its tier")
+		}
+		return nil
+	case StageAgent:
+		return Error("stage " + s.Name + ": model does not apply to an agent stage — the dispatched agent's own configuration decides its tier")
+	case StageBranch:
+		return Error("stage " + s.Name + ": a branch makes no LLM call, so model does not apply")
+	case StageLoop:
+		return Error("stage " + s.Name + ": set model on the loop's BODY stages, not the loop itself")
 	}
 	return nil
 }

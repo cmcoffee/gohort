@@ -86,3 +86,22 @@ func TestParsePipelineStages_BranchRoundTrip(t *testing.T) {
 		t.Errorf("parsed branch should validate: %v", err)
 	}
 }
+
+func TestParsePipelineStages_ModelTierRoundTrip(t *testing.T) {
+	got, err := parsePipelineStages([]any{
+		map[string]any{"name": "plan", "prompt": "decompose", "model": "LEAD"},
+		map[string]any{"name": "note", "prompt": "transform"},
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if got[0].Model != "lead" {
+		t.Errorf("model = %q, want normalized \"lead\"", got[0].Model)
+	}
+	if got[1].Model != "" {
+		t.Errorf("unset model should stay empty, got %q", got[1].Model)
+	}
+	if err := (PipelineDef{Name: "t", Stages: got}).Validate(); err != nil {
+		t.Errorf("parsed tiers should validate: %v", err)
+	}
+}

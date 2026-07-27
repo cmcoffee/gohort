@@ -270,9 +270,29 @@ Control flow lives in `pipelineRun.runList`, not `runStage` — only the walk ca
 skip ahead or end the run, and keeping `runStage` as "execute one stage" is what
 lets a loop body reuse it unchanged.
 
+## Follow-on: per-stage model tier (SHIPPED v0.5.556)
+
+`model: "worker"` (default) or `"lead"` — the declarative equivalent of the
+`RouteStage` keys compiled apps register. A pipeline's decompose and judge
+stages want the stronger model; its transforms do not, and paying lead rates on
+every stage is how a cheap pipeline stops being cheap.
+
+Wired through **both** worker paths — `LeadChat` vs `WorkerChat` on the
+tool-less path, `AgentLoopConfig.Tier` on the tool-equipped one — and a
+worker-mode fanout passes its tier down to every branch. `LeadChat` already
+degrades to worker when no separate lead is configured, so no availability check
+is needed.
+
+**Rejected rather than ignored** on the kinds it can't apply to: an agent stage
+(the dispatched agent's own config decides), a branch (no LLM call), the loop
+itself (set it on the body stages), and an agent-dispatching fanout. A tier
+silently dropped would read as "I asked for lead and got worker" — indis-
+tinguishable from a routing bug, and exactly the silent-drop class this codebase
+keeps producing.
+
 ## Out of scope
 
-A `tool` stage kind, per-stage model tier, nested field addressing
+A `tool` stage kind, nested field addressing
 (`{stage:plan.calcs.0.expr}`), and streaming a structured stage. Each is a
 separate change on top of this one.
 

@@ -248,8 +248,12 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			}
 			// JSON mode only helps the tool-less path — see runWorkerStage.
 			jsonMode := len(stage.Output) > 0
+			tier := stageTier(stage)
+			if tier == LEAD {
+				kindLabel += " model=lead"
+			}
 			call = func(p string) (string, error) {
-				return T.runWorkerStage(ctx, p, stageTools, think, jsonMode)
+				return T.runWorkerStage(ctx, p, stageTools, think, jsonMode, tier)
 			}
 		case StageAgent:
 			if dispatch == nil {
@@ -564,14 +568,20 @@ func renderFieldValue(v any) string {
 // supported across backends, and a tool-equipped structured stage has
 // the prompt contract, DecodeJSON's tolerance, and the repair retry to
 // fall back on — three softer mechanisms beat one that may 400.
-func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []AgentToolDef, think, jsonMode bool) (string, error) {
+func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []AgentToolDef, think, jsonMode bool, tier LLMTier) (string, error) {
 	if len(tools) == 0 {
 		// Cheap path — pure LLM transform.
 		opts := []ChatOption{WithThink(think)}
 		if jsonMode {
 			opts = append(opts, WithJSONMode())
 		}
-		resp, err := T.WorkerChat(ctx, []Message{{Role: "user", Content: prompt}}, opts...)
+		chat := T.WorkerChat
+		if tier == LEAD {
+			// LeadChat already degrades to worker when no separate lead
+			// is configured, so this needs no availability check.
+			chat = T.LeadChat
+		}
+		resp, err := chat(ctx, []Message{{Role: "user", Content: prompt}}, opts...)
 		if err != nil {
 			return "", err
 		}
@@ -586,6 +596,7 @@ func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []Age
 	// tool calls since pipelines run un-attended.
 	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: prompt}}, AgentLoopConfig{
 		Tools:     tools,
+		Tier:      tier,
 		MaxRounds: pipelineStageMaxRounds,
 		Confirm:   func(name, args string) bool { return true },
 		ChatOptions: []ChatOption{
@@ -600,6 +611,16 @@ func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []Age
 		return "", Error("worker returned no response")
 	}
 	return resp.Content, nil
+}
+
+// stageTier resolves a stage's declared model tier. Empty or "worker"
+// is WORKER; only an explicit "lead" escalates. Validate already
+// rejected anything else and every kind this can't apply to.
+func stageTier(stage PipelineStage) LLMTier {
+	if strings.EqualFold(strings.TrimSpace(stage.Model), "lead") {
+		return LEAD
+	}
+	return WORKER
 }
 
 // pipelineStageMaxRounds caps how many rounds a tool-equipped worker
@@ -652,6 +673,7 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 	if stage.Think != nil {
 		think = *stage.Think
 	}
+	tier := stageTier(stage)
 	agent := strings.TrimSpace(stage.Agent)
 
 	results := make([]string, len(items))
@@ -678,7 +700,7 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 				// No jsonMode: a fanout branch produces free text that
 				// gets joined into the labeled block, not a declared
 				// shape (Validate rejects Output on kind=fanout).
-				out, err = T.runWorkerStage(ctx, p, stageTools, think, false)
+				out, err = T.runWorkerStage(ctx, p, stageTools, think, false, tier)
 			}
 			if err != nil {
 				results[idx] = fmt.Sprintf("(branch error: %v)", err)
