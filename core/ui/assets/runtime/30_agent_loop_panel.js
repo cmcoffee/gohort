@@ -832,11 +832,63 @@
         var url = substituteExtras(cfg.diagnostics_url).replace('{session}', encodeURIComponent(sid));
         fetchJSON(url).then(function(list) {
           if (!Array.isArray(list)) list = [];
+          // Copy the trail as plain text so it can be forwarded to whoever
+          // is debugging the framework. The entries are timestamps, kind
+          // slugs, and framework-authored sentences — no tool arguments —
+          // so there is nothing here to redact. Text is already in hand
+          // (fetched above), so this writes synchronously inside the click
+          // and keeps the user gesture intact; the promise-valued
+          // ClipboardItem dance elsewhere in this file is only needed when
+          // a fetch sits between the click and the write.
+          function diagAsText() {
+            var lines = ['Session diagnostics — ' + list.length + ' entr' + (list.length === 1 ? 'y' : 'ies')];
+            list.forEach(function(e) {
+              var when = '';
+              try { when = e.at ? new Date(e.at).toISOString() : ''; } catch (_) {}
+              lines.push('', when + (e.kind ? ' · ' + e.kind : ''), e.detail || '');
+            });
+            return lines.join('\n');
+          }
+          function copyDiag(btn) {
+            var text = diagAsText();
+            var was = btn.textContent;
+            function done() { btn.textContent = 'Copied'; setTimeout(function() { btn.textContent = was; }, 1500); }
+            function fail() { showToast('Clipboard unavailable — select the text and copy manually.'); }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).then(done).catch(function() { hostCopy(text, done, fail); });
+              return;
+            }
+            hostCopy(text, done, fail);
+          }
+          function hostCopy(text, done, fail) {
+            if (typeof window.__uiClipboardImpl === 'function') {
+              window.__uiClipboardImpl(text).then(done).catch(function() { legacyCopy(text, done, fail); });
+              return;
+            }
+            legacyCopy(text, done, fail);
+          }
+          function legacyCopy(text, done, fail) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch (_) {}
+            document.body.removeChild(ta);
+            if (ok) { done(); } else { fail(); }
+          }
+          var modalActions = [{label: 'Close', primary: true}];
+          if (list.length) {
+            // onClick means the modal stays open — copying shouldn't dismiss
+            // the thing you're reading.
+            modalActions.unshift({label: 'Copy', onClick: function(api, btn) { copyDiag(btn); }});
+          }
           window.uiOpenModal({
             title: 'Session diagnostics',
             subtitle: 'Framework decisions in this conversation — content suppressed, discarded, or retried on your behalf. Newest first.',
             width: 'min(640px, 94vw)',
-            actions: [{label: 'Close'}],
+            actions: modalActions,
             mount: function(body) {
               if (!list.length) {
                 body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.85rem'},

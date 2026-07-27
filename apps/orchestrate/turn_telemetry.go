@@ -140,6 +140,66 @@ func (tt *turnTelemetry) toolCallSummary(label string) string {
 	return out
 }
 
+// Churn thresholds — see churnDiag.
+const (
+	// A tool called with IDENTICAL args this many times has definitively
+	// made no progress. Sits above the loop-guard's own repeat limits so
+	// this only fires on churn the guards didn't already stop.
+	churnDupLimit = 3
+	// A single tool dominating a turn is only churn WITH errors: eight
+	// distinct web_search calls is a research turn, eight failing
+	// tool_def calls is a fight.
+	churnCallLimit = 8
+)
+
+// churnDiag reports a turn that spent its tool calls without moving, as
+// a (kind, detail) breadcrumb for the session diagnostics trail. Returns
+// ok=false for a healthy turn.
+//
+// This is the detector for the shape that destroyed a live toolbox:
+// seventeen tool_def calls in one turn, five of them with duplicate
+// args, each reporting success, ending in a delete. The telemetry
+// already computed every number needed to see it — the counts went to a
+// log line the operator never reads, while the ⚠ trail that exists for
+// exactly this said nothing. No new bookkeeping, just a second consumer
+// of numbers already in hand.
+//
+// Deliberately tool-agnostic: it knows nothing about tool_def, so the
+// same shape gets caught whichever tool a turn starts fighting with.
+func (tt *turnTelemetry) churnDiag() (kind, detail string, ok bool) {
+	if tt == nil {
+		return "", "", false
+	}
+	// Same tool, same args, repeatedly — the strongest signal, so it wins
+	// when both fire. Report the worst offender.
+	worstDup, worstDupCount := "", 0
+	for fp, count := range tt.dupFingerprint {
+		if count > worstDupCount {
+			worstDup, worstDupCount = tt.dupExemplar[fp], count
+		}
+	}
+	if worstDupCount >= churnDupLimit {
+		return "tool_churn", fmt.Sprintf(
+			"%s was called %d times with identical arguments in one turn — the same call repeated without making progress. If it kept reporting success, the change may not be landing.",
+			worstDup, worstDupCount), true
+	}
+	// High volume on one tool, with failures.
+	if tt.toolErrorCount > 0 {
+		worstTool, worstCount := "", 0
+		for name, c := range tt.toolCallCounts {
+			if c > worstCount {
+				worstTool, worstCount = name, c
+			}
+		}
+		if worstCount >= churnCallLimit {
+			return "tool_churn", fmt.Sprintf(
+				"%s was called %d times in one turn with %d tool error(s) — a sustained fight with one tool rather than progress.",
+				worstTool, worstCount, tt.toolErrorCount), true
+		}
+	}
+	return "", "", false
+}
+
 // canonicalArgsHash returns a short stable fingerprint for a tool
 // call's args map. Used to detect "same tool, same args" repetitions
 // across a turn (the plan_set fixation / re-search drift pattern).

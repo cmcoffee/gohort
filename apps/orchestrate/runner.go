@@ -5285,6 +5285,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		if line := telem.toolCallSummary(label); line != "" {
 			Log("%s", line)
 		}
+		// Churn is a user-visible outcome, not just a log line — route it
+		// to the ⚠ trail so the person who saw the turn go wrong can see
+		// WHY without reading server logs.
+		if kind, detail, ok := telem.churnDiag(); ok {
+			t.turnDiag(kind, detail)
+		}
 	}()
 
 	// Assembly order matters — LLMs weight more-recent prompt
@@ -6797,6 +6803,12 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		Log("%s", telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
 		if line := telem.toolCallSummary(label); line != "" {
 			Log("%s", line)
+		}
+		// Churn is a user-visible outcome, not just a log line — route it
+		// to the ⚠ trail so the person who saw the turn go wrong can see
+		// WHY without reading server logs.
+		if kind, detail, ok := telem.churnDiag(); ok {
+			t.turnDiag(kind, detail)
 		}
 	}()
 
