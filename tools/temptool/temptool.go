@@ -1987,19 +1987,47 @@ var actionOnlyFields = map[string]string{
 // stop a real, expensive retry loop over param-descriptor shape. What it
 // cannot do is repair a key that names no parameter at all, so that case
 // gets a pointer to the right shape instead of a silent guess.
-func checkMisplacedActionField(k string, val any) error {
-	if what, bad := actionOnlyFields[k]; bad {
-		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params — it is nested one level too deep. Move it out alongside params: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}", k, what, k)
-	}
-	// "required" is a plausible param name on a real API, so the name
-	// alone can't decide. The action's required list is an ARRAY and a
-	// param descriptor never is, so the shape disambiguates.
-	if k == "required" {
-		if _, isList := val.([]any); isList {
-			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params — move it out alongside params: {name: …, params: {…}, required: ["a","b"]}`)
+func checkMisplacedActionFields(loose map[string]any) error {
+	var bad []string
+	for k, val := range loose {
+		if _, isField := actionOnlyFields[k]; isField {
+			bad = append(bad, k)
+			continue
+		}
+		// "required" is a plausible param name on a real API, so the name
+		// alone can't decide. The action's required list is an ARRAY and a
+		// param descriptor never is, so the shape disambiguates.
+		if k == "required" {
+			if _, isList := val.([]any); isList {
+				bad = append(bad, k)
+			}
 		}
 	}
-	return nil
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad) // deterministic: the same input always names them in the same order
+	if len(bad) == 1 {
+		k := bad[0]
+		if k == "required" {
+			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params — move it out alongside params: {name: …, params: {…}, required: ["a","b"]}`)
+		}
+		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params — it is nested one level too deep. Move it out alongside params: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}", k, actionOnlyFields[k], k)
+	}
+	return fmt.Errorf("%s are fields of the tool/action itself, not its params — they are nested one level too deep. Move ALL of them out alongside params in one edit: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}",
+		quotedList(bad), strings.Join(bad, ": …, "))
+}
+
+// quotedList renders names as `"a", "b" and "c"` for an error sentence.
+func quotedList(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	if len(q) == 1 {
+		return q[0]
+	}
+	return strings.Join(q[:len(q)-1], ", ") + " and " + q[len(q)-1]
 }
 
 func parseParamsArg(v any) (map[string]ToolParam, error) {
@@ -2042,10 +2070,16 @@ func parseParamsArg(v any) (map[string]ToolParam, error) {
 	if err := json.Unmarshal(b, &loose); err != nil {
 		return nil, fmt.Errorf("params must be an object mapping each name to {type, description} (a type or description string, or true, also works) — could not read it as an object: %w", err)
 	}
+	// Report EVERY misplaced field at once, sorted. Reporting the first
+	// offender meant a caller with three of them needed three round
+	// trips — and because this ranges a map, which one surfaced was
+	// random each time, so the fix looked like moving goalposts.
+	// Observed live: three rejections in a row, after which the model
+	// gave up on update and deleted the tool instead.
+	if err := checkMisplacedActionFields(loose); err != nil {
+		return nil, err
+	}
 	for k, val := range loose {
-		if err := checkMisplacedActionField(k, val); err != nil {
-			return nil, err
-		}
 		if !validToolName(k) {
 			return nil, fmt.Errorf("param name %q must be lowercase letters/digits/underscores only", k)
 		}

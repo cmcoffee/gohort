@@ -134,8 +134,12 @@ func BuildToolDef() *GroupedTool {
 		// The created tool, when invoked, carries its own caps (CapExecute
 		// for shell mode, CapNetwork for api mode) and is filtered at
 		// dispatch time. So this action itself needs no caps to be visible.
-		Caps:         nil,
-		NeedsConfirm: true,
+		Caps: nil,
+		// Additive and reversible: a wrong tool is fixed with update or
+		// removed with delete, and authoring is the whole point of the
+		// agents that hold this. Gating every creation would put a prompt
+		// in front of the most common authoring move in the system.
+		NeedsConfirm: false,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
@@ -215,8 +219,15 @@ func BuildToolDef() *GroupedTool {
 		},
 		Required: []string{"name"},
 		// Deletion is registry CRUD — no caps required.
-		Caps:         nil,
-		NeedsConfirm: false,
+		Caps: nil,
+		// The one action here that destroys work. Deleting takes the
+		// tool's actions, its credential wiring, and its admin-approved
+		// status with it, and a rebuild routinely misses a detail the
+		// original had right. Observed live: three rejected updates, then
+		// a delete that threw away a working admin-approved toolbox.
+		// (create was marked confirm and delete was not — exactly
+		// backwards.)
+		NeedsConfirm: true,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")

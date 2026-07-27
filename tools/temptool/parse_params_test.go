@@ -134,6 +134,43 @@ func TestParseParamsArgRejectsMisplacedActionFields(t *testing.T) {
 // edge: "description", "method", and "name" are real parameter names on
 // real APIs, and "required" as a param DESCRIPTOR (not a list) is a
 // different thing from the action's required list. None may be rejected.
+// TestParseParamsArgReportsEveryMisplacedField pins the fix for the
+// three-round-trip grind: a caller with several misplaced fields is told
+// about ALL of them in one error, in a stable order. Reporting the first
+// offender out of a map made the sequence look random, and the model
+// gave up on update and deleted the tool instead.
+func TestParseParamsArgReportsEveryMisplacedField(t *testing.T) {
+	in := map[string]any{
+		"content":       map[string]any{"type": "string", "description": "Reply content"},
+		"body_template": `{"content": {content}}`,
+		"response_pipe": "jq -c '.'",
+		"required":      []any{"content"},
+	}
+	_, err := parseParamsArg(in)
+	if err == nil {
+		t.Fatal("expected a rejection")
+	}
+	msg := err.Error()
+	for _, want := range []string{"body_template", "required", "response_pipe"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should name every offender, missing %q: %s", want, msg)
+		}
+	}
+	// Stable order across runs, despite ranging a map.
+	for i := 0; i < 20; i++ {
+		again, _ := parseParamsArg(in)
+		_ = again
+		e2 := func() string { _, e := parseParamsArg(in); return e.Error() }()
+		if e2 != msg {
+			t.Fatalf("error text is not deterministic:\n%s\n%s", msg, e2)
+		}
+	}
+	// One edit, not three: the message has to say so.
+	if !strings.Contains(msg, "in one edit") {
+		t.Errorf("message should ask for a single combined fix: %s", msg)
+	}
+}
+
 func TestParseParamsArgKeepsPlausibleParamNames(t *testing.T) {
 	ok := map[string]any{
 		"description": map[string]any{"type": "string", "description": "Issue description"},

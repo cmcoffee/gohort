@@ -321,9 +321,23 @@ type AgentToolDef struct {
 	Tool    Tool
 	Handler ToolHandlerFunc
 
-	// NeedsConfirm indicates that this tool requires user approval before
-	// execution. When true, the agent loop will display the tool name and
-	// arguments and prompt the user to allow or deny the call.
+	// NeedsConfirm marks a call worth stopping on before it executes.
+	// What that COSTS depends on who supplied AgentLoopConfig.Confirm,
+	// and the two live callers differ:
+	//
+	//   - CLI (defaultConfirm): a real terminal prompt — allow or deny.
+	//   - Web (orchestrate's confirmFuncFor): escalates ONLY when the
+	//     call resolves to a credential marked RequiresConfirm, and
+	//     otherwise returns true. So on the dashboard this flag does NOT
+	//     by itself put a prompt in front of the user.
+	//
+	// It has a second, always-live effect: it selects which tools get the
+	// pre-action guardrail check (GuardHookPreAction). That is a real
+	// function, so the flag is not decoration — but do not read it as
+	// "the user will be asked" on the web path, because today they won't.
+	// Wiring a per-call web confirm needs per-ACTION granularity on
+	// grouped tools (GroupedTool.NeedsConfirm ORs its actions together,
+	// so honoring it as-is would prompt on reads too).
 	NeedsConfirm bool
 
 	// SingleFirePerBatch indicates that only ONE call to this tool may run
