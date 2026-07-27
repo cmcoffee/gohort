@@ -258,6 +258,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
 							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_broken"},
+							{Label: "Card to…", Method: "POST", URL: "api/console/monitors/card-to", PickerSource: "api/console/card-to-options", PickerTitle: "Where should the trace card land? (the alert still goes to the chat)", OnlyIf: "_external"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
 						}},
 						// Cards layout so each recurring task shows its cadence, fire
