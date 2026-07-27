@@ -88,7 +88,8 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 		inherited: inheritedTools,
 		outputs:   make(map[string]stageOutput, len(def.Stages)),
 	}
-	return r.runList(ctx, def.Stages, input, "Stage")
+	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
+	return out, err
 }
 
 // pipelineRun is one execution of a pipeline definition — the state every
@@ -108,22 +109,74 @@ type pipelineRun struct {
 // output. label prefixes the progress lines ("Stage" at the top level,
 // "  Stage" inside a loop pass) so the activity pane reads as a tree.
 // extra carries per-pass template values such as {iteration}.
-func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev, label string, extra ...map[string]string) (string, error) {
+// A branch is control flow, so it lives HERE rather than in runStage:
+// only the walk can skip ahead or end the run. runStage stays "execute
+// one stage", which is what lets a loop body reuse it unchanged.
+func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev, label string, extra ...map[string]string) (string, bool, error) {
 	var vars map[string]string
 	if len(extra) > 0 {
 		vars = extra[0]
 	}
-	for i, stage := range stages {
+	for i := 0; i < len(stages); i++ {
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return "", false, ctx.Err()
+		}
+		stage := stages[i]
+		if stage.Kind == StageBranch {
+			taken := r.branchTaken(stage)
+			if !taken {
+				continue
+			}
+			if strings.TrimSpace(stage.SkipTo) == "" {
+				if r.status != nil {
+					r.status(fmt.Sprintf("%s: %s is true — ending the pipeline here", stage.Name, stage.When))
+				}
+				return prev, true, nil
+			}
+			target := indexOfStage(stages, stage.SkipTo)
+			if target < 0 {
+				// Validate proved this exists; defensive only.
+				return "", false, Error("stage " + stage.Name + ": skip_to target " + stage.SkipTo + " not found")
+			}
+			if r.status != nil {
+				r.status(fmt.Sprintf("%s: %s is true — skipping ahead to %s", stage.Name, stage.When, stage.SkipTo))
+			}
+			i = target - 1 // the loop's own increment lands on the target
+			continue
 		}
 		out, err := r.runStage(ctx, stage, prev, fmt.Sprintf("%s %d/%d: %s", label, i+1, len(stages), stage.Name), vars)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		prev = out
 	}
-	return prev, nil
+	return prev, false, nil
+}
+
+// branchTaken evaluates a branch's condition. A missing or non-bool
+// value reads as FALSE — fall through and run the stages. That is the
+// safe direction: the alternative is skipping real work because a field
+// didn't parse, and Validate already proved the reference is a declared
+// bool, so this only covers a stage that never ran (skipped by an
+// earlier branch).
+func (r *pipelineRun) branchTaken(stage PipelineStage) bool {
+	name, field := SplitStageRef(stage.When)
+	src, ok := r.outputs[name]
+	if !ok {
+		return false
+	}
+	v, _ := src.Fields[field].(bool)
+	return v
+}
+
+// indexOfStage returns the position of a stage by name, or -1.
+func indexOfStage(stages []PipelineStage, name string) int {
+	for i, s := range stages {
+		if s.Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // runStage executes ONE stage: resolve its tools and prompt, run it,
@@ -681,7 +734,10 @@ func (r *pipelineRun) runLoopStage(ctx context.Context, stage PipelineStage, pre
 			"{iteration}":  strconv.Itoa(i),
 			"{iterations}": strconv.Itoa(stage.Count),
 		}
-		out, err := r.runList(ctx, stage.Body, carry, "  "+stage.Name+" pass "+strconv.Itoa(i), vars)
+		// A body branch can only skip WITHIN the pass (Validate rejects
+		// a pipeline-ending branch inside a loop), so the stop flag is
+		// never set here.
+		out, _, err := r.runList(ctx, stage.Body, carry, "  "+stage.Name+" pass "+strconv.Itoa(i), vars)
 		if err != nil {
 			return "", err
 		}

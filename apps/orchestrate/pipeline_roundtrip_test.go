@@ -65,3 +65,24 @@ func TestParsePipelineStages_LoopCountAsString(t *testing.T) {
 		t.Errorf("count = %d, want 2", got[0].Count)
 	}
 }
+
+func TestParsePipelineStages_BranchRoundTrip(t *testing.T) {
+	got, err := parsePipelineStages([]any{
+		map[string]any{"name": "frame", "prompt": "screen it",
+			"output": []any{map[string]any{"name": "rejected", "type": "bool", "required": true}}},
+		map[string]any{"name": "gate", "kind": "branch",
+			"when": "frame.rejected", "skip_to": "report"},
+		map[string]any{"name": "work", "prompt": "do it"},
+		map[string]any{"name": "report", "prompt": "wrap up"},
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	gate := got[1]
+	if gate.Kind != StageBranch || gate.When != "frame.rejected" || gate.SkipTo != "report" {
+		t.Errorf("branch fields dropped: %+v", gate)
+	}
+	if err := (PipelineDef{Name: "t", Stages: got}).Validate(); err != nil {
+		t.Errorf("parsed branch should validate: %v", err)
+	}
+}

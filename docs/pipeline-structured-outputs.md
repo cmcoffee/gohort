@@ -237,9 +237,42 @@ Implementation note: the per-stage execution was extracted from
 path the top level does. The alternative was a second copy of the kind switch,
 which would have drifted.
 
+## Follow-on: `branch` (SHIPPED v0.5.555)
+
+The other primitive that only works because a stage can declare a shape: a
+branch reads a **bool field** and takes an action. It is the one stage that
+makes no LLM call, so it costs nothing.
+
+| Field | Meaning |
+|---|---|
+| `when` | required `NAME.field` bool on an EARLIER stage |
+| `skip_to` | optional LATER stage name; empty = end the pipeline |
+
+Ending returns the last stage's output, so a screening stage's rejection *is*
+the pipeline's answer without a stage to restate it.
+
+**Jumps are forward-only.** A backward jump is iteration, and iteration belongs
+to `loop` where `count` bounds it — allowing one here would reintroduce
+unbounded looping past the ceiling loops exist to enforce. Rejected at save
+time, along with a `skip_to` naming an unknown stage or the branch itself.
+
+**Inside a loop body a branch may only skip within the pass.** Ending the
+*pipeline* from inside a pass is ambiguous (stop the pass, the loop, or the
+run?), and the loop already has `until` for stopping early — so that case is
+rejected with an error pointing at `until`.
+
+**A missing source reads as FALSE** — fall through and run the stages. Validate
+already proved the reference is a declared bool, so this only covers a stage
+skipped by an *earlier* branch; falling through risks doing redundant work,
+while the other direction risks silently skipping real work.
+
+Control flow lives in `pipelineRun.runList`, not `runStage` — only the walk can
+skip ahead or end the run, and keeping `runStage` as "execute one stage" is what
+lets a loop body reuse it unchanged.
+
 ## Out of scope
 
-`branch`, a `tool` stage kind, per-stage model tier, nested field addressing
+A `tool` stage kind, per-stage model tier, nested field addressing
 (`{stage:plan.calcs.0.expr}`), and streaming a structured stage. Each is a
 separate change on top of this one.
 

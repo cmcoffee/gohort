@@ -72,6 +72,13 @@ const (
 	// whole point, and it's why the two can't be collapsed into one
 	// primitive.
 	StageLoop PipelineStageKind = "loop"
+
+	// StageBranch is the only stage that makes no LLM call: it reads a
+	// bool field an earlier stage declared and, when true, either ends
+	// the pipeline or skips forward past stages that no longer apply.
+	// The two shapes it exists for are "the input was rejected, stop"
+	// and "this was supplied already, skip the stage that derives it".
+	StageBranch PipelineStageKind = "branch"
 )
 
 // loopMaxIterations bounds any single loop stage. A pipeline is
@@ -169,6 +176,21 @@ type PipelineStage struct {
 	// block the way fanout does. Refinement loops want last; a loop
 	// building a transcript wants all.
 	Collect string `json:"collect,omitempty"`
+
+	// When is a kind="branch" stage's condition: a "NAME.field"
+	// reference to a bool an EARLIER stage declared. True takes the
+	// branch, false falls through to the next stage.
+	When string `json:"when,omitempty"`
+
+	// SkipTo is where a taken branch goes: the name of a LATER stage in
+	// the same list. Empty means end the pipeline, returning whatever
+	// the last stage produced.
+	//
+	// Forward-only, deliberately. A backward jump is iteration, and
+	// iteration belongs to kind="loop" where Count bounds it — allowing
+	// one here would reintroduce unbounded looping through the back
+	// door, past the ceiling loops exist to enforce.
+	SkipTo string `json:"skip_to,omitempty"`
 }
 
 // PipelineFieldType is the declared type of a structured output field.
@@ -302,6 +324,13 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 				return err
 			}
 		}
+		if s.Kind == StageBranch {
+			if err := validateBranchStage(s, stages, i, done, inLoop); err != nil {
+				return err
+			}
+		} else if s.When != "" || s.SkipTo != "" {
+			return Error("stage " + s.Name + ": when/skip_to are only valid on kind=branch")
+		}
 		for _, ref := range stageRefs(s.Prompt) {
 			if err := checkStageRef(s.Name, "prompt", ref, done); err != nil {
 				return err
@@ -380,6 +409,50 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 		}
 	}
 	return nil
+}
+
+// validateBranchStage checks a kind="branch" stage. stages/at locate it
+// in its own list, which is what makes the forward-only jump checkable
+// at save time rather than at run time.
+func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done map[string]map[string]PipelineFieldType, inLoop bool) error {
+	if len(s.Output) > 0 || len(s.Body) > 0 {
+		return Error("stage " + s.Name + ": a branch makes no LLM call, so it has no output or body — it only reads an earlier stage's field")
+	}
+	ref := strings.TrimSpace(s.When)
+	if ref == "" {
+		return Error("stage " + s.Name + " is kind=branch but has no when (a \"NAME.field\" bool reference to an earlier stage)")
+	}
+	name, field := SplitStageRef(ref)
+	if field == "" {
+		return Error("stage " + s.Name + ": when must name a BOOL FIELD (e.g. \"frame.rejected\"), not just a stage")
+	}
+	if err := checkStageRef(s.Name, "when", ref, done); err != nil {
+		return err
+	}
+	if t := done[name][field]; t != FieldBool {
+		return Error("stage " + s.Name + ": when references " + ref + ", which is declared " + string(t) + ", not bool")
+	}
+	target := strings.TrimSpace(s.SkipTo)
+	if target == "" {
+		// Ending the pipeline from inside a loop body is ambiguous — stop
+		// the pass, the loop, or the whole run? The loop already has a
+		// purpose-built early exit, so point the author at it rather than
+		// inventing an answer.
+		if inLoop {
+			return Error("stage " + s.Name + ": a branch inside a loop body cannot end the pipeline — use the loop's until to stop early, or set skip_to to jump within the body")
+		}
+		return nil
+	}
+	for i, other := range stages {
+		if other.Name != target {
+			continue
+		}
+		if i <= at {
+			return Error("stage " + s.Name + ": skip_to " + target + " points backwards — a branch only jumps FORWARD. Repeating work is what kind=loop is for, where count bounds it.")
+		}
+		return nil
+	}
+	return Error("stage " + s.Name + ": skip_to names " + target + ", which is not a later stage in the same list")
 }
 
 // checkStageRef verifies one "NAME" or "NAME.field" reference resolves
