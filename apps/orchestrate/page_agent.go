@@ -274,8 +274,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Shows a Private toggle on the public chat — drops network tools per turn. Off for Research-style agents that need network."},
 			ui.FormField{Field: "force_private", Type: "toggle", Label: "Force Private mode (network locked off)",
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
-			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
-				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
 			// (Dispatch policy lives in the "Cortex & delegation" section above,
 			// next to the conductor-tools toggle — the two delegation controls
 			// were split across sections and read as one switch when they are
@@ -288,8 +286,11 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// the list this policy governs. They used to live inside the
 			// collapsed "Cortex & delegation" accordion, so that card pointed
 			// at a control the reader could not see.
-			ui.FormField{Type: "header", Label: "Delegation — who this agent may call",
-				Help: "Governs agents(action=\"run\"). The target list below is only consulted in the two \"selected\" modes."},
+			ui.FormField{Type: "header", Label: "Delegation — who calls whom",
+				Help: "Both directions of agent-to-agent calling. Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy + the target list below, which is only consulted in the two \"selected\" modes)."},
+			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
+				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
+
 			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
 				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
 			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
