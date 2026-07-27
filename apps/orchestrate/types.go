@@ -596,16 +596,32 @@ type AgentRecord struct {
 	// edit the agent's prompt can edit its tools).
 	Tools []TempTool `json:"tools,omitempty"`
 
-	// IntakeForm is an optional list of fields the user fills before
-	// the FIRST turn of a new session. Empty list (the default) =
-	// normal chat input on session open. When non-empty, the chat
-	// surface shows the form instead of the text input; submitting
-	// packs the values into a markdown user message and proceeds
-	// with the normal turn flow. Subsequent turns in the same
-	// session use the regular input. Useful for agents whose work
-	// always starts from structured input (e.g. a marketing copy
-	// agent that needs company / product / audience / deadline up
-	// front).
+	// IntakeForm is an optional list of fields offered before the FIRST
+	// turn of a new session. Empty list (the default) = a plain empty
+	// chat on session open.
+	//
+	// The form is ADDITIVE, not a gate: it renders as a card in the
+	// empty conversation area and the normal composer stays live beside
+	// it, so the user can fill it in OR just type — same agent either
+	// way. Submitting packs the values into a markdown user message and
+	// proceeds with the normal turn flow; later turns use the regular
+	// input. (This corrects an older comment that said the form
+	// REPLACED the text input; setIntakeInputRowHidden was removed.)
+	//
+	// An ALL-BUTTON form is the "pick a starting point" shape: it
+	// renders with no submit button and each option self-submits, which
+	// makes it a router rather than a questionnaire.
+	//
+	// It has a second life on the dispatch path, where no form is
+	// rendered at all: dispatchBriefHint publishes the field labels
+	// (and a button field's options) into every caller's
+	// available-agents block, so a dispatching agent knows what a good
+	// brief for this agent contains.
+	//
+	// Useful both for agents whose work always starts from structured
+	// input (a marketing copy agent needing company / product /
+	// audience) and for agents with a few distinct entry points
+	// (Builder's agent / app / tool / pipeline).
 	IntakeForm IntakeFormSpec `json:"intake_form,omitempty"`
 
 	// GapCheck enables a post-plan structural-gap review pass. After

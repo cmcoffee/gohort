@@ -973,14 +973,24 @@ func dispatchBriefHint(a AgentRecord) string {
 	}
 	var parts []string
 	for _, f := range a.IntakeForm {
-		if f.Type == "button" {
-			continue
-		}
 		label := strings.TrimSpace(f.Label)
 		if label == "" {
 			label = strings.TrimSpace(f.Name)
 		}
 		if label == "" {
+			continue
+		}
+		if f.Type == "button" {
+			// A button is a router rather than something to type, so the
+			// human form self-submits on click. A CALLER composing a brief
+			// still has to state the choice, though, and the options ARE
+			// that choice — so render them instead of dropping the field.
+			// Skipping it meant a button-only form (the natural shape for
+			// "pick a starting point") published no brief guidance at all.
+			if len(f.Options) == 0 {
+				continue
+			}
+			parts = append(parts, label+" ("+strings.Join(f.Options, " | ")+")")
 			continue
 		}
 		if f.Type == "file" {

@@ -1271,6 +1271,34 @@ FINISH THE JOB: an api/toolbox tool isn't done until tool_def(action="test") pas
 			// forces Hidden=true on this ID so user shadow edits
 			// can't flip it.
 			Hidden: true,
+			// Starting points, not a gate. An all-button intake renders
+			// as "Pick a starting point" with no submit, and the chat
+			// composer stays live beside it — so "fix the moltbook reply
+			// body" is still a one-liner while an open-ended "build me
+			// something" gets a useful empty state instead of a blank box.
+			//
+			// The same options double as the dispatch brief hint
+			// (dispatchBriefHint), which is where they earn the most: a
+			// caller composing a brief for Builder is told to say WHICH
+			// of these it wants, and an under-specified brief is exactly
+			// how a delegated authoring run goes wrong.
+			//
+			// "Fix or change something" is here despite not being a
+			// build kind because it is the most common real request, and
+			// a menu of four build kinds would otherwise imply Builder
+			// only does new work.
+			IntakeForm: IntakeFormSpec{{
+				Name:  "start",
+				Label: "What do you want to build?",
+				Type:  "button",
+				Options: []string{
+					"An agent",
+					"An app",
+					"A tool",
+					"A pipeline",
+					"Fix or change something I already have",
+				},
+			}},
 		},
 		{
 			ID:          "seed-research",
