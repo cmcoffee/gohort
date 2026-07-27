@@ -249,19 +249,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_compaction", Type: "toggle", Label: "Disable rolling summary",
 				Help: "Off (default) summarizes older messages into a running summary; on drops them to the context-depth tail instead. Both stay bounded — this just chooses summarize-old vs forget-old."},
 
-			ui.FormField{Type: "header", Label: "Cortex & delegation", Collapsed: true,
-				Help: "Standing behaviors plus BOTH delegation controls: the conductor toolset (adds tools) and the Dispatch policy (governs agents(run) calls). They are independent — turning conductor tools off does not stop ordinary dispatch; \"Allow none\" does."},
+			ui.FormField{Type: "header", Label: "Cortex & capability", Collapsed: true,
+				Help: "Standing behaviors and capability GRANTS: whether the agent keeps a Cortex thread, plus the two toolsets it may hold — conductor (scheduling, monitors, delegate) and authoring (build agents, tools, apps). These add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it."},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
 				Help: "Gives the agent a persistent Cortex thread (its mind — the 🧠 row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Reached only from Agents. When published to the dashboard, granted users don't see the Cortex thread — they get ordinary chat sessions, each seeded read-only from the agent's standing awareness so it shows up already aware (publishing + granting access is the consent to share that). Publishable as long as the delegation & management tools (below) are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Conductor tools (scheduling, monitors, delegate)",
 				Help: "Grants the conductor toolset: the delegate tool + standing-agent scheduling + event-monitors + run-ledger + history-recall. This is DISTINCT from \"the fleet\" (the collection of all your agents — every agent is in that), and it is NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below (set it to \"Allow none\" to fully ground this agent). It does NOT stop the agent doing work itself; it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
 			ui.FormField{Field: "author", Type: "toggle", Label: "Authoring tools (build agents, tools, apps)",
 				Help: "Grants the full authoring toolset — the SAME catalog the Builder agent holds: survey (map what already exists), create/update/clone agents, tool_def, app_def, skill_def, the credential draft + probe tools, bridge/connector, and (when you own the agent, plus the conductor tools) scheduling/monitors to wire a built tool live. This is the de-silo of Builder: authoring is a capability any capable agent can hold, so it can BUILD new agents/tools/apps on the gohort framework the way Builder does — not just run pre-built ones. Independent of the conductor tools above. Like them, an authoring agent reaches owner-only endpoints, so it is never published publicly."},
-			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
-				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
-			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
-				Options: dispatchModeOptions(dispatchModeFirst),
-				Help:    "Which OTHER agents this one may call via agents(action=\"run\") — this governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all = any non-hidden agent (default). Only allow / Allow all except use the target list in the \"Dispatch target list\" section below. Allow none blocks all dispatch — the actual delegation kill switch. Same control as the in-chat Configure → Security & Access modal."},
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
 				Help: "Prefixes every message this agent sends over a messaging channel/bridge with its name — e.g. \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
 
@@ -288,6 +283,18 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// (Lock moved to the 🔒/🔓 icon in the top-right of the editor —
 			// toggled live via handleAgentLock, preserved across form saves.)
 
+			// Delegation sits LAST and uncollapsed on purpose: the fields
+			// render directly above the "Dispatch target list" card, which is
+			// the list this policy governs. They used to live inside the
+			// collapsed "Cortex & delegation" accordion, so that card pointed
+			// at a control the reader could not see.
+			ui.FormField{Type: "header", Label: "Delegation — who this agent may call",
+				Help: "Governs agents(action=\"run\"). The target list below is only consulted in the two \"selected\" modes."},
+			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
+				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
+			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
+				Options: dispatchModeOptions(dispatchModeFirst),
+				Help:    "Which OTHER agents this one may call via agents(action=\"run\") — this governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all = any non-hidden agent (default). Only allow / Allow all except use the target list in the \"Dispatch target list\" section below. Allow none blocks all dispatch — the actual delegation kill switch. Same control as the in-chat Configure → Security & Access modal."},
 			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
 				Help: "Optional structured input form + saved test cases."},
 			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
@@ -352,9 +359,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// adds clutter without a real use case. The parent already owns
 	// the routing decisions.
 	if id != "" && !subAgent {
+		// The subtitle names WHERE the policy lives and what it is set to
+		// right now. It used to say "the Dispatch policy above", which
+		// pointed at a select inside the collapsed "Cortex & delegation"
+		// accordion — a different widget, folded shut by default — so the
+		// card referenced a control the reader could not see.
 		sections = append(sections, ui.Section{
 			Title:    "Dispatch target list",
-			Subtitle: "The agents referenced by the Dispatch policy above: in \"Only allow\" mode these are the ONLY agents this one may call (also reaching Hidden agents you pick); in \"Allow all except\" mode these are the BLOCKED agents. Ignored when the policy is Allow all or Allow none.",
+			Subtitle: dispatchTargetSubtitle(dispatchModeFirst),
 			Body: ui.ChipPicker{
 				OptionsSource: "../api/agents?role=dispatch-target&self=" + id,
 				RecordSource:  source,
@@ -547,6 +559,24 @@ func agentLockIconHTML(id string, locked bool) string {
 // stored value from its FIRST option, so a legacy record (dispatch_mode never
 // saved) would otherwise be silently rewritten to allow-all on the next save.
 // Putting the effective mode first makes that seed preserve current behavior.
+// dispatchTargetSubtitle explains the target-list picker in terms of the
+// policy CURRENTLY set, and says where that policy lives. Without the
+// current value the reader can't tell whether the list they're editing
+// does anything at all — the two most common modes ignore it entirely.
+func dispatchTargetSubtitle(mode string) string {
+	const where = " The policy itself is the **Dispatch policy** select under **Cortex & delegation** above (collapsed by default)."
+	switch mode {
+	case dispatchOnly:
+		return "Currently **Only allow selected** — this agent may call ONLY the agents ticked here, including any Hidden ones you pick." + where
+	case dispatchExcept:
+		return "Currently **Allow all except selected** — this agent may call any non-hidden agent EXCEPT the ones ticked here." + where
+	case dispatchNone:
+		return "Currently **Allow none** — this agent dispatches to nobody, so this list has no effect until you change the policy." + where
+	default:
+		return "Currently **Allow all** — this agent may call any non-hidden agent, so this list has no effect. It applies only in \"Only allow selected\" or \"Allow all except selected\" mode." + where
+	}
+}
+
 func dispatchModeOptions(first string) []ui.SelectOption {
 	all := []ui.SelectOption{
 		{Value: dispatchAll, Label: "Allow all — any non-hidden agent (default)"},
