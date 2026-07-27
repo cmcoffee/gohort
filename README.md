@@ -25,7 +25,7 @@ That's the whole install. One static binary, no runtime, no dependency tree.
 
 ## Three ways to think about it
 
-**🏗️ A platform.** A web dashboard that runs a fleet, not a single bot. Multi-agent dispatch with per-caller allowlists, declarative multi-stage **pipelines** (with parallel fan-out), messaging **channels**, scheduled + event-triggered agents, real multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry — all first-class, not bolted on.
+**🏗️ A platform.** A web dashboard that runs a fleet, not a single bot. Multi-agent dispatch with per-caller allowlists, declarative multi-stage **pipelines** (parallel fan-out, bounded loops, branching, and direct tool calls), messaging **channels**, scheduled + event-triggered agents, real multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry — all first-class, not bolted on.
 
 **⚙️ A harness.** An agent loop engineered so local and small models stay reliable: the model is told its round budget up front, a loop-guard kills any tool re-called with identical args after it errors 3×, tool-round discipline prevents double replies, failure-streak detection pivots the approach, and runs survive client disconnect. The reliability doesn't come from reaching for a frontier model — it comes from the loop.
 
@@ -53,7 +53,7 @@ That's the loop: **describe it, approve it, it runs.**
 
 - **Local-first, not local-only.** By default the worker tier is your own GPU (Ollama / llama.cpp) and does the bulk of the work; an optional precision tier escalates to a frontier model only for the stages that earn it. Any stage can instead point at a hosted provider — run fully local, fully hosted, or any mix. Privacy is structural: `ForcePrivate` agents and `Private:true` route stages hard-lock to the local tier, so sensitive data (credentials, internal docs, system facts) never leaves the box even by accident.
 
-- **Compose, don't hardcode.** Four primitives — **agents** (persona + tools), **skills** (conditional prompt addendums with a self-training vector corpus), **collections** (RAG buckets), and **pipelines** (declarative `decompose → fan-out → synthesize` workflows, authored once and attached to any agent as a callable tool). Export any of them as portable JSON; the recipe carries no identity, so it travels between deployments.
+- **Compose, don't hardcode.** Four primitives — **agents** (persona + tools), **skills** (conditional prompt addendums with a self-training vector corpus), **collections** (RAG buckets), and **pipelines** (declarative workflows authored once and attached to any agent as a callable tool — stages fan out for breadth, loop for depth, branch to stop or skip, and call tools directly for the deterministic parts, threading typed fields between each other). Export any of them as portable JSON; the recipe carries no identity, so it travels between deployments.
 
 ## Quick start
 
@@ -129,6 +129,7 @@ On deck:
 - **Artifact marketplace** — every artifact type already exports as a portable, identity-free bundle; next is a remote catalog with signing and provenance, so a pipeline or agent recipe can travel between deployments the way a package does.
 - **Scoping parity across primitives** — collections and tools have per-user *and* shared tiers; skills are catching up, so "governed" means the same story everywhere.
 - **Richer authoring** — Builder composing whole apps as data (`app_def` → `customapps`), not just agents and tools.
+- **Pipelines as agents** — a pipeline is now expressive enough to describe a real multi-round workflow (typed fields between stages, breadth, depth, branching, direct tool calls), but it still has no identity of its own. Next is letting an agent's *body* be a pipeline, so a composed workflow gets a name, an ACL, dispatch, and a schedule for free instead of a second copy of that plumbing.
 
 ## Learn more
 
