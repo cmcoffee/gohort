@@ -858,7 +858,19 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	}
 	var available []AgentRecord
 	for _, a := range all {
-		if a.ID == t.agent.ID || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
+		if a.ID == t.agent.ID || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
+			continue
+		}
+		// Builder rides the same carve-out as the dispatch gate: invisible
+		// to everyone who can't call it, listed for everyone who can — and
+		// listed regardless of dispatch mode, since the grant is explicit
+		// and shouldn't also have to be repeated in an allowlist. (Allow
+		// none already returned above, so this can't resurrect dispatch for
+		// an agent the user switched off.)
+		if isBuilderAgent(a.ID) {
+			if t.canDispatchBuilder() {
+				available = append(available, a)
+			}
 			continue
 		}
 		// A target BLOCKED in the Permissions pane must not be advertised.

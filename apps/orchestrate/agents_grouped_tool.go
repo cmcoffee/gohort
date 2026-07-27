@@ -336,12 +336,16 @@ func (t *chatTurn) agentsListAction() (string, error) {
 	all := listAgents(fleetDB, fleetUser)
 	out := make([]row, 0, len(all))
 	for _, a := range all {
-		// Builder is not dispatch-callable (see agentsRunAction);
-		// hide it from the listing too so the LLM can't address it
-		// by id/name through the tool. Direct chat with Builder via
-		// the Agency picker / /chat/seed-builder still works — those
-		// are human-facing surfaces, not LLM-facing.
-		if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
+		// Builder is not dispatch-callable for most callers (see
+		// agentsRunAction); hide it from the listing too so the LLM can't
+		// address it by id/name through the tool. Direct chat with Builder
+		// via the Agency picker / /chat/seed-builder still works — those
+		// are human-facing surfaces, not LLM-facing. Callers that MAY
+		// dispatch it must be able to see it, or the grant is inert.
+		if isBuilderAgent(a.ID) && !t.canDispatchBuilder() {
+			continue
+		}
+		if isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 			continue
 		}
 		// Sub-agents held for approval aren't live — keep them out of the
@@ -381,8 +385,13 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 		return "", errors.New("action=get needs the agent to fetch — pass id=\"<uuid>\" or agent=\"<name or id>\" (agents(action=\"list\") shows both)")
 	}
 	// Builder and retired seeds are hidden from this surface — see
-	// agentsRunAction and agentsListAction for the rationale.
-	if isBuilderAgent(key) || isFleetRetiredSeed(key) || isRetiringArchetypeSeed(key) {
+	// agentsRunAction and agentsListAction for the rationale. A caller
+	// allowed to dispatch Builder can read it, so it can write a brief
+	// against the real description rather than guessing.
+	if isBuilderAgent(key) && !t.canDispatchBuilder() {
+		return "", fmt.Errorf("agent %q not found", key)
+	}
+	if isFleetRetiredSeed(key) || isRetiringArchetypeSeed(key) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
 	fleetDB, fleetUser := t.fleetView()
@@ -394,7 +403,10 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
-	if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
+	if isBuilderAgent(a.ID) && !t.canDispatchBuilder() {
+		return "", fmt.Errorf("agent %q not found", key)
+	}
+	if isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
 	if t.session != nil && t.session.ID != "" {
@@ -598,8 +610,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// parent owner's approval instead of going live. For every NON-Fleet caller
 	// Builder stays undispatchable — authoring there still needs the human in
 	// the loop (the full intake conversation, ask_user pauses, draft review).
-	if isBuilderAgent(target.ID) && !t.agent.Fleet {
-		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent. Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
+	// AllowBuilderDispatch is the per-agent opt-in to the same seam: the
+	// user has decided this specific agent may author through Builder
+	// without being a Fleet controller. Same downstream treatment — the
+	// dispatch runs Builder as a sub-agent and its output lands
+	// PendingApproval.
+	if isBuilderAgent(target.ID) && !t.agent.Fleet && !t.agent.AllowBuilderDispatch {
+		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
 	}
 	// seed-chat is retired from every surface, dispatch included — an
 	// unhidden shadow or an explicit allowlist pick must not resurrect the
@@ -670,12 +687,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	}
 	if target.OwnedBy == t.agent.ID {
 		// Allowed by ownership; skip the standard checks.
-	} else if isBuilderAgent(target.ID) && t.agent.Fleet {
+	} else if isBuilderAgent(target.ID) && (t.agent.Fleet || t.agent.AllowBuilderDispatch) {
 		// Builder is dispatch-callable from a Fleet controller (e.g. Chat) for
-		// in-session authoring, despite Builder's Hidden=true seed posture. The
-		// guard at the top of this function already refused non-Fleet callers, so
-		// reaching here means the caller is authorized — let it through past the
-		// Hidden / allowlist checks below.
+		// in-session authoring, or from an agent the user has explicitly granted
+		// AllowBuilderDispatch, despite Builder's Hidden=true seed posture. The
+		// guard at the top of this function already refused unauthorized callers,
+		// so reaching here means the caller is authorized — let it through past
+		// the Hidden / allowlist checks below. (Allow-none was refused earlier
+		// still; this carve-out widens WHICH targets are reachable, never
+		// whether dispatch is permitted at all.)
 	} else if isBuilderAgent(t.agent.ID) && target.OwnedBy != "" {
 		// Builder override — allow dispatch to any sub-agent for
 		// post-authoring verification. Logged for audit visibility.

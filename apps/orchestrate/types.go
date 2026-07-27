@@ -68,6 +68,29 @@ type AgentRecord struct {
 	// it just grants the tools; the agent still does work directly.
 	Fleet bool `json:"fleet,omitempty"`
 
+	// AllowBuilderDispatch grants this agent the ability to dispatch
+	// Builder — agents(action="run", agent="builder") — which is
+	// otherwise reserved to Fleet controllers (see the gate in
+	// agentsRunAction). It is a CARVE-OUT, not an allowlist entry: the
+	// Dispatch target list picker stays a list of the user's own agents,
+	// and this flag works under any dispatch policy, the same way
+	// sub-agent ownership does.
+	//
+	// The reservation it lifts exists because authoring wants a human in
+	// the loop — the intake conversation, ask_user pauses, draft review.
+	// Turning this on trades that for reach; the backstop is unchanged,
+	// since anything Builder creates on a dispatch still lands
+	// PendingApproval rather than going live.
+	//
+	// Grants VISIBILITY as well as permission. Builder is filtered out of
+	// the fleet catalog, agents(list), and agents(get) for everyone else,
+	// and an agent that may call a target it cannot see will never think
+	// to call it — so every one of those filters consults this flag too.
+	//
+	// Does NOT override dispatch policy "Allow none", which stays
+	// absolute (a user who disabled delegation disabled it, full stop).
+	AllowBuilderDispatch bool `json:"allow_builder_dispatch,omitempty"`
+
 	// Author, when true, grants the FULL authoring toolset — the same catalog
 	// the Builder seed holds: survey, create/update/clone/delete_agent, tool_def,
 	// app_def, skill_def, the credential draft/probe tools, bridge/connector, and

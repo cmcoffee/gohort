@@ -868,6 +868,25 @@ func isBuilderAgent(agentID string) bool {
 	return agentID == "seed-builder"
 }
 
+// canDispatchBuilder reports whether THIS turn's agent may reach Builder:
+// a Fleet controller (Chat and the like, the historic rule) or an agent
+// the user has granted AgentRecord.AllowBuilderDispatch.
+//
+// One predicate for permission AND visibility on purpose. Builder is
+// filtered out of the fleet catalog, agents(list), and agents(get); an
+// agent permitted to call a target it cannot see never thinks to call it,
+// so a grant that moved only the gate would read as broken. Every filter
+// asks this same question.
+//
+// Deliberately NOT consulted for dispatch policy "Allow none" — that is
+// checked earlier and stays absolute.
+func (t *chatTurn) canDispatchBuilder() bool {
+	if t == nil {
+		return false
+	}
+	return t.agent.Fleet || t.agent.AllowBuilderDispatch
+}
+
 // agentCanAuthor reports whether an agent should receive the authoring toolset —
 // the de-silo predicate. TRUE for the Builder seed (authoring is its identity)
 // OR any agent with the Author flag set (authoring granted as a capability).
