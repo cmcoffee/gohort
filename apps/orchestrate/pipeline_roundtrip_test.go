@@ -105,3 +105,29 @@ func TestParsePipelineStages_ModelTierRoundTrip(t *testing.T) {
 		t.Errorf("parsed tiers should validate: %v", err)
 	}
 }
+
+func TestParsePipelineStages_ToolStageRoundTrip(t *testing.T) {
+	got, err := parsePipelineStages([]any{
+		map[string]any{"name": "plan", "prompt": "x",
+			"output": []any{map[string]any{"name": "expr", "type": "string"}}},
+		map[string]any{"name": "math", "kind": "tool", "tool": "calculate",
+			"args": map[string]any{"expr": "{stage:plan.expr}", "places": float64(2)}},
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	m := got[1]
+	if m.Kind != StageTool || m.Tool != "calculate" {
+		t.Errorf("tool fields dropped: %+v", m)
+	}
+	if m.Args["expr"] != "{stage:plan.expr}" {
+		t.Errorf("arg template dropped: %+v", m.Args)
+	}
+	// Non-string arg values coerce rather than vanishing.
+	if m.Args["places"] != "2" {
+		t.Errorf("numeric arg = %q, want coerced \"2\"", m.Args["places"])
+	}
+	if err := (PipelineDef{Name: "t", Stages: got}).Validate(); err != nil {
+		t.Errorf("parsed tool stage should validate: %v", err)
+	}
+}

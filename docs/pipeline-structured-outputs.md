@@ -1,6 +1,6 @@
 # Pipeline structured outputs
 
-**Status:** SHIPPED v0.5.549. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
+**Status:** SHIPPED v0.5.549; the four follow-on primitives v0.5.554-557. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
 `core/pipeline_structured_test.go`, `project_pipeline_framework_future`,
 `project_builder_as_pipeline`.
 
@@ -290,9 +290,38 @@ silently dropped would read as "I asked for lead and got worker" — indis-
 tinguishable from a routing bug, and exactly the silent-drop class this codebase
 keeps producing.
 
+## Follow-on: the `tool` stage (SHIPPED v0.5.557)
+
+The escape hatch, and the reason the stage vocabulary can stop growing. A
+`tool` stage calls one of the caller's tools directly with arguments the
+**author** wrote — no model in the loop, no tokens spent.
+
+| Field | Meaning |
+|---|---|
+| `tool` | required; resolved at run time against the same catalog a worker stage sees |
+| `args` | `{param: template}`, full templating vocabulary |
+
+Without this, every app needing deterministic work — arithmetic, dedup,
+normalization, a cache lookup — argues for a new stage kind of its own. With it,
+the answer is always "write a tool." It also removes the worst reason to ask an
+LLM to do arithmetic: `Debate`'s `runKeyCalculations` is a tool stage.
+
+**Safer than a tool-equipped worker stage, not riskier.** The arguments come
+from a saved definition a human wrote and reviewed, rather than from whatever
+the model decided to pass this run.
+
+A tool stage may declare `output` to decode a JSON-returning tool into fields —
+but with **no repair retry**, since there is no model to ask again. A mismatch
+means the tool's contract is wrong, and that should surface rather than loop.
+
+The tool name is deliberately **not** validated at save time: availability is
+per-user and per-agent, so a pipeline that resolves for one caller may
+legitimately not for another. The run-time error lists what the caller does
+have.
+
 ## Out of scope
 
-A `tool` stage kind, nested field addressing
+Nested field addressing
 (`{stage:plan.calcs.0.expr}`), and streaming a structured stage. Each is a
 separate change on top of this one.
 

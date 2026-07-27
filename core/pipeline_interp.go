@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -208,7 +209,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		// so a stage can be permissive (no Tools = inherit everything)
 		// OR restrictive (specific names from the inherited pool).
 		var stageTools []AgentToolDef
-		if stage.Kind == StageWorker || stage.Kind == StageSynthesize ||
+		if stage.Kind == StageWorker || stage.Kind == StageSynthesize || stage.Kind == StageTool ||
 			(stage.Kind == StageFanout && strings.TrimSpace(stage.Agent) == "") {
 			stageTools = resolveStageTools(stage.Tools, inheritedTools)
 			if len(stageTools) > 0 {
@@ -219,7 +220,9 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 				kindLabel += " tools=[" + strings.Join(names, ",") + "]"
 			}
 		}
-		if status != nil {
+		if status != nil && stage.Kind != StageTool {
+			// A tool stage reports its own start once the tool name is
+			// resolved into the label.
 			status(stageLabel + " [" + kindLabel + "] starting")
 		}
 		prompt := resolveStageTemplate(stage.Prompt, input, prev, outputs)
@@ -268,6 +271,24 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		case StageLoop:
 			// Repeat the body, threading each pass's result into the next.
 			out, err = r.runLoopStage(ctx, stage, prev)
+		case StageTool:
+			// Call the named tool with the author's arguments. No model
+			// runs, so there is nothing to prompt and nothing to repair.
+			kindLabel = "tool → " + stage.Tool
+			if status != nil {
+				status(stageLabel + " [" + kindLabel + "] starting")
+			}
+			out, err = r.runToolStage(ctx, stage, prev, stageTools, vars)
+			if err == nil && len(stage.Output) > 0 {
+				// A tool that returns JSON can declare its shape like any
+				// other stage — decode it, but with no repair retry: there
+				// is no model to ask again, so a mismatch is the tool's
+				// contract being wrong, not a bad generation.
+				fields, err = decodeStageOutput(out, stage.Output)
+				if err != nil {
+					err = Error("tool returned a result that does not match the declared output: " + err.Error())
+				}
+			}
 		default:
 			return "", Error("stage " + stage.Name + ": unknown kind " + string(stage.Kind))
 		}
@@ -611,6 +632,56 @@ func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []Age
 		return "", Error("worker returned no response")
 	}
 	return resp.Content, nil
+}
+
+// runToolStage calls the stage's named tool with the author's rendered
+// arguments and returns its result. No LLM runs.
+//
+// Argument values go through the same templating a prompt does, so a
+// tool stage composes with everything upstream: {stage:plan.expression}
+// feeds a calculator, {prev} feeds a formatter. They render to strings —
+// a tool wanting a number coerces exactly as it does for a
+// model-supplied call, so this needs no separate type system.
+//
+// A missing tool is a clear run-time error rather than a save-time one:
+// tool availability is per-user and per-agent, so the pipeline that
+// validates for one caller may legitimately not resolve for another.
+func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, prev string, tools []AgentToolDef, vars map[string]string) (string, error) {
+	name := strings.TrimSpace(stage.Tool)
+	var handler ToolHandlerFunc
+	for _, td := range tools {
+		if td.Tool.Name == name {
+			handler = td.Handler
+			break
+		}
+	}
+	if handler == nil {
+		available := make([]string, 0, len(tools))
+		for _, td := range tools {
+			available = append(available, td.Tool.Name)
+		}
+		sort.Strings(available)
+		if len(available) == 0 {
+			return "", Error("tool " + strconv.Quote(name) + " is not available to this pipeline — the caller supplied no tool catalog. A tool stage can only call tools the invoking agent has.")
+		}
+		return "", Error("tool " + strconv.Quote(name) + " is not available to this pipeline; the caller has: " + strings.Join(available, ", "))
+	}
+	args := make(map[string]any, len(stage.Args))
+	for k, tmpl := range stage.Args {
+		v := resolveStageTemplate(tmpl, r.input, prev, r.outputs)
+		for from, to := range vars {
+			v = strings.ReplaceAll(v, from, to)
+		}
+		args[k] = v
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	out, err := handler(args)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 // stageTier resolves a stage's declared model tier. Empty or "worker"

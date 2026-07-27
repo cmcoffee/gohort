@@ -79,6 +79,21 @@ const (
 	// The two shapes it exists for are "the input was rejected, stop"
 	// and "this was supplied already, skip the stage that derives it".
 	StageBranch PipelineStageKind = "branch"
+
+	// StageTool calls one of the caller's tools directly, with arguments
+	// the AUTHOR wrote, and captures its result. No LLM in the loop.
+	//
+	// This is the escape hatch that keeps the stage vocabulary small.
+	// Deterministic work — arithmetic, dedup, normalization, a cache
+	// lookup, a specific API call — does not want a model's judgment,
+	// and without this kind every app that needs some would argue for a
+	// new stage kind of its own. It also removes the worst reason to ask
+	// an LLM to do arithmetic: a stage can just call the calculator.
+	//
+	// Safer than a tool-equipped worker stage, not riskier: the
+	// arguments come from a saved definition a human wrote and reviewed,
+	// rather than from whatever the model decided to pass this run.
+	StageTool PipelineStageKind = "tool"
 )
 
 // loopMaxIterations bounds any single loop stage. A pipeline is
@@ -181,6 +196,20 @@ type PipelineStage struct {
 	// reference to a bool an EARLIER stage declared. True takes the
 	// branch, false falls through to the next stage.
 	When string `json:"when,omitempty"`
+
+	// Tool names the tool a kind="tool" stage calls. Resolved at run
+	// time against the same set a worker stage would see (the caller's
+	// catalog, narrowed by Tools when set) — tool availability is
+	// per-user and per-agent, so it can't be checked when the pipeline
+	// is saved.
+	Tool string `json:"tool,omitempty"`
+
+	// Args are the arguments passed to that tool: param name → template,
+	// carrying the full templating vocabulary ({input}, {prev},
+	// {stage:NAME}, {stage:NAME.field}, and {iteration} inside a loop).
+	// Values render to strings; a tool wanting a number coerces the same
+	// way it does for a model-supplied call.
+	Args map[string]string `json:"args,omitempty"`
 
 	// Model picks the LLM tier a worker stage runs on: "" or "worker"
 	// (default, the local/primary tier) or "lead" (the precision tier).
@@ -350,6 +379,13 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 		if err := validateStageModel(s); err != nil {
 			return err
 		}
+		if s.Kind == StageTool {
+			if err := validateToolStage(s, done); err != nil {
+				return err
+			}
+		} else if s.Tool != "" || len(s.Args) > 0 {
+			return Error("stage " + s.Name + ": tool/args are only valid on kind=tool")
+		}
 		for _, ref := range stageRefs(s.Prompt) {
 			if err := checkStageRef(s.Name, "prompt", ref, done); err != nil {
 				return err
@@ -430,6 +466,41 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 	return nil
 }
 
+// validateToolStage checks a kind="tool" stage. The tool NAME can't be
+// verified here — availability is per-user and per-agent, resolved at
+// run time — but everything about the call's shape can be.
+func validateToolStage(s PipelineStage, done map[string]map[string]PipelineFieldType) error {
+	if strings.TrimSpace(s.Tool) == "" {
+		return Error("stage " + s.Name + " is kind=tool but names no tool")
+	}
+	if strings.TrimSpace(s.Prompt) != "" {
+		return Error("stage " + s.Name + ": a tool stage takes args, not a prompt — there is no model to prompt. Put the values in args.")
+	}
+	if strings.TrimSpace(s.Agent) != "" {
+		return Error("stage " + s.Name + ": agent does not apply to a tool stage — use kind=agent to dispatch, or kind=tool to call a tool directly")
+	}
+	if s.Think != nil {
+		return Error("stage " + s.Name + ": think does not apply to a tool stage — no model runs")
+	}
+	// Every {stage:...} in an argument is a real reference and gets the
+	// same forward/unknown check a prompt does. Arg names are sorted so
+	// the FIRST error reported is stable across runs rather than
+	// whichever key Go's map iteration happened to reach first.
+	names := make([]string, 0, len(s.Args))
+	for k := range s.Args {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		for _, ref := range stageRefs(s.Args[k]) {
+			if err := checkStageRef(s.Name, "args."+k, ref, done); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // validateStageModel checks the per-stage tier: a closed set, and only
 // on the kinds that actually make a worker call. Rejecting it elsewhere
 // rather than ignoring it is the point — a tier silently dropped on an
@@ -455,6 +526,8 @@ func validateStageModel(s PipelineStage) error {
 		return Error("stage " + s.Name + ": model does not apply to an agent stage — the dispatched agent's own configuration decides its tier")
 	case StageBranch:
 		return Error("stage " + s.Name + ": a branch makes no LLM call, so model does not apply")
+	case StageTool:
+		return Error("stage " + s.Name + ": a tool stage makes no LLM call, so model does not apply")
 	case StageLoop:
 		return Error("stage " + s.Name + ": set model on the loop's BODY stages, not the loop itself")
 	}
