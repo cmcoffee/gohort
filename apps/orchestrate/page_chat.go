@@ -247,6 +247,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							// re-point the standing agent at (clears broken, stays
 							// paused → then Resume).
 							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_broken"},
+							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
 						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
@@ -258,7 +259,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
 							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_broken"},
-							{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/monitor-move-options", PickerTitle: "Move this monitor — its card, badge & wake all follow"},
+							{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor — its card, badge & wake all follow"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
 						}},
 						// Cards layout so each recurring task shows its cadence, fire
@@ -273,6 +274,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							// Relink (broken rows only): pick a live agent — recurring
 							// has no pause, so this resumes the task on its cadence.
 							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_broken"},
+							{Label: "Move to…", Method: "POST", URL: "api/console/recurring/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the recurring conversation runs (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
 						}},
 						// Permissions — pinned ABOVE the session list (it's an action

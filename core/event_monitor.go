@@ -101,15 +101,17 @@ type EventMonitor struct {
 	// own home thread as before.
 	WakeChannel string `json:"wake_channel,omitempty"`
 
-	// Background, when true, gives the monitor NO agent visibility: it runs and
-	// delivers externally (deliver_to / wake_channel) but leaves no trace card in
-	// any agent thread and no "background work" rail badge. The complement is a
-	// monitor HOMED on a thread via WakeSession — its card/wake/badge all surface
-	// in that session (move it to the cortex home thread to relocate all three at
-	// once). This replaced the finer-grained "card_to" routing: the card isn't a
-	// separate destination, it follows the monitor's home; Background is the one
-	// case where there is no home at all.
-	Background bool `json:"background,omitempty"`
+	// Surface controls WHERE this monitor's fire lands for the agent — its trace
+	// card, rail badge, and (for a channel wake) its LLM turn all follow it:
+	//   "" / "session" — the monitor's home session (WakeSession).
+	//   "cortex"        — the agent's cortex home thread.
+	//   "background"    — nowhere: NO agent visibility (external delivery only,
+	//                     no card, no rail badge).
+	// A MODE resolved at fire time — the home (WakeSession) is left intact, so a
+	// switch back to "session" always works. "cortex" is only meaningful when the
+	// wake agent has a cortex. Unified across monitors / standing agents /
+	// recurring (see SurfaceSession / same "Move to…" control).
+	Surface string `json:"surface,omitempty"`
 
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition

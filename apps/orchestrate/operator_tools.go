@@ -857,7 +857,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
 					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread — use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
-					"background":       {Type: "boolean", Description: "watch/http_poll with deliver_to: run with NO AGENT VISIBILITY — deliver only to the external chat, leave no trace card in any agent thread and no rail badge. Default false: the monitor is HOMED on the creating session (its card/badge/wake surface there; relocate it later with the console's Move-to control, e.g. to the cortex home thread). Use background=true for a pure background feed like a join/leave ticker you only want in the group chat."},
+					"surface":          {Type: "string", Enum: []string{"", "session", "cortex", "background"}, Description: "Where the fire surfaces for the agent — its trace card, rail badge, and (for a channel wake) its LLM turn all follow. \"\"/\"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge — for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
 					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes — the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
@@ -903,7 +903,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				m := EventMonitor{
 					Name: name, Owner: owner, Kind: kind, Notify: notify,
 					DeliverChatID: deliverTo,
-					Background:    oArgBool(args, "background"),
+					Surface:       strings.ToLower(strings.TrimSpace(oArgStr(args, "surface"))),
 					// Wake the agent that created this monitor, IN the session it
 					// was created in, so the event lands back where the user set
 					// it up (not a hardcoded default thread). WakeSession falls

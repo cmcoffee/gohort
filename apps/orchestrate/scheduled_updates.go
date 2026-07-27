@@ -81,6 +81,13 @@ type orchUpdatePayload struct {
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`
 
+	// Surface — same mode as EventMonitor/StandingAgent, resolved at fire time
+	// against SessionID (the home): "" / "session" appends the fire into the
+	// creating session, "cortex" into the agent's cortex home thread, "background"
+	// runs it but posts nothing to a thread. The recurring conversation continues
+	// in whichever thread it surfaces to.
+	Surface string `json:"surface,omitempty"`
+
 	// Broken parks a recurring task whose target agent was deleted. Unlike a
 	// monitor/standing agent (which have a stored record), a recurring task lives
 	// ONLY as its scheduler entry — so "keep it, don't drop it" means re-arming a
@@ -308,7 +315,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			}
 		}()
 	}
-	sess, ok := loadChatSession(udb, p.AgentID, p.SessionID)
+	// Surface routes the recurring conversation: "cortex" moves it (context +
+	// reply) to the agent's cortex home thread; "background" runs it but posts no
+	// reply card; "" / "session" keeps it in the creating session. The home
+	// (p.SessionID) is left intact so a switch back always works.
+	loadSession := p.SessionID
+	if strings.TrimSpace(p.Surface) == "cortex" {
+		loadSession = cortexSessionID(p.AgentID)
+	}
+	recordFire := strings.TrimSpace(p.Surface) != "background"
+	sess, ok := loadChatSession(udb, p.AgentID, loadSession)
 	if !ok {
 		// The target thread doesn't exist yet — synthesize it rather than
 		// dropping the task. A channel agent's Cortex home thread
@@ -318,7 +334,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// not a failure. Start a fresh thread with the scheduled id (parity with
 		// the chat GET path, which returns an empty session on a miss); the
 		// fire's reply is what materializes it via saveChatSession below.
-		sess = ChatSession{ID: p.SessionID, AgentID: p.AgentID}
+		sess = ChatSession{ID: loadSession, AgentID: p.AgentID}
 	}
 
 	// Cap message history so a long-running tracker doesn't accumulate
@@ -597,18 +613,22 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// Carry the full tool trace too (extracted from the loop transcript, since a
 	// scheduled fire has no live chatTurn to snapshot from) so the export and the
 	// session UI show WHAT the agent did to produce the reply, not just the text.
-	sess.Messages = append(sess.Messages, ChatMessage{
-		Role:         "assistant",
-		Content:      reply,
-		Created:      time.Now(),
-		ReportFrom:   recurringName(p),
-		ReportKind:   cortexKindScheduled,
-		ReportDetail: detail,
-		ToolCalls:    toolTrace,
-	})
-	sess.LastAt = time.Now()
-	if _, err := saveChatSession(udb, sess); err != nil {
-		Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
+	// Background (Surface): the fire ran (tools executed, recorded to the run
+	// ledger below) but posts no reply card to any thread — no agent visibility.
+	if recordFire {
+		sess.Messages = append(sess.Messages, ChatMessage{
+			Role:         "assistant",
+			Content:      reply,
+			Created:      time.Now(),
+			ReportFrom:   recurringName(p),
+			ReportKind:   cortexKindScheduled,
+			ReportDetail: detail,
+			ToolCalls:    toolTrace,
+		})
+		sess.LastAt = time.Now()
+		if _, err := saveChatSession(udb, sess); err != nil {
+			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
+		}
 	}
 	status, summary := RunOK, standingSummary(reply)
 	if hitCap {

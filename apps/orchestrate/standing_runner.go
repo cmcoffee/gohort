@@ -122,9 +122,11 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if reportAgent == "" {
 			reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
 		}
-		reportSession := strings.TrimSpace(sa.ReportSessionID)
-		if reportSession == "" {
-			reportSession = cortexSessionID(reportAgent)
+		// Surface routes the report: session (home) / cortex / background. The run
+		// still happened; background just doesn't post the result to any thread.
+		reportSession, record := resolveSurface(sa.Surface, sa.ReportSessionID, reportAgent)
+		if !record {
+			return
 		}
 		udb := UserDB(app.DB, sa.Owner)
 		if udb == nil {

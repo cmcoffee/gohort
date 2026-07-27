@@ -51,6 +51,52 @@ func cortexSessionID(agentID string) string {
 	return "channel:" + agentID
 }
 
+// resolveSurface maps a scheduled thing's Surface mode to the session its fire
+// should land in, plus whether to surface it at all. `home` is the record's own
+// home session — a monitor's WakeSession, a standing agent's ReportSessionID, or
+// a recurring task's SessionID. Shared by monitors / standing / recurring so all
+// three behave identically:
+//   "" / "session" → the home session (or the cortex home thread if home is
+//                    empty — the legacy fallback so a fire still surfaces).
+//   "cortex"       → the agent's cortex home thread.
+//   "background"   → record=false: NO agent visibility (external delivery only).
+// The home is never overwritten by a move, so switching back to "session" works.
+func resolveSurface(surface, home, agentID string) (session string, record bool) {
+	switch strings.TrimSpace(surface) {
+	case "background":
+		return "", false
+	case "cortex":
+		return cortexSessionID(agentID), true
+	default: // "" / "session"
+		if strings.TrimSpace(home) == "" {
+			return cortexSessionID(agentID), true
+		}
+		return home, true
+	}
+}
+
+// surfaceOptionsFor returns the "Move to…" picker options for an agent, gated on
+// whether it has a cortex: Cortex is offered only when the agent has one. Shared
+// by the monitor / standing / recurring move pickers.
+func surfaceOptions(agentHasCortex bool) []struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+} {
+	type opt = struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+	}
+	var out []opt
+	if agentHasCortex {
+		out = append(out, opt{Value: "cortex", Label: "Cortex home thread"})
+	}
+	out = append(out,
+		opt{Value: "session", Label: "Session (where it was created)"},
+		opt{Value: "background", Label: "Background (No Agent Visibility)"},
+	)
+	return out
+}
+
 // defaultConsoleAgent is the channel agent the console endpoints — and the
 // event-monitor wake fallback — default to when no agent is specified. Chat is
 // the primary channel agent now (the Operator folded into it), so legacy
@@ -115,10 +161,13 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))
 	T.HandleFunc("/api/console/monitors/resume", gw(T.handleConsoleMonitorResume))
 	T.HandleFunc("/api/console/monitors/relink", gw(T.handleConsoleMonitorRelink))
-	// Move a monitor's home in place (cortex home thread / background) — static
-	// picker source + in-place setter, no delete+recreate.
-	T.HandleFunc("/api/console/monitor-move-options", g(T.handleConsoleMonitorMoveOptions))
+	// "Move to…" (Surface: Cortex / Session / Background) — shared dynamic picker
+	// source (cortex gated on the agent) + per-type in-place setters, no
+	// delete+recreate.
+	T.HandleFunc("/api/console/surface-options", g(T.handleConsoleSurfaceOptions))
 	T.HandleFunc("/api/console/monitors/move", gw(T.handleConsoleMonitorMove))
+	T.HandleFunc("/api/console/agents/move", gw(T.handleConsoleStandingMove))
+	T.HandleFunc("/api/console/recurring/move", gw(T.handleConsoleRecurringMove))
 	T.HandleFunc("/api/console/monitors/run", gw(T.handleConsoleMonitorRun))
 	T.HandleFunc("/api/console/monitors/get", g(T.handleConsoleMonitorGet))
 	T.HandleFunc("/api/console/monitors/update", gw(T.handleConsoleMonitorUpdate))
@@ -423,52 +472,118 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleConsoleMonitorMoveOptions is the static picker source for the monitor
-// "Move to…" action: where the monitor is HOMED — the single place its trace
-// card, rail badge, and (for a channel-wake) its LLM turn all surface. Static;
-// the choices don't depend on the owner's data.
-func (T *OrchestrateApp) handleConsoleMonitorMoveOptions(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+// handleConsoleSurfaceOptions is the SHARED "Move to…" picker source for
+// monitors / standing agents / recurring: it returns Cortex/Session/Background,
+// with Cortex offered only when the pane's agent has a cortex (?agent=<id>).
+func (T *OrchestrateApp) handleConsoleSurfaceOptions(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
-	type opt struct {
-		Value string `json:"value"`
-		Label string `json:"label"`
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	hasCortex := false
+	if a, ok := loadAgent(agentUserDB(RootDB, user), agentID); ok && a.Cortex {
+		hasCortex = true
 	}
-	writeJSON(w, []opt{
-		{Value: "cortex", Label: "Cortex home thread"},
-		{Value: "background", Label: "Background (No Agent Visibility)"},
-	})
+	writeJSON(w, surfaceOptions(hasCortex))
 }
 
-// handleConsoleMonitorMove relocates a monitor's HOME in place — the UI way to
-// move the whole monitor (card + rail badge + wake all follow) without a
-// delete+recreate. "cortex" homes it on the agent's cortex home thread;
-// "background" gives it no agent visibility (external delivery only).
+// normalizeSurface maps a picker value to a stored Surface mode. "session" is
+// the default and stores as "" so the home session is used untouched.
+func normalizeSurface(val string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "session", "":
+		return "", true
+	case "cortex":
+		return "cortex", true
+	case "background":
+		return "background", true
+	}
+	return "", false
+}
+
+// handleConsoleMonitorMove sets a monitor's Surface in place — moves the whole
+// monitor (card + rail badge + wake all follow) without a delete+recreate. The
+// home session (WakeSession) is left intact, so Session always works to return.
 func (T *OrchestrateApp) handleConsoleMonitorMove(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
-	val := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("value")))
+	surface, valid := normalizeSurface(r.URL.Query().Get("value"))
+	if !valid {
+		http.Error(w, "move target must be cortex, session, or background", http.StatusBadRequest)
+		return
+	}
 	m, found := GetEventMonitor(RootDB, user, name)
 	if !found {
 		http.Error(w, "no such monitor", http.StatusNotFound)
 		return
 	}
-	switch val {
-	case "cortex":
-		m.Background = false
-		m.WakeSession = cortexSessionID(m.WakeAgent)
-	case "background":
-		m.Background = true
-	default:
-		http.Error(w, "move target must be \"cortex\" or \"background\"", http.StatusBadRequest)
-		return
-	}
+	m.Surface = surface
 	SaveEventMonitor(RootDB, m)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsoleStandingMove sets a standing agent's Surface in place — same
+// Cortex/Session/Background modes as monitors; its per-run report follows.
+func (T *OrchestrateApp) handleConsoleStandingMove(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("id"))
+	surface, valid := normalizeSurface(r.URL.Query().Get("value"))
+	if !valid {
+		http.Error(w, "move target must be cortex, session, or background", http.StatusBadRequest)
+		return
+	}
+	sa, found := GetStandingAgent(RootDB, user, name)
+	if !found {
+		http.Error(w, "no such standing agent", http.StatusNotFound)
+		return
+	}
+	sa.Surface = surface
+	SaveStandingAgent(RootDB, sa)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsoleRecurringMove sets a recurring task's Surface in place. Recurring
+// lives only as a scheduler entry, so this re-arms it with the updated payload
+// (mirrors relink). The home session (SessionID) is left intact.
+func (T *OrchestrateApp) handleConsoleRecurringMove(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	surface, valid := normalizeSurface(r.URL.Query().Get("value"))
+	if !valid {
+		http.Error(w, "move target must be cortex, session, or background", http.StatusBadRequest)
+		return
+	}
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID != id {
+			continue
+		}
+		UnscheduleTask(id)
+		p := rt.Payload
+		p.Surface = surface
+		p.LastActive = time.Now().Format(time.RFC3339)
+		next, err := computeNextFire(&p, time.Now().In(UserLocation(user)))
+		if err != nil {
+			http.Error(w, "moved but couldn't reschedule: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 // handleConsoleAgentRelink re-points a broken standing agent at a live target
@@ -1587,12 +1702,13 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			if !hasWake {
 				detail += " (no LLM)"
 			}
-			// Show where the monitor is HOMED so the user can see + change it via
-			// the Move-to action (its card/badge/wake all surface here).
-			if m.Background {
+			// Show where the monitor surfaces (Surface) so the user sees + can change
+			// it via the Move-to action (its card/badge/wake all follow).
+			switch strings.TrimSpace(m.Surface) {
+			case "background":
 				detail += " · background (no agent visibility)"
-			} else if m.WakeSession != "" && m.WakeSession == cortexSessionID(m.WakeAgent) {
-				detail += " · homed on cortex"
+			case "cortex":
+				detail += " · reports to cortex"
 			}
 		}
 		last := ""

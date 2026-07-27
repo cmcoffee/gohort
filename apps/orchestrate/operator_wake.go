@@ -140,11 +140,12 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
-		// The trace card follows the monitor's HOME (wakeSession) — move the monitor
-		// to the cortex home thread and the card moves with it. A Background monitor
-		// has no home: it delivers externally only, with no card in any thread.
-		cardSession := wakeSession
-		recordCard := !m.Background
+		// Resolve where the fire SURFACES for the agent (Surface: session / cortex /
+		// background). The trace card AND the channel wake both land here; the home
+		// (wakeSession) is left intact so a switch back to "session" always works.
+		// Background → recordCard=false + no surface session (external delivery only).
+		surfSession, recordCard := resolveSurface(m.Surface, wakeSession, wakeAgent)
+		cardSession := surfSession
 
 		// direct: post the change verbatim, no LLM, WHERE the watcher was created
 		// — a phantom-origin watcher (DeliverChatID set) into that conversation
@@ -205,12 +206,20 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
-		// channel: wake the agent in-thread to react. Also the fallback when no
-		// other destination delivered, so the alert is never silently dropped.
+		// channel: wake the agent to react — in the SURFACED session (cortex when
+		// moved there). Also the never-drop fallback when nothing else delivered:
+		// a Background monitor has no surface session, so the fallback wakes the
+		// home thread rather than an empty session so the alert isn't lost.
 		if modes[EventNotifyChannel] || !delivered {
+			wakeTarget := surfSession
+			if wakeTarget == "" {
+				if wakeTarget = wakeSession; wakeTarget == "" {
+					wakeTarget = cortexSessionID(wakeAgent)
+				}
+			}
 			msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
 				monitorName, summary, brief)
-			if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, wakeAgent, wakeSession, "", msg, false); err != nil {
+			if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, wakeAgent, wakeTarget, "", msg, false); err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 			}
 		}
