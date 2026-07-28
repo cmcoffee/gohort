@@ -46,26 +46,7 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 		}
 		var shadow AgentRecord
 		if db.Get(agentsTable, id, &shadow) {
-			if r := strings.TrimSpace(shadow.Rules); r != "" {
-				seed.Rules = shadow.Rules
-			}
-			// Scope decisions are DEPLOYMENT state (admin/user drives the scope
-			// pills), not framework structure, so they must survive the rebase
-			// like Rules does. Without this, denying a credential / pipeline /
-			// tool on Builder saved to the shadow but was discarded on read-back
-			// — the pill snapped straight back on ("can't unselect Builder via
-			// api scope"). Everything else (prompt, AllowedTools authoring kit)
-			// still flows from the in-code seed.
-			seed.DisabledCredentials = shadow.DisabledCredentials
-			seed.DisabledPipelines = shadow.DisabledPipelines
-			seed.AttachedPipelines = shadow.AttachedPipelines
-			seed.DisabledPersistentTools = shadow.DisabledPersistentTools
-			// Agent-scoped tools bundled onto Builder (via the scope pill / add_tool)
-			// are deployment state too — same rationale as the disabled/attached
-			// fields above. Without this they saved to the shadow but were dropped
-			// on read-back, so the scope pill snapped straight back off ("can't
-			// enable Builder on a tool").
-			seed.Tools = shadow.Tools
+			applyBuilderDeploymentState(&seed, shadow)
 		}
 		return seed, true
 	}
@@ -255,6 +236,46 @@ func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
 // sub-store via UserDB, and for any user with a seed-builder
 // shadow re-writes it with the current in-code seed (preserving
 // Rules). Idempotent — running again produces the same record.
+// applyBuilderDeploymentState carries the fields a rebase onto the in-code
+// Builder seed must NOT discard, from the user's persisted shadow onto the
+// seed. Everything absent from this list (prompt, AllowedTools, the authoring
+// kit, round budgets) deliberately flows from code so framework updates reach
+// existing deployments without a manual revert.
+//
+// The distinction is authorship: framework STRUCTURE is ours, deployment
+// DECISIONS are the owner's. A denied credential, a bundled tool, a rulebook,
+// and which model this deployment runs Builder on are all the owner's answers
+// to questions the seed doesn't get a vote on — and each one that fell off this
+// list showed up as a control that silently refused to stick.
+//
+// One list, used by BOTH the read path and the startup migration. They had
+// drifted: the migration preserved only Rules, so every restart wrote the
+// seed's empty scope fields over the shadow that loadAgent then read back
+// from — the read path was carefully preserving state the boot path had
+// already destroyed.
+func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
+	if seed == nil {
+		return
+	}
+	if r := strings.TrimSpace(shadow.Rules); r != "" {
+		seed.Rules = shadow.Rules
+	}
+	// Scope decisions — denying a credential / pipeline / tool on Builder, or
+	// bundling one onto it via the scope pill / add_tool.
+	seed.DisabledCredentials = shadow.DisabledCredentials
+	seed.DisabledPipelines = shadow.DisabledPipelines
+	seed.AttachedPipelines = shadow.AttachedPipelines
+	seed.DisabledPersistentTools = shadow.DisabledPersistentTools
+	seed.Tools = shadow.Tools
+	// Which model Builder reasons on. Builder stopped being special here when
+	// orchestratorRouteKey dropped its dedicated always-lead stage: the "Use
+	// Lead model" toggle is now the ONE control that decides it, and the editor
+	// shows that toggle on Builder like any other agent. Left off this list it
+	// saved and then read back false every time, so the toggle appeared to
+	// refuse to turn on.
+	seed.LeadModel = shadow.LeadModel
+}
+
 func (T *OrchestrateApp) migrateBuilderShadows() {
 	if T == nil || T.DB == nil || AuthDB == nil {
 		return
@@ -278,13 +299,12 @@ func (T *OrchestrateApp) migrateBuilderShadows() {
 			continue
 		}
 		merged := seed
-		if r := strings.TrimSpace(shadow.Rules); r != "" {
-			merged.Rules = shadow.Rules
-		}
+		applyBuilderDeploymentState(&merged, shadow)
 		merged.Updated = time.Now()
 		udb.Set(agentsTable, "seed-builder", merged)
 		migrated++
-		Log("[orchestrate.migrate] re-applied seed-builder defaults for user=%q (Rules preserved: %v)", u.Username, merged.Rules != "")
+		Log("[orchestrate.migrate] re-applied seed-builder defaults for user=%q (rules=%v lead_model=%v scoped_tools=%d)",
+			u.Username, merged.Rules != "", merged.LeadModel, len(merged.Tools))
 	}
 	if migrated > 0 {
 		Log("[orchestrate.migrate] migrateBuilderShadows: refreshed %d user shadow(s)", migrated)
@@ -1214,7 +1234,7 @@ WHAT TO BUILD — first match wins:
 - "When I do X, also do Y" / a behavior or style tweak -> skill_def.
 - "Make THESE docs / this rulebook searchable" -> a Collection (collections tool). Ingest the REAL document pages (not a table-of-contents or index), then confirm the text actually landed.
 - "A workflow that runs A then B then C" -> pipeline.
-- "An app" / "a page to log / track / visualize / graph X" / a multi-panel tool -> app_def. This builds a real dashboard surface at /custom/<slug>/ with a free per-record store — it is NOT a standalone HTML file. Do not hand over an HTML file as "your app" (it misleads users); produce one only if they explicitly ask for a downloadable file. Compose it from sections: form (a create form — modal=true + a submit_label), table (the record list — set empty_text, deletable, auto_refresh_ms=2000), display (read-only pairs), chart (bar/line/area/pie — set chart_type plus inline labels+series OR a source_script that PRINTS {"labels":[...],"series":[...]}; this is how an app graphs/plots/trends, the answer whenever the ask says graph/chart/plot/trend), and workbench (the SINGLE section that IS a "list | document viewer | chat" three-panel app — don't also add form/table/chat). If the app needs a brain, build that agent too (create_agent) and pass its name as agent_id; a workbench agent adds content by calling the auto-provided add_section(title, markdown) into the OPEN document — never give it its own storage tools, they write to the wrong place. After creating, give the user the /custom/<slug>/ URL and iterate with action="update".
+- "An app" / "a page to log / track / visualize / graph X" / a multi-panel tool -> app_def. This builds a real dashboard surface at /custom/<slug>/ with a free per-record store — it is NOT a standalone HTML file. Do not hand over an HTML file as "your app" (it misleads users); produce one only if they explicitly ask for a downloadable file. Compose it from sections: form (a create form — modal=true + a submit_label), table (the record list — set empty_text, deletable, auto_refresh_ms=2000), display (read-only pairs), chart (bar/line/area/pie — set chart_type plus inline labels+series OR a source_script that PRINTS {"labels":[...],"series":[...]}; this is how an app graphs/plots/trends, the answer whenever the ask says graph/chart/plot/trend), and workbench (the SINGLE section that IS a "list | document viewer | chat" three-panel app — don't also add form/table/chat). For anything the typed kinds can't express — a GAME, a canvas animation, a simulation — use ONE html section (call action="help" for its spec); that is a real app, not the standalone-file case warned about above. If the app needs a brain, build that agent too (create_agent) and pass its name as agent_id; a workbench agent adds content by calling the auto-provided add_section(title, markdown) into the OPEN document — never give it its own storage tools, they write to the wrong place. After creating, give the user the /custom/<slug>/ URL and iterate with action="update".
 - A single capability (call an API, run a script, produce a file) -> tool_def: mode="api" for HTTP (author url_template as a PATH like /v1/clients — it resolves against the credential's base_url), mode="shell" for a script.
 
 SCRIPTS + NETWORK: all network goes through gohort. Inside a script: from gohort import fetch_url, browse_page, log (automatic — no declaration). curl / wget / requests / urllib-network / http.client / socket are BLOCKED; a 4xx is NEVER fixed by a different HTTP client — fix the URL or escalate to browse_page. A gohort tool is not a shell binary — you cannot subprocess it; call the underlying API directly instead.

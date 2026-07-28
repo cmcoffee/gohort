@@ -226,7 +226,12 @@ type AgentRecord struct {
 	//      chatTurn.shouldUseLeadModel + LeadChat's NoLead guard).
 	//   3. Routes through the non-private app.orchestrate.orchestrator.lead
 	//      stage, so admin keeps a global worker-or-lead ceiling.
-	// Builder ignores this flag — it has its own always-lead stage.
+	// Builder honors it like any other agent — its dedicated always-lead
+	// stage is gone (see orchestratorRouteKey), so this toggle is the one
+	// control that decides which model Builder reasons on. Builder's record
+	// rebases onto the in-code seed on every read, so the value survives via
+	// applyBuilderDeploymentState; drop it from that list and the toggle
+	// silently reverts.
 	LeadModel bool `json:"lead_model,omitempty"`
 
 	// Exposed publishes this agent under the public /agents/ surface
