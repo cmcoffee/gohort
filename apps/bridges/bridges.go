@@ -576,6 +576,12 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 		}
 	}
 	it.Owner = "" // transient — never persist/leak the owner to a connector
+	// Fingerprint what we are about to send, AFTER the tag + markdown
+	// flattening, since that is the form that comes back. In a self thread the
+	// copy that returns is is_from_me exactly like the owner's own typing, so
+	// this is the only thing that tells the two apart. A status item is not an
+	// agent turn, but it echoes the same way, so it is recorded too.
+	noteOutbound(it.ChatID, it.Text)
 	T.DB.Set(outboxTable, it.ID, it)
 	// Delivery-leg visibility: the outbound path (enqueue → connector /api/poll →
 	// drainOutbox) was previously unlogged, so a dropped reply was invisible.

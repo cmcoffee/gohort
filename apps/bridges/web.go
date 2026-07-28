@@ -235,6 +235,15 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	if T.seenMessage(activeChatID, req.MsgID) {
 		return
 	}
+	// The id dedupe above has nothing to key on when a delivery carries no
+	// message id, so it lets every copy through as new. Fall back to content
+	// for those: a duplicate delivery is what typically starts a self-thread
+	// loop, because two identical inbounds produce two replies that arrive as
+	// two more inbounds.
+	if strings.TrimSpace(req.MsgID) == "" && seenContent(activeChatID, req.Text) {
+		Debug("[bridges] dropping id-less duplicate inbound on %s", activeChatID)
+		return
+	}
 
 	// Record the conversation (identity + participant) and keep the message for
 	// the thread view.
@@ -339,6 +348,22 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		return
 	}
 
+	// Our own reply coming back. In a SELF thread every message is is_from_me
+	// (handle cleared), so an agent reply is indistinguishable by handle from
+	// the owner typing — it routes to the channel that produced it and the
+	// agent answers itself. The message stays in the transcript above; it just
+	// doesn't wake anything.
+	if isOwnEcho(activeChatID, req.Text, strings.TrimSpace(req.Handle) == "") {
+		Log("[bridges] inbound on %s is our own message echoed back — recorded, not routed", activeChatID)
+		return
+	}
+	// A conversation that already blew the reply budget stays cut until its
+	// cooldown expires. Recording continues so nothing is lost from history.
+	if loopTripped(activeChatID) {
+		Log("[bridges] conversation %s is in loop cooldown — inbound recorded, not routed", activeChatID)
+		return
+	}
+
 	sessionID := ChannelSessionKey(ch, activeChatID)
 	replyHere := ChannelDirection(ch) != DirectionInbound
 	// Does this service actually have a delivery path? A rest_messaging connector
@@ -409,6 +434,16 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		}
 		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 {
 			return
+		}
+		// Count the reply against this conversation's budget. The echo guard
+		// stops the ordinary self-thread loop, but it compares TEXT — an agent
+		// that rephrases each round walks straight past it. This doesn't care
+		// what was said, only how many times, so it terminates every loop shape
+		// including that one. It runs after the agent has already answered, so
+		// the reply about to be sent is the last one; the cut applies to the
+		// inbound that would follow.
+		if noteReply(chatID) {
+			logLoopCut(chatID)
 		}
 		if hasOutput {
 			T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"})
