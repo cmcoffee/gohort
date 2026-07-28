@@ -15,6 +15,7 @@ const (
 	snippetTable        = "codewriter_snippets"
 	valueTable          = "codewriter_values"
 	contextTable        = "codewriter_contexts"
+	templateTable       = "codewriter_templates"
 	cwRevisionTable     = "codewriter_revisions"
 	maxSnippetRevisions = 50
 )
@@ -43,6 +44,18 @@ type SnippetRecord struct {
 type ContextRecord struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	Body string `json:"body"`
+	Date string `json:"date"`
+}
+
+// TemplateRecord is a user-saved document skeleton. Same shape as the
+// host-declared ui.DocTemplate so the picker can render both kinds in
+// one list; the Owner distinction is that these carry an ID and can be
+// deleted, and built-ins cannot.
+type TemplateRecord struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Desc string `json:"description"`
 	Body string `json:"body"`
 	Date string `json:"date"`
 }
@@ -78,6 +91,12 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/value/", T.handleValue)
 	sub.HandleFunc("/api/contexts", T.handleContexts)
 	sub.HandleFunc("/api/context/", T.handleContext)
+	sub.HandleFunc("/api/assist", T.handleAssist)
+	sub.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+		HandleDocRules(w, r, T.DB, "codewriter")
+	})
+	sub.HandleFunc("/api/templates", T.handleTemplates)
+	sub.HandleFunc("/api/template/", T.handleTemplate)
 	sub.HandleFunc("/api/collections", T.handleCollectionsList)
 	sub.HandleFunc("/api/reference-sources", T.handleReferenceSources)
 	sub.HandleFunc("/api/revisions/", T.handleRevisions)
@@ -168,7 +187,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		if is_regex {
 			label = "Target description (what the pattern should match)"
 		}
-		code_context = fmt.Sprintf("\n\n%s:\n```\n%s\n```", label, req.Context)
+		code_context = fmt.Sprintf("\n\n%s:\n%s\n%s\n%s", label, DocFence(req.Context), req.Context, DocFence(req.Context))
 	}
 	if req.Code != "" {
 		lang := req.Lang
@@ -176,9 +195,10 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 			lang = "code"
 		}
 		if is_regex {
-			code_context += fmt.Sprintf("\n\nTest samples (one per line; lines prefixed `+` should match, `-` should not match, unprefixed are ambiguous):\n```\n%s\n```", req.Code)
+			code_context += fmt.Sprintf("\n\nTest samples (one per line; lines prefixed `+` should match, `-` should not match, unprefixed are ambiguous):\n%s\n%s\n%s", DocFence(req.Code), req.Code, DocFence(req.Code))
 		} else {
-			code_context += fmt.Sprintf("\n\nCurrent script (%s):\n```%s\n%s\n```", req.Name, lang, req.Code)
+			f := DocFence(req.Code)
+			code_context += fmt.Sprintf("\n\nCurrent script (%s):\n%s%s\n%s\n%s", req.Name, f, lang, req.Code, f)
 		}
 	} else if req.Name != "" && !is_regex {
 		code_context += fmt.Sprintf("\n\nScript name: %s\n(Editor is empty -- this is a new script.)", req.Name)
@@ -265,6 +285,12 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, Message{Role: role, Content: h.Content})
 	}
 	messages = append(messages, Message{Role: "user", Content: prompt + ref_context})
+
+	// Standing rules append to the system prompt on every chat turn, the
+	// same as on assist — they're constraints on output, not on mode.
+	if uid := AuthCurrentUser(r); uid != "" {
+		system_prompt += DocRulesSection(UserDB(T.DB, uid), "codewriter")
+	}
 
 	resp, err := agent.LeadChatWithTools(r.Context(), messages, ref_tools,
 		WithSystemPrompt(system_prompt), WithRouteKey("app.codewriter"))
@@ -731,7 +757,7 @@ func (T *CodeWriterAgent) handleSuggestName(w http.ResponseWriter, r *http.Reque
 	agent := &AppCore{LLM: T.AppCore.LLM}
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), []Message{
-		{Role: "user", Content: fmt.Sprintf("Suggest a concise snake_case filename (max 5 words, no extension) for this %s script:\n\n```\n%s\n```", lang, preview)},
+		{Role: "user", Content: fmt.Sprintf("Suggest a concise snake_case filename (max 5 words, no extension) for this %s script:\n\n%s\n%s\n%s", lang, DocFence(preview), preview, DocFence(preview))},
 	}, WithSystemPrompt("Reply with ONLY the name in snake_case. No extension. No quotes."), WithMaxTokens(304), WorkerJudgeThink())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -741,4 +767,188 @@ func (T *CodeWriterAgent) handleSuggestName(w http.ResponseWriter, r *http.Reque
 	name = strings.Trim(name, "`\"'")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"name": name})
+}
+
+// handleTemplates lists and creates user-saved markdown templates.
+// Mirrors handleContexts — same per-user store, same shape.
+func (T *CodeWriterAgent) handleTemplates(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if udb == nil {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, "[]")
+			return
+		}
+		var items []TemplateRecord
+		for _, key := range udb.Keys(templateTable) {
+			var rec TemplateRecord
+			if udb.Get(templateTable, key, &rec) {
+				items = append(items, rec)
+			}
+		}
+		if items == nil {
+			items = []TemplateRecord{}
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+		})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(items)
+
+	case http.MethodPost:
+		if udb == nil {
+			http.Error(w, "no database", http.StatusInternalServerError)
+			return
+		}
+		var req TemplateRecord
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		req.Name = strings.TrimSpace(req.Name)
+		if req.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Body) == "" {
+			http.Error(w, "body required", http.StatusBadRequest)
+			return
+		}
+		// Saving under a name that already exists REPLACES it. Without
+		// this, "save as template" after an edit silently accumulates
+		// near-duplicate rows and the picker becomes a junk drawer.
+		if req.ID == "" {
+			var existing []TemplateRecord
+			for _, key := range udb.Keys(templateTable) {
+				var rec TemplateRecord
+				if udb.Get(templateTable, key, &rec) {
+					existing = append(existing, rec)
+				}
+			}
+			req.ID = resolveTemplateID(existing, req.Name)
+		}
+		if req.ID == "" {
+			req.ID = UUIDv4()
+		}
+		req.Date = time.Now().Format(time.RFC3339)
+		udb.Set(templateTable, req.ID, req)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTemplate fetches or deletes one saved template.
+func (T *CodeWriterAgent) handleTemplate(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/template/")
+	if id == "" || udb == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		var rec TemplateRecord
+		if !udb.Get(templateTable, id, &rec) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rec)
+	case http.MethodDelete:
+		udb.Unset(templateTable, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAssist powers the draft-with-me workbench over a markdown
+// document: the text on one side, a conversation on the other. Same
+// wire contract as the agent editor's suggest endpoint — in
+// {section, message, draft, history}, out {reply, value} — so the shared
+// core/ui workbench drives both without knowing which app it's talking
+// to.
+//
+// Deliberately separate from handleChat. That endpoint is about CODE:
+// it frames the body as a script, offers regex handling, and returns a
+// proposal the diff pane reviews. This one is about a DOCUMENT and a
+// section of it, and returns a whole replacement the version walk
+// handles. Folding them together would mean one prompt trying to be
+// both, which is how both get worse.
+func (T *CodeWriterAgent) handleAssist(w http.ResponseWriter, r *http.Request) {
+	_, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if T.AppCore.LLM == nil {
+		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name    string `json:"name"`
+		Section string `json:"section"`
+		Message string `json:"message"`
+		Draft   string `json:"draft"`
+		Context string `json:"context"`
+		History []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		http.Error(w, "message required", http.StatusBadRequest)
+		return
+	}
+	req.Section = strings.TrimSpace(req.Section)
+
+	msgs := make([]Message, 0, len(req.History)+1)
+	for _, t := range req.History {
+		role := strings.TrimSpace(t.Role)
+		if (role != "user" && role != "assistant") || strings.TrimSpace(t.Content) == "" {
+			continue
+		}
+		msgs = append(msgs, Message{Role: role, Content: t.Content})
+	}
+	msgs = append(msgs, Message{Role: "user", Content: req.Message})
+
+	// The user's standing rules ride on every assist turn, the same way
+	// they do on chat — a draft that ignores them gets rejected on sight.
+	var rules string
+	if uid := AuthCurrentUser(r); uid != "" {
+		rules = DocRulesSection(UserDB(T.DB, uid), "codewriter")
+	}
+	agent := &AppCore{LLM: T.AppCore.LLM}
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(r.Context(), msgs,
+		WithSystemPrompt(BuildDocAssistPrompt(req.Name, req.Section, req.Draft, req.Context)+rules),
+		WithThink(false),
+	)
+	if err != nil {
+		http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	reply, value := SplitDraftReply(ResponseText(resp))
+	if value != "" && req.Section != "" {
+		value = StripLeadingHeading(value, req.Section)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"reply": reply, "value": value})
 }

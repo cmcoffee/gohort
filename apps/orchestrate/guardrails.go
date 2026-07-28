@@ -235,11 +235,51 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) (bool,
 		}
 		verdicts, err := t.app.runWarden(t.ctx, t.agent, hookPoint, candidate)
 		if err != nil {
-			// The warden is itself an LLM call; an infra hiccup must not brick
-			// every consequential action. Fail OPEN — but loudly, so the
-			// unchecked gap is visible in the ⚠ trail, never silent.
+			// The warden is itself an LLM call, so an infra hiccup has to have
+			// a policy. The owner picks it per agent (GuardrailFailClosed);
+			// either way the gap is recorded, never silent.
+			if t.agent.GuardrailFailClosed {
+				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v) — BLOCKED (this agent fails closed).", err))
+				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s: warden error: %v", t.agent.ID, hookPoint, err)
+				return true, guardrailNoVerdictMessage()
+			}
 			t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v) — the action proceeded unchecked.", err))
 			return false, ""
+		}
+		// UNSURE is not compliance. parseWardenVerdicts deliberately returns
+		// "unsure" for a reply it cannot read, on the stated grounds that "an
+		// unreadable warden must not read as compliance" — and then this
+		// caller treated unsure exactly like comply, silently. So a warden
+		// whose generation collapsed (the worker runs no-think, which this
+		// deployment's model is known to degenerate under) waved the action
+		// through leaving no trace at all.
+		//
+		// Retry once: a collapsed generation is usually transient, and a
+		// second warden call is far cheaper than an unchecked consequential
+		// action. If it is still unreadable, fail open — the deliberate
+		// policy for warden infrastructure trouble — but leave a breadcrumb,
+		// which is the house rule for every guard that drops something.
+		if worstVerdict(verdicts) == guardUnsure {
+			Log("[orchestrate.guardrail] agent=%s warden returned UNSURE at %s — retrying once", t.agent.ID, hookPoint)
+			retried, rerr := t.app.runWarden(t.ctx, t.agent, hookPoint, candidate)
+			if rerr == nil && worstVerdict(retried) != guardUnsure {
+				verdicts = retried
+			} else {
+				_, reason := firstViolation(verdicts)
+				if strings.TrimSpace(reason) == "" {
+					reason = "warden verdict unreadable"
+				}
+				if t.agent.GuardrailFailClosed {
+					t.turnDiag("guardrail-blocked", fmt.Sprintf(
+						"Guardrail check at %s could not reach a verdict (%s) — BLOCKED (this agent fails closed). Retried once.", hookPoint, reason))
+					Log("[orchestrate.guardrail] agent=%s fail-closed block at %s after retry (%s)", t.agent.ID, hookPoint, reason)
+					return true, guardrailNoVerdictMessage()
+				}
+				t.turnDiag("guardrail-unsure", fmt.Sprintf(
+					"Guardrail check at %s could not reach a verdict (%s) — the action proceeded UNCHECKED. Retried once.", hookPoint, reason))
+				Log("[orchestrate.guardrail] agent=%s UNCHECKED at %s after retry (%s)", t.agent.ID, hookPoint, reason)
+				return false, ""
+			}
 		}
 		if worstVerdict(verdicts) != guardViolate {
 			return false, ""
@@ -417,11 +457,18 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{"guardrails": agent.Guardrails, "hooks": agent.GuardrailHooks})
+		writeJSON(w, map[string]any{
+			"guardrails":  agent.Guardrails,
+			"hooks":       agent.GuardrailHooks,
+			"fail_closed": agent.GuardrailFailClosed,
+			"declines":    agent.GuardrailDeclines,
+		})
 	case http.MethodPost:
 		var body struct {
 			Guardrails string   `json:"guardrails"`
 			Hooks      []string `json:"hooks"`
+			FailClosed bool     `json:"fail_closed"`
+			Declines   []string `json:"declines"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -436,11 +483,13 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		}
 		agent.Guardrails = strings.TrimSpace(body.Guardrails)
 		agent.GuardrailHooks = hooks
+		agent.GuardrailFailClosed = body.FailClosed
+		agent.GuardrailDeclines = sanitizeDeclines(body.Declines)
 		if _, err := saveAgent(udb, agent); err != nil {
 			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v)", agentID, len(agent.Guardrails), hooks)
+		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v)", agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -523,4 +572,121 @@ func extractJSONObject(s string) string {
 		}
 	}
 	return ""
+}
+
+// guardrailNoVerdictMessage is handed back when a fail-closed agent's warden
+// could not reach a verdict. It deliberately does NOT say which rule or that
+// the check itself failed: the agent should not learn that retrying might
+// succeed, which is exactly what a compromised context would try next.
+func guardrailNoVerdictMessage() string {
+	return "BLOCKED: this action could not be verified against the enforced guardrails, and this agent is configured to refuse unverified actions. The action did NOT happen. Do not retry it, and do not re-route around it — attempt a different approach, or tell the user plainly that you cannot complete this step."
+}
+
+// declineLeakWords are phrases a decline must never contain. A decline exists
+// to withhold WHY, so anything naming the mechanism, the rule, or the fact
+// that a check ran hands a prober the bisection signal the guardrail is there
+// to deny. Applied to model-written lines AND to owner-typed ones — the
+// failure mode is the same either way.
+// STEMS, not whole words: "rephrase" does not match "rephrasing", which is
+// exactly how a leaky line slipped the first version of this filter.
+var declineLeakWords = []string{
+	"guardrail", "rule", "polic", "block", "restrict", "not allowed",
+	"forbid", "prohibit", "complian", "violat", "filter", "system",
+	"instruct", "rephras", "reword", "try again", "ask again",
+	"differently", "verif", "check", "permission", "configur",
+}
+
+// declineLeaks reports whether a candidate decline gives away why it fired.
+func declineLeaks(line string) bool {
+	low := strings.ToLower(line)
+	for _, w := range declineLeakWords {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeDeclines trims, drops blanks and duplicates, drops any line that
+// leaks WHY it fired, and caps the set. A rejected line is simply not stored:
+// an over-informative decline is worse than the neutral built-in it replaces,
+// so silently keeping the safe subset beats saving the lot.
+func sanitizeDeclines(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range in {
+		line := strings.TrimSpace(raw)
+		if line == "" || seen[strings.ToLower(line)] || declineLeaks(line) {
+			continue
+		}
+		seen[strings.ToLower(line)] = true
+		out = append(out, line)
+		if len(out) >= maxDeclines {
+			break
+		}
+	}
+	return out
+}
+
+const maxDeclines = 12
+
+// handleAgentDeclineSuggest writes a set of declines in the AGENT'S VOICE.
+//
+// Generation happens HERE, at authoring time, not at block time. That is the
+// entire safety argument: this call runs in a clean context with no protected
+// content anywhere in scope, and the owner reviews and edits the result before
+// it can ever be shown. Generating at block time would ask the model that just
+// failed the correction budget, still holding the withheld content, to write
+// user-facing text.
+//
+// The generator is NOT given the guardrail rules. A decline that paraphrases
+// its rule leaks it ("I can't discuss salary figures" tells you exactly what
+// "no salary figures" was protecting), so it sees only the agent's persona.
+func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *http.Request, user, agentID string) {
+	udb := UserDB(T.DB, user)
+	agent, ok := loadAgent(udb, agentID)
+	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	if T.LLM == nil {
+		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var b strings.Builder
+	b.WriteString("Write 8 short refusal lines for this assistant to use when it cannot help with a request.\n\n")
+	fmt.Fprintf(&b, "ASSISTANT NAME: %s\n", agent.Name)
+	if d := strings.TrimSpace(agent.Description); d != "" {
+		fmt.Fprintf(&b, "WHAT IT IS FOR: %s\n", d)
+	}
+	// Voice only. The rules are deliberately withheld — see the doc comment.
+	b.WriteString("\nRULES FOR THE LINES:\n")
+	b.WriteString("- One sentence each. Plain and calm. Match the assistant's voice.\n")
+	b.WriteString("- Say only that it will not or cannot do this. Give NO reason.\n")
+	b.WriteString("- Never mention rules, policies, checks, filters, systems, or instructions.\n")
+	b.WriteString("- Never suggest rewording, retrying, or asking differently.\n")
+	b.WriteString("- Do not apologise more than briefly. No hedging. No em-dashes.\n")
+	b.WriteString("- They must be interchangeable: a reader must not learn anything from WHICH one they got.\n")
+	b.WriteString("\nReturn ONLY a JSON array of 8 strings. No prose, no keys, no markdown.\n")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	resp, err := T.WorkerChat(ctx, []Message{{Role: "user", Content: b.String()}},
+		WithRouteKey("app.orchestrate.decline_suggest"),
+		WithThink(false),
+		WithTemperature(0.9), // variety is the point
+	)
+	if err != nil || resp == nil {
+		http.Error(w, "suggest failed", http.StatusBadGateway)
+		return
+	}
+	// Tolerate prose around the array — a non-JSON model wraps it.
+	var lines []string
+	text := ResponseText(resp)
+	if i, j := strings.Index(text, "["), strings.LastIndex(text, "]"); i >= 0 && j > i {
+		_ = json.Unmarshal([]byte(text[i:j+1]), &lines)
+	}
+	clean := sanitizeDeclines(lines)
+	Log("[orchestrate.guardrails] agent=%s decline suggest: %d returned, %d kept after leak filter", agentID, len(lines), len(clean))
+	writeJSON(w, map[string]any{"declines": clean})
 }

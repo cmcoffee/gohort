@@ -479,6 +479,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		Reasoning:    reasoning,
 		ToolCalls:    toolCalls,
 		Model:        result.ModelVersion,
+		StopReason:   geminiStopReason(finishReason),
 		InputTokens:  result.UsageMetadata.PromptTokenCount,
 		OutputTokens: result.UsageMetadata.CandidatesTokenCount,
 	}, nil
@@ -566,6 +567,10 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	var thinking strings.Builder
 	var toolCalls []ToolCall
 	var modelVersion string
+	// Last non-empty finishReason across chunks — the terminal chunk carries
+	// it, and it must reach Response.StopReason or the agent loop's
+	// clean-finish gate stays permanently closed for Gemini.
+	var streamFinishReason string
 	var inputTokens, outputTokens int
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -583,6 +588,9 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 
 		if chunk.ModelVersion != "" {
 			modelVersion = chunk.ModelVersion
+		}
+		if len(chunk.Candidates) > 0 && chunk.Candidates[0].FinishReason != "" {
+			streamFinishReason = chunk.Candidates[0].FinishReason
 		}
 		if chunk.UsageMetadata.PromptTokenCount > 0 {
 			inputTokens = chunk.UsageMetadata.PromptTokenCount
@@ -637,7 +645,42 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		Reasoning:    thinking.String(),
 		ToolCalls:    toolCalls,
 		Model:        modelVersion,
+		StopReason:   geminiStopReason(streamFinishReason),
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 	}, nil
+}
+
+// geminiStopReason maps Gemini's finishReason onto the vocabulary the rest of
+// the framework uses ("stop" / "length"), which OpenAI and Anthropic already
+// speak.
+//
+// This was previously left EMPTY on every Gemini response, and an empty stop
+// reason is not neutral — the agent loop reads it:
+//
+//	if resp.StopReason == "stop" && len(resp.Content) >= cleanFinishProseFloor {
+//	    // model finished cleanly; skip the prose tool-call scan
+//	}
+//
+// So the scan that is meant to be SKIPPED after a clean finish always ran on
+// Gemini output, and could cut a turn short on prose that merely resembles a
+// tool call. The local (OpenAI-compatible) model populated the field and got
+// the skip — which is exactly why Gemini "just stopped" where the local model
+// kept going.
+func geminiStopReason(finish string) string {
+	switch strings.ToUpper(strings.TrimSpace(finish)) {
+	case "STOP":
+		return "stop"
+	case "MAX_TOKENS":
+		return "length"
+	case "":
+		// No candidate / no reason reported. Treat as a clean stop rather
+		// than an empty string: empty is the value that silently disabled
+		// the clean-finish gate in the first place.
+		return "stop"
+	default:
+		// SAFETY, RECITATION, BLOCKLIST, OTHER — surfaced verbatim (lowered)
+		// so callers can tell a filtered response from a finished one.
+		return strings.ToLower(finish)
+	}
 }

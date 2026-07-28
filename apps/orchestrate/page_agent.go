@@ -10,6 +10,31 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// orchestratorPromptSections is the outline the prompt editor offers.
+//
+// Shared with the suggest endpoint, which looks a section's Help up by
+// title to tell the model what that section is for. One declaration, so
+// the guidance the author reads and the guidance the model gets can't
+// drift apart. The outline is a suggestion, not a schema: the prompt is
+// still one markdown string, an existing free-form prompt opens intact
+// in the Intro block above these slots, empty slots contribute nothing,
+// and the author can add sections of their own.
+var orchestratorPromptSections = []ui.SectionSpec{
+	{Title: "Role & voice", Mode: "prose", Required: true,
+		Placeholder: "You are a…",
+		Help:        "Who this agent is, what it's accountable for, and how it sounds. Two or three sentences. Tone lives here rather than in its own slot: nobody writes a persona and then a separate paragraph about its tone, and splitting them just leaves one box empty."},
+	{Title: "Approach", Mode: "prose",
+		Help: "How it works a request: what it does first, how it decomposes, when it asks instead of assuming."},
+	{Title: "Rules", Mode: "list",
+		Placeholder: "always cite a source URL",
+		Help:        "Hard constraints, one per line. Stated as instructions the agent can check itself against."},
+	{Title: "Failure modes", Mode: "list",
+		Placeholder: "no results found — say so, don't guess",
+		Help:        "What commonly goes wrong in this domain and what to do about it. The highest-value section: defaults rarely fit."},
+	{Title: "Output format", Mode: "prose",
+		Help: "The shape of the reply: length, structure, whether to cite, when to use code blocks or tables. Distinct from voice — this is what the answer looks like, not what the agent sounds like."},
+}
+
 // handleAgentPage routes the agent editor.
 //
 //	GET /agent/new        — create a new blank agent
@@ -156,9 +181,20 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Help: "Patterns that, when matched in the user's message, nudge the host to dispatch to THIS agent FIRST that turn — a salient per-turn hint, stronger than the description alone for domains the host has priors in (law, medicine, finance). A pattern with * or ? matches attachment filenames; anything else is a case-insensitive substring of the message. Author SPECIFIC patterns the domain's questions actually contain (a criminal-law agent: \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\") — loose ones over-fire and get tuned out. Empty = no per-turn nudge (the agent is still in the catalog)."},
 		{Type: "header", Label: "Persona",
 			Help: "How the agent thinks and decomposes work."},
-		{Field: "orchestrator_prompt", Type: "textarea", Label: "Orchestrator prompt", Rows: 8, Expand: true,
+		{Field: "orchestrator_prompt", Type: "sections", Label: "Orchestrator prompt", Rows: 12,
 			Help:       "Voice, decomposition style, and synthesis approach. The orchestrator also briefs the worker per step, so spell out how to handle this agent's common failure modes (ambiguous matches, empty results, conflicting sources) — defaults rarely fit.",
-			SuggestURL: "../api/agents/suggest"},
+			SuggestURL: "../api/agents/suggest",
+			AssistPrompt: "You are writing the system prompt for an AI agent, which the user will run. " +
+				"Write in the second person, addressing the agent directly (\"You are…\", \"When a request is ambiguous, ask…\"). " +
+				"Be concrete about behavior rather than aspirational about quality: \"cite the URL you read it from\" beats \"be accurate\". " +
+				"Do not list tools, mention plan_set or ask_user, or describe the orchestration machinery — the framework supplies all of that around your text.",
+			// The outline is a suggestion, not a schema: the prompt is
+			// still one markdown string, an existing free-form prompt
+			// opens intact in the Intro block above these slots, and the
+			// author can add sections of their own. Empty slots write
+			// nothing into the prompt the model sees.
+			SectionsAllowFree: true,
+			Sections:          orchestratorPromptSections},
 		{Field: "plan_guidance", Type: "textarea", Label: "Plan guidance", Rows: 3,
 			Help:       "Optional. Appended to the orchestrator prompt — nudges decomposition style.",
 			SuggestURL: "../api/agents/suggest"},
@@ -186,21 +222,20 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
 			Placeholder: "0",
 			Help:        "Max thinking tokens per LLM call for this agent. 0 = inherit the deployment default (4096). The admin global budget is a hard ceiling — this can only LOWER the budget (snappier turns); a value above the admin ceiling is clamped. Only applies when Think is on."},
+		// Which MODEL does the reasoning — a Reasoning setting, not an
+		// Autonomous-runs one. It sat under Autonomous runs purely by
+		// position (a header owns the fields until the next header), so it
+		// read as an unattended-run option when it governs every turn.
+		//
+		// Shown only when a distinct lead is actually wired (HasDistinctLead):
+		// otherwise it degrades straight back to the worker and the control
+		// would be a no-op. Hidden for ForcePrivate agents — their
+		// conversation must never leave for the remote lead model (gate 2).
+		leadModelField(T.HasDistinctLead() && !leadModelLocked),
 		{Type: "header", Label: "Autonomous runs", Collapsed: true,
 			Help: "What this agent may do on a scheduled/standing fire, when no one is present to click Approve."},
 		{Field: "auto_approve_tools", Type: "tags", Label: "Pre-approved tools",
 			Help: "Tool names this agent — and its sub-agents, by inheritance — may call on a SCHEDULED/standing run WITHOUT a per-call approval prompt. Add the consequential tools you trust it to run unattended (a credential-backed tool, a channel send). Anything not listed is refused on the first unattended fire and queued in the Permissions pane (approving it there adds it here). Read-only tools never prompt, so you don't need to list them."},
-	}
-	// Per-agent lead-model escalation. Only offered when a distinct lead LLM
-	// is actually wired (HasDistinctLead) — otherwise it degrades straight
-	// back to the worker, so showing it would be a no-op control. Hidden for
-	// ForcePrivate agents: their conversation must never leave for the remote
-	// lead model (gate 2), so the option doesn't apply.
-	if T.HasDistinctLead() && !leadModelLocked {
-		fields = append(fields, ui.FormField{
-			Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
-			Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local.",
-		})
 	}
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST
@@ -255,8 +290,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Gives the agent a persistent Cortex thread (its mind — the 🧠 row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Reached only from Agents. When published to the dashboard, granted users don't see the Cortex thread — they get ordinary chat sessions, each seeded read-only from the agent's standing awareness so it shows up already aware (publishing + granting access is the consent to share that). Publishable as long as the delegation & management tools (below) are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Conductor tools (scheduling, monitors, delegate)",
 				Help: "Grants the conductor toolset: the delegate tool + standing-agent scheduling + event-monitors + run-ledger + history-recall. This is DISTINCT from \"the fleet\" (the collection of all your agents — every agent is in that), and it is NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below (set it to \"Allow none\" to fully ground this agent). It does NOT stop the agent doing work itself; it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
-			ui.FormField{Field: "author", Type: "toggle", Label: "Authoring tools (build agents, tools, apps)",
-				Help: "Grants the full authoring toolset — the SAME catalog the Builder agent holds: survey (map what already exists), create/update/clone agents, tool_def, app_def, skill_def, the credential draft + probe tools, bridge/connector, and (when you own the agent, plus the conductor tools) scheduling/monitors to wire a built tool live. This is the de-silo of Builder: authoring is a capability any capable agent can hold, so it can BUILD new agents/tools/apps on the gohort framework the way Builder does — not just run pre-built ones. Independent of the conductor tools above. Like them, an authoring agent reaches owner-only endpoints, so it is never published publicly."},
+			authorCapabilityField(id),
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
 				Help: "Prefixes every message this agent sends over a messaging channel/bridge with its name — e.g. \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
 
@@ -291,11 +325,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
 				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
 
+			// Delegation gets its OWN group so it lands in the same page section
+			// as the target list it governs. Left under "Access & visibility"
+			// the policy select sat one rail entry away from the list it
+			// chooses from, which is the split this section exists to close.
+			ui.FormField{Type: "header", Label: "Delegation", Collapsed: true,
+				Help: "Which other agents this one may call, and the list those choices draw from."},
 			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
 				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
 			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
 				Options: dispatchModeOptions(dispatchModeFirst),
-				Help:    "Which OTHER agents this one may call via agents(action=\"run\") — this governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all = any non-hidden agent (default). Only allow / Allow all except use the target list in the \"Dispatch target list\" section below. Allow none blocks all dispatch — the actual delegation kill switch. Same control as the in-chat Configure → Security & Access modal."},
+				Help:    "Which OTHER agents this one may call via agents(action=\"run\") — this governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all = any non-hidden agent (default). Only allow / Allow all except draw from the target list directly below. Allow none blocks all dispatch — the actual delegation kill switch. Same control as the in-chat Configure → Security & Access modal."},
 			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
 				Help: "Optional structured input form + saved test cases."},
 			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
@@ -319,6 +359,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id == "" && !subAgent {
 		agentTemplates = agentTypeTemplates()
 	}
+	// EDIT mode splits the form's header groups into page-level sections, so
+	// they appear in the page's own left rail (SectionNav) instead of eight
+	// accordions stacked inside one section. Each section is its own
+	// FormPanel over the SAME record, saving with PATCH — which merges one
+	// field onto the stored copy. A POST would have sent only that section's
+	// fields as the whole record and wiped the rest, which is exactly why
+	// this split wasn't possible before the PATCH handler.
+	//
+	// CREATE mode stays one POST form: there is no record to PATCH yet, and a
+	// new agent needs its fields submitted together with the templates picker.
 	agentSection := ui.Section{
 		Title:    "Agent",
 		Subtitle: "Identity, prompts, and behavior. Clone an existing agent from the landing page if you want a quick copy to tweak.",
@@ -343,6 +393,11 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	sections := []ui.Section{agentSection}
+	if id != "" {
+		if split := splitAgentFormSections(id, source, fields, agentSection.Subtitle); len(split) > 0 {
+			sections = split
+		}
+	}
 
 	// (Channels section removed from the agent editor — channels are managed in
 	// the chat rail's Channels area and in the Bridges app, scoped to the agent
@@ -365,20 +420,27 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// pointed at a select inside the collapsed "Cortex & delegation"
 		// accordion — a different widget, folded shut by default — so the
 		// card referenced a control the reader could not see.
-		sections = append(sections, ui.Section{
-			Title:    "Dispatch target list",
-			Subtitle: dispatchTargetSubtitle(dispatchModeFirst),
-			Body: ui.ChipPicker{
-				OptionsSource: "../api/agents?role=dispatch-target&self=" + id,
-				RecordSource:  source,
-				Field:         "allowed_dispatch_targets",
-				PostTo:        source,
-				Method:        "POST",
-				NameField:     "id",
-				LabelField:    "name",
-				DescField:     "description",
-			},
-		})
+		// The picker is FOLDED INTO the Delegation section when the form was
+		// split, so the policy select and the list it chooses from sit
+		// together. Only when there is no Delegation section (create mode,
+		// which doesn't split) does it stand alone.
+		targetPicker := ui.ChipPicker{
+			OptionsSource: "../api/agents?role=dispatch-target&self=" + id,
+			RecordSource:  source,
+			Field:         "allowed_dispatch_targets",
+			PostTo:        source,
+			Method:        "POST",
+			NameField:     "id",
+			LabelField:    "name",
+			DescField:     "description",
+		}
+		if !foldIntoDelegation(sections, targetPicker) {
+			sections = append(sections, ui.Section{
+				Title:    "Dispatch target list",
+				Subtitle: dispatchTargetSubtitle(dispatchModeFirst),
+				Body:     targetPicker,
+			})
+		}
 	}
 
 	// Credentials this agent may use — tier-2 per-agent scoping, relocated here
@@ -597,4 +659,129 @@ func dispatchModeOptions(first string) []ui.SelectOption {
 		}
 	}
 	return out
+}
+
+// authorCapabilityField renders the "Authoring tools" control.
+//
+// For an ordinary agent it is a real toggle: authoring is a capability you
+// grant. For the BUILDER SEED it is not, and must not pretend to be —
+// agentCanAuthor() returns true for seed-builder by IDENTITY, OR'd ahead of
+// the flag, so the stored value is never consulted for it. Rendering a live
+// toggle there showed "off" on an agent that had the full authoring catalog,
+// which is how one debugging session concluded authoring was disabled when
+// it was not. A control that cannot affect anything is worse than no control.
+func authorCapabilityField(agentID string) ui.FormField {
+	if isBuilderAgent(agentID) {
+		return ui.FormField{
+			Type:  "header",
+			Label: "Authoring tools — always on for Builder",
+			Help: "Builder holds the authoring catalog (survey, create/update/clone agents, tool_def, app_def, skill_def, credential drafting, bridge/connector) as its IDENTITY, not as a grant, so there is nothing to switch here. To have an agent that builds without being Builder, turn this capability on for that agent instead. " +
+				"Note: authoring is owner-only at runtime — if a turn runs as someone other than this agent's owner, the catalog is withheld and the reason is recorded in the session diagnostics.",
+		}
+	}
+	return ui.FormField{Field: "author", Type: "toggle", Label: "Authoring tools (build agents, tools, apps)",
+		Help: "Grants the full authoring toolset — the SAME catalog the Builder agent holds: survey (map what already exists), create/update/clone agents, tool_def, app_def, skill_def, the credential draft + probe tools, bridge/connector, and (when you own the agent, plus the conductor tools) scheduling/monitors to wire a built tool live. This is the de-silo of Builder: authoring is a capability any capable agent can hold, so it can BUILD new agents/tools/apps on the gohort framework the way Builder does — not just run pre-built ones. Independent of the conductor tools above. Like them, an authoring agent reaches owner-only endpoints, so it is never published publicly."}
+}
+
+// splitAgentFormSections turns one long form into page-level sections, split
+// at its "header" fields, so the page's own left rail navigates them.
+//
+// Each section is a separate FormPanel over the SAME agent record, saving with
+// Method "PATCH" — one changed field merged onto the stored copy. With POST
+// each panel would send only ITS fields as the whole record and blank
+// everything else, which is what made this split unsafe until the PATCH
+// handler existed.
+//
+// Fields BEFORE the first header lead the first section rather than becoming a
+// group of their own: they are the agent's identity (name, description,
+// triggers), and burying them behind a rail entry would hide the one thing you
+// always want to see. Returns nil when the form has no headers to split on.
+func splitAgentFormSections(id, source string, fields []ui.FormField, identitySubtitle string) []ui.Section {
+	type group struct {
+		title, help string
+		fields      []ui.FormField
+	}
+	var lead []ui.FormField
+	var groups []group
+	for _, f := range fields {
+		if f.Type == "header" {
+			groups = append(groups, group{title: f.Label, help: f.Help})
+			continue
+		}
+		if len(groups) == 0 {
+			lead = append(lead, f)
+			continue
+		}
+		groups[len(groups)-1].fields = append(groups[len(groups)-1].fields, f)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	panel := func(ff []ui.FormField) ui.FormPanel {
+		return ui.FormPanel{
+			Source: source,
+			// The id rides in the QUERY, not the body: a FormPanel's PATCH body
+			// is exactly {changed_field: value} and carries no record id, so
+			// the target has to be named in the URL.
+			PostURL: "../api/agents?id=" + url.QueryEscape(id),
+			Method:  "PATCH",
+			Fields:  ff,
+		}
+	}
+	// The identity fields lead the first group so the rail's first entry holds
+	// both, rather than spending an entry on two inputs.
+	first := append(append([]ui.FormField{}, lead...), groups[0].fields...)
+	out := []ui.Section{{
+		Title:    "Agent",
+		Subtitle: identitySubtitle,
+		Body:     panel(first),
+	}}
+	for _, g := range groups[1:] {
+		out = append(out, ui.Section{
+			Title:    g.title,
+			Subtitle: g.help,
+			Body:     panel(g.fields),
+		})
+	}
+	return out
+}
+
+// leadModelField is the "Use Lead model" toggle, or a hidden no-op field when
+// the deployment has no distinct lead wired (or the agent is ForcePrivate).
+//
+// Returns a field either way so it can sit INLINE in the Reasoning group where
+// it belongs, rather than being appended to the end of the form — which is how
+// it ended up filed under "Autonomous runs".
+func leadModelField(show bool) ui.FormField {
+	if !show {
+		// Type "hidden" with no Default renders nothing and contributes
+		// nothing to the save payload.
+		return ui.FormField{Field: "lead_model", Type: "hidden"}
+	}
+	return ui.FormField{
+		Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
+		Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local.\n\nUsually you do not need this: an agent holding the `consult` tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning — not one hard question — is what needs the stronger model.",
+	}
+}
+
+// foldIntoDelegation appends the dispatch-target picker into the "Delegation"
+// section, so the policy select and the list it draws from live in one place.
+//
+// Split apart they were one rail entry away from each other: you would set
+// "Only allow" in Delegation and then have to find a different section to say
+// WHICH agents. Returns false when there is no Delegation section (create
+// mode, which does not split), leaving the caller to add a standalone one.
+func foldIntoDelegation(sections []ui.Section, picker ui.ChipPicker) bool {
+	for i := range sections {
+		if sections[i].Title != "Delegation" {
+			continue
+		}
+		panel, ok := sections[i].Body.(ui.FormPanel)
+		if !ok {
+			return false
+		}
+		sections[i].Body = ui.Stack{Children: []ui.Component{panel, picker}}
+		return true
+	}
+	return false
 }

@@ -578,7 +578,21 @@
     });
     var frame = document.createElement('iframe');
     frame.style.cssText = 'flex:1 1 auto;min-height:0;width:100%;border:0;background:#fff';
+    // Let a document that wants the screen take it, and audio start without a
+    // second gesture — an interactive artifact (a game, a player) is otherwise
+    // blocked by policy it can't see.
+    frame.setAttribute('allow', 'autoplay; fullscreen');
     pane.appendChild(frame);
+    // Keystrokes only reach the artifact while the FRAME holds focus, so an
+    // interactive document is inert until something focuses it — a game looks
+    // frozen on arrow keys and space. Hand focus over on load, but never pull
+    // it out of a field the user is typing in: the pane opens by itself when a
+    // tool emits an artifact mid-conversation.
+    frame.addEventListener('load', function() {
+      var a = document.activeElement;
+      if (a && (a.isContentEditable || /^(input|textarea|select)$/i.test(a.tagName || ''))) return;
+      try { frame.contentWindow.focus(); } catch (_) {}
+    });
     // sameOriginPath accepts only a relative path on THIS origin: one
     // leading "/" (not "//host"), no scheme. Everything else is refused —
     // the url mode renders UNsandboxed, so it must never frame foreign
@@ -593,6 +607,26 @@
     // the privileged half that enforces the allowlist and does the real
     // same-origin GET. The closing script tag is split so this string can
     // never terminate an enclosing <script> block.
+    // Storage polyfill, injected into EVERY authored document. The sandbox is
+    // allow-scripts WITHOUT allow-same-origin, so the document has an opaque
+    // origin and merely TOUCHING window.localStorage throws SecurityError —
+    // which kills the whole script on line one. Authored pages reach for it
+    // constantly (a high score, a saved draft, a theme), so without this a
+    // large share of artifacts render blank or freeze on load with no visible
+    // cause. Swap in an in-memory Storage: the API works, nothing persists
+    // past the pane (which is the sandbox's point, and true of an artifact
+    // either way).
+    var STORAGE_SHIM = '<script>(function(){' +
+      'function mem(){var d={};return{getItem:function(k){k=String(k);' +
+      'return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},' +
+      'setItem:function(k,v){d[String(k)]=String(v);},' +
+      'removeItem:function(k){delete d[String(k)];},clear:function(){d={};},' +
+      'key:function(i){var ks=Object.keys(d);return i<ks.length?ks[i]:null;},' +
+      'get length(){return Object.keys(d).length;}};}' +
+      '["localStorage","sessionStorage"].forEach(function(n){try{' +
+      'var s=window[n];s.setItem("__probe","1");s.removeItem("__probe");}catch(e){' +
+      'try{Object.defineProperty(window,n,{value:mem(),configurable:true});}catch(_){}}});' +
+      '})();<' + '/script>';
     var BRIDGE_SHIM = '<script>(function(){var seq=0,pend={};' +
       'window.addEventListener("message",function(ev){if(ev.source!==window.parent)return;' +
       'var d=ev.data;if(!d||d.gohort_fetch_id==null||!pend[d.gohort_fetch_id])return;' +
@@ -604,11 +638,14 @@
       'window.parent.postMessage({gohort_fetch:url,gohort_fetch_id:id},"*");' +
       'setTimeout(function(){if(pend[id]){delete pend[id];rej(new Error("gohort.fetch timeout"));}},20000);});}};' +
       '})();<' + '/script>';
-    function withBridge(html, dataUrls) {
-      if (!dataUrls || !dataUrls.length) return html;
+    // Both shims go in as early as the document allows — a page that reads
+    // storage or calls gohort.fetch in its first inline script must find them
+    // already installed.
+    function withShims(html, dataUrls) {
+      var shim = STORAGE_SHIM + ((dataUrls && dataUrls.length) ? BRIDGE_SHIM : '');
       var m = html.match(/<head[^>]*>/i);
-      if (m) return html.replace(m[0], m[0] + BRIDGE_SHIM);
-      return BRIDGE_SHIM + html;
+      if (m) return html.replace(m[0], m[0] + shim);
+      return shim + html;
     }
     function update(o) {
       o = o || {};
@@ -637,7 +674,7 @@
           state.dataUrls = dataUrls; state.dataKey = dataKey;
           frame.removeAttribute('src');
           frame.setAttribute('sandbox', 'allow-scripts');
-          frame.setAttribute('srcdoc', withBridge(o.html, dataUrls));
+          frame.setAttribute('srcdoc', withShims(o.html, dataUrls));
         }
       }
     }

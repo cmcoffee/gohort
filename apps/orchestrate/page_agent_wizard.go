@@ -575,7 +575,9 @@ func (T *OrchestrateApp) wizardDraftField(ctx context.Context, field, hint strin
 	if T.LLM == nil {
 		return ""
 	}
-	prompt := buildSuggestPrompt(field, hint, record)
+	// Whole-field draft: the wizard composes a complete value, so no
+	// section scoping.
+	prompt := buildSuggestPrompt(field, "", hint, record)
 	resp, err := T.LLM.Chat(ctx,
 		[]Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt(suggestSystemPrompt),

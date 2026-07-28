@@ -480,6 +480,29 @@
     return wrap;
   };
 
+  // frame — a complete HTML document in its own iframe (srcdoc), so its
+  // reset/body CSS styles ITSELF instead of the page hosting it and its
+  // 100vh means the frame box. No sandbox: same origin as the page that
+  // served it, so relative fetches ('data/<source>'), cookies and storage
+  // work exactly as they do in an inlined card.
+  components.frame = function(cfg) {
+    var wrap = el('div', {class: 'ui-frame'});
+    var f = document.createElement('iframe');
+    f.style.cssText = 'display:block;width:100%;border:0;background:#fff;border-radius:8px;' +
+      'height:' + (cfg.height || 'min(80vh, 860px)');
+    f.setAttribute('allow', 'autoplay; fullscreen');
+    f.setAttribute('srcdoc', cfg.html || '');
+    // Keyboard-driven documents (games, editors) are inert until the frame
+    // holds focus. Take it on load unless the user is typing somewhere.
+    f.addEventListener('load', function() {
+      var a = document.activeElement;
+      if (a && (a.isContentEditable || /^(input|textarea|select)$/i.test(a.tagName || ''))) return;
+      try { f.contentWindow.focus(); } catch (_) {}
+    });
+    wrap.appendChild(f);
+    return wrap;
+  };
+
   components.error = function(cfg) {
     return el('div', {class: 'ui-card', text: 'UI error: ' + (cfg.message || 'unknown')});
   };

@@ -152,6 +152,7 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/delete/", T.handleDelete)
 	sub.HandleFunc("/api/export/", T.handleExport)
 	sub.HandleFunc("/api/import", T.handleImport)
+	sub.HandleFunc("/api/assist", T.handleAssist)
 	sub.HandleFunc("/api/merge", T.handleMerge)
 	sub.HandleFunc("/api/merge-sources", T.handleMergeSources)
 	sub.HandleFunc("/api/merge-source/", T.handleMergeSource)
@@ -1300,3 +1301,77 @@ func headerImageHTML(url string) string {
 
 // Use shared functions from core:
 // HTMLEscape, MarkdownToHTML, InlineMarkdownToHTML, HTMLToMarkdown, HTMLUnescape
+
+// handleAssist powers the draft-with-me workbench over an article: the
+// text on one side, a conversation on the other. Same wire contract as
+// CodeWriter's and the agent editor's — in {section, message, draft,
+// history}, out {reply, value} — so the one shared workbench drives all
+// three without knowing which app it is talking to.
+//
+// Separate from handleChat by design. That endpoint proposes a whole
+// rewrite the diff pane reviews; this one revises a named section and
+// hands back a replacement the version walk owns.
+func (T *TechWriterAgent) handleAssist(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if T.AppCore.LLM == nil {
+		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name    string `json:"name"`
+		Section string `json:"section"`
+		Message string `json:"message"`
+		Draft   string `json:"draft"`
+		History []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		http.Error(w, "message required", http.StatusBadRequest)
+		return
+	}
+	req.Section = strings.TrimSpace(req.Section)
+
+	msgs := make([]Message, 0, len(req.History)+1)
+	for _, t := range req.History {
+		role := strings.TrimSpace(t.Role)
+		if (role != "user" && role != "assistant") || strings.TrimSpace(t.Content) == "" {
+			continue
+		}
+		msgs = append(msgs, Message{Role: role, Content: t.Content})
+	}
+	msgs = append(msgs, Message{Role: "user", Content: req.Message})
+
+	// The user's saved rules ride along as reference material: they are
+	// standing instructions for this article's prose, so a draft that
+	// ignores them would be rejected the moment it lands.
+	rules := loadUserRules(udb)
+
+	resp, err := T.AppCore.WorkerChat(r.Context(), msgs,
+		WithSystemPrompt(BuildDocAssistPrompt(req.Name, req.Section, req.Draft, rules)),
+		WithRouteKey("app.techwriter.assist"),
+		WithThink(false),
+	)
+	if err != nil {
+		http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	reply, value := SplitDraftReply(ResponseText(resp))
+	if value != "" && req.Section != "" {
+		value = StripLeadingHeading(value, req.Section)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"reply": reply, "value": value})
+}

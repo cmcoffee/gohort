@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"time"
 )
 
 // responseExtractDesc documents the response_extract spec for the tool_def
@@ -291,6 +292,11 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			pendingModeByName[p.Tool.Name] = p.Tool.Mode
 		}
 	}
+	// Deployment-wide shared tools live in their OWNER's pool, so none of
+	// the maps above contain one you don't own. Without this, such a tool
+	// listed as "[session-only]" — the exact opposite of the truth (it is
+	// permanent and global), and with no hint that someone else owns it.
+	sharedOwners := SharedToolOwners(sess.DB)
 	tools := sess.CopyTempTools()
 	if len(tools) == 0 && len(pendingByName) == 0 && len(persistentByName) == 0 {
 		return "No temp tools defined in this session.", nil
@@ -311,6 +317,10 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			tag = " [persistent]"
 		case pendingByName[t.Name]:
 			tag = " [pending approval]"
+		case sharedOwners[t.Name] != "" && sharedOwners[t.Name] != sess.Username:
+			tag = " [shared deployment-wide — owned by " + sharedOwners[t.Name] + "; read-only to you, copy under a new name to change it]"
+		case sharedOwners[t.Name] == sess.Username:
+			tag = " [persistent, shared deployment-wide — you own it; edits affect every user]"
 		default:
 			tag = " [session-only]"
 		}
@@ -522,11 +532,17 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			shellArgs["raw_network"] = v
 		}
 		t := &CreateTempToolTool{}
+		Debug("[tool_def] create(shell) %q: RunWithSession start", StringArg(args, "name"))
 		res, err := t.RunWithSession(shellArgs, sess)
+		Debug("[tool_def] create(shell) %q: RunWithSession done (err=%v)", StringArg(args, "name"), err)
 		if err == nil {
+			// finalizeAuthoredTool routes the write-back (agent attach vs
+			// bundle vs pool), which is where the shared tool mutex is taken.
+			Debug("[tool_def] create(shell) %q: finalize start", StringArg(args, "name"))
 			if scope := finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name"))); scope != "" {
 				res = strings.TrimRight(res, " ") + " " + scope
 			}
+			Debug("[tool_def] create(shell) %q: finalize done", StringArg(args, "name"))
 		}
 		return res, err
 	case TempToolModeAPI:
@@ -946,7 +962,11 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("marshal tool %q: %w", name, err)
 			}
-			return fmt.Sprintf("source: active (admin-approved)\n%s", string(body)), nil
+			src := "active (admin-approved)"
+			if p.Shared {
+				src = "active (admin-approved), PUBLISHED deployment-wide — you own it, so an update changes it for every user"
+			}
+			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
 		}
 	}
 	// Pending review queue — recently authored by an LLM, awaiting admin.
@@ -970,6 +990,19 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 				return fmt.Sprintf("source: session draft (this turn)\n%s", string(body)), nil
 			}
 		}
+	}
+	// Deployment-wide SHARED pool. A shared tool is callable from every
+	// user's catalog, so "get" erroring on one the model just invoked was
+	// pure confusion — it reads as the tool having vanished.
+	if p, owner, ok := FindSharedToolWithOwner(sess.DB, name); ok {
+		body, err := json.MarshalIndent(p.Tool, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshal tool %q: %w", name, err)
+		}
+		if owner == sess.Username {
+			return fmt.Sprintf("source: active (shared deployment-wide; you own it, so update edits it in place)\n%s", string(body)), nil
+		}
+		return fmt.Sprintf("source: shared deployment-wide, owned by %s — FULL definition below including its script; reading is always allowed, only editing is not. To change its behavior, copy it under a NEW name with action=\"create\" and edit that.\n%s", owner, string(body)), nil
 	}
 	// Live session tools — the only place an agent-bundled tool appears
 	// (it's reconstituted from the agent record each turn, never written
@@ -1240,6 +1273,19 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
+	// Stage breadcrumbs. An update that never returns leaves the UI showing
+	// "running" forever with nothing in the log to say WHERE it stopped —
+	// resolve, script syntax-check (which shells out), or persist. The gap
+	// between the last stage logged here and the next line in the log is the
+	// answer. Cheap, and it turns the next hang into a five-second diagnosis
+	// instead of a code read.
+	t0 := time.Now()
+	stage := "resolve"
+	Debug("[tool_def] update %q: begin", name)
+	defer func() {
+		Debug("[tool_def] update %q: returned after %s (last stage: %s)", name, time.Since(t0), stage)
+	}()
+	_ = stage
 	if persistentToolLocked(sess, name) {
 		return fmt.Sprintf(lockedToolMsg, name), nil
 	}
@@ -1260,6 +1306,15 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 	}
 	if !ok {
+		// Before declaring it missing: it may be a DEPLOYMENT-WIDE shared
+		// tool. Those are callable by everyone but live in their owner's
+		// pool, so the searches above never see one you don't own. Saying
+		// "no tool named X" there is actively misleading — the model just
+		// called it.
+		if _, owner, shared := FindSharedToolWithOwner(sess.DB, name); shared {
+			return fmt.Sprintf("Tool %q is a DEPLOYMENT-WIDE SHARED tool owned by %s, so you cannot edit it from here — an edit would change it for every user. Nothing is broken and there is nothing to report. Options: ask %s to make the change; or copy it into your own pool with action=\"create\" under a NEW name (use action=\"get\" to read its current definition first) and edit that. Do NOT re-create it under the SAME name.",
+				name, owner, owner), nil
+		}
 		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}
 	// Scope-preserving write-back (flattened namespace): when the resolved
@@ -1276,6 +1331,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			defer func() { sess.BundleAuthoredToolTo = "" }()
 		}
 	}
+	stage = "merge"
 	merged := tempToolToCreateArgs(existing)
 
 	// Secured-credential bindings are AUTO-RESOLVED on the re-run create below:
@@ -1394,6 +1450,12 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		merged["actions"] = cur
 	}
 
+	// createGrouped re-runs the full create path, which for a shell tool
+	// SHELLS OUT to syntax-check the script (py_compile / bash -n). That
+	// subprocess is the most likely place for a long stall — pair this line
+	// with the [sandbox] spawn/exit breadcrumbs to tell them apart.
+	stage = "create/persist (may syntax-check the script in a subprocess)"
+	Debug("[tool_def] update %q: entering create path after %s", name, time.Since(t0))
 	res, err := createGrouped(merged, sess)
 	if err != nil {
 		return "", err
@@ -2749,6 +2811,63 @@ URL placeholders are URL-encoded at dispatch. Body placeholders are
 JSON-encoded. Both are safe against injection.
 
 ================================================================
+WHAT THE TOOL RETURNS — anchor list items, never omit a field
+================================================================
+
+The output shape is part of the tool's contract, same as its params.
+These two rules apply in every mode; a tool can pass action="test"
+clean and still produce wrong answers in use by breaking them.
+
+ANCHOR EVERY ITEM IN A LIST RESULT.
+
+A tool that returns many similar-shaped items — search hits,
+headlines, rows, files, messages — must give each item an id. Without
+one the caller can read every field correctly and still attach it to
+the wrong item: the attributes survive, the binding to their item
+doesn't. It looks like a hallucination and isn't. It's two neighbors
+in an undifferentiated wall of text.
+
+WRONG (nothing to point at):
+  ### Cracker Barrel CEO steps down after rebrand chaos
+  *BBC Business* — Mon, 27 Jul 2026
+  Julie Masino will exit after backlash over the logo redesign.
+
+RIGHT (each item carries a handle):
+  [id: bbc-cr49z0r54nko] Cracker Barrel CEO steps down
+  source: BBC Business | date: 2026-07-27
+
+Prefer a stable opaque id (the upstream's own id, a URL slug) over a
+position number: ordinals shift between calls, so [3] names a
+different item an hour later. If another tool consumes the selection,
+have it take the id as a param rather than a retyped description of
+the item. The retyping is where the drift happens.
+
+In api mode this is a response_pipe job:
+
+  response_pipe="jq -c '[.items[] | {id, title, source, published}]'"
+
+STATE ABSENT FIELDS, DON'T DROP THEM.
+
+An omitted key reads as a gap to fill from whatever else is in
+context. An explicit null reads as a fact. The caller can't tell
+"this tool doesn't report that" from "this item happens to lack it"
+unless you say which.
+
+  WRONG:  {"id": "a1", "title": "...", "source": "BBC"}
+  RIGHT:  {"id": "a1", "title": "...", "source": "BBC",
+           "summary": null, "author": null}
+
+This matters most for the field the caller needs in order to act. If
+your tool hands back a headline with no body and the caller's job is
+to summarize the body, the missing body gets invented from the
+nearest plausible text in context. Emitting "summary": null makes the
+caller go fetch it or report that it can't.
+
+Keep the field set identical across items and use a delimiter the
+caller can't mistake for content. Ragged records let values slide
+across item boundaries.
+
+================================================================
 WebDAV / CalDAV — the Depth header is not optional
 ================================================================
 
@@ -3053,6 +3172,11 @@ common pitfalls
   visible result is what comes off stdout; if your jq filter
   doesn't match, you get nothing. Test the filter against a real
   response first.
+
+- Returning a list of items with no per-item id, or dropping keys
+  the item doesn't have. Both invite the caller to bind a field to
+  the wrong item or invent one outright. See "WHAT THE TOOL RETURNS"
+  above.
 `
 
 // pruneRequired drops entries from a required list that no longer name a param.

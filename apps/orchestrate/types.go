@@ -659,6 +659,49 @@ type AgentRecord struct {
 	// feature is opt-in by authoring a rule). One rule per line.
 	Guardrails string `json:"guardrails,omitempty"`
 
+	// GuardrailFailClosed decides what happens when the warden cannot reach a
+	// verdict — its call errored, or its reply came back unreadable (the
+	// worker runs no-think, which some models degenerate under, producing
+	// output that parses to no verdict at all).
+	//
+	// false (default): fail OPEN. The action proceeds unchecked, loudly — a
+	// guardrail-unsure / guardrail-error entry lands in the ⚠ trail. Right for
+	// style and tone rules, where a flaky warden blocking real work costs more
+	// than an occasional unchecked action.
+	//
+	// true: fail CLOSED. No verdict means no action. Right for consequential
+	// rules ("never send money", "never email outside the company"), where an
+	// unchecked action is the thing you wrote the rule to prevent.
+	//
+	// Agent-level rather than per-rule on purpose: an unreadable warden reply
+	// carries NO rule attribution, so there is nothing to look a per-rule
+	// policy up by in precisely the case the policy exists for. An agent whose
+	// rules differ in severity should carry the strict ones on their own agent.
+	GuardrailFailClosed bool `json:"guardrail_fail_closed,omitempty"`
+
+	// GuardrailDeclines are the lines shown when a reply cannot be made
+	// guardrail-compliant. Empty rotates through the framework's neutral
+	// built-ins; a non-empty set replaces them, so an agent declines in its
+	// own voice.
+	//
+	// A SET, not one line, for the same reason the built-ins are: a
+	// verbatim-identical refusal is a fingerprint that tells a prober exactly
+	// which attempts tripped the guardrail, letting them bisect toward a rule
+	// they never see.
+	//
+	// Authored ahead of time — the model may WRITE these (see the generate
+	// endpoint) but never at block time. The distinction is the whole safety
+	// argument: generating here happens in a clean context with no protected
+	// content in scope and the owner reviewing before it goes live, whereas
+	// generating at block time would ask the model that just failed the
+	// correction budget, with the withheld content still in front of it, to
+	// produce user-facing text.
+	//
+	// The generator is deliberately NOT shown the guardrail rules, so a
+	// decline can't paraphrase the rule it enforces ("I can't discuss salary
+	// figures" leaks what "no salary figures" was protecting).
+	GuardrailDeclines []string `json:"guardrail_declines,omitempty"`
+
 	// GuardrailHooks selects WHERE the warden runs — the interception points,
 	// configurable per agent: "pre_action" (before a consequential tool call),
 	// "pre_output" (before the final reply), "periodic" (sampling the turn

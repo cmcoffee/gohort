@@ -6,7 +6,7 @@
     var dateF = cfg.date_field || 'date';
     var languages = (cfg.languages && cfg.languages.length)
       ? cfg.languages
-      : ['bash','sql','python','powershell','go','regex',''];
+      : ['bash','sql','python','powershell','go','markdown','regex',''];
 
     var wrap = el('div', {class: 'ui-cw ui-tw'});
     var side = el('div', {class: 'ui-tw-side'});
@@ -71,6 +71,11 @@
     var copyBtn = el('button', {class: 'ui-row-btn', onclick: function(){ copyEditor(); }}, ['Copy']);
     var newBtn  = el('button', {class: 'ui-row-btn', onclick: function(){ openSnippet(null); }}, ['New']);
     var varsBtn = el('button', {class: 'ui-row-btn', onclick: function(){ openVarsModal('apply'); }}, ['Variables']);
+    // Standing instructions for the assistant — same shared panel the
+    // article editor uses.
+    var rulesBtn = cfg.rules_url
+      ? el('button', {class: 'ui-row-btn', onclick: function(){ openRulesPanel({url: cfg.rules_url, noun: 'reply'}); }}, ['Rules'])
+      : null;
     var valuesBtn = cfg.values_list_url
       ? el('button', {class: 'ui-row-btn', onclick: function(){ openValuesModal(); }}, ['Values'])
       : null;
@@ -79,24 +84,38 @@
     // record has revision-list / revision-load URLs configured. Hidden
     // when no snippet is open (currentID === null) so the toolbar
     // doesn't show "rev 0/0" on a blank New buffer.
-    var revGroup = null, revBackBtn = null, revFwdBtn = null, revIndicator = null, revMarkBtn = null;
-    if (cfg.revisions_list_url && cfg.revision_load_url) {
-      revBackBtn = el('button', {class: 'ui-row-btn ui-cw-rev-btn', title: 'Previous revision',
-        onclick: function(){ navigateRevision(-1); }, disabled: 'true'}, ['◀']);
-      revFwdBtn = el('button', {class: 'ui-row-btn ui-cw-rev-btn', title: 'Next revision',
-        onclick: function(){ navigateRevision(1); }, disabled: 'true'}, ['▶']);
-      revIndicator = el('span', {class: 'ui-cw-rev-ind'}, []);
-      revMarkBtn = el('button', {class: 'ui-row-btn ui-cw-rev-mark', title: 'Save current editor content as a new (latest) revision',
-        onclick: function(){ markAsLatest(); }, style: 'display:none'}, ['Make Latest']);
-      revGroup = el('span', {class: 'ui-cw-rev-group', style: 'display:none'},
-        [revMarkBtn, revBackBtn, revIndicator, revFwdBtn]);
-    }
+    // Revision walk — shared with article_editor via buildRevisionNav
+    // (45_document_core.js). Only onLoad is app-shaped: a revision here
+    // carries code + name + lang.
+    var revNav = buildRevisionNav({
+      listURL:  cfg.revisions_list_url,
+      loadURL:  cfg.revision_load_url,
+      btnClass: 'ui-row-btn ui-cw-rev-btn',
+      indicatorClass: 'ui-cw-rev-ind',
+      makeClass: 'ui-row-btn ui-cw-rev-mark',
+      makeLabel: 'Make Latest',
+      makeTitle: 'Save current editor content as a new (latest) revision',
+      onMakeCurrent: function(){ saveSnippet(); },
+      onLoad: function(rev) {
+        docSetValue(rev[codeF] || rev.code || '');
+        if (rev[nameF] || rev.name) nameInput.value = rev[nameF] || rev.name || '';
+        var l = rev[langF] || rev.lang || '';
+        if (l) {
+          for (var i = 0; i < langSelect.options.length; i++) {
+            if (langSelect.options[i].value === l) { langSelect.selectedIndex = i; break; }
+          }
+          syncDocViewBtn();
+        }
+      },
+    });
+    var revGroup = revNav.group;
 
     var toolbarKids = [nameInput];
     if (revGroup) toolbarKids.push(revGroup);
     toolbarKids.push(langSelect);
     toolbarKids.push(varsBtn);
     if (valuesBtn) toolbarKids.push(valuesBtn);
+    if (rulesBtn) toolbarKids.push(rulesBtn);
     toolbarKids.push(saveBtn);
     toolbarKids.push(copyBtn);
     toolbarKids.push(newBtn);
@@ -116,6 +135,180 @@
       spellcheck: 'false',
     });
 
+    // Outline view over the MAIN editor, offered only while the language
+    // is markdown. A markdown snippet is a document, and the same
+    // sectioned editor that serves other prose surfaces serves it too.
+    // Code stays a code textarea: headings mean nothing in bash.
+    //
+    // As with Context, the textarea remains the SINGLE value carrier —
+    // save, chat, variable extraction, copy, and revision navigation all
+    // keep reading editor.value untouched, and the outline writes
+    // through on every edit.
+    var docOutline     = null;
+    var docOutlineHost = el('div', {class: 'ui-cw-doc-outline'});
+    docOutlineHost.style.display = 'none';
+    function docOutlineOn() { return docOutlineHost.style.display !== 'none'; }
+    function langIsMarkdown() {
+      return String(langSelect.value || '').toLowerCase() === 'markdown';
+    }
+    var docViewBtn = el('button', {
+      class: 'ui-cw-doc-view', type: 'button',
+      title: 'Switch between the raw text and a section outline',
+    }, ['Outline']);
+    docViewBtn.style.display = 'none';
+    // docSetValue writes the snippet body from OUTSIDE the editors —
+    // loading a snippet or a revision, applying a diff, substituting
+    // variables — and keeps whichever view is showing in sync.
+    function docSetValue(text) {
+      editor.value = text == null ? '' : String(text);
+      if (docOutline && docOutlineOn()) docOutline.setValue(editor.value);
+    }
+    // editorValue reads the live body whichever view is up. The outline
+    // writes through on every keystroke so editor.value is already
+    // current, but reading the visible editor directly keeps that an
+    // implementation detail rather than a thing callers must know.
+    function editorValue() {
+      if (docOutline && docOutlineOn()) return docOutline.getValue();
+      return editor.value || '';
+    }
+    // docToRaw forces the raw textarea back into view. Called before
+    // anything that manipulates the textarea's own visibility (the diff
+    // pane hides it and inserts itself where it sat) and whenever the
+    // language stops being markdown.
+    function docToRaw() {
+      if (!docOutlineOn()) return;
+      editor.value = docOutline.getValue();
+      docOutlineHost.style.display = 'none';
+      editor.style.display = '';
+      docViewBtn.textContent = 'Outline';
+      docViewBtn.classList.remove('on');
+      if (docAssistBtn && langIsMarkdown()) docAssistBtn.style.display = '';
+    }
+    function toggleDocOutline() {
+      if (docOutlineOn()) { docToRaw(); return; }
+      if (!docOutline) {
+        docOutline = buildSectionsEditor({
+          allowFree: true,
+          initial: editor.value || '',
+          onChange: function(text) { editor.value = text; },
+          // Per-section drafting, same as the agent editor's prompt
+          // outline: asking for one section keeps the rest of the
+          // document exactly as written.
+          onSuggest: cfg.assist_url ? function(title, body, apply) {
+            openDocAssist(title, body, apply);
+          } : null,
+        });
+        docOutlineHost.appendChild(docOutline.node);
+      } else {
+        docOutline.setValue(editor.value || '');
+      }
+      editor.style.display = 'none';
+      docOutlineHost.style.display = '';
+      docViewBtn.textContent = 'Raw';
+      docViewBtn.classList.add('on');
+      if (docAssistBtn) docAssistBtn.style.display = 'none';
+    }
+    docViewBtn.addEventListener('click', toggleDocOutline);
+    // syncDocViewBtn shows the toggle only for markdown, and drops out of
+    // outline mode when the language changes away from it — an outline
+    // over a bash script is nonsense, and leaving it up would hide the
+    // editor the user is trying to reach.
+    // openDocAssist launches the shared draft-with-me workbench for the
+    // whole document or one section of it. section === '' means whole.
+    // The saved Context rides along as reference material, since it is
+    // exactly the background the document is being written against.
+    function openDocAssist(section, initial, apply) {
+      window.uiOpenAssist({
+        title: (nameInput.value || 'Document') + (section ? ' — ' + section : ''),
+        subtitle: section
+          ? 'Drafting one section. The rest of the document is untouched.'
+          : 'Drafting the whole document.',
+        initial: initial,
+        send: function(req, done) {
+          fetch(cfg.assist_url, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              name: nameInput.value || '',
+              section: section || '',
+              message: req.message,
+              draft: req.draft,
+              context: ctxEditor.value || '',
+              history: req.history,
+            }),
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          }).then(function(d) {
+            done({reply: d && d.reply, value: d && d.value});
+          }).catch(function(err) {
+            done(null, (err && err.message) || String(err));
+          });
+        },
+        onAccept: apply,
+      });
+    }
+
+    // Whole-document draft button — RAW mode only, mirroring the agent
+    // editor. In the outline the ✨ lives per section, where a targeted
+    // revision is possible; raw has no sections to hang one on and the
+    // user is working on the document as a whole anyway.
+    var docAssistBtn = cfg.assist_url
+      ? el('button', {class: 'ui-cw-doc-view', type: 'button',
+          title: 'Draft the whole document with assistance'}, ['✨ Draft'])
+      : null;
+    if (docAssistBtn) {
+      docAssistBtn.style.display = 'none';
+      docAssistBtn.addEventListener('click', function() {
+        openDocAssist('', editorValue(), function(text) { docSetValue(text); });
+      });
+    }
+
+    // Templates button — same markdown-only visibility as the outline
+    // toggle, and hidden entirely when the host declared no templates.
+    var tplBtn = ((cfg.templates && cfg.templates.length) || cfg.templates_list_url)
+      ? el('button', {class: 'ui-cw-doc-view', type: 'button',
+          title: 'Start from a markdown template, or save this one'}, ['Templates'])
+      : null;
+    if (tplBtn) {
+      tplBtn.style.display = 'none';
+      tplBtn.addEventListener('click', function(){ openTemplatesModal(); });
+    }
+    function syncDocViewBtn() {
+      if (langIsMarkdown()) {
+        docViewBtn.style.display = '';
+        if (tplBtn) tplBtn.style.display = '';
+        // Outline is the default view for a markdown document: the
+        // structure is the point, and someone who opens a runbook wants
+        // its sections, not a wall of text with hashes in it. Raw stays
+        // one click away and re-asserts itself per document, so a
+        // deliberate switch to Raw lasts as long as that document.
+        if (!docOutlineOn()) toggleDocOutline();
+        // Whole-document draft only makes sense in raw; the outline
+        // offers it per section instead.
+        if (docAssistBtn) docAssistBtn.style.display = docOutlineOn() ? 'none' : '';
+        return;
+      }
+      docToRaw();
+      docViewBtn.style.display = 'none';
+      if (tplBtn) tplBtn.style.display = 'none';
+      if (docAssistBtn) docAssistBtn.style.display = 'none';
+    }
+    langSelect.addEventListener('change', syncDocViewBtn);
+    // The toolbar was assembled above, before these buttons existed. Park
+    // them right after the language select they belong to.
+    var docAnchor = langSelect.nextSibling;
+    if (docAnchor) toolbar.insertBefore(docViewBtn, docAnchor);
+    else toolbar.appendChild(docViewBtn);
+    if (tplBtn) {
+      if (docAnchor) toolbar.insertBefore(tplBtn, docAnchor);
+      else toolbar.appendChild(tplBtn);
+    }
+    if (docAssistBtn) {
+      if (docAnchor) toolbar.insertBefore(docAssistBtn, docAnchor);
+      else toolbar.appendChild(docAssistBtn);
+    }
+    syncDocViewBtn();
+
     var ctxOpen = true;
     var ctxArrow   = el('span', {class: 'ui-cw-ctx-arrow open'}, ['▸']);
     var ctxLabel   = el('span', {}, [' Context (table schemas, reference docs, notes)']);
@@ -133,6 +326,66 @@
       placeholder: cfg.placeholder_ctx || 'Paste table schemas, DDL, column descriptions, API docs, or any reference material here. The LLM reads this alongside the code on every chat turn.',
       spellcheck: 'false',
     });
+
+    // Outline view over the Context block — the same sectioned markdown
+    // editor form fields use, reached through a toggle in the Context
+    // header. A context that has grown to schemas + conventions + gotchas
+    // is a document, and scrolling one textarea to find the API section
+    // is the problem this fixes.
+    //
+    // The textarea stays the SINGLE value carrier. Every existing read
+    // (the chat POST, Save, the resizer) keeps using ctxEditor.value
+    // untouched, and the outline writes through to it on every edit.
+    //
+    // Raw is the default: a context usually starts life as a pasted
+    // schema dump, and re-shaping someone's paste on arrival is not a
+    // favor. No declared skeleton either — what belongs in a reference
+    // context is the user's business, so sections here are all free-form.
+    var ctxOutline     = null;
+    var ctxOutlineHost = el('div', {class: 'ui-cw-ctx-outline'});
+    ctxOutlineHost.style.display = 'none';
+    function ctxOutlineOn() { return ctxOutlineHost.style.display !== 'none'; }
+    // ctxSetValue writes the context from OUTSIDE the editors (loading a
+    // saved context, mainly) and keeps whichever view is showing in sync.
+    function ctxSetValue(text) {
+      ctxEditor.value = text == null ? '' : String(text);
+      if (ctxOutline && ctxOutlineOn()) ctxOutline.setValue(ctxEditor.value);
+    }
+    var ctxViewBtn = el('button', {class: 'ui-cw-ctx-btn', title: 'Switch between the raw text and a section outline',
+      onclick: function(ev) { ev.stopPropagation(); toggleCtxOutline(); }}, ['Outline']);
+    function toggleCtxOutline() {
+      if (ctxOutlineOn()) {
+        ctxEditor.value = ctxOutline.getValue();
+        ctxOutlineHost.style.display = 'none';
+        ctxEditor.style.display = '';
+        ctxViewBtn.textContent = 'Outline';
+        ctxViewBtn.classList.remove('on');
+        return;
+      }
+      if (!ctxOutline) {
+        ctxOutline = buildSectionsEditor({
+          allowFree: true,
+          initial: ctxEditor.value || '',
+          onChange: function(text) { ctxEditor.value = text; },
+        });
+        ctxOutlineHost.appendChild(ctxOutline.node);
+      } else {
+        ctxOutline.setValue(ctxEditor.value || '');
+      }
+      ctxEditor.style.display = 'none';
+      ctxOutlineHost.style.display = '';
+      ctxViewBtn.textContent = 'Raw';
+      ctxViewBtn.classList.add('on');
+    }
+    // ctxActions was assembled above, before this button existed; put the
+    // view toggle at its head so it reads left-to-right as
+    // [Outline] [Save] [Load] <current context name>.
+    ctxActions.insertBefore(ctxViewBtn, ctxActions.firstChild);
+    // Outline is the default here too. A context with no headings shows
+    // as one block, which reads exactly like the textarea did, so the
+    // flip costs nothing for a pasted schema and pays off the moment the
+    // context grows sections. Content is never reshaped unless edited.
+    toggleCtxOutline();
     // Reference-collections picker. Rendered only when the host wires
     // cfg.collections_list_url. A compact "+ Add <noun>" button opens a
     // modal listing each collection by name + description + size; the chosen
@@ -164,7 +417,7 @@
         collBar.appendChild(el('span', {class: 'ui-cw-coll-chip'}, [(c.name || c.id) + ' ', x]));
       });
     }
-    var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [collBar, ctxEditor]);
+    var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [collBar, ctxEditor, ctxOutlineHost]);
     var ctxSection = el('div', {class: 'ui-cw-ctx-section'}, [ctxToggle, ctxPane]);
 
     // Load the collection list once for the picker. Best-effort: any
@@ -197,7 +450,7 @@
       });
     });
 
-    var editorWrap = el('div', {class: 'ui-cw-editor-wrap'}, [editor, ctxResizer, ctxSection]);
+    var editorWrap = el('div', {class: 'ui-cw-editor-wrap'}, [editor, docOutlineHost, ctxResizer, ctxSection]);
 
     function toggleCtx() {
       ctxOpen = !ctxOpen;
@@ -241,7 +494,7 @@
       if (!cfg.context_url) return;
       var url = cfg.context_url.replace('{id}', encodeURIComponent(id));
       fetchJSON(url).then(function(rec) {
-        ctxEditor.value = rec.body || '';
+        ctxSetValue(rec.body || '');
         setCurrentContext(rec.id, rec.name);
         if (!ctxOpen) toggleCtx();
         closeModal();
@@ -365,14 +618,11 @@
     }
 
     // --- Chat state ---
-    var chatHistory = [];
-    function appendHistory(role, content) {
-      chatHistory.push({role: role, content: content});
-      if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
-    }
+    // History lives inside docChat (buildDocChat); this side owns only
+    // the visible transcript.
     function clearChat() {
       chatMessages.innerHTML = '';
-      chatHistory = [];
+      docChat.clear();
     }
     function addChatMsg(role, html, copyPayload) {
       var msg = el('div', {class: 'ui-cw-msg ' + role});
@@ -414,135 +664,79 @@
       chatBtnTalk.disabled = !!busy;
       chatBtnEdit.disabled = !!busy;
     }
-    function sendChat(mode) {
-      mode = mode === 'chat' ? 'chat' : 'edit';
-      var text = (chatInput.value || '').trim();
-      if (!text) return;
-      chatInput.value = '';
-      var prefix = mode === 'chat' ? '<span class="ui-cw-mode-tag">chat</span> ' : '';
-      addChatMsg('user', prefix + escapeChat(text));
-      appendHistory('user', text);
-
-      var body = {
-        name:    nameInput.value.trim(),
-        lang:    langSelect.value,
-        code:    editor.value || '',
-        context: ctxEditor.value || '',
-        collections: pickedCollections(),
-        references: selectedRef ? [selectedRef] : [],
-        message: text,
-        mode:    mode,
-        history: chatHistory.slice(0, -1),
-      };
-      setChatBusy(true);
-      var thinking = addChatMsg('assistant', '<span class="ui-cw-spinner"></span> Thinking…');
-
-      fetch(cfg.chat_url, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-      }).then(function(r) {
-        if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-        return r.json();
-      }).then(function(data) {
-        thinking.remove();
-        // Edit-mode response with code → trigger the inline diff in
-        // the editor pane and SUPPRESS the chat bubble entirely. The
-        // editor's diff view already shows adds/removes visually with
-        // its own +N / -M counters, so a parallel summary in chat is
-        // redundant. The assistant text still goes into chatHistory
-        // so the LLM has context for the next turn.
-        var hasCodeProposal = mode !== 'chat' && data.type === 'code' && data.code && langSelect.value !== 'regex';
-        if (hasCodeProposal) {
-          if (typeof window.editorShowDiff === 'function') {
-            window.editorShowDiff({
-              newText: data.code,
-              editorPane: editorWrap,
-              editorTextarea: editor,
-              onApply: function(text) { editor.value = text; },
-            });
-          } else {
-            editor.value = data.code;
-          }
-        } else {
-          // Chat mode, or Edit mode where the LLM didn't return code
-          // (just prose) — render the response in the chat panel as
-          // normal.
-          addChatMsg('assistant', formatChatBody(data.content), data.content || '');
+    // Chat protocol — shared with article_editor via buildDocChat
+    // (45_document_core.js). Rendering stays here: this panel formats
+    // fenced code into HTML, which article_editor deliberately doesn't.
+    var docChat = buildDocChat({
+      url: cfg.chat_url,
+      setBusy: setChatBusy,
+      appendMsg: function(role, text) {
+        if (role === 'user') {
+          var prefix = chatLastMode === 'chat' ? '<span class="ui-cw-mode-tag">chat</span> ' : '';
+          return addChatMsg('user', prefix + escapeChat(text));
         }
-        appendHistory('assistant', data.content || '');
-      }).catch(function(err) {
-        thinking.remove();
-        addChatMsg('assistant', '<span class="ui-cw-err">Error: ' + escapeChat(err.message) + '</span>');
-      }).then(function() {
-        setChatBusy(false);
-      });
+        if (role === 'error') {
+          return addChatMsg('assistant', '<span class="ui-cw-err">Error: ' + escapeChat(text) + '</span>');
+        }
+        return addChatMsg('assistant', formatChatBody(text), text || '');
+      },
+      thinking: function() {
+        return addChatMsg('assistant', '<span class="ui-cw-spinner"></span> Thinking…');
+      },
+      buildBody: function(message, mode, history) {
+        return {
+          name:    nameInput.value.trim(),
+          lang:    langSelect.value,
+          code:    editorValue(),
+          context: ctxEditor.value || '',
+          collections: pickedCollections(),
+          references: selectedRef ? [selectedRef] : [],
+          message: message,
+          mode:    mode,
+          history: history,
+        };
+      },
+      // A regex snippet's "code" is a pattern the diff pane can't
+      // usefully review, so those replies stay in the chat.
+      proposalOf: function(data, mode) {
+        if (mode === 'chat' || data.type !== 'code' || !data.code) return null;
+        if (langSelect.value === 'regex') return null;
+        return data.code;
+      },
+      onProposal: function(text) {
+        // The diff pane hides the textarea and inserts itself where the
+        // textarea sat. Drop out of outline mode first, or the outline
+        // stays up covering a review the user can't see or resolve.
+        docToRaw();
+        if (typeof window.editorShowDiff === 'function') {
+          window.editorShowDiff({
+            newText: text,
+            editorPane: editorWrap,
+            editorTextarea: editor,
+            onApply: function(t) { docSetValue(t); },
+          });
+        } else {
+          docSetValue(text);
+        }
+        // No chat bubble: the diff pane already shows the change with
+        // its own +N / -M counters, so a prose echo would duplicate it.
+      },
+    });
+    // The user bubble is tagged with the mode that produced it, and
+    // appendMsg fires before send() knows the mode, so stash it.
+    var chatLastMode = 'edit';
+    function sendChat(mode) {
+      chatLastMode = mode === 'chat' ? 'chat' : 'edit';
+      docChat.send(chatInput.value, chatLastMode);
+      chatInput.value = '';
     }
 
     // --- State ---
     var currentID    = null;
     var savedTagShown = false;
 
-    // Revision-history state. Populated by loadRevisions() whenever
-    // a snippet is opened or saved; navigateRevision() walks the
-    // index and updates the editor / name / lang to match.
-    var revisions     = [];
-    var revisionIndex = -1;
-    function updateRevNav() {
-      if (!revGroup) return;
-      var n = revisions.length;
-      revBackBtn.disabled = revisionIndex <= 0;
-      revFwdBtn.disabled  = revisionIndex >= n - 1;
-      revIndicator.textContent = n > 0 ? 'rev ' + (revisionIndex + 1) + '/' + n : '';
-      // Show "Make Latest" only when the user has scrolled back to
-      // an earlier revision — clicking it saves the editor's current
-      // contents as a new revision so it becomes the latest.
-      revMarkBtn.style.display = (n > 0 && revisionIndex < n - 1) ? 'inline-flex' : 'none';
-      revGroup.style.display = n > 0 ? 'inline-flex' : 'none';
-    }
-    function loadRevisions(snippetID) {
-      if (!revGroup) return;
-      if (!snippetID) {
-        revisions = []; revisionIndex = -1;
-        updateRevNav();
-        return;
-      }
-      var url = cfg.revisions_list_url.replace('{id}', encodeURIComponent(snippetID));
-      fetchJSON(url).then(function(data) {
-        revisions = data || [];
-        revisionIndex = revisions.length - 1;
-        updateRevNav();
-      }).catch(function() {
-        revisions = []; revisionIndex = -1;
-        updateRevNav();
-      });
-    }
-    function navigateRevision(dir) {
-      if (!revGroup) return;
-      var idx = revisionIndex + dir;
-      if (idx < 0 || idx >= revisions.length) return;
-      var url = cfg.revision_load_url.replace('{id}', encodeURIComponent(revisions[idx].id));
-      fetchJSON(url).then(function(rev) {
-        editor.value = rev[codeF] || rev.code || '';
-        if (rev[nameF] || rev.name) nameInput.value = rev[nameF] || rev.name || '';
-        var l = rev[langF] || rev.lang || '';
-        if (l) {
-          for (var i = 0; i < langSelect.options.length; i++) {
-            if (langSelect.options[i].value === l) { langSelect.selectedIndex = i; break; }
-          }
-        }
-        revisionIndex = idx;
-        updateRevNav();
-      }).catch(function(err) {
-        showToast('Could not load revision: ' + err.message);
-      });
-    }
-    function markAsLatest() {
-      // Saving the current editor content creates a new revision —
-      // server-side it's appended to the list and becomes the latest,
-      // exactly the behavior the legacy "Make Latest" button had.
-      saveSnippet();
-    }
+    // Revision state now lives inside revNav (buildRevisionNav);
+    // reload/clear on open + save are the whole interface.
 
     function setMobileTitle(t) { mobileTitle.textContent = t || 'New snippet'; }
 
@@ -550,12 +744,12 @@
       if (id == null) {
         currentID = null;
         nameInput.value = '';
-        editor.value = '';
+        docSetValue('');
         // langSelect retains the last choice — usually convenient.
         setMobileTitle('New snippet');
         closeDrawer();
         markActive(null);
-        loadRevisions(null);
+        revNav.clear();
         return;
       }
       var url = (cfg.load_url || (cfg.list_url + '/{id}')).replace('{id}', encodeURIComponent(id));
@@ -563,11 +757,14 @@
         currentID = rec[idF] || id;
         nameInput.value = rec[nameF] || '';
         if (rec[langF]) langSelect.value = rec[langF];
-        editor.value = rec[codeF] || '';
+        // Setting .value in code fires no 'change' event, so the toggle's
+        // visibility has to be re-derived by hand after a load.
+        syncDocViewBtn();
+        docSetValue(rec[codeF] || '');
         setMobileTitle(rec[nameF] || 'Untitled');
         closeDrawer();
         markActive(currentID);
-        loadRevisions(currentID);
+        revNav.reload(currentID);
       }).catch(function(err) {
         showToast('Load failed: ' + err.message);
       });
@@ -604,7 +801,7 @@
         else if (rec && rec.id) currentID = rec.id;
         setMobileTitle(name);
         loadList();
-        loadRevisions(currentID);
+        revNav.reload(currentID);
         flashSaved();
       }).catch(function(err) {
         showToast('Save failed: ' + err.message);
@@ -636,72 +833,26 @@
       }, 1500);
     }
 
-    async function deleteSnippet(id) {
-      if (!cfg.delete_url) return;
-      if (!(await window.uiConfirm('Delete this snippet? This cannot be undone.'))) return;
-      var url = cfg.delete_url.replace('{id}', encodeURIComponent(id));
-      fetch(url, {method: 'DELETE'}).then(function(r) {
-        if (!r.ok && r.status !== 204) {
-          return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-        }
-        if (currentID === id) openSnippet(null);
-        loadList();
-      }).catch(function(err) {
-        showToast('Delete failed: ' + err.message);
-      });
-    }
 
-    function markActive(id) {
-      sideList.querySelectorAll('.ui-chat-side-item').forEach(function(it) {
-        it.classList.toggle('active', it.dataset.id === id);
-      });
-    }
-
-    function loadList() {
-      fetchJSON(cfg.list_url).then(function(items) {
-        items = items || [];
-        // Sort newest-first by date.
-        items.sort(function(a, b) {
-          return String(b[dateF] || '').localeCompare(String(a[dateF] || ''));
-        });
-        sideList.innerHTML = '';
-        if (!items.length) {
-          sideList.appendChild(el('div', {class: 'ui-chat-empty'}, [cfg.empty_text || 'No snippets yet. Click + New or chat with the LLM to generate one.']));
-          return;
-        }
-        items.forEach(function(it) {
-          var fullName = it[nameF] || '(untitled)';
-          var meta = (it[langF] ? it[langF] + ' · ' : '') + relTime(it[dateF]);
-          var row = el('div', {
-            class: 'ui-chat-side-item' + (it[idF] === currentID ? ' active' : ''),
-            // title is the native browser tooltip — shows full name on
-            // hover even when the row's text is ellipsized at the
-            // halved width. Includes lang+date so a cursor pause
-            // surfaces the same metadata that the legacy meta line
-            // used to display inline.
-            title: fullName + ' — ' + meta,
-            onclick: function(ev) {
-              if (ev.target.classList.contains('ui-chat-side-del')) return;
-              openSnippet(it[idF]);
-            },
-          });
-          row.dataset.id = String(it[idF] || '');
-          var textWrap = el('div', {class: 'ui-chat-side-text'});
-          textWrap.appendChild(el('div', {class: 'ui-chat-side-title'}, [fullName]));
-          row.appendChild(textWrap);
-          if (cfg.delete_url) {
-            row.appendChild(el('button', {
-              class: 'ui-chat-side-del', title: 'Delete',
-              onclick: function(ev) { ev.stopPropagation(); deleteSnippet(it[idF]); },
-            }, ['×']));
-          }
-          sideList.appendChild(row);
-        });
-      }).catch(function(err) {
-        sideList.innerHTML = '';
-        sideList.appendChild(el('div', {class: 'ui-chat-empty'}, ['Failed to load: ' + err.message]));
-      });
-    }
+    // Record list — shared with article_editor via buildDocList
+    // (45_document_core.js). This panel shows the language in the row
+    // tooltip; everything else is the common shape.
+    var docList = buildDocList({
+      host:       sideList,
+      listURL:    cfg.list_url,
+      idField:    idF,
+      labelField: nameF,
+      dateField:  dateF,
+      emptyText:  cfg.empty_text || 'No snippets yet. Click + New or chat with the LLM to generate one.',
+      metaOf:     function(it){ return it[langF] || ''; },
+      currentID:  function(){ return currentID; },
+      onOpen:     function(id){ openSnippet(id); },
+      deleteURL:  cfg.delete_url,
+      deleteConfirm: function(){ return 'Delete this snippet? This cannot be undone.'; },
+      onDeleted:  function(id){ if (currentID === id) openSnippet(null); },
+    });
+    function loadList() { docList.reload(); }
+    function markActive(id) { docList.markActive(id); }
 
     // --- Modal infrastructure (variables / values / contexts) ---
     // One overlay+container reused across modal types. closeModal()
@@ -857,7 +1008,7 @@
               showToast('Copied with substitutions');
             });
           } else {
-            editor.value = code;
+            docSetValue(code);
           }
           closeModal();
         });
@@ -990,6 +1141,28 @@
     }
 
     // --- Contexts library modal ---
+    // Template picker — shared with article_editor via
+    // openTemplatePicker (45_document_core.js), which is built on the
+    // standard uiOpenModal rather than this panel's bespoke shell.
+    function openTemplatesModal() {
+      openTemplatePicker({
+        builtins:    cfg.templates || [],
+        listURL:     cfg.templates_list_url,
+        itemURL:     cfg.template_url,
+        currentBody: function(){ return editorValue(); },
+        currentName: function(){ return (nameInput.value || '').trim(); },
+        onApply: async function(tpl) {
+          if ((editorValue() || '').trim() !== '') {
+            if (!(await window.uiConfirm('Replace the editor contents with the "' + (tpl.name || 'template') + '" template?'))) return;
+          }
+          docSetValue(tpl.body || '');
+          // A template names the document; seed the snippet name too when
+          // the user hasn't given it one, so it isn't born "Untitled".
+          if ((nameInput.value || '').trim() === '' && tpl.name) nameInput.value = tpl.name;
+        },
+      });
+    }
+
     function openContextsModal() {
       if (!cfg.contexts_list_url) return;
       modalBox.innerHTML = '';

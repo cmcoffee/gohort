@@ -1626,6 +1626,64 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 			"brief":   brief,
 		})
 	}
+	// Inline pending-approval card — a request queued during a turn the user is
+	// watching, shown here rather than only counted on the Permissions tile.
+	// Session loads rebuild the same card from the stored record (see
+	// pendingApprovalBlocks), so this is purely the live path.
+	sess.PendingApprovalPrompt = func(auth Authorization) {
+		if strings.TrimSpace(auth.ID) == "" {
+			return
+		}
+		who, detail := approvalDisplay(t.udb, t.user, auth)
+		data := map[string]string{
+			"auth_id": auth.ID,
+			"action":  auth.Action,
+			"who":     who,
+			"detail":  detail,
+		}
+		if approvalAlwaysMeans(auth.Action) {
+			data["always"] = "1"
+		}
+		t.sse.Send(map[string]any{
+			"kind":  "block",
+			"type":  "pending_approval",
+			"id":    "approval-" + auth.ID,
+			"title": who,
+			"text":  detail,
+			"data":  data,
+		})
+	}
+	// Inline privileges card — what an agent an authoring tool just saved may
+	// now do, editable in place. Persisted as a UIBlock (like the credential
+	// card) so it replays with the session, and upserted per agent so a build
+	// that saves the same agent twice refreshes one card instead of stacking.
+	sess.PrivilegePrompt = func(agentID, agentName string, data map[string]string) {
+		agentID = strings.TrimSpace(agentID)
+		if agentID == "" {
+			return
+		}
+		if data == nil {
+			data = map[string]string{}
+		}
+		// The card's target rides in data, not a top-level field: UIBlock has no
+		// agent column, so a replayed block would otherwise lose the id the
+		// controls POST against and render a card that can't write.
+		data["agent_id"] = agentID
+		id := "privileges-" + agentID
+		t.sse.Send(map[string]any{
+			"kind":  "block",
+			"type":  "privilege_grant",
+			"id":    id,
+			"title": agentName,
+			"data":  data,
+		})
+		if t.session != nil {
+			blk := UIBlock{Type: "privilege_grant", ID: id, Title: agentName, Data: data}
+			t.toolMu.Lock()
+			t.session.upsert_ui_block(blk, func(b *UIBlock) bool { return b.ID == id })
+			t.toolMu.Unlock()
+		}
+	}
 }
 
 func (t *chatTurn) newToolSession() *ToolSession {
@@ -2311,7 +2369,24 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	}
 	tools, err := GetAgentToolsWithSession(sess, toolNames...)
 	if err != nil {
-		return nil, nil, err
+		// One unresolvable name used to abort the whole catalog build, which
+		// took the capability toolsets appended BELOW down with it — an agent
+		// could lose its entire authoring set because a single allowlisted
+		// tool had gone missing. The dispatch path already recovers per-name;
+		// do the same here so a stale allowlist entry costs one tool, not all
+		// of them.
+		Log("[orchestrate.tools] catalog build failed for agent=%s (%v) — resolving per-name", t.agent.ID, err)
+		tools = nil
+		resolved := toolNames[:0]
+		for _, n := range toolNames {
+			if td, terr := GetAgentToolsWithSession(sess, n); terr == nil && len(td) > 0 {
+				tools = append(tools, td[0])
+				resolved = append(resolved, n)
+				continue
+			}
+			Log("[orchestrate.tools] dropping unresolvable tool %q for agent=%s", n, t.agent.ID)
+		}
+		toolNames = resolved
 	}
 	// Builder gets the unregistered authoring tools appended here —
 	// they don't live in any global registry, so they reach the
@@ -2341,8 +2416,39 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// their own Builder seed. publiclyExposable stays permissive (Publish means
 	// published) precisely because this gate, not the publish gate, is where the
 	// owner-only concern lives.
-	ownerRun := t.agent.Owner == "" || t.agent.Owner == t.user
+	// A VIRGIN SEED is the caller's own. loadAgent stamps the in-code
+	// default with Owner = seedOwner ("system") precisely so callers can
+	// tell "came from code" from "came from the DB" — so an unshadowed
+	// Builder has Owner "system", never "" and never the username.
+	//
+	// This check used to test only ""/username, on the stated assumption
+	// that "seeds load with Owner unset". They don't. The result: every
+	// user's own Builder failed the gate and silently lost the ENTIRE
+	// authoring catalog — no tool_def, no create_agent, no survey — while
+	// the UI still described it as the authoring agent. Builder then
+	// truthfully reported it could not author, and the missing tools read
+	// as a model hallucination for three debugging sessions.
+	//
+	// Every other owner check in the package already admits seedOwner
+	// (agent_credentials.go, agents_grouped_tool.go, admin_tool_scope.go);
+	// this one was the outlier.
+	ownerRun := t.agent.Owner == "" || t.agent.Owner == seedOwner || t.agent.Owner == t.user
+	// An authoring agent running for someone who is NOT its owner loses the
+	// whole authoring catalog. That is the correct security answer, but it
+	// used to happen in total silence: the model found no tool_def, invented
+	// a reason ("a framework problem on my end — report this to the platform
+	// administrators"), and the user went debugging a system that was working
+	// as designed. Say it out loud, in the log AND in the model's own context,
+	// so the absence has a stated cause instead of a guessed one.
+	if agentCanAuthor(t.agent) && !ownerRun {
+		Log("[orchestrate.tools] authoring catalog WITHHELD from agent %q (%s): owner=%q but this turn runs as %q — authoring tools are owner-only",
+			t.agent.Name, t.agent.ID, t.agent.Owner, t.user)
+		t.turnDiag("authoring_withheld", "Owned by "+t.agent.Owner+" but this turn runs as "+t.user+
+			". Authoring is owner-only, so tool_def / create_agent / update_agent are absent BY DESIGN — nothing is broken.")
+	}
 	if agentCanAuthor(t.agent) && ownerRun {
+		Log("[orchestrate.tools] authoring catalog GRANTED to agent %q (%s) for user %q (orchestrator=%v)",
+			t.agent.Name, t.agent.ID, t.user, forOrchestrator)
 		var extra []AgentToolDef
 		if forOrchestrator {
 			extra = builderAuthoringTools(sess, t)
@@ -2482,8 +2588,60 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// and two recordToolCall entries — the catalog showed (and the tool log
 	// recorded) every desktop call twice. The single call-site wrap gives
 	// them the same inline chips + cache as every other tool, once.
+	// hand_to_builder — pass a WORKING artifact to Builder rather than a
+	// description of one. Nil unless this agent may already dispatch Builder,
+	// so it grants no new reach.
+	if h := handToBuilderTool(t); h != nil {
+		tools = append(tools, *h)
+		toolNames = append(toolNames, h.Tool.Name)
+	}
 	tools = append(tools, fromClient...)
+	// Dedupe by tool name at the single exit.
+	//
+	// The catalog is assembled by appending several independent sets — the
+	// allowlist resolution, the capability toolsets (authoring, conductor),
+	// framework utilities, credential tools, client-bridge tools. Each
+	// append is individually correct, but a name can legitimately appear in
+	// two of them (Builder's seed allowlists stay_silent / keep_going, and
+	// the framework also supplies them), so the assembled slice carried
+	// duplicates.
+	//
+	// The agent loop already coped — it keeps the first and logs a
+	// collision — but the log line blamed "an expanded toolbox action and a
+	// standalone tool", which is a real cause of collisions and NOT this
+	// one, so the noise pointed every reader at the wrong thing. Dedupe
+	// here, with the same first-wins rule, and the loop's warning goes back
+	// to meaning what it says.
+	tools, toolNames = dedupeToolsByName(tools, toolNames)
 	return tools, toolNames, nil
+}
+
+// dedupeToolsByName keeps the FIRST definition of each tool name, matching
+// the agent loop's own collision rule so behavior is unchanged — only the
+// duplicate entries (and the misleading warnings they produced) go away.
+func dedupeToolsByName(tools []AgentToolDef, names []string) ([]AgentToolDef, []string) {
+	seen := make(map[string]bool, len(tools))
+	outTools := tools[:0]
+	for _, td := range tools {
+		n := td.Tool.Name
+		if n != "" && seen[n] {
+			continue
+		}
+		if n != "" {
+			seen[n] = true
+		}
+		outTools = append(outTools, td)
+	}
+	seenName := make(map[string]bool, len(names))
+	outNames := names[:0]
+	for _, n := range names {
+		if seenName[n] {
+			continue
+		}
+		seenName[n] = true
+		outNames = append(outNames, n)
+	}
+	return outTools, outNames
 }
 
 // wrapToolsForActivity decorates each tool's handler with:
@@ -4719,6 +4877,23 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 			"text": "The reply promised to create or update a tool or agent but no authoring call fired this turn — nothing was saved. Next turn is re-prompted to actually make the call.",
 		})
 	}
+	// A fourth shape: the reply claims a tool is UNAVAILABLE when that tool
+	// is sitting in the agent's own catalog. Builder did this with tool_def
+	// — narrated "I cannot access tool_def, this is a framework issue,
+	// report it to the administrators" across three turns without ever
+	// emitting the call. A real refusal produces an ERROR tool result the
+	// user can see; a hallucinated one produces confident prose blaming the
+	// platform, which is worse than a plain failure because it sends the
+	// user off to debug something that isn't broken.
+	if injectFalseUnavailabilityWarning(&sess, turnToolCalls, reply, agent) {
+		_, _ = saveChatSession(udb, sess)
+		sse.Send(map[string]any{
+			"kind": "activity",
+			"type": "error",
+			"id":   activityCheapID(),
+			"text": "The reply claimed a tool is unavailable, but that tool is in this agent's catalog and was never called. Next turn is re-prompted to actually call it.",
+		})
+	}
 	// The other half of hallucinated authoring: an authoring tool DID fire but
 	// every call errored, yet the reply claims success (the live moltbook case —
 	// no BuildPlan, so the check above misses it).
@@ -4763,6 +4938,117 @@ var agentAuthoringToolNames = map[string]bool{
 	"delete_agent": true,
 	"add_tool":     true,
 	"tool_def":     true,
+	"app_def":      true,
+	"skill_def":    true,
+	"pipeline_def": true,
+}
+
+// authoringWriteActions are the grouped-authoring-tool actions that CHANGE
+// something. The grouped tools (app_def, tool_def, …) also read — get, list,
+// help, test, verify — and a successful read must not vouch for a failed
+// write. The live case: app_def get succeeded, all three app_def updates
+// errored, and the reply announced the fixes as applied; counting the read as
+// authoring-that-worked is what let the claim through.
+var authoringWriteActions = map[string]bool{
+	"create": true, "update": true, "delete": true, "patch": true,
+	"add": true, "remove": true, "set": true, "save": true,
+}
+
+// authoringCallIsWrite reports whether a persisted authoring call attempted a
+// change. Single-purpose tools (create_agent, add_tool) always do; a grouped
+// tool is judged by its action argument, and an unreadable/absent action is
+// treated as a write so the guard fails toward catching the claim.
+func authoringCallIsWrite(tc PersistedToolCall) bool {
+	raw, ok := tc.Args["action"]
+	if !ok {
+		return true
+	}
+	action, ok := raw.(string)
+	if !ok {
+		return true
+	}
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "" {
+		return true
+	}
+	return authoringWriteActions[action]
+}
+
+// injectFalseUnavailabilityWarning catches a reply that blames the
+// framework for a tool the agent actually has.
+//
+// The live case: Builder spent three turns insisting "I am unable to
+// access tool_def", "this is a framework problem on my end", "report
+// this error to the platform administrators" — and never emitted a
+// single tool_def call. tool_def is in builderAuthoringTools(); a real
+// refusal would have produced a visible ERROR tool result. The user was
+// sent to debug a platform that was working.
+//
+// This is worse than an ordinary failure, so it earns its own guard: a
+// plain error tells the user what broke, while a confident false
+// unavailability tells them to go fix the wrong thing.
+//
+// Scoped to the FRAMEWORK AUTHORING tools, whose presence is a pure
+// function of the agent record — no catalog plumbing, and no risk of
+// firing on a tool the agent genuinely lacks.
+func injectFalseUnavailabilityWarning(sess *ChatSession, turnToolCalls []PersistedToolCall, reply string, agent AgentRecord) bool {
+	if sess == nil || strings.TrimSpace(reply) == "" {
+		return false
+	}
+	// An agent without authoring rights is telling the truth.
+	if !isBuilderAgent(agent.ID) && !agentCanAuthor(agent) {
+		return false
+	}
+	named := falselyClaimedUnavailable(reply)
+	if named == "" {
+		return false
+	}
+	// If it actually called the tool this turn, the complaint is about a
+	// real result, not a hallucinated absence.
+	for _, tc := range turnToolCalls {
+		if tc.Name == named {
+			return false
+		}
+	}
+	sess.Messages = append(sess.Messages, ChatMessage{
+		Role: "user",
+		Content: "FRAMEWORK NOTICE: your previous reply said " + named + " is unavailable to you, or blamed a framework/platform error for not being able to use it. That is incorrect: " + named +
+			" IS in your tool catalog for this turn, and you did not call it. Nothing is broken and there is nothing for the user to report. Call " + named +
+			" now with real arguments. If a call fails, quote the actual error you received — do not infer unavailability from a call you never made.",
+		Created: time.Now(),
+		Hidden:  true,
+	})
+	return true
+}
+
+// falselyClaimedUnavailable returns the authoring tool a reply claims to
+// be unable to use, or "" when the reply makes no such claim.
+//
+// Requires the tool NAME and an inability phrase in the same sentence,
+// so "tool_def failed with a validation error" (an honest report) and
+// "I will call tool_def" (a promise) both stay clear of it.
+func falselyClaimedUnavailable(reply string) string {
+	inability := []string{
+		"not in my available tools", "not available to me", "unable to access",
+		"unable to use", "cannot access", "can't access", "cannot use",
+		"can't use", "do not have access", "don't have access",
+		"no access to", "is not available", "isn't available",
+		"not able to access", "not able to use",
+	}
+	for _, sentence := range sentencesOf(strings.ToLower(reply)) {
+		if !containsAnyOf(sentence, inability) {
+			continue
+		}
+		for name := range agentAuthoringToolNames {
+			if strings.Contains(sentence, name) {
+				return name
+			}
+		}
+		if strings.Contains(sentence, "skill_def") {
+			return "skill_def"
+		}
+	}
+	return ""
 }
 
 // injectAuthoringMismatchWarning detects the "claimed but didn't fire"
@@ -4867,7 +5153,7 @@ func injectFailedAuthoringWarning(sess *ChatSession, turnToolCalls []PersistedTo
 	}
 	fired, errored, ok := 0, 0, 0
 	for _, tc := range turnToolCalls {
-		if !agentAuthoringToolNames[tc.Name] {
+		if !agentAuthoringToolNames[tc.Name] || !authoringCallIsWrite(tc) {
 			continue
 		}
 		fired++
@@ -4884,7 +5170,7 @@ func injectFailedAuthoringWarning(sess *ChatSession, turnToolCalls []PersistedTo
 	}
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role:    "user",
-		Content: "FRAMEWORK NOTICE: your reply says a tool or agent was created, updated, or fixed — but EVERY authoring call this turn returned an error, so nothing was saved. Do NOT tell the user it's done. Read the error text, correct the arguments, and make ONE fixed authoring call (prefer action=\"update\" over delete+recreate).",
+		Content: "FRAMEWORK NOTICE: your reply says a tool, agent, app, skill, or pipeline was created, updated, or fixed — but EVERY authoring call this turn that tried to CHANGE something returned an error, so nothing was saved. The old version is still live and the user still has the problem. Do NOT tell the user it's done, and do NOT describe the fixes as applied. Read the error text, correct the arguments, and make ONE fixed authoring call (prefer action=\"update\" over delete+recreate).",
 		Created: time.Now(),
 		Hidden:  true,
 	})
@@ -5001,6 +5287,12 @@ func claimsSuccessWithoutAck(reply string) bool {
 		"done", "created", "rebuilt", "rebuild", "fixed", "i've ", "i have ", "is live",
 		"now live", "ready to use", "all set", "up and running", "successfully",
 		"is working now", "it's working", "built the", "set up",
+		// The changelog shape: a reply that never says "done" but lists the
+		// repairs as landed and hands the thing back. The live app_def session
+		// closed with exactly this ("Fixes applied: … Try it now —") and slipped
+		// past a list built around "done"/"created".
+		"fixes applied", "fix applied", "changes applied", "corrected",
+		"try it now", "should work now", "now works", "updated the",
 	} {
 		if strings.Contains(r, pos) {
 			return true
@@ -6565,8 +6857,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// credential flagged "Require confirm" park on an in-chat
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
-		Confirm:        t.confirmFuncFor(sess),
-		GuardrailCheck: t.guardrailCheckHook(),
+		Confirm:           t.confirmFuncFor(sess),
+		GuardrailCheck:    t.guardrailCheckHook(),
+		GuardrailDeclines: t.agent.GuardrailDeclines,
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
 		// fires and the turn pauses for the user's actual answer.
@@ -7144,8 +7437,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// orchestrator loop: flagged-credential calls park on the
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
-		Confirm:        t.confirmFuncFor(sess),
-		GuardrailCheck: t.guardrailCheckHook(),
+		Confirm:           t.confirmFuncFor(sess),
+		GuardrailCheck:    t.guardrailCheckHook(),
+		GuardrailDeclines: t.agent.GuardrailDeclines,
 		// (No SingleFireGroups for image/video producers — same
 		// rationale as the orchestrator round above. Multi-fire is
 		// intentional under the write-to-workspace + workspace(attach)

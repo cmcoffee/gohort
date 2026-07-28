@@ -1,4 +1,5 @@
-// `app_def` — grouped tool for authoring data-driven gohort APPS: real
+// `app_def` — grouped tool for authoring gohort APPS (data-shaped OR fully
+// interactive, e.g. a canvas game): real
 // in-dashboard surfaces composed from ui primitives (FormPanel, Table,
 // DisplayPanel, EmptyState), stored as an AppSpec and served by apps/customapps
 // at /custom/<slug>/. This is the tool that lets Builder answer "build me an
@@ -43,7 +44,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "app_def",
-			Description: "Author and manage data-driven gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) composed from ui primitives and served at /custom/<slug>/. This is how you build a gohort app: describe it declaratively as a list of sections, and the framework renders it + gives it a generic per-app record store (a form section saves records, a table section lists them) with no hand-written HTML/CSS/JS.\n\nUse this when the user asks for \"an app\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent multi-panel surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
+			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /custom/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nUse this when the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
 			Parameters: map[string]ToolParam{
 				"action": {Type: "string", Description: "One of: create | update | test | verify | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
 				"sample": {
@@ -75,7 +76,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields; every section may set `title` and `subtitle`. Kinds: \"form\" (a create form — set `fields`, `submit_label`, and `modal`:true for the signature structured-create look) · \"table\" (the record list — set `columns`, ALWAYS set `empty_text`, and set `editable`/`deletable` on any table paired with a create form) · \"display\" (read-only pairs) · \"chart\" (bar|line|area|pie — set `chart_type` plus inline labels+series OR a `source_script`; this is how an app graphs/plots/trends) · \"chat\" (a conversation panel bound to an agent) · \"workbench\" (the SINGLE section that IS a three-panel list | document | chat app — do not also add form/table/chat). Minimal good app = a modal form + an editable table over the same records. **Call action=\"help\" for the full spec** — every field of every kind, data_sources, actions, schedules, and the worked examples.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields; every section may set `title` and `subtitle`. Kinds: \"form\" (a create form — set `fields`, `submit_label`, and `modal`:true for the signature structured-create look) · \"table\" (the record list — set `columns`, ALWAYS set `empty_text`, and set `editable`/`deletable` on any table paired with a create form) · \"display\" (read-only pairs) · \"chart\" (bar|line|area|pie — set `chart_type` plus inline labels+series OR a `source_script`; this is how an app graphs/plots/trends) · \"chat\" (a conversation panel bound to an agent) · \"workbench\" (the SINGLE section that IS a three-panel list | document | chat app — do not also add form/table/chat) · \"html\" (set `html` — a full HTML/CSS/JS canvas rendered verbatim, inline <script> RUNS; this is how you build a GAME, a canvas animation, a simulation, or any custom visual the other kinds can't express) · \"actions\" (a row of script-backed buttons) · \"empty\" (a centered placeholder). Minimal good app = a modal form + an editable table over the same records; a game = ONE html section. **Call action=\"help\" for the full spec** — every field of every kind, data_sources, actions, schedules, and the worked examples.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -106,7 +107,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 }
 
 const appDefHelpText = `app_def actions:
-- create {name, slug?, description?, record_key?, sections:[…]} — author a data-driven app, served at /custom/<slug>/.
+- create {name, slug?, description?, record_key?, sections:[…]} — author an app, served at /custom/<slug>/. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
 - update {id(slug), …, sections:[…]} — revise an app in place.
 - list — your apps: [{slug, name, desc}].
 - get  {id(slug)} — one app's full section definition.
@@ -114,7 +115,7 @@ const appDefHelpText = `app_def actions:
 - verify {id(slug), sample?:[{...}]} — the FINAL gate before telling the user the app is ready: runs every script (like test) AND loads /custom/<slug>/ in a real headless browser as the user, reporting JS console errors, uncaught exceptions, failed requests, whether the sections actually rendered, and — per data source — whether the page really fetched its live endpoint (catches a working script no section is wired to). An app is NOT done until verify passes.
 - delete {id(slug)}.
 
-Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (raw-HTML escape hatch — set the html field; last resort, prefer typed sections).
+Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (a full HTML/CSS/JS canvas — set the html field; inline <script> RUNS, so this covers anything the typed kinds can't express: games, canvas animation, simulations, custom visualizations, bespoke widgets).
 
 Minimal good app = a form (modal=true) + a table (editable, deletable) over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
 
@@ -139,7 +140,9 @@ kind="actions" — a row of script-backed action buttons (one per entry in the a
 
 kind="empty" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: 'icon' (an emoji), 'title', 'hint'.
 
-kind="html" — a raw-HTML escape hatch. Field: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> runs). This is the ONLY way to put hand-written HTML/CSS/JS into a custom app, and it is a LAST RESORT — reach for a typed section (form/table/display/chart) first, because those give you the record store, editing, refresh, and styling for free. Use html only for a bespoke widget or layout the typed primitives genuinely can't express. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it.
+GRAPHICS IN AN html SECTION: draw them in code. There is NO static asset route for apps — an app cannot reference /images/sprite.png — and generate_image is a CHAT tool that shows the user a picture, not an asset pipeline. So build visuals from: canvas 2D primitives (fillRect / arc / paths / gradients), inline <svg>, CSS shapes and animation, emoji or text glyphs as sprites, or a data: URI embedded in the markup. For a side-scroller that means drawing the runner and the obstacles with canvas calls rather than loading sprite files — which is also less to go wrong, since there is nothing to 404. Do not stall a build waiting on art that has nowhere to live.
+
+kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> RUNS) and optional 'height' (any CSS length, e.g. "640px" / "80vh" — only used when the blob is a whole document; default min(80vh, 860px)). WRITE A COMPLETE DOCUMENT for anything with its own layout (a game, a canvas animation, a simulation): doctype, <head>, <style>, <body>. A whole document is given its OWN FRAME, so its CSS reset and body rules style only itself and its 100vh measures its own box; a bare fragment is spliced into the page and its styles apply page-wide. Same origin either way — a framed document still fetches 'data/<name>' and shares the page's cookies/storage. Anything that runs in a browser page runs here: <canvas> with a requestAnimationFrame loop, keyboard/pointer handlers, physics, collision, audio, SVG, WebGL. So YES — a game, an animation, a simulation, or a custom visualization is buildable, and this is how you build one. Do not tell the user an interactive or graphical app is out of scope; the typed sections are not the limit of what an app can be. The steer is about FIT, not permission: for a DATA app (records, forms, lists, dashboards) reach for a typed section first, because those give you the record store, editing, refresh, and styling for free, and hand-rolling that in html is wasted work. When the thing genuinely isn't a data app, html is the right and intended choice — use it without apology. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it.
 
 kind="chat" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: 'list_title', 'empty_text', 'placeholder'. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.
 
@@ -246,11 +249,24 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			return "", fmt.Errorf("render app page: %w", err)
 		}
 		spec.Page = blob
+		// Keep the AUTHORING sections next to the page they compiled into, so
+		// action=get can hand back something action=update actually accepts.
+		// The rendered page is not valid input; without this, revising an app
+		// meant re-authoring it blind from the rendered shape (which fails the
+		// section parser outright) — the "the Builder can't update its own app"
+		// bug this field exists to close.
+		if src, err := json.Marshal(raw); err == nil {
+			spec.Sections = src
+		}
 		// Record the workbench body field on the spec so the co-author tool +
 		// viewer agree on which field is the document body.
 		if arr, ok := raw.([]any); ok {
 			for _, item := range arr {
-				if mm, ok := item.(map[string]any); ok && strings.EqualFold(strings.TrimSpace(mapStr(mm, "kind")), "workbench") {
+				mm, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if mm = normalizeSection(mm); strings.EqualFold(strings.TrimSpace(mapStr(mm, "kind")), "workbench") {
 					spec.BodyField = firstNonEmptyStr(mapStr(mm, "body_field"), "content")
 				}
 			}
@@ -306,10 +322,21 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 	if len(arr) == 0 {
 		return ui.Page{}, errors.New("an app needs at least one section")
 	}
+	// Normalize once, up front: every scan below keys off `kind`, so a section
+	// that only implies its kind has to be resolved before the first look, not
+	// at build time.
+	secs := make([]map[string]any, 0, len(arr))
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return ui.Page{}, fmt.Errorf("section %d must be an object", i+1)
+		}
+		secs = append(secs, normalizeSection(m))
+	}
 	// A workbench is a whole-page shape (three full-height columns), so when one
 	// is present it owns the page: full width, single no-chrome section.
-	for _, item := range arr {
-		if m, ok := item.(map[string]any); ok && strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), "workbench") {
+	for _, m := range secs {
+		if strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), "workbench") {
 			wb, err := buildWorkbench(spec, m)
 			if err != nil {
 				return ui.Page{}, err
@@ -339,19 +366,15 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 	// table's edit dialog — same labels/types/selects the record was created
 	// with. Scanned up front so section order doesn't matter.
 	var createFields []ui.FormField
-	for _, item := range arr {
-		if m, ok := item.(map[string]any); ok && strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), "form") {
+	for _, m := range secs {
+		if strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), "form") {
 			if fields := appFormFields(m["fields"]); len(fields) > 0 {
 				createFields = fields
 				break
 			}
 		}
 	}
-	for i, item := range arr {
-		m, ok := item.(map[string]any)
-		if !ok {
-			return ui.Page{}, fmt.Errorf("section %d must be an object", i+1)
-		}
+	for i, m := range secs {
 		sec, err := buildAppSection(spec, m, createFields)
 		if err != nil {
 			return ui.Page{}, fmt.Errorf("section %d: %w", i+1, err)
@@ -361,7 +384,56 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 	return page, nil
 }
 
+// normalizeSection makes a section object parseable when the author sent a
+// near-miss instead of the documented {kind, …} shape. Two arrive constantly:
+// a section read back from a RENDERED page (fields nested under `body`, kind
+// carried as the body's component `type`), and a section whose kind is simply
+// implied by the field that was set (an `html` blob, a `columns` list). Both
+// state the intent unambiguously, so infer rather than reject — a hard error
+// here reads as "the app can't be edited" and the author re-writes it blind.
+func normalizeSection(m map[string]any) map[string]any {
+	if strings.TrimSpace(mapStr(m, "kind")) != "" {
+		return m
+	}
+	out := map[string]any{}
+	for k, v := range m {
+		out[k] = v
+	}
+	// Rendered shape: {title, body:{type:"card", html:…}} — lift the body's
+	// fields up and translate its component type to the authoring kind.
+	if body, ok := m["body"].(map[string]any); ok {
+		delete(out, "body")
+		for k, v := range body {
+			if k == "type" {
+				continue
+			}
+			if _, taken := out[k]; !taken {
+				out[k] = v
+			}
+		}
+		if kind, ok := bodyTypeToKind[strings.TrimSpace(mapStr(body, "type"))]; ok {
+			out["kind"] = kind
+			return out
+		}
+	}
+	// Kind implied by the defining field of exactly one kind.
+	switch {
+	case strings.TrimSpace(mapStr(out, "html")) != "":
+		out["kind"] = "html"
+	case out["fields"] != nil:
+		out["kind"] = "form"
+	case out["columns"] != nil:
+		out["kind"] = "table"
+	case out["pairs"] != nil:
+		out["kind"] = "display"
+	case out["series"] != nil || out["chart_type"] != nil:
+		out["kind"] = "chart"
+	}
+	return out
+}
+
 func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField) (ui.Section, error) {
+	m = normalizeSection(m)
 	kind := strings.ToLower(strings.TrimSpace(mapStr(m, "kind")))
 	sec := ui.Section{Title: mapStr(m, "title"), Subtitle: mapStr(m, "subtitle")}
 	switch kind {
@@ -521,10 +593,24 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		// server-side). Reach for a typed section first; this is a last resort.
 		html := mapStr(m, "html")
 		if strings.TrimSpace(html) == "" {
-			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render)")
+			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render) — pass the markup itself, not a nested object")
 		}
-		sec.Body = ui.Card{HTML: html}
+		// A COMPLETE document gets its own frame; a fragment is inlined. An
+		// author writing a game or an animation writes a whole document
+		// (doctype, <head>, a `* { margin: 0 }` reset, `body { … 100vh }`),
+		// and inlining that leaks its reset and body rules into the host page
+		// while its 100vh layout measures the browser window instead of its
+		// own box. Framing it keeps both cascades to themselves — same origin
+		// either way, so relative data-source fetches still work.
+		if isFullHTMLDocument(html) {
+			sec.Body = ui.Frame{HTML: html, Height: mapStr(m, "height")}
+		} else {
+			sec.Body = ui.Card{HTML: html}
+		}
 	default:
+		if kind == "" {
+			return ui.Section{}, errors.New("this section has no `kind` and none could be inferred from its fields — every section needs kind: form | table | display | chart | empty | chat | workbench | actions | html. Call action=get to read the app's current sections in editable form (or action=help for each kind's fields)")
+		}
 		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | chart | empty | chat | workbench | actions | html", kind)
 	}
 	return sec, nil
@@ -1011,7 +1097,32 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"agent_id":   spec.AgentID,
 		"full_width": spec.FullWidth,
 		"url":        "/custom/" + spec.Slug + "/",
-		"page":       json.RawMessage(spec.Page),
+	}
+	// Hand back the AUTHORING sections — the shape action=update accepts — not
+	// the rendered page. Returning the page invited the obvious next move (feed
+	// it back to update), which fails the section parser on every section, so
+	// the author either gave up or re-wrote the app blind.
+	switch {
+	case len(spec.Sections) > 0:
+		out["sections"] = json.RawMessage(spec.Sections)
+	default:
+		// Authored before sections were stored. Reconstruct from the rendered
+		// page: exact where the authoring fields ARE the body's fields (an html
+		// canvas, an empty state), best-effort otherwise. Say which, because a
+		// best-effort section pasted into update would silently drop whatever
+		// the reversal couldn't recover.
+		secs, exact := authoringSectionsFromPage(spec.Page)
+		if len(secs) == 0 {
+			out["page"] = json.RawMessage(spec.Page)
+			out["sections_note"] = "This app predates section storage and its page could not be reversed. `page` above is the RENDERED page — NOT valid input to action=update. Re-author the sections array from scratch (each section needs a `kind`); the next successful update stores it for real."
+			break
+		}
+		out["sections"] = secs
+		if exact {
+			out["sections_note"] = "Reconstructed from the stored page (this app predates section storage) — lossless for these section kinds. Edit and pass back to action=update."
+		} else {
+			out["sections_note"] = "Reconstructed BEST-EFFORT from the stored page (this app predates section storage). Section kinds are right, but per-kind fields may be incomplete — check them against action=help before passing back to action=update, since update REPLACES the page with what you send."
+		}
 	}
 	// Surface the logic seam so an update can inspect + revise it (scripts omitted
 	// for size; names/caps/schedule are what you edit). schedule is the self-update
@@ -1039,6 +1150,113 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
+}
+
+// isFullHTMLDocument reports whether a blob is a whole page rather than a
+// fragment — it opens with a doctype or an <html> tag, or carries its own
+// <body>. Whole documents render in their own frame (see the html section);
+// fragments splice into the page.
+func isFullHTMLDocument(html string) bool {
+	head := strings.ToLower(strings.TrimSpace(html))
+	if len(head) > 2048 {
+		head = head[:2048]
+	}
+	return strings.HasPrefix(head, "<!doctype") || strings.HasPrefix(head, "<html") || strings.Contains(head, "<body")
+}
+
+// bodyTypeToKind maps a RENDERED section body's component type back to the
+// authoring section kind that produces it. Reverse of buildAppSection's switch.
+var bodyTypeToKind = map[string]string{
+	"card":             "html",
+	"frame":            "html",
+	"empty_state":      "empty",
+	"form_panel":       "form",
+	"modal_button":     "form",
+	"table":            "table",
+	"display_panel":    "display",
+	"chart_panel":      "chart",
+	"chat_panel":       "chat",
+	"agent_loop_panel": "chat",
+	"workbench_panel":  "workbench",
+	"action_list":      "actions",
+}
+
+// exactReverseKinds are the kinds whose authoring fields ARE the rendered
+// body's fields, so reversing loses nothing: an html canvas is its html, an
+// empty state its icon/title/hint. Everything else reverses best-effort —
+// the kind is certain, individual fields may not survive.
+var exactReverseKinds = map[string]bool{"html": true, "empty": true}
+
+// authoringSectionsFromPage turns a stored pageConfig back into the authoring
+// sections array, for specs written before AppSpec.Sections existed. Returns
+// the sections and whether every one of them reversed exactly. Callers must
+// surface the exactness — update REPLACES the page with what it is handed, so
+// a lossy reversal fed back would quietly drop fields.
+func authoringSectionsFromPage(page json.RawMessage) ([]map[string]any, bool) {
+	if len(page) == 0 {
+		return nil, false
+	}
+	var pc struct {
+		Sections []struct {
+			Title    string         `json:"title"`
+			Subtitle string         `json:"subtitle"`
+			Body     map[string]any `json:"body"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(page, &pc); err != nil || len(pc.Sections) == 0 {
+		return nil, false
+	}
+	// Plumbing the framework wires itself (endpoints, cache invalidation). It is
+	// not authoring input and re-emitting it only invites confusion.
+	plumbing := map[string]bool{"type": true, "source": true, "post_url": true, "invalidate": true}
+	out := make([]map[string]any, 0, len(pc.Sections))
+	exact := true
+	for _, s := range pc.Sections {
+		body := s.Body
+		kind, ok := bodyTypeToKind[strings.TrimSpace(mapStr(body, "type"))]
+		if !ok {
+			return nil, false
+		}
+		sec := map[string]any{"kind": kind}
+		if s.Title != "" {
+			sec["title"] = s.Title
+		}
+		if s.Subtitle != "" {
+			sec["subtitle"] = s.Subtitle
+		}
+		// A modal form renders as a ModalButton wrapping the form; the section's
+		// own chrome moved onto the modal, so read the title back from there.
+		if mapStr(body, "type") == "modal_button" {
+			sec["modal"] = true
+			if lbl := mapStr(body, "label"); lbl != "" {
+				sec["submit_label"] = lbl
+			}
+			if ttl := mapStr(body, "title"); ttl != "" {
+				sec["title"] = ttl
+			}
+			inner, _ := body["body"].(map[string]any)
+			body = inner
+		}
+		for k, v := range body {
+			if plumbing[k] || k == "" {
+				continue
+			}
+			if _, taken := sec[k]; taken {
+				continue
+			}
+			sec[k] = v
+		}
+		// A script-backed panel points at "data/<name>"; authoring names the
+		// data source directly.
+		if src := mapStr(body, "source"); strings.HasPrefix(src, "data/") {
+			sec["source_script"] = strings.TrimPrefix(src, "data/")
+		}
+		if !exactReverseKinds[kind] {
+			exact = false
+		}
+		out = append(out, sec)
+	}
+	return out, exact
 }
 
 func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
@@ -1120,12 +1338,31 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	// The DOM probe counts what the runtime actually mounted. Empty-state
 	// texts ride along as information — an empty table can be a fresh
 	// store (fine) or a data source printing [] (test's WARN covers that).
-	probe := `() => JSON.stringify({
-		sections: document.querySelectorAll('.ui-section').length,
-		tables: document.querySelectorAll('.ui-table-list').length,
-		empty_texts: Array.prototype.slice.call(document.querySelectorAll('.ui-table-empty'), 0, 8).map(function(e){ return e.textContent.trim(); }),
-		body_chars: (document.body && document.body.innerText || '').length
-	})`
+	// Content lives in two places the naive innerText count misses: inside a
+	// framed document (an html section holding a whole page), and on a canvas
+	// (a game or animation renders pixels, not text). Counting only top-level
+	// text fails a working app for having nothing to say.
+	probe := `() => {
+		var txt = (document.body && document.body.innerText || '');
+		var visuals = document.querySelectorAll('canvas, svg, img, video').length;
+		var frames = document.querySelectorAll('iframe');
+		Array.prototype.forEach.call(frames, function(f) {
+			try {
+				var d = f.contentDocument;
+				if (!d) return;
+				txt += ' ' + (d.body && d.body.innerText || '');
+				visuals += d.querySelectorAll('canvas, svg, img, video').length;
+			} catch (e) {}
+		});
+		return JSON.stringify({
+			sections: document.querySelectorAll('.ui-section').length,
+			tables: document.querySelectorAll('.ui-table-list').length,
+			empty_texts: Array.prototype.slice.call(document.querySelectorAll('.ui-table-empty'), 0, 8).map(function(e){ return e.textContent.trim(); }),
+			body_chars: txt.length,
+			visuals: visuals,
+			frames: frames.length
+		});
+	}`
 	rep, err := CheckPageAsUser(RootDB, t.user, "/custom/"+spec.Slug+"/", probe)
 	if err != nil {
 		failures++
@@ -1195,6 +1432,8 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			Tables     int      `json:"tables"`
 			EmptyTexts []string `json:"empty_texts"`
 			BodyChars  int      `json:"body_chars"`
+			Visuals    int      `json:"visuals"`
+			Frames     int      `json:"frames"`
 		}
 		if rep.ProbeJSON != "" && json.Unmarshal([]byte(rep.ProbeJSON), &pr) == nil {
 			expected := countSpecSections(spec)
@@ -1208,9 +1447,15 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			default:
 				fmt.Fprintf(&b, "OK   render — %d section(s) mounted (%d table(s)).\n", pr.Sections, pr.Tables)
 			}
-			if pr.BodyChars < 40 {
+			// A canvas app draws instead of writing, so visuals count as
+			// content — only a page with neither text nor anything drawn is
+			// actually blank.
+			if pr.BodyChars < 40 && pr.Visuals == 0 {
 				failures++
-				fmt.Fprintf(&b, "FAIL render — page body is nearly empty (%d chars of text).\n", pr.BodyChars)
+				fmt.Fprintf(&b, "FAIL render — page body is nearly empty (%d chars of text, nothing drawn).\n", pr.BodyChars)
+			}
+			if pr.Frames > 0 {
+				fmt.Fprintf(&b, "OK   %d framed document(s) rendered (an html section holding a complete page gets its own frame).\n", pr.Frames)
 			}
 			for _, txt := range pr.EmptyTexts {
 				fmt.Fprintf(&b, "NOTE a table is showing its empty state: %q — fine for a fresh store; a problem if records/data should exist.\n", txt)

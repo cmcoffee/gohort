@@ -37,7 +37,13 @@ func TestCleanupSessionDraftsIsUserScoped(t *testing.T) {
 	})
 	t.Cleanup(func() { RegisterScopedToolLister(nil) })
 
-	if n := cleanupSessionDraftsByName(db, "alice", "get_weather"); n != 1 {
+	// The helper requires tempToolPersistMu HELD — both production callers
+	// invoke it mid-write. Honor that contract here rather than reaching for
+	// a locking variant, which is the shape that deadlocked.
+	tempToolPersistMu.Lock()
+	n := cleanupSessionDraftsByNameLocked(db, "alice", "get_weather")
+	tempToolPersistMu.Unlock()
+	if n != 1 {
 		t.Fatalf("cleaned %d, want 1 (alice's own)", n)
 	}
 	if got := LoadSessionTempTools(db, "s-alice"); len(got) != 0 {
@@ -61,7 +67,10 @@ func TestCleanupSessionDraftsNoLister(t *testing.T) {
 	if err := SaveSessionTempTool(db, "s1", TempTool{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := cleanupSessionDraftsByName(db, "alice", "x"); n != 0 {
+	tempToolPersistMu.Lock()
+	n := cleanupSessionDraftsByNameLocked(db, "alice", "x")
+	tempToolPersistMu.Unlock()
+	if n != 0 {
 		t.Errorf("cleaned %d with no lister, want 0", n)
 	}
 	if got := LoadSessionTempTools(db, "s1"); len(got) != 1 {
@@ -85,7 +94,10 @@ func TestCleanupSessionDraftsRequiresUser(t *testing.T) {
 	if err := SaveSessionTempTool(db, "s1", TempTool{Name: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := cleanupSessionDraftsByName(db, "", "x"); n != 0 {
+	tempToolPersistMu.Lock()
+	n := cleanupSessionDraftsByNameLocked(db, "", "x")
+	tempToolPersistMu.Unlock()
+	if n != 0 {
 		t.Errorf("cleaned %d with no username, want 0", n)
 	}
 }

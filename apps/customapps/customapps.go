@@ -165,6 +165,12 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// stays entirely in its own file.
 	appdb := T.recordBase(spec, user)
 	switch {
+	// Static assets — read-only, owner-scoped, extension-allowlisted. Served
+	// before anything else so an app can reference its own artwork without the
+	// asset name having to dodge every other route below.
+	case rest == "assets" || strings.HasPrefix(rest, "assets/"):
+		T.handleAsset(w, r, ownerUser, slug, strings.TrimPrefix(strings.TrimPrefix(rest, "assets"), "/"))
+		return
 	case rest == "":
 		// Component Source/PostURL are relative ("records"), so the page must
 		// live at a trailing-slash URL or they resolve one level too high.
@@ -438,7 +444,6 @@ const shareModalScript = `<script>
 })();
 </` + `script>`
 
-
 // handleDeleteApp removes a custom app: its spec, its per-app record store, and
 // any workbench active-selection state. The demo "notes" app re-seeds on next
 // visit (by design); delete a real app and it stays gone.
@@ -691,9 +696,9 @@ type dsInFlight struct {
 }
 
 var (
-	dsCacheMu    sync.Mutex
-	dsCache      = map[string]dsCacheEntry{}
-	dsInFlightCalls  = map[string]*dsInFlight{}
+	dsCacheMu       sync.Mutex
+	dsCache         = map[string]dsCacheEntry{}
+	dsInFlightCalls = map[string]*dsInFlight{}
 )
 
 // dsCacheKey identifies one data-source computation by everything its output
@@ -1267,4 +1272,40 @@ func newID() string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleAsset serves one of an app's static assets.
+//
+// Read-only by design: assets are written through the authoring tool, never
+// over HTTP, so there is no upload endpoint to abuse. Resolution is scoped to
+// the app's OWNER, not the requester, so a shared app serves the owner's
+// artwork to everyone who can already see the app — the same trust boundary
+// the page itself sits behind.
+func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, slug, name string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || !ValidAppAssetName(name) {
+		http.NotFound(w, r)
+		return
+	}
+	data, ct, err := ReadAppAsset(owner, slug, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	// Assets are replaced by name, so a long cache would pin a stale sprite.
+	// Short and revalidating keeps an updated asset visible on reload.
+	w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+	// The directory only ever holds allowlisted image/font types, but a
+	// browser sniffing its way to something else is exactly the hole the
+	// allowlist exists to close.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(data)
+	}
 }

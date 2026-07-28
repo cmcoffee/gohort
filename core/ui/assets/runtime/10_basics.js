@@ -187,6 +187,46 @@
         });
         if (actionsWrap.childNodes.length > 0) row.appendChild(actionsWrap);
 
+        // Row link: the named field carries this row's destination. Same
+        // scheme guard as the link column, so a javascript:/data: value in
+        // the data can't become navigable. An empty or rejected value just
+        // leaves the row inert — that's how an endpoint marks a row the
+        // viewer has nowhere to go from (or isn't allowed to reach).
+        var rowHref = cfg.row_link ? lookup(rec, cfg.row_link) : null;
+        if (rowHref != null && /^(https?:\/\/|\/)/.test(String(rowHref))) {
+          (function(href) {
+            row.classList.add('ui-table-row-link');
+            function follow(ev, newTab) {
+              // Never steal a click meant for a control in the row.
+              if (ev.target.closest('button, a, input, select, textarea, label')) return;
+              if (ev.defaultPrevented) return;
+              if (newTab) window.open(href, '_blank', 'noopener');
+              else window.location.href = href;
+            }
+            row.addEventListener('click', function(ev) {
+              follow(ev, ev.metaKey || ev.ctrlKey || ev.shiftKey);
+            });
+            // Middle click arrives as auxclick, not click — without this the
+            // open-in-background gesture people use on lists silently does
+            // nothing on a row that otherwise behaves like a link.
+            row.addEventListener('auxclick', function(ev) {
+              if (ev.button !== 1) return;
+              ev.preventDefault();
+              follow(ev, true);
+            });
+            // Keyboard parity: the row is a link, so announce it as one and
+            // let Enter follow it. Without this the destination is reachable
+            // only by mouse.
+            row.setAttribute('role', 'link');
+            row.setAttribute('tabindex', '0');
+            row.addEventListener('keydown', function(ev) {
+              if (ev.key !== 'Enter') return;
+              if (ev.target !== row) return; // a focused control handles its own keys
+              window.location.href = href;
+            });
+          })(String(rowHref));
+        }
+
         listEl.appendChild(row);
       });
     }
@@ -1536,6 +1576,165 @@
           renderRules();
           persist();
         };
+      } else if (t === 'sections') {
+        // Structured markdown editor — the field's ONE markdown string
+        // presented as an outline of headed blocks, each edited as prose
+        // or as a +/- list. Parsing and serialization live in
+        // 05_form_sections.js; this branch only wires the editor to the
+        // form's save path and offers the raw escape hatch.
+        input = el('div', {class: 'ui-sections'});
+        var secInitial = String(initial == null ? '' : initial);
+        var secEditor = buildSectionsEditor({
+          specs: f.sections || [],
+          allowFree: !!f.sections_allow_free,
+          level: f.sections_level || 2,
+          initial: secInitial,
+          onChange: function(text, immediate) {
+            if (immediate) {
+              clearTimeout(debounceTimers[f.field]);
+              if (current[f.field] !== text) save(f.field, text);
+            } else {
+              debounced(f.field, text);
+            }
+          },
+          // Per-section suggestion reuses the field's own suggest
+          // endpoint, adding the section name to the payload. Asking for
+          // one section beats regenerating the whole document: the parts
+          // already working survive untouched.
+          onSuggest: f.suggest_url ? function(title, body, apply) {
+            openAssist(f, title, body, apply);
+          } : null,
+        });
+        // Raw view — the outline can only model shapes it knows, so
+        // there is always a way to see and edit the exact stored text.
+        // Switching views hands the current value across, so neither
+        // side can go stale.
+        var secRaw = el('textarea', {
+          class: 'ui-form-textarea ui-sections-raw',
+          rows: String(f.rows || 12), placeholder: f.placeholder || '',
+        });
+        secRaw.value = secInitial;
+        secRaw.style.display = 'none';
+        secRaw.addEventListener('input', function() { debounced(f.field, secRaw.value); });
+        secRaw.addEventListener('blur', function() {
+          clearTimeout(debounceTimers[f.field]);
+          if (current[f.field] !== secRaw.value) save(f.field, secRaw.value);
+        });
+
+        var secViewRow = el('div', {class: 'ui-sections-viewrow'});
+        var secOutlineBtn = el('button', {type: 'button', class: 'ui-sections-view on'}, ['Outline']);
+        var secRawBtn = el('button', {type: 'button', class: 'ui-sections-view'}, ['Raw']);
+        // Whole-document assist, RAW MODE ONLY. In the outline the ✨
+        // lives per section, because that is where a targeted revision
+        // is possible; raw mode has no sections to hang one on, and the
+        // user is deliberately working on the document as a whole there,
+        // so the whole-document draft is the affordance that matches.
+        var secAssistBtn = null;
+        if (f.suggest_url) {
+          secAssistBtn = el('button', {
+            type: 'button', class: 'ui-sections-view',
+            title: 'Draft the whole document with assistance',
+          }, ['✨ Draft']);
+          secAssistBtn.style.display = 'none';
+          secAssistBtn.addEventListener('click', function() {
+            openAssist(f, '', secRaw.value, function(text) {
+              var setter = fieldSetters[f.field];
+              if (setter) setter(text);
+            });
+          });
+        }
+        secOutlineBtn.addEventListener('click', function() {
+          if (secOutlineBtn.classList.contains('on')) return;
+          secEditor.setValue(secRaw.value);
+          secEditor.node.style.display = '';
+          secRaw.style.display = 'none';
+          secOutlineBtn.classList.add('on');
+          secRawBtn.classList.remove('on');
+          if (secAssistBtn) secAssistBtn.style.display = 'none';
+        });
+        secRawBtn.addEventListener('click', function() {
+          if (secRawBtn.classList.contains('on')) return;
+          secRaw.value = secEditor.getValue();
+          secRaw.style.display = '';
+          secEditor.node.style.display = 'none';
+          secRawBtn.classList.add('on');
+          secOutlineBtn.classList.remove('on');
+          if (secAssistBtn) secAssistBtn.style.display = '';
+        });
+        if (secAssistBtn) secViewRow.appendChild(secAssistBtn);
+        secViewRow.appendChild(secOutlineBtn);
+        secViewRow.appendChild(secRawBtn);
+
+        var secBodyHost = el('div', {class: 'ui-sections-editing'});
+        secBodyHost.appendChild(secViewRow);
+        secBodyHost.appendChild(secEditor.node);
+        secBodyHost.appendChild(secRaw);
+
+        // Reading posture: the field shows the finished document, rendered,
+        // and only becomes an editor on Edit. A prompt is read far more
+        // often than it is restructured, and the outline's controls are
+        // noise while you are just checking what the thing says.
+        var secPreview = el('div', {class: 'ui-sections-preview'});
+        secPreview.style.maxHeight = ((f.rows || 12) * 1.5) + 'rem';
+        function secText() {
+          return secRawBtn.classList.contains('on') ? secRaw.value : secEditor.getValue();
+        }
+        function refreshSecPreview() {
+          var v = secText();
+          if (v.trim() === '') {
+            secPreview.classList.remove('ui-md');
+            secPreview.classList.add('empty');
+            secPreview.textContent = f.placeholder || 'Empty — use Edit to add.';
+            return;
+          }
+          secPreview.classList.remove('empty');
+          secPreview.classList.add('ui-md');
+          // mdToHTML, NOT uiRenderMarkdown: that wrapper runs the display
+          // boundary passes (em-dash swap, meta-tag strip) which exist for
+          // model output shown to a reader. This preview stands in for a
+          // value the user is editing, so it has to show what is actually
+          // stored — a preview that quietly differs from the saved text
+          // is worse than no preview.
+          secPreview.innerHTML = mdToHTML(v);
+        }
+
+        // f.inline forces the editor permanently open, matching the same
+        // flag on a textarea field.
+        if (f.inline) {
+          input.appendChild(secBodyHost);
+        } else {
+          input.appendChild(secPreview);
+          input.appendChild(secBodyHost);
+          secBodyHost.style.display = 'none';
+          refreshSecPreview();
+          // Rides in the suggest row so Suggest and Edit sit together,
+          // exactly as they do for an expanded textarea.
+          expandEditBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'}, ['✎ Edit']);
+          expandEditBtn.addEventListener('click', function() {
+            var editing = secBodyHost.style.display !== 'none';
+            if (editing) {
+              refreshSecPreview();
+              secBodyHost.style.display = 'none';
+              secPreview.style.display = '';
+              expandEditBtn.textContent = '✎ Edit';
+            } else {
+              secPreview.style.display = 'none';
+              secBodyHost.style.display = '';
+              expandEditBtn.textContent = '✓ Done';
+            }
+          });
+        }
+
+        // Suggest setter: a server-generated document replaces the whole
+        // outline. Re-parsing means generated markdown lands as real
+        // sections rather than one prose blob.
+        fieldSetters[f.field] = function(v) {
+          var text = String(v == null ? '' : v);
+          secEditor.setValue(text);
+          secRaw.value = text;
+          refreshSecPreview();
+          save(f.field, text);
+        };
       } else if (t === 'checklist') {
         // Multi-select checkbox list. Persists as []string of checked
         // values. Options may carry "help" (subtitle below the label)
@@ -1804,9 +2003,16 @@
       // returns {value}, which the field-typed setter applies. The expand
       // "✎ Edit" button (if any) rides in the same row, right after Suggest,
       // sharing its theme; when there's no Suggest, Edit gets its own row.
-      if ((f.suggest_url && fieldSetters[f.field]) || expandEditBtn) {
+      //
+      // A "sections" field gets NO field-level Suggest even when it
+      // declares suggest_url. Its assist is per-section, reached by
+      // opening the editor: one click that regenerates a whole document
+      // is precisely the destructive move per-section drafting exists to
+      // avoid, and offering both invites the wrong one.
+      var fieldSuggestable = f.suggest_url && fieldSetters[f.field] && t !== 'sections';
+      if (fieldSuggestable || expandEditBtn) {
         var suggestRow = el('div', {class: 'ui-form-suggest-row'});
-        if (f.suggest_url && fieldSetters[f.field]) {
+        if (fieldSuggestable) {
           var sBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'},
             ['✨ Suggest']);
           sBtn.addEventListener('click', function() {
@@ -1827,21 +2033,81 @@
     // f.suggest_url, and feeds the server's {value} back through the
     // field's registered setter so the right apply logic fires per
     // field type (parseInt for number, rules-rebuild for rules, etc.).
-    async function runFieldSuggest(f, btn) {
-      var hint = await uiPrompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
-      if (hint === null) return; // user cancelled
-      btn.classList.add('busy');
-      btn.disabled = true;
-      fetch(f.suggest_url, {
+    // assistFieldTypes — field types whose value is long enough that
+    // revising beats regenerating, so ✨ opens the assist workbench
+    // (draft + conversation + version walk) instead of the one-shot
+    // hint prompt. A name or a step count is not worth a modal.
+    // "sections" is absent on purpose: it has no field-level ✨ at all,
+    // only the per-section ones inside its editor.
+    var assistFieldTypes = {textarea: true, rules: true};
+
+    // postSuggest is the one transport both suggest flows share. Extra
+    // keys ride on top of the base {field, hint, record} contract; a
+    // server that ignores them still answers with {value}, so the assist
+    // workbench degrades to one-shot rather than breaking.
+    function postSuggest(f, extra) {
+      var body = {field: f.field, record: current};
+      for (var k in extra) { if (extra.hasOwnProperty(k)) body[k] = extra[k]; }
+      return fetch(f.suggest_url, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({field: f.field, hint: hint || '', record: current}),
+        body: JSON.stringify(body),
       }).then(function(r) {
         if (!r.ok) return r.text().then(function(t) {
           throw new Error(t || ('HTTP ' + r.status));
         });
         return r.json();
-      }).then(function(d) {
+      });
+    }
+
+    // openAssist launches the workbench for one value. section is "" for
+    // a whole field, or a section title when scoped to one block of a
+    // sections field.
+    function openAssist(f, section, initial, apply) {
+      // A section may scope the assistant more tightly than the field
+      // does; fall back to the field's own framing when it doesn't.
+      var spec = null;
+      if (section && Array.isArray(f.sections)) {
+        f.sections.forEach(function(sp) {
+          if (sp && String(sp.title || '').toLowerCase() === String(section).toLowerCase()) spec = sp;
+        });
+      }
+      var assistPrompt = (spec && spec.assist_prompt) || f.assist_prompt || '';
+      var help = (spec && spec.help) || f.help || '';
+      window.uiOpenAssist({
+        title: (f.label || 'Draft') + (section ? ' — ' + section : ''),
+        subtitle: help || undefined,
+        initial: initial,
+        send: function(req, done) {
+          postSuggest(f, {
+            section: section || '',
+            assist_prompt: assistPrompt,
+            message: req.message,
+            draft: req.draft,
+            history: req.history,
+          }).then(function(d) {
+            done({reply: d && d.reply, value: d && d.value});
+          }).catch(function(err) {
+            done(null, (err && err.message) || String(err));
+          });
+        },
+        onAccept: apply,
+      });
+    }
+
+    async function runFieldSuggest(f, btn) {
+      if (assistFieldTypes[f.type || 'text']) {
+        var setter = fieldSetters[f.field];
+        if (!setter) { showToast('No setter registered for ' + f.field); return; }
+        var cur = current[f.field];
+        openAssist(f, '', cur == null ? '' : String(cur), function(text) { setter(text); });
+        return;
+      }
+      var hint = await uiPrompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
+      if (hint === null) return; // user cancelled
+      btn.classList.add('busy');
+      btn.disabled = true;
+      postSuggest(f, {hint: hint || ''}).then(function(d) {
         var setter = fieldSetters[f.field];
         if (!setter) { showToast('No setter registered for ' + f.field); return; }
         if (d && d.value !== undefined && d.value !== null) {
@@ -2090,7 +2356,68 @@
           (collapseBody || host).appendChild(fieldEl);
         });
       }
+      // renderSideNav — headers become a left rail instead of accordions.
+      //
+      // A long form with collapsed groups hides how much there IS: every
+      // section reads as shut, nothing says which one holds the setting you
+      // want, and finding anything means opening each in turn. A rail shows
+      // every group at once and keeps the current one open, so the shape of
+      // the form is visible before you touch it.
+      //
+      // Same grouping rule as the accordions (a header owns the fields until
+      // the next header), so a form opts in without rewriting its field list.
+      // Fields BEFORE the first header stay pinned above the rail — they are
+      // the form's identity (name, description), wanted on every group.
+      function renderSideNav(host, fields) {
+        var groups = [];
+        var lead = [];
+        fields.forEach(function(f) {
+          if ((f.type || '') === 'header') {
+            groups.push({header: f, fields: []});
+            return;
+          }
+          if (groups.length === 0) lead.push(f);
+          else groups[groups.length - 1].fields.push(f);
+        });
+        // No headers at all — nothing to navigate; fall back to the flat form.
+        if (groups.length === 0) { renderFieldsInto(host, fields); return; }
+
+        if (lead.length) {
+          var leadHost = el('div', {class: 'ui-form-nav-lead'});
+          renderFieldsInto(leadHost, lead);
+          host.appendChild(leadHost);
+        }
+        var shell = el('div', {class: 'ui-form-nav'});
+        var rail = el('div', {class: 'ui-form-nav-rail'});
+        var pane = el('div', {class: 'ui-form-nav-pane'});
+        shell.appendChild(rail);
+        shell.appendChild(pane);
+        host.appendChild(shell);
+
+        var bodies = [];
+        var buttons = [];
+        groups.forEach(function(g, i) {
+          var btn = el('button', {type: 'button', class: 'ui-form-nav-item'}, [g.header.label || 'Section']);
+          btn.addEventListener('click', function(){ show(i); });
+          rail.appendChild(btn);
+          buttons.push(btn);
+
+          var body = el('div', {class: 'ui-form-nav-body', style: 'display:none'});
+          if (g.header.help) {
+            body.appendChild(el('div', {class: 'ui-form-section-help'}, [g.header.help]));
+          }
+          renderFieldsInto(body, g.fields);
+          pane.appendChild(body);
+          bodies.push(body);
+        });
+        function show(idx) {
+          bodies.forEach(function(b, i) { b.style.display = i === idx ? '' : 'none'; });
+          buttons.forEach(function(b, i) { b.classList.toggle('on', i === idx); });
+        }
+        show(0);
+      }
       if (stepsMode) renderStepper(wrap);
+      else if (cfg.side_nav) renderSideNav(wrap, cfg.fields);
       else renderFieldsInto(wrap, cfg.fields);
       applyVisibility();
       // Saving indicator gets attached to the parent section header.

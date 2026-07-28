@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	httppprof "net/http/pprof"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -903,9 +904,28 @@ func ServeDashboard(addr string) error {
 	})
 
 	// Global live view endpoint for the dashboard.
+	//
+	// Deep links are gated HERE rather than in the client: whether this
+	// viewer may re-enter the owning app is a server-side fact (per-user
+	// grants + the app's own WebRestricted), and the browser has no
+	// business guessing it. An entry the viewer can't follow gets its
+	// url/path cleared, which is exactly the signal the live pill reads
+	// to fall back to the Monitor.
 	mux.HandleFunc("/api/live", func(w http.ResponseWriter, r *http.Request) {
+		entries := AllLiveSessions()
+		for i := range entries {
+			prefix := liveEntryAppPath(entries[i])
+			if prefix == "" {
+				continue // offers no way back; already Monitor-only
+			}
+			if !userCanReachApp(r, apps, prefix) {
+				entries[i].URL, entries[i].Path = "", ""
+				continue
+			}
+			entries[i].Href = entries[i].ResolveHref()
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(AllLiveSessions())
+		json.NewEncoder(w).Encode(entries)
 	})
 
 	// Admin-gated pprof — live runtime introspection WITHOUT restarting. The
@@ -1661,6 +1681,76 @@ type LiveEntry struct {
 	Path    string `json:"path,omitempty"`    // web path prefix
 	URL     string `json:"url,omitempty"`     // full reconnect URL (if set, used instead of path+id)
 	Order   int    `json:"order,omitempty"`   // display order for the live ribbon (lower = earlier); ties break by App name
+	// Href is the resolved destination for "take me back to this work",
+	// filled in by /api/live rather than by providers: it collapses URL
+	// and Path+ID to one link AND applies the viewer's app access, so
+	// every surface (live pill, Monitor table) agrees on where a row goes
+	// without each re-deriving it. Empty means there is nowhere to send
+	// this viewer — either the work has no owning page or access says no.
+	Href string `json:"href,omitempty"`
+}
+
+// ResolveHref fills Href from the entry's URL, or its Path plus the
+// framework's ?reconnect=<id> convention, which the runtime honours on any
+// page configured with events_url. Returns "" when the entry offers neither,
+// which is the normal case for work with no owning page: agent runs from the
+// runs registry and queued tasks carry a label but nothing to return to.
+//
+// Callers gate on access BEFORE calling this — an entry the viewer can't
+// follow should be left with an empty Href, not a link that 403s.
+func (e LiveEntry) ResolveHref() string {
+	if e.URL != "" {
+		return e.URL
+	}
+	if e.Path == "" || e.ID == "" {
+		return ""
+	}
+	return strings.TrimSuffix(e.Path, "/") + "/?reconnect=" + url.QueryEscape(e.ID)
+}
+
+// liveEntryAppPath returns the app mount prefix a live entry points back
+// at, or "" when the entry offers no route into an app at all.
+//
+// "" is the normal case for work that isn't owned by a web surface —
+// agent runs from the runs registry and queued tasks carry a label and a
+// status but no page to return to. Those are what the Monitor exists for.
+func liveEntryAppPath(e LiveEntry) string {
+	if e.Path != "" {
+		return e.Path
+	}
+	if !strings.HasPrefix(e.URL, "/") {
+		return "" // empty, or an absolute/foreign URL we can't gate
+	}
+	p := e.URL
+	if i := strings.IndexAny(p, "?#"); i >= 0 {
+		p = p[:i]
+	}
+	// First path segment is the mount prefix ("/servitor/?reconnect=x").
+	if i := strings.Index(p[1:], "/"); i >= 0 {
+		p = p[:i+1]
+	}
+	return strings.TrimSuffix(p, "/")
+}
+
+// userCanReachApp reports whether this viewer may open the app mounted at
+// prefix, applying the same two gates the dashboard uses to decide which
+// cards to draw: the per-user app grant and the app's own WebRestricted.
+//
+// Apps registered WebHidden are absent from the dashboard list, so they
+// clear on the grant check alone. Hidden means "no card", not "no entry".
+func userCanReachApp(r *http.Request, apps []dashApp, prefix string) bool {
+	if !UserHasAppAccess(r, prefix) {
+		return false
+	}
+	for _, a := range apps {
+		if a.path != prefix || a.app == nil {
+			continue
+		}
+		if ra, ok := a.app.(WebAppRestricted); ok && ra.WebRestricted(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // LiveProvider returns active sessions for a specific app.

@@ -201,6 +201,21 @@
 .ui-orch-connect-btn:hover { background: var(--accent-hi, var(--accent)); }
 .ui-orch-connect-btn[disabled] { opacity: 0.6; cursor: default; }
 .ui-orch-connect.connected { border-color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
+/* privilege_grant — inline "what this agent may now do" card, emitted when an
+   authoring tool saves an agent. Same governed records as the Permissions
+   pane; this is just where the decision belongs. */
+.ui-orch-priv { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 0.7rem 0.85rem; background: var(--bg-1); }
+.ui-orch-priv-title { font-weight: 600; color: var(--text); }
+.ui-orch-priv-sub { font-size: 0.82rem; color: var(--text-mute); margin-top: 0.15rem; }
+.ui-orch-priv-rows { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.ui-orch-priv-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.ui-orch-priv-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, monospace); }
+.ui-orch-priv-detail { flex: 1 1 auto; color: var(--text-mute); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-orch-priv-fixed { color: var(--text-mute); font-size: 0.78rem; white-space: nowrap; }
+.ui-orch-priv-sep { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
+.ui-orch-priv select { font-family: inherit; font-size: 0.8rem; padding: 0.1rem 0.3rem; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
+.ui-orch-priv-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.7rem; }
+.ui-orch-priv-note { font-size: 0.78rem; color: var(--text-mute); }
 /* Small "answered" footer for clarity. */
 .ui-orch-ask.submitted::after {
   content: "\2713 Answered";
@@ -949,6 +964,165 @@
       }
       approve.addEventListener('click', function() { act('approve', 'approve', 'Approved — "' + name + '" is live.'); });
       deny.addEventListener('click', function() { act('deny', 'deny', 'Denied — the draft was discarded.'); });
+      return {wrap: wrap, body: null};
+    });
+
+    // Pending-approval card — a request that queued while nobody was watching
+    // (an unattended fire wanting a tool it isn't pre-authorized for, a
+    // scheduled run trying to message a real person). The server computes these
+    // per session load from the SAME Authorization records the Permissions pane
+    // lists, so the decision can happen in the thread the work belongs to
+    // instead of on a trip to the tile. Buttons hit the same owner-checked
+    // endpoints; "Always" only appears where it means something more than
+    // Approve.
+    window.uiRegisterBlockRenderer('pending_approval', function(d) {
+      var data = d.data || {};
+      var authID = String(data.auth_id || '');
+      var who = String(data.who || d.title || 'a pending request');
+      var detail = String(data.detail || d.text || '');
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🔑']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Waiting on you: ' + who]));
+      var sub = el('div', {class: 'ui-orch-connect-sub'}, [detail || 'A request is queued for your approval.']);
+      msg.appendChild(sub);
+      wrap.appendChild(msg);
+      var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});
+      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Approve']);
+      actions.appendChild(approve);
+      var always = null;
+      if (data.always === '1') {
+        always = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+          style: 'background:transparent;border:1px solid var(--accent);color:var(--accent)'}, ['Always allow']);
+        actions.appendChild(always);
+      }
+      var deny = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Deny']);
+      actions.appendChild(deny);
+      wrap.appendChild(actions);
+      var buttons = [approve, deny].concat(always ? [always] : []);
+      if (!authID) { buttons.forEach(function(b) { b.disabled = true; }); }
+      function settle(text) {
+        wrap.classList.add('connected');
+        if (actions.parentNode) actions.remove();
+        sub.textContent = text;
+      }
+      function act(path, verb, done) {
+        buttons.forEach(function(b) { b.disabled = true; });
+        fetch('api/console/approvals/' + path + '?id=' + encodeURIComponent(authID), {method: 'POST'})
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle(done); })
+          .catch(function(err) {
+            buttons.forEach(function(b) { b.disabled = false; });
+            window.uiAlert('Could not ' + verb + ' this request: ' + String(err && err.message || err));
+          });
+      }
+      approve.addEventListener('click', function() { act('approve', 'approve', 'Approved.'); });
+      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied — the request was dropped.'); });
+      if (always) {
+        always.addEventListener('click', function() {
+          act('always', 'approve', 'Approved, and allowed from now on.');
+        });
+      }
+      return {wrap: wrap, body: null};
+    });
+
+    // Privileges card — emitted when an authoring tool saves an agent. Lists
+    // what that agent may now do and lets the owner settle it HERE, in the
+    // conversation that granted it, rather than on a later trip to the
+    // Permissions pane. Every control writes through api/console/privileges,
+    // which re-checks ownership and edits the same AgentRecord the pane and the
+    // agent editor edit — the card is a shortcut, not a second authority.
+    window.uiRegisterBlockRenderer('privilege_grant', function(d) {
+      var data = d.data || {};
+      var agentID = String(data.agent_id || '');
+      var name = String(d.title || 'this agent');
+      var subAgent = data.sub_agent === '1';
+      var tools = [], flags = [];
+      try { tools = JSON.parse(data.tools || '[]'); } catch (e) { tools = []; }
+      try { flags = JSON.parse(data.flags || '[]'); } catch (e) { flags = []; }
+      // Pending edits, applied as one POST. Keyed by tool name / flag field.
+      var toolEdits = {}, flagEdits = {};
+
+      var wrap = el('div', {class: 'ui-orch-priv'});
+      wrap.appendChild(el('div', {class: 'ui-orch-priv-title'}, ['Privileges for "' + name + '"']));
+      var sub = el('div', {class: 'ui-orch-priv-sub'}, [subAgent
+        ? 'A sub-agent carries its parent’s authority, so its tools run unattended without asking. Its capabilities follow the parent.'
+        : 'Ask = refused on an unattended run and queued for you. Allow = runs on a schedule with nobody watching.']);
+      wrap.appendChild(sub);
+
+      var rows = el('div', {class: 'ui-orch-priv-rows'});
+      tools.forEach(function(t) {
+        var row = el('div', {class: 'ui-orch-priv-row'});
+        row.appendChild(el('span', {class: 'ui-orch-priv-name'}, [String(t.name || '')]));
+        row.appendChild(el('span', {class: 'ui-orch-priv-detail'}, [String(t.detail || '')]));
+        if (t.policy === 'auto') {
+          row.appendChild(el('span', {class: 'ui-orch-priv-fixed'}, ['runs freely']));
+        } else {
+          var sel = el('select');
+          [['ask', 'Ask'], ['allow', 'Allow']].forEach(function(o) {
+            var opt = el('option', {value: o[0]}, [o[1]]);
+            if (o[0] === t.policy) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          sel.addEventListener('change', function() { toolEdits[t.name] = sel.value; });
+          row.appendChild(sel);
+        }
+        rows.appendChild(row);
+      });
+      if (tools.length) wrap.appendChild(rows);
+
+      if (flags.length) {
+        var frows = el('div', {class: 'ui-orch-priv-rows ui-orch-priv-sep'});
+        flags.forEach(function(f) {
+          var row = el('div', {class: 'ui-orch-priv-row'});
+          row.appendChild(el('span', {class: 'ui-orch-priv-detail', style: 'flex:1 1 auto'}, [String(f.label || f.field)]));
+          if (f.locked) {
+            row.appendChild(el('span', {class: 'ui-orch-priv-fixed'}, [f.on ? 'on' : 'off']));
+          } else {
+            var box = el('input', {type: 'checkbox'});
+            box.checked = !!f.on;
+            box.addEventListener('change', function() { flagEdits[f.field] = box.checked; });
+            row.appendChild(box);
+          }
+          frows.appendChild(row);
+        });
+        wrap.appendChild(frows);
+      }
+
+      var actions = el('div', {class: 'ui-orch-priv-actions'});
+      var apply = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Apply']);
+      var editor = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Open full editor']);
+      var note = el('span', {class: 'ui-orch-priv-note'});
+      actions.appendChild(apply);
+      actions.appendChild(editor);
+      actions.appendChild(note);
+      wrap.appendChild(actions);
+      if (!agentID) { apply.disabled = true; editor.disabled = true; }
+
+      editor.addEventListener('click', function() {
+        window.location.href = 'agent/' + encodeURIComponent(agentID);
+      });
+      apply.addEventListener('click', function() {
+        var hasTools = Object.keys(toolEdits).length, hasFlags = Object.keys(flagEdits).length;
+        if (!hasTools && !hasFlags) { note.textContent = 'Nothing changed.'; return; }
+        apply.disabled = true;
+        note.textContent = 'Saving…';
+        fetch('api/console/privileges', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({agent_id: agentID, tools: toolEdits, flags: flagEdits})
+        }).then(function(r) {
+          if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
+          note.textContent = 'Saved.';
+          toolEdits = {}; flagEdits = {};
+          apply.disabled = false;
+        }).catch(function(err) {
+          apply.disabled = false;
+          note.textContent = '';
+          window.uiAlert('Could not save privileges: ' + String(err && err.message || err));
+        });
+      });
       return {wrap: wrap, body: null};
     });
 
@@ -3792,6 +3966,101 @@
           });
           gWrap.appendChild(hookWrap);
 
+          // Fail-open vs fail-closed: what happens when the warden itself
+          // can't answer (its call errors, or its reply comes back
+          // unreadable). Lives with the rules because it IS a property of
+          // them — a style rule and a "never send money" rule want opposite
+          // answers. Agent-level rather than per-rule because an unreadable
+          // warden reply carries no rule attribution to look one up by.
+          var failWrap = document.createElement('div');
+          failWrap.style.cssText = 'margin-top:0.6rem';
+          var failRow = document.createElement('label');
+          failRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.45rem;font-size:0.85rem;padding:0.12rem 0;cursor:pointer';
+          var failCb = document.createElement('input');
+          failCb.type = 'checkbox';
+          failCb.checked = !!agent.guardrail_fail_closed;
+          failCb.style.cssText = 'margin-top:0.2rem';
+          failCb.onchange = function() { agent.guardrail_fail_closed = failCb.checked; };
+          failRow.appendChild(failCb);
+          var failTxt = document.createElement('span');
+          failTxt.textContent = 'Refuse when the check can’t run (fail closed)';
+          failRow.appendChild(failTxt);
+          failWrap.appendChild(failRow);
+          var failHelp = document.createElement('div');
+          failHelp.className = 'ui-orch-modal-help';
+          failHelp.style.cssText = 'margin-top:0.15rem';
+          failHelp.textContent = 'The warden is itself a model call, so it can fail or return something unreadable. Off (default): the action proceeds unchecked and the gap is recorded in the ⚠ trail — right for style and tone rules. On: no verdict means no action — right for consequential rules, where an unchecked action is the thing the rule exists to prevent.';
+          failWrap.appendChild(failHelp);
+          gWrap.appendChild(failWrap);
+
+          // Declines: the lines the USER sees when a reply can't be made to
+          // satisfy the rules. A SET, not one line — an identical refusal
+          // every time is a fingerprint that tells a prober exactly which
+          // attempts tripped the guardrail.
+          //
+          // The model may WRITE these, here at authoring time, in a clean
+          // context with no protected content in scope and the owner
+          // reviewing before they go live. Nothing is generated at block
+          // time, where the model still holds the withheld content.
+          var declines = (agent.guardrail_declines || []).slice();
+          var decWrap = document.createElement('div');
+          decWrap.style.cssText = 'margin-top:0.7rem';
+          var decLbl = document.createElement('div');
+          decLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
+          decLbl.textContent = 'Declines shown to the user (optional):';
+          decWrap.appendChild(decLbl);
+          var decList = document.createElement('div');
+          decList.className = 'ui-orch-list';
+          decWrap.appendChild(decList);
+          function renderD() {
+            decList.innerHTML = '';
+            declines.forEach(function(text, idx) {
+              var row = document.createElement('div');
+              row.className = 'ui-orch-list-row';
+              var input = document.createElement('input');
+              input.type = 'text'; input.value = text; input.placeholder = 'decline line\u2026';
+              input.className = 'ui-orch-list-input';
+              input.oninput = function() { declines[idx] = input.value; };
+              var del = document.createElement('button');
+              del.type = 'button'; del.className = 'ui-orch-list-del'; del.textContent = '\u00d7';
+              del.onclick = function() { declines.splice(idx, 1); renderD(); };
+              row.appendChild(input); row.appendChild(del);
+              decList.appendChild(row);
+            });
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;gap:0.4rem;flex-wrap:wrap';
+            var addD = document.createElement('button');
+            addD.type = 'button'; addD.className = 'ui-orch-list-add'; addD.textContent = '+ Add decline';
+            addD.onclick = function() { declines.push(''); renderD(); };
+            btnRow.appendChild(addD);
+            var genLabel = '\u2728 Write in this agent\u2019s voice';
+            var genD = document.createElement('button');
+            genD.type = 'button'; genD.className = 'ui-orch-list-add';
+            genD.textContent = genLabel;
+            genD.title = 'Draft a set now, in the agent\u2019s voice. Written here, not when a block happens, and reviewed by you before it is ever shown.';
+            genD.onclick = function() {
+              genD.disabled = true; genD.textContent = 'Writing\u2026';
+              fetch('api/agents/' + encodeURIComponent(id) + '/decline-suggest', {method: 'POST'})
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(d) {
+                  var got = (d && d.declines) || [];
+                  if (!got.length) { window.uiAlert('No usable lines came back \u2014 the ones written gave the reason away and were dropped. Try again, or write your own.'); return; }
+                  declines = got; renderD();
+                })
+                .catch(function(err) { window.uiAlert('Could not write declines: ' + (err && err.message || err)); })
+                .then(function() { genD.disabled = false; genD.textContent = genLabel; });
+            };
+            btnRow.appendChild(genD);
+            decList.appendChild(btnRow);
+          }
+          renderD();
+          var decHelp = document.createElement('div');
+          decHelp.className = 'ui-orch-modal-help';
+          decHelp.style.cssText = 'margin-top:0.15rem';
+          decHelp.textContent = 'Shown when a reply can\u2019t be made to satisfy the rules above; one is picked at random. Leave empty to use neutral built-ins. Keep them uninformative: a line that names the rule, or hints that rewording would land, hands a prober the signal the guardrail exists to withhold. Lines that give the reason away are dropped on save.';
+          decWrap.appendChild(decHelp);
+          gWrap.appendChild(decWrap);
+
           // Test box — run the warden against a sample candidate now, without
           // any live interception, so the owner can feel the check.
           var testWrap = document.createElement('div');
@@ -3851,19 +4120,31 @@
                                .filter(function(r) { return r.length > 0; });
             var hooks = hookDefs.map(function(h){ return h.v; }).filter(function(v){ return activeHooks[v]; });
             saveBtn.disabled = true;
-            // Two saves: the soft Rules ride the whole-record POST (which
-            // PRESERVES guardrails server-side); the guardrails go through
-            // their dedicated protected endpoint. Both must land.
-            Promise.all([
-              fetch('api/agents', {
+            // Two saves, STRICTLY SEQUENCED — never Promise.all.
+            //
+            // The whole-record POST preserves guardrails by copying them from
+            // the STORED copy server-side. Run concurrently with the
+            // guardrails POST, it reads that copy BEFORE the guardrails write
+            // commits and then saves the stale value over it — a lost update
+            // that silently discarded the rule the user just typed. Both
+            // symptoms followed: the new guardrail never appeared, and the
+            // warden had nothing to enforce.
+            //
+            // Record first, guardrails last, so the protected write is the one
+            // that lands on top.
+            fetch('api/agents', {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(agent),
+            }).then(function(r) {
+              if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+            }).then(function() {
+              return fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(agent),
-              }).then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); }),
-              fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks}),
-              }).then(function(r) { if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); }); })
-            ]).then(function() {
+                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines}),
+              });
+            }).then(function(r) {
+              if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); });
+            }).then(function() {
               m.close();
               refreshAgentCounts();
             }).catch(function(err) {
@@ -5373,55 +5654,10 @@
         });
       }
       registerReportReplayHook();
-
-      // Export-to-Techwriter — on any assistant bubble, ship the
-      // rendered body to techwriter as a new article and open the
-      // editor in a new tab. Subject is the closest preceding user
-      // message (truncated) so the article isn't born nameless.
-      function registerExportToTechwriter() {
-        if (!window.uiRegisterBubbleAction) { setTimeout(registerExportToTechwriter, 50); return; }
-        window.uiRegisterBubbleAction({
-          role: 'assistant',
-          label: '↗ Techwriter',
-          title: 'Export this response to Techwriter as a new article',
-          onclick: function(ctx) {
-            var body = ctx.getText() || '';
-            if (!body.trim()) { window.uiAlert('Nothing to export — message is empty.'); return; }
-            // Find the closest preceding user message for the subject.
-            var subject = 'Untitled';
-            var bub = ctx.bubble;
-            var cur = bub && bub.previousElementSibling;
-            while (cur) {
-              if (cur.classList && cur.classList.contains('ui-agent-msg-user')) {
-                var t = (cur.dataset && cur.dataset.raw) || cur.textContent || '';
-                t = t.replace(/\s+/g, ' ').trim();
-                if (t.length > 0) {
-                  subject = t.length > 80 ? t.slice(0, 77) + '...' : t;
-                  break;
-                }
-              }
-              cur = cur.previousElementSibling;
-            }
-            fetch('/techwriter/api/save', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({subject: subject, body: body}),
-            }).then(function(r) {
-              if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-              return r.json();
-            }).then(function(d) {
-              if (d && d.id) {
-                window.open('/techwriter/?article=' + encodeURIComponent(d.id), '_blank');
-              } else {
-                window.uiAlert('Saved, but Techwriter returned no ID.');
-              }
-            }).catch(function(err) {
-              window.uiAlert('Export failed: ' + (err && err.message || err));
-            });
-          },
-        });
-      }
-      registerExportToTechwriter();
+      // The per-reply ↗ Techwriter export was removed. Handing a raw
+      // reply to another app produced articles nobody had named or
+      // shaped; agents that should write there have techwriter tools of
+      // their own, which arrive with a subject and a body on purpose.
 
       // Track the active agent's intake_form. Refreshed on agent
       // change (dropdown switch); cached so renderIntakeForm doesn't

@@ -441,6 +441,11 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				a := SaveAuthorization(RootDB, Authorization{
 					Owner: owner, Action: "send_message", Agent: agentID, ChatID: chatID, Handle: handle, Text: text, Images: images,
 				})
+				// Decide it here if someone is watching, instead of leaving the
+				// user to find it on the Permissions tile.
+				if sess != nil && sess.PendingApprovalPrompt != nil {
+					sess.PendingApprovalPrompt(a)
+				}
 				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s) — it sends once approved.", label, a.ID), nil
 			},
 		},

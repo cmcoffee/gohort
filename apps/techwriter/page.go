@@ -52,6 +52,12 @@ func (T *TechWriterAgent) handleNewTechwriterPage(w http.ResponseWriter, r *http
 					RevisionsListURL: "api/revisions/{id}",
 					RevisionLoadURL:  "api/revision/{revid}",
 					ImageField:       "ImageURL",
+					// Document capabilities (Stage 3): the sectioned outline
+					// over the body, the shared starting skeletons plus a
+					// per-user saved set, and the draft-with-me workbench.
+					Outline:   true,
+					Templates: MarkdownDocTemplates,
+					AssistURL: "api/assist",
 					// Reference picker — surfaces every registered
 					// reference source (servitor systems, collections,
 					// …) so a draft can be grounded in knowledge other
@@ -64,12 +70,10 @@ func (T *TechWriterAgent) handleNewTechwriterPage(w http.ResponseWriter, r *http
 					// use "client" — the handler is registered from
 					// web_assets.go via window.uiRegisterClientAction.
 					Actions: []ui.ToolbarAction{
-						// Rules and Merge keep "builtin" for now —
-						// their slide-in panels still live in the
-						// framework. They'll move out alongside a
-						// generic SlidePanel primitive.
-						{Label: "Rules", Title: "Edit rules the assistant must follow",
-							Method: "builtin", URL: "rules"},
+						// Merge keeps "builtin" — its slide-in panel still
+						// lives in the framework, awaiting a generic
+						// SlidePanel primitive. Rules moved out: RulesURL
+						// renders its own button over a shared modal.
 						{Label: "Reprocess", Title: "Run the assistant on the current body and apply its rewrite directly",
 							Method: "client", URL: "techwriter_reprocess"},
 						{Label: "Merge", Title: "Merge another article or pasted content into this one",

@@ -72,6 +72,17 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				} else {
 					b.WriteString("- Tools (allowlist): " + strings.Join(a.AllowedTools, ", ") + "\n")
 				}
+				// The allowlist is NOT the whole catalog. Capability toolsets
+				// (authoring, conductor) and per-session credential tools are
+				// appended AFTER allowlist filtering, so they never appear in
+				// AllowedTools. Reporting the allowlist alone as "Capabilities"
+				// told Builder it had no tool_def — it read its own record,
+				// believed it, and told the user to report a framework bug.
+				// An introspection surface that under-reports is worse than
+				// none: the model trusts it over its own tool array.
+				for _, extra := range effectiveExtraToolsets(a) {
+					b.WriteString("- " + extra + "\n")
+				}
 				if len(a.AllowedSkills) == 0 {
 					b.WriteString("- Skills: none attached\n")
 				} else {
@@ -233,4 +244,37 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 			return out, nil
 		},
 	}
+}
+
+// effectiveExtraToolsets describes the toolsets an agent receives ON TOP of
+// its AllowedTools allowlist, so an introspection answer matches the catalog
+// the model is actually holding.
+//
+// These are appended by the runner after allowlist filtering (see the
+// agentCanAuthor / Fleet branches in buildTurnTools), which is why none of
+// them appear in the record's allowlist. Kept as prose rather than a tool
+// enumeration because the exact membership is assembled per session; the
+// point is to stop the model concluding "absent from the allowlist" means
+// "absent from my catalog".
+func effectiveExtraToolsets(a AgentRecord) []string {
+	var out []string
+	if agentCanAuthor(a) {
+		why := "capability granted"
+		if isBuilderAgent(a.ID) {
+			why = "always on for Builder"
+		}
+		out = append(out, "Authoring toolset ("+why+"): tool_def, create_agent, update_agent, clone_agent, "+
+			"delete_agent, add_tool, skill_def, app_def, survey, plus credential drafting. "+
+			"These are appended to the catalog AFTER allowlist filtering, so they never appear in the allowlist "+
+			"above — its absence there says nothing about whether you can call them. "+
+			"Check the tool list you were actually given this turn: if tool_def is there, use it. "+
+			"They are withheld only when the turn runs as someone other than this agent's owner.")
+	}
+	if a.Fleet {
+		out = append(out, "Conductor toolset (capability granted), APPENDED beyond the allowlist above: "+
+			"delegation, standing-agent scheduling, event monitors, and the run ledger.")
+	}
+	out = append(out, "Credential-backed fetch tools are added per session for any credential this agent may use; "+
+		"framework tools (plan_set, respond_directly, stay_silent, keep_going) are always present.")
+	return out
 }

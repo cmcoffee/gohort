@@ -655,14 +655,21 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	// that rule can't re-expose it.
 	if isCloneOnlySeed(a.ID) {
 		a.Exposed = false
-	} else if a.Hidden && !a.Exposed {
-		// Reachability invariant: a Hidden agent (not in the fleet's
-		// "Available agents" block + not dispatchable via agents(run)) is
-		// orphaned if it's ALSO not exposed as a public app — the owner
-		// has no surface to reach it. Default Exposed=true on Hidden saves
-		// so users who flip the Hide toggle get a usable chat entry by
-		// default. They can still manually turn Exposed off after if they
-		// genuinely want a fully-private agent reachable only by URL.
+	} else if a.Hidden && !a.Exposed && newlyHidden(db, a) {
+		// Reachability DEFAULT (not an invariant): a Hidden agent is
+		// orphaned if it's also unexposed — hidden from the fleet AND
+		// absent from the dashboard leaves the owner no surface to reach
+		// it. So flipping Hide ON defaults Exposed ON.
+		//
+		// newlyHidden is what makes this a default instead of a cage. The
+		// rule used to run on EVERY save, so a Hidden agent could never be
+		// un-exposed: the same save that set Exposed=false immediately flipped
+		// it back, and the dashboard card the user was trying to remove
+		// reappeared every time. The comment here promised "they can still
+		// manually turn Exposed off after" — the code made that impossible.
+		//
+		// Now it fires only on the transition into Hidden (or on create), so
+		// the default still lands once and the user's later choice sticks.
 		a.Exposed = true
 	}
 	// Drop the retired "orchestrator" mode marker on save. The record now
@@ -1119,10 +1126,10 @@ func sandboxPythonNoteSection() string {
 func coreSeedAgents() []AgentRecord {
 	return []AgentRecord{
 		{
-			ID:          "seed-chat",
-			Owner:       seedOwner,
-			Name:        "Chat",
-			Description: "Default conversational agent. Replies directly for casual turns, plans + uses tools when needed, and can manage your other agents on request.",
+			ID:                 "seed-chat",
+			Owner:              seedOwner,
+			Name:               "Chat",
+			Description:        "Default conversational agent. Replies directly for casual turns, plans + uses tools when needed, and can manage your other agents on request.",
 			OrchestratorPrompt: `You are a helpful conversational assistant. The framework gives you tools directly this round (web_search, fetch_url, calculate, agent-management, etc.) — use them like a normal chat-with-tools agent.`,
 			// Chat is the primary channel agent — the Operator folded into it.
 			// Cortex gives it a persistent home thread (where monitor wakes +
@@ -1571,6 +1578,8 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				// by the agent's own edit paths. Preserve from the stored copy.
 				req.Guardrails = existing.Guardrails
 				req.GuardrailHooks = existing.GuardrailHooks
+				req.GuardrailFailClosed = existing.GuardrailFailClosed
+				req.GuardrailDeclines = existing.GuardrailDeclines
 			}
 		} else if isSeedID(req.ID) {
 			// Seeds save as a per-user shadow. The form carries no `locked`
@@ -1580,6 +1589,8 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.Locked = existing.Locked
 				req.Guardrails = existing.Guardrails
 				req.GuardrailHooks = existing.GuardrailHooks
+				req.GuardrailFailClosed = existing.GuardrailFailClosed
+				req.GuardrailDeclines = existing.GuardrailDeclines
 			}
 		}
 		// Tool-curation translation for seed agents. The modal sends the
@@ -1629,9 +1640,140 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(saved)
+	case http.MethodPatch:
+		T.patchAgent(w, r, udb, user)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// patchAgentFields is the allowlist of keys PATCH may set.
+//
+// An allowlist, not "everything except a denylist". PATCH merges onto the
+// STORED record, so a key it accepts is a key that survives; the safety
+// question is what we vouch for, not what we happened to think of. The fields
+// with their own protected endpoints are absent BY NAME so a partial save can
+// never reach them:
+//
+//   - guardrails / guardrail_hooks / guardrail_fail_closed / guardrail_declines
+//     — owner-only, and the whole point is that no ordinary agent edit path can
+//     weaken the rule it is about to be checked against
+//   - locked — owned by the lock icon
+//   - id / owner / created — identity, not settings
+var patchAgentFields = map[string]bool{
+	"name": true, "description": true, "orchestrator_prompt": true,
+	"plan_guidance": true, "rules": true, "triggers": true,
+	"allowed_tools": true, "auto_approve_tools": true, "allowed_skills": true,
+	"attached_collections": true, "attached_pipelines": true,
+	"allowed_dispatch_targets": true, "allowed_users": true,
+	"max_plan_steps": true, "max_worker_rounds": true, "think": true,
+	"think_budget": true, "context_depth": true, "gap_check": true,
+	"lead_model": true, "memory_mode": true, "disable_explicit": true,
+	"disable_inferred": true, "disable_compaction": true, "recall_hints": true,
+	"allow_explorer": true, "explorer_hard_cap": true,
+	"channel": true, "fleet": true, "author": true, "tag_name": true,
+	"exposed": true, "mcp_exposed": true, "public_name": true,
+	"allow_private_mode": true, "force_private": true, "hidden": true,
+	"allow_builder_dispatch": true, "dispatch_mode": true,
+	"evals": true, "intake_form": true, "owned_by": true,
+}
+
+// patchAgent merges a partial update into an existing agent.
+//
+// Exists so ONE record can be edited from several forms. A FormPanel POSTs the
+// fields IT holds as the whole record, so splitting a long editor across
+// page-level sections used to mean each section's save wiped every field it
+// didn't carry. PATCH sends just what changed and merges it onto the stored
+// copy, which makes that split safe.
+//
+// Round-trips through JSON rather than reflecting over the struct: the field
+// names are the ones the form already speaks, and re-marshalling the stored
+// record means every field the caller did NOT send keeps exactly the value it
+// had, including ones no form knows about.
+func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	var patch map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// The id may come in the body OR the query. A FormPanel's PATCH body is
+	// exactly {changed_field: value} with no record id in it, so a form names
+	// its target in the URL instead.
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" && patch["id"] != nil {
+		id = strings.TrimSpace(fmt.Sprint(patch["id"]))
+	}
+	if id == "" {
+		http.Error(w, "id is required for PATCH (in the body or as ?id=)", http.StatusBadRequest)
+		return
+	}
+	existing, ok := loadAgent(udb, id)
+	if !ok {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	if existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner {
+		http.Error(w, "not your agent", http.StatusForbidden)
+		return
+	}
+	if existing.Locked {
+		http.Error(w, "this agent is locked — unlock it (the 🔒 icon) before editing", http.StatusConflict)
+		return
+	}
+	// Merge: start from the stored record's own JSON so untouched fields keep
+	// their exact values, then overlay only allowlisted keys.
+	blob, err := json.Marshal(existing)
+	if err != nil {
+		http.Error(w, "encode failed", http.StatusInternalServerError)
+		return
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(blob, &merged); err != nil {
+		http.Error(w, "decode failed", http.StatusInternalServerError)
+		return
+	}
+	applied := make([]string, 0, len(patch))
+	var refused []string
+	for k, v := range patch {
+		if k == "id" {
+			continue
+		}
+		if !patchAgentFields[k] {
+			refused = append(refused, k)
+			continue
+		}
+		merged[k] = v
+		applied = append(applied, k)
+	}
+	if len(refused) > 0 {
+		sort.Strings(refused)
+		http.Error(w, "these fields cannot be set through PATCH (they have their own protected endpoints): "+strings.Join(refused, ", "), http.StatusBadRequest)
+		return
+	}
+	out, err := json.Marshal(merged)
+	if err != nil {
+		http.Error(w, "encode failed", http.StatusInternalServerError)
+		return
+	}
+	var rec AgentRecord
+	if err := json.Unmarshal(out, &rec); err != nil {
+		http.Error(w, "bad field value: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	rec.ID = existing.ID
+	rec.Owner = existing.Owner
+	if rec.Owner == "" || rec.Owner == seedOwner {
+		rec.Owner = user
+	}
+	saved, err := saveAgent(udb, rec)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sort.Strings(applied)
+	Log("[orchestrate.agents] PATCH agent=%s fields=%v", id, applied)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(saved)
 }
 
 // agentExport is the portable recipe shape: the agent itself plus any
@@ -1885,6 +2027,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentGuardrails(w, r, user, id)
 		return
 	}
+	if action == "decline-suggest" {
+		T.handleAgentDeclineSuggest(w, r, user, id)
+		return
+	}
 	if action == "guardrail-test" {
 		T.handleAgentGuardrailTest(w, r, user, id)
 		return
@@ -2099,4 +2245,21 @@ func (T *OrchestrateApp) handleAgentLock(w http.ResponseWriter, r *http.Request,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"locked": a.Locked})
+}
+
+// newlyHidden reports whether this save is the one turning Hidden ON — a new
+// record arriving hidden, or an existing record whose stored copy was visible.
+//
+// Separates "apply a sensible default at the moment the user hides an agent"
+// from "re-apply it forever", which is the difference between a default and an
+// override the user cannot escape.
+func newlyHidden(db Database, a AgentRecord) bool {
+	if db == nil || strings.TrimSpace(a.ID) == "" {
+		return true // brand-new record: the default applies
+	}
+	var prior AgentRecord
+	if !db.Get(agentsTable, a.ID, &prior) {
+		return true // no stored copy yet
+	}
+	return !prior.Hidden
 }

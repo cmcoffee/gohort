@@ -148,8 +148,8 @@ func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if resp.Content != guardrailSafeFallbackReply {
-		t.Fatalf("a reply that keeps violating must end as the safe substitute; got: %s", resp.Content)
+	if !isGuardrailSafeFallback(resp.Content) {
+		t.Fatalf("a reply that keeps violating must end as one of the safe substitutes; got: %s", resp.Content)
 	}
 	for i, m := range history {
 		if strings.Contains(m.Content, "$202k") {
@@ -185,5 +185,58 @@ func TestGuardrailPreOutputRetractsNotSettles(t *testing.T) {
 	}
 	if settled != 0 {
 		t.Fatalf("a blocked round must NOT be settled (that persists the leak); settled=%d", settled)
+	}
+}
+
+// The decline set exists so a blocked reply is not a FINGERPRINT: a
+// verbatim-identical string tells a prober exactly which attempts tripped the
+// guardrail, letting them bisect toward a rule they never see.
+func TestGuardrailFallbackVariesAndStaysUninformative(t *testing.T) {
+	if len(guardrailSafeFallbacks) < 4 {
+		t.Fatalf("only %d declines — too few to stop the reply reading as a fingerprint", len(guardrailSafeFallbacks))
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 400; i++ {
+		seen[guardrailSafeFallbackReply(nil)] = true
+	}
+	if len(seen) < 2 {
+		t.Error("the decline never varied across 400 picks")
+	}
+	for _, line := range guardrailSafeFallbacks {
+		if !isGuardrailSafeFallback(line) {
+			t.Errorf("%q not recognized by isGuardrailSafeFallback", line)
+		}
+		low := strings.ToLower(line)
+		// Uniform in information, varied only in wording. Anything naming the
+		// mechanism, or hinting a rephrase might land, leaks more than the one
+		// fixed string it replaced.
+		for _, leak := range []string{"guardrail", "rule", "policy", "blocked", "not allowed", "restrict", "rephrase", "try again"} {
+			if strings.Contains(low, leak) {
+				t.Errorf("decline %q leaks %q", line, leak)
+			}
+		}
+		// House style: no em-dashes (the display boundary rewrites them anyway).
+		if strings.Contains(line, "—") {
+			t.Errorf("decline %q contains an em-dash", line)
+		}
+	}
+}
+
+// An agent's own decline set wins, so it refuses in its own voice. The set may
+// have been model-written at AUTHORING time; by the time it is used here it is
+// static reviewed text, which is the whole distinction.
+func TestOwnerDeclineOverridesBuiltIn(t *testing.T) {
+	const custom = "That's not something this desk handles."
+	for i := 0; i < 20; i++ {
+		if got := guardrailSafeFallbackReply([]string{custom}); got != custom {
+			t.Fatalf("owner decline ignored: got %q", got)
+		}
+	}
+	// Blank / whitespace falls back to the built-in set rather than sending
+	// an empty reply.
+	for _, blank := range [][]string{nil, {}, {""}, {"   ", "\n\t"}} {
+		if got := guardrailSafeFallbackReply(blank); !isGuardrailSafeFallback(got) {
+			t.Errorf("blank custom declines %q produced %q, want a built-in", blank, got)
+		}
 	}
 }

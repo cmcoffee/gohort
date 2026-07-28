@@ -374,7 +374,9 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		// siblings are captured; a missed helper is a no-op (it still
 		// sits in the shared workspace at runtime, it just wouldn't
 		// travel). See gatherWorkspaceHelpers.
+		Debug("[temptool] create %q: gathering workspace helpers from %s", name, sess.WorkspaceDir)
 		tool.WorkspaceFiles = gatherWorkspaceHelpers(scriptName, scriptBody, sess.WorkspaceDir)
+		Debug("[temptool] create %q: gathered %d helper file(s)", name, len(tool.WorkspaceFiles))
 	}
 	// Optional StatePath captures "this subdir of the workspace
 	// persists across invocations." Most tools don't need it — they
@@ -1206,6 +1208,13 @@ func capsSubset(want, have []Capability) bool {
 // can't call them") — interactive turns hid the split because their confirm
 // hook only escalates RequiresConfirm credentials anyway. Unknown credential
 // fails closed.
+// NeedsConfirm is the exported form of the same judgement, for callers outside
+// this package that must show or reason about a stored tool's tier BEFORE it
+// runs — the inline privileges card names which of an agent's tools will stop
+// and ask on an unattended fire, and it has to agree with the gate exactly or
+// it teaches the user something false.
+func NeedsConfirm(tt *TempTool) bool { return tempToolNeedsConfirm(tt) }
+
 func tempToolNeedsConfirm(tt *TempTool) bool {
 	if tt == nil {
 		return true

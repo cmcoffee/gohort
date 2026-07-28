@@ -36,6 +36,15 @@ type AppSpec struct {
 	Owner     string          `json:"owner"`
 	AgentID   string          `json:"agent_id,omitempty"`
 	Page      json.RawMessage `json:"page"`
+	// Sections is the AUTHORING form of the page — the declarative sections
+	// array the author passed to app_def, stored verbatim alongside the Page it
+	// compiled into. Page is the RENDERED shape (bodies keyed by component
+	// type); it is not valid authoring input, so without this an author who
+	// reads a spec back has nothing to edit and every revision is a blind
+	// re-write from scratch. Keeping the source next to the artifact makes
+	// get → edit → update a real round trip. Empty for specs written before
+	// this field existed (the reader reconstructs what it can and says so).
+	Sections  json.RawMessage `json:"sections,omitempty"`
 	RecordKey string          `json:"record_key"`
 	// BodyField is the record field a workbench's viewer renders + its co-author
 	// tool appends to (the document body). Empty for non-workbench apps.

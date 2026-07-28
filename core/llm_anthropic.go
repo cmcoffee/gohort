@@ -145,6 +145,9 @@ type anthError struct {
 
 // snoopRequest logs the outbound HTTP request details via Trace.
 func (c *anthropicClient) snoopRequest(body []byte, stream bool) {
+	if !TraceEnabled() {
+		return // body reformatting below is pure waste when nothing reads it
+	}
 	Trace("[anthropic]: %s", c.api.Server)
 	if stream {
 		Trace("--> METHOD: \"POST\" PATH: \"/messages\" (streaming)")
@@ -165,6 +168,9 @@ func (c *anthropicClient) snoopRequest(body []byte, stream bool) {
 
 // snoopResponse logs the HTTP response details via Trace.
 func snoopAnthResponse(statusCode int, body []byte) {
+	if !TraceEnabled() {
+		return
+	}
 	Trace("<-- RESPONSE STATUS: %d", statusCode)
 	var generic map[string]interface{}
 	if json.Unmarshal(body, &generic) == nil {

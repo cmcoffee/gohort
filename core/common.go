@@ -1356,6 +1356,30 @@ type ToolSession struct {
 	// goroutine — set once at session creation, don't mutate after.
 	ApprovalPrompt func(authID, agentName, brief string)
 
+	// PendingApprovalPrompt, if set, surfaces a queued authorization as an
+	// inline card the moment it is queued, for the case where someone IS
+	// watching — an interactive turn that tried to reach a real person, or a
+	// delegation held for consent. Without it the tool's text is the only
+	// signal and the request goes and sits on the approvals pane. The app wires
+	// it to emit a pending_approval block; the same card is rebuilt from the
+	// stored record on later session loads, so this is a liveness improvement,
+	// not the only path. Nil ⇒ text only. Must be safe to call from a tool
+	// goroutine — set once at session creation, don't mutate after.
+	PendingApprovalPrompt func(auth Authorization)
+
+	// PrivilegePrompt, if set, surfaces an INLINE privileges card for an agent
+	// an authoring tool just created or changed: what it may now do, and which
+	// of those powers still need a human's say-so on an unattended run. The app
+	// wires it to emit a privilege_grant block whose controls write to the same
+	// governed records the Permissions pane edits — so the grant is decided in
+	// the conversation that produced it, instead of being discovered later by a
+	// trip to the pane. data is the renderer-specific payload (the caller owns
+	// its shape); core neither reads nor validates it. Nil ⇒ the authoring tool
+	// just returns its text (a wake / non-interactive run with no live viewer).
+	// Must be safe to call from a tool goroutine — set once at session creation,
+	// don't mutate after.
+	PrivilegePrompt func(agentID, agentName string, data map[string]string)
+
 	// SubAgentRunner spawns a one-shot sub-agent loop for tools that
 	// need to dispatch their OWN LLM round (today: pipeline-mode
 	// temp tools). Apps wire this on session creation; nil means
@@ -2465,6 +2489,29 @@ var (
 	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.
 	GetInput        = nfo.GetInput        // Prompt user for text input.
 )
+
+// traceEnabled mirrors whether the TRACE sink is actually routed
+// somewhere.
+//
+// nfo discards a Trace() call when the level is off, but only AFTER the
+// arguments have been built. Wire-level snooping builds whole request
+// and response bodies — an LLM call carrying 80 tool schemas is a
+// ~190KB JSON document, and the snoop helpers parse it into a
+// map[string]interface{} and re-serialize it indented. That is real CPU
+// on every single call, thrown away, on deployments that never asked for
+// tracing. The write can't be skipped from inside nfo; the FORMATTING
+// has to be skipped by the caller, which needs this flag.
+var traceEnabled atomic.Bool
+
+// SetTraceEnabled tells core whether wire-level tracing is routed. Owned
+// by the main package, which knows the --trace / --snoop state and where
+// the TRACE sink points; core has no view of either.
+func SetTraceEnabled(on bool) { traceEnabled.Store(on) }
+
+// TraceEnabled reports whether building trace-only payloads is worth it.
+// Guard any Trace() call whose ARGUMENTS cost something to produce; a
+// Trace of values you already hold needs no guard.
+func TraceEnabled() bool { return traceEnabled.Load() }
 
 var (
 	transferMonitor = nfo.TransferMonitor

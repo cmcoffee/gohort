@@ -60,6 +60,7 @@ func (addToolTool) Desc() string {
 	if pipelineAuthoringDisabled {
 		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[…]) and attach it to the agent via attached_pipelines — it surfaces as a callable run_<pipeline> tool."
 	}
+	base += "\nOUTPUT SHAPE IS PART OF THE TOOL, not an afterthought. If it returns a list of similar items (search hits, headlines, rows, files, messages), give every item a stable id, and emit a field an item lacks as an explicit null instead of dropping the key. Unanchored items get bound to the wrong neighbor and absent keys get filled in from whatever else is in context — both pass verification and fail in use. Full section: tool_def(action=\"help\")."
 	base += "\nRe-calling with the same name overwrites — that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call agents(action=\"get\") on the target agent or create_agent first."
 	return base
 }
@@ -71,7 +72,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"script_body": {
 			Type:        "string",
-			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export — the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name']. Network calls: use `from gohort import fetch_url` — urllib/requests/curl/wget are blocked in the sandbox.",
+			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export — the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name']. Network calls: use `from gohort import fetch_url` — urllib/requests/curl/wget are blocked in the sandbox. What the script PRINTS is the tool's result: emit one record per item with a stable id, and print an explicit null for a field the item lacks rather than omitting it.",
 		},
 		"script_name": {
 			Type:        "string",
@@ -128,11 +129,11 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"response_pipe": {
 			Type:        "string",
-			Description: "(api mode) Optional shell command to post-process the raw response (jq, awk, etc.) before the LLM sees it. Empty = raw response.",
+			Description: "(api mode) Optional shell command to post-process the raw response (jq, awk, etc.) before the LLM sees it. Empty = raw response. This is where you set the output shape: project a stable per-item id in list results (jq -c '[.items[] | {id, title, source}]') and keep the field set identical across items, so the caller can't attach a value to the wrong item.",
 		},
 		"test_args": {
 			Type:        "object",
-			Description: "STRONGLY RECOMMENDED. Object of sample args (one value per declared param) to dispatch the freshly-authored tool with as a verification step. The result (or error) is appended to add_tool's reply so you can see whether the template actually works before declaring success. Example: for params={subreddit:{type:\"string\"}, limit:{type:\"string\"}} pass test_args={subreddit:\"golang\", limit:\"5\"}. Omit only when the tool has no parameters or when you'll iterate the design with new args next round anyway.",
+			Description: "STRONGLY RECOMMENDED. Object of sample args (one value per declared param) to dispatch the freshly-authored tool with as a verification step. The result (or error) is appended to add_tool's reply so you can see whether the template actually works before declaring success. Example: for params={subreddit:{type:\"string\"}, limit:{type:\"string\"}} pass test_args={subreddit:\"golang\", limit:\"5\"}. Omit only when the tool has no parameters or when you'll iterate the design with new args next round anyway. Read the returned result for SHAPE, not just for absence of error: a 2xx that hands back unanchored list items or silently missing fields is a tool that will misinform whoever calls it.",
 		},
 	}
 }

@@ -659,15 +659,16 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	telem := newTurnTelemetry()
 	dispatchMsgs := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
 	resp, _, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
-		SendGuardKey:   sendGuardKey,
-		SystemPrompt:   sysPrompt,
-		Tools:          tools,
-		MaxRounds:      resolveMaxWorkerRounds(target),
-		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		OnStep:         func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
-		Confirm:        confirm,
-		GuardrailCheck: subTurn.guardrailCheckHook(),
+		SendGuardKey:      sendGuardKey,
+		SystemPrompt:      sysPrompt,
+		Tools:             tools,
+		MaxRounds:         resolveMaxWorkerRounds(target),
+		StampLocation:     UserLocation(runtimeUser), // stamp the turn in the acting user's zone
+		ThinkBudget:       target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		OnStep:            func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
+		Confirm:           confirm,
+		GuardrailCheck:    subTurn.guardrailCheckHook(),
+		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
@@ -1330,13 +1331,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		think = *run.Think
 	}
 	loopCfg := AgentLoopConfig{
-		SendGuardKey:   sendGuardKey,
-		SystemPrompt:   sysPrompt,
-		Tools:          tools,
-		MaxRounds:      resolveMaxWorkerRounds(target),
-		ThinkBudget:    target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Confirm:        func(name, args string) bool { return true },
-		GuardrailCheck: subTurn.guardrailCheckHook(),
+		SendGuardKey:      sendGuardKey,
+		SystemPrompt:      sysPrompt,
+		Tools:             tools,
+		MaxRounds:         resolveMaxWorkerRounds(target),
+		ThinkBudget:       target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Confirm:           func(name, args string) bool { return true },
+		GuardrailCheck:    subTurn.guardrailCheckHook(),
+		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),

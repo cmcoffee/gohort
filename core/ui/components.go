@@ -159,6 +159,21 @@ type Table struct {
 	// want a Table for each. Empty = auto-detect (top-level array,
 	// then `.conversations`, then first-key list).
 	RecordsField string `json:"records_field,omitempty"`
+	// RowLink names a FIELD on each record holding a destination URL,
+	// which makes the whole row navigate there on click. Same shape as
+	// Col.Link (a field name, not a template) so the endpoint stays the
+	// one place a destination is decided — which matters when reaching it
+	// depends on who is asking, since the server can emit the field for
+	// viewers who may follow it and leave it empty for those who may not.
+	//
+	// Rows whose field is empty, or whose value isn't http(s):// or a
+	// root-relative path, simply don't link. A row can therefore be
+	// clickable or inert per-record without a second table.
+	//
+	// Clicks on row actions (buttons, toggles, selects, links) are never
+	// swallowed; only the row's own dead space navigates. Ctrl/Cmd/middle
+	// click opens in a new tab, as with any link.
+	RowLink string `json:"row_link,omitempty"`
 }
 
 // Refresh sets AutoRefreshMS from a time.Duration for ergonomic Go.
@@ -549,8 +564,20 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 // Method defaults to POST. Use "PATCH" + only-the-changed-field saving
 // for endpoints that don't accept full-record overwrites.
 type FormPanel struct {
-	Source string      `json:"source"`
-	Method string      `json:"method,omitempty"`
+	Source string `json:"source"`
+	Method string `json:"method,omitempty"`
+	// SideNav renders a FormPanel's "header" fields as a left navigation rail
+	// instead of collapsed accordions: every group is listed at once and the
+	// selected one is shown. Same grouping rule (a header owns the fields
+	// until the next header), so a form opts in without touching its field
+	// list; fields before the first header stay pinned above the rail as the
+	// form's identity.
+	//
+	// For a long settings form, accordions hide how much there is — every
+	// section reads as shut and finding one setting means opening each in
+	// turn. Ignored when the form has no headers, or in Steps mode.
+	SideNav bool `json:"side_nav,omitempty"`
+
 	Fields []FormField `json:"fields"`
 	// Steps — when set, the form renders as a multi-step wizard
 	// instead of one flat field list: a numbered progress rail, one
@@ -693,6 +720,14 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 //     saves as a newline-joined string)
 //   - "tags"     — compact chip array editor (saves as a JSON
 //     string array), suited for keyword-style fields
+//   - "sections" — structured markdown editor. Reads as the finished
+//     document (rendered markdown, scrollable, capped at
+//     Rows) with an "✎ Edit" button; editing presents the
+//     value as an outline of headed blocks, each edited as
+//     prose or as a +/- list, with a Raw view alongside.
+//     Set Inline to keep the editor permanently open.
+//     Declare the outline with Sections; see SectionSpec
+//     for the round-trip contract.
 //   - "toggle"   — iOS-style switch bound to a boolean field
 //   - "password" — masked input (renders as <input type="password">).
 //     Pair with a server convention where GET returns
@@ -726,8 +761,11 @@ type FormField struct {
 	// tall modal editor (the shared uiOpenModal). Default: auto — any
 	// textarea with Rows >= 6 gets the preview+Edit treatment; smaller ones
 	// stay plain inline boxes. Expand forces it on regardless of Rows;
-	// Inline forces the plain inline box regardless of Rows. Ignored by
-	// non-textarea field types.
+	// Inline forces the plain inline box regardless of Rows.
+	//
+	// A "sections" field reads the same way but is preview-first
+	// unconditionally (Expand is redundant there); Inline keeps its
+	// outline editor permanently open. Other field types ignore both.
 	Expand bool `json:"expand,omitempty"`
 	Inline bool `json:"inline,omitempty"`
 	// SingleLine opts a "text" / "tel" field OUT of the multi-line paste
@@ -806,12 +844,43 @@ type FormField struct {
 	// fields can fan them out into companion form inputs.
 	ChipsAlsoSet map[string]string `json:"chips_also_set,omitempty"`
 
+	// AssistPrompt tells the assistant what THIS field is for, in the
+	// app's own words: who it should write as, what the value is used
+	// for downstream, what to avoid. Folded into the assist
+	// conversation's framing alongside whatever guidance the endpoint
+	// already has. Without it the assistant knows only the field's name,
+	// label, and help text, which is usually too thin to write well from.
+	//
+	// It rides to the server through the browser, so treat it as
+	// instructions about the writing task and nothing more: no secrets,
+	// no authorization logic, nothing whose integrity matters. The
+	// endpoint composes it INTO its own framing rather than being
+	// replaced by it, so a tampered value can shape the advice but
+	// cannot escape the response contract or reach another field.
+	AssistPrompt string `json:"assist_prompt,omitempty"`
+
 	// SuggestURL enables a per-field "✨ Suggest" button that asks
 	// the server to generate (or refine) this field's value via the
 	// app's LLM. Click → optional hint prompt → POST {field, hint,
 	// record} → server returns {value} → setter applies based on
 	// field type and triggers save. Supported types: text, textarea,
 	// number, rules.
+	//
+	// Long-text types ("textarea", "rules") open the assist workbench
+	// instead of the hint prompt: the draft beside a conversation, with
+	// a walk back through earlier versions. Those turns POST the same
+	// body plus {message, draft, history, assist_prompt} and read
+	// {reply, value} — an endpoint that ignores the extra keys and
+	// answers {value} still works, it just behaves as one-shot.
+	//
+	// A "sections" field puts the ✨ on each SECTION rather than on the
+	// field, so drafting revises one part of the document and leaves the
+	// rest alone. Reaching it means opening the editor: the reading view
+	// has no ✨ at all, because regenerating an entire prompt from one
+	// click next to a preview is the mistake per-section drafting exists
+	// to prevent. Raw view is the exception and gets a whole-document
+	// "✨ Draft" — there are no sections there to target, and someone in
+	// raw mode has already chosen to work on the document as a whole.
 	SuggestURL string `json:"suggest_url,omitempty"`
 
 	// Presets — small inline static list of one-click fills shown
@@ -831,6 +900,30 @@ type FormField struct {
 	// SuggestURL when you want a default a user can edit.
 	Default string `json:"default,omitempty"`
 
+	// Sections declares the outline a Type=="sections" field offers —
+	// the areas the author is expected to fill in. Declared sections the
+	// stored value doesn't have yet render as empty, labeled slots, so
+	// the structure is visible before it's written; they contribute
+	// NOTHING to the saved markdown until they hold content. Headings
+	// found in the value that aren't declared render in document order
+	// alongside them and keep whatever shape their content implies.
+	//
+	// The outline SEEDS a document, it does not constrain one. The saved
+	// value is ordinary markdown: the author can reorder any section
+	// (declared ones included), reshape it, or ignore a slot entirely,
+	// and order is carried by the markdown itself. Declare what usually
+	// belongs here, not what must. Ignored by other field types.
+	Sections []SectionSpec `json:"sections,omitempty"`
+	// SectionsAllowFree lets the user add sections beyond the declared
+	// outline (and delete the ones they added). Off by default: a field
+	// whose skeleton IS the contract — a form the server parses back by
+	// heading — should not grow headings the server won't read.
+	SectionsAllowFree bool `json:"sections_allow_free,omitempty"`
+	// SectionsLevel is the markdown heading level used for declared and
+	// newly added sections (default 2, i.e. "## Title"). Existing
+	// headings in the value keep the level the author wrote.
+	SectionsLevel int `json:"sections_level,omitempty"`
+
 	// Accept sets the file picker's accept filter (e.g. ".json") for a
 	// Type=="file" field. That field renders a native file chooser; the
 	// picked file is read as text ENTIRELY in the browser (no upload, no
@@ -849,6 +942,47 @@ type FieldPreset struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
 	Hint  string `json:"hint,omitempty"`
+}
+
+// SectionSpec is one declared area of a Type=="sections" FormField.
+//
+// The value such a field saves is still a single markdown string: the
+// editor parses it into "## Heading" blocks on load and re-serializes on
+// every edit. Nothing server-side needs to know the field is structured
+// — prompt builders, exporters, and tools that write the field as plain
+// text keep working, and an author can paste raw markdown in.
+//
+// Mode is only a STARTING shape for an empty section. Once a section has
+// content, its editor is chosen by what that content looks like: all
+// lines bulleted reads as "list", all lines numbered as "steps",
+// anything else as "prose". Switching a section to "list" in the UI
+// rewrites its lines as bullets, which parses back as a list next time —
+// which is why a per-section choice survives with no schema to store it.
+// Content matching no known shape stays prose and is carried verbatim.
+type SectionSpec struct {
+	// Title is both the heading written into the markdown and the label
+	// shown on the slot. Match it exactly to adopt a heading that already
+	// exists in the stored value (case-insensitively).
+	Title string `json:"title"`
+	// Mode is the editor an EMPTY section opens with: "prose" (default),
+	// "list", or "steps".
+	Mode string `json:"mode,omitempty"`
+	// Help renders under the section, like FormField.Help does for an
+	// input. Say what belongs in this area.
+	Help string `json:"help,omitempty"`
+	// Placeholder shows inside the empty editor. Falls back to Help.
+	Placeholder string `json:"placeholder,omitempty"`
+	// Required marks the slot visually while it's empty. Advisory only —
+	// it does not block saving (a sections field saves continuously, the
+	// same as every other FormPanel input).
+	Required bool `json:"required,omitempty"`
+	// AssistPrompt scopes the assist conversation to THIS section, the
+	// way FormField.AssistPrompt does for a whole field. Set it where a
+	// section wants a different voice from its neighbours — a Rules
+	// slot that should produce terse checkable lines reads nothing like
+	// a Voice slot. Falls back to the field's AssistPrompt when blank.
+	// Same trust note as FormField.AssistPrompt: task instructions only.
+	AssistPrompt string `json:"assist_prompt,omitempty"`
 }
 
 // SelectOption is one entry in a "select" or "checklist" FormField.
@@ -2263,6 +2397,29 @@ type ArticleEditor struct {
 	// holds the header image URL. Default "ImageURL". Set blank to
 	// disable image persistence (the editor still surfaces images
 	// supplied by client actions but won't round-trip them).
+	// Outline turns on the sectioned markdown view over the body: an
+	// "Outline" toggle that presents the document as headed blocks
+	// (core/ui's sections editor) instead of one textarea. The textarea
+	// stays the value carrier, so save / chat / merge / revisions are
+	// unaffected. Opt-in because not every ArticleEditor body is
+	// markdown worth sectioning.
+	Outline bool `json:"outline,omitempty"`
+
+	// Templates offers starting skeletons via a "Templates" button.
+	// TemplatesListURL / TemplateURL add the user's own saved templates
+	// on top (GET/POST the list, DELETE one) — same contract as
+	// CodeWriterPanel's. Leave all three unset to hide the button.
+	Templates        []DocTemplate `json:"templates,omitempty"`
+	TemplatesListURL string        `json:"templates_list_url,omitempty"`
+	TemplateURL      string        `json:"template_url,omitempty"`
+
+	// AssistURL turns on the draft-with-me workbench: the document
+	// beside a conversation, with a walk back through earlier versions.
+	// A ✨ appears per section in the outline, and a whole-document one
+	// in raw view. POST {name, section, message, draft, history} →
+	// {reply, value}; section is "" for the whole document.
+	AssistURL string `json:"assist_url,omitempty"`
+
 	ImageField string `json:"image_field,omitempty"`
 
 	// ExtraActions populates a "More ▾" popover at the right end of
@@ -2392,8 +2549,48 @@ type CodeWriterPanel struct {
 	DateField string `json:"date_field,omitempty"` // default "date"
 
 	// Languages populates the lang dropdown. Leave nil to use defaults
-	// (bash, sql, python, powershell, go, regex, other).
+	// (bash, sql, python, powershell, go, markdown, regex, other).
 	Languages []string `json:"languages,omitempty"`
+
+	// Templates are starting skeletons offered when the language is
+	// markdown, via a "Templates" button next to the outline toggle.
+	// Picking one replaces the editor (confirmed first when the buffer
+	// isn't empty). Leave nil to hide the button.
+	//
+	// These are the BUILT-IN skeletons: the handful of shapes people
+	// write over and over and shouldn't have to remember the headings
+	// for. They can't be deleted. Users add their own via the endpoints
+	// below, and the picker shows both lists together.
+	Templates []DocTemplate `json:"templates,omitempty"`
+
+	// User-saved templates. Set all three to let the picker save the
+	// current document as a reusable template, list what's been saved,
+	// and delete one. Leave blank for built-ins only.
+	//
+	// TemplatesListURL: GET → [{id, name, description, body, date}],
+	// POST {name, description, body} to create. Re-saving under an
+	// existing name replaces it rather than accumulating near-duplicates.
+	// TemplateURL: GET/DELETE {id}.
+	TemplatesListURL string `json:"templates_list_url,omitempty"`
+	TemplateURL      string `json:"template_url,omitempty"`
+
+	// RulesURL turns on the "Rules" editor: per-user standing
+	// instructions the assistant must follow on every call in this app.
+	// GET → {rules}; POST {rules}. Namespaced per app server-side, since
+	// the constraints that fit prose don't fit SQL.
+	RulesURL string `json:"rules_url,omitempty"`
+
+	// AssistURL turns on the draft-with-me workbench for markdown
+	// documents: the text beside a conversation, with a walk back
+	// through earlier versions. A ✨ appears on each section in the
+	// outline, and a whole-document one in raw view.
+	//
+	// POST {name, section, message, draft, context, history} →
+	// {reply, value}. section is "" for the whole document. value empty
+	// means the model answered without proposing a change. Same contract
+	// as the agent editor's suggest endpoint, so both drive the one
+	// workbench. Leave blank to hide the affordance.
+	AssistURL string `json:"assist_url,omitempty"`
 
 	// Empty-state copy + placeholder text.
 	EmptyText       string `json:"empty_text,omitempty"`
@@ -2401,6 +2598,19 @@ type CodeWriterPanel struct {
 	PlaceholderCode string `json:"placeholder_code,omitempty"`
 	PlaceholderCtx  string `json:"placeholder_ctx,omitempty"`
 	PlaceholderChat string `json:"placeholder_chat,omitempty"`
+}
+
+// DocTemplate is one starting skeleton in CodeWriterPanel.Templates.
+// Body is the document the editor is filled with; Name doubles as the
+// snippet name when the user hasn't typed one yet.
+//
+// Write the Body as a real outline with headings, not prose about what
+// to write: it lands in the sections editor as navigable blocks, and a
+// heading the author can fill beats a paragraph telling them to.
+type DocTemplate struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Body        string `json:"body"`
 }
 
 func (CodeWriterPanel) componentType() string { return "codewriter_panel" }
@@ -2425,6 +2635,40 @@ func (c Card) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		alias
 	}{"card", alias(c)})
+}
+
+// Frame renders a COMPLETE, self-contained HTML document in its own iframe
+// (via srcdoc) instead of splicing it into the host page. Use it whenever the
+// HTML is a whole document rather than a fragment — a game, a canvas
+// animation, a simulation, an embedded mini-app.
+//
+// The distinction matters because a Card inlines its HTML: the browser drops
+// the document's <html>/<head>/<body> wrappers but KEEPS its <style>, so a
+// blob that opens with the usual `* { margin: 0 }` reset and a `body { … }`
+// rule silently restyles the entire surrounding page, and its `100vh` layout
+// measures the whole window rather than its own box. A Frame gives the
+// document its own viewport, its own cascade, and its own <body> to measure.
+//
+// NOT a sandbox: the frame keeps the parent's origin (no sandbox attribute),
+// because a framed document is the same owner-authored, owner-served content a
+// Card holds — it must keep the relative fetches, cookies, and storage the
+// page it came from has. Frame is about ISOLATING LAYOUT, not privilege. For
+// untrusted or model-authored HTML shown to a user, the sandboxed artifact
+// pane (uiOpenArtifactPane) is the surface with the trust boundary.
+type Frame struct {
+	HTML string `json:"html"`
+	// Height is any CSS length for the frame box (e.g. "640px", "80vh").
+	// Defaults to a tall-but-bounded viewport when empty.
+	Height string `json:"height,omitempty"`
+}
+
+func (Frame) componentType() string { return "frame" }
+func (f Frame) MarshalJSON() ([]byte, error) {
+	type alias Frame
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"frame", alias(f)})
 }
 
 // Button is a single action button that calls an endpoint on click — the

@@ -352,6 +352,12 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// Opening a session clears its unread state (a background wake that
 		// landed here is now seen). Writes LastSeen only — not activity.
 		markSessionSeen(udb, agent.ID, sid)
+		// Anything still awaiting the owner's decision rides along as a card in
+		// the thread, so a run that stalled unattended says so where the user is
+		// rather than only as a count on the Permissions tile. Computed per load
+		// and NOT persisted — resolving one anywhere drops it from the next load,
+		// with no stale card to sweep.
+		s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s)
 	case http.MethodDelete:

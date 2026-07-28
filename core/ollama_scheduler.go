@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 )
 
 // OllamaScheduler provides a fair-queued concurrency limiter for
@@ -90,6 +91,99 @@ func StartOllamaScheduler(maxParallel int) {
 	}
 }
 
+// llmQueueWaitLogFloor is the shortest queue wait worth a log line.
+// Below this the wait is indistinguishable from channel-handoff noise,
+// and reporting every grant would bury the ones that matter.
+const llmQueueWaitLogFloor = 250 * time.Millisecond
+
+// acquire blocks until a slot is granted, and reports the wait whenever
+// it was long enough for a person to have felt it.
+//
+// This wait is invisible everywhere else, which is the whole reason for
+// the line. It elapses BEFORE the client logs "Sending request", and the
+// inference server never sees the request while it sits here — so a turn
+// delayed by local queueing and a turn delayed by a slow server look
+// identical in both logs. Without this, the only symptom of a
+// max_parallel set below what the server can actually serve is a user
+// saying turns feel slow.
+//
+// in_flight and queued come from the dispatcher AFTER the grant, so they
+// describe the state this request was admitted into, not the backlog it
+// arrived at. That is the more useful of the two: it says whether the
+// limiter is still saturated at the moment we were let through.
+func (s *OllamaScheduler) acquire(ctx context.Context, backend, callerID string) error {
+	if callerID == "" {
+		callerID = "unknown"
+	}
+	tok := &ollamaReqToken{
+		callerID: callerID,
+		ctx:      ctx,
+		done:     make(chan error, 1),
+	}
+	started := time.Now()
+	select {
+	case s.submit <- tok:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	var err error
+	select {
+	case err = <-tok.done:
+	case <-ctx.Done():
+		// Mark as canceled; dispatcher will skip this token on next pass.
+		// We don't signal the dispatcher here because it re-checks ctx
+		// when picking a token to grant.
+		err = ctx.Err()
+	}
+	waited := time.Since(started)
+	if waited < llmQueueWaitLogFloor {
+		return err
+	}
+	outcome := "granted"
+	if err != nil {
+		outcome = "abandoned (" + err.Error() + ")"
+	}
+	if st, ok := s.snapshot(); ok {
+		Debug("[llm-queue] %s: slot %s after waiting %s (caller=%s, max_parallel=%d, in_flight=%d, queued=%d)",
+			backend, outcome, waited.Round(time.Millisecond), callerID,
+			st.MaxParallel, st.InFlight, totalQueued(st))
+	} else {
+		Debug("[llm-queue] %s: slot %s after waiting %s (caller=%s)",
+			backend, outcome, waited.Round(time.Millisecond), callerID)
+	}
+	return err
+}
+
+// snapshot reads dispatcher state, giving up rather than blocking.
+//
+// Every caller is either on the request path or an admin page, and a
+// diagnostic that can wedge the thing it measures is worse than no
+// diagnostic. A wedged or shutting-down dispatcher yields !ok instead of
+// a hang.
+func (s *OllamaScheduler) snapshot() (OllamaSchedStats, bool) {
+	reply := make(chan OllamaSchedStats, 1)
+	select {
+	case s.statReq <- reply:
+	default:
+		return OllamaSchedStats{}, false // stat channel backed up
+	}
+	select {
+	case st := <-reply:
+		return st, true
+	case <-time.After(time.Second):
+		return OllamaSchedStats{}, false
+	}
+}
+
+// totalQueued sums the per-caller backlog into one number for logging.
+func totalQueued(st OllamaSchedStats) int {
+	n := 0
+	for _, q := range st.Queued {
+		n += q
+	}
+	return n
+}
+
 // AcquireOllamaSlot blocks until a slot is available for the caller,
 // subject to global and per-caller limits. Returns immediately when
 // the scheduler is disabled. Caller MUST call ReleaseOllamaSlot with
@@ -101,28 +195,7 @@ func AcquireOllamaSlot(ctx context.Context, callerID string) error {
 	if s == nil {
 		return nil // scheduler not started; pass through
 	}
-	if callerID == "" {
-		callerID = "unknown"
-	}
-	tok := &ollamaReqToken{
-		callerID: callerID,
-		ctx:      ctx,
-		done:     make(chan error, 1),
-	}
-	select {
-	case s.submit <- tok:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	select {
-	case err := <-tok.done:
-		return err
-	case <-ctx.Done():
-		// Mark as canceled; dispatcher will skip this token on next pass.
-		// We don't signal the dispatcher here because it re-checks ctx
-		// when picking a token to grant.
-		return ctx.Err()
-	}
+	return s.acquire(ctx, "ollama", callerID)
 }
 
 // ReleaseOllamaSlot returns the slot previously acquired by the
@@ -152,9 +225,8 @@ func OllamaSchedulerStats() OllamaSchedStats {
 	if s == nil {
 		return OllamaSchedStats{}
 	}
-	reply := make(chan OllamaSchedStats, 1)
-	s.statReq <- reply
-	return <-reply
+	st, _ := s.snapshot()
+	return st
 }
 
 // llamacppSched serializes requests to llama.cpp. llama.cpp is
@@ -190,6 +262,11 @@ func StartLlamacppScheduler(maxParallel int) {
 	} else {
 		llamacppSched.setN <- maxParallel
 	}
+	// Stated plainly at Log level because this cap is invisible at every
+	// other layer: it is enforced here, not by the server, and a value
+	// below the server's own --parallel silently strands slot capacity
+	// while turns queue locally. Pairs with the [llm-queue] waits.
+	Log("[llm-queue] llama.cpp request cap: max_parallel=%d (server-side --parallel is separate; a lower value here is the binding limit)", maxParallel)
 }
 
 // AcquireLlamacppSlot blocks until a llama.cpp slot is available.
@@ -200,25 +277,7 @@ func AcquireLlamacppSlot(ctx context.Context, callerID string) error {
 	if s == nil {
 		return nil
 	}
-	if callerID == "" {
-		callerID = "unknown"
-	}
-	tok := &ollamaReqToken{
-		callerID: callerID,
-		ctx:      ctx,
-		done:     make(chan error, 1),
-	}
-	select {
-	case s.submit <- tok:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	select {
-	case err := <-tok.done:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return s.acquire(ctx, "llama.cpp", callerID)
 }
 
 // ReleaseLlamacppSlot returns the slot previously acquired. Safe to

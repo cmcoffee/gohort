@@ -181,6 +181,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/permissions", g(T.handleConsolePermissions))
 	T.HandleFunc("/api/console/permissions/policy", g(T.handleConsolePermissionPolicy))
 	T.HandleFunc("/api/console/permissions/remove", g(T.handleConsolePermissionRemove))
+	T.HandleFunc("/api/console/privileges", g(T.handleConsolePrivileges))
 	T.HandleFunc("/api/console/approvals/approve", gw(T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", gw(T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", gw(T.handleApprovalDeny))
@@ -2008,6 +2009,16 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 		if a.Brief != "" {
 			detail = "bind 1:1 thread (" + a.Brief + ")"
 		}
+	case "autonomous_tool":
+		if rec, found := loadAgent(udb, a.Agent); found {
+			who = rec.Name
+		}
+		detail = "run \"" + a.Brief + "\" unattended (refused on a scheduled fire; approving pre-authorizes it)"
+	case "scope_tool":
+		if rec, found := loadAgent(udb, a.Agent); found {
+			who = rec.Name
+		}
+		detail = "keep \"" + a.Brief + "\" in this agent's own kit"
 	}
 	return who, detail
 }
@@ -2099,6 +2110,105 @@ func removeAutoApproveTool(udb Database, agentID, tool string) {
 			Log("[console.perm] revoke autonomous tool %s/%s failed: %v", agentID, tool, err)
 		}
 	}
+}
+
+// handleConsolePrivileges is the write side of the inline privileges card: it
+// applies the same edits the Permissions pane and the agent editor make, to the
+// same AgentRecord, for an agent the CALLER owns.
+//
+// The card is a shortcut, never an authority. The model can emit a card; only a
+// request carrying the owner's session can change anything, and the record is
+// loaded from that user's own store — an id belonging to someone else simply
+// isn't there. POST body:
+//
+//	{"agent_id":"…","tools":{"send_message":"allow","call_x":"ask"},
+//	 "flags":{"fleet":true,"exposed":false}}
+//
+// Tool policy is binary: "allow" pre-authorizes the tool for unattended runs
+// (AutoApproveTools), anything else revokes so it queues again on its next
+// fire. Flags map to the capability toggles by their form field names.
+func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		AgentID string            `json:"agent_id"`
+		Tools   map[string]string `json:"tools"`
+		Flags   map[string]bool   `json:"flags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	udb := UserDB(T.DB, user)
+	rec, found := loadAgent(udb, strings.TrimSpace(body.AgentID))
+	if !found {
+		http.Error(w, "no such agent", http.StatusNotFound)
+		return
+	}
+	// A sub-agent's posture is the framework's to decide (it carries its
+	// parent's authority and is never published on its own), so the card shows
+	// those rows locked and the server refuses them too — a locked control that
+	// only the UI enforces is not a control.
+	if strings.TrimSpace(rec.OwnedBy) != "" && len(body.Flags) > 0 {
+		http.Error(w, "a sub-agent's capabilities follow its parent", http.StatusConflict)
+		return
+	}
+	for tool, policy := range body.Tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(policy), "allow") {
+			rec.AutoApproveTools = appendUnique(rec.AutoApproveTools, tool)
+			continue
+		}
+		var kept []string
+		for _, t := range rec.AutoApproveTools {
+			if t != tool {
+				kept = append(kept, t)
+			}
+		}
+		rec.AutoApproveTools = kept
+	}
+	for field, on := range body.Flags {
+		switch strings.TrimSpace(field) {
+		case "fleet":
+			rec.Fleet = on
+		case "author":
+			rec.Author = on
+		case "exposed":
+			rec.Exposed = on
+		case "mcp_exposed":
+			rec.MCPExposed = on
+		case "allow_builder_dispatch":
+			rec.AllowBuilderDispatch = on
+		default:
+			http.Error(w, "unknown capability "+field, http.StatusBadRequest)
+			return
+		}
+	}
+	if _, err := saveAgent(udb, rec); err != nil {
+		Log("[console.privileges] save %s failed: %v", rec.ID, err)
+		http.Error(w, "could not save", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// appendUnique adds s to list unless it's already there.
+func appendUnique(list []string, s string) []string {
+	for _, v := range list {
+		if v == s {
+			return list
+		}
+	}
+	return append(list, s)
 }
 
 // handleConsolePermissionPolicy sets a subject's standing policy.

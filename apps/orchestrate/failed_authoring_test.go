@@ -12,6 +12,9 @@ func TestClaimsSuccessWithoutAck(t *testing.T) {
 		"The tool is live and ready to use.",
 		"Fixed — post_message is now a POST.",
 		"All set — the agent is up and running.",
+		// The changelog shape, verbatim from the app_def session that closed
+		// clean after three failed updates.
+		"Fixes applied:\n- Collision now uses proper bounding-box math\n- Pipe gap widened to 170px\n\nTry it now — navigate to /custom/flappy-lawyer/.",
 	}
 	no := []string{
 		"I didn't fix it yet — the toolbox still has post_message as a GET.",
@@ -64,6 +67,53 @@ func TestInjectFailedAuthoringWarning(t *testing.T) {
 	if injectFailedAuthoringWarning(&ChatSession{}, []PersistedToolCall{{Name: "fetch_url", Err: "x"}}, "Done!") {
 		t.Fatal("must NOT fire when no authoring tool fired")
 	}
+
+	// The live app_def case: a READ succeeded, every WRITE errored, and the
+	// reply listed the fixes as applied. A successful read must not vouch for
+	// a failed write.
+	readOKWritesFailed := []PersistedToolCall{
+		{Name: "app_def", Args: map[string]any{"action": "get", "id": "flappy-lawyer"}, Result: `{"slug":"flappy-lawyer"}`},
+		{Name: "app_def", Args: map[string]any{"action": "update", "id": "flappy-lawyer"}, Err: `section 1: unknown section kind ""`},
+		{Name: "app_def", Args: map[string]any{"action": "update", "id": "flappy-lawyer"}, Err: "section 1: an html section needs an `html` field"},
+	}
+	sess = &ChatSession{}
+	if !injectFailedAuthoringWarning(sess, readOKWritesFailed, "Fixes applied — the collision math is corrected and the gap is wider. Try it now.") {
+		t.Fatal("expected the warning to fire: every app_def WRITE errored (the get doesn't count)")
+	}
+	if len(sess.Messages) != 1 || !sess.Messages[0].Hidden {
+		t.Fatalf("expected one hidden corrective note; got %d messages", len(sess.Messages))
+	}
+
+	// A read-only turn claims nothing was built, so it can't be caught here.
+	readsOnly := []PersistedToolCall{
+		{Name: "app_def", Args: map[string]any{"action": "get"}, Err: "no matching app"},
+		{Name: "app_def", Args: map[string]any{"action": "list"}, Err: "boom"},
+	}
+	if injectFailedAuthoringWarning(&ChatSession{}, readsOnly, "Done! Updated the app.") {
+		t.Fatal("must NOT fire when no authoring WRITE was attempted")
+	}
+}
+
+func TestAuthoringCallIsWrite(t *testing.T) {
+	write := []PersistedToolCall{
+		{Name: "create_agent"}, // no action arg at all
+		{Name: "app_def", Args: map[string]any{"action": "update"}},   //
+		{Name: "app_def", Args: map[string]any{"action": " Create "}}, // spacing/case
+		{Name: "tool_def", Args: map[string]any{"action": "delete"}},  //
+		{Name: "app_def", Args: map[string]any{"action": ""}},         // unreadable → assume write
+		{Name: "app_def", Args: map[string]any{"action": float64(1)}}, // wrong type → assume write
+	}
+	for _, tc := range write {
+		if !authoringCallIsWrite(tc) {
+			t.Errorf("expected a write: %+v", tc.Args)
+		}
+	}
+	read := []string{"get", "list", "help", "test", "verify"}
+	for _, a := range read {
+		if authoringCallIsWrite(PersistedToolCall{Name: "app_def", Args: map[string]any{"action": a}}) {
+			t.Errorf("action %q is a read, not a write", a)
+		}
+	}
 }
 
 func TestPromisesAuthoringWithoutAction(t *testing.T) {
@@ -75,7 +125,7 @@ func TestPromisesAuthoringWithoutAction(t *testing.T) {
 		"Next I'll add the get_transcript action to the toolbox.",
 	}
 	no := []string{
-		"I'll use the get_weather tool to check that.",   // dispatch, no authoring verb
+		"I'll use the get_weather tool to check that.",    // dispatch, no authoring verb
 		"I've created the toolbox and verified it works.", // past tense — sibling guard's job
 		"The toolbox already exists, so nothing to do.",
 		"Here's a joke about robots.",

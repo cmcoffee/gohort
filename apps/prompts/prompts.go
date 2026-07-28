@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/editor"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -30,7 +31,7 @@ func init() {
 	// self-registered here rather than surfaced as an agent-facing hub app. The
 	// app's routes below still serve the editor; WebHidden keeps it off the
 	// dashboard and there's no HubTab, so it's reached only from admin.
-	RegisterAdminSection(AdminSectionEntry{Section: promptsAdminSection(), Head: promptsHead})
+	RegisterAdminSection(AdminSectionEntry{Section: promptsAdminSection(), Head: promptsHeadHTML()})
 }
 
 // PromptsApp is the app entry point. Embedding AppCore wires in shared state
@@ -96,14 +97,18 @@ func (T *PromptsApp) Routes() {
 		}
 		T.handlePage(w, r)
 	}))
-	T.HandleFunc("/api/list", T.adminGated(T.handleList))         // GET  -> [{ID, Subject, Date}]
-	T.HandleFunc("/api/load", T.adminGated(T.handleLoad))         // GET  ?id= -> {ID, Subject, Body, Date}
-	T.HandleFunc("/api/save", T.adminGated(T.handleSave))         // POST {ID, Body}
-	T.HandleFunc("/api/revert", T.adminGated(T.handleRevert))     // POST ?id=
-	T.HandleFunc("/api/chat", T.adminGated(T.handleChat))         // POST {subject, body, message, mode, history}
-	T.HandleFunc("/api/revisions", T.adminGated(T.handleRevList))        // GET  ?id= -> [{id, date}]
-	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))         // GET  ?revid= -> {body}
-	T.HandleFunc("/api/optimize-all", T.adminGated(T.handleOptimizeAll))              // POST -> starts a background pass
+	T.HandleFunc("/api/list", T.adminGated(T.handleList))     // GET  -> [{ID, Subject, Date}]
+	T.HandleFunc("/api/load", T.adminGated(T.handleLoad))     // GET  ?id= -> {ID, Subject, Body, Date}
+	T.HandleFunc("/api/save", T.adminGated(T.handleSave))     // POST {ID, Body}
+	T.HandleFunc("/api/revert", T.adminGated(T.handleRevert)) // POST ?id=
+	T.HandleFunc("/api/chat", T.adminGated(T.handleChat))     // POST {subject, body, message, mode, history}
+	T.HandleFunc("/api/rules", T.adminGated(func(w http.ResponseWriter, r *http.Request) {
+		HandleDocRules(w, r, T.DB, "prompts")
+	}))
+	T.HandleFunc("/api/assist", T.adminGated(T.handleAssist))                      // POST {name, section, message, draft, history}
+	T.HandleFunc("/api/revisions", T.adminGated(T.handleRevList))                  // GET  ?id= -> [{id, date}]
+	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))                   // GET  ?revid= -> {body}
+	T.HandleFunc("/api/optimize-all", T.adminGated(T.handleOptimizeAll))           // POST -> starts a background pass
 	T.HandleFunc("/api/optimize-all/status", T.adminGated(T.handleOptimizeStatus)) // GET  -> {optimizing, done, total}
 }
 
@@ -112,6 +117,26 @@ func (T *PromptsApp) Routes() {
 func lookupBlock(key string) (PromptBlock, bool) {
 	for _, b := range AllPromptBlocks() {
 		if b.Key == key {
+			return b, true
+		}
+	}
+	return PromptBlock{}, false
+}
+
+// lookupBlockByKeyOrTitle resolves a block from whichever identifier the
+// caller has. The list endpoint hands the UI {ID: key, Subject: title},
+// and the editor's title input holds the title — so an assist request
+// arrives naming the block the way a human reads it, not the way the
+// registry keys it.
+func lookupBlockByKeyOrTitle(s string) (PromptBlock, bool) {
+	if s == "" {
+		return PromptBlock{}, false
+	}
+	if b, ok := lookupBlock(s); ok {
+		return b, true
+	}
+	for _, b := range AllPromptBlocks() {
+		if strings.EqualFold(strings.TrimSpace(b.Title), s) {
 			return b, true
 		}
 	}
@@ -137,7 +162,7 @@ func (T *PromptsApp) handlePage(w http.ResponseWriter, r *http.Request) {
 		// No hub Nav: Prompts lives in the admin UI now (RegisterAdminSection),
 		// not the agent hub — this standalone page is reachable directly but
 		// isn't a hub member. BackURL is enough.
-		ExtraHeadHTML: promptsHead,
+		ExtraHeadHTML: promptsHeadHTML(),
 		Sections: []ui.Section{
 			{NoChrome: true, Body: promptsEditor()},
 		},
@@ -168,6 +193,12 @@ func promptsEditor() ui.ArticleEditor {
 		EmptyText:        "Select a prompt block on the left to view and edit it.",
 		PlaceholderTitle: "Block name",
 		PlaceholderBody:  "The block's effective text — edit to override the shipped default; clear (or match the default) to revert.",
+		// A prompt block IS structured markdown, so the outline is the
+		// natural view of it. No Templates: blocks are framework-defined
+		// and you edit them, never create one from a skeleton.
+		Outline:   true,
+		AssistURL: "/prompts/api/assist",
+		RulesURL:  "/prompts/api/rules",
 		Actions: []ui.ToolbarAction{
 			{Label: "Optimize", Title: "Let the model tighten this block — more concise and accurate, preserving every distinct instruction and lesson. The original is saved as a revision first, so you can revert.",
 				Method: "client", URL: "prompts_optimize"},
@@ -549,6 +580,21 @@ func (T *PromptsApp) handleOptimizeStatus(w http.ResponseWriter, r *http.Request
 // so the snapshot-on-save captures it as a revision — a bad optimization is one
 // click to revert in the revisions panel. App-specific behavior injected via
 // ExtraHeadHTML per the core/ui domain-agnostic rule.
+// promptsHeadHTML is the page head for both surfaces this editor appears
+// on: the standalone /prompts page and the admin "Prompts" tab.
+//
+// It carries the shared inline-diff helper (core/editor) alongside this
+// app's client actions. The editor proposes rewrites in chat-edit mode,
+// and without these statics it fell back to an in-chat Approve/Deny
+// list — a second, lesser diff that existed only because this app
+// hadn't opted in. TechWriter already loaded them; now both surfaces
+// review a proposal the same way.
+func promptsHeadHTML() string {
+	return "<style>" + editor.DiffCSS() + "</style>" +
+		"<script>" + editor.UtilsJS() + editor.DiffJS() + "</script>" +
+		promptsHead
+}
+
 const promptsHead = `<script>
 (function(){
   function register() {
@@ -623,3 +669,83 @@ const promptsHead = `<script>
   register();
 })();
 </script>`
+
+// handleAssist powers the draft-with-me workbench over a prompt block:
+// the text on one side, a conversation on the other. Same wire contract
+// as TechWriter's and CodeWriter's, so the one shared workbench drives
+// all three.
+//
+// Distinct from Optimize, which is a single unattended tightening pass.
+// This is for the case where you want to talk about WHY a block says
+// what it says before changing it.
+func (T *PromptsApp) handleAssist(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if T.AppCore.LLM == nil {
+		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name    string `json:"name"`
+		Section string `json:"section"`
+		Message string `json:"message"`
+		Draft   string `json:"draft"`
+		History []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		http.Error(w, "message required", http.StatusBadRequest)
+		return
+	}
+	req.Section = strings.TrimSpace(req.Section)
+
+	msgs := make([]Message, 0, len(req.History)+1)
+	for _, t := range req.History {
+		role := strings.TrimSpace(t.Role)
+		if (role != "user" && role != "assistant") || strings.TrimSpace(t.Content) == "" {
+			continue
+		}
+		msgs = append(msgs, Message{Role: role, Content: t.Content})
+	}
+	msgs = append(msgs, Message{Role: "user", Content: req.Message})
+
+	// The block's shipped text and its gate are the reference material:
+	// the question behind most edits is "how does this differ from what
+	// the framework ships, and when does it even apply?"
+	// The editor sends the block's DISPLAY title (that's what the title
+	// input holds), not its key, so match on either.
+	var reference string
+	if b, ok := lookupBlockByKeyOrTitle(strings.TrimSpace(req.Name)); ok {
+		reference = "Applies when: " + b.Gate + "\n\nShipped default:\n" + b.Text
+	}
+
+	var rules string
+	if uid := AuthCurrentUser(r); uid != "" {
+		rules = DocRulesSection(UserDB(T.DB, uid), "prompts")
+	}
+	resp, err := T.AppCore.WorkerChat(r.Context(), msgs,
+		WithSystemPrompt(BuildDocAssistPrompt(req.Name, req.Section, req.Draft, reference)+rules),
+		WithRouteKey("app.prompts.assist"),
+		WithThink(false),
+	)
+	if err != nil {
+		http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	reply, value := SplitDraftReply(ResponseText(resp))
+	if value != "" && req.Section != "" {
+		value = StripLeadingHeading(value, req.Section)
+	}
+	writeJSON(w, map[string]any{"reply": reply, "value": value})
+}

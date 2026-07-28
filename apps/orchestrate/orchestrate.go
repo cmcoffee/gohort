@@ -59,20 +59,12 @@ func init() {
 		Group:   "Agents",
 		Private: true,
 	})
-	RegisterRouteStage(RouteStage{
-		Key:   "app.orchestrate.builder",
-		Label: "Agents: Builder design (escalates to lead)",
-		// Builder is low-volume + high-leverage — its agent-design reasoning
-		// (decomposition, tool/credential design) benefits most from the lead
-		// model, and a well-built agent saves many downstream worker turns. NOT
-		// Private (unlike the other Agents stages): the admin can flip it back to
-		// worker for a fully-local build flow, and it degrades to worker
-		// automatically when no lead model is configured. Only the design /
-		// synthesis reasoning routes here; the dispatched plan_set worker phases
-		// stay on app.orchestrate.worker.
-		Default: "lead",
-		Group:   "Agents",
-	})
+	// (No dedicated Builder stage. It carried a "lead" default and duplicated
+	// the per-agent "Use Lead model" toggle, which this function's caller then
+	// ignored for Builder — two controls, one of them inert. Builder now runs
+	// on the worker and escalates through `consult`, or via that toggle on its
+	// own agent settings. A stale DB override for the old key is simply never
+	// read.)
 	RegisterRouteStage(RouteStage{
 		Key:   "app.orchestrate.orchestrator.lead",
 		Label: "Agents: Agent reasoning (lead-escalated agents)",
@@ -297,7 +289,10 @@ func (T *OrchestrateApp) Routes() {
 	// Authored tools commit onto the requesting agent's record. Wired here
 	// because only this app owns agent records.
 	AttachToolToAgent = func(db Database, owner, agentID string, t TempTool) error {
-		return bundleAgentToolByID(agentUserDB(db, owner), owner, agentID, t)
+		Debug("[orchestrate.tools] attach %q -> agent %s: begin", t.Name, agentID)
+		err := bundleAgentToolByID(agentUserDB(db, owner), owner, agentID, t)
+		Debug("[orchestrate.tools] attach %q -> agent %s: done (err=%v)", t.Name, agentID, err)
+		return err
 	}
 	// Delete half of the in-place edit pair: drops a tool from the owning
 	// agent's record so tool_def delete works on tools bundled to another of

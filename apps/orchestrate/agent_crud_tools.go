@@ -79,11 +79,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if len(rec.AllowedTools) == 0 {
 		return "", errors.New("allowed_tools is required — pick a tight allowlist (4-10 tool names) for the agent's actual job. If the user genuinely wants every tool, pass [\"*\"]")
 	}
-	if len(rec.AllowedTools) == 1 && rec.AllowedTools[0] == "*" {
-		// Sentinel "*" = "everything" — the runner already treats
-		// nil AllowedTools as the default pool, so map back.
-		rec.AllowedTools = nil
-	}
+	rec.AllowedTools = normalizeAllowedTools(rec.AllowedTools)
 	// LLM-supplied inline tools commit to the user's unified store AFTER the
 	// record is saved (scoping a store row needs the assigned agent ID) — the
 	// record no longer carries embedded tool copies.
@@ -186,6 +182,10 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies (the agent will keep working past this session).", copied)
 	}
 	verifyHint += toolWarn
+	// Surface what this agent may now DO as an inline card, so the powers it
+	// just gained are reviewed in the conversation that granted them instead of
+	// on a later trip to the Permissions pane.
+	emitPrivilegeCard(sess, saved, committedTools)
 	// Announce the focus move. Creating an agent silently re-points the
 	// authoring-focus slot (above), which is the implicit target of a later
 	// add_tool. When the new agent is a HELPER for something else — the
@@ -277,6 +277,37 @@ func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) []TempToo
 		}
 	}
 	return copied
+}
+
+// agentHasNoTools reports whether an agent's allowlist is the explicit
+// "none" sentinel — it can produce text and nothing else. Distinct from
+// an EMPTY allowlist, which means the opposite (the default pool).
+func agentHasNoTools(rec AgentRecord) bool {
+	if len(rec.AllowedTools) != 1 {
+		return false
+	}
+	return strings.TrimSpace(rec.AllowedTools[0]) == noToolsSentinel
+}
+
+// normalizeAllowedTools collapses the "*" everything-sentinel to nil,
+// which is how every downstream reader spells "the default pool"
+// (GetAgentToolsWithSession, autoCopySessionToolsForAgent, and
+// unresolvedAllowedTools all key off len(AllowedTools) == 0).
+//
+// This has to run on EVERY write path, not just create. A literal
+// ["*"] surviving into the record is the worst possible outcome: it is
+// a strict allowlist of length one naming a tool that cannot exist, so
+// the agent comes up with ZERO tools — the exact inverse of what "*"
+// asks for — and unresolvedAllowedTools skips "*" when it hunts for
+// typos, so nothing warns. update_agent used to do exactly that while
+// reporting success.
+func normalizeAllowedTools(list []string) []string {
+	for _, n := range list {
+		if strings.TrimSpace(n) == "*" {
+			return nil
+		}
+	}
+	return list
 }
 
 // unresolvedAllowedTools returns the allowed_tools names that won't resolve
@@ -426,6 +457,9 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies.", copied)
 	}
 	verifyHint += unresolvedToolsWarning(sess, &saved)
+	// An update can widen what an agent may do as easily as a create can —
+	// same card, same reason.
+	emitPrivilegeCard(sess, saved, append(append([]TempTool{}, inlineTools...), copiedTools...))
 	b, _ := json.Marshal(saved)
 	return fmt.Sprintf(
 		"AGENT_UPDATED ok. id=%s name=%q.%s DONE — reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
@@ -467,6 +501,9 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	if err != nil {
 		return "", err
 	}
+	// A clone copies the source's grants verbatim, which is exactly the case
+	// where they go unexamined — show them.
+	emitPrivilegeCard(sess, saved, nil)
 	b, _ := json.Marshal(saved)
 	return fmt.Sprintf(
 		"AGENT_CLONED ok. id=%s name=%q. DONE — reply with a short summary of what was cloned and END THE TURN. Do NOT call ask_user, clone_agent, or any other tool after this.\n\nSaved record: %s",
@@ -745,7 +782,7 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 		rec.Rules = strings.TrimSpace(fmt.Sprint(v))
 	}
 	if v, ok := args["allowed_tools"]; ok && v != nil {
-		rec.AllowedTools = stringSliceFromArgs(args, "allowed_tools")
+		rec.AllowedTools = normalizeAllowedTools(stringSliceFromArgs(args, "allowed_tools"))
 	}
 	if v, ok := args["max_plan_steps"]; ok && v != nil {
 		rec.MaxPlanSteps = coerceInt(v)

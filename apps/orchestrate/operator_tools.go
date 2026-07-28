@@ -604,6 +604,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// with the same channel reach a pre-authorized one gets — the user
 				// clicking Approve isn't making a scope decision.
 				a := SaveAuthorization(RootDB, Authorization{Owner: owner, Agent: agent, Brief: brief, FromAgent: controllerAgentID})
+				if sess != nil && sess.PendingApprovalPrompt != nil {
+					sess.PendingApprovalPrompt(a)
+				}
 				return fmt.Sprintf("Queued a delegation to %q for the user's approval — it's in the Authorizations pane (id %s) and runs once approved.", agent, a.ID), nil
 			},
 		},
@@ -634,9 +637,21 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// stored the raw string, a later rename (Name changes, id doesn't)
 				// would silently orphan this schedule. Resolving up front also
 				// fails loudly at setup instead of quietly at fire time.
+				// toolWarn flags a target that cannot reach any tool. Such an
+				// agent schedules and fires perfectly well — it just can't DO
+				// anything but talk, so a mission like "fetch X and send it"
+				// produces a plausible-sounding run that accomplished nothing.
+				// A warning, not an error: a text-only agent that composes
+				// something and reports back is a legitimate standing task.
+				toolWarn := ""
 				if sess != nil && sess.DB != nil {
 					if target, ok := findAgentByNameOrID(sess.DB, owner, agentID); ok {
 						agentID = target.ID
+						if agentHasNoTools(target) {
+							toolWarn = fmt.Sprintf(
+								" ⚠ WARNING: %q has NO tools (its allowlist is set to none), so it can only produce text — it cannot fetch, search, send, or call anything. If this mission needs a tool, pick a different agent or give this one an allowlist via update_agent, then recreate the schedule.",
+								target.Name)
+						}
 					} else {
 						return "", fmt.Errorf("no agent named %q found — create it first, or check the name (agents action=list shows the exact names)", agentID)
 					}
@@ -679,8 +694,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return "", fmt.Errorf("saved but scheduling failed: %w", err)
 				}
 				got, _ := GetStandingAgent(RootDB, owner, name)
-				return fmt.Sprintf("Created standing agent %q running %q on %s. Next run: %s.",
-					name, agentID, StandingScheduleLabel(got), got.NextRun.Local().Format("Mon Jan 2 3:04 PM")), nil
+				return fmt.Sprintf("Created standing agent %q running %q on %s. Next run: %s.%s",
+					name, agentID, StandingScheduleLabel(got), got.NextRun.Local().Format("Mon Jan 2 3:04 PM"), toolWarn), nil
 			},
 		},
 		{
@@ -857,7 +872,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
 					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread — use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
-					"surface":          {Type: "string", Enum: []string{"", "session", "cortex", "background"}, Description: "Where the fire surfaces for the agent — its trace card, rail badge, and (for a channel wake) its LLM turn all follow. \"\"/\"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge — for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
+					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent — its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge — for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
 					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes — the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
@@ -1200,6 +1215,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				a := SaveAuthorization(RootDB, Authorization{
 					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images,
 				})
+				if sess != nil && sess.PendingApprovalPrompt != nil {
+					sess.PendingApprovalPrompt(a)
+				}
 				return fmt.Sprintf("Queued a message to %s for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
 			},
 		},

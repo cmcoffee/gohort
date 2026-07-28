@@ -108,6 +108,13 @@
       liveWrap.appendChild(liveMenu);
       header.appendChild(liveWrap);
       var liveItems = [];
+      // The server resolves each entry's destination and applies the
+      // viewer's app access, so an empty href here means "no way back" —
+      // either the work has no owning page (an agent run, a queued task)
+      // or access says no. Both land on the framework's live view.
+      function liveHref(it) {
+        return it.href || cfg.live_url || '#';
+      }
       function renderLiveMenu() {
         liveMenu.innerHTML = '';
         if (!liveItems.length) {
@@ -117,9 +124,11 @@
         liveItems.forEach(function(it) {
           var row = el('a', {
             class: 'ui-live-item' + (it.queued ? ' queued' : ' running'),
-            // Each entry opens the framework-supplied live view (cfg.live_url);
-            // core/ui names no specific app. '#' when none is configured.
-            href: cfg.live_url || '#',
+            // Prefer going back to the work itself (the server-resolved
+            // href), falling back to the framework-supplied live view when
+            // the entry offers nowhere to go. core/ui names no specific app
+            // either way. '#' when neither is configured.
+            href: liveHref(it),
           });
           row.appendChild(el('span', {class: 'ui-live-app'}, [it.app || '?']));
           row.appendChild(el('span', {class: 'ui-live-state'}, [it.queued ? 'Queued' : 'Running']));

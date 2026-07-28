@@ -1001,34 +1001,13 @@
         var row = document.createElement('div');
         row.className = 'ui-servitor-save-row';
 
-        if (saveDestinations.techwriter) {
-          var twBtn = makeBtn('↗ TechWriter', function() {
-            twBtn.disabled = true; twBtn.textContent = 'Saving…';
-            fetch('api/save_article', {
-              method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({text: m.rawText}),
-            }).then(function(r) {
-              twBtn.disabled = false;
-              twBtn.textContent = r.ok ? 'Saved ✓' : 'Failed';
-              if (r.ok) twBtn.classList.add('saved');
-            });
-          });
-          row.appendChild(twBtn);
-        }
-        if (saveDestinations.codewriter) {
-          var cwBtn = makeBtn('↗ CodeWriter', function() {
-            cwBtn.disabled = true; cwBtn.textContent = 'Saving…';
-            fetch('api/save_snippet', {
-              method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({text: m.rawText}),
-            }).then(function(r) {
-              cwBtn.disabled = false;
-              cwBtn.textContent = r.ok ? 'Saved ✓' : 'Failed';
-              if (r.ok) cwBtn.classList.add('saved');
-            });
-          });
-          row.appendChild(cwBtn);
-        }
+        // The per-reply TechWriter / CodeWriter buttons were removed: the
+        // agent's own save_to_techwriter / save_to_codewriter tools cover
+        // the same handoff, and they can name and shape the record
+        // instead of dumping a raw reply into it. The api/save_article
+        // and api/save_snippet endpoints remain for any caller that
+        // wants the blunt version.
+        //
         // Push this reply into a Guide — but only guides that already list THIS
         // appliance/repo as a source (fetched on click). One match pushes
         // directly; several show a picker.

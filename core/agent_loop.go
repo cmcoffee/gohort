@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/snugforge/nfo"
+	"math/rand/v2"
 )
 
 // ToolHandlerFunc is a function that executes a tool call and returns its output.
@@ -401,14 +402,88 @@ const maxGuardrailOutputCorrections = 2
 // — it stands in for the scrubbed turn in the transcript.
 const guardrailRedactedDraft = "[a draft reply was withheld here: it violated an enforced guardrail and was never shown to the user]"
 
-// guardrailSafeFallbackReply is the neutral decline substituted for the reply
-// when the model cannot produce a guardrail-compliant one within the correction
-// budget — a determined push. It reveals no rule and is the hard floor that
-// makes pre_output a real guarantee (an input check can always be talked
-// around; the output check cannot release the protected content).
-const guardrailSafeFallbackReply = "Sorry — I can't help with that one."
+// guardrailSafeFallbacks are the neutral declines substituted for the reply
+// when the model cannot produce a guardrail-compliant one within the
+// correction budget — a determined push. This is the hard floor that makes
+// pre_output a real guarantee: an input check can always be talked around, but
+// the output check cannot release the protected content.
+//
+// A SET rather than one fixed string, for two reasons. A verbatim-identical
+// reply is a fingerprint: someone probing learns exactly which attempts tripped
+// the guardrail and can bisect toward the rule without ever seeing it. And the
+// same sentence returned every time reads like a broken machine rather than a
+// refusal.
+//
+// Every line must be interchangeable in INFORMATION, only in wording. None
+// names a rule, hints whether the limit is capability or policy, or suggests a
+// rephrase would land differently — a set that varied on any of those would
+// leak more than the single string it replaced. No em-dashes (house style, and
+// the display boundary rewrites them anyway).
+var guardrailSafeFallbacks = []string{
+	"I can't help with that one.",
+	"That's not something I can do.",
+	"I'm not able to help with that.",
+	"I can't take that one on.",
+	"That's outside what I can do here.",
+	"No, I can't do that one.",
+	"I won't be able to help with that.",
+	"That one isn't something I can take on.",
+}
+
+// guardrailSafeFallbackReply picks a decline at random.
+//
+// Uniform choice, no memory of prior picks: tracking "don't repeat the last
+// one" would make consecutive refusals distinguishable from independent ones,
+// which is a signal the caller shouldn't be handed.
+func guardrailSafeFallbackReply(custom []string) string {
+	// The agent's own set wins when it has one. Those are authored ahead of
+	// time (the owner may have had the model write them, then reviewed them),
+	// so by the time this runs they are static trusted text.
+	//
+	// Nothing is generated HERE, at block time. The model available at this
+	// point is the one that just failed the correction budget, with the
+	// withheld content still in its context, so asking it for user-facing text
+	// would make the decline a channel that content can escape through. It
+	// would also need guardrail-checking itself, which recurses, and would
+	// still need a hardcoded floor when that check failed. A floor that calls
+	// the thing it is a floor for is not a floor.
+	pool := guardrailSafeFallbacks
+	if clean := nonEmptyLines(custom); len(clean) > 0 {
+		pool = clean
+	}
+	return pool[rand.IntN(len(pool))]
+}
+
+// nonEmptyLines trims and drops blanks — a set that is all whitespace must
+// fall back to the built-ins rather than sending an empty reply.
+func nonEmptyLines(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// isGuardrailSafeFallback reports whether s is one of the built-in declines.
+// Exists so tests can assert "the floor fired" without pinning which line.
+func isGuardrailSafeFallback(s string) bool {
+	for _, f := range guardrailSafeFallbacks {
+		if s == f {
+			return true
+		}
+	}
+	return false
+}
 
 type AgentLoopConfig struct {
+	// GuardrailDeclines optionally replaces the built-in neutral declines used
+	// when a reply cannot be made guardrail-compliant. Empty uses the built-in
+	// set. Authored ahead of time, never generated at block time — see
+	// guardrailSafeFallbackReply.
+	GuardrailDeclines []string
+
 	// SystemPrompt sets the system prompt for the LLM.
 	SystemPrompt string
 
@@ -1187,8 +1262,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// rounds without progress.
 	promiseCorrectionsTotal := 0
 	const maxPromiseCorrections = 2
-	guardrailOutputCorrections := 0    // pre_output revise passes used this turn
-	lastPeriodicGuardRound := 0        // last round the periodic guard sampled
+	guardrailOutputCorrections := 0 // pre_output revise passes used this turn
+	lastPeriodicGuardRound := 0     // last round the periodic guard sampled
 
 	// emitDiag breadcrumbs a silent correction into the app's session-diag
 	// trail (nil-safe). Kept here so every correction guard below records the
@@ -1361,7 +1436,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// catches the wall the other three guards walk past.
 	errShapeCount := map[string]int{}
 	errShapeNudged := map[string]bool{}
-	const errShapeNudgeAt = 3    // say it plainly, once per shape
+	const errShapeNudgeAt = 3      // say it plainly, once per shape
 	const errShapeDeescalateAt = 6 // stop paying lead rates to keep hitting it
 	// toolFailShapes records which failure shapes each TOOL produced this
 	// turn, so a later success of that tool can retire its stale failure
@@ -1454,6 +1529,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// "calling LLM" → narrows the wedge to compaction / option
 		// assembly / injection drain. Cheap, fires once per iteration.
 		Debug("[agent_loop] round %d: starting (history=%d msgs)", round, len(history))
+		if round == 1 {
+			logPromptFloor(cfg, systemPrompt, history)
+		}
 		// BREADCRUMB: round-top reached. Mirrors the Debug above at
 		// Log level — paired with the "dispatch complete" breadcrumb
 		// after tools, the gap between the two pinpoints whether
@@ -1767,6 +1845,16 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		if deescalated != "" {
 			callOpts = append(append([]ChatOption{}, opts...), WithRouteKey(""))
 		}
+		// Whether THIS round went to the lead — the fallback below only fires
+		// for rounds the lead actually served, so a worker failure isn't
+		// pointlessly retried on the worker.
+		roundUsedLead := false
+		if deescalated == "" && !T.NoLead {
+			roundUsedLead = cfg.Tier == LEAD
+			if cfg.RouteKey != "" {
+				roundUsedLead = RouteToLead(cfg.RouteKey)
+			}
+		}
 		if streamHandler != nil {
 			resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 		} else {
@@ -1819,6 +1907,44 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 			if err == nil {
 				Debug("[agent_loop] round %d: context-exceeded recovered after force-compact", round)
+			}
+		}
+		// LEAD FAILED OR REFUSED — hand this round to the worker instead of
+		// failing the turn.
+		//
+		// Escalating to a lead is an optimization, so losing it should cost
+		// quality, not the work. Two ways it goes wrong and both used to end
+		// the turn outright:
+		//
+		//   - the call errors (provider 4xx/5xx, network, a malformed tool
+		//     schema the lead rejects but the worker accepts)
+		//   - the provider REFUSES on its own policy (safety / recitation /
+		//     blocklist), which is not the local deployment's policy at all
+		//
+		// The local worker has neither the remote provider's outage nor its
+		// content rules, so it can usually just do the work. This reuses the
+		// existing de-escalation path (the same one the lead-budget guard
+		// uses), so the rest of the turn stays on the worker rather than
+		// bouncing back and failing again next round.
+		if err != nil || providerRefused(resp) {
+			if roundUsedLead && deescalated == "" && !T.NoLead {
+				why := "the lead model call failed"
+				diag := "The lead model could not complete this round"
+				if err == nil {
+					why = "the lead model refused this round on its own content policy"
+					diag = "The lead model refused this round on its provider's content policy"
+				}
+				Log("[agent_loop] round %d: %s — retrying on the worker model", round, why)
+				deescalated = "lead-unavailable"
+				if cfg.OnDiag != nil {
+					cfg.OnDiag("tier_deescalated", diag+" — this turn continued on the local worker model instead of stopping.")
+				}
+				workerOpts := append(append([]ChatOption{}, opts...), WithRouteKey(""))
+				if streamHandler != nil {
+					resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, workerOpts...)
+				} else {
+					resp, err = T.WorkerChat(ctx, history, workerOpts...)
+				}
 			}
 		}
 		if err != nil {
@@ -2069,7 +2195,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
-						Content: frameworkNoticeTag+"Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
+						Content: frameworkNoticeTag + "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
 					})
 					promiseCorrectionsTotal++
 					continue
@@ -2106,7 +2232,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
-						Content: frameworkNoticeTag+"Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
+						Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
 					})
 					promiseCorrectionsTotal++
 					continue
@@ -2133,7 +2259,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
 				history = append(history, Message{
 					Role:    "user",
-					Content: frameworkNoticeTag+"You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
+					Content: frameworkNoticeTag + "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
 				})
 				promiseCorrectionsTotal++
 				continue
@@ -2156,7 +2282,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				settleRound() // finalize the announcement so the retry doesn't concatenate into it
 				history = append(history, Message{
 					Role:    "user",
-					Content: frameworkNoticeTag+"Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
+					Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
 				})
 				promiseCorrectionsTotal++
 				continue
@@ -2230,7 +2356,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
 				history = append(history, Message{
 					Role:    "user",
-					Content: frameworkNoticeTag+"Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
+					Content: frameworkNoticeTag + "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
 				})
 				promiseCorrectionsTotal++
 				continue
@@ -2331,8 +2457,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					Debug("[agent_loop] guardrail pre-output still blocked at budget exhaustion — substituting safe reply")
 					emitDiag("guardrail-output-substituted", "A reply kept violating an enforced guardrail after retries; a neutral decline was substituted so nothing protected was released.")
 					retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
-					replaceBlockedDraft(guardrailSafeFallbackReply)
-					resp.Content = guardrailSafeFallbackReply
+					fallback := guardrailSafeFallbackReply(cfg.GuardrailDeclines)
+					replaceBlockedDraft(fallback)
+					resp.Content = fallback
 					resp.Reasoning = ""
 					resp.ToolCalls = nil
 					return resp, history, nil
@@ -3003,7 +3130,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// real tool, so the promise-correction path never ran.
 			history = append(history, Message{
 				Role:    "user",
-				Content: frameworkNoticeTag+"You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
+				Content: frameworkNoticeTag + "You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
 			})
 		} else {
 			keepGoingStreak = 0
@@ -4434,4 +4561,70 @@ func parseFunctionTagToolCall(body string) (string, map[string]any) {
 		rest = rest[closeIdx+len(pClose):]
 	}
 	return name, args
+}
+
+// providerRefused reports whether a response is the provider declining on its
+// OWN content policy rather than the model answering.
+//
+// This is not the local deployment's policy — a remote provider refusing an
+// agent-design turn (or a game with a rude name) says nothing about what this
+// deployment permits, and the local worker will simply do the work. Detected
+// from the stop reason, which every client now populates.
+//
+// Content or tool calls means the model answered; a filter that fires after a
+// complete answer is not a refusal to act on.
+func providerRefused(resp *Response) bool {
+	if resp == nil {
+		return false
+	}
+	if strings.TrimSpace(resp.Content) != "" || len(resp.ToolCalls) > 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(resp.StopReason)) {
+	case "safety", "recitation", "blocklist", "content_filter", "prohibited_content":
+		return true
+	}
+	return false
+}
+
+// logPromptFloor breaks the first round's prompt into its parts.
+//
+// "Why does 'Hello' cost 34k tokens?" was unanswerable: the floor is assembled
+// from a system prompt, a tool catalog, and history, and nothing reported
+// their relative sizes — so tuning it meant guessing which one to cut. Tool
+// SCHEMAS are usually the bulk and the least obvious, because each one carries
+// a full description and parameter spec whether or not the turn uses it.
+//
+// Round 1 only: later rounds add tool results, and the point here is the FLOOR
+// a turn starts from. Bytes, not tokens — no tokenizer is in reach at this
+// layer, and ~4 bytes/token is close enough to tell a 20k problem from a 2k
+// one.
+func logPromptFloor(cfg AgentLoopConfig, systemPrompt string, history []Message) {
+	sysBytes := len(systemPrompt)
+	histBytes := 0
+	for _, m := range history {
+		histBytes += len(m.Content)
+	}
+	toolBytes, biggest, biggestName := 0, 0, ""
+	for _, t := range cfg.Tools {
+		n := len(t.Tool.Name) + len(t.Tool.Description)
+		for pn, p := range t.Tool.Parameters {
+			n += len(pn) + len(p.Description) + len(p.Type)
+		}
+		toolBytes += n
+		if n > biggest {
+			biggest, biggestName = n, t.Tool.Name
+		}
+	}
+	total := sysBytes + histBytes + toolBytes
+	if total == 0 {
+		return
+	}
+	pct := func(n int) int { return n * 100 / total }
+	Debug("[agent_loop] prompt floor: %d bytes total (~%dk tokens) = system %d (%d%%) + %d tool schemas %d (%d%%) + history %d (%d%%); largest tool %q at %d bytes",
+		total, total/4000,
+		sysBytes, pct(sysBytes),
+		len(cfg.Tools), toolBytes, pct(toolBytes),
+		histBytes, pct(histBytes),
+		biggestName, biggest)
 }

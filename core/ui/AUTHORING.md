@@ -141,7 +141,9 @@ An app is one struct that implements `core.Agent`. Its `RegisterRoutes` mounts H
 `ui.Page` is a Go struct describing the page. You don't write HTML or CSS. The framework's runtime JS (`/_ui/ui.js`) reads your page config and builds the DOM.
 
 ### Sections wrap Components
-A `ui.Section` has a Title, Subtitle, and a Body (one Component). Common components: `Table`, `FormPanel`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `Card`. List them in `Sections: []ui.Section{...}`.
+A `ui.Section` has a Title, Subtitle, and a Body (one Component). Common components: `Table`, `FormPanel`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `Card`, `Frame`. List them in `Sections: []ui.Section{...}`.
+
+`Card` splices raw HTML into the page; `Frame` gives a COMPLETE HTML document (a game, a canvas animation, an embedded mini-app) its own iframe so its CSS reset and `body` rules style only itself and its `100vh` measures its own box. Reach for `Frame` whenever the markup starts with a doctype or carries its own `<body>` — same origin either way, so relative fetches and storage keep working.
 
 ### SSE for streaming, REST for the rest
 Static data → JSON over plain HTTP. Live pipelines → SSE (`/api/send`, framework runtime handles the protocol). The `PipelinePanel` primitive does this for you — you write a *bridge* function that translates your app's events into framework SSE events.

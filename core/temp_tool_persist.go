@@ -771,7 +771,9 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
+	Debug("[temp_tool_persist] AdminPersistTempTool %q: acquiring tool lock", t.Name)
 	tempToolPersistMu.Lock()
+	Debug("[temp_tool_persist] AdminPersistTempTool %q: lock acquired", t.Name)
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	rest := approved[:0]
@@ -826,7 +828,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	// ApprovePendingTempTool: prevent the new persistent entry from
 	// being shadowed by any stale draft of the same name in any of
 	// the user's chat sessions.
-	if n := cleanupSessionDraftsByName(db, username, t.Name); n > 0 {
+	if n := cleanupSessionDraftsByNameLocked(db, username, t.Name); n > 0 {
 		Debug("[temp_tool_persist] persist %q: cleaned %d stale session draft(s)", t.Name, n)
 	}
 	if OnTempToolApproved != nil {
@@ -882,11 +884,12 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 	db.Set(pendingTempToolsTable, username, rest)
 	db.Set(persistentTempToolsTable, username, deduped)
 	// Clean up the originating session draft. The mutex is already
-	// held; RemoveSessionTempTool takes no lock of its own so this
-	// is safe. Quiet on miss — drafts may have been pruned before
+	// held, so call the lock-free core: the locking form would deadlock on
+	// this same non-reentrant mutex and freeze tool persistence
+	// process-wide. Best-effort — the draft may already be gone by
 	// approval (session deleted, draft manually dropped).
 	if moved.RequestedSession != "" {
-		RemoveSessionTempTool(db, moved.RequestedSession, name)
+		removeSessionTempToolLocked(db, moved.RequestedSession, name)
 	}
 	// AND scan ALL the user's chat sessions for stale drafts with the
 	// same name — the originating-session cleanup above misses cases
@@ -895,7 +898,7 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 	// also queued one). The lazy filter at handleSessionToolsList
 	// catches these on next modal open, but eager cleanup here makes
 	// the "exactly one of session/persistent" invariant immediate.
-	if n := cleanupSessionDraftsByName(db, username, name); n > 0 {
+	if n := cleanupSessionDraftsByNameLocked(db, username, name); n > 0 {
 		Debug("[temp_tool_persist] approve %q: cleaned %d stale session draft(s)", name, n)
 	}
 	if OnTempToolApproved != nil {
@@ -1030,7 +1033,7 @@ func cleanupToolGroupMemberRefs(toolName string) {
 	}
 }
 
-// cleanupSessionDraftsByName removes stale drafts of toolName from THIS USER's
+// cleanupSessionDraftsByNameLocked removes stale drafts of toolName from THIS USER's
 // chat sessions — the drafts a freshly committed tool of the same name has just
 // superseded. Returns the number cleaned.
 //
@@ -1046,7 +1049,17 @@ func cleanupToolGroupMemberRefs(toolName string) {
 //
 // With no lister registered (a deployment without the sessions app) there are
 // no sessions to clean, so this is a no-op rather than a global sweep.
-func cleanupSessionDraftsByName(db Database, username, toolName string) int {
+// NOTE: BOTH callers (AdminPersistTempTool, ApprovePendingTempTool) invoke
+// this while HOLDING tempToolPersistMu, hence the Locked suffix and the
+// lock-free removal below. Calling the exported RemoveSessionTempTool here
+// deadlocked on the non-reentrant mutex — and because the mutex is
+// process-global, the stuck goroutine froze tool persistence for everything.
+//
+// This is the same defect as the direct ApprovePendingTempTool call, one level
+// deeper: this function does not lock, so a one-level scan for "locked
+// function calls locking function" walked straight past it. The reachability
+// test alongside these is transitive for that reason.
+func cleanupSessionDraftsByNameLocked(db Database, username, toolName string) int {
 	db = tempToolStore(db)
 	if db == nil || strings.TrimSpace(username) == "" || toolName == "" {
 		return 0
@@ -1058,7 +1071,7 @@ func cleanupSessionDraftsByName(db Database, username, toolName string) int {
 			continue
 		}
 		seen[d.SessionID] = true
-		if RemoveSessionTempTool(db, d.SessionID, toolName) {
+		if removeSessionTempToolLocked(db, d.SessionID, toolName) {
 			cleaned++
 		}
 	}
@@ -1104,12 +1117,27 @@ func UpdatePersistentTempTool(db Database, username string, t TempTool) bool {
 // TouchPersistentTempTool updates LastUsedAt for the named tool in the
 // user's pool. Best-effort — silent no-op if the tool isn't found.
 // Used for telemetry in the admin UI ("last used: 3h ago").
+// TouchPersistentTempTool bumps LastUsedAt. Pure telemetry, and it runs after
+// EVERY custom tool execution — which makes it the widest possible blast
+// radius for a stall on the shared tool mutex.
+//
+// That is not hypothetical: while ApprovePendingTempTool deadlocked holding
+// this mutex, every agent turn that called any custom tool ran its tool
+// successfully and then froze HERE, on a timestamp write, so the work
+// completed but no reply was ever sent.
+//
+// So it does not wait. TryLock means a contended moment costs one LastUsedAt
+// value, which is worth nothing, instead of the turn, which is worth
+// everything. Best-effort was always the stated contract at the call sites;
+// this makes the code match it.
 func TouchPersistentTempTool(db Database, username, name string) {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return
 	}
-	tempToolPersistMu.Lock()
+	if !tempToolPersistMu.TryLock() {
+		return
+	}
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	changed := false
@@ -1189,6 +1217,25 @@ func RemoveSessionTempTool(db Database, chatSessionID, name string) bool {
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
+	return removeSessionTempToolLocked(db, chatSessionID, name)
+}
+
+// removeSessionTempToolLocked is the body of RemoveSessionTempTool with the
+// locking removed, for callers that ALREADY hold tempToolPersistMu.
+//
+// This split exists because ApprovePendingTempTool called the locking form
+// while holding the lock. sync.Mutex is not reentrant, so that goroutine
+// blocked forever — and because the mutex is process-global, it took every
+// other tool-persist operation down with it: later requests kept arriving and
+// completing their own work but could never publish, because the reply path
+// needed the same lock. A hung tool_def update froze tool persistence for the
+// whole process.
+//
+// The call site carried a comment asserting "RemoveSessionTempTool takes no
+// lock of its own so this is safe." That was true once; the lock was added
+// later and the comment was not revisited. Hence the explicit Locked suffix —
+// a name that cannot silently become wrong.
+func removeSessionTempToolLocked(db Database, chatSessionID, name string) bool {
 	existing := LoadSessionTempTools(db, chatSessionID)
 	rest := existing[:0]
 	removed := false
@@ -1220,4 +1267,56 @@ func DeleteSessionTempTools(db Database, chatSessionID string) {
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
 	db.Unset(sessionTempToolsTable, chatSessionID)
+}
+
+// FindSharedToolWithOwner locates a DEPLOYMENT-WIDE shared tool by name and
+// returns it along with the username that owns the record.
+//
+// Exists because the shared pool is otherwise write-blind: shared tools enter
+// an agent's catalog (see the adopted-global branch in the runner's tool
+// assembly) and are perfectly callable, but every tool_def lookup searched
+// only the CALLER's own pool. A tool you could invoke all day answered
+// `tool_def(action="get")` with "no tool named X" — which reads as "your tool
+// vanished" and sent at least one authoring session chasing a framework bug
+// that did not exist.
+//
+// Returns the owner so callers can tell "this is yours, edit it" apart from
+// "this belongs to someone else", which are different answers.
+func FindSharedToolWithOwner(db Database, name string) (tool PersistentTempTool, owner string, found bool) {
+	db = tempToolStore(db)
+	if db == nil || strings.TrimSpace(name) == "" {
+		return PersistentTempTool{}, "", false
+	}
+	for _, u := range db.Keys(persistentTempToolsTable) {
+		for _, p := range LoadPersistentTempTools(db, u) {
+			if p.Shared && p.Tool.Name == name {
+				return p, u, true
+			}
+		}
+	}
+	return PersistentTempTool{}, "", false
+}
+
+// SharedToolOwners returns name → owning-username for every DEPLOYMENT-WIDE
+// shared tool, in one pass over the pools.
+//
+// The per-name variant (FindSharedToolWithOwner) walks every user's pool, so
+// calling it once per row of a listing would be quadratic. Callers rendering a
+// catalog take this map instead.
+func SharedToolOwners(db Database) map[string]string {
+	db = tempToolStore(db)
+	out := map[string]string{}
+	if db == nil {
+		return out
+	}
+	for _, u := range db.Keys(persistentTempToolsTable) {
+		for _, p := range LoadPersistentTempTools(db, u) {
+			if p.Shared {
+				if _, seen := out[p.Tool.Name]; !seen {
+					out[p.Tool.Name] = u
+				}
+			}
+		}
+	}
+	return out
 }

@@ -476,14 +476,15 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	defer liveRun.Complete(RunStatusFailed)
 	msgs = subTurn.applyInputGuardrail(msgs)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
-		SendGuardKey:   sendGuardKey,
-		SystemPrompt:   sysPrompt,
-		Tools:          tools,
-		MaxRounds:      softCap,
-		StampLocation:  UserLocation(p.Username), // stamp the turn in the owning user's zone
-		ThinkBudget:    agent.ThinkBudget,
-		Confirm:        gate.confirm,
-		GuardrailCheck: subTurn.guardrailCheckHook(),
+		SendGuardKey:      sendGuardKey,
+		SystemPrompt:      sysPrompt,
+		Tools:             tools,
+		MaxRounds:         softCap,
+		StampLocation:     UserLocation(p.Username), // stamp the turn in the owning user's zone
+		ThinkBudget:       agent.ThinkBudget,
+		Confirm:           gate.confirm,
+		GuardrailCheck:    subTurn.guardrailCheckHook(),
+		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
 		OnStep: func(s StepInfo) {
 			if s.Round > lastRound {
 				lastRound = s.Round

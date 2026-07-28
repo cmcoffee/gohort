@@ -96,8 +96,8 @@
     // they're undefined but unreferenced. The methods read them
     // lazily so this works.
     var editorAPI = {
-      getBody:  function()    { return bodyArea.value; },
-      setBody:  function(s)   { bodyArea.value = s == null ? '' : String(s); },
+      getBody:  function()    { return editorValue(); },
+      setBody:  function(s)   { docSetValue(s); },
       getTitle: function()    { return titleInput.value; },
       setTitle: function(s)   { titleInput.value = s == null ? '' : String(s); },
       getID:    function()    { return currentID; },
@@ -114,6 +114,30 @@
       reloadList: function() { loadList(); },
     };
 
+    // Document-mode buttons: outline toggle, template picker, and the
+    // raw-mode whole-document draft. Each appears only when the host
+    // wired the matching config, so an app opts in per capability.
+    var outlineBtn = cfg.outline ? el('button', {
+      class: 'ui-row-btn compact', type: 'button',
+      title: 'Switch between the raw text and a section outline',
+      onclick: function(){ toggleOutline(); },
+    }, ['Outline']) : null;
+    var tplBtn = ((cfg.templates && cfg.templates.length) || cfg.templates_list_url) ? el('button', {
+      class: 'ui-row-btn compact', type: 'button',
+      title: 'Start from a template, or save this document as one',
+      onclick: function(){ openTemplatesModal(); },
+    }, ['Templates']) : null;
+    var rulesBtn = cfg.rules_url ? el('button', {
+      class: 'ui-row-btn compact', type: 'button',
+      title: 'Standing instructions the assistant must follow',
+      onclick: function(){ toggleRules(); },
+    }, ['Rules']) : null;
+    var assistBtn = cfg.assist_url ? el('button', {
+      class: 'ui-row-btn compact', type: 'button',
+      title: 'Draft the whole document with assistance',
+      onclick: function(){ openDocAssist('', editorValue(), function(t){ docSetValue(t); }); },
+    }, ['✨ Draft']) : null;
+
     var actionButtons = [];
     // Holdover dispatcher for the two slide-in panel flows that
     // still live in this file (rules, merge). Everything else is
@@ -122,7 +146,9 @@
     // out once a generic SlidePanel primitive exists.
     function builtinAction(name) {
       switch (name) {
-        case 'rules': return toggleRules;
+        // 'rules' used to live here; RulesURL now renders its own button,
+        // so a declared {Method:"builtin", URL:"rules"} action is dropped
+        // rather than producing a second one.
         case 'merge': return toggleMerge;
       }
       return null;
@@ -228,47 +254,39 @@
     // Inline revision navigation — back/forward arrows + indicator +
     // "Make current" button instead of a slide-in panel. Hidden when
     // there's only one revision (or the article hasn't been saved yet).
-    var revBackBtn = cfg.revisions_list_url ? el('button', {
-      class: 'ui-row-btn compact', title: 'Previous revision',
-      onclick: function(){ navigateRevision(-1); },
-    }, ['◀']) : null;
-    var revFwdBtn = cfg.revisions_list_url ? el('button', {
-      class: 'ui-row-btn compact', title: 'Next revision',
-      onclick: function(){ navigateRevision(1); },
-    }, ['▶']) : null;
-    var revIndicator = cfg.revisions_list_url ? el('span', {class: 'ui-tw-rev-indicator'}, []) : null;
-    var revMakeCurrentBtn = cfg.revisions_list_url ? el('button', {
-      class: 'ui-row-btn', title: 'Save the displayed revision as the latest version',
-      onclick: function(){ saveArticle(); },
-    }, ['Make current']) : null;
-    if (revMakeCurrentBtn) revMakeCurrentBtn.style.display = 'none';
+    // Revision walk — shared with the code-document panel via buildRevisionNav
+    // (45_document_core.js). Only onLoad is app-shaped: an article
+    // revision carries a body and a subject.
+    var revNav = buildRevisionNav({
+      listURL: cfg.revisions_list_url,
+      loadURL: cfg.revision_load_url,
+      onMakeCurrent: function(){ saveArticle(); },
+      onLoad: function(rev) {
+        docSetValue(rev.body || rev[bodyF] || '');
+        if (rev.subject || rev[subjectF]) titleInput.value = rev.subject || rev[subjectF];
+      },
+    });
+
     // The titlebar-level Delete button used to live here. Removed —
     // delete now happens per-article via the × button on each sidebar
-    // row (matches codewriter's pattern). Saves toolbar real estate
+    // row (matches the code-document panel's pattern). Saves toolbar real estate
     // and removes a destructive control from a high-traffic toolbar.
     var saveBtn = el('button', {class: 'ui-row-btn primary', onclick: function(){ saveArticle(); }}, ['Save']);
 
-    // Group the revision controls inside a bordered span so they read
-    // as a single visual unit — matches the codewriter toolbar's
-    // .ui-cw-rev-group treatment. Hidden when no article is open or
-    // there's only one revision.
-    var revGroup = null;
-    if (revBackBtn || revFwdBtn || revIndicator || revMakeCurrentBtn) {
-      var revKids = [];
-      if (revMakeCurrentBtn) revKids.push(revMakeCurrentBtn);
-      if (revBackBtn)        revKids.push(revBackBtn);
-      if (revIndicator)      revKids.push(revIndicator);
-      if (revFwdBtn)         revKids.push(revFwdBtn);
-      revGroup = el('span', {class: 'ui-cw-rev-group', style: 'display:none'}, revKids);
-    }
+    var revGroup = revNav.group;
+
 
     titleBar.appendChild(titleInput);
     titleBar.appendChild(savedTag);
     // Revision group sits as the leftmost button cluster on the
     // titlebar (immediately after the title input and saved tag) —
-    // matches codewriter where rev navigation is the first button
+    // matches the code-document panel, where rev navigation is the first button
     // group after the name input.
     if (revGroup) titleBar.appendChild(revGroup);
+    if (rulesBtn) titleBar.appendChild(rulesBtn);
+    if (outlineBtn) titleBar.appendChild(outlineBtn);
+    if (tplBtn) titleBar.appendChild(tplBtn);
+    if (assistBtn) titleBar.appendChild(assistBtn);
     actionButtons.forEach(function(btn){ titleBar.appendChild(btn); });
     if (extrasBtn) {
       var extrasWrap = el('span', {class: 'ui-tw-extras-wrap'}, [extrasBtn, extrasMenu]);
@@ -276,12 +294,6 @@
     }
     titleBar.appendChild(saveBtn);
     main.appendChild(titleBar);
-
-    // Rules slide-in panel — keeps the slide-in pattern for editing
-    // the rules text block; revisions are now inline arrows.
-    var rulesPanel = el('div', {class: 'ui-tw-revs'});
-    rulesPanel.style.display = 'none';
-    main.appendChild(rulesPanel);
 
     // Merge slide-in panel — picks a saved merge source (or pastes
     // content) and combines it with the current article.
@@ -302,6 +314,116 @@
     var bodyArea = el('textarea', {class: 'ui-tw-body',
       placeholder: cfg.placeholder_body || 'Article body in markdown…'});
     main.appendChild(bodyArea);
+
+    // Outline view over the body — the same sectioned markdown editor
+    // the agent prompt fields and the code-document panel use. An article IS
+    // markdown, so there's no language to gate on here; the host opts
+    // in with cfg.outline.
+    //
+    // The textarea stays the SINGLE value carrier: save, chat, merge,
+    // revisions, and the client-action editor handle all keep reading it,
+    // and the outline writes through on every edit.
+    var docOutline = null;
+    var docOutlineHost = el('div', {class: 'ui-tw-outline'});
+    docOutlineHost.style.display = 'none';
+    main.appendChild(docOutlineHost);
+    function docOutlineOn() { return docOutlineHost.style.display !== 'none'; }
+    function docSetValue(text) {
+      bodyArea.value = text == null ? '' : String(text);
+      if (docOutline && docOutlineOn()) docOutline.setValue(bodyArea.value);
+    }
+    function editorValue() {
+      if (docOutline && docOutlineOn()) return docOutline.getValue();
+      return bodyArea.value || '';
+    }
+    // docToRaw restores the textarea before anything that manipulates its
+    // visibility — the diff pane hides it and inserts itself where it sat,
+    // so an outline left up would cover a review nobody can resolve.
+    function docToRaw() {
+      if (!docOutlineOn()) return;
+      bodyArea.value = docOutline.getValue();
+      docOutlineHost.style.display = 'none';
+      bodyArea.style.display = '';
+      if (outlineBtn) {
+        outlineBtn.textContent = 'Outline';
+        outlineBtn.classList.remove('on');
+      }
+      if (assistBtn) assistBtn.style.display = '';
+    }
+    function toggleOutline() {
+      if (docOutlineOn()) { docToRaw(); return; }
+      if (!docOutline) {
+        docOutline = buildSectionsEditor({
+          allowFree: true,
+          initial: bodyArea.value || '',
+          onChange: function(text) { bodyArea.value = text; },
+          onSuggest: cfg.assist_url ? function(title, body, apply) {
+            openDocAssist(title, body, apply);
+          } : null,
+        });
+        docOutlineHost.appendChild(docOutline.node);
+      } else {
+        docOutline.setValue(bodyArea.value || '');
+      }
+      bodyArea.style.display = 'none';
+      docOutlineHost.style.display = '';
+      if (outlineBtn) {
+        outlineBtn.textContent = 'Raw';
+        outlineBtn.classList.add('on');
+      }
+      // Whole-document drafting is a raw-mode affordance; the outline
+      // offers it per section instead.
+      if (assistBtn) assistBtn.style.display = 'none';
+    }
+
+    // Template picker — shared with the code-document panel.
+    function openTemplatesModal() {
+      openTemplatePicker({
+        builtins:    cfg.templates || [],
+        listURL:     cfg.templates_list_url,
+        itemURL:     cfg.template_url,
+        currentBody: function(){ return editorValue(); },
+        currentName: function(){ return (titleInput.value || '').trim(); },
+        onApply: async function(tpl) {
+          if ((editorValue() || '').trim() !== '') {
+            if (!(await window.uiConfirm('Replace the body with the "' + (tpl.name || 'template') + '" template?'))) return;
+          }
+          docSetValue(tpl.body || '');
+          if ((titleInput.value || '').trim() === '' && tpl.name && !cfg.title_readonly) {
+            titleInput.value = tpl.name;
+          }
+        },
+      });
+    }
+
+    // openDocAssist launches the shared draft-with-me workbench for the
+    // whole body or one section of it.
+    function openDocAssist(section, initial, apply) {
+      window.uiOpenAssist({
+        title: (titleInput.value || 'Document') + (section ? ' — ' + section : ''),
+        subtitle: section
+          ? 'Drafting one section. The rest of the document is untouched.'
+          : 'Drafting the whole document.',
+        initial: initial,
+        send: function(req, done) {
+          fetchJSON(cfg.assist_url, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              name: titleInput.value || '',
+              section: section || '',
+              message: req.message,
+              draft: req.draft,
+              history: req.history,
+            }),
+          }).then(function(d) {
+            done({reply: d && d.reply, value: d && d.value});
+          }).catch(function(err) {
+            done(null, (err && err.message) || String(err));
+          });
+        },
+        onAccept: apply,
+      });
+    }
 
     // --- Assistant chat (below the editor) ---
     // Drag handle between the editor body and the assistant pane.
@@ -435,15 +557,11 @@
     var currentImageURL = '';
     var lastSavedSubject = '';
     var lastSavedBody = '';
-    var chatHistory = [];
+    // Chat history lives inside docChat (buildDocChat); this side keeps
+    // only the mode toggle and the in-flight flag the send button reads.
     var chatMode = 'edit'; // 'edit' or 'chat'
     var asstSending = false;
-    // Revision navigation state — populated by reloadRevisions() after
-    // every successful save. revisionIndex points at the entry in
-    // revisions[] currently displayed in the editor; the Make-current
-    // button is visible when we're not at the latest entry.
-    var revisions = [];
-    var revisionIndex = -1;
+    // Revision state lives inside revNav (buildRevisionNav).
 
     var openDrawer  = drawer.openDrawer;
     var closeDrawer = drawer.closeDrawer;
@@ -451,96 +569,27 @@
     // --- Sidebar list ---
     var bulkSelected = {}; // article id -> true
     var bulkState    = {mode: false};
-    function loadList() {
-      fetchJSON(cfg.list_url).then(function(items) {
-        sideList.innerHTML = '';
-        items = items || [];
-        items.sort(function(a, b){ return String(b[dateF] || '').localeCompare(String(a[dateF] || '')); });
-        var ids = {}; items.forEach(function(it){ ids[it[idF]] = true; });
-        Object.keys(bulkSelected).forEach(function(k){ if (!ids[k]) delete bulkSelected[k]; });
-        if (!items.length) {
-          if (cfg.bulk_select && bulkState.mode) {
-            renderBulkBar([], sideList, bulkState, bulkSelected,
-              function(it){ return it[idF]; }, loadList, function(){});
-          }
-          sideList.appendChild(el('div', {class: 'ui-chat-empty', style: 'padding:0.5rem;text-align:left'}, ['No articles yet.']));
-          return;
-        }
-        if (cfg.bulk_select) {
-          renderBulkBar(items, sideList, bulkState, bulkSelected,
-            function(it){ return it[idF]; },
-            loadList,
-            async function() {
-              var keys = Object.keys(bulkSelected);
-              if (!keys.length) return;
-              if (!(await window.uiConfirm('Delete ' + keys.length + ' article(s) permanently?'))) return;
-              Promise.all(keys.map(function(id) {
-                var url = cfg.delete_url.replace('{id}', encodeURIComponent(id));
-                return fetchJSON(url, {method: 'DELETE'}).catch(function(){});
-              })).then(function() {
-                if (bulkSelected[currentID]) openArticle(null);
-                bulkSelected = {};
-                bulkState.mode = false;
-                loadList();
-              });
-            });
-        }
-        items.forEach(function(it) {
-          var inMode = cfg.bulk_select && bulkState.mode;
-          var selected = !!bulkSelected[it[idF]];
-          var fullSubject = it[subjectF] || '(untitled)';
-          var rowMeta = relTime(it[dateF]);
-          var row = el('div', {
-            class:
-              'ui-chat-side-item' +
-              (it[idF] === currentID ? ' active' : '') +
-              (inMode ? ' selectable' : '') +
-              (selected ? ' selected' : ''),
-            // Hover tooltip with full title + date so the row can be
-            // shorter without losing information when the title
-            // ellipsizes at the narrower sidebar width.
-            title: fullSubject + ' — ' + rowMeta,
-          }, [
-            el('div', {class: 'ui-chat-side-text'}, [
-              el('div', {class: 'ui-chat-side-title'}, [fullSubject]),
-            ]),
-          ]);
-          // Per-row delete button (× in the right corner) — matches
-          // codewriter. Bulk-select mode hides it; checkboxes drive
-          // multi-delete instead. The titlebar Delete button is kept
-          // off the toolbar entirely since this gives one-click access
-          // per article.
-          if (cfg.delete_url && !inMode) {
-            row.appendChild(el('button', {
-              class: 'ui-chat-side-del', title: 'Delete article',
-              onclick: async function(ev) {
-                ev.stopPropagation();
-                if (!(await window.uiConfirm('Delete "' + fullSubject + '" permanently?'))) return;
-                var url = cfg.delete_url.replace('{id}', encodeURIComponent(it[idF]));
-                fetchJSON(url, {method: 'DELETE'}).then(function() {
-                  if (currentID === it[idF]) openArticle(null);
-                  loadList();
-                  showToast('Deleted');
-                }).catch(function(err){ showToast('Delete failed: ' + err.message); });
-              },
-            }, ['×']));
-          }
-          row.addEventListener('click', function(ev) {
-            // Per-row × delete is a button child — let its own click
-            // handler fire and short-circuit the row open.
-            if (ev.target.classList.contains('ui-chat-side-del')) return;
-            if (inMode) {
-              if (bulkSelected[it[idF]]) delete bulkSelected[it[idF]];
-              else bulkSelected[it[idF]] = true;
-              loadList();
-            } else {
-              openArticle(it[idF]); closeDrawer();
-            }
-          });
-          sideList.appendChild(row);
-        });
-      }).catch(function(err){ sideList.textContent = 'Failed: ' + err.message; });
-    }
+    // Record list — shared with the code-document panel via buildDocList
+    // (45_document_core.js). The bulk-select block is article-only;
+    // That panel passes no `bulk` and gets a plain list.
+    var docList = buildDocList({
+      host:       sideList,
+      listURL:    cfg.list_url,
+      idField:    idF,
+      labelField: subjectF,
+      dateField:  dateF,
+      emptyText:  cfg.empty_text || 'No articles yet.',
+      currentID:  function(){ return currentID; },
+      onOpen:     function(id){ openArticle(id); closeDrawer(); },
+      deleteURL:  cfg.delete_url,
+      onDeleted:  function(id){ if (currentID === id) openArticle(null); },
+      bulk: cfg.bulk_select ? {
+        state:    bulkState,
+        selected: bulkSelected,
+        confirmMany: function(n){ return 'Delete ' + n + ' article(s) permanently?'; },
+      } : null,
+    });
+    function loadList() { docList.reload(); }
 
     function openArticle(id) {
       currentID = id;
@@ -548,37 +597,36 @@
       asstThread.innerHTML = '';
       asstThread.appendChild(el('div', {class: 'ui-tw-asst-empty'},
         [id ? 'Ask the assistant to discuss or rewrite this article.' : 'Start typing your article — the assistant can help once you have something to work with.']));
-      chatHistory = [];
+      docChat.clear();
       hideImage();
       if (!id) {
         titleInput.value = '';
-        bodyArea.value = '';
+        docSetValue('');
         lastSavedSubject = '';
         lastSavedBody = '';
         savedTag.textContent = '';
         mobileTitle.textContent = 'New article';
-        revisions = []; revisionIndex = -1;
-        updateRevNav();
+        revNav.clear();
         loadList();
         return;
       }
       var url = cfg.load_url.replace('{id}', encodeURIComponent(id));
       fetchJSON(url).then(function(rec) {
         titleInput.value = rec[subjectF] || '';
-        bodyArea.value   = rec[bodyF]    || '';
+        docSetValue(rec[bodyF] || '');
         lastSavedSubject = titleInput.value;
         lastSavedBody    = bodyArea.value;
         savedTag.textContent = 'saved ' + relTime(rec[dateF]);
         mobileTitle.textContent = rec[subjectF] || 'Untitled';
         if (rec[imageF]) showImage(rec[imageF]);
         loadList();
-        reloadRevisions();
+        revNav.reload(currentID);
       }).catch(function(err){ showToast('Load failed: ' + err.message); });
     }
 
     function saveArticle(extra) {
       var subject = titleInput.value.trim();
-      var body    = bodyArea.value;
+      var body    = editorValue();
       if (!subject && !body) { showToast('Nothing to save'); return; }
       // Server-side accepts lowercase keys; encoding/json case-folds
       // for the inbound decode. Image URL is the new persisted field.
@@ -607,7 +655,7 @@
         savedTag.textContent = 'saved just now';
         mobileTitle.textContent = subject || 'Untitled';
         loadList();
-        reloadRevisions();
+        revNav.reload(currentID);
       }).catch(function(err) {
         saveBtn.disabled = false;
         savedTag.textContent = '';
@@ -636,142 +684,72 @@
       imageRow.innerHTML = '';
     }
 
-    // Revision navigation — back/forward arrows + "Make current".
-    function reloadRevisions() {
-      if (!cfg.revisions_list_url || !currentID) {
-        revisions = []; revisionIndex = -1; updateRevNav();
-        return;
-      }
-      var url = cfg.revisions_list_url.replace('{id}', encodeURIComponent(currentID));
-      fetchJSON(url).then(function(items) {
-        revisions = items || [];
-        revisions.sort(function(a, b){ return String(a.date || '').localeCompare(String(b.date || '')); });
-        revisionIndex = revisions.length - 1;
-        updateRevNav();
-      }).catch(function() { revisions = []; revisionIndex = -1; updateRevNav(); });
-    }
-    function updateRevNav() {
-      if (!revBackBtn) return;
-      var n = revisions.length;
-      revBackBtn.disabled = revisionIndex <= 0;
-      revFwdBtn.disabled = revisionIndex >= n - 1;
-      var curRev = (revisionIndex >= 0) ? revisions[revisionIndex] : null;
-      revIndicator.textContent = n > 0
-        ? 'rev ' + (revisionIndex + 1) + '/' + n + (curRev && curRev.label ? ' · ' + curRev.label : '')
-        : '';
-      revMakeCurrentBtn.style.display = (n > 0 && revisionIndex < n - 1) ? 'inline-flex' : 'none';
-      // The whole rev group is hidden until there are revisions to
-      // navigate. Use explicit inline-flex / none so the value beats
-      // the bordered-span CSS rules that don't carry display:none.
-      if (revGroup) revGroup.style.display = n > 0 ? 'inline-flex' : 'none';
-    }
-    function navigateRevision(dir) {
-      var idx = revisionIndex + dir;
-      if (idx < 0 || idx >= revisions.length) return;
-      if (!cfg.revision_load_url) { showToast('Revision load not configured'); return; }
-      var url = cfg.revision_load_url.replace('{revid}', encodeURIComponent(revisions[idx].id));
-      fetchJSON(url).then(function(rev) {
-        bodyArea.value = rev.body || rev[bodyF] || '';
-        if (rev.subject || rev[subjectF]) titleInput.value = rev.subject || rev[subjectF];
-        revisionIndex = idx;
-        updateRevNav();
-      }).catch(function(err){ showToast('Load failed: ' + err.message); });
-    }
-
     // --- Assistant ---
+    // Chat protocol — shared with the code-document panel via buildDocChat
+    // (45_document_core.js). Rendering stays here: article messages are
+    // plain text set via textContent, not formatted HTML.
+    var docChat = buildDocChat({
+      url: cfg.chat_url,
+      setBusy: function(on) {
+        asstSending = on;
+        asstSend.disabled = on;
+      },
+      appendMsg: function(role, text) {
+        if (role === 'error') return asstAppend('assistant', 'Error: ' + text);
+        return asstAppend(role, text);
+      },
+      thinking: function() {
+        var node = asstAppend('assistant', '');
+        node.querySelector('.ui-chat-msg-body').innerHTML =
+          '<span class="ui-chat-typing"><span></span><span></span><span></span></span>';
+        return node;
+      },
+      buildBody: function(message, mode, history) {
+        return {
+          subject: titleInput.value,
+          body:    editorValue(),
+          message: message,
+          mode:    mode,
+          history: history,
+          references: selectedRef ? [selectedRef] : [],
+        };
+      },
+      proposalOf: function(data) {
+        return (data.type === 'article' && data.content) ? data.content : null;
+      },
+      onProposal: function(text, data) {
+        // The diff pane hides the textarea and inserts itself where the
+        // textarea sat; an outline left up would cover the review.
+        docToRaw();
+        if (typeof window.editorShowDiff === 'function') {
+          window.editorShowDiff({
+            newText: text,
+            editorPane: main,
+            editorTextarea: bodyArea,
+            onApply: function(t) {
+              docSetValue(t);
+              if (data.title) titleInput.value = data.title;
+              showToast('Applied — remember to Save');
+            },
+          });
+          asstAppend('assistant', 'Review proposed changes in editor window.');
+          return;
+        }
+        // Diff helper not loaded. Every host mounts it via
+        // ExtraHeadHTML, so this is a misconfiguration rather than a
+        // supported mode: apply directly and say so.
+        docSetValue(text);
+        if (data.title) titleInput.value = data.title;
+        asstAppend('assistant', 'Applied directly (diff viewer unavailable) - remember to Save.');
+        showToast('Applied - remember to Save');
+      },
+    });
     function doAssist() {
-      if (asstSending) return;
       var msg = asstInput.value.trim();
       if (!msg) return;
       asstInput.value = '';
       autoresizeAsst();
-      asstSending = true;
-      asstSend.disabled = true;
-      // Push user msg.
-      asstAppend('user', msg);
-      var thinking = asstAppend('assistant', '');
-      thinking.querySelector('.ui-chat-msg-body').innerHTML =
-        '<span class="ui-chat-typing"><span></span><span></span><span></span></span>';
-      var historyForSend = chatHistory.slice();
-      chatHistory.push({role: 'user', content: msg});
-      fetchJSON(cfg.chat_url, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          subject: titleInput.value,
-          body:    bodyArea.value,
-          message: msg,
-          mode:    chatMode,
-          history: historyForSend,
-          references: selectedRef ? [selectedRef] : [],
-        }),
-      }).then(function(d) {
-        asstSending = false;
-        asstSend.disabled = false;
-        thinking.remove();
-        if (!d) { asstAppend('assistant', '(empty response)'); return; }
-        if (d.error) { asstAppend('assistant', 'Error: ' + d.error); return; }
-        if (d.type === 'article' && d.content) {
-          // Article rewrite — show the proposal as an inline diff in
-          // the editor pane (matches codewriter's pattern). Apply
-          // copies the new text into the body textarea + suggested
-          // title; Reject restores the textarea. The chat bubble is
-          // a brief pointer rather than a full duplicate of the
-          // content — the visual diff in the editor is the primary
-          // affordance.
-          if (typeof window.editorShowDiff === 'function') {
-            window.editorShowDiff({
-              newText: d.content,
-              editorPane: main,
-              editorTextarea: bodyArea,
-              onApply: function(text) {
-                bodyArea.value = text;
-                if (d.title) titleInput.value = d.title;
-                showToast('Applied — remember to Save');
-              },
-            });
-            asstAppend('assistant', 'Review proposed changes in editor window.');
-          } else {
-            // Diff helper not loaded — fall back to the legacy
-            // in-chat Approve/Deny pattern so the proposal is still
-            // actionable.
-            var diffLines = computeLineDiff(bodyArea.value, d.content);
-            var msgEl = asstAppend('assistant', '');
-            msgEl.querySelector('.ui-chat-msg-body').innerHTML = renderLineDiff(diffLines);
-            var bar = el('div', {class: 'ui-chat-actions'});
-            var statusLine = function(text) {
-              bar.innerHTML = '';
-              bar.appendChild(el('span', {class: 'ui-chat-act-status'}, [text]));
-            };
-            var approveBtn = el('button', {class: 'ui-row-btn success', onclick: function(){
-              bodyArea.value = d.content;
-              if (d.title) titleInput.value = d.title;
-              statusLine('✓ Applied — Save to keep');
-              showToast('Applied — remember to Save');
-            }}, ['Approve']);
-            var denyBtn = el('button', {class: 'ui-row-btn danger', onclick: function(){
-              statusLine('✗ Denied');
-            }}, ['Deny']);
-            var copyBtn = el('button', {class: 'ui-row-btn', onclick: function(){
-              navigator.clipboard && navigator.clipboard.writeText(d.content);
-              showToast('Copied');
-            }}, ['Copy']);
-            bar.appendChild(approveBtn);
-            bar.appendChild(denyBtn);
-            bar.appendChild(copyBtn);
-            msgEl.appendChild(bar);
-          }
-          chatHistory.push({role: 'assistant', content: d.content});
-        } else {
-          var text = d.content || '';
-          asstAppend('assistant', text);
-          chatHistory.push({role: 'assistant', content: text});
-        }
-      }).catch(function(err) {
-        asstSending = false;
-        asstSend.disabled = false;
-        thinking.remove();
-        asstAppend('assistant', 'Error: ' + err.message);
-      });
+      docChat.send(msg, chatMode);
     }
 
     function asstAppend(role, content) {
@@ -785,70 +763,6 @@
       asstThread.appendChild(msg);
       asstThread.scrollTop = asstThread.scrollHeight;
       return msg;
-    }
-
-    function diffStats(oldText, newText) {
-      // Cheap line-count diff so the user has SOME signal about how
-      // big the rewrite is before applying.
-      var oldLines = (oldText || '').split('\n').length;
-      var newLines = (newText || '').split('\n').length;
-      return { add: Math.max(0, newLines - oldLines), remove: Math.max(0, oldLines - newLines) };
-    }
-
-    // computeLineDiff runs an LCS-based diff over two text blocks split
-    // on newlines and returns an array of {type, text} records. Type is
-    // '=' (unchanged), '-' (in old but not new), or '+' (in new but not
-    // old). Used by the assistant proposal renderer to draw red/green
-    // line markers like a github-style diff. O(m*n) memory — fine for
-    // typical articles (a few hundred lines); a Myers-style algorithm
-    // would be linear-ish in practice but adds code without measurable
-    // wins at the article length we deal with.
-    function computeLineDiff(a, b) {
-      var oldL = (a || '').split('\n');
-      var newL = (b || '').split('\n');
-      var m = oldL.length, n = newL.length;
-      // Build LCS DP table.
-      var dp = new Array(m + 1);
-      for (var i = 0; i <= m; i++) {
-        dp[i] = new Array(n + 1);
-        dp[i][0] = 0;
-      }
-      for (var j = 0; j <= n; j++) dp[0][j] = 0;
-      for (var i2 = 1; i2 <= m; i2++) {
-        for (var j2 = 1; j2 <= n; j2++) {
-          if (oldL[i2-1] === newL[j2-1]) dp[i2][j2] = dp[i2-1][j2-1] + 1;
-          else dp[i2][j2] = Math.max(dp[i2-1][j2], dp[i2][j2-1]);
-        }
-      }
-      // Backtrack to construct the diff.
-      var out = [];
-      var i3 = m, j3 = n;
-      while (i3 > 0 || j3 > 0) {
-        if (i3 > 0 && j3 > 0 && oldL[i3-1] === newL[j3-1]) {
-          out.unshift({type: '=', text: oldL[i3-1]});
-          i3--; j3--;
-        } else if (j3 > 0 && (i3 === 0 || dp[i3][j3-1] >= dp[i3-1][j3])) {
-          out.unshift({type: '+', text: newL[j3-1]});
-          j3--;
-        } else if (i3 > 0) {
-          out.unshift({type: '-', text: oldL[i3-1]});
-          i3--;
-        }
-      }
-      return out;
-    }
-
-    function renderLineDiff(lines) {
-      var add = 0, rem = 0;
-      lines.forEach(function(l){ if (l.type === '+') add++; else if (l.type === '-') rem++; });
-      var summary = '<div class="ui-tw-diff-h">Proposed rewrite &middot; <span class="add">+' + add + '</span> / <span class="rem">&minus;' + rem + '</span></div>';
-      var rows = lines.map(function(l) {
-        var cls = l.type === '+' ? 'add' : (l.type === '-' ? 'rem' : 'same');
-        var prefix = l.type === '+' ? '+ ' : (l.type === '-' ? '- ' : '  ');
-        var text = (l.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return '<div class="ui-tw-diff-row ' + cls + '"><span class="prefix">' + prefix + '</span>' + text + '</div>';
-      }).join('');
-      return summary + '<div class="ui-tw-diff">' + rows + '</div>';
     }
 
     function autoresizeAsst() {
@@ -891,9 +805,9 @@
         mergePanel.style.display = 'none';
         return;
       }
-      // Hide siblings — only one overlay at a time.
+      // Hide siblings — only one overlay at a time. (Rules is a modal
+      // now, so it can't collide with this pane.)
       revsPanel.style.display = 'none';
-      rulesPanel.style.display = 'none';
       mergePanel.innerHTML = '';
       mergePanel.style.display = '';
 
@@ -970,7 +884,7 @@
         onclick: async function() {
           var other = pasteArea.value.trim();
           if (!other) { showToast('Need something to merge with'); return; }
-          if (!bodyArea.value.trim()) { showToast('Current article is empty — nothing to merge into'); return; }
+          if (!editorValue().trim()) { showToast('Current article is empty — nothing to merge into'); return; }
           if (!(await window.uiConfirm('Merge the source into the current article? The body will be replaced with the merged result.'))) return;
           setBtnBusy(mergeRunBtn, 'Merging…');
           statusLine.textContent = '';
@@ -978,7 +892,7 @@
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               subject:  titleInput.value,
-              body:     bodyArea.value,
+              body:     editorValue(),
               other:    other,
               mode:     'edit',
               guidance: guidance.value,
@@ -989,7 +903,7 @@
             if (d.error) { showToast('Error: ' + d.error); return; }
             var merged = d.content || d.body || '';
             if (d.type === 'article' && merged) {
-              bodyArea.value = merged;
+              docSetValue(merged);
               if (d.title) titleInput.value = d.title;
               // Auto-save so the merge produces a revision. ◀ reverts
               // if the merge result isn't what the user wanted.
@@ -1016,55 +930,10 @@
       pasteArea.focus();
     }
 
+    // Rules — shared with the code-document panel via openRulesPanel
+    // (45_document_core.js), on the standard modal shell.
     function toggleRules() {
-      if (rulesPanel.style.display !== 'none') {
-        rulesPanel.style.display = 'none';
-        return;
-      }
-      // Hide the revisions panel if it's open — only one overlay at a time.
-      revsPanel.style.display = 'none';
-      rulesPanel.innerHTML = '';
-      rulesPanel.style.display = '';
-      var header = el('div', {class: 'ui-tw-revs-h'}, [
-        el('span', {text: 'Rules'}),
-        el('button', {class: 'ui-row-btn', onclick: function(){ rulesPanel.style.display = 'none'; }}, ['Close']),
-      ]);
-      var ta = el('textarea', {class: 'ui-tw-rules-ta',
-        placeholder: 'One rule per line. Examples:\n  Strip mentions of sample system.\n  Never post API keys, passwords, or other secrets.\n  Match the existing article tone — terse, factual.'});
-      ta.value = '(loading…)';
-      ta.disabled = true;
-      var savedHint = el('div', {class: 'ui-tw-rules-saved'});
-      var saveBtn = el('button', {class: 'ui-row-btn', onclick: function() {
-        saveBtn.disabled = true;
-        savedHint.textContent = 'saving…';
-        fetchJSON(cfg.rules_url, {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({rules: ta.value}),
-        }).then(function() {
-          saveBtn.disabled = false;
-          savedHint.textContent = 'saved — applies to next assistant message';
-          setTimeout(function(){ savedHint.textContent = ''; }, 3000);
-        }).catch(function(err) {
-          saveBtn.disabled = false;
-          savedHint.textContent = '';
-          showToast('Save failed: ' + err.message);
-        });
-      }}, ['Save rules']);
-      var hint = el('div', {class: 'ui-tw-rules-hint'},
-        ['Lines you write here are appended to the assistant\'s system prompt as constraints. Each line is one rule.']);
-      rulesPanel.appendChild(header);
-      rulesPanel.appendChild(hint);
-      rulesPanel.appendChild(ta);
-      rulesPanel.appendChild(el('div', {class: 'ui-tw-rules-actions'}, [savedHint, saveBtn]));
-      fetchJSON(cfg.rules_url).then(function(d) {
-        ta.disabled = false;
-        ta.value = (d && d.rules) || '';
-        ta.focus();
-      }).catch(function(err) {
-        ta.disabled = false;
-        ta.value = '';
-        savedHint.textContent = 'Failed to load existing rules';
-      });
+      openRulesPanel({url: cfg.rules_url, noun: 'reply'});
     }
 
     // toggleRevisions retained for backward compatibility — the inline

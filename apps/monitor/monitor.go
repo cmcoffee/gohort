@@ -82,8 +82,14 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 	// Everything running now — the same instantaneous feed the live pill shows:
 	// apps and pipelines alongside active agent turns.
 	live := ui.Table{
-		Source:        "/api/live",
-		RowKey:        "id",
+		Source: "/api/live",
+		RowKey: "id",
+		// /api/live resolves each row's way back into the app that owns the
+		// work and blanks it for viewers who can't reach that app, so rows
+		// link exactly when there's somewhere to go. Agent runs and queued
+		// tasks have no owning page and stay inert — which is right, since
+		// this page IS where they'd otherwise send you.
+		RowLink:       "href",
 		AutoRefreshMS: 3000,
 		EmptyText:     "Nothing running.",
 		Columns: []ui.Col{

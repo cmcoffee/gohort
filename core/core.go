@@ -78,6 +78,8 @@ const (
 	TimeAwarenessRule        = textutil.TimeAwarenessRule
 	UntrustedDataRule        = textutil.UntrustedDataRule
 	UntrustedToolResultFence = textutil.UntrustedToolResultFence
+	DraftFence               = textutil.DraftFence
+	DraftReplyContract       = textutil.DraftReplyContract
 )
 
 var (
@@ -89,6 +91,8 @@ var (
 	SnakeFromDisplay            = textutil.SnakeFromDisplay
 	UntrustedData               = textutil.UntrustedData
 	UntrustedFence              = textutil.UntrustedFence
+	SplitDraftReply             = textutil.SplitDraftReply
+	StripLeadingHeading         = textutil.StripLeadingHeading
 )
 
 // --- factcheck ---------------------------------------------------------------

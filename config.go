@@ -1580,6 +1580,9 @@ func init_database() {
 	SetBrowserDir(data_dir + "/browser")
 	SetGeocodeDir(data_dir + "/geocode")
 	SetWorkspacesDir(data_dir + "/workspaces")
+	// Per-app static assets (images/fonts an app references), served read-only
+	// at /custom/<slug>/assets/<name>.
+	SetAppAssetsDir(data_dir + "/app_assets")
 
 	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
@@ -1720,6 +1723,12 @@ func enable_trace() {
 // to call multiple times — nfo.LogFile reopens an existing rotating
 // log without truncating.
 func setupTraceFile(logs_dir string) {
+	// The single point where the TRACE level gets routed anywhere, so it
+	// is also where core learns tracing is live. Until this runs, core
+	// skips building trace-only payloads (whole LLM request/response
+	// bodies) that nothing would read. Set before the file is opened so
+	// the error-fallback path below is covered too.
+	SetTraceEnabled(true)
 	tfile, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/%s.trace.log", logs_dir, APPNAME)), 10, 10)
 	if err != nil {
 		// Falling back to the main log preserves trace output instead

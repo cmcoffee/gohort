@@ -913,18 +913,24 @@ func isCloneOnlySeed(agentID string) bool {
 }
 
 // orchestratorRouteKey picks the lead-routing stage for the main reasoning +
-// synthesis calls. Builder gets its own stage (default lead, admin-flippable)
-// so its agent-design reasoning runs on the stronger model. Every other agent
-// stays on the worker-locked orchestrator stage UNLESS it opted into the lead
-// model (leadModel), in which case it routes through the non-private
-// orchestrator.lead stage (default lead, admin-flippable as a global ceiling).
+// synthesis calls. An agent stays on the worker-locked orchestrator stage
+// UNLESS it opted into the lead model (leadModel), in which case it routes
+// through the non-private orchestrator.lead stage (default lead,
+// admin-flippable as a global ceiling). Builder included — it is not special
+// here any more.
 // All three degrade to worker automatically when no lead model is configured
 // (agent_loop's NoLead guard). The leadModel flag is gated for privacy
 // upstream — see chatTurn.shouldUseLeadModel.
 func orchestratorRouteKey(agentID string, leadModel bool) string {
-	if isBuilderAgent(agentID) {
-		return "app.orchestrate.builder"
-	}
+	// Builder has NO dedicated stage. It used to, defaulting to lead, which
+	// meant two controls decided one thing: an admin routing row AND the
+	// per-agent "Use Lead model" toggle — and the toggle silently did nothing
+	// for Builder, because this function short-circuited before reading it.
+	//
+	// Builder now answers the same question every other agent answers. It runs
+	// on the worker and reaches the lead through `consult`; an owner who wants
+	// the whole turn escalated flips "Use Lead model" on Builder's own agent
+	// settings, in the place they already look.
 	if leadModel {
 		return "app.orchestrate.orchestrator.lead"
 	}
