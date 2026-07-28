@@ -46,7 +46,19 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			Name:        "app_def",
 			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /custom/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nUse this when the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
 			Parameters: map[string]ToolParam{
-				"action": {Type: "string", Description: "One of: create | update | test | verify | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
+				"action": {Type: "string", Description: "One of: create | update | patch_html | test | verify | list | get | delete | help. To change PART of an html app (a constant, one function, a bug on one line), use patch_html — an exact find/replace — instead of re-sending the whole document through update; re-typing a long document is how working code gets silently rewritten around the fix. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
+				"find": {
+					Type:        "string",
+					Description: "(patch_html) The EXACT text to replace, copied verbatim from the app's current html (read it with action=\"get\"), whitespace included. It must match EXACTLY ONCE — include the surrounding lines until it is unique. Zero matches or several are both refused rather than guessed at, so a patch can never land somewhere you didn't mean.",
+				},
+				"replace": {
+					Type:        "string",
+					Description: "(patch_html) What to put there instead. May be empty to delete the matched text. Only this region changes — everything else in the document is left byte-for-byte alone, which is the whole point of patching instead of re-sending it.",
+				},
+				"section": {
+					Type:        "number",
+					Description: "(patch_html) Which html section to patch, 1-based among the app's html sections. Omit when the app has only one (the usual case, e.g. a game).",
+				},
 				"sample": {
 					Type:        "array",
 					Description: "(test) Example form submissions to run the data sources/actions against, standing in for the live record store. Each item is an object keyed by the FORM's field names — exactly what a record looks like after the user submits the form (e.g. [{\"city\":\"Santa Cruz, CA\"}]). Use this to test end-to-end before the app has any real records: the scripts receive these as the `records` env var, so you see whether 'add a location → forecast' actually produces output. If a data source returns [] against a sample that clearly should match, the script isn't reading the records env var (or has the wrong field name).",
@@ -91,6 +103,8 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				return t.appDefList()
 			case "get":
 				return t.appDefGet(args)
+			case "patch_html", "patch":
+				return t.appDefPatchHTML(args)
 			case "test":
 				return t.appDefTest(args)
 			case "verify":
@@ -100,7 +114,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			case "help", "":
 				return appDefHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | test | verify | list | get | delete | help", action)
+				return "", fmt.Errorf("unknown action %q — use create | update | patch_html | test | verify | list | get | delete | help", action)
 			}
 		},
 	}
@@ -108,7 +122,8 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 
 const appDefHelpText = `app_def actions:
 - create {name, slug?, description?, record_key?, sections:[…]} — author an app, served at /custom/<slug>/. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
-- update {id(slug), …, sections:[…]} — revise an app in place.
+- update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document.
+- patch_html {id(slug), find, replace, section?} — change PART of an html section by exact find/replace. Prefer this for any edit smaller than a rewrite (a constant, one function, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. The patch is parsed and the page is loaded in a real browser BEFORE it is kept — a patch that breaks either is rolled back and the previous revision keeps serving.
 - list — your apps: [{slug, name, desc}].
 - get  {id(slug)} — one app's full section definition.
 - test {id(slug), sample?:[{...}], params?:{...}} — RUN every data_source + action script and report each one's output/errors (catches broken scripts before the user opens the app). Run this after authoring any app with scripts. Pass sample=[{field:value,...}] (example form submissions, keyed by the form's field names) to exercise the full form→record→data-source→output chain even before any real records exist — e.g. test that adding {"city":"Santa Cruz, CA"} actually yields a forecast.
