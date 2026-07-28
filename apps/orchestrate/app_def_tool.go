@@ -263,10 +263,10 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		if arr, ok := raw.([]any); ok {
 			for _, item := range arr {
 				mm, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if mm = normalizeSection(mm); strings.EqualFold(strings.TrimSpace(mapStr(mm, "kind")), "workbench") {
+				if !ok {
+					continue
+				}
+				if mm = normalizeSection(mm); strings.EqualFold(strings.TrimSpace(mapStr(mm, "kind")), "workbench") {
 					spec.BodyField = firstNonEmptyStr(mapStr(mm, "body_field"), "content")
 				}
 			}
@@ -291,6 +291,43 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		msg += "\n\nHeads up — the framework adjusted your input:\n- " + strings.Join(parseNotes, "\n- ")
 	}
 
+	// Parse the inline JavaScript an html section carries. A script that
+	// doesn't parse takes the WHOLE page down (a game is one section, so the
+	// app is simply dead), and until this ran the write reported success and
+	// the author found out one round-trip later from a browser check —
+	// usually against the previous revision, which is how a single stray
+	// token turns into six updates that never converge. Answer here, attached
+	// to the write that caused it, naming the block and line.
+	if raw, ok := args["sections"]; ok && raw != nil {
+		var scriptProblems []string
+		for i, html := range appHTMLSectionScripts(raw) {
+			probs, checked := htmlScriptSyntaxProblems(html)
+			if !checked {
+				continue // no verdict reachable — say nothing rather than accuse
+			}
+			for _, p := range probs {
+				scriptProblems = append(scriptProblems, fmt.Sprintf("html section %d, %s", i+1, p))
+			}
+		}
+		if len(scriptProblems) > 0 {
+			return fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE — the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+				verb, saved.Name, strings.Join(scriptProblems, "\n- "), saved.Slug), nil
+		}
+		// Parsing is only the cheap half. An html section IS the page, so load
+		// the revision that was just written and report what the browser says
+		// about it. Doing this ON SAVE is the point: action=verify runs against
+		// whatever is stored when IT runs, so an author who batches an update
+		// and a verify in one turn verifies the copy it just replaced, reads a
+		// report about code it already rewrote, and "fixes" a line that no
+		// longer exists. Checking the write's own output cannot go stale.
+		if len(appHTMLSectionScripts(raw)) > 0 {
+			if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
+				return fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER — this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug), nil
+			}
+		}
+	}
+
 	// Auto-verify the data sources: they fire when the page first opens (a table or
 	// display fetches them), so a script that crashes is exactly the "errors on
 	// load" footgun. Run them here — read-only by design, safe to execute — and on
@@ -307,7 +344,16 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		msg += "\n\nData source check — all passed:\n" + strings.TrimSpace(report)
 		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
 	}
-	msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\") — it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see."
+	// What to say about verification depends on what this save already did. An
+	// html-section app was just loaded in a real browser above, so telling the
+	// author to go verify it invites the exact loop this check exists to end:
+	// a verify batched alongside the NEXT update reports on the revision being
+	// replaced, and its findings read as fresh.
+	if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
+		msg += "\nThis save already parsed the inline JavaScript AND loaded /custom/" + saved.Slug + "/ in a real browser — it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
+	} else {
+		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\") — it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
+	}
 	return msg, nil
 }
 
