@@ -507,6 +507,20 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 		}
 		return T.WorkerChat(ctx, messages, opts...)
 	}
+	// A lead route carries a thinking preference too ("lead (thinking)"), and
+	// callers that don't pre-apply it would otherwise escalate the tier while
+	// silently dropping the reasoning the stage asked for. A call-site Think
+	// still wins — this only fills the gap.
+	if probe.Think == nil {
+		if think := RouteThink(probe.RouteKey); think != nil {
+			opts = append(opts, WithThink(*think))
+			if *think && probe.ThinkBudget == nil {
+				if budget := RouteThinkBudget(probe.RouteKey); budget != nil {
+					opts = append(opts, WithThinkBudget(*budget))
+				}
+			}
+		}
+	}
 	lead := T.GetLeadLLM()
 	start := time.Now()
 	resp, err := lead.Chat(ctx, messages, opts...)
@@ -640,7 +654,7 @@ func LoadGhostConfig() GhostConfig {
 type RouteStage struct {
 	Key           string // db key, e.g. "myapp.stage_name"
 	Label         string // menu label
-	Default       string // effective value when not set in DB: "lead" (default), "worker", or "worker (thinking)"
+	Default       string // effective value when not set in DB: "lead", "lead (thinking)", "worker", or "worker (thinking)"
 	DefaultBudget int    // default thinking budget tokens for this stage; 0 means fall back to global
 	Group         string // display group in the admin routing UI; derived from key prefix if empty
 	Private       bool   // when true, the stage is locked to worker tier (private-only app)
@@ -727,18 +741,46 @@ func RouteToLead(key string) bool {
 	if IsPrivateStage(key) {
 		return false
 	}
-	val := routeEffectiveVal(key)
+	return RouteValueIsLead(routeEffectiveVal(key))
+}
+
+// RouteValueIsLead reports whether a raw route VALUE escalates to the lead
+// tier. Worker values are the closed set; everything else (including the empty
+// string, which means "stage default") escalates.
+//
+// Exported so the admin write path tests the same thing the runtime does. It
+// previously kept its own copy of the rule as a literal `value == "lead"`,
+// which silently stopped covering the tier the moment a second lead value
+// existed — letting a Private stage store one. Runtime still refuses (the
+// IsPrivateStage check above), but a stored value that the runtime overrides
+// is exactly the kind of setting that reads as broken.
+func RouteValueIsLead(val string) bool {
 	return val != "worker" && val != "worker (thinking)"
+}
+
+// RouteValues are the four legal route values: the two tiers × explicit
+// thinking. Tier and thinking are independent — see RouteThink.
+func RouteValues() []string {
+	return []string{"lead", "lead (thinking)", "worker", "worker (thinking)"}
 }
 
 // RouteThink returns the thinking override for the named route stage.
 //   - "worker (thinking)" → &true
+//   - "lead (thinking)"   → &true
 //   - "worker"            → &false
-//   - "lead" / ""         → nil (not routed to worker)
+//   - "lead" / ""         → nil (provider default)
+//
+// Thinking used to be expressible on WORKER routes only, which coupled two
+// decisions to one control: escalating a stage to the lead also dropped the
+// explicit thinking flag it had as a worker, because "lead" fell through to
+// nil here. So the moment an agent moved to the stronger model, the framework
+// stopped asking it to reason harder — backwards, and invisible, since the
+// admin table showed only the tier. Tier and thinking are now independent:
+// each is spelled out in the value.
 func RouteThink(key string) *bool {
 	val := routeEffectiveVal(key)
 	switch val {
-	case "worker (thinking)":
+	case "worker (thinking)", "lead (thinking)":
 		t := true
 		return &t
 	case "worker":
@@ -1035,6 +1077,19 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 	if useLead {
 		llm = T.LeadLLM
 		tier = LEAD
+	}
+	// Same gap-fill as LeadChat: the stage's thinking preference applies to a
+	// lead route as much as a worker one, and a streaming caller that didn't
+	// pre-apply it would escalate the tier without the reasoning.
+	if useLead && probe.Think == nil {
+		if think := RouteThink(probe.RouteKey); think != nil {
+			opts = append(opts, WithThink(*think))
+			if *think && probe.ThinkBudget == nil {
+				if budget := RouteThinkBudget(probe.RouteKey); budget != nil {
+					opts = append(opts, WithThinkBudget(*budget))
+				}
+			}
+		}
 	}
 
 	start := time.Now()

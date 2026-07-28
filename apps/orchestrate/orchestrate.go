@@ -74,7 +74,15 @@ func init() {
 		// it back to worker as a global ceiling, and it degrades to worker
 		// automatically when no lead model is configured. The dispatched
 		// plan_set worker phases stay on app.orchestrate.worker regardless.
-		Default: "lead",
+		//
+		// THINKING ON, deliberately. The worker stage this escalates FROM is
+		// "worker (thinking)", and while the vocabulary had no lead-with-
+		// thinking value, flipping "Use Lead model" silently dropped the
+		// explicit thinking flag — so moving an agent to the stronger model
+		// stopped asking it to reason, which is backwards. The observed shape
+		// was a lead turn that answered in prose and ended at round 2 of 80
+		// instead of continuing to call tools.
+		Default: "lead (thinking)",
 		Group:   "Agents",
 	})
 	RegisterRouteStage(RouteStage{

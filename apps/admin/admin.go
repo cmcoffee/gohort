@@ -3905,13 +3905,18 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			allowed := map[string]bool{"lead": true, "worker": true, "worker (thinking)": true}
+			allowed := map[string]bool{}
+			for _, v := range RouteValues() {
+				allowed[v] = true
+			}
 			if !allowed[req.Value] {
 				http.Error(w, "invalid value", http.StatusBadRequest)
 				return
 			}
-			// Private stages can't route to lead, but allow worker ↔ worker (thinking).
-			if IsPrivateStage(req.Key) && req.Value == "lead" {
+			// Private stages can't route to lead, but allow worker ↔ worker
+			// (thinking). Tested by TIER, not by one literal, so a new lead
+			// value can't slip past this guard.
+			if IsPrivateStage(req.Key) && RouteValueIsLead(req.Value) {
 				http.Error(w, "private stage — cannot route to lead", http.StatusForbidden)
 				return
 			}

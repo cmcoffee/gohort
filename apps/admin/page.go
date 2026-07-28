@@ -763,7 +763,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "LLM Routing",
-				Subtitle: "Pick which tier handles each pipeline stage. \"lead\" uses the precision (remote) LLM. \"worker\" uses the local model. \"worker (thinking)\" enables extended reasoning on the local model. Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
+				Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons. \"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier. Tier and thinking are independent — a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
 				Body: ui.Table{
 					Source: "api/routing",
 					RowKey: "key",
@@ -780,13 +780,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Width:  "10rem",
 							Options: []ui.SelectOption{
 								{Value: "lead", Label: "Lead"},
+								{Value: "lead (thinking)", Label: "Lead (Thinking)"},
 								{Value: "worker", Label: "Worker"},
 								{Value: "worker (thinking)", Label: "Worker (Thinking)"},
 							},
-							// Hide the "lead" option when the stage is
-							// private — private stages can't escalate.
+							// Hide the lead options when the stage is
+							// private — private stages can't escalate. BOTH
+							// lead values, or the private row would offer an
+							// escalation the server then refuses.
 							FilterOptionsIf: "private",
-							FilterOptions:   "lead",
+							FilterOptions:   "lead,lead (thinking)",
 							// Mark the option matching the stage's
 							// out-of-the-box Default with an asterisk
 							// so operators can tell at a glance what
