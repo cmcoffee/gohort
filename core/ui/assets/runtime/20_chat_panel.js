@@ -899,6 +899,12 @@
       // place when the first chunk (or tool_call event) lands.
       showTyping(assistantBody);
       var fullReply = '';
+      // Tell the live pill a run just started rather than leaving it to notice
+      // on its next 10s poll — from here the turn is the most visible work in
+      // the deployment, and a pill that lags most of the way through the answer
+      // reads as broken. Optional hook: a surface without the pill just has no
+      // function to call.
+      if (window.uiRefreshLive) window.uiRefreshLive();
 
       sendController = new AbortController();
       // Build the send body — base fields plus active mode flags
@@ -1199,6 +1205,9 @@
         sendBtn.disabled = false;
         cancelBtn.style.display = 'none';
         sendController = null;
+        // Clear the pill on the same clock it was lit on — a "Live" badge
+        // still showing after the answer has landed is worse than a late one.
+        if (window.uiRefreshLive) window.uiRefreshLive();
         loadSessions();
         // Let a host surface (e.g. a WorkbenchPanel) know a round finished — its
         // co-author tool may have written into the open document.

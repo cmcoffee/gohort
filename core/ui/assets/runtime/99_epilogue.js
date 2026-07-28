@@ -101,7 +101,12 @@
       // The dropdown lists each session with its app + state, which
       // is where the count is visible — the pill itself stays terse
       // ("LIVE" reads at a glance, a number doesn't).
-      var liveBtn = el('button', {class: 'ui-live-pill', title: 'Active sessions across all apps', style: 'display:none'},
+      // Hidden with VISIBILITY, not display: the pill is taller than the rest
+      // of the header, so removing it from layout let the header collapse and
+      // every page below it jumped a few pixels each time work started or
+      // finished. Keeping the box reserved means appearing costs nothing but
+      // the paint. Nothing sits to its right, so the reserved width is free.
+      var liveBtn = el('button', {class: 'ui-live-pill', title: 'Active sessions across all apps', style: 'visibility:hidden'},
         [el('span', {class: 'ui-live-dot'}), el('span', {class: 'ui-live-text'}, ['Live'])]);
       var liveMenu = el('div', {class: 'ui-live-menu', style: 'display:none'});
       liveWrap.appendChild(liveBtn);
@@ -142,11 +147,11 @@
           liveItems = items;
           var n = items.length;
           if (n === 0) {
-            liveBtn.style.display = 'none';
+            liveBtn.style.visibility = 'hidden';
             liveMenu.style.display = 'none';
             return;
           }
-          liveBtn.style.display = '';
+          liveBtn.style.visibility = 'visible';
           // Class encodes the state so CSS can paint the dot color —
           // green if anything is running, amber if all are queued.
           var anyRunning = items.some(function(it){ return !it.queued; });
@@ -170,6 +175,21 @@
       });
       refreshLive();
       setInterval(refreshLive, 10000);
+      // A 10s poll is fine for background work nobody is watching, but it is
+      // the wrong clock for work the user just started: asking a question and
+      // watching the pill sit idle for most of the answer reads as the pill
+      // being broken. Any surface that knows a run began can say so — the poll
+      // stays as the backstop that catches everything else (another tab, a
+      // schedule firing, a run that ended elsewhere).
+      //
+      // Two follow-ups because the race cuts both ways: the request may not
+      // have reached the server yet when the first refresh lands, and a very
+      // short turn may already be over by the second.
+      window.uiRefreshLive = function() {
+        refreshLive();
+        setTimeout(refreshLive, 900);
+        setTimeout(refreshLive, 2500);
+      };
       } // end if(!cfg.public) — no live-sessions pill on public pages
       // Update the document title in case the rendered title differs.
       if (cfg.title) document.title = cfg.title;
