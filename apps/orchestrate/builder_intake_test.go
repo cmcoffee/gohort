@@ -81,3 +81,49 @@ func TestBuilderSeed_HasStartingPoints(t *testing.T) {
 		t.Error("Builder's starting points should reach callers as a brief hint")
 	}
 }
+
+// Builder's intake offers four build kinds plus "Fix something". The four ARE
+// the answer once clicked; the fifth is only a category, and submitting it bare
+// left Builder with no target — it swept every agent, monitor, schedule and run
+// (~50k tokens) and then asked what was meant anyway.
+func TestFixOptionAsksWhatToFix(t *testing.T) {
+	seed, ok := seedAgentByID("seed-builder")
+	if !ok {
+		t.Fatal("seed-builder should exist")
+	}
+	if len(seed.IntakeForm) == 0 {
+		t.Fatal("Builder should have an intake form")
+	}
+	f := seed.IntakeForm[0]
+
+	ask, hasDetail := f.Detail["Fix something"]
+	if !hasDetail {
+		t.Fatal(`"Fix something" must ask what to fix — bare, it starts a turn with no target`)
+	}
+	if !strings.Contains(strings.ToLower(ask), "fix") {
+		t.Errorf("the question should name what it wants: %q", ask)
+	}
+
+	// The build kinds must NOT ask — they're already specific, and a question
+	// on every option turns a one-click intake into a form.
+	for _, opt := range []string{"Agent", "App", "Tool", "Pipeline"} {
+		if _, asks := f.Detail[opt]; asks {
+			t.Errorf("%q is already the answer — it should submit immediately", opt)
+		}
+	}
+
+	// Every option carrying a question must still be a real option, or the
+	// map silently does nothing.
+	for opt := range f.Detail {
+		found := false
+		for _, o := range f.Options {
+			if o == opt {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("detail question for %q, which is not an option", opt)
+		}
+	}
+}

@@ -1099,7 +1099,18 @@ type IntakeField struct {
 	Help        string   `json:"help,omitempty"`        // optional explanatory copy under the input
 	Required    bool     `json:"required,omitempty"`    // when true, blank value blocks submit (for checklist: at least one box checked with a non-empty value)
 	Options     []string `json:"options,omitempty"`     // for type=select / checklist / button; ignored otherwise. checklist joins selected values comma-separated when packing the intake markdown.
-	AllowOther  bool     `json:"allow_other,omitempty"` // for type=checklist only. When true, renders an extra "Other:" row with a free-text input. Non-empty text becomes a list value, joined with the other picks ("**Topics:** AI, Healthcare, my custom thing"). Lets the user contribute outside the curated options without forcing the LLM to pre-imagine every answer.
+	// Detail maps a BUTTON option value → a question to ask before submitting.
+	// A button normally submits the moment it is clicked, which is right for an
+	// option that is already the whole answer ("Agent", "App"). It is wrong for
+	// one that is only a category: picking "Fix something" sent the words "Fix
+	// something" and nothing else, so the agent opened with no target and spent
+	// a 50k-token sweep of every agent, monitor, schedule and run guessing what
+	// was meant — then asked anyway. Asking first costs one sentence.
+	//
+	// Options absent from the map keep submitting immediately.
+	Detail map[string]string `json:"detail,omitempty"`
+
+	AllowOther bool `json:"allow_other,omitempty"` // for type=checklist only. When true, renders an extra "Other:" row with a free-text input. Non-empty text becomes a list value, joined with the other picks ("**Topics:** AI, Healthcare, my custom thing"). Lets the user contribute outside the curated options without forcing the LLM to pre-imagine every answer.
 }
 
 // EvalCase is one saved test case on an agent — admin-curated prompt

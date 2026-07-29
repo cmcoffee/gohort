@@ -1329,6 +1329,15 @@ FINISH THE JOB: an api/toolbox tool isn't done until tool_def(action="test") pas
 					"Pipeline",
 					"Fix something",
 				},
+				// The four build kinds ARE the answer once clicked. "Fix
+				// something" is only a category, and submitting it bare left
+				// Builder with no target: it swept every agent, monitor,
+				// schedule and run — ~50k tokens — and then asked what was
+				// meant anyway. Ask first; the sweep is what a vague answer
+				// costs, not what it buys.
+				Detail: map[string]string{
+					"Fix something": "What would you like to fix? Name the agent, tool, or app — or paste the error you saw.",
+				},
 			}},
 		},
 		{

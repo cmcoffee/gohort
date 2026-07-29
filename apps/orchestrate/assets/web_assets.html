@@ -5309,6 +5309,44 @@
               if (disabled) btn.disabled = true;
               btn.addEventListener('click', function() {
                 inp.dataset.value = val;
+                // An option that is only a CATEGORY asks before it submits.
+                // "Fix something" used to send those two words and nothing
+                // else, so the agent opened with no target and swept every
+                // agent, monitor and run guessing what was meant — then asked
+                // anyway. One question here replaces all of that.
+                var ask = (f.detail || {})[val];
+                if (ask) {
+                  inp.innerHTML = '';
+                  var q = document.createElement('div');
+                  q.className = 'ui-orch-intake-label';
+                  q.textContent = ask;
+                  var box = document.createElement('input');
+                  box.type = 'text';
+                  box.className = 'ui-orch-intake-input';
+                  box.placeholder = 'Type it here, then press Enter';
+                  var go = function() {
+                    var extra = (box.value || '').trim();
+                    // Submitting empty is allowed — it lands exactly where the
+                    // old behavior did, so the question can be skipped rather
+                    // than becoming a wall.
+                    inp.dataset.value = extra ? val + ': ' + extra : val;
+                    var sb = document.querySelector('.ui-orch-intake-actions .ui-row-btn.primary');
+                    if (sb) sb.click();
+                  };
+                  box.addEventListener('keydown', function(ev) {
+                    if (ev.key === 'Enter') { ev.preventDefault(); go(); }
+                  });
+                  var send = document.createElement('button');
+                  send.type = 'button';
+                  send.className = 'ui-row-btn primary';
+                  send.textContent = 'Continue';
+                  send.addEventListener('click', go);
+                  inp.appendChild(q);
+                  inp.appendChild(box);
+                  inp.appendChild(send);
+                  box.focus();
+                  return;
+                }
                 var submitBtn = document.querySelector('.ui-orch-intake-actions .ui-row-btn.primary');
                 if (submitBtn) submitBtn.click();
               });
