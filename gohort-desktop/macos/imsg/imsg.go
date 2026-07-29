@@ -235,12 +235,25 @@ const maxEmptyPolls = 6 // ~30s at 5s interval before giving up on an empty row
 var (
 	sentROWIDMu sync.Mutex
 	sentROWIDs  = map[int64]struct{}{} // ROWIDs of is_from_me=1 rows we sent; skip these in the processing loop
-	// sentText is a TTL-bounded set of recently-sent message texts. It's a
-	// fallback skip key for is_from_me=1 rows whose ROWID never landed in
+	// sentText is a TTL-bounded set of recently-sent messages, keyed by WHO we
+	// sent to + the text. Two jobs:
+	//
+	// Fallback skip for is_from_me=1 rows whose ROWID never landed in
 	// sentROWIDs (iMessage occasionally writes the row > 10s after our
 	// osascript send returns, and a bridge restart wipes the ROWID set
-	// entirely). Without this, our own outbound messages loop back through
-	// the hook as if the user typed them.
+	// entirely). Without this, our own outbound loops back as if typed.
+	//
+	// AND the only defense against the self-message loop. Sending to your own
+	// number writes TWO rows for one message — is_from_me=1 (the sent copy)
+	// and is_from_me=0 (the received copy, because you are also the
+	// recipient). The skip below used to sit entirely inside the is_from_me=1
+	// branch, so the received copy of our OWN reply was never tested: it went
+	// up as an ordinary inbound with a fresh ROWID, the server could not
+	// dedupe it against anything, and the agent answered itself forever.
+	//
+	// Keyed by identity rather than raw chat id because iMessage falls back to
+	// SMS/MMS — the same thread then has two chat ids, and a reply sent on one
+	// leg comes back on the other.
 	sentTextMu sync.Mutex
 	sentText   = map[string]time.Time{}
 )
@@ -250,14 +263,14 @@ const sentTextTTL = 10 * time.Minute
 // rememberSentText records s with the current time so subsequent polls can
 // match against it as a fallback to the ROWID set. Empty / very short
 // strings are skipped to avoid false matches on common short replies.
-func rememberSentText(s string) {
-	s = strings.TrimSpace(s)
-	if len(s) < 8 {
+func rememberSentText(chatID, handle, s string) {
+	k := sentKey(chatID, handle, s)
+	if k == "" {
 		return
 	}
 	sentTextMu.Lock()
 	defer sentTextMu.Unlock()
-	sentText[s] = time.Now()
+	sentText[k] = time.Now()
 	// Lazy GC: walk the map and drop expired entries when it grows large.
 	if len(sentText) > 200 {
 		cutoff := time.Now().Add(-sentTextTTL)
@@ -269,21 +282,67 @@ func rememberSentText(s string) {
 	}
 }
 
-// matchesRecentSentText returns true if s was recently sent by us (within
-// sentTextTTL). Used as a secondary skip key for is_from_me=1 rows.
-func matchesRecentSentText(s string) bool {
+// sentKey identifies one message we sent as "these words, to this person".
+// Empty for text too short to match on safely — short replies ("ok", "sure")
+// recur naturally and matching them would swallow real messages.
+func sentKey(chatID, handle, s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) < 8 {
+		return ""
+	}
+	return sentIdentity(chatID, handle) + "\x00" + s
+}
+
+// sentIdentity reduces a conversation to the person on the other end, ignoring
+// which transport carried it. iMessage chat ids are "<account>;<type>;<handle>"
+// — a 1:1 sent natively and the same thread delivered as SMS/MMS differ only in
+// that prefix, so the trailing handle is what identifies the person. A group
+// (";+;") has no single handle and keeps its own id. Punctuation that only
+// varies by formatting is dropped so "+1 (650) 555-1234" and "+16505551234"
+// are one key.
+func sentIdentity(chatID, handle string) string {
+	id := strings.TrimSpace(chatID)
+	if id != "" && !strings.Contains(id, ";+;") {
+		if i := strings.LastIndex(id, ";"); i >= 0 {
+			id = strings.TrimSpace(id[i+1:])
+		}
+	}
+	if id == "" {
+		id = strings.TrimSpace(handle)
+	}
+	id = strings.ToLower(id)
+	var b strings.Builder
+	for _, r := range id {
+		switch r {
+		case ' ', '-', '(', ')', '.', '\t':
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// matchesRecentSentText returns true if we recently sent exactly this text to
+// this person (within sentTextTTL). Used as a secondary skip key for
+// is_from_me=1 rows AND as the self-message loop guard for is_from_me=0 rows.
+//
+// The one false positive it admits: someone quoting our own words back at us
+// verbatim, in the same thread, inside the TTL. That drops a single inbound —
+// against a loop that otherwise runs until someone notices, it is the right
+// trade.
+func matchesRecentSentText(chatID, handle, s string) bool {
+	k := sentKey(chatID, handle, s)
+	if k == "" {
 		return false
 	}
 	sentTextMu.Lock()
 	defer sentTextMu.Unlock()
-	t, ok := sentText[s]
+	t, ok := sentText[k]
 	if !ok {
 		return false
 	}
 	if time.Since(t) > sentTextTTL {
-		delete(sentText, s)
+		delete(sentText, k)
 		return false
 	}
 	return true
@@ -459,7 +518,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 				newMax = rowID
 				continue
 			}
-			if matchesRecentSentText(text) {
+			if matchesRecentSentText(chatID, handle, text) {
 				nfo.Log("rowid=%d: skipping our own outgoing reply (matched by text)", rowID)
 				// Record the ROWID so subsequent passes use the fast path
 				// even if the same row reappears.
@@ -471,6 +530,20 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 			}
 			// User typed this themselves — clear handle so the server treats it as from_me.
 			handle = ""
+		} else if matchesRecentSentText(chatID, handle, text) {
+			// The RECEIVED copy of a message we just sent. Messaging your own
+			// number writes both legs of one message — is_from_me=1 (sent) and
+			// is_from_me=0 (received, because you are also the recipient) — and
+			// only the sent leg was ever tested here. The received leg went up
+			// as an ordinary inbound carrying a fresh ROWID, so nothing
+			// downstream could recognize it, and the agent answered its own
+			// reply for as long as the thread stayed open.
+			nfo.Log("rowid=%d: skipping the received copy of our own message (self-thread echo)", rowID)
+			sentROWIDMu.Lock()
+			sentROWIDs[rowID] = struct{}{}
+			sentROWIDMu.Unlock()
+			newMax = rowID
+			continue
 		}
 
 		// chatID comes from chat_message_join which may lag behind the message row.
@@ -1424,7 +1497,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	// Remember the sent text so a fallback skip path can identify our own
 	// outbound even if recordSentROWIDs misses the row (slow chat.db
 	// commit, bridge restart, etc.).
-	rememberSentText(item.Text)
+	rememberSentText(item.ChatID, item.Handle, item.Text)
 
 	// Find the is_from_me=1 row(s) that appeared after we sent and record their
 	// ROWIDs so the processing loop won't treat them as inbound messages.
