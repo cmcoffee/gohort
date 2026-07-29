@@ -913,7 +913,13 @@ func ServeDashboard(addr string) error {
 	// to fall back to the Monitor.
 	mux.HandleFunc("/api/live", func(w http.ResponseWriter, r *http.Request) {
 		entries := AllLiveSessions()
+		viewer := AuthCurrentUser(r)
 		for i := range entries {
+			// Label masking runs FIRST and unconditionally — it is about who
+			// the work belongs to, not about whether this viewer can navigate
+			// to it. The access checks below only decide whether the row gets
+			// a link; an entry with no way back still renders its label.
+			entries[i].Label = entries[i].MaskedLabel(viewer)
 			prefix := liveEntryAppPath(entries[i])
 			if prefix == "" {
 				continue // offers no way back; already Monitor-only
@@ -1496,6 +1502,7 @@ func HistoryHandlers[R Dated, S any](db func() Database, table string, summarize
 type LiveSession[T any] struct {
 	ID      string
 	Label   string // Human-readable label (topic, question, etc.)
+	Owner   string // User this session belongs to; surfaces as LiveEntry.Owner so /api/live can mask the label for everyone else. Set via SetOwner — empty masks for all.
 	Cancel  context.CancelFunc
 	Events  []T
 	Done    bool
@@ -1531,6 +1538,21 @@ func (m *LiveSessionMap[T]) Register(id, label string, cancel context.CancelFunc
 	defer m.mu.Unlock()
 	s := &LiveSession[T]{ID: id, Label: label, Cancel: cancel}
 	m.sessions[id] = s
+	return s
+}
+
+// SetOwner records which user this session belongs to and returns the session,
+// so a caller can tag it inline: Register(id, q, cancel).SetOwner(user).
+//
+// Labels here are user content — the research question, the debate topic, the
+// command being mapped. Without an owner the global live ribbon masks the
+// label for everyone, so tagging a session is what lets its OWN user keep
+// seeing what it is. Nil-safe: Register returns nil at the concurrency cap.
+func (s *LiveSession[T]) SetOwner(user string) *LiveSession[T] {
+	if s == nil {
+		return nil
+	}
+	s.Owner = user
 	return s
 }
 
@@ -1688,6 +1710,55 @@ type LiveEntry struct {
 	// without each re-deriving it. Empty means there is nowhere to send
 	// this viewer — either the work has no owning page or access says no.
 	Href string `json:"href,omitempty"`
+	// Owner is the user whose work this is. Never serialized — it exists so
+	// /api/live can decide whether THIS viewer may see the entry's Label,
+	// which for most providers is user content (the chat message, the
+	// research question, the debate topic). The live ribbon is global and
+	// untenanted by design, so without this every user reads every other
+	// user's prompts off the pill.
+	//
+	// Empty means "unknown owner", which masks for everyone — fail closed.
+	// A provider that hasn't been taught to fill this shows a generic label
+	// rather than leaking; that's the safe direction to be wrong in.
+	Owner string `json:"-"`
+}
+
+// MaskedLabel returns the entry's label as viewer should see it: unchanged
+// for the owner, generic for anyone else (admins included — an operator who
+// needs run detail has the runs registry and pprof, and "logged in as admin"
+// shouldn't mean "reads everyone's prompts").
+//
+// App and Status are deliberately NOT masked. App is the owning app or agent
+// name, already shown as its own column, and Status is kind/round/tool —
+// operationally useful and not something the user typed.
+//
+// Any tree-indent prefix survives masking, or the nested view collapses.
+func (e LiveEntry) MaskedLabel(viewer string) string {
+	if e.Owner != "" && e.Owner == viewer {
+		return e.Label
+	}
+	indent, _ := splitLiveIndent(e.Label)
+	who := e.Owner
+	if who == "" {
+		who = "another user"
+	}
+	if e.App != "" {
+		return indent + e.App + " · " + who
+	}
+	return indent + "Active session · " + who
+}
+
+// splitLiveIndent peels a live label's leading tree indent (spaces, and the
+// "↳ " marker a nested run carries) from its content.
+func splitLiveIndent(label string) (indent, rest string) {
+	i := 0
+	for i < len(label) && label[i] == ' ' {
+		i++
+	}
+	if strings.HasPrefix(label[i:], "↳ ") {
+		i += len("↳ ")
+	}
+	return label[:i], label[i:]
 }
 
 // ResolveHref fills Href from the entry's URL, or its Path plus the
@@ -1795,7 +1866,7 @@ func (m *LiveSessionMap[T]) ActiveSessions() []LiveEntry {
 	var entries []LiveEntry
 	for _, s := range m.sessions {
 		if !s.Done && !queuedIDs[s.ID] {
-			entries = append(entries, LiveEntry{ID: s.ID, Label: s.Label, Status: s.Status, Spawned: s.Spawned})
+			entries = append(entries, LiveEntry{ID: s.ID, Label: s.Label, Status: s.Status, Spawned: s.Spawned, Owner: s.Owner})
 		}
 	}
 	return entries

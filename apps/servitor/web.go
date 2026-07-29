@@ -807,7 +807,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	// LiveSessionMap.ScheduleCleanupAfter.
 	sid := ensureSession(udb, appliance.ID, req.SessionID, req.Message)
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, label, cancel)
+	probeSessions.Register(sid, label, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, ch)
@@ -987,7 +987,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Refreshing "+appliance.Name, cancel)
+	probeSessions.Register(sid, "Refreshing "+appliance.Name, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, ch)
@@ -1059,7 +1059,7 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Mapping "+req.Command+" on "+appliance.Name, cancel)
+	probeSessions.Register(sid, "Mapping "+req.Command+" on "+appliance.Name, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, ch)
@@ -1211,7 +1211,7 @@ func (T *Servitor) handleRepoRefresh(w http.ResponseWriter, r *http.Request) {
 	// 202. The AgentLoopPanel subscribes to the same event stream.
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Refreshing "+rec.Name, cancel)
+	probeSessions.Register(sid, "Refreshing "+rec.Name, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, rec.ID)
 	go func() {
 		defer cancel()

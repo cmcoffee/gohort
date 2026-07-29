@@ -143,6 +143,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				out = append(out, LiveEntry{
 					ID: s.ID, Label: runIndentPrefix(s.Depth) + label, App: name, Status: status,
 					Order: 100 + i, // after in-view app tasks (default 0), preserving tree order
+					// The label is truncateObs(the user's message) —
+					// /api/live masks it for every viewer but this owner.
+					Owner: s.UserID,
 				})
 			}
 			return out
