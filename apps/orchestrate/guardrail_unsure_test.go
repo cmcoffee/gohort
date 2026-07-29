@@ -27,8 +27,8 @@ func TestUnparseableWardenReplyIsUnsureNotComply(t *testing.T) {
 		if got == guardComply {
 			t.Errorf("reply %q read as COMPLY — an unreadable warden must never mean 'allowed'", reply)
 		}
-		if got != guardUnsure {
-			t.Errorf("reply %q gave %q, want %q", reply, got, guardUnsure)
+		if got != guardNoVerdict {
+			t.Errorf("reply %q gave %q, want %q", reply, got, guardNoVerdict)
 		}
 	}
 }
@@ -53,11 +53,11 @@ func TestWellFormedWardenVerdictsParse(t *testing.T) {
 // worstVerdict must rank violate > unsure > comply — the ordering the caller
 // depends on to tell "blocked" from "could not tell" from "fine".
 func TestWorstVerdictOrdering(t *testing.T) {
-	mixed := []guardrailVerdict{{Status: guardComply}, {Status: guardUnsure}, {Status: guardViolate}}
+	mixed := []guardrailVerdict{{Status: guardComply}, {Status: guardNoVerdict}, {Status: guardViolate}}
 	if worstVerdict(mixed) != guardViolate {
 		t.Error("violate must win over unsure and comply")
 	}
-	if worstVerdict([]guardrailVerdict{{Status: guardComply}, {Status: guardUnsure}}) != guardUnsure {
+	if worstVerdict([]guardrailVerdict{{Status: guardComply}, {Status: guardNoVerdict}}) != guardNoVerdict {
 		t.Error("unsure must win over comply")
 	}
 	if worstVerdict([]guardrailVerdict{{Status: guardComply}}) != guardComply {
@@ -141,4 +141,55 @@ func readSourceFile(t *testing.T, name string) string {
 		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(b)
+}
+
+// The warden's vocabulary is now binary: violate or comply, nothing else. That
+// is what the prompt offers, because a judge handed a middle option reaches for
+// it under uncertainty — and every hedge here costs a second warden call and can
+// let a consequential action through unchecked.
+//
+// "No verdict" survives as a state the warden is never told about, because an
+// unreadable reply must never be mistaken for permission.
+func TestWardenVocabularyIsBinary(t *testing.T) {
+	if strings.Contains(wardenSystemPrompt, "unsure") {
+		t.Error("the warden must not be offered a third option")
+	}
+	if !strings.Contains(wardenSystemPrompt, `"status":"comply|violate"`) {
+		t.Error("the output schema should name exactly the two allowed statuses")
+	}
+	if !strings.Contains(wardenSystemPrompt, "no third option") {
+		t.Error("the prompt should say plainly that there is no third answer")
+	}
+}
+
+// A warden still answering "unsure" — a stale prompt, a cached system message,
+// a model repeating a pattern — must land on no-verdict, which retries and then
+// blocks or leaves a breadcrumb. Never on comply.
+func TestLegacyUnsureStatusIsNotCompliance(t *testing.T) {
+	for _, reply := range []string{
+		`{"verdicts":[{"rule":"no secrets","status":"unsure","reason":"can't tell"}]}`,
+		`{"verdicts":[{"rule":"no secrets","status":"UNSURE"}]}`,
+		`{"verdicts":[{"rule":"no secrets","status":"maybe"}]}`,
+	} {
+		got := worstVerdict(parseWardenVerdicts(reply))
+		if got == guardComply {
+			t.Errorf("reply %q read as COMPLY — an answer we don't recognize is not permission", reply)
+		}
+		if got != guardNoVerdict {
+			t.Errorf("reply %q gave %q, want %q", reply, got, guardNoVerdict)
+		}
+	}
+}
+
+// The two real verdicts still work, and violate still outranks comply when a
+// multi-rule reply mixes them.
+func TestBinaryVerdictsAggregate(t *testing.T) {
+	mixed := `{"verdicts":[{"rule":"a","status":"comply"},{"rule":"b","status":"violate","reason":"leaks"}]}`
+	if got := worstVerdict(parseWardenVerdicts(mixed)); got != guardViolate {
+		t.Errorf("a violation among complies must win, got %q", got)
+	}
+	allClear := `{"verdicts":[{"rule":"a","status":"comply"},{"rule":"b","status":"comply"}]}`
+	if got := worstVerdict(parseWardenVerdicts(allClear)); got != guardComply {
+		t.Errorf("all-comply should be comply, got %q", got)
+	}
 }

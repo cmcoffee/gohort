@@ -62,7 +62,7 @@ func TestParseWardenVerdicts(t *testing.T) {
 	}
 	// Unparseable → a single unsure verdict, never a silent comply.
 	bad := parseWardenVerdicts("I think it's fine, no JSON here")
-	if len(bad) != 1 || bad[0].Status != guardUnsure {
+	if len(bad) != 1 || bad[0].Status != guardNoVerdict {
 		t.Fatalf("unparseable reply must yield unsure; got %+v", bad)
 	}
 	if worstVerdict(nil) != guardComply {
@@ -70,7 +70,7 @@ func TestParseWardenVerdicts(t *testing.T) {
 	}
 	// Unknown status normalizes to unsure.
 	unk := parseWardenVerdicts(`{"verdicts":[{"rule":"r","status":"maybe"}]}`)
-	if unk[0].Status != guardUnsure {
+	if unk[0].Status != guardNoVerdict {
 		t.Fatalf("unknown status should normalize to unsure; got %q", unk[0].Status)
 	}
 }
