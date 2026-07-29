@@ -195,45 +195,9 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		wails_runtime.WindowExecJS(app.ctx, "window.__desktop_logs_open && window.__desktop_logs_open("+string(data)+")")
 	})
 
-	// Copy — an explicit item rather than relying on EditMenu's Copy ROLE.
-	// The role is installed (EditMenu below) and the menu IS wired into
-	// wails.Run, yet Cmd+C copies nothing in this build: the role dispatches
-	// through the responder chain to the webview and does not come back with
-	// the selection. This path avoids every link that could be at fault —
-	// no role dispatch, and no navigator.clipboard (which wants a secure
-	// context AND a recent user gesture, and an ExecJS callback is neither).
-	//
-	// Reads the selection in JS, including inside the Forge terminal: xterm.js
-	// keeps its own selection that is NOT a DOM selection, so window.getSelection
-	// misses it entirely and the terminal was the case that prompted this.
-	// Hands the text to Go, which writes the pasteboard directly.
-	//
-	// Deliberately NOT bound to Cmd+C: that accelerator belongs to EditMenu's
-	// role, and two menu items sharing one shortcut is undefined. Cmd+Shift+C
-	// is the reliable one; if the role turns out to be dead everywhere, the
-	// role menu can go and this can take the plain shortcut.
-	custom.AddText("Copy Selection", keys.Combo("C", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *wails_menu.CallbackData) {
-		if app.ctx == nil {
-			return
-		}
-		wails_runtime.WindowExecJS(app.ctx, `
-			(function () {
-				var t = '';
-				// The terminal owns its selection; ask it first.
-				try {
-					if (window.__forgeTerm && window.__forgeTerm.hasSelection()) {
-						t = window.__forgeTerm.getSelection();
-					}
-				} catch (e) {}
-				if (!t) {
-					try { t = String(window.getSelection()); } catch (e) {}
-				}
-				if (t && window.go && window.go.main && window.go.main.App) {
-					window.go.main.App.CopyToClipboard(t);
-				}
-			})();
-		`)
-	})
+	// Copy Selection — the same action the Edit menu's Copy now runs, kept as a
+	// second, discoverable shortcut. Both go through copyAction.
+	custom.AddText("Copy Selection", keys.Combo("C", keys.CmdOrCtrlKey, keys.ShiftKey), copyAction(app))
 
 	custom.AddText("Reload", keys.CmdOrCtrl("R"), func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
@@ -250,4 +214,58 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		wails_menu.SubMenu("Account", custom),
 		wails_menu.WindowMenu(), // Minimize, Zoom, Bring All to Front
 	)
+}
+
+// copyAction copies whatever is selected, asking each source that can hold a
+// selection in this app — in priority order, because they are mutually
+// exclusive rather than redundant.
+//
+// The previous version asked only the DOM selection and xterm's own selection,
+// and in Forge both are ALWAYS empty: tmux runs with mouse mode on so it owns
+// every drag, and the highlight the user sees belongs to tmux copy-mode, not to
+// the browser or to xterm. That is why Cmd+Shift+C copied nothing there.
+//
+// tmux has already stashed the text in a paste buffer, and Forge exposes it at
+// api/clipboard, so that is the source to ask when the other two come back
+// empty. Resolving the URL against the current page keeps this working on any
+// mount prefix.
+//
+// Everything happens in JS and hands the final text to Go, which writes the
+// pasteboard directly — navigator.clipboard is no use from an ExecJS callback,
+// which has neither a user gesture nor a guaranteed secure context.
+func copyAction(app *App) func(*wails_menu.CallbackData) {
+	return func(_ *wails_menu.CallbackData) {
+		if app.ctx == nil {
+			return
+		}
+		wails_runtime.WindowExecJS(app.ctx, `
+			(function () {
+				function put(t) {
+					if (t && window.go && window.go.main && window.go.main.App) {
+						window.go.main.App.CopyToClipboard(t);
+					}
+				}
+				// 1. A real DOM selection (ordinary page text, form fields).
+				var t = '';
+				try { t = String(window.getSelection() || ''); } catch (e) {}
+				if (t) { put(t); return; }
+				// 2. xterm's own selection, which is not a DOM selection. Only
+				//    non-empty when tmux is NOT owning the mouse.
+				try {
+					if (window.__forgeTerm && window.__forgeTerm.hasSelection()) {
+						t = window.__forgeTerm.getSelection();
+					}
+				} catch (e) {}
+				if (t) { put(t); return; }
+				// 3. Whatever tmux copied. Present only on the Forge page; a
+				//    404 elsewhere just means there was nothing to copy.
+				try {
+					fetch(new URL('api/clipboard', window.location.href).toString())
+						.then(function (r) { return r.ok ? r.text() : ''; })
+						.then(put)
+						.catch(function () {});
+				} catch (e) {}
+			})();
+		`)
+	}
 }
