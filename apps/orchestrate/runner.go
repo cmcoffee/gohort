@@ -2624,6 +2624,13 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// here, with the same first-wins rule, and the loop's warning goes back
 	// to meaning what it says.
 	tools, toolNames = dedupeToolsByName(tools, toolNames)
+	// Tell the session what actually resolved, so a tool's OUTPUT can name
+	// only tools the caller really has. fetch_url's binary-response message
+	// used to hardcode "use read_file/run_local", both servitor-only: a
+	// research pipeline stage that downloaded a PDF was handed a recovery
+	// path that did not exist for it, and re-fetched the same 4MB file
+	// instead. Single exit, so every caller gets this.
+	sess.SetAvailableTools(toolNames)
 	return tools, toolNames, nil
 }
 

@@ -360,7 +360,7 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		if err != nil {
 			return "", fmt.Errorf("save_to: %w", err)
 		}
-		return fetchURLToFile(target, savePath, saveTo)
+		return fetchURLToFile(sess, target, savePath, saveTo)
 	}
 
 	// Text-extraction path. Peek Content-Type first; binary responses
@@ -377,8 +377,8 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 			}
 			Debug("[fetch_url] auto-cached %s → %s (%d bytes, %s)", target, cachePath, written, mime)
 			return fmt.Sprintf(
-				"Response is binary (%s, %d bytes). Auto-cached to %s. Use attach_file(%q) to deliver to the user, or read_file/run_local for binary inspection. To choose a friendlier filename, retry with save_to=<name>.",
-				mime, written, savedAt, savedAt), nil
+				"Response is binary (%s, %d bytes). Auto-cached to %s.%s To choose a friendlier filename, retry with save_to=<name>.",
+				mime, written, savedAt, binaryRecoveryHint(sess, savedAt)), nil
 		}
 		// No session — can't cache, fall back to hard error.
 		return "", fmt.Errorf("response Content-Type is %q (binary). fetch_url can't return binary content as text. Retry with save_to=<workspace-relative path>", mime)
@@ -402,7 +402,7 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		if full, err := FetchArticle(target, 0); err == nil && len(full) > len(text) {
 			if cachePath, savedAt, _, cerr := writeCacheString(target, sess.WorkspaceDir, full, mime); cerr == nil {
 				Debug("[fetch_url] truncated text auto-cached: %s → %s (full %d chars)", target, cachePath, len(full))
-				suffix = fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s. Use read_file with offset to access the rest.]", len(full), savedAt)
+				suffix = truncationHint(sess, len(full), savedAt)
 			}
 		}
 	}
@@ -689,7 +689,49 @@ func fetchURLDirect(sess *ToolSession, target, method, body string, customHeader
 
 // fetchURLToFile streams target to absPath, capped at fetchURLMaxSaveBytes.
 // Returns the tool-result message describing what was saved.
-func fetchURLToFile(target, absPath, displayPath string) (string, error) {
+// binaryRecoveryHint names what THIS caller can actually do with a file that
+// landed in its workspace, and says nothing when it can do nothing.
+//
+// These messages used to read "Use attach_file(...) to deliver to the user, or
+// read_file/run_local for binary inspection" — unconditionally. read_file and
+// run_local are servitor-scoped, so for a research pipeline stage (web_search +
+// fetch_url + browse_page) every one of those was a door that wasn't there.
+// Observed cost: a stage re-fetched the same 4.2MB PDF five times, never read a
+// byte of it, and the sub-question it was chasing stayed unanswered.
+//
+// Silence beats a wrong suggestion. A caller with no way to open the file
+// should conclude exactly that and move on — an honest dead end is a finding.
+// Being pointed at an imaginary tool turns it into a retry loop.
+// truncationHint reports where the untruncated text went, naming a reader the
+// caller actually has. Same rule as binaryRecoveryHint: a caller that cannot
+// reach the rest is told so, rather than pointed at read_file on faith.
+func truncationHint(sess *ToolSession, fullLen int, savedAt string) string {
+	reader := sess.FirstAvailableTool("read_file", "shell", "python", "run_local")
+	if reader == "" {
+		return fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s, but you have no tool that can read it. Work from the text above.]", fullLen, savedAt)
+	}
+	return fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s. Use %s to access the rest.]", fullLen, savedAt, reader)
+}
+
+func binaryRecoveryHint(sess *ToolSession, savedAt string) string {
+	var parts []string
+	if reader := sess.FirstAvailableTool("read_file", "shell", "python", "run_local"); reader != "" {
+		parts = append(parts, fmt.Sprintf("Read or convert it with %s.", reader))
+	}
+	if sess.HasTool("attach_file") {
+		parts = append(parts, fmt.Sprintf("attach_file(%q) delivers it to the user.", savedAt))
+	} else if sess.HasTool("workspace") {
+		parts = append(parts, fmt.Sprintf("workspace(action=\"attach\", path=%q) delivers it to the user.", savedAt))
+	}
+	if len(parts) == 0 {
+		// Say so plainly rather than leaving a bare "saved to X" that reads
+		// as though something more is possible.
+		return " You have no tool that can open it — treat the content as unavailable."
+	}
+	return " " + strings.Join(parts, " ")
+}
+
+func fetchURLToFile(sess *ToolSession, target, absPath, displayPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
@@ -726,8 +768,9 @@ func fetchURLToFile(target, absPath, displayPath string) (string, error) {
 	}
 	mime := resp.Header.Get("Content-Type")
 	Debug("[fetch_url] %s → %d bytes → %s (%s)", target, written, displayPath, mime)
-	return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
-		resp.StatusCode, http.StatusText(resp.StatusCode), written, displayPath, mime, displayPath), nil
+	return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s).%s",
+		resp.StatusCode, http.StatusText(resp.StatusCode), written, displayPath, mime,
+		binaryRecoveryHint(sess, displayPath)), nil
 }
 
 // peekContentType issues a tiny GET (range-limited if the server

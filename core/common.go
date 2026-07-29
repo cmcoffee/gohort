@@ -1369,6 +1369,7 @@ type ToolSession struct {
 	imgGenAttempts    int                // Tier-2 auto-retry CHAIN length for the current image (resets on a new subject); drives the retry budget. See NextImageAttempt.
 	imgGenTotal       int                // Tier-2 absolute generate_image calls this turn (never resets); the runaway hard cap. See NextImageAttempt.
 	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
+	availableTools    map[string]bool    // names that actually resolved for this caller; see SetAvailableTools/HasTool. nil = unknown, which callers must treat as "name no tools"
 	LLM               LLM                // optional LLM made available to tools that need sub-calls
 	LeadLLM           LLM                // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
 	DB                Database           // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
@@ -1625,6 +1626,44 @@ func (s *ToolSession) NetworkAllowed() bool {
 		return true
 	}
 	return s.Network.Allowed()
+}
+
+// SetAvailableTools records the tool names that actually resolved for this
+// caller. Called once where the catalog is built; safe on a nil session.
+func (s *ToolSession) SetAvailableTools(names []string) {
+	if s == nil {
+		return
+	}
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	s.availableTools = m
+}
+
+// HasTool reports whether name resolved for this caller.
+//
+// Unknown (no session, or nobody called SetAvailableTools) returns FALSE, so a
+// caller that suggests a recovery path suggests nothing rather than something
+// imaginary. Naming a tool the model does not have is worse than naming none:
+// it spends rounds on a door that isn't there. See FirstAvailableTool.
+func (s *ToolSession) HasTool(name string) bool {
+	if s == nil || s.availableTools == nil {
+		return false
+	}
+	return s.availableTools[name]
+}
+
+// FirstAvailableTool returns the first of names that resolved for this caller,
+// or "" if none did. For building an actionable suggestion out of whichever
+// capability the caller actually has.
+func (s *ToolSession) FirstAvailableTool(names ...string) string {
+	for _, n := range names {
+		if s.HasTool(n) {
+			return n
+		}
+	}
+	return ""
 }
 
 // Context returns the session's turn context (s.Ctx), or
