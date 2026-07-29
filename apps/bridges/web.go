@@ -240,7 +240,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// for those: a duplicate delivery is what typically starts a self-thread
 	// loop, because two identical inbounds produce two replies that arrive as
 	// two more inbounds.
-	if strings.TrimSpace(req.MsgID) == "" && seenContent(activeChatID, req.Text) {
+	if strings.TrimSpace(req.MsgID) == "" && seenContent(activeChatID, req.Handle, req.Text) {
 		Debug("[bridges] dropping id-less duplicate inbound on %s", activeChatID)
 		return
 	}
@@ -353,13 +353,26 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// the owner typing — it routes to the channel that produced it and the
 	// agent answers itself. The message stays in the transcript above; it just
 	// doesn't wake anything.
-	if isOwnEcho(activeChatID, req.Text, strings.TrimSpace(req.Handle) == "") {
+	// Our own outbound tag on an inbound message is conclusive: that marker is
+	// put there by us, on the way out, so anything wearing it is our message
+	// returning. Checked FIRST because it holds where the others don't — it
+	// survives the agent rephrasing, and it doesn't care which transport
+	// carried the message back.
+	if carriesOurTag(req.Text) {
+		Log("[bridges] inbound on %s carries our own outbound tag — recorded, not routed", activeChatID)
+		return
+	}
+	// Content fingerprint, for outbound that carried no tag. fromMe cannot be
+	// read off an empty handle alone: over MMS the owner's own number arrives
+	// as a RECEIVED message with the handle populated, which skipped this guard
+	// entirely on the exact thread it was written for.
+	if isOwnEcho(activeChatID, req.Handle, req.Text, T.isOwnerHandle(req.Handle)) {
 		Log("[bridges] inbound on %s is our own message echoed back — recorded, not routed", activeChatID)
 		return
 	}
 	// A conversation that already blew the reply budget stays cut until its
 	// cooldown expires. Recording continues so nothing is lost from history.
-	if loopTripped(activeChatID) {
+	if loopTripped(activeChatID, req.Handle) {
 		Log("[bridges] conversation %s is in loop cooldown — inbound recorded, not routed", activeChatID)
 		return
 	}
@@ -442,7 +455,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		// including that one. It runs after the agent has already answered, so
 		// the reply about to be sent is the last one; the cut applies to the
 		// inbound that would follow.
-		if noteReply(chatID) {
+		if noteReply(chatID, handle, T.isSelfThread(chatID, handle)) {
 			logLoopCut(chatID)
 		}
 		if hasOutput {

@@ -24,17 +24,25 @@ import (
 // twice produces two replies, which arrive as two more inbounds, and the branch
 // widens instead of settling.
 //
-// Three independent guards, because each fails differently:
+// Four guards, ordered by how conclusive they are:
 //
-//  1. echoGuard — the outbound chokepoint fingerprints what we send; an inbound
-//     from-me message matching a recent fingerprint is our own words coming
-//     back. Exact, and useless the moment the agent rephrases.
-//  2. contentSeen — dedupe for deliveries that arrive with NO message id, which
-//     the id-keyed dedupe treats as new every time.
-//  3. replyBudget — a hard cap on replies per conversation per window. Catches
-//     any loop shape the first two miss, including an agent that says something
-//     different every round. This is the one that actually guarantees
-//     termination; the others just keep it from tripping in normal use.
+//  1. carriesOurTag — the outbound name tag ("[Gohort] ") is a marker WE put on
+//     the wire, so anything wearing it is our own message returning. Survives
+//     rephrasing and transport changes alike, and needs no timing assumption.
+//     This is the one that catches the observed loop.
+//  2. isOwnEcho — a content fingerprint, for outbound that carried no tag.
+//     Exact, and useless the moment the agent rewords its reply.
+//  3. seenContent — dedupe for deliveries arriving with NO message id, which the
+//     id-keyed dedupe treats as new every time. This is the duplicate delivery
+//     that starts a loop.
+//  4. noteReply — a cap on replies per conversation. Catches any shape the
+//     others miss. Strict in a self thread (the only place this can happen) and
+//     generous elsewhere, so it never becomes the bug it prevents.
+//
+// Everything is keyed on the PERSON, not the chat id: iMessage falls back to
+// SMS/MMS, and those are separate ids for one thread — a reply sent one way and
+// reflected the other defeated all of it until the keys collapsed onto the
+// handle.
 //
 // State is in-memory and TTL'd: the windows are minutes, and a process restart
 // starting a loop is not a shape that occurs.
@@ -51,8 +59,21 @@ const (
 	// exchange never reaches it — a human sending eight messages inside two
 	// minutes and expecting eight separate answers is not a real pattern, while
 	// a loop clears it in seconds.
-	replyWindow = 2 * time.Minute
-	replyBudget = 8
+	// A loop runs at the agent's speed, not a human's: at ~13s per round eight
+	// replies take just over two minutes, so a two-minute window never filled
+	// and the budget never tripped on the very case it was written for. The
+	// window has to outlast a slow loop, and the count has to stay above a real
+	// exchange — ten minutes and twelve replies clears both.
+	replyWindow = 10 * time.Minute
+	replyBudget = 12
+	// A loop of this shape is only possible in a thread addressed to YOURSELF:
+	// anywhere else the other end is a person who has to actually type, so the
+	// agent can never be answering its own words. That means the self thread can
+	// be policed hard and every other conversation left alone — the budget above
+	// is a backstop for real threads, this is the real limit for the one place a
+	// runaway can start. Three consecutive agent messages into your own thread
+	// is already unusual; thirty is a loop.
+	selfThreadBudget = 3
 	// loopCooldown is how long routing stays cut for a conversation once the
 	// budget trips. Inbound is still recorded; nothing wakes the agent.
 	loopCooldown = 10 * time.Minute
@@ -62,12 +83,14 @@ var loopGuard struct {
 	mu sync.Mutex
 	// echo: fingerprint → when we sent it.
 	echo map[string]time.Time
-	// content: chat+text hash → when we last saw it inbound.
+	// content: identity+text hash → when we last saw it inbound.
 	content map[string]time.Time
-	// replies: chat id → recent agent-reply timestamps.
+	// replies: identity → recent agent-reply timestamps.
 	replies map[string][]time.Time
-	// tripped: chat id → when the budget blew, for the cooldown.
+	// tripped: identity → when the budget blew, for the cooldown.
 	tripped map[string]time.Time
+	// tags: outbound name-tag prefixes we have emitted ("[gohort] ").
+	tags map[string]bool
 }
 
 func loopGuardInit() {
@@ -76,27 +99,133 @@ func loopGuardInit() {
 		loopGuard.content = map[string]time.Time{}
 		loopGuard.replies = map[string][]time.Time{}
 		loopGuard.tripped = map[string]time.Time{}
+		loopGuard.tags = map[string]bool{}
 	}
 }
 
-// echoKey fingerprints a message by conversation + its text. Whitespace is
+// noteOutboundTag remembers a name-tag prefix we put on the wire ("[Gohort] ").
+// The tag exists so a recipient can tell an agent's message from the owner's
+// own texts — which makes it, for free, the most reliable mark of OUR message
+// coming back. Unlike the content fingerprint it survives rephrasing, and
+// unlike the reply budget it needs no timing assumption.
+func noteOutboundTag(prefix string) {
+	if prefix = strings.TrimSpace(prefix); prefix == "" {
+		return
+	}
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	loopGuardInit()
+	loopGuard.tags[strings.ToLower(prefix)] = true
+}
+
+// carriesOurTag reports whether an inbound opens with a tag we emit. An agent
+// message that comes back into the thread that produced it is never something
+// to answer, however it was worded and whichever transport carried it.
+func carriesOurTag(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	if t == "" || !strings.HasPrefix(t, "[") {
+		return false
+	}
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	loopGuardInit()
+	for tag := range loopGuard.tags {
+		if strings.HasPrefix(t, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// loopIdentity reduces a conversation to the PERSON it reaches, not the
+// transport it took. iMessage delivers as native iMessage or falls back to
+// SMS/MMS, and those are different chat ids for the same thread — so a reply
+// that goes out one way and reflects back the other looked like two unrelated
+// conversations. That defeated every guard here at once: the fingerprint never
+// matched because it was scoped to the id, and the reply budget split across
+// two buckets instead of filling one. chatHandle already strips the service
+// prefix ("iMessage;-;+1650…" and "SMS;-;+1650…" both reduce to "+1650…"), so
+// both legs collapse onto one key.
+//
+// Groups keep their own chat id — a group is identified by the group, and
+// chatHandle deliberately returns "" for one.
+func loopIdentity(chatID, handle string) string {
+	if h := chatHandle(chatID); h != "" {
+		return normalizeIdentity(h)
+	}
+	if h := strings.TrimSpace(handle); h != "" {
+		return normalizeIdentity(h)
+	}
+	return normalizeIdentity(chatID)
+}
+
+// normalizeIdentity flattens the cosmetic differences between renderings of the
+// same handle — "+1 (650) 555-1234" and "+16505551234" are one person, and an
+// address differing only in case is one mailbox.
+func normalizeIdentity(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case ' ', '-', '(', ')', '.', '\t':
+			// drop punctuation that only ever varies by formatting
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// echoKey fingerprints a message by WHO it reaches + its text. Whitespace is
 // normalized because transports reflow it; the text is otherwise compared as
 // sent, AFTER the outbound tag and markdown flattening, since that is the form
 // that comes back.
-func echoKey(chatID, text string) string {
+func echoKey(chatID, handle, text string) string {
 	norm := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 	if norm == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(chatID + "\x00" + norm))
+	sum := sha256.Sum256([]byte(loopIdentity(chatID, handle) + "\x00" + norm))
 	return hex.EncodeToString(sum[:16])
+}
+
+// isSelfThread reports whether a conversation is addressed to the owner
+// THEMSELVES. That is the only place this loop can occur: every other thread
+// has a person on the other end who has to type, so the agent is never
+// answering its own words. Knowing which is which lets the strict limit apply
+// where a runaway is possible and leave real conversations alone.
+func (T *Bridges) isSelfThread(chatID, handle string) bool {
+	self := strings.TrimSpace(T.config().SelfHandle)
+	if self == "" {
+		return false
+	}
+	return loopIdentity(chatID, handle) == normalizeIdentity(self)
+}
+
+// isOwnerHandle reports whether an inbound came from the OWNER's own handle.
+//
+// "From me" cannot be read off an empty handle alone. The daemon clears the
+// handle for a native is_from_me iMessage, but the same thread delivered as
+// SMS/MMS arrives as a RECEIVED message from the owner's own number, handle
+// populated — so the empty-handle test skipped the echo guard on exactly the
+// self-thread it was written for. Comparing against the configured SelfHandle
+// covers both legs.
+func (T *Bridges) isOwnerHandle(handle string) bool {
+	if strings.TrimSpace(handle) == "" {
+		return true // is_from_me: the daemon clears the handle
+	}
+	self := strings.TrimSpace(T.config().SelfHandle)
+	if self == "" {
+		return false
+	}
+	return normalizeIdentity(handle) == normalizeIdentity(self)
 }
 
 // noteOutbound records that we sent this text into this conversation, so the
 // copy that comes back is recognizable as ours. Called from the single outbound
 // chokepoint (enqueueOutbox) with the FINAL text.
-func noteOutbound(chatID, text string) {
-	k := echoKey(chatID, text)
+func noteOutbound(chatID, handle, text string) {
+	k := echoKey(chatID, handle, text)
 	if k == "" {
 		return
 	}
@@ -110,11 +239,11 @@ func noteOutbound(chatID, text string) {
 // isOwnEcho reports whether an inbound is a message we sent coming back. Only
 // meaningful for from-me messages: another person quoting our exact words is
 // theirs to answer, ours is not.
-func isOwnEcho(chatID, text string, fromMe bool) bool {
+func isOwnEcho(chatID, handle, text string, fromMe bool) bool {
 	if !fromMe {
 		return false
 	}
-	k := echoKey(chatID, text)
+	k := echoKey(chatID, handle, text)
 	if k == "" {
 		return false
 	}
@@ -132,8 +261,8 @@ func isOwnEcho(chatID, text string, fromMe bool) bool {
 
 // seenContent dedupes a delivery that arrived with no message id, where the
 // id-keyed dedupe has nothing to key on and treats every copy as new.
-func seenContent(chatID, text string) bool {
-	k := echoKey(chatID, text)
+func seenContent(chatID, handle, text string) bool {
+	k := echoKey(chatID, handle, text)
 	if k == "" {
 		return false
 	}
@@ -150,42 +279,49 @@ func seenContent(chatID, text string) bool {
 
 // noteReply records that the agent answered into this conversation and reports
 // whether that has now blown the budget. The caller stops routing on true.
-func noteReply(chatID string) (tripped bool) {
-	if strings.TrimSpace(chatID) == "" {
+// selfThread selects the strict limit — see selfThreadBudget.
+func noteReply(chatID, handle string, selfThread bool) (tripped bool) {
+	id := loopIdentity(chatID, handle)
+	if id == "" {
 		return false
+	}
+	budget := replyBudget
+	if selfThread {
+		budget = selfThreadBudget
 	}
 	loopGuard.mu.Lock()
 	defer loopGuard.mu.Unlock()
 	loopGuardInit()
 	sweepLocked()
 	now := time.Now()
-	kept := loopGuard.replies[chatID][:0]
-	for _, at := range loopGuard.replies[chatID] {
+	kept := loopGuard.replies[id][:0]
+	for _, at := range loopGuard.replies[id] {
 		if now.Sub(at) < replyWindow {
 			kept = append(kept, at)
 		}
 	}
 	kept = append(kept, now)
-	loopGuard.replies[chatID] = kept
-	if len(kept) >= replyBudget {
-		loopGuard.tripped[chatID] = now
+	loopGuard.replies[id] = kept
+	if len(kept) >= budget {
+		loopGuard.tripped[id] = now
 		return true
 	}
 	return false
 }
 
 // loopTripped reports whether a conversation is in its post-loop cooldown.
-func loopTripped(chatID string) bool {
+func loopTripped(chatID, handle string) bool {
+	id := loopIdentity(chatID, handle)
 	loopGuard.mu.Lock()
 	defer loopGuard.mu.Unlock()
 	loopGuardInit()
-	at, ok := loopGuard.tripped[chatID]
+	at, ok := loopGuard.tripped[id]
 	if !ok {
 		return false
 	}
 	if time.Since(at) > loopCooldown {
-		delete(loopGuard.tripped, chatID)
-		delete(loopGuard.replies, chatID)
+		delete(loopGuard.tripped, id)
+		delete(loopGuard.replies, id)
 		return false
 	}
 	return true

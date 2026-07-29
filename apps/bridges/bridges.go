@@ -572,7 +572,11 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 			}
 		}
 		if name != "" {
-			it.Text = "[" + name + "] " + it.Text
+			prefix := "[" + name + "] "
+			it.Text = prefix + it.Text
+			// Remember the marker so the copy that comes back is recognizable
+			// as ours no matter how it was worded or which transport carried it.
+			noteOutboundTag(prefix)
 		}
 	}
 	it.Owner = "" // transient — never persist/leak the owner to a connector
@@ -581,7 +585,7 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	// copy that returns is is_from_me exactly like the owner's own typing, so
 	// this is the only thing that tells the two apart. A status item is not an
 	// agent turn, but it echoes the same way, so it is recorded too.
-	noteOutbound(it.ChatID, it.Text)
+	noteOutbound(it.ChatID, it.Handle, it.Text)
 	T.DB.Set(outboxTable, it.ID, it)
 	// Delivery-leg visibility: the outbound path (enqueue → connector /api/poll →
 	// drainOutbox) was previously unlogged, so a dropped reply was invisible.
