@@ -14,6 +14,12 @@ func TestEndsWithCallAnnouncement(t *testing.T) {
 		"Now I'll remove the duplicate action with this tool call:",
 		"Let me fix that. Calling reply_to_comment with the corrected args:",
 		"First I'll update the moltbook toolbox:",
+		// The live miss (2026-07-28): announces work, ends on a colon, names
+		// no tool and contains no snake_case — the old call-word requirement
+		// passed it through and the user watched the turn end on a promise.
+		"Let me dig up that benchmark article with actual token/s numbers:",
+		"Here's the plan:",
+		"Now I'll pull the numbers:",
 	}
 	noFire := []string{
 		"Paste the error message here:",
@@ -21,6 +27,10 @@ func TestEndsWithCallAnnouncement(t *testing.T) {
 		"I'll try to nail the house next time.",
 		"Here are your options:\n1. Remove the toolbox action\n2. Remove the standalone reply handler",
 		"That's the plan, basically:", // "basically" must not match \bcall\b
+		// Colons that hand the next move to the USER end a turn legitimately;
+		// only the agent committing ITSELF and then stopping is broken.
+		"Send me the link and I'll take a look:",
+		"Reply with one of these:",
 		"",
 	}
 	for _, c := range fire {

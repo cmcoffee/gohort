@@ -3804,11 +3804,32 @@ func endsWithCallAnnouncement(content string) bool {
 	if i := strings.LastIndexByte(trimmed, '\n'); i >= 0 {
 		line = strings.TrimSpace(trimmed[i+1:])
 	}
-	lower := strings.ToLower(line)
+	lower := strings.ToLower(strings.ReplaceAll(line, "\u2019", "'"))
 	if callWordRe.MatchString(lower) {
 		return true
 	}
-	return snakeCaseTokenRe.MatchString(lower)
+	if snakeCaseTokenRe.MatchString(lower) {
+		return true
+	}
+	// First-person intent is the general form of this failure, and requiring a
+	// call word missed most of it: "Let me dig up that benchmark article with
+	// actual token/s numbers:" announces work, ends on a colon, and stops —
+	// but names no tool and contains no snake_case, so the guard passed it
+	// through and the user watched the turn end on a promise.
+	//
+	// What separates it from a legitimate turn-ending colon is WHO the colon
+	// commits. "Paste the error message here:" hands the next move to the
+	// user and is complete. "Let me look that up:" / "Here's the plan:" commit
+	// the AGENT to something that then never arrives.
+	//
+	// Checked in this order because a line can carry both — "Send me the link
+	// and I'll take a look:" states first-person intent AND hands over the
+	// next move, and it is the handover that makes it complete. Asking is a
+	// finished turn; promising is not.
+	if userDirectiveRe.MatchString(lower) {
+		return false
+	}
+	return firstPersonIntentRe.MatchString(lower)
 }
 
 // callWordRe word-bounds the announcement keywords so "basically:" /
@@ -3819,6 +3840,18 @@ var callWordRe = regexp.MustCompile(`\b(?:call|calls|calling|tool|tools|toolbox)
 // tool/action names ("update_agent", "reply_to_comment") and essentially
 // nothing in natural prose.
 var snakeCaseTokenRe = regexp.MustCompile(`\b[a-z0-9]+(?:_[a-z0-9]+)+\b`)
+
+// firstPersonIntentRe matches the agent committing ITSELF to what follows the
+// colon. Deliberately first-person: an imperative aimed at the user ("paste
+// the error message here:") ends a turn legitimately and must not re-prompt.
+var firstPersonIntentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to|here's|here is|now i|next i|going to)\b`)
+
+// userDirectiveRe matches a line handing the next move to the USER. A turn that
+// ends by asking for something is finished, however it is punctuated — it is
+// waiting, not stalled. Takes precedence over first-person intent, which the
+// same sentence often also contains ("send me the link and I'll look:").
+// "let me know" appears here rather than as intent for exactly that reason.
+var userDirectiveRe = regexp.MustCompile(`\b(?:paste|send me|send it|reply with|tell me|let me know|share (?:the|it|that)|upload|attach|type|enter|choose|pick)\b`)
 
 // DynamicThinkBudget scales the model's thinking budget based on the
 // input token count. Short queries stay cheap; large/dense inputs get
