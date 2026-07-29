@@ -4317,6 +4317,15 @@ func coerceArgValue(v string) any {
 // parseNaturalToolCall scans text for a known tool name and extracts any
 // arguments that follow it. This handles thinking models that reason about
 // which tool to call but stop before emitting a structured call.
+//
+// The name match is TOKEN-BOUNDED, and a name that is a bare English word
+// (no underscore) is only honored in the adjacent-paren call form. Both
+// guards exist because this scan reads ordinary conversation: a session
+// with a tool named "image" put the word through here every time the model
+// DESCRIBED a photo to the user. Substring matching would also have fired
+// it inside "images"/"imagery". A tool name is only evidence of a call when
+// it can't equally be evidence of English — see mentionedNoArgTool, which
+// has held the same two guards since the actionPromiseCorrection fallout.
 func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *ToolCall {
 	lower := strings.ToLower(content)
 
@@ -4324,7 +4333,7 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	var bestName string
 	var bestPos int = -1
 	for name := range handlers {
-		pos := strings.LastIndex(lower, strings.ToLower(name))
+		pos := lastTokenIndex(lower, strings.ToLower(name))
 		if pos >= 0 && (bestPos < 0 || len(name) > len(bestName)) {
 			bestName = name
 			bestPos = pos
@@ -4337,7 +4346,27 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 
 	// Try to extract args after the tool name mention.
 	args := make(map[string]any)
-	after := strings.TrimSpace(content[bestPos+len(bestName):])
+	rest := content[bestPos+len(bestName):]
+	after := strings.TrimSpace(rest)
+
+	// Common-word guard. A name with no underscore is a word the user and
+	// the model may simply be TALKING about, so the only shape trusted for
+	// it is one prose does not produce: the paren opening immediately, with
+	// no space ("image(prompt=…)" is a call; "the image (a 4x6 print)" is a
+	// sentence). Snake_case names skip this — they read as tool names
+	// wherever they appear, so the looser forms below stay available.
+	if !strings.Contains(bestName, "_") {
+		if !strings.HasPrefix(rest, "(") {
+			Debug("[agent_loop] skipping tool mention %q — common-word name not in call form, treating as prose", bestName)
+			return nil
+		}
+		callArgs := parseCallArgs(rest)
+		if len(callArgs) == 0 {
+			Debug("[agent_loop] skipping tool mention %q — common-word name with no parsable args, treating as prose", bestName)
+			return nil
+		}
+		return &ToolCall{ID: fmt.Sprintf("text_%s", UUIDv4()), Name: bestName, Args: callArgs}
+	}
 
 	// Function-call narration: name(key="value", ...) or name({...json...}).
 	// This is the most common shape when a model WRITES a call as text instead
@@ -4351,9 +4380,15 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	}
 
 	// Look for --flag patterns (e.g. "--to user@example.com").
+	//
+	// A flag must be "--" followed by a LETTER. Without that test a markdown
+	// horizontal rule ("---") counts as a flag, and since the scan runs from
+	// the tool name to the end of the message it then sweeps every remaining
+	// word into args["args"] — any answer that names a tool and later breaks
+	// a section becomes a bogus call carrying the rest of the document.
 	var flag_args []string
 	for _, part := range strings.Fields(after) {
-		if strings.HasPrefix(part, "--") {
+		if isFlagToken(part) {
 			flag_args = append(flag_args, part)
 		} else if len(flag_args) > 0 {
 			// Attach value to the previous flag.
@@ -4422,23 +4457,44 @@ func mentionedNoArgTool(content string, handlers map[string]ToolHandlerFunc, too
 // non-identifier characters (so a tool name matches only as a standalone token,
 // not inside a longer word). Both arguments must already be lowercase.
 func mentionsToken(haystack, needle string) bool {
+	return lastTokenIndex(haystack, needle) >= 0
+}
+
+// lastTokenIndex returns the index of the LAST token-bounded occurrence of
+// needle in haystack, or -1. Same boundary rule as mentionsToken; the prose
+// scan needs the position so it can read arguments off what follows. Last
+// rather than first because a model that narrates and then calls puts the
+// real call at the end. Both arguments must already be lowercase.
+func lastTokenIndex(haystack, needle string) int {
 	if needle == "" {
-		return false
+		return -1
 	}
-	for from := 0; ; {
+	found := -1
+	for from := 0; from <= len(haystack)-len(needle); {
 		i := strings.Index(haystack[from:], needle)
 		if i < 0 {
-			return false
+			break
 		}
 		i += from
 		end := i + len(needle)
 		beforeOK := i == 0 || !isIdentByte(haystack[i-1])
 		afterOK := end >= len(haystack) || !isIdentByte(haystack[end])
 		if beforeOK && afterOK {
-			return true
+			found = i
 		}
 		from = i + 1
 	}
+	return found
+}
+
+// isFlagToken reports whether s is a command-line style flag ("--verbose"),
+// as opposed to a run of dashes ("--", "---") that markdown uses as a rule.
+func isFlagToken(s string) bool {
+	if len(s) < 3 || !strings.HasPrefix(s, "--") {
+		return false
+	}
+	c := s[2] | 0x20 // fold case
+	return c >= 'a' && c <= 'z'
 }
 
 func isIdentByte(b byte) bool {
