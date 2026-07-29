@@ -26,6 +26,7 @@ go 1.25.0
 
 require (
 	fyne.io/systray v1.12.1
+	github.com/atotto/clipboard v0.1.4
 	github.com/cmcoffee/snugforge v0.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/wailsapp/wails/v2 v2.9.2
@@ -34,7 +35,6 @@ require (
 )
 
 require (
-	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/charmbracelet/bubbles v0.21.0 // indirect

@@ -31,6 +31,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/atotto/clipboard"
 	"net/http"
 	"net/url"
 	"os"
@@ -563,4 +564,27 @@ func probe_gohort(target string) error {
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// CopyToClipboard writes text to the SYSTEM clipboard from the Go side.
+// JS-callable as window.go.main.App.CopyToClipboard.
+//
+// Cmd+C did not copy in the desktop client despite menu.EditMenu() being
+// installed and wired into wails.Run — the Copy role reaches the webview
+// through the responder chain and, for whatever reason in this build, does not
+// come back with the selection. Rather than keep guessing at which link fails,
+// this path avoids all of them: the browser's own clipboard API (which wants a
+// secure context and a recent user gesture) is not involved, and neither is the
+// role menu's plumbing. Go writes to the pasteboard directly.
+//
+// Returns an error string rather than a bare bool so a failure shows up in the
+// caller instead of looking like an empty selection.
+func (a *App) CopyToClipboard(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return "" // nothing selected is not an error
+	}
+	if err := clipboard.WriteAll(text); err != nil {
+		return err.Error()
+	}
+	return ""
 }

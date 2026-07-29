@@ -195,6 +195,46 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		wails_runtime.WindowExecJS(app.ctx, "window.__desktop_logs_open && window.__desktop_logs_open("+string(data)+")")
 	})
 
+	// Copy — an explicit item rather than relying on EditMenu's Copy ROLE.
+	// The role is installed (EditMenu below) and the menu IS wired into
+	// wails.Run, yet Cmd+C copies nothing in this build: the role dispatches
+	// through the responder chain to the webview and does not come back with
+	// the selection. This path avoids every link that could be at fault —
+	// no role dispatch, and no navigator.clipboard (which wants a secure
+	// context AND a recent user gesture, and an ExecJS callback is neither).
+	//
+	// Reads the selection in JS, including inside the Forge terminal: xterm.js
+	// keeps its own selection that is NOT a DOM selection, so window.getSelection
+	// misses it entirely and the terminal was the case that prompted this.
+	// Hands the text to Go, which writes the pasteboard directly.
+	//
+	// Deliberately NOT bound to Cmd+C: that accelerator belongs to EditMenu's
+	// role, and two menu items sharing one shortcut is undefined. Cmd+Shift+C
+	// is the reliable one; if the role turns out to be dead everywhere, the
+	// role menu can go and this can take the plain shortcut.
+	custom.AddText("Copy Selection", keys.Combo("C", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *wails_menu.CallbackData) {
+		if app.ctx == nil {
+			return
+		}
+		wails_runtime.WindowExecJS(app.ctx, `
+			(function () {
+				var t = '';
+				// The terminal owns its selection; ask it first.
+				try {
+					if (window.__forgeTerm && window.__forgeTerm.hasSelection()) {
+						t = window.__forgeTerm.getSelection();
+					}
+				} catch (e) {}
+				if (!t) {
+					try { t = String(window.getSelection()); } catch (e) {}
+				}
+				if (t && window.go && window.go.main && window.go.main.App) {
+					window.go.main.App.CopyToClipboard(t);
+				}
+			})();
+		`)
+	})
+
 	custom.AddText("Reload", keys.CmdOrCtrl("R"), func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
