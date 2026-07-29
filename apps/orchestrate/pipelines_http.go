@@ -13,6 +13,10 @@
 //	DELETE /api/pipelines/{id}         → delete
 //	GET    /api/pipelines/{id}/export  → portable recipe (id/owner/timestamps stripped)
 //	POST   /api/pipelines/{id}/run     → run on body {input}; returns {output} (sync)
+//	POST   /api/pipelines/{id}/stream          → run, streaming the transcript (SSE)
+//	GET    /api/pipelines/{id}/sessions        → past runs, newest first
+//	GET    /api/pipelines/{id}/sessions/{sid}  → one run's stored blocks
+//	DELETE /api/pipelines/{id}/sessions/{sid}  → drop a run
 
 package orchestrate
 
@@ -173,7 +177,21 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		T.runPipelineHTTP(w, r, user, def)
+	case "stream":
+		// The streaming twin of "run": same execution, transcript instead of a
+		// lump. This is what lets a PipelineDef be an APP — see pipeline_runs.go.
+		T.handlePipelineStream(w, r, user, def)
+	case "sessions":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		T.handlePipelineSessions(w, r, user, def.ID)
 	default:
+		if sid, ok := strings.CutPrefix(action, "sessions/"); ok && sid != "" && !strings.Contains(sid, "/") {
+			T.handlePipelineSessionOne(w, r, user, def.ID, sid)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }
