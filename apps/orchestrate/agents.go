@@ -1221,6 +1221,8 @@ func coreSeedAgents() []AgentRecord {
 			Description: "Authoring agent: creates, modifies, and verifies agents and tools. The only agent in the fleet with direct authoring access — every other agent (Chat, Research, etc.) delegates here when the user wants to build something.",
 			OrchestratorPrompt: `You are Builder — you create, modify, and verify agents, tools, apps, skills, pipelines, and collections. That is your whole job; if a request isn't about authoring, point the user to Chat and end the turn.
 
+FIX REQUESTS START WITH A QUESTION — the one exception to the rule below. A request to fix something with NO target ("Fix something", "something's broken") is not actionable, and surveying to guess is the expensive wrong move: sweeping every agent, monitor, schedule and run costs ~50k tokens and still ends with you asking. So ask FIRST, in two short beats: (1) "What would you like to fix?" — get the agent, tool, or app; (2) "Should I run a general audit on that, or is there a specific issue you're hitting?" Then work. When the user names the thing AND the symptom up front ("moltbook posts are 404ing"), skip both questions and start — they already answered.
+
 HOW YOU WORK — act, don't interrogate. Understand the ask in a message or two, then BUILD it, RUN it, read the error, FIX it, and repeat until it works — then ship. Don't run a multi-step propose-then-confirm-then-confirm dance, and don't ask the user for anything you can test, probe, or look up yourself. Confirm only genuinely destructive or costly actions. A working credential or endpoint is something you PROBE, not something you ask about.
 
 ORIENT FIRST — read the repo before you edit it. Whenever a request could reuse or must stay consistent with what's already here (a tool on a credential others use, an app like one that exists, an agent with a similar job), call survey FIRST: it maps the user's whole gohort in one shot — agents (+ their tool surface), tools (mode + credential), credentials (+ the tools already wired to each and their working paths), apps, pipelines, monitors. BUILD ON what it shows — reuse a sibling tool's endpoint, an existing credential, an existing agent — instead of re-guessing or rebuilding something that already exists.
@@ -1329,15 +1331,11 @@ FINISH THE JOB: an api/toolbox tool isn't done until tool_def(action="test") pas
 					"Pipeline",
 					"Fix something",
 				},
-				// The four build kinds ARE the answer once clicked. "Fix
-				// something" is only a category, and submitting it bare left
-				// Builder with no target: it swept every agent, monitor,
-				// schedule and run — ~50k tokens — and then asked what was
-				// meant anyway. Ask first; the sweep is what a vague answer
-				// costs, not what it buys.
-				Detail: map[string]string{
-					"Fix something": "What would you like to fix? Name the agent, tool, or app — or paste the error you saw.",
-				},
+				// No Detail entry on "Fix something": the CONVERSATION asks
+				// (see the FIX REQUESTS rule in the prompt above), which reads
+				// better than a text box grafted onto a row of buttons and can
+				// follow up on the answer. IntakeField.Detail stays available
+				// for intakes where a one-shot field genuinely fits.
 			}},
 		},
 		{

@@ -82,48 +82,40 @@ func TestBuilderSeed_HasStartingPoints(t *testing.T) {
 	}
 }
 
-// Builder's intake offers four build kinds plus "Fix something". The four ARE
-// the answer once clicked; the fifth is only a category, and submitting it bare
-// left Builder with no target — it swept every agent, monitor, schedule and run
-// (~50k tokens) and then asked what was meant anyway.
-func TestFixOptionAsksWhatToFix(t *testing.T) {
+// A bare "Fix something" is not actionable, and surveying to guess costs ~50k
+// tokens and still ends in a question. Builder asks instead — in the
+// CONVERSATION, so it can follow up on the answer, rather than via a text box
+// grafted onto a row of buttons.
+func TestFixRequestsAskBeforeSurveying(t *testing.T) {
 	seed, ok := seedAgentByID("seed-builder")
 	if !ok {
 		t.Fatal("seed-builder should exist")
 	}
-	if len(seed.IntakeForm) == 0 {
-		t.Fatal("Builder should have an intake form")
+	p := seed.OrchestratorPrompt
+	if !strings.Contains(p, "FIX REQUESTS START WITH A QUESTION") {
+		t.Fatal("Builder must be told to ask before acting on an untargeted fix request")
 	}
-	f := seed.IntakeForm[0]
-
-	ask, hasDetail := f.Detail["Fix something"]
-	if !hasDetail {
-		t.Fatal(`"Fix something" must ask what to fix — bare, it starts a turn with no target`)
+	// Both beats the user asked for, in order.
+	what := strings.Index(p, "What would you like to fix?")
+	audit := strings.Index(p, "general audit")
+	if what < 0 {
+		t.Error("should ask WHAT to fix")
 	}
-	if !strings.Contains(strings.ToLower(ask), "fix") {
-		t.Errorf("the question should name what it wants: %q", ask)
+	if audit < 0 {
+		t.Error("should offer a general audit vs a specific issue")
 	}
-
-	// The build kinds must NOT ask — they're already specific, and a question
-	// on every option turns a one-click intake into a form.
-	for _, opt := range []string{"Agent", "App", "Tool", "Pipeline"} {
-		if _, asks := f.Detail[opt]; asks {
-			t.Errorf("%q is already the answer — it should submit immediately", opt)
-		}
+	if what > 0 && audit > 0 && audit < what {
+		t.Error("the target question comes before the audit-or-issue question")
 	}
-
-	// Every option carrying a question must still be a real option, or the
-	// map silently does nothing.
-	for opt := range f.Detail {
-		found := false
-		for _, o := range f.Options {
-			if o == opt {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("detail question for %q, which is not an option", opt)
+	// It must not become a wall: a request that already names thing + symptom
+	// skips straight to work.
+	if !strings.Contains(p, "skip both questions") {
+		t.Error("a fully-specified request must bypass the questions")
+	}
+	// And the form must not ask the same thing — one place asks, not two.
+	if len(seed.IntakeForm) > 0 {
+		if _, asks := seed.IntakeForm[0].Detail["Fix something"]; asks {
+			t.Error("the conversation asks; the intake form must not ask it too")
 		}
 	}
 }
