@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 
@@ -30,10 +31,14 @@ func TestFindingConflictCandidates(t *testing.T) {
 // TestRenderFindingConflictNote: the surfacing message names each conflicting
 // finding with its saved-date hint and a recall id, and pluralizes.
 func TestRenderFindingConflictNote(t *testing.T) {
+	// Dated relative to now: a literal date keeps its rendering only until real
+	// time crosses an age threshold, at which point the assertion fails on
+	// correct behavior.
+	saved := time.Now().AddDate(0, 0, -2)
 	one := renderFindingConflictNote([]SearchHit{
-		{ReportID: "r1", Title: "Craig lives in Santa Cruz", Date: "2026-01-15T00:00:00Z"},
+		{ReportID: "r1", Title: "Craig lives in Santa Cruz", Date: saved.Format(time.RFC3339)},
 	})
-	for _, want := range []string{"a finding you already saved", "Craig lives in Santa Cruz", "(saved 2026-01-15)", "mem:r1", "Both are kept"} {
+	for _, want := range []string{"a finding you already saved", "Craig lives in Santa Cruz", "(saved " + saved.Format("2006-01-02") + ")", "mem:r1", "Both are kept"} {
 		if !strings.Contains(one, want) {
 			t.Fatalf("single-conflict note missing %q: %s", want, one)
 		}

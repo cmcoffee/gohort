@@ -608,7 +608,23 @@ func recallAgeNote(date string) string {
 	if err != nil {
 		return ""
 	}
-	return "(saved " + ts.Format("2006-01-02") + ")"
+	stamp := "(saved " + ts.Format("2006-01-02")
+	// A bare date is inert: it makes the model do the arithmetic AND draw the
+	// conclusion. Findings are mostly notes about EXTERNAL systems — an API's
+	// request shape, an endpoint path, a library's quirk — which change without
+	// telling us, and acting on a stale one costs a wrong tool and a debugging
+	// detour that never questions the memory. So say what the age MEANS, the
+	// way the fact store already does on pull ("re-verify before relying").
+	//
+	// Graded rather than binary because most findings are fine: nothing under
+	// a season gets a warning, so the caution keeps its force where it lands.
+	switch days := int(time.Since(ts).Hours()) / 24; {
+	case days >= 365:
+		stamp += fmt.Sprintf(", ~%dmo ago — OLD; if this describes an external system (an API shape, an endpoint, a version), re-verify before relying on it", days/30)
+	case days >= 90:
+		stamp += fmt.Sprintf(", ~%dd ago — may have changed since", days)
+	}
+	return stamp + ")"
 }
 
 // renderRecallChunks formats a bucket of vector hits under a [tag], stamping an

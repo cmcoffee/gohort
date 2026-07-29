@@ -46,9 +46,16 @@ func TestRerankFindingsByRecency(t *testing.T) {
 
 // TestRecallAgeNote: findings show an absolute saved-date hint; a missing or
 // unparseable date yields no note (never a bogus one).
+//
+// Dated RELATIVE to now. The literal date this once asserted kept its text
+// only until real time moved past the caution threshold, at which point the
+// test failed on correct behavior — a hardcoded date makes an age assertion
+// rot by construction.
 func TestRecallAgeNote(t *testing.T) {
-	if got := recallAgeNote("2026-01-15T09:00:00Z"); got != "(saved 2026-01-15)" {
-		t.Fatalf("got %q", got)
+	fresh := time.Now().AddDate(0, 0, -2)
+	want := "(saved " + fresh.Format("2006-01-02") + ")"
+	if got := recallAgeNote(fresh.Format(time.RFC3339)); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 	if got := recallAgeNote(""); got != "" {
 		t.Fatalf("empty date should give no note, got %q", got)
