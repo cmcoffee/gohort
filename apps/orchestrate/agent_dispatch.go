@@ -854,6 +854,13 @@ type AgentSyncResult struct {
 	// servitor's investigator continuing while plan steps remain) re-runs with the
 	// same SubSessionID while this is true.
 	HitRoundCap bool
+	// Silenced reports that the model DELIBERATELY chose to say nothing —
+	// stay_silent fired. Distinct from Text being empty by accident, which is a
+	// failure. Callers that substitute a fallback for empty output must not do
+	// so here: on a messaging channel, "don't reply to this" produced the
+	// agent's "I wasn't able to put together a response" line, which is the
+	// framework overriding an instruction the user gave and the model obeyed.
+	Silenced bool
 }
 
 // buildInboundMediaManifest individuates the media that arrived on THIS turn,
@@ -1468,7 +1475,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Status already finalized above (runOutcomeStatus) — reaching here is the
 	// success case, already marked Completed.
-	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap}, nil
+	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, Silenced: subSess != nil && subSess.Silenced}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

@@ -315,10 +315,17 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// (the model ended a turn with empty content, or its whole output was a
 		// stripped marker), send a graceful fallback so the contact gets SOMETHING
 		// back instead of the agent appearing to give up.
-		if strings.TrimSpace(replyText) == "" && len(res.Images) == 0 && len(res.Videos) == 0 {
-			Log("[channel] empty agent reply for owner=%s agent=%s — sending fallback", in.Owner, in.AgentID)
-			replyText = "I wasn't able to put together a response to that. Could you rephrase it, or give me a little more detail?"
+		//
+		// UNLESS the silence was deliberate — see channelDelivery.
+		text, deliver := channelDelivery(replyText, res.Images, res.Videos, res.Silenced)
+		if !deliver {
+			Log("[channel] agent chose silence for owner=%s agent=%s — delivering nothing", in.Owner, in.AgentID)
+			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
 		}
+		if text != replyText {
+			Log("[channel] empty agent reply for owner=%s agent=%s — sending fallback", in.Owner, in.AgentID)
+		}
+		replyText = text
 		// Cortex feed (received → cortex): mirror this inbound into the bound
 		// agent's cortex as a non-triggering observation, so the standing thread
 		// stays aware of everything coming in over its channels. No-op when the
@@ -371,4 +378,34 @@ func audioNameForType(ct string) string {
 	default:
 		return "inbound.m4a"
 	}
+}
+
+// channelEmptyFallback is what a channel sends when a turn produced nothing at
+// all. A messaging surface must not go silent by accident — the contact texted
+// and expects something back.
+const channelEmptyFallback = "I wasn't able to put together a response to that. Could you rephrase it, or give me a little more detail?"
+
+// channelDelivery decides what a channel actually sends for a completed run:
+// the text to deliver, and whether to deliver anything at all.
+//
+// The distinction that matters is WHY the text is empty. An accident (the model
+// ended a turn with no content, or its whole output was a stripped marker) means
+// the contact would hear nothing from a conversation they started, so a fallback
+// goes out. A DELIBERATE silence — stay_silent — means the model was told not to
+// reply and complied, and a fallback there talks over both the user and the
+// model: asking the bot "don't reply to this" answered back "I wasn't able to
+// put together a response to that."
+//
+// Attachments outrank both. stay_silent paired with a produced file is the
+// tool's documented purpose (deliver the file with no caption), so silence with
+// an attachment still delivers.
+func channelDelivery(text string, images, videos []string, silenced bool) (string, bool) {
+	hasAttachment := len(images) > 0 || len(videos) > 0
+	if strings.TrimSpace(text) != "" || hasAttachment {
+		return text, true
+	}
+	if silenced {
+		return "", false
+	}
+	return channelEmptyFallback, true
 }

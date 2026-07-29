@@ -389,6 +389,12 @@ type ChannelReply struct {
 	// recipient tell an agent's message apart from the owner's own texts. Empty
 	// when unresolved; the transport then leaves the message untagged.
 	AgentName string
+	// Silenced reports that the agent DELIBERATELY said nothing (stay_silent),
+	// as opposed to producing nothing by accident. The transport must deliver
+	// no message at all in that case: telling a channel bot "don't reply to
+	// this" and getting "I wasn't able to put together a response" back is the
+	// framework overriding an instruction the user gave and the model obeyed.
+	Silenced bool
 }
 
 // ChannelAgentRunnerFunc runs a channel's bound agent on one inbound message
