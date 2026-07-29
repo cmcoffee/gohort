@@ -279,7 +279,7 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	}
 	parsed, err := url.Parse(target)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", fmt.Errorf("'url' must be an http:// or https:// URL")
+		return "", fmt.Errorf("'url' must be an http:// or https:// URL%s", SameOriginURLHint(target))
 	}
 	// Auto-route FIRST: when a registered credential covers this host, dispatch
 	// THROUGH it (auth injected server-side) instead of an anonymous request that

@@ -386,7 +386,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// wrap). See feedback_shell_tool_symmetry.
 	parsed, err := neturl.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		writeHookError(conn, "fetch refused: url must be an http:// or https:// URL")
+		writeHookError(conn, "fetch refused: url must be an http:// or https:// URL"+SameOriginURLHint(rawURL))
 		return
 	}
 	// Refuse URLs with raw whitespace — almost always an unencoded
@@ -724,7 +724,7 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 	// for a URL we'd have refused anyway.
 	parsed, err := neturl.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		writeHookError(conn, "browse_page refused: url must be an http:// or https:// URL")
+		writeHookError(conn, "browse_page refused: url must be an http:// or https:// URL"+SameOriginURLHint(rawURL))
 		return
 	}
 	if host := parsed.Hostname(); host != "" {

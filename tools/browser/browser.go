@@ -376,7 +376,7 @@ func (t *BrowsePageTool) Run(args map[string]any) (string, error) {
 	}
 	parsed, err := url.Parse(target)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", fmt.Errorf("url must be http:// or https://")
+		return "", fmt.Errorf("url must be http:// or https://%s", SameOriginURLHint(target))
 	}
 	// SSRF guard — same rules as fetch_url.
 	if host := parsed.Hostname(); host != "" {
