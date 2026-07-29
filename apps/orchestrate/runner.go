@@ -321,6 +321,17 @@ type chatTurn struct {
 	udb   Database
 	user  string
 	agent AgentRecord
+	// turnClosed records that a control tool ended this turn — today
+	// stay_silent, whose tool result promises "this turn is now closed".
+	// It closes the LOOP it fires in (agent_loop breaks server-side), but a
+	// plan's steps are driven by an ordinary for-loop OUTSIDE that call, so
+	// without this the queue kept running: the model said it was done and then
+	// watched nine more rounds of its own work it could no longer stop.
+	//
+	// Set from ToolSession.Silenced after a loop returns — that flag was
+	// written by the tool and read by nobody.
+	turnClosed bool
+
 	// appTools are extra per-run tools supplied by the HOST APP dispatching this
 	// turn (e.g. a workbench's co-author tool that writes into the open document's
 	// record store). Injected into the orchestrator's catalog so the agent can call
@@ -4710,6 +4721,22 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 			return
 		default:
 		}
+		// A control tool closed the turn. Steps are driven HERE, outside the
+		// orchestrator's RunAgentLoop, so a tool that ends that loop never
+		// reached this queue: the model called stay_silent, read "this turn is
+		// now closed", and then watched the plan keep executing with no way to
+		// intervene. Closing a turn abandons the pending plan — which is what
+		// the tool already tells the model it does.
+		if turn.turnClosed {
+			Log("[orchestrate.orch] turn closed by a control tool — abandoning %d remaining step(s)", len(steps)-i)
+			turn.emitStatus(fmt.Sprintf("Turn closed — %d remaining step%s skipped.", len(steps)-i, plural(len(steps)-i)))
+			for j := i; j < len(steps); j++ {
+				steps[j].Status = StepBlocked
+				steps[j].BlockedReason = "turn closed before this step ran"
+			}
+			emitPlanBlock(sse, blockID, steps)
+			break
+		}
 		steps[i].Status = StepInProgress
 		emitPlanBlock(sse, blockID, steps)
 		// Servitor-style intent narration block lands in the
@@ -6879,6 +6906,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		},
 	})
 	stopKeepalive()
+	// Consume the silence flag. stay_silent writes ToolSession.Silenced and,
+	// until now, nothing read it: the only thing that worked was agent_loop's
+	// hardcoded break, which ends the LOOP. Recording it on the turn is what
+	// lets the plan driver honor "this turn is now closed" — the promise the
+	// tool's own result makes to the model.
+	if sess != nil && sess.Silenced {
+		t.turnClosed = true
+	}
 	// Off-hot-path graph population: after a clean turn, best-effort extract the
 	// entity relationships the user stated into the graph. Single-flight +
 	// cooldown + own goroutine (never blocks the turn, self-throttles on the
@@ -7440,6 +7475,13 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		Confirm:           t.confirmFuncFor(sess),
 		GuardrailCheck:    t.guardrailCheckHook(),
 		GuardrailDeclines: t.agent.GuardrailDeclines,
+		// A step must be able to END ITSELF. Without these, respond_directly
+		// inside a worker step is an ordinary tool call: it returns, the round
+		// completes, and the loop takes another turn — observed as a step that
+		// decided it was finished and then ran to nine rounds and six tool
+		// errors anyway. Same set the orchestrator round declares, minus
+		// plan_set: a step does not get to re-plan the turn it belongs to.
+		RoundAbortTools: []string{"ask_user", "ask_user_form", "respond_directly"},
 		// (No SingleFireGroups for image/video producers — same
 		// rationale as the orchestrator round above. Multi-fire is
 		// intentional under the write-to-workspace + workspace(attach)
@@ -7450,6 +7492,12 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		},
 	})
 	stopKeepalive()
+	// A step can close the whole turn too: stay_silent inside a step means the
+	// same thing it means anywhere else, and the driver checks this before the
+	// next step runs.
+	if sess != nil && sess.Silenced {
+		t.turnClosed = true
+	}
 	if err != nil {
 		return "", err
 	}
