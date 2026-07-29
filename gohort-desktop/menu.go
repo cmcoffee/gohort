@@ -216,56 +216,41 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	)
 }
 
-// copyAction copies whatever is selected, asking each source that can hold a
-// selection in this app — in priority order, because they are mutually
-// exclusive rather than redundant.
+// copyAction copies the current selection to the system pasteboard.
 //
-// The previous version asked only the DOM selection and xterm's own selection,
-// and in Forge both are ALWAYS empty: tmux runs with mouse mode on so it owns
-// every drag, and the highlight the user sees belongs to tmux copy-mode, not to
-// the browser or to xterm. That is why Cmd+Shift+C copied nothing there.
+// Entirely in Go, because the page cannot help: the Forge terminal is served
+// THROUGH THE PROXY, and Wails does not inject its Go bridge into proxy-served
+// pages — window.go is simply absent there (see proxy.go:139, wails_app.go:478,
+// and the same note on Change Server and Show Logs). Every earlier attempt at
+// this ended in window.go.main.App.CopyToClipboard, which on that page does not
+// exist, so each one failed silently no matter which source it read the text
+// from. That is one cause behind every desktop copy failure so far, including
+// the Go binding added specifically to solve it.
 //
-// tmux has already stashed the text in a paste buffer, and Forge exposes it at
-// api/clipboard, so that is the source to ask when the other two come back
-// empty. Resolving the URL against the current page keeps this working on any
-// mount prefix.
+// The text comes from Forge's api/clipboard, which serves tmux's paste buffer —
+// the only place the selection actually lives, since tmux owns the mouse and
+// neither the DOM nor xterm has a selection to offer. Fetched with the
+// webview's session cookies, the same way provisionBridgeKey authenticates.
 //
-// Everything happens in JS and hands the final text to Go, which writes the
-// pasteboard directly — navigator.clipboard is no use from an ExecJS callback,
-// which has neither a user gesture nor a guaranteed secure context.
+// Runs on its own goroutine: menu callbacks run on the app's lifecycle
+// goroutine and this does network I/O.
 func copyAction(app *App) func(*wails_menu.CallbackData) {
 	return func(_ *wails_menu.CallbackData) {
-		if app.ctx == nil {
-			return
-		}
-		wails_runtime.WindowExecJS(app.ctx, `
-			(function () {
-				function put(t) {
-					if (t && window.go && window.go.main && window.go.main.App) {
-						window.go.main.App.CopyToClipboard(t);
-					}
-				}
-				// 1. A real DOM selection (ordinary page text, form fields).
-				var t = '';
-				try { t = String(window.getSelection() || ''); } catch (e) {}
-				if (t) { put(t); return; }
-				// 2. xterm's own selection, which is not a DOM selection. Only
-				//    non-empty when tmux is NOT owning the mouse.
-				try {
-					if (window.__forgeTerm && window.__forgeTerm.hasSelection()) {
-						t = window.__forgeTerm.getSelection();
-					}
-				} catch (e) {}
-				if (t) { put(t); return; }
-				// 3. Whatever tmux copied. Present only on the Forge page; a
-				//    404 elsewhere just means there was nothing to copy.
-				try {
-					fetch(new URL('api/clipboard', window.location.href).toString())
-						.then(function (r) { return r.ok ? r.text() : ''; })
-						.then(put)
-						.catch(function () {});
-				} catch (e) {}
-			})();
-		`)
+		go func() {
+			text, err := app.forgeClipboard()
+			if err != nil {
+				core.Log("[gohort-desktop] menu: copy failed: %v", err)
+				return
+			}
+			if text == "" {
+				core.Log("[gohort-desktop] menu: copy found nothing to copy")
+				return
+			}
+			if msg := app.CopyToClipboard(text); msg != "" {
+				core.Log("[gohort-desktop] menu: pasteboard write failed: %s", msg)
+				return
+			}
+			core.Log("[gohort-desktop] menu: copied %d bytes", len(text))
+		}()
 	}
 }

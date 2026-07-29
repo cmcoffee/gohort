@@ -31,6 +31,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"github.com/atotto/clipboard"
 	"net/http"
 	"net/url"
@@ -587,4 +588,46 @@ func (a *App) CopyToClipboard(text string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// forgeClipboard fetches whatever tmux most recently copied, from Forge's
+// api/clipboard endpoint on the configured server.
+//
+// This exists because the desktop's copy path cannot run in the page: Forge is
+// proxy-served and Wails injects no Go bridge there, so window.go — and with it
+// CopyToClipboard — is unavailable. Go has to fetch the text itself.
+//
+// Authenticated with the webview's session cookies, the same approach
+// provisionBridgeKey uses. A non-200 (not logged in, Forge not mounted, no
+// admin rights) returns empty rather than an error: there is simply nothing to
+// copy, which is not a failure worth interrupting the user over.
+func (a *App) forgeClipboard() (string, error) {
+	base := strings.TrimRight(a.config.ServerURL(), "/")
+	if base == "" {
+		return "", fmt.Errorf("no server URL configured")
+	}
+	req, err := http.NewRequest(http.MethodGet, base+"/forge/api/clipboard", nil)
+	if err != nil {
+		return "", err
+	}
+	if a.cookies != nil {
+		if u, e := url.Parse(base); e == nil {
+			for _, c := range a.cookies.Cookies(u) {
+				req.AddCookie(c)
+			}
+		}
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
