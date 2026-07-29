@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,6 +41,49 @@ type PipelineDispatch func(ctx context.Context, agentID, input string) (string, 
 // stage for live progress. Worker stages run without tools (cheap
 // LLM-only transforms). To let workers inherit the caller's tool
 // catalog, use RunPipelineDefSyncWithTools.
+// PipelineEvent is one unit of pipeline progress. It mirrors the block
+// protocol core/ui's PipelinePanel already speaks (block → chunk → block_done,
+// plus soft status lines), so a surface can render a pipeline run as a live
+// per-stage transcript instead of a single progress line.
+//
+// This exists because the apps worth migrating onto pipelines — a debate, a
+// deep-research run — are watched while they run. Their whole UI is "see which
+// stage is working and what it produced". A pipeline that can only report
+// "stage 3 starting" cannot replace them however expressive its stages are.
+type PipelineEvent struct {
+	Kind  string // "block" | "chunk" | "block_done" | "status"
+	ID    string // stable block id within one run; empty for status
+	Type  string // block type — the stage kind, so a surface can style per kind
+	Title string // human label for the block
+	Text  string // chunk body, or the status line
+}
+
+// PipelineSink receives progress events. Must tolerate being called from
+// several goroutines: fanout branches run in parallel.
+type PipelineSink func(PipelineEvent)
+
+// statusSink adapts the plain status callback every existing caller passes.
+// Block/chunk events are dropped — a caller that only wanted status lines
+// keeps getting exactly those, so adding the richer protocol changes nothing
+// for surfaces that haven't opted in.
+func statusSink(status func(string)) PipelineSink {
+	if status == nil {
+		return nil
+	}
+	return func(ev PipelineEvent) {
+		if ev.Kind == "status" {
+			status(ev.Text)
+		}
+	}
+}
+
+// RunPipelineDefSyncWithSink is the streaming entry point: same execution as
+// RunPipelineDefSync, but progress arrives as typed events rather than
+// pre-formatted strings.
+func (T *AppCore) RunPipelineDefSyncWithSink(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
+	return T.executePipelineDefSink(ctx, def, input, dispatch, sink, inheritedTools)
+}
+
 func (T *AppCore) RunPipelineDefSync(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string)) (string, error) {
 	return T.executePipelineDef(ctx, def, input, dispatch, status, nil)
 }
@@ -78,6 +122,10 @@ func (T *AppCore) RunPipelineDefAsync(cfg PipelineConfig, def PipelineDef, input
 // name and made available to later stages via {stage:NAME} templating.
 // Returns the final stage's output.
 func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string), inheritedTools []AgentToolDef) (string, error) {
+	return T.executePipelineDefSink(ctx, def, input, dispatch, statusSink(status), inheritedTools)
+}
+
+func (T *AppCore) executePipelineDefSink(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
 	if err := def.Validate(); err != nil {
 		return "", err
 	}
@@ -85,7 +133,7 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 		app:       T,
 		input:     input,
 		dispatch:  dispatch,
-		status:    status,
+		sink:      sink,
 		inherited: inheritedTools,
 		outputs:   make(map[string]stageOutput, len(def.Stages)),
 	}
@@ -101,9 +149,42 @@ type pipelineRun struct {
 	app       *AppCore
 	input     string
 	dispatch  PipelineDispatch
-	status    func(string)
+	sink      PipelineSink
 	inherited []AgentToolDef
 	outputs   map[string]stageOutput
+	blockSeq  atomic.Int64 // block ids, unique across parallel fanout branches
+}
+
+// status emits a soft progress line. Kept as a method so the interpreter's
+// existing r.status(...) calls read unchanged.
+func (r *pipelineRun) status(text string) {
+	r.emit(PipelineEvent{Kind: "status", Text: text})
+}
+
+// emit delivers one event, if anyone is listening.
+func (r *pipelineRun) emit(ev PipelineEvent) {
+	if r == nil || r.sink == nil {
+		return
+	}
+	r.sink(ev)
+}
+
+// openBlock announces a stage and returns its id plus the closer. One block
+// per stage execution — a loop body stage opens a fresh block per pass, which
+// is what makes a loop legible in the transcript rather than one card that
+// silently rewrites itself.
+func (r *pipelineRun) openBlock(stage PipelineStage, title string) (string, func(body string)) {
+	if r == nil || r.sink == nil {
+		return "", func(string) {}
+	}
+	id := fmt.Sprintf("stage-%d", r.blockSeq.Add(1))
+	r.emit(PipelineEvent{Kind: "block", ID: id, Type: string(stage.Kind), Title: title})
+	return id, func(body string) {
+		if body != "" {
+			r.emit(PipelineEvent{Kind: "chunk", ID: id, Text: body})
+		}
+		r.emit(PipelineEvent{Kind: "block_done", ID: id})
+	}
 }
 
 // runList executes a stage list in order and returns the last stage's
@@ -129,9 +210,7 @@ func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev,
 				continue
 			}
 			if strings.TrimSpace(stage.SkipTo) == "" {
-				if r.status != nil {
-					r.status(fmt.Sprintf("%s: %s is true — ending the pipeline here", stage.Name, stage.When))
-				}
+				r.status(fmt.Sprintf("%s: %s is true — ending the pipeline here", stage.Name, stage.When))
 				return prev, true, nil
 			}
 			target := indexOfStage(stages, stage.SkipTo)
@@ -139,9 +218,7 @@ func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev,
 				// Validate proved this exists; defensive only.
 				return "", false, Error("stage " + stage.Name + ": skip_to target " + stage.SkipTo + " not found")
 			}
-			if r.status != nil {
-				r.status(fmt.Sprintf("%s: %s is true — skipping ahead to %s", stage.Name, stage.When, stage.SkipTo))
-			}
+			r.status(fmt.Sprintf("%s: %s is true — skipping ahead to %s", stage.Name, stage.When, stage.SkipTo))
 			i = target - 1 // the loop's own increment lands on the target
 			continue
 		}
@@ -225,6 +302,11 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			// resolved into the label.
 			status(stageLabel + " [" + kindLabel + "] starting")
 		}
+		// Open this stage's transcript block. A surface renders one card per
+		// stage from here; the closer below carries what the stage produced.
+		// Opened before the prompt resolves so a slow stage shows as working
+		// rather than as nothing.
+		_, closeBlock := r.openBlock(stage, stage.Name)
 		prompt := resolveStageTemplate(stage.Prompt, input, prev, outputs)
 		for k, v := range vars {
 			prompt = strings.ReplaceAll(prompt, k, v)
@@ -304,10 +386,14 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			if status != nil {
 				status(stageLabel + " failed after " + elapsed.String() + ": " + err.Error())
 			}
+			// Close the block on the way out: a surface that leaves a card
+			// spinning forever after a failed stage reads as a hung run.
+			closeBlock("failed after " + elapsed.String() + ": " + err.Error())
 			return "", fmt.Errorf("stage %q: %w", stage.Name, err)
 		}
 		out = strings.TrimSpace(out)
 		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
+		closeBlock(out)
 		if status != nil {
 			// Tail preview lets the user see WHAT the stage produced
 			// without having to wait for the whole pipeline to finish.
@@ -820,9 +906,7 @@ func (r *pipelineRun) runLoopStage(ctx context.Context, stage PipelineStage, pre
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		if r.status != nil {
-			r.status(fmt.Sprintf("%s: pass %d/%d", stage.Name, i, stage.Count))
-		}
+		r.status(fmt.Sprintf("%s: pass %d/%d", stage.Name, i, stage.Count))
 		vars := map[string]string{
 			"{iteration}":  strconv.Itoa(i),
 			"{iterations}": strconv.Itoa(stage.Count),
@@ -849,9 +933,7 @@ func (r *pipelineRun) runLoopStage(ctx context.Context, stage PipelineStage, pre
 		}
 		done, _ := src.Fields[untilField].(bool)
 		if done {
-			if r.status != nil {
-				r.status(fmt.Sprintf("%s: %s went true after pass %d — stopping early", stage.Name, stage.Until, i))
-			}
+			r.status(fmt.Sprintf("%s: %s went true after pass %d — stopping early", stage.Name, stage.Until, i))
 			break
 		}
 	}
