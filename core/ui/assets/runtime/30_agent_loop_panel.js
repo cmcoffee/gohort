@@ -2117,6 +2117,39 @@
       // Walk forward from the request through assistant bubbles
       // until the next user (or end). Each assistant bubble becomes
       // a round; tools attached to the bubble become subsections.
+      var fence = '```';
+      function emitTools(tools) {
+        (tools || []).forEach(function(t) {
+          lines.push('### Tool call: ' + (t.name || '(unnamed)'));
+          if (t.args !== undefined) {
+            var argsStr;
+            try { argsStr = JSON.stringify(t.args, null, 2); }
+            catch (_) { argsStr = String(t.args); }
+            lines.push('args:');
+            lines.push(fence + 'json');
+            lines.push(argsStr);
+            lines.push(fence);
+          }
+          if (t.output !== undefined && t.output !== null && t.output !== '') {
+            lines.push('result:');
+            lines.push(fence);
+            lines.push(String(t.output));
+            lines.push(fence);
+          }
+          lines.push('');
+        });
+      }
+      // Tool chips do not always ride the assistant bubble. When that bubble is
+      // still EMPTY as a tool_call event lands — the normal case for a tool
+      // round — toolHostFor pins the chips to the previous VISIBLE block: a
+      // plan card, an intent card, even the request bubble itself. Harvesting
+      // only assistant bubbles therefore copied prose-and-no-tools for exactly
+      // the turns where the tools were the point (observed: a tool_def create
+      // that the copy showed no trace of). So: harvest EVERY element in the
+      // walk, in DOM order, which is chronological order.
+      if (userBubble && userBubble.tools && userBubble.tools.length) {
+        emitTools(userBubble.tools);
+      }
       var roundNum = 0;
       var next = (startBubble === bubble ? bubble : startBubble.nextElementSibling);
       while (next && !next.classList.contains('ui-agent-msg-user')) {
@@ -2137,26 +2170,10 @@
             lines.push(txt);
             lines.push('');
           }
-          var fence = '```';
-          tools.forEach(function(t) {
-            lines.push('### Tool call: ' + (t.name || '(unnamed)'));
-            if (t.args !== undefined) {
-              var argsStr;
-              try { argsStr = JSON.stringify(t.args, null, 2); }
-              catch (_) { argsStr = String(t.args); }
-              lines.push('args:');
-              lines.push(fence + 'json');
-              lines.push(argsStr);
-              lines.push(fence);
-            }
-            if (t.output !== undefined && t.output !== null && t.output !== '') {
-              lines.push('result:');
-              lines.push(fence);
-              lines.push(String(t.output));
-              lines.push(fence);
-            }
-            lines.push('');
-          });
+          emitTools(tools);
+        } else if (next.tools && next.tools.length) {
+          // A non-bubble host (plan/intent card) carrying pinned tool chips.
+          emitTools(next.tools);
         }
         next = next.nextElementSibling;
       }
