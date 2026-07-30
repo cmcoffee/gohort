@@ -5975,7 +5975,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	askTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user",
-			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is. Call ask_user when: (a) a tool returned 2+ plausible matches and you'd be picking arbitrarily (\"there are 3 users named Sam — which one?\"), (b) the user must choose between meaningfully different approaches (\"PDF or HTML?\"), (c) they must supply personal info (which appliance, which file, their preference), or (d) the request is genuinely ambiguous beyond what a search could resolve. DON'T ask for things you could just look up — call the right tool instead. **DEFAULT TO `options`**: whenever the answer space is bounded — yes/no confirmations, picking a format / mode / category, choosing among matches you already found — pass the choices as `options=[\"…\",\"…\"]` so the user clicks one button instead of typing. Free-text fields are friction; click-to-choose is one tap. Only OMIT `options` when the user must type something open-ended you couldn't enumerate (a name, a description, content). If you find yourself writing \"(yes / no / maybe)\" or similar choices into the question TEXT, you should be passing them as `options` instead — text-only renders as a plain field with no buttons. For multi-step builds (Builder agent), pass `plan` to paint a visible checklist card above the question — each item flips to ✓ as later turns mark steps done.",
+			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is. Call ask_user when: (a) a tool returned 2+ plausible matches and you'd be picking arbitrarily (\"there are 3 users named Sam — which one?\"), (b) the user must choose between meaningfully different approaches (\"PDF or HTML?\"), (c) they must supply personal info (which appliance, which file, their preference), or (d) the request is genuinely ambiguous beyond what a search could resolve. DON'T ask for things you could just look up — call the right tool instead. **DEFAULT TO `options`**: whenever the answer space is bounded — yes/no confirmations, picking a format / mode / category, choosing among matches you already found — pass the choices as `options=[\"…\",\"…\"]` so the user clicks one button instead of typing. Free-text fields are friction; click-to-choose is one tap. Only OMIT `options` when the user must type something open-ended you couldn't enumerate (a name, a description, content). If you find yourself writing \"(yes / no / maybe)\" or similar choices into the question TEXT, you should be passing them as `options` instead — a question WITHOUT options renders as plain chat text (no card, no buttons), and the user answers in the normal composer. For multi-step builds (Builder agent), pass `plan` to paint a visible checklist card above the question — each item flips to ✓ as later turns mark steps done.",
 			Parameters: map[string]ToolParam{
 				"question": {
 					Type:        "string",
@@ -5983,7 +5983,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				},
 				"options": {
 					Type:        "array",
-					Description: "**STRONGLY PREFERRED — pass options whenever the answer has any natural choices.** Click-to-choose is one tap; a free-text field is friction. MUST be an array of STRINGS, each being one option label. Concrete examples: options=[\"yes\", \"edit\", \"no\"], options=[\"PDF\", \"HTML\", \"Markdown\"], options=[\"Sam Patel\", \"Sam Reyes\", \"Sam Chen\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders radios (or checkboxes when multi=true) plus a free-text fallback. PUT THE CHOICES HERE, not in the question text — writing \"(yes / no / edit)\" into the question text gives a plain field with no buttons. Keep labels short (1-4 words each), 8 max. Only OMIT options when the user must type something genuinely open-ended you couldn't enumerate.",
+					Description: "**STRONGLY PREFERRED — pass options whenever the answer has any natural choices.** Click-to-choose is one tap; a free-text field is friction. MUST be an array of STRINGS, each being one option label. Concrete examples: options=[\"yes\", \"edit\", \"no\"], options=[\"PDF\", \"HTML\", \"Markdown\"], options=[\"Sam Patel\", \"Sam Reyes\", \"Sam Chen\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders radios (or checkboxes when multi=true) plus a free-text fallback. PUT THE CHOICES HERE, not in the question text — without options there is no card at all, just the question as chat text. Keep labels short (1-4 words each), 8 max. Only OMIT options when the user must type something genuinely open-ended you couldn't enumerate.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"multi": {
@@ -7137,12 +7137,22 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		return nil, fmt.Sprintf("(form with %d question%s)", len(capturedFormSteps), plural(len(capturedFormSteps))), "", nil
 	}
 	if capturedQuest != "" {
-		// ask_user ALWAYS renders as a form card — question + (optional
-		// option group) + textarea + Submit. The renderer handles the
-		// no-options case by just showing the textarea. Always-form
-		// gives the user a consistent affordance to reply explicitly,
-		// instead of having to click into the chat input on some
-		// questions and an inline form on others.
+		// A bare question — no options — renders as PROSE, not a card. The card
+		// used to render always ("consistent affordance"), but with no buttons
+		// its only control is a textarea floating directly above the composer,
+		// which is already a textarea: two identical answer boxes for one
+		// question, and the card one gates the turn. The card earns its place
+		// exactly when it has choices to click. AwaitingUserConfirm is still
+		// set: it is still an ask, and the next turn's gated tools (agent CRUD
+		// after a Builder confirmation) depend on the flag, not the rendering.
+		if len(capturedOptions) == 0 {
+			emitCapturedAsBubble(capturedQuest)
+			if t.session != nil {
+				t.session.AwaitingUserConfirm = true
+			}
+			return nil, capturedQuest, "", nil
+		}
+		// With options, the card is the whole point: click-to-choose.
 		t.sse.Send(map[string]any{
 			"kind":     "block",
 			"type":     "orchestrate_ask",
