@@ -68,3 +68,30 @@ func TestGuardrailPromptIsStableAcrossTurns(t *testing.T) {
 		}
 	}
 }
+
+// A deployment-wide default must not quietly overrule an agent the owner
+// deliberately made non-reasoning — but an explicit per-agent setting is the more
+// specific statement and does win.
+func TestThinkEscalationPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		think       string
+		escalate    string
+		wantEnabled bool
+		why         string
+	}{
+		{"plain agent follows the deployment", "", "", true, "nothing explicit, so the default applies"},
+		{"think:on follows the deployment", "on", "", true, "reasoning already on; escalation is moot but not disabled"},
+		{"think:off is left alone", "off", "", false, "an owner said this one does not reason; a global default must not overrule it"},
+		{"explicit off wins", "on", "off", false, "the most specific setting wins"},
+		{"explicit on beats think:off", "off", "on", true, "cheap on questions, reasons once the turn proves to be work — the useful pairing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveThinkEscalation(AgentRecord{Think: tc.think, ThinkEscalate: tc.escalate})
+			enabled := got.AfterRound > 0 || got.AfterToolRounds > 0
+			if enabled != tc.wantEnabled {
+				t.Errorf("Think=%q ThinkEscalate=%q: enabled=%v want %v — %s", tc.think, tc.escalate, enabled, tc.wantEnabled, tc.why)
+			}
+		})
+	}
+}

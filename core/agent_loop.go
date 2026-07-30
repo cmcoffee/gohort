@@ -416,6 +416,10 @@ const (
 // rule, try again" doesn't land, the decline is the better answer.
 const maxGuardrailOutputCorrections = 1
 
+// DefaultThinkEscalateAfterRound is the fallback threshold for a caller that has
+// opted in explicitly while the deployment default is off.
+const DefaultThinkEscalateAfterRound = 3
+
 func init() {
 	// Operator-facing, because this trades latency and cost for answer quality on
 	// exactly the turns a person is waiting through, and where that line sits is a
@@ -426,6 +430,12 @@ func init() {
 		Label: "Think escalation: after N rounds",
 		Help:  "A turn still running after this many rounds gets a larger thinking budget for the rest of it, on the grounds that it has demonstrated it is real work rather than a question. Short turns are unaffected. 0 disables escalation entirely.",
 		Kind:  KindInt, Default: 3, Min: 0, Max: 20,
+	})
+	RegisterTunable(TunableSpec{
+		Key: "tune_think_escalate_after_tool_rounds", Category: "Limits",
+		Label: "Think escalation: after N tool rounds",
+		Help:  "A turn that has called tools this many times starts reasoning for the rest of it. Usually the better trigger: calling a tool means the turn is doing work, and the round after the call is where results get synthesised, which is where reasoning pays. A one-shot reply never trips it. 0 disables this trigger (the round-count one still applies).",
+		Kind:  KindInt, Default: 1, Min: 0, Max: 10,
 	})
 	RegisterTunable(TunableSpec{
 		Key: "tune_think_escalate_budget", Category: "Limits",
@@ -440,8 +450,9 @@ func init() {
 // the next restart.
 func ConfiguredThinkEscalation() ThinkEscalation {
 	return ThinkEscalation{
-		AfterRound: TuneInt("tune_think_escalate_after_round"),
-		Budget:     TuneInt("tune_think_escalate_budget"),
+		AfterRound:      TuneInt("tune_think_escalate_after_round"),
+		AfterToolRounds: TuneInt("tune_think_escalate_after_tool_rounds"),
+		Budget:          TuneInt("tune_think_escalate_budget"),
 	}
 }
 
@@ -451,6 +462,20 @@ type ThinkEscalation struct {
 	// AfterRound is how many rounds a turn must have completed before escalation
 	// applies. Escalation begins on the round AFTER this one. 0 = off.
 	AfterRound int
+	// AfterToolRounds escalates once the turn has completed this many rounds that
+	// actually called tools. 0 = off.
+	//
+	// A sharper signal than the round count, and it lands the reasoning in a better
+	// place. Calling a tool is the turn saying it is doing work rather than
+	// answering; the round AFTER the call is where the results get synthesised,
+	// which is exactly where reasoning earns its cost. A one-shot reply never trips
+	// it, so short conversational turns stay cheap.
+	//
+	// Waiting for a round COUNT gets this backwards for a planner: the plan is made
+	// in round one, so a threshold of three delivers thinking after the decisions
+	// that needed it.
+	AfterToolRounds int
+
 	// Budget optionally OVERRIDES the thinking allowance for escalated rounds.
 	//
 	// Zero — the normal case — means escalation lifts the suppression and nothing
@@ -465,10 +490,16 @@ type ThinkEscalation struct {
 	Budget int
 }
 
-// Engaged reports whether the rule applies on the given 1-based round. Budget is
-// not consulted: a zero budget means "use the configured one", not "off".
-func (e ThinkEscalation) Engaged(round int) bool {
-	return e.AfterRound > 0 && round > e.AfterRound
+// Engaged reports whether the rule applies, given the 1-based round and how many
+// tool-calling rounds the turn has completed. Either trigger is sufficient.
+//
+// Budget is not consulted: a zero budget means "use the configured one", not
+// "off".
+func (e ThinkEscalation) Engaged(round, toolRounds int) bool {
+	if e.AfterRound > 0 && round > e.AfterRound {
+		return true
+	}
+	return e.AfterToolRounds > 0 && toolRounds >= e.AfterToolRounds
 }
 
 // GuardrailDecision is what a guardrail check reports about one candidate.
@@ -1553,6 +1584,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 
 	var lastResp *Response
 	prevHadToolCalls := false
+	toolRounds := 0 // rounds that actually called tools — the "this turn is working" signal
 	// promiseCorrectionsTotal caps how many times we'll re-prompt the
 	// model for promising action without taking it. Two attempts is
 	// enough to nudge a stuck Qwen turn; further attempts would burn
@@ -2071,7 +2103,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// on a no-think call (Think=false with the operator's send-budget toggle
 		// on, which is the default) and returns the no-think budget without ever
 		// reading the per-call override. A budget alone would be discarded.
-		if esc := cfg.ThinkEscalation; esc.Engaged(round) {
+		if esc := cfg.ThinkEscalation; esc.Engaged(round, toolRounds) {
 			// Think(true) is the whole mechanism and is not optional: on a no-think
 			// call llamacppThinkBudget short-circuits (Think=false with the
 			// operator's send-budget toggle on, which is the default) and returns
@@ -2089,10 +2121,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 			if !thinkEscalated {
 				thinkEscalated = true
-				Debug("[agent_loop] think escalation: past round %d, remaining rounds think with %s", esc.AfterRound, budgetNote)
+				why := fmt.Sprintf("was still going after %d rounds", esc.AfterRound)
+				if esc.AfterToolRounds > 0 && toolRounds >= esc.AfterToolRounds {
+					why = "started using tools, so it is doing work rather than answering"
+				}
+				Debug("[agent_loop] think escalation (%s): remaining rounds think with %s", why, budgetNote)
 				emitDiag("think-escalated", fmt.Sprintf(
-					"This turn was still going after %d rounds, so the rest of it was allowed to think with %s. Longer turns are the ones that need it; short ones are unaffected.",
-					esc.AfterRound, budgetNote))
+					"This turn %s, so the rest of it was allowed to think with %s. Short one-shot replies are unaffected.",
+					why, budgetNote))
 			}
 		}
 		// Per-round dynamic override, appended after the static option
@@ -2417,6 +2453,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// Send result back as a plain user message.
 			history = append(history, Message{Role: "user", Content: resultText})
 			prevHadToolCalls = true
+			toolRounds++ // this turn is doing work, not answering
 
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{Round: round, ToolCalls: []ToolCall{*tc}, ToolErrors: toolErrors})
@@ -3447,6 +3484,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 		}
 		prevHadToolCalls = true
+		toolRounds++ // this turn is doing work, not answering
 
 		// Failure-streak bookkeeping. A round counts as a "failure"
 		// when EVERY tool result this round has IsError=true. Any
