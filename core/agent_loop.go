@@ -416,30 +416,59 @@ const (
 // rule, try again" doesn't land, the decline is the better answer.
 const maxGuardrailOutputCorrections = 1
 
-// Default think-escalation shape for a conversational turn. A turn still going
-// after three rounds has stopped being a question and started being a piece of
-// work; the budget is a middle setting, and the deployment's global ceiling still
-// caps it.
-const (
-	DefaultThinkEscalateAfterRound = 3
-	DefaultThinkEscalateBudget     = 2048
-)
+func init() {
+	// Operator-facing, because this trades latency and cost for answer quality on
+	// exactly the turns a person is waiting through, and where that line sits is a
+	// deployment judgment rather than something to bake into a constant. Either
+	// knob at 0 turns it off — the whole feature, not just one half.
+	RegisterTunable(TunableSpec{
+		Key: "tune_think_escalate_after_round", Category: "Limits",
+		Label: "Think escalation: after N rounds",
+		Help:  "A turn still running after this many rounds gets a larger thinking budget for the rest of it, on the grounds that it has demonstrated it is real work rather than a question. Short turns are unaffected. 0 disables escalation entirely.",
+		Kind:  KindInt, Default: 3, Min: 0, Max: 20,
+	})
+	RegisterTunable(TunableSpec{
+		Key: "tune_think_escalate_budget", Category: "Limits",
+		Label: "Think escalation: budget override",
+		Help:  "Optional. Leave at 0 and an escalated turn simply uses the thinking budget already configured for it (per-agent, else per-route, else the global default) — escalation lifts the suppression rather than inventing a second number. Set a value only to give escalated rounds MORE than the normal budget; the global ceiling still caps it either way.",
+		Kind:  KindInt, Default: 0, Min: 0, Max: 8192,
+	})
+}
+
+// ConfiguredThinkEscalation is the operator's current setting. Read per turn
+// rather than cached, so an admin change takes effect on the next turn instead of
+// the next restart.
+func ConfiguredThinkEscalation() ThinkEscalation {
+	return ThinkEscalation{
+		AfterRound: TuneInt("tune_think_escalate_after_round"),
+		Budget:     TuneInt("tune_think_escalate_budget"),
+	}
+}
 
 // ThinkEscalation is the round-count rule for raising a turn's thinking budget.
 // Both fields must be set for it to engage; either at zero leaves it off.
 type ThinkEscalation struct {
-	// AfterRound is how many rounds a turn must have completed before the larger
-	// budget applies. Escalation begins on the round AFTER this one.
+	// AfterRound is how many rounds a turn must have completed before escalation
+	// applies. Escalation begins on the round AFTER this one. 0 = off.
 	AfterRound int
-	// Budget is the thinking allowance for the remaining rounds, in tokens. Still
-	// clamped by the deployment's global ceiling, which stays a hard maximum — an
-	// escalation cannot buy more reasoning than the operator allows.
+	// Budget optionally OVERRIDES the thinking allowance for escalated rounds.
+	//
+	// Zero — the normal case — means escalation lifts the suppression and nothing
+	// more: the turn then resolves its budget the way it always would, per-agent
+	// then per-route then the deployment global. That is deliberate. The operator
+	// has already said how much thinking is allowed, in the admin UI, and a second
+	// number living here would silently disagree with it.
+	//
+	// Set it only to give escalated rounds MORE than the normal budget. Either way
+	// the global ceiling still clamps, so this cannot buy more reasoning than the
+	// deployment permits.
 	Budget int
 }
 
-// Engaged reports whether the rule applies on the given 1-based round.
+// Engaged reports whether the rule applies on the given 1-based round. Budget is
+// not consulted: a zero budget means "use the configured one", not "off".
 func (e ThinkEscalation) Engaged(round int) bool {
-	return e.AfterRound > 0 && e.Budget > 0 && round > e.AfterRound
+	return e.AfterRound > 0 && round > e.AfterRound
 }
 
 // GuardrailDecision is what a guardrail check reports about one candidate.
@@ -2042,15 +2071,29 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// on a no-think call (Think=false with the operator's send-budget toggle
 		// on, which is the default) and returns the no-think budget without ever
 		// reading the per-call override. A budget alone would be discarded.
-		if cfg.ThinkEscalation.Engaged(round) {
+		if esc := cfg.ThinkEscalation; esc.Engaged(round) {
+			// Think(true) is the whole mechanism and is not optional: on a no-think
+			// call llamacppThinkBudget short-circuits (Think=false with the
+			// operator's send-budget toggle on, which is the default) and returns
+			// the no-think budget without ever reading a per-call override, so a
+			// budget on its own would be silently discarded.
+			opts = append(opts, WithThink(true))
+			// No budget appended unless the operator asked for one: the per-agent /
+			// per-route / global options were already appended above, and leaving
+			// them alone is what makes an escalated turn use the budget the admin UI
+			// actually configured.
+			budgetNote := "the thinking budget already configured for it"
+			if esc.Budget > 0 {
+				opts = append(opts, WithThinkBudget(esc.Budget))
+				budgetNote = fmt.Sprintf("a %d-token thinking budget", esc.Budget)
+			}
 			if !thinkEscalated {
 				thinkEscalated = true
-				Debug("[agent_loop] think escalation: past round %d, remaining rounds get a %d-token budget", cfg.ThinkEscalation.AfterRound, cfg.ThinkEscalation.Budget)
+				Debug("[agent_loop] think escalation: past round %d, remaining rounds think with %s", esc.AfterRound, budgetNote)
 				emitDiag("think-escalated", fmt.Sprintf(
-					"This turn was still going after %d rounds, so the rest of it was given a larger thinking budget (%d tokens). Longer turns are the ones that need it; short ones are unaffected.",
-					cfg.ThinkEscalation.AfterRound, cfg.ThinkEscalation.Budget))
+					"This turn was still going after %d rounds, so the rest of it was allowed to think with %s. Longer turns are the ones that need it; short ones are unaffected.",
+					esc.AfterRound, budgetNote))
 			}
-			opts = append(opts, WithThink(true), WithThinkBudget(cfg.ThinkEscalation.Budget))
 		}
 		// Per-round dynamic override, appended after the static option
 		// slices so it wins (e.g. WithThink(false) on the round after a

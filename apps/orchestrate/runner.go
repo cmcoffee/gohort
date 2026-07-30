@@ -6811,11 +6811,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		// A turn a person is waiting on is exactly where a long one earns more
 		// reasoning: short answers stay cheap, and a turn that has already run
-		// several rounds has shown it is real work rather than a question.
-		ThinkEscalation: ThinkEscalation{
-			AfterRound: DefaultThinkEscalateAfterRound,
-			Budget:     DefaultThinkEscalateBudget,
-		},
+		// several rounds has shown it is real work rather than a question. Sized by
+		// the operator (Admin → Tuning → Limits); either knob at 0 turns it off.
+		ThinkEscalation: ConfiguredThinkEscalation(),
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply:       gDecline,

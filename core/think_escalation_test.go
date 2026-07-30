@@ -41,7 +41,7 @@ func TestThinkEscalatesAfterRoundCount(t *testing.T) {
 		Tools:           []AgentToolDef{noop},
 		MaxRounds:       10,
 		RouteKey:        "test.escalate",
-		ThinkEscalation: ThinkEscalation{AfterRound: 3, Budget: 2048},
+		ThinkEscalation: ThinkEscalation{AfterRound: 3, Budget: 2048}, // explicit override
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -74,13 +74,63 @@ func TestThinkEscalationOffByDefault(t *testing.T) {
 			t.Fatalf("the zero value must never engage; fired on round %d", round)
 		}
 	}
-	// A half-configured rule is also off — a budget with no threshold, or a
-	// threshold with no budget, is a mistake rather than an instruction.
-	if (ThinkEscalation{AfterRound: 3}).Engaged(9) {
-		t.Error("a threshold with no budget must not engage")
-	}
+	// A budget with no threshold is a mistake, not an instruction — there is no
+	// round at which it would ever apply.
 	if (ThinkEscalation{Budget: 2048}).Engaged(9) {
 		t.Error("a budget with no threshold must not engage")
+	}
+	// A threshold with NO budget is the normal configuration, not a broken one:
+	// it means "lift the suppression and use whatever budget is already
+	// configured", which is what makes escalation agree with the admin UI instead
+	// of carrying a second number that disagrees with it.
+	if !(ThinkEscalation{AfterRound: 3}).Engaged(9) {
+		t.Error("a threshold alone must engage — a zero budget means 'use the configured one'")
+	}
+}
+
+// The default shape: escalation lifts thinking and leaves the AMOUNT to the
+// existing per-agent / per-route / global layering, so an escalated turn thinks
+// with exactly what the admin UI configured rather than a number hidden in code.
+func TestThinkEscalationDefersToConfiguredBudget(t *testing.T) {
+	var perRound []ChatConfig
+	stub := &tierStubLLM{name: "worker", log: &[]string{}, reply: func(n int) []ToolCall {
+		if n < 6 {
+			return []ToolCall{{ID: "1", Name: "noop", Args: map[string]any{}}}
+		}
+		return nil
+	}}
+	stub.onOpts = func(o []ChatOption) { perRound = append(perRound, applyOptsFor(o)) }
+
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(stub, stub)
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
+	RegisterRouteStage(RouteStage{Key: "test.escdefer", Label: "test", Default: "worker"})
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+
+	noop := AgentToolDef{
+		Tool:    Tool{Name: "noop", Description: "does nothing", Parameters: map[string]ToolParam{}},
+		Handler: func(args map[string]any) (string, error) { return "ok", nil },
+	}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 10,
+		RouteKey:  "test.escdefer",
+		// The agent's own configured budget. Escalation must not replace it.
+		ThinkBudget:     777,
+		ThinkEscalation: ThinkEscalation{AfterRound: 3}, // no override
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if len(perRound) < 5 {
+		t.Fatalf("need several rounds; got %d", len(perRound))
+	}
+	got := perRound[3]
+	if got.Think == nil || !*got.Think {
+		t.Error("escalation must lift the suppression with Think(true)")
+	}
+	if got.ThinkBudget == nil || *got.ThinkBudget != 777 {
+		t.Errorf("an escalated round must keep the CONFIGURED budget, not a hidden default; got %v", got.ThinkBudget)
 	}
 }
 
