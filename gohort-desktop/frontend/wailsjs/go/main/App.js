@@ -10,6 +10,10 @@ export function ApproveInvoke(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApproveInvoke'](arg1, arg2, arg3);
 }
 
+export function CopyToClipboard(arg1) {
+  return window['go']['main']['App']['CopyToClipboard'](arg1);
+}
+
 export function GetAllowedTools() {
   return window['go']['main']['App']['GetAllowedTools']();
 }

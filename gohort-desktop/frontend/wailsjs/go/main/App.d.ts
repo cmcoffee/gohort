@@ -6,6 +6,8 @@ export function AddReadRoot(arg1:string):Promise<main.save_result>;
 
 export function ApproveInvoke(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
 
+export function CopyToClipboard(arg1:string):Promise<string>;
+
 export function GetAllowedTools():Promise<Array<string>>;
 
 export function GetAutoApprove():Promise<boolean>;

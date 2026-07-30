@@ -88,13 +88,14 @@ func Run(cfg Config, fromStart, verbose bool, stop <-chan struct{}) {
 	}
 	defer db.Close()
 
-	var lastRowID int64
+	var cur relayCursor
 	if !fromStart {
-		lastRowID = latestMessageRowID(dbPath)
+		cur.rowID = latestMessageRowID(dbPath)
+		cur.date = latestMessageDate(dbPath)
 	}
 	hasBody := hasColumn(db, "message", "attributedBody")
-	nfo.Log("imsg relay started. db=%s server=%s poll=%s last_rowid=%d attributedBody=%v",
-		dbPath, cfg.ServerURL, interval, lastRowID, hasBody)
+	nfo.Log("imsg relay started. db=%s server=%s poll=%s last_rowid=%d date_floor=%s attributedBody=%v",
+		dbPath, cfg.ServerURL, interval, cur.rowID, cur.dateLabel(), hasBody)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -104,10 +105,10 @@ func Run(cfg Config, fromStart, verbose bool, stop <-chan struct{}) {
 			nfo.Log("imsg relay stopped")
 			return
 		case <-ticker.C:
-			prev := lastRowID
-			lastRowID = processNewMessages(cfg, db, hasBody, lastRowID, verbose)
-			if verbose && lastRowID == prev {
-				nfo.Log("poll: no new messages (watermark=%d)", lastRowID)
+			prev := cur.rowID
+			cur = processNewMessages(cfg, db, hasBody, cur, verbose)
+			if verbose && cur.rowID == prev {
+				nfo.Log("poll: no new messages (watermark=%d)", cur.rowID)
 			}
 			deliverOutbox(cfg, db)
 		}
@@ -463,24 +464,24 @@ func runTest(dbPath string) {
 	fmt.Printf("--- max ROWID in db: %d ---\n", latestMessageRowID(dbPath))
 }
 
-// processNewMessages queries chat.db for messages newer than lastRowID,
-// POSTs them to the server, and returns the new high-water mark.
+// processNewMessages queries chat.db for messages past the cursor, POSTs them to
+// the server, and returns the advanced cursor.
 // Only advances the watermark past messages that were successfully sent.
-func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, verbose bool) int64 {
+func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, verbose bool) relayCursor {
 	var dbMax int64
 	db.QueryRow(`SELECT IFNULL(MAX(ROWID),0) FROM message`).Scan(&dbMax)
 	if verbose {
-		nfo.Log("poll: watermark=%d db_max=%d", lastRowID, dbMax)
+		nfo.Log("poll: watermark=%d db_max=%d date_floor=%s", cur.rowID, dbMax, cur.dateLabel())
 	}
 
-	rows, err := db.Query(messageTextQuery(hasBody), lastRowID)
+	rows, err := db.Query(messageTextQuery(hasBody), cur.rowID)
 	if err != nil {
 		nfo.Log("query: %v", err)
-		return lastRowID
+		return cur
 	}
 	defer rows.Close()
 
-	newMax := lastRowID
+	out := cur
 	rowCount := 0
 	for rows.Next() {
 		var rowID int64
@@ -493,6 +494,17 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 			continue
 		}
 		rowCount++
+		sent := appleTime(appleDate)
+
+		// History re-inserted by iCloud sync, not new traffic. Step the ROWID
+		// past it so it isn't rescanned every poll, and leave the date floor
+		// where it is — this row is behind it by definition.
+		if out.backfilled(sent) {
+			nfo.Log("rowid=%d: skipping backfilled history (sent %s, floor %s)",
+				rowID, sent.UTC().Format(time.RFC3339), out.dateLabel())
+			out.rowID = rowID
+			continue
+		}
 
 		// macOS Ventura+: text column is often NULL; extract from attributedBody blob.
 		if text == "" && len(body) > 0 {
@@ -515,7 +527,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 			sentROWIDMu.Unlock()
 			if skipByID {
 				nfo.Log("rowid=%d: skipping our own outgoing reply (matched by ROWID)", rowID)
-				newMax = rowID
+				out.rowID = rowID
 				continue
 			}
 			if matchesRecentSentText(chatID, handle, text) {
@@ -525,7 +537,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 				sentROWIDMu.Lock()
 				sentROWIDs[rowID] = struct{}{}
 				sentROWIDMu.Unlock()
-				newMax = rowID
+				out.rowID = rowID
 				continue
 			}
 			// User typed this themselves — clear handle so the server treats it as from_me.
@@ -542,7 +554,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 			sentROWIDMu.Lock()
 			sentROWIDs[rowID] = struct{}{}
 			sentROWIDMu.Unlock()
-			newMax = rowID
+			out.rowID = rowID
 			continue
 		}
 
@@ -551,7 +563,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 		if chatID == "" {
 			if handle == "" {
 				// No handle either — skip entirely.
-				newMax = rowID
+				out.rowID = rowID
 				continue
 			}
 			emptyRowMu.Lock()
@@ -605,7 +617,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 				emptyRowMu.Lock()
 				delete(emptyRowSeen, rowID)
 				emptyRowMu.Unlock()
-				newMax = rowID
+				out.rowID = rowID
 				continue
 			}
 		}
@@ -637,13 +649,16 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 		if err := postHook(cfg, payload); err != nil {
 			if he, ok := err.(*hookErr); ok && he.skip {
 				nfo.Log("hook rejected rowid=%d handle=%s: %v — skipping row", rowID, handle, err)
-				newMax = rowID
+				out.rowID = rowID
 				continue
 			}
 			nfo.Log("hook FAILED rowid=%d handle=%s: %v — will retry next poll", rowID, handle, err)
 			break
 		}
-		newMax = rowID
+		// Relayed. This is the only site that carries the date floor forward —
+		// the floor rises on messages actually delivered, never on skipped ones,
+		// so a skip can't push it ahead of traffic still to come.
+		out = out.advance(rowID, sent)
 		emptyRowMu.Lock()
 		delete(emptyRowSeen, rowID)
 		emptyRowMu.Unlock()
@@ -655,9 +670,9 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 		}
 	}
 	if rowCount > 0 {
-		nfo.Log("poll done: scanned %d row(s), watermark now %d", rowCount, newMax)
+		nfo.Log("poll done: scanned %d row(s), watermark now %d, date floor %s", rowCount, out.rowID, out.dateLabel())
 	}
-	return newMax
+	return out
 }
 
 // extractTextFromBody extracts the message text from an NSAttributedString binary plist blob.
@@ -1844,19 +1859,18 @@ func latestMessageRowID(dbPath string) int64 {
 	return id
 }
 
-// appleTimeToRFC3339 converts Apple's epoch (nanoseconds since 2001-01-01) to RFC3339.
-// Older macOS versions used seconds; newer use nanoseconds. We detect by magnitude.
-func appleTimeToRFC3339(appleTime int64) string {
-	appleEpoch := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
-	var t time.Time
-	if appleTime > 1e15 {
-		// nanoseconds
-		t = appleEpoch.Add(time.Duration(appleTime))
-	} else {
-		// seconds
-		t = appleEpoch.Add(time.Duration(appleTime) * time.Second)
+// latestMessageDate returns the send time of the newest message already in
+// chat.db — the relay's starting date floor. Zero when the db can't be read or
+// holds no dated rows, which reads as "no floor" and filters nothing.
+func latestMessageDate(dbPath string) time.Time {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=5000")
+	if err != nil {
+		return time.Time{}
 	}
-	return t.UTC().Format(time.RFC3339)
+	defer db.Close()
+	var d int64
+	db.QueryRow(`SELECT IFNULL(MAX(date),0) FROM message`).Scan(&d)
+	return appleTime(d)
 }
 
 // --- Config ---
