@@ -57,7 +57,7 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.json"`)
 		_ = json.NewEncoder(w).Encode(payload)
 	case "md", "markdown":
-		body := renderSessionMarkdown(agent, sess)
+		body := renderSessionMarkdownWithDiag(agent, sess, udb)
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.md"`)
 		_, _ = w.Write([]byte(body))
@@ -122,6 +122,13 @@ func buildExportPayload(agent AgentRecord, sess ChatSession) sessionExportPayloa
 // "🔧 <name>(args)" / "↳ <result>" lines under the assistant message
 // that owns them.
 func renderSessionMarkdown(agent AgentRecord, sess ChatSession) string {
+	return renderSessionMarkdownWithDiag(agent, sess, nil)
+}
+
+// renderSessionMarkdownWithDiag is renderSessionMarkdown plus the session's
+// guardrail activity, read from the diagnostics trail. udb may be nil (callers
+// that have no store, or don't want the section).
+func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Database) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# Session export — %s\n\n", sess.Title)
 	fmt.Fprintf(&b, "- **Agent:** %s (id: %s)\n", agent.Name, agent.ID)
@@ -140,6 +147,39 @@ func renderSessionMarkdown(agent AgentRecord, sess ChatSession) string {
 	}
 	fmt.Fprintf(&b, "- **Exported:** %s\n", time.Now().Format(time.RFC3339))
 	fmt.Fprintf(&b, "\n---\n\n")
+
+	// Guardrail activity, if any. Placed BEFORE the transcript so a reader meets it
+	// before the conversation it explains — a turn that ends in a flat refusal
+	// otherwise reads as the agent being unhelpful.
+	//
+	// Events only: the KIND and the time, never the diag's detail. The detail names
+	// the rule that fired, and an export is exactly the artifact that gets handed
+	// to somebody else — shipping the rules inside it would hand a reader the
+	// bisection signal the declines work to withhold. Full detail stays in the
+	// app's own ⚠ trail, which only the owner can read.
+	if udb != nil {
+		if events := guardrailExportEvents(udb, agent.ID, sess.ID); len(events) > 0 {
+			fmt.Fprintf(&b, "## Guardrail activity\n\n")
+			fmt.Fprintf(&b, "An enforced check acted %d time(s) during this session. Which rule fired is\n", len(events))
+			fmt.Fprintf(&b, "deliberately not included here; it is in the session's diagnostics in the app.\n\n")
+			for _, e := range events {
+				fmt.Fprintf(&b, "- %s — %s\n", e.At.Format(time.RFC3339), e.What)
+			}
+			b.WriteString("\n---\n\n")
+		}
+	}
+
+	// An agent that enforces guardrails may have tool output carrying the very
+	// thing its rules protect. Runtime containment covers what the agent says and
+	// does; it has never covered what its tools RETURN, because that renders only
+	// in the owner's own pane — which is fine until the transcript is exported and
+	// handed to someone else.
+	withholdResults := resolveGuardrailHooks(agent) != nil
+	if withholdResults {
+		b.WriteString("> **Tool results are withheld from this export.** This agent enforces guardrails, so\n")
+		b.WriteString("> what its tools returned is not serialized here — only the calls it made. The\n")
+		b.WriteString("> results were visible in the live session.\n\n")
+	}
 
 	planByIdx := map[int]PlanSnapshot{}
 	for _, p := range sess.Plans {
@@ -189,11 +229,21 @@ func renderSessionMarkdown(agent AgentRecord, sess ChatSession) string {
 					if tc.Err != "" {
 						fmt.Fprintf(&b, "  ↳ ERROR: %s\n", tc.Err)
 					} else if tc.Result != "" {
-						res := tc.Result
-						if len(res) > 800 {
-							res = res[:800] + "… [truncated]"
+						if withholdResults {
+							// Name and args stay — that is most of the debug value, and
+							// neither carries content. The RESULT is what a guardrail
+							// exists to keep in: an export is the one place tool output
+							// leaves the owner-only pane, and a rule that stops the agent
+							// SAYING something is not served by shipping the same content
+							// in a transcript someone can forward.
+							b.WriteString("  ↳ [result withheld — see below]\n")
+						} else {
+							res := tc.Result
+							if len(res) > 800 {
+								res = res[:800] + "… [truncated]"
+							}
+							fmt.Fprintf(&b, "  ↳ %s\n", strings.ReplaceAll(res, "\n", " "))
 						}
-						fmt.Fprintf(&b, "  ↳ %s\n", strings.ReplaceAll(res, "\n", " "))
 					}
 				}
 				b.WriteString("\n")
@@ -234,4 +284,45 @@ func slugifyAgentName(name string) string {
 		s = s[:40]
 	}
 	return s
+}
+
+// guardrailExportEvent is one guardrail action, reduced to what is safe to put in
+// an exported transcript: when, and what kind of thing happened.
+type guardrailExportEvent struct {
+	At   time.Time
+	What string
+}
+
+// guardrailExportEvents reads the session's diagnostics trail and returns the
+// guardrail entries, translated into plain descriptions.
+//
+// The translation is the point. A diag's Detail names the rule and the warden's
+// reason, which is right for the owner's own ⚠ trail and wrong for a file that
+// gets forwarded. An unrecognized kind is dropped rather than passed through,
+// because a future guardrail diag would otherwise leak its detail into exports by
+// default — the safe direction for a list like this is closed.
+func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailExportEvent {
+	if udb == nil || agentID == "" || sessionID == "" {
+		return nil
+	}
+	var list []SessionDiag
+	udb.Get(sessionDiagTable, agentID+":"+sessionID, &list)
+	label := map[string]string{
+		"guardrail-blocked":            "an action or reply was blocked",
+		"guardrail-input-blocked":      "a request was refused before the model ran",
+		"guardrail-blocked-output":     "a reply was withheld and sent back for a rewrite",
+		"guardrail-input":              "a request was flagged and the turn was steered",
+		"guardrail-halted":             "the turn was stopped; the reply was written by a separate check",
+		"guardrail-periodic-block":     "the turn was flagged mid-flight and redirected",
+		"guardrail-output-substituted": "a reply kept breaking a rule and a neutral decline was substituted",
+		"guardrail-error":              "a check could not run; the turn proceeded unchecked",
+		"guardrail-no-verdict":         "a check reached no verdict; the turn proceeded unchecked",
+	}
+	var out []guardrailExportEvent
+	for _, d := range list {
+		if what, ok := label[d.Kind]; ok {
+			out = append(out, guardrailExportEvent{At: d.At, What: what})
+		}
+	}
+	return out
 }
