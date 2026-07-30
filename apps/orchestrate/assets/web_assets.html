@@ -4136,9 +4136,17 @@
               // Hand-editing leaves the presets behind; say so rather than let
               // the slider keep showing a level that is no longer in force.
               slider.disabled = true;
-              guardrailsOff = false; // hand-picking a hook is a choice to enforce it
-            lvlDesc.style.color = 'var(--text-mute)';
-            lvlDesc.textContent = 'Custom selection — the slider no longer applies.';
+              // Unchecking the LAST box is the off switch, and it has to be said
+              // explicitly here. An empty hook set is ambiguous on its own — the
+              // resolver reads "no hooks stored" as "never configured" and applies
+              // the default set — so without this, clearing every box turned three
+              // checks back on, which is the opposite of what clearing them means.
+              var anyOn = boxes.some(function(b) { return b.cb.checked; });
+              guardrailsOff = !anyOn;
+              lvlDesc.style.color = anyOn ? 'var(--text-mute)' : 'var(--warning)';
+              lvlDesc.textContent = anyOn
+                ? 'Custom selection — the slider no longer applies.'
+                : 'No check points selected, so enforcement is OFF. Your rules stay exactly as written and nothing checks them. Tick one to turn it back on.';
             };
             boxes.push({def: hd, cb: cb});
             row.appendChild(cb);
