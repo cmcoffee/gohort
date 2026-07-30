@@ -996,3 +996,66 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
 - **Capture mistakes and gotchas via store_fact.** When you make a mistake the framework or test_args catches (forgot URL encoding, wrote a wrapper around gohort.fetch without importing it, tried urllib in the sandbox, used a library not present) — store_fact with the FAILURE PATH as a rule. When you discover an API quirk worth knowing (200 + empty body on missing key, User-Agent required, weird pagination shape) — store_fact that too. Same namespace as Builder, so the lesson surfaces in Builder's next session. NO permission needed for operational knowledge.
 
   Frame as a RULE not a story: "When using gohort.fetch, import gohort first or get NameError" (rule) — not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name) — that's a detail, not a lesson, and it bloats Builder's prompt without value.`
+
+// registerLazyAuthoringTools holds an Author-flagged agent's authoring catalog
+// out of the inline tool list and behind load_tool, returning the prompt index
+// that replaces it. Builder never comes through here — it authors constantly and
+// keeps the catalog inline.
+//
+// Measured motivation: the catalog is ~18.7k tokens, roughly a third of such an
+// agent's entire prompt, prefilled on every turn — the conversational ones
+// included. The index is about a twentieth of that.
+//
+// It CREATES the turn's deferred-authoring maps rather than borrowing the custom-
+// tool ones. That is not a style choice: setupCustomTools rebuilds
+// lazyCustomToolDefs/lazyCustomToolNames AFTER tool resolution runs, so entries
+// written there from here were first a nil-map panic and then would have been
+// silently wiped — a tool listed in the prompt that load_tool cannot find. Owned
+// maps, owned lifecycle (the v0.5.692 revert).
+func registerLazyAuthoringTools(t *chatTurn, tools []AgentToolDef) string {
+	if len(tools) == 0 {
+		return ""
+	}
+	t.deferredAuthoringDefs = make(map[string]AgentToolDef, len(tools))
+	t.deferredAuthoringLoaded = map[string]bool{}
+	var b strings.Builder
+	b.WriteString("\n\n## Authoring tools (load before use)\n")
+	b.WriteString("You can build things — agents, tools, skills, credentials, bridges, connectors. These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\", ...])` with EVERY tool you expect to need in that one call; it returns their parameters and makes them callable. Then use them normally.\n\n")
+	for _, td := range tools {
+		t.deferredAuthoringDefs[td.Tool.Name] = td
+		desc := strings.TrimSpace(td.Tool.Description)
+		if len(desc) > 200 {
+			desc = desc[:200] + "…"
+		}
+		b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
+	}
+	return b.String()
+}
+
+// loadedDeferredAuthoringTools returns the deferred tools the model has loaded
+// this turn, render-late so their schemas sit at the BOTTOM of the prompt and
+// leave the cached prefix alone. Sorted: the tool list is part of the serialized
+// request, and map-order jitter between rounds would shuffle it and bust the
+// prompt cache (see feedback_deterministic_llm_payload).
+func (t *chatTurn) loadedDeferredAuthoringTools() []AgentToolDef {
+	if len(t.deferredAuthoringLoaded) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(t.deferredAuthoringLoaded))
+	for n, on := range t.deferredAuthoringLoaded {
+		if on {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	out := make([]AgentToolDef, 0, len(names))
+	for _, n := range names {
+		td, ok := t.deferredAuthoringDefs[n]
+		if !ok {
+			continue
+		}
+		td.Tool.RenderLate = true
+		out = append(out, td)
+	}
+	return out
+}

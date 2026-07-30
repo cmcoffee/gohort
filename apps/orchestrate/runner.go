@@ -532,6 +532,22 @@ type chatTurn struct {
 	// name); it is never what decides the owner classification. Both empty on
 	// interactive owner turns and on agent-to-agent dispatch, where there is no
 	// third party to name.
+	// Deferred authoring catalog — an Author-flagged agent's authoring tools,
+	// held out of the inline catalog (which costs ~18.7k tokens on every turn)
+	// and served through load_tool instead. THESE MAPS ARE OWNED BY
+	// registerLazyAuthoringTools, which creates them; nothing else may create or
+	// replace them. That ownership is the lesson of v0.5.692's panic-and-revert:
+	// the first attempt borrowed lazyCustomToolDefs, whose lifecycle belongs to
+	// setupCustomTools — which runs LATER and rebuilds its maps, so the borrowed
+	// entries were first a nil-map write and then, guarded, would have been
+	// silently discarded.
+	deferredAuthoringDefs   map[string]AgentToolDef
+	deferredAuthoringLoaded map[string]bool
+	// authoringLazyPrompt is the "Authoring tools (load before use)" index that
+	// replaces the deferred catalog in the system prompt. Empty for Builder
+	// (inline catalog) and for agents that cannot author.
+	authoringLazyPrompt string
+
 	requesterName    string
 	requesterChannel string
 	// requesterOwnerHandle records that this channel inbound came from the OWNER's
@@ -2002,6 +2018,23 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 						already = append(already, n)
 						continue
 					}
+					// Deferred authoring tool (see registerLazyAuthoringTools).
+					// Checked before the persistent pool: these are framework tools,
+					// not pool entries, so the pool lookup would miss and report the
+					// very tool the prompt index told the model to load as unknown.
+					// Handled entirely in the turn's own maps — no elevation
+					// recording (that signal is for user pool tools, and scoping a
+					// framework tool onto an agent is meaningless).
+					if dtd, isDeferred := t.deferredAuthoringDefs[n]; isDeferred {
+						t.deferredAuthoringLoaded[n] = true
+						loaded = append(loaded, n)
+						schemas = append(schemas, map[string]any{
+							"name":        dtd.Tool.Name,
+							"description": dtd.Tool.Description,
+							"parameters":  dtd.Tool.Parameters,
+						})
+						continue
+					}
 					// On-demand from the persistent pool. Builder skips loading
 					// user-authored persistent tools at session setup ("authors
 					// fresh"), so a tool the "approved but not loaded" list shows
@@ -2177,6 +2210,11 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 			}
 			out = append(out, td)
 		}
+		// Deferred authoring tools the model loaded this turn — surfaced
+		// render-late so their schemas land at the bottom of the prompt and
+		// the cached prefix survives. Empty for every agent that isn't
+		// Author-flagged, and for Author-flagged turns that never loaded one.
+		out = append(out, t.loadedDeferredAuthoringTools()...)
 		// Source-hook dispatcher: ONE query_source tool over all exposed
 		// hooks (the agents pattern) instead of N per-hook tools — see
 		// RenderAvailableSourcesBlock for the shown "Available sources"
@@ -2492,9 +2530,21 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		} else {
 			extra = builderWorkerResearchTools(sess, t)
 		}
-		tools = append(tools, extra...)
-		for _, td := range extra {
-			toolNames = append(toolNames, td.Tool.Name)
+		// Builder authors constantly, so it carries the catalog inline. Any OTHER
+		// agent has authoring as a CAPABILITY it uses occasionally — and the
+		// catalog is ~18.7k tokens, about a third of such an agent's whole prompt,
+		// paid on every turn including the eight-word ones. For them the catalog
+		// goes behind load_tool: an index of names and one-liners in the prompt,
+		// full schemas on demand. Cost is one extra round on a turn that actually
+		// authors; saving is ~17.6k tokens on every turn that does not.
+		if forOrchestrator && !isBuilderAgent(t.agent.ID) {
+			t.authoringLazyPrompt = registerLazyAuthoringTools(t, extra)
+			Log("[orchestrate.tools] agent=%s: %d authoring tool(s) deferred behind load_tool — index only in the prompt", t.agent.ID, len(extra))
+		} else {
+			tools = append(tools, extra...)
+			for _, td := range extra {
+				toolNames = append(toolNames, td.Tool.Name)
+			}
 		}
 	}
 	// Fleet agents get the exclusive fleet-management catalog on their
@@ -6308,6 +6358,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	}
 	directCustomTools, lazyCustomPrompt := t.setupCustomTools(sess)
 	sys += lazyCustomPrompt
+	// The authoring index, when the catalog was deferred. Set during
+	// resolveWorkerTools, which ran before this point.
+	sys += t.authoringLazyPrompt
 	allTools := append(controlTools, knowTools...)
 	allTools = append(allTools, workerTools...)
 	allTools = append(allTools, directCustomTools...)
