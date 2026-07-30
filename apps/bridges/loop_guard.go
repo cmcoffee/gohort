@@ -147,16 +147,30 @@ func carriesOurTag(text string) bool {
 // prefix ("iMessage;-;+1650…" and "SMS;-;+1650…" both reduce to "+1650…"), so
 // both legs collapse onto one key.
 //
-// Groups keep their own chat id — a group is identified by the group, and
-// chatHandle deliberately returns "" for one.
+// Groups keep their own chat id — a group is identified by the group, never by
+// whichever member happened to speak, matching the rule inboundIdentities
+// already follows. chatHandle returns "" for a group, so an empty result there
+// is the group signal, and the chat id must be preferred over the sender's
+// handle on that branch.
+//
+// Getting that order backwards broke group threads outright: every guard here
+// keys on this value, so a group borrowed the identity of whoever spoke. One
+// person's 1:1 thread and every group they were in shared a single reply budget
+// and a single cooldown, so a self-thread loop — the exact incident this guard
+// exists for — tripped once and then cut routing for unrelated group
+// conversations. Worse, the owner's own message in a group arrives over SMS/MMS
+// with their handle populated, which made loopIdentity equal SelfHandle and
+// isSelfThread report TRUE for a group, dropping it to the strict 3-reply
+// budget. The echo fingerprint mismatched too: outbound to a group carries no
+// handle and keyed on the chat id, while inbound keyed on the member.
 func loopIdentity(chatID, handle string) string {
 	if h := chatHandle(chatID); h != "" {
-		return normalizeIdentity(h)
+		return normalizeIdentity(h) // 1:1 — collapse the iMessage and SMS legs onto the person
 	}
-	if h := strings.TrimSpace(handle); h != "" {
-		return normalizeIdentity(h)
+	if id := strings.TrimSpace(chatID); id != "" {
+		return normalizeIdentity(id) // group — the conversation itself is the identity
 	}
-	return normalizeIdentity(chatID)
+	return normalizeIdentity(handle)
 }
 
 // normalizeIdentity flattens the cosmetic differences between renderings of the

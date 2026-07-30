@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -121,6 +122,10 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// push-sub primitive owns their renewal + restart recovery, we supply the
 	// provider create/renew/delete via this handler.
 	RegisterPushSubHandler(graphPushKind, graphPushHandler{T})
+
+	// Migrate the transcript to per-chat tables and start the daily expiry of
+	// dedup keys + old messages. Here, not init(), because T.DB must be live.
+	T.startRetention()
 }
 
 // ensureServiceBridge is the server half of a messaging_bridge connector: make
@@ -194,6 +199,65 @@ type hookRequest struct {
 	Audios           []string `json:"audios,omitempty"` // base64 inbound audio (a voice memo / m4a); transcribed for the agent — connector must send them on this field, not images
 	MsgID            string   `json:"msg_id"`
 	RowID            int64    `json:"row_id"`
+	// Timestamp is when the message was SENT, per the connector (RFC3339). The
+	// iMessage relay has always put this on the wire; this struct simply never
+	// declared it, so encoding/json dropped it and the server had no idea when
+	// anything was actually sent — every inbound looked like it happened now.
+	// That is what let replayed history wake an agent as live conversation.
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+// inboundMsgID returns the stable per-message id for an inbound, preferring the
+// connector's own msg_id and falling back to its row_id.
+//
+// The iMessage relay has only ever sent row_id — its comment reads "DB ROWID for
+// server-side deduplication" — and this server decoded that field and then used
+// nothing but msg_id, which the relay does not send. So every iMessage inbound
+// looked id-LESS: seenMessage bails on an empty id, so the persistent dedupe
+// never ran, and everything fell through to the 2-minute content hash. That
+// fallback cannot tell a re-delivery from two people saying "ok" in the same
+// room, so ordinary messages were dropped as duplicates — worst in group rooms,
+// where short identical replies are normal. storeMessage suffered the same way,
+// minting a random id per message so nothing could be correlated afterward.
+func inboundMsgID(req hookRequest) string {
+	if id := strings.TrimSpace(req.MsgID); id != "" {
+		return id
+	}
+	if req.RowID > 0 {
+		// Namespaced: a row id is an integer from one machine's chat.db and must
+		// never collide with a connector's own opaque msg_id.
+		return "row:" + strconv.FormatInt(req.RowID, 10)
+	}
+	return ""
+}
+
+// staleInboundAge is how old a message may claim to be and still wake an agent.
+// Past this it is history being replayed, not conversation: it gets recorded so
+// nothing is lost from the thread, but it wakes nothing.
+//
+// Generous on purpose. A connector that was offline overnight, a phone that
+// syncs on wake, a poller catching up after a restart — those deliver genuinely
+// undelivered messages that deserve an answer, and the window has to clear them.
+// A replay of old history is hours-to-months behind and never comes close.
+const staleInboundAge = 6 * time.Hour
+
+// inboundIsStale reports whether an inbound claims a send time far enough in the
+// past to be replayed history, and returns the parsed time for the log.
+//
+// Fails OPEN in every uncertain case — no timestamp, an unparseable one, or a
+// clock-skewed future one all count as current. A connector that doesn't send
+// the field must keep working exactly as before, and the cost of being wrong
+// here is a dropped real message, which is worse than an extra answered one.
+func inboundIsStale(ts string) (time.Time, bool) {
+	ts = strings.TrimSpace(ts)
+	if ts == "" {
+		return time.Time{}, false
+	}
+	sent, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return sent, time.Since(sent) > staleInboundAge
 }
 
 // handleHook is the inbound HTTP entry point: authenticate the connector, decode
@@ -230,9 +294,10 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		svc = "imessage"
 	}
 	activeChatID := strings.TrimSpace(req.ChatID)
+	msgID := inboundMsgID(req)
 
 	// Dedup — a connector may re-deliver; only act once.
-	if T.seenMessage(activeChatID, req.MsgID) {
+	if T.seenMessage(activeChatID, msgID) {
 		return
 	}
 	// The id dedupe above has nothing to key on when a delivery carries no
@@ -240,7 +305,11 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// for those: a duplicate delivery is what typically starts a self-thread
 	// loop, because two identical inbounds produce two replies that arrive as
 	// two more inbounds.
-	if strings.TrimSpace(req.MsgID) == "" && seenContent(activeChatID, req.Handle, req.Text) {
+	//
+	// This is a LAST resort, not the normal path. It cannot tell a re-delivery
+	// from two people saying "ok" in the same room, so every connector that can
+	// identify its messages must do so — see inboundMsgID.
+	if msgID == "" && seenContent(activeChatID, req.Handle, req.Text) {
 		Debug("[bridges] dropping id-less duplicate inbound on %s", activeChatID)
 		return
 	}
@@ -253,11 +322,29 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// reused for the agent dispatch below — nothing between mutates the convo's
 	// members, so a second resolve would return the same value.
 	sender := T.resolveSender(activeChatID, req.Handle, req.DisplayName)
+	// Record it at the time it was SENT, not the time it reached us. storeMessage
+	// falls back to now() for a connector that supplies nothing, which is what
+	// every inbound used to get — so replayed history read as having just arrived
+	// in the thread view too, not only to the agent.
 	T.storeMessage(StoredMessage{
-		ID: firstNonEmpty(req.MsgID, newToken()[:12]), ChatID: activeChatID, Role: "user",
+		ID: firstNonEmpty(msgID, newToken()[:12]), ChatID: activeChatID, Role: "user",
 		Handle: req.Handle, DisplayName: sender,
-		Text: req.Text,
+		Text: req.Text, Timestamp: strings.TrimSpace(req.Timestamp),
 	})
+
+	// Replayed history, not conversation. A connector can re-deliver old messages
+	// for reasons the server can't see — a rebuilt local database handing back old
+	// rows under new ids, a poller re-reading a feed from the start — and the
+	// id/content dedupe only catches a repeat of something this server already
+	// saw. It has nothing to say about old traffic arriving for the FIRST time,
+	// which is exactly the case that wakes an agent to answer a months-old
+	// message. The message's own send time is the one signal that settles it, so
+	// this guard belongs here rather than in any single connector.
+	if sent, stale := inboundIsStale(req.Timestamp); stale {
+		Log("[bridges] inbound on %s was sent %s (%s ago) — recorded as history, not routed",
+			activeChatID, sent.Format(time.RFC3339), time.Since(sent).Round(time.Minute))
+		return
+	}
 
 	// Panic / disabled: recorded above (dedup), but don't route or reply —
 	// either the global switch (panic) or this specific bridge being turned off.

@@ -236,3 +236,59 @@ func TestSelfThreadBudgetIsStrict(t *testing.T) {
 		}
 	}
 }
+
+// A group is identified by the GROUP, never by whichever member spoke — the
+// same rule inboundIdentities follows. loopIdentity used to fall through to the
+// sender's handle on the group branch, which made every guard here treat a group
+// as the 1:1 thread of whoever happened to be talking.
+func TestGroupIdentityIsTheGroupNotTheSpeaker(t *testing.T) {
+	const group = "iMessage;+;chat9876543210"
+	const alice = "+15551234567"
+
+	if got := loopIdentity(group, alice); got == normalizeIdentity(alice) {
+		t.Fatal("a group must not borrow the identity of the member who spoke")
+	}
+	// Two different members speaking in one group are one conversation.
+	if loopIdentity(group, alice) != loopIdentity(group, "+15559998888") {
+		t.Error("every member of a group must resolve to the same conversation identity")
+	}
+	// And that identity is distinct from the same person's 1:1 thread.
+	if loopIdentity(group, alice) == loopIdentity("iMessage;-;"+alice, alice) {
+		t.Error("a group and a member's 1:1 thread must be separate conversations")
+	}
+}
+
+// The regression this cost us: a self-thread loop tripped the guard, and because
+// a group keyed on the speaker, the cooldown cut unrelated group conversations.
+func TestTrippedThreadDoesNotCutGroups(t *testing.T) {
+	LoopGuardReset()
+	const owner = "+16504401019"
+	const group = "iMessage;+;chat9876543210"
+
+	// Blow the strict budget on the owner's own thread.
+	for i := 0; i < selfThreadBudget; i++ {
+		noteReply("iMessage;-;"+owner, "", true)
+	}
+	if !loopTripped("iMessage;-;"+owner, "") {
+		t.Fatal("the self thread should be in cooldown")
+	}
+	// A group the owner also talks in must still route. Over SMS/MMS the owner's
+	// own group message arrives with their handle populated, which is exactly the
+	// case that used to collapse onto the tripped identity.
+	if loopTripped(group, owner) {
+		t.Error("a group must not inherit another thread's cooldown")
+	}
+}
+
+// A group must also keep the generous budget: isSelfThread compares loopIdentity
+// against SelfHandle, so a group that borrowed the owner's handle was policed at
+// the strict self-thread limit.
+func TestGroupKeepsTheGenerousBudget(t *testing.T) {
+	LoopGuardReset()
+	const group = "iMessage;+;chat9876543210"
+	for i := 0; i < selfThreadBudget+2; i++ {
+		if noteReply(group, "+16504401019", false) {
+			t.Fatalf("a group must not cut at %d replies", i+1)
+		}
+	}
+}

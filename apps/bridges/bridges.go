@@ -69,11 +69,25 @@ func (T *Bridges) Main() error {
 // --- storage tables ----------------------------------------------------------
 
 const (
-	bridgeKeysTable = "bridges_keys"      // BridgeKey records (auth + service declaration)
-	outboxTable     = "bridges_outbox"    // pending outbound items, drained by poll
-	seenMsgTable    = "bridges_seen_msgs" // inbound dedup (chatID:msgID → 1)
-	convosTable     = "bridges_convos"    // chats seen — identity + members + aliases
-	messagesTable   = "bridges_messages"  // chatID:msgID → StoredMessage (thread view)
+	bridgeKeysTable = "bridges_keys"   // BridgeKey records (auth + service declaration)
+	outboxTable     = "bridges_outbox" // pending outbound items, drained by poll
+	convosTable     = "bridges_convos" // chats seen — identity + members + aliases
+	messagesTable   = "bridges_messages"
+
+	// seenMsgTable is the inbound dedup set: chatID:msgID → RFC3339 first-seen
+	// time, so the retention sweep has an age to expire on.
+	//
+	// A SEPARATE table from the original, which stored a bare int. kvlite decodes
+	// through gob and DBase.Get routes a decode error to Critical — so reading a
+	// legacy int into a string doesn't fail softly, it takes the process down.
+	// A value type can therefore never be changed in place; the old table is
+	// dropped once and the new one only ever holds the new type.
+	seenMsgTable = "bridges_seen_msgs_v2"
+
+	// legacySeenMsgTable is the pre-timestamp dedup set (chatID:msgID → 1),
+	// dropped wholesale on first start. Its entries only answer "seen before",
+	// and the staleness guard covers the one risk losing them creates.
+	legacySeenMsgTable = "bridges_seen_msgs"
 )
 
 // ConvMember is one participant — the identity Bridges learns, the name the user
@@ -120,12 +134,8 @@ func (T *Bridges) deleteConvo(chatID string) {
 		return
 	}
 	T.DB.Unset(convosTable, chatID)
-	prefix := chatID + ":"
-	for _, k := range T.DB.Keys(messagesTable) {
-		if strings.HasPrefix(k, prefix) {
-			T.DB.Unset(messagesTable, k)
-		}
-	}
+	// One Drop instead of a walk over every message in every conversation.
+	T.DB.Drop(chatMessagesTable(chatID))
 }
 
 // isGroupChat reports whether a chat id is a group room. iMessage marks the
@@ -351,18 +361,18 @@ func (T *Bridges) storeMessage(m StoredMessage) {
 	if m.Timestamp == "" {
 		m.Timestamp = now()
 	}
-	T.DB.Set(messagesTable, m.ChatID+":"+m.ID, m)
+	T.DB.Set(chatMessagesTable(m.ChatID), m.ID, m)
 }
 
+// recentMessages returns a conversation's last n messages, oldest first (n<=0
+// for the whole thread). Reads only this chat's table — see retention.go for why
+// the transcript is stored per chat rather than in one flat table.
 func (T *Bridges) recentMessages(chatID string, n int) []StoredMessage {
 	var out []StoredMessage
-	prefix := chatID + ":"
-	for _, k := range T.DB.Keys(messagesTable) {
-		if !strings.HasPrefix(k, prefix) {
-			continue
-		}
+	table := chatMessagesTable(chatID)
+	for _, k := range T.DB.Keys(table) {
 		var m StoredMessage
-		if T.DB.Get(messagesTable, k, &m) {
+		if T.DB.Get(table, k, &m) {
 			out = append(out, m)
 		}
 	}
@@ -476,20 +486,59 @@ func (T *Bridges) validateBridgeKey(secret string) (BridgeKey, bool) {
 	// first sight) so the desktop bridge shows in the dashboard and has its own
 	// enable switch like any other bridge.
 	if user, ok := LookupDesktopKey(secret); ok && user != "" {
-		id := "desktop:" + user
-		var k BridgeKey
-		if !T.DB.Get(bridgeKeysTable, id, &k) {
-			// Name carries no service suffix — the dashboard appends "(iMessage)"
-			// when it renders the row, so "Desktop" shows as "Desktop (iMessage)".
-			k = BridgeKey{ID: id, Name: "Desktop", Owner: user, Service: "imessage", Enabled: true, Created: now()}
-		} else if k.Name == "Desktop (iMessage)" {
-			k.Name = "Desktop" // migrate the old doubled-suffix name in place
-		}
-		k.LastSeen = now()
-		T.DB.Set(bridgeKeysTable, id, k)
-		return k, true
+		return T.desktopServiceBridge(user), true
 	}
 	return BridgeKey{}, false
+}
+
+// desktopServiceBridge returns the routing record for a user's desktop
+// (iMessage) bridge, stamping LastSeen, creating it on first sight.
+//
+// ADOPTS an existing record for the service rather than always minting its own.
+// Two paths create this row — the connector approve path (ensureServiceBridge)
+// and this one — and only the former checked for an existing key first, so
+// approving the messaging connector BEFORE the daemon ever connected left the
+// dashboard with two iMessage bridges for one person: the daemon's live
+// "Desktop" row and the connector's orphan, stuck at "never connected" because
+// nothing ever authenticates with a secret that was minted server-side and shown
+// to no one. One bridge, one status, one enable switch.
+func (T *Bridges) desktopServiceBridge(user string) BridgeKey {
+	const service = "imessage"
+	id := "desktop:" + user
+	var k BridgeKey
+	switch {
+	case T.DB.Get(bridgeKeysTable, id, &k):
+		if k.Name == "Desktop (iMessage)" {
+			k.Name = "Desktop" // migrate the old doubled-suffix name in place
+		}
+		// Prune orphans left by the ordering bug above: another record for the
+		// same owner + service that has NEVER been seen. Never-seen means its
+		// secret has authenticated nothing, so nothing breaks by dropping it —
+		// and leaving it means the dashboard shows a permanent phantom
+		// disconnect. A sibling that HAS been seen is a real second connector
+		// (a second Mac with its own minted key); that one stays.
+		for _, other := range T.listBridgeKeys(user) {
+			if other.ID != id && other.Service == service && other.LastSeen == "" {
+				T.DB.Unset(bridgeKeysTable, other.ID)
+				Log("[bridges] dropped duplicate never-connected %s bridge %q for %s (superseded by the desktop bridge)", service, other.Name, user)
+			}
+		}
+	default:
+		// Adopt a record the connector path already created for this service so
+		// the two stay one row; only mint when there's nothing to adopt. Name
+		// carries no service suffix — the dashboard appends "(iMessage)" when it
+		// renders the row, so "Desktop" shows as "Desktop (iMessage)".
+		k = BridgeKey{ID: id, Name: "Desktop", Owner: user, Service: service, Enabled: true, Created: now()}
+		for _, other := range T.listBridgeKeys(user) {
+			if other.Service == service {
+				k = other
+				break
+			}
+		}
+	}
+	k.LastSeen = now()
+	T.DB.Set(bridgeKeysTable, k.ID, k)
+	return k
 }
 
 // --- Outbox: pending outbound, drained per-service by the poll ---------------
@@ -651,11 +700,14 @@ func (T *Bridges) seenMessage(chatID, msgID string) bool {
 		return false
 	}
 	key := chatID + ":" + msgID
-	var v int
-	if T.DB.Get(seenMsgTable, key, &v) {
+	var at string
+	if T.DB.Get(seenMsgTable, key, &at) {
 		return true
 	}
-	T.DB.Set(seenMsgTable, key, 1)
+	// Stamped, not flagged: the retention sweep needs an age to expire on, and a
+	// bare 1 gave it nothing to work with. Written to the v2 table — the old one
+	// holds ints, and reading one of those into this string is fatal, not a miss.
+	T.DB.Set(seenMsgTable, key, now())
 	return false
 }
 
