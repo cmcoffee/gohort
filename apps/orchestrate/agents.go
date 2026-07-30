@@ -1534,6 +1534,18 @@ func foldUncheckedIntoDenyList(db Database, user string, picked, currentDisabled
 		disabledSet[n] = true
 	}
 	for _, p := range LoadPersistentTempTools(db, user) {
+		// Scoped rows never appear in the modal's CHECKLIST — they render in the
+		// read-only Agent-Scoped Tools section — so "not picked" is not a
+		// statement the owner made about them; it is a checkbox that never
+		// existed. Folding them in anyway re-disabled such a tool on every save
+		// of the agent editor, which from the owner's side looked like "every
+		// time I enable it, it gets disabled", with nothing on screen to explain
+		// why. Scope management owns these rows; the deny list must not. Deleting
+		// (not just skipping) also self-heals records the old behavior polluted.
+		if len(p.ScopeAgents) > 0 {
+			delete(disabledSet, p.Tool.Name)
+			continue
+		}
 		if pickedSet[p.Tool.Name] {
 			delete(disabledSet, p.Tool.Name) // re-enabled
 		} else {
