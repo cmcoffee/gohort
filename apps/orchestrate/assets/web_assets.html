@@ -2700,6 +2700,12 @@
                             note += st.global
                               ? 'Global: every agent gets this tool. Turn an agent off to deny it there; turn Global off to descope it to the agents left on.'
                               : 'Agent-scoped: available only on the agents shown. Turn Global on to share it with all your agents.';
+                            // Builder's absence is a fact worth stating, not a gap: it is
+                            // the authoring surface and reads the whole pool by identity,
+                            // so scope cannot bind it and a pill for it would be a toggle
+                            // that does nothing. Left unexplained, its absence reads as a
+                            // bug ("builder is missing") — say it instead.
+                            note += ' Builder is not listed: it always sees your full tool pool (it is the authoring surface), so there is nothing here to grant or revoke. Framework seeds appear only while they hold an explicit grant — turn one off and it leaves the list.';
                             return {
                               primary: { label: 'Global (all agents)', on: !!st.global },
                               items: (st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on }; }),
