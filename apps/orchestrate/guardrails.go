@@ -756,9 +756,24 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline s
 	if directive == "" {
 		return msgs, ""
 	}
+	// Inserted immediately BEFORE the current request, never at the front.
+	//
+	// Prepending it was a cold-prefill generator. The prompt is system prompt +
+	// these messages in order, so a message at index 0 shifts every token after
+	// it: the whole conversation's KV cache misses and the turn re-prefills from
+	// nothing. On a long thread that is the single most expensive thing a turn can
+	// do, and pre_input is in the default hook set, so it happened on every
+	// flagged turn. Same lesson as moving the date stamp off the system prompt.
+	//
+	// Here, everything up to the insertion point is byte-identical to the last
+	// turn, so the cache hits and only the tail is new. It is still a system-role
+	// message and still framework authority — and landing next to the request it
+	// governs, rather than above a persona the agent can edit, reads stronger
+	// rather than weaker.
 	res := make([]Message, 0, len(msgs)+1)
+	res = append(res, msgs[:lastIdx]...)
 	res = append(res, Message{Role: "system", Content: directive})
-	res = append(res, msgs...)
+	res = append(res, msgs[lastIdx:]...)
 	return res, ""
 }
 

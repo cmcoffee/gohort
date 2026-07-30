@@ -139,10 +139,10 @@ func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 		t.Fatalf("a non-terminal rule steers, it does not refuse outright; got decline %q", decline)
 	}
 	if len(out) != len(in)+1 {
-		t.Fatalf("a flagged request must prepend one directive; got %d msgs", len(out))
+		t.Fatalf("a flagged request must inject one directive; got %d msgs", len(out))
 	}
-	if out[0].Role != "system" {
-		t.Fatalf("the directive must lead as a system message; got role %q", out[0].Role)
+	if out[len(out)-2].Role != "system" {
+		t.Fatalf("the directive must be a system message next to the request; got %+v", out)
 	}
 	// Properties, not phrasing (see the block-message test for why the wording
 	// is deliberately terse).
@@ -185,8 +185,12 @@ func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 		{Role: "user", Content: "Why?"},
 	}
 	out, _ := turn.applyInputGuardrail(convo)
-	if len(out) != len(convo)+1 || out[0].Role != "system" {
+	if len(out) != len(convo)+1 {
 		t.Fatal("a context-implicated follow-up must still get a directive")
+	}
+	// Placed just BEFORE the current request, not at index 0 — see below.
+	if out[len(out)-2].Role != "system" {
+		t.Fatalf("the directive must sit immediately before the request; got %+v", out)
 	}
 	// The warden must have SEEN the prior salary question, not just "Why?".
 	if !strings.Contains(stub.lastMsg, "How much does Rory make?") {
@@ -344,5 +348,42 @@ func TestOverlongRejectionIsRejected(t *testing.T) {
 
 	if got := turn.guardrailRejection("pre_output", "price?"); got != "" {
 		t.Errorf("an overlong reply must be discarded so the caller falls back, got %q", got)
+	}
+}
+
+// The directive must NEVER land at index 0. The prompt is the system prompt plus
+// these messages in order, so a message inserted at the front shifts every token
+// after it: the whole conversation's KV cache misses and the turn re-prefills from
+// nothing. That is the most expensive thing a long turn can do, and pre_input is
+// in the default hook set, so it happened on every flagged turn.
+//
+// Everything before the insertion point must be byte-identical to what was passed
+// in, which is what lets the cache hit.
+func TestPreInputDirectiveDoesNotInvalidateThePrefix(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"asks for pay"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "X", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_input"},
+	})
+	in := []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi there"},
+		{Role: "user", Content: "and what does the manager earn?"},
+	}
+	out, _ := turn.applyInputGuardrail(in)
+	if out[0].Role != "user" || out[0].Content != "hello" {
+		t.Fatalf("the first message must be untouched or the entire prefix re-prefills; got %+v", out[0])
+	}
+	// Every turn before the current request is unchanged, in order.
+	for i := 0; i < len(in)-1; i++ {
+		if out[i].Role != in[i].Role || out[i].Content != in[i].Content {
+			t.Fatalf("history turn %d changed (%+v -> %+v) — the cached prefix is lost", i, in[i], out[i])
+		}
+	}
+	// The directive sits between the history and the request it governs.
+	if out[len(in)-1].Role != "system" {
+		t.Fatalf("expected the directive just before the request; got %+v", out)
+	}
+	if last := out[len(out)-1]; last.Role != "user" || last.Content != "and what does the manager earn?" {
+		t.Fatalf("the request must remain last; got %+v", last)
 	}
 }
