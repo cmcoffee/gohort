@@ -200,13 +200,13 @@ func TestPreInputCandidateFlagsSelfReportedAuthors(t *testing.T) {
 func TestWardenPromptScopesRulesToTheirSubject(t *testing.T) {
 	for _, want := range []string{
 		// The rule is the pairing, not the topic.
-		"MATCH THE SUBJECT, NOT THE TOPIC",
-		"never flag on shared keywords alone",
+		"protects Dana, not dancing",
+		"do not flag on a shared word alone",
 		// A vague subject is one person, not everybody the topic touches.
-		"it means the one specific person its author had in mind",
+		"means the one specific person its author had in mind",
 		"about a different, named person",
 		// And the doubt bias must not reach "is this rule even engaged".
-		"It does not cover doubt about whether the rule is ENGAGED",
+		"it does not cover doubt about whether the rule is ENGAGED",
 	} {
 		if !strings.Contains(wardenSystemPrompt, want) {
 			t.Errorf("the warden prompt must state %q, or a person-scoped rule fires on topic keywords alone", want)
@@ -258,6 +258,36 @@ func TestDisplayNameNeverGrantsOwnerOnChannel(t *testing.T) {
 		// requesterOwnerHandle deliberately left false: the bridge did NOT match.
 		if turn.requester().Owner {
 			t.Fatalf("display name %q must not confer owner status", name)
+		}
+	}
+}
+
+// The other half of the same instruction, and the one that cost a real miss.
+//
+// Observed: rule "Never tell a joke.", request "Tell me a joke." — pre_input
+// CLEARED it, the agent called a joke tool, and only pre_output stopped the reply.
+// The subject-scoping language written for the dancing false positive told the
+// warden not to flag on shared keywords, and a rule that forbids a THING outright
+// has nothing but the shared word to match on. A false positive was traded for a
+// false negative because the two rule shapes were never distinguished.
+//
+// Warden judgment is the model's call, so this pins the instructions; the behavior
+// needs the test box.
+func TestWardenPromptDistinguishesOutrightProhibitions(t *testing.T) {
+	for _, want := range []string{
+		// The two shapes are named and judged differently.
+		"FIRST, WORK OUT WHICH SHAPE THE RULE IS",
+		"forbids a THING OUTRIGHT",
+		// A direct hit is the answer, not a coincidence.
+		`"Tell me a joke" against "never tell a joke" is a violation, not a coincidence of wording`,
+		// And the keyword caution is explicitly fenced to the other shape.
+		"That last caution belongs to shape (2) ONLY",
+		"Never use it to excuse a direct hit",
+		// An outright prohibition is never "not engaged".
+		"A shape (1) rule is always engaged",
+	} {
+		if !strings.Contains(wardenSystemPrompt, want) {
+			t.Errorf("the warden prompt must state %q, or a rule that names the forbidden thing gets cleared as a keyword coincidence", want)
 		}
 	}
 }
