@@ -6,6 +6,10 @@ html, body {
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   overscroll-behavior-y: contain;
 }
+/* Fill the screen on a short page so the background reaches the bottom.
+ * Stays on the LAYOUT viewport (100dvh), not --ui-vh: this is the document's
+ * height floor, and the scroll-past agent layout needs the document to stay
+ * taller than the viewport while the keyboard is open. See .ui-agent-grid. */
 body { min-height: 100vh; min-height: 100dvh; }
 
 #ui-root {
@@ -13,6 +17,28 @@ body { min-height: 100vh; min-height: 100dvh; }
   padding: 0.95rem;
   padding-top: calc(0.95rem + env(safe-area-inset-top, 0px));
   padding-bottom: calc(1.8rem + env(safe-area-inset-bottom, 0px));
+}
+/* A full-height panel already fills the screen and pads its own composer for
+ * the home indicator, so on a phone the root's page gutters are pure dead
+ * screen above and below it — and the bottom one is what pushed the input
+ * past the fold. Give those pixels back to the panel.
+ *
+ * EXCEPT on a page carrying .ui-agent. That layout is scroll-past: the panel
+ * auto-scrolls the chat grid to the top of the viewport on load (see
+ * scrollPastBundle in 30_agent_loop_panel.js), and the scroll can only reach
+ * documentHeight - layoutViewportHeight. iOS keeps the layout viewport at the
+ * URL-bar-collapsed height, so the gutter below the grid is the slack that
+ * absorbs the expanded bar. Remove it and the scroll lands SHORT of the grid,
+ * leaving the header + button bundle wedged on screen with the conversation
+ * shoved down. The gutter has a job there — leave it alone. */
+@media (max-width: 700px) {
+  /* Descendant match, not child: a panel may be mounted bare on the root
+   * (NoChrome section), inside a .ui-section-inner, or inside a tab panel. */
+  #ui-root:has(.ui-chat, .ui-tw, .ui-wb,
+               .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
+    padding-top: calc(0.35rem + env(safe-area-inset-top, 0px));
+    padding-bottom: 0;
+  }
 }
 
 /* --- Page header (back link + visible title) --- */
@@ -280,9 +306,13 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb {
   display: flex; gap: 0.8rem; align-items: stretch;
   /* Fill the viewport below the page header. Columns scroll internally.
-   * position:relative anchors the mobile list drawer + backdrop. */
+   * position:relative anchors the mobile list drawer + backdrop.
+   * --ui-vh / --ui-chrome-h are measured by the runtime (see syncViewport);
+   * the literals are the pre-JS fallback. */
   position: relative;
-  height: calc(100vh - 90px); min-height: 420px;
+  height: calc(100vh - 90px);
+  height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 90px));
+  min-height: 420px;
 }
 .ui-wb-col {
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
@@ -312,8 +342,8 @@ body { min-height: 100vh; min-height: 100dvh; }
 @media (max-width: 700px) {
   .ui-wb {
     flex-direction: column; gap: 0.5rem;
-    height: calc(100vh - 90px);
-    height: calc(100dvh - 90px);
+    height: calc(100dvh - 120px);
+    height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 120px));
     min-height: 0;
   }
   .ui-wb-list {
@@ -1662,13 +1692,14 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-chat {
   display: grid; grid-template-columns: 240px 1fr;
   gap: 1rem;
-  /* Reserve only the actual page-header + root padding (~70px after
-   * the header shrink) so the chat fills the rest of the viewport
-   * instead of leaving a leftover gap at the bottom. Matches the standard chat-panel
-   * / codewriter / agent-loop panels. min-height keeps mobile usable
-   * when 100dvh is unreliable mid-keyboard. */
+  /* Reserve exactly the page-header + root padding so the chat fills the rest
+   * of the viewport instead of leaving a gap at the bottom — or, worse on a
+   * phone, overflowing it and putting the composer below the fold. Both terms
+   * are measured by the runtime (syncViewport in the epilogue); the literals
+   * are the pre-JS fallback and match what this rule used to hardcode.
+   * Matches the codewriter / agent-loop panels. */
   height: calc(100vh - 70px);
-  height: calc(100dvh - 70px);
+  height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px));
   min-height: 400px;
   position: relative;
 }
@@ -1704,10 +1735,12 @@ body { min-height: 100vh; min-height: 100dvh; }
   /* Mobile layout — single column, full-screen-ish chat. */
   .ui-chat {
     grid-template-columns: 1fr;
-    /* Use dvh when available so iOS Safari's URL bar doesn't subtract
-     * twice when collapsing. Fallback to vh for older browsers. */
-    height: calc(100vh - 120px);
+    /* Same measured expression as desktop — only the pre-JS fallback differs,
+     * because the mobile header is taller (44px tap-target back link). Sizing
+     * to --ui-vh (visualViewport) also means an open keyboard shrinks the
+     * panel instead of hiding the composer behind the keys. */
     height: calc(100dvh - 120px);
+    height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 120px));
     min-height: 0;
   }
   /* Sidebar becomes a full-screen drawer that slides in over the chat —
@@ -2803,6 +2836,7 @@ body { min-height: 100vh; min-height: 100dvh; }
    * overflow-y never engages — you'd scroll the page instead of
    * the conversation. Same pattern .ui-chat uses. */
   height: calc(100vh - 70px);
+  height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px));
 }
 @media (max-width: 900px) {
   /* Mobile: chat fills the full visible viewport; the page header
@@ -2818,6 +2852,17 @@ body { min-height: 100vh; min-height: 100dvh; }
     min-height: 0;
   }
   .ui-agent-grid {
+    /* One full LAYOUT viewport — deliberately NOT --ui-vh. This layout depends
+     * on the document being taller than the viewport (see above): that surplus
+     * is what lets you scroll the header + bundle off the top and hold the chat
+     * on screen. iOS never shrinks the layout viewport for the keyboard, so
+     * sizing this to the visual viewport instead makes the document SHORTER
+     * than the layout viewport the moment the keyboard opens — the browser then
+     * clamps scrollY to 0 and yanks the chrome back into view, dragging the
+     * conversation down the page. Leave it on 100dvh; iOS scrolls the focused
+     * composer into the visible band by itself.
+     * Panels that own exactly one viewport (.ui-chat, .ui-tw, .ui-wb, the nav
+     * shell) have no scroll surplus to lose, so they DO track --ui-vh. */
     height: 100vh;
     height: 100dvh;
   }
@@ -4542,7 +4587,7 @@ body { min-height: 100vh; min-height: 100dvh; }
    * 280/340/380 because article rows are title-only with hover
    * tooltip, no body preview. */
   height: calc(100vh - 70px);
-  height: calc(100dvh - 70px);
+  height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px));
   min-height: 500px;
   position: relative;
 }
@@ -4761,8 +4806,9 @@ body { min-height: 100vh; min-height: 100dvh; }
 @media (max-width: 700px) {
   .ui-tw {
     grid-template-columns: 1fr;
-    height: calc(100vh - 120px);
     height: calc(100dvh - 120px);
+    height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 120px));
+    min-height: 0;
   }
   .ui-tw-side {
     position: absolute; top: 0; left: 0; bottom: 0; right: 0; z-index: 30;
@@ -4773,6 +4819,67 @@ body { min-height: 100vh; min-height: 100dvh; }
   }
   .ui-tw-side.open { transform: translateX(0); }
   .ui-tw-asst { max-height: 45%; }
+  /* Last row on screen once the root's bottom gutter is gone — clear the
+   * home indicator here instead. */
+  .ui-tw-asst-input-row {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* --- NavShell (app-shell: nav rail + content pane) ---
+ * The shell's layout is set inline by the nav_shell renderer so the desktop
+ * look needs no stylesheet at all. These classes exist purely so the phone
+ * layout can override it — hence the !important, which is the only way to
+ * beat an inline style. */
+@media (max-width: 700px) {
+  /* A 190px rail on a 390px-wide screen leaves the content pane unusable.
+   * Reflow the rail into a horizontal scrolling strip above the content, the
+   * standard phone pattern for a small fixed set of destinations. */
+  .ui-navshell-body { flex-direction: column !important; }
+  .ui-navshell-rail {
+    flex-direction: row !important;
+    min-width: 0 !important;
+    flex: 0 0 auto !important;
+    gap: 0.2rem !important;
+    padding: 0.35rem 0.4rem !important;
+    /* The rail's side border made sense as a column divider; as a top strip it
+     * needs a bottom rule instead, on whichever side rail_side put it. */
+    border-right: 0 !important;
+    border-left: 0 !important;
+    border-bottom: 1px solid var(--border) !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .ui-navshell-rail::-webkit-scrollbar { height: 0; }
+  /* Buttons were full-width column rows; as strip tabs they size to their
+   * label and keep a 44px tap target. */
+  .ui-navshell-item {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    min-height: var(--tap);
+    white-space: nowrap;
+    text-align: center !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* rail_side:"right" reverses the DOM order to put the rail second. In a
+   * column that would drop the strip BELOW the content; pull it back to the
+   * top so both variants read the same on a phone. */
+  .ui-navshell-body > .ui-navshell-rail { order: -1; }
+  /* The shell owns the full screen here, so its rounded card edges just clip
+   * content against the curve at the viewport boundary. */
+  .ui-navshell:not(.ui-navshell-embedded) {
+    border-left: 0; border-right: 0; border-radius: 0;
+  }
+  .ui-navshell-content { padding: 0.5rem !important; }
+  /* The shell now reaches the bottom of the screen (the root's gutter is gone),
+   * so something has to clear the home indicator. A hosted chat or agent panel
+   * pads its own composer for it — anything else gets the inset here, so the
+   * two never stack up into a double gap. */
+  .ui-navshell-content:not(:has(.ui-chat, .ui-agent)) {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
 }
 
 /* --- Card escape hatch --- */

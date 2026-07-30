@@ -44,6 +44,64 @@
     }, {passive: true});
   })();
 
+  // --- Viewport measurement --------------------------------------------
+  // Full-height panels (chat, agent, workbench, article/code editor) size
+  // themselves as "the viewport minus the page chrome". They used to subtract
+  // a hardcoded guess for that chrome — 70px on desktop, 120px on mobile —
+  // and the guess is wrong on a phone: a 44px tap-target back link plus the
+  // root's top and bottom padding plus the home-indicator safe area add up
+  // past 120px, so the page overflowed by a dozen-odd pixels and the composer
+  // sat just below the fold. That's the "input is too low" feel.
+  //
+  // Measure it instead. Two custom properties on <html>:
+  //   --ui-chrome-h  real height of the page header + #ui-root's vertical
+  //                  padding, i.e. everything a full-height panel shares the
+  //                  viewport with.
+  //   --ui-vh        the height actually visible right now. visualViewport
+  //                  tracks the on-screen keyboard, so opening it shrinks the
+  //                  panel rather than shoving the composer under the keys.
+  //
+  // The CSS keeps the old constants as var() fallbacks, so the first paint —
+  // before this runs — looks exactly like it does today.
+  function syncViewport() {
+    var st = document.documentElement.style;
+    var chrome = 0;
+    var hdr = document.querySelector('.ui-page-header');
+    if (hdr) chrome += hdr.getBoundingClientRect().height;
+    var root = document.getElementById('ui-root');
+    if (root) {
+      var cs = getComputedStyle(root);
+      chrome += (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    }
+    // Pinch-zoom also shrinks visualViewport. Sizing to it then would collapse
+    // the panel to the zoomed window, so only trust it at natural scale.
+    var vv = window.visualViewport;
+    var vh = (vv && vv.scale && vv.scale <= 1.01) ? vv.height : window.innerHeight;
+    // Round AWAY from a fit — ceil the chrome, floor the viewport — so a
+    // fractional device pixel can only ever leave a hairline gap under the
+    // panel, never overflow the page and start the scroll that put the
+    // composer out of reach in the first place.
+    st.setProperty('--ui-chrome-h', Math.ceil(chrome) + 'px');
+    st.setProperty('--ui-vh', Math.floor(vh) + 'px');
+  }
+  // Coalesce bursts (a keyboard opening fires several resizes) into one pass
+  // on the next frame — the measurement reads layout, so batching it keeps
+  // the read out of the middle of the browser's own resize work.
+  var vpPending = false;
+  function scheduleViewportSync() {
+    if (vpPending) return;
+    vpPending = true;
+    requestAnimationFrame(function() { vpPending = false; syncViewport(); });
+  }
+  window.uiSyncViewport = scheduleViewportSync;
+  (function() {
+    window.addEventListener('resize', scheduleViewportSync);
+    window.addEventListener('orientationchange', scheduleViewportSync);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', scheduleViewportSync);
+    }
+  })();
+
   // --- Page mount ------------------------------------------------------
   function mount() {
     var configEl = document.getElementById('ui-config');
@@ -393,6 +451,15 @@
       if (cfg.footer_url) footer.appendChild(el('a', {class: 'ui-footer-link', href: cfg.footer_url}, [cfg.footer]));
       else footer.appendChild(el('span', {class: 'ui-footer-link'}, [cfg.footer]));
       root.appendChild(footer);
+    }
+
+    // Chrome is in the DOM now — measure it. Re-measure whenever the header's
+    // own height changes: the nav tabs wrap to a second row on a narrow phone,
+    // and a late webfont swap shifts it by a pixel or two.
+    syncViewport();
+    var hdrEl = document.querySelector('.ui-page-header');
+    if (hdrEl && window.ResizeObserver) {
+      new ResizeObserver(scheduleViewportSync).observe(hdrEl);
     }
   }
 

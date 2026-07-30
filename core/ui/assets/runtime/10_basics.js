@@ -3760,13 +3760,16 @@
   // should be first to avoid a hidden initial mount.
   components.nav_shell = function(cfg, ctx) {
     // Fill the viewport below the page header so the content pane reaches
-    // the window bottom. min-height keeps it usable when dvh is unreliable.
+    // the window bottom. --ui-vh / --ui-chrome-h are measured by the runtime
+    // (syncViewport in the epilogue) — the literals are the pre-JS fallback.
+    // Guessing the chrome overflowed the page on a phone, where the header is
+    // taller than 70px, and pushed a hosted composer below the fold.
     // Embedded shells size to content (capped, internal scroll) since they sit
     // below a page's header + tabs; the default fills the viewport (app-shell).
     var shellHeight = cfg.embedded
-      ? 'min-height:320px;max-height:calc(100dvh - 210px)'
-      : 'height:calc(100dvh - 70px);min-height:420px';
-    var outer = el('div', {class: 'ui-navshell', style: 'display:flex;flex-direction:column;' + shellHeight + ';border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;overflow:hidden'});
+      ? 'min-height:320px;max-height:calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px) - 140px)'
+      : 'height:calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px));min-height:420px';
+    var outer = el('div', {class: 'ui-navshell' + (cfg.embedded ? ' ui-navshell-embedded' : ''), style: 'display:flex;flex-direction:column;' + shellHeight + ';border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;overflow:hidden'});
 
     // Optional top control bar — a horizontal row of controls/dials.
     if (cfg.toolbar && cfg.toolbar.length) {
@@ -3776,19 +3779,23 @@
     }
 
     var railRight = (cfg.rail_side === 'right');
-    var body = el('div', {style: 'display:flex;flex:1;min-height:0'});
+    var body = el('div', {class: 'ui-navshell-body', style: 'display:flex;flex:1;min-height:0'});
     var railBorder = railRight ? 'border-left' : 'border-right';
-    var rail = el('div', {style: 'display:flex;flex-direction:column;gap:0.25rem;padding:0.5rem;min-width:190px;' + railBorder + ':1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06));overflow:auto'});
-    var right = el('div', {style: 'flex:1;display:flex;flex-direction:column;min-width:0'});
+    // Classed so the stylesheet can reflow the rail into a horizontal strip on
+    // a phone — a 190px column leaves almost nothing for the content pane on a
+    // 390px-wide screen. The layout stays inline for desktop; the mobile rules
+    // in runtime.css override with !important because of it.
+    var rail = el('div', {class: 'ui-navshell-rail', style: 'display:flex;flex-direction:column;gap:0.25rem;padding:0.5rem;min-width:190px;' + railBorder + ':1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06));overflow:auto'});
+    var right = el('div', {class: 'ui-navshell-right', style: 'flex:1;display:flex;flex-direction:column;min-width:0'});
 
     // Pinned activity strip — always visible regardless of selection.
     if (cfg.header) {
-      var hdr = el('div', {style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3));padding:0.4rem 0.6rem;background:var(--bg-1, rgba(127,127,127,0.06));max-height:34vh;overflow:auto'});
+      var hdr = el('div', {class: 'ui-navshell-header', style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3));padding:0.4rem 0.6rem;background:var(--bg-1, rgba(127,127,127,0.06));max-height:34vh;overflow:auto'});
       mountComponent(cfg.header, hdr, ctx);
       right.appendChild(hdr);
     }
 
-    var content = el('div', {style: 'flex:1;padding:0.75rem;overflow:auto;min-width:0'});
+    var content = el('div', {class: 'ui-navshell-content', style: 'flex:1;padding:0.75rem;overflow:auto;min-width:0'});
     right.appendChild(content);
 
     var entries = [];
@@ -3808,6 +3815,7 @@
 
       var btn = el('button', {
         type: 'button',
+        class: 'ui-navshell-item',
         style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
         onclick: function() { activate(i); },
       }, [item.label || ('Item ' + (i + 1))]);
