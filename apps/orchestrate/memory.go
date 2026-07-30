@@ -65,6 +65,11 @@ func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact, not
 	if r := renderRulesPromptSection(agent.Rules); r != "" {
 		out = r + out
 	}
+	// Above Rules: these are the limits an independent check enforces, so they
+	// outrank the soft band. Prepended last so it lands at the very top.
+	if g := renderGuardrailsPromptSection(agent); g != "" {
+		out = g + out
+	}
 	// Catch-all mode-aware rewrite: when the unified surface is live, swap any
 	// hardcoded legacy tool names (in the persona prose OR the injected facts-
 	// block intro) for their collapsed-surface equivalents. No-op in legacy
