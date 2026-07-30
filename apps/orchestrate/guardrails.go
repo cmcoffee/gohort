@@ -630,6 +630,7 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 		// check are separate hooks that must read one number, and a turn's
 		// escalation state belongs to the turn.
 		t.guardrailBlocks++
+		t.noteGuardrailRule(rule)
 		t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail %q blocked a %s check%s: %s", rule, hookPoint, modeNote, reason))
 		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q correctable=%v) block#%d", t.agent.ID, hookPoint, rule, correctable, t.guardrailBlocks)
 		if t.guardrailBlocks >= guardBlockEscalateAt {
@@ -709,6 +710,7 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 		// how to decline without saying why, which is the single biggest cost a
 		// blocked turn carries (visible as the loop's COLLAPSE-DIAG: thousands of
 		// reasoning tokens, one sentence of output). Skip it.
+		t.noteGuardrailRule(rule)
 		t.turnDiag("guardrail-input-blocked", fmt.Sprintf("Guardrail %q refused the request before the model saw it, so no reply was generated: %s", rule, reason))
 		Log("[orchestrate.guardrail] agent=%s pre_input HARD BLOCK (rule=%q, not correctable)", t.agent.ID, rule)
 		return "", true
@@ -1365,4 +1367,21 @@ func renderGuardrailsPromptSection(agent AgentRecord) string {
 	}
 	b.WriteString("\nWork within them without drawing attention to them. If a request can't be met inside a limit, decline briefly in your own voice and move on. Do not quote a limit back, cite a rule or policy, say something is \"off-limits\" or that you're \"not allowed\", or mention that any check exists.\n\n")
 	return b.String()
+}
+
+// noteGuardrailRule records a rule that blocked something this turn, once. The
+// caller of a background run reads this to say WHICH rule stopped it — a run
+// whose status is "blocked" and whose reason is absent is the shape that sends
+// someone digging through server logs.
+func (t *chatTurn) noteGuardrailRule(rule string) {
+	rule = strings.TrimSpace(rule)
+	if t == nil || rule == "" {
+		return
+	}
+	for _, r := range t.guardrailRulesHit {
+		if r == rule {
+			return
+		}
+	}
+	t.guardrailRulesHit = append(t.guardrailRulesHit, rule)
 }

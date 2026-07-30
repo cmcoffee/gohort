@@ -51,10 +51,28 @@ func appendSessionDiag(udb Database, agentID, sessionID, kind, detail string) {
 // turnDiag is appendSessionDiag bound to a chatTurn — the convenient form
 // for guards firing inside a live turn. Nil-safe on every field.
 func (t *chatTurn) turnDiag(kind, detail string) {
-	if t == nil || t.session == nil {
+	if t == nil {
 		return
 	}
-	appendSessionDiag(t.udb, t.agent.ID, t.session.ID, kind, detail)
+	// A live turn writes to its own session. A BACKGROUND turn (scheduled fire,
+	// monitor wake, dispatched sub-agent) has no *session at all — it was built
+	// for the run, and the session record lives with the caller. Those turns run
+	// the same guards, so requiring a *session silently discarded every
+	// breadcrumb they left: the guardrail that stopped a 3am fire was in the
+	// server log and nowhere a user would ever look.
+	agentID, sessionID := t.agent.ID, ""
+	if t.session != nil {
+		sessionID = t.session.ID
+	} else {
+		if t.diagAgentID != "" {
+			agentID = t.diagAgentID
+		}
+		sessionID = t.diagSessionID
+	}
+	if sessionID == "" {
+		return // genuinely no trail to write to
+	}
+	appendSessionDiag(t.udb, agentID, sessionID, kind, detail)
 }
 
 // handleSessionDiag serves the trail: GET /api/session-diag?agent=&session=

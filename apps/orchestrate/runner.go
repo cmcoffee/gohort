@@ -338,6 +338,21 @@ type chatTurn struct {
 	// of the turn, not of a single interception point.
 	guardrailBlocks int
 
+	// guardrailRulesHit names each DISTINCT rule that blocked something this
+	// turn, in order. The block path already logs the rule to the server log and
+	// drops a session breadcrumb; this keeps it in reach of the CALLER, so a
+	// background run can put the rule in its ledger entry instead of finishing
+	// with a status that says nothing about why.
+	guardrailRulesHit []string
+
+	// diagAgentID / diagSessionID identify the trail for a turn that has no
+	// live *session — a scheduled fire, a monitor wake, a dispatched sub-agent.
+	// Those turns still fire guards, and without this every breadcrumb they
+	// dropped went nowhere (turnDiag returned early on the nil session). Set by
+	// the caller that owns the session record.
+	diagAgentID   string
+	diagSessionID string
+
 	// guardrails caches this turn's enforcement set (see guardrailEnforcer).
 	guardrails *guardrailEnforcement
 

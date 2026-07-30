@@ -462,6 +462,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// NeedsConfirm tool runs only if the owner pre-authorized it (AutoApproveTools),
 	// else it's refused and queued. Replaces the old blanket auto-approve that
 	// silently bypassed every tool's "Require confirm" contract on a schedule.
+	// The fire's turn has no *session (it was built for this run; the session
+	// record is p.SessionID here). Point its diagnostics at that record so
+	// guard breadcrumbs — which guardrail stopped this fire, and why — land in
+	// the same trail the rest of this function writes to, instead of being
+	// dropped for want of a session pointer.
+	subTurn.diagAgentID = p.AgentID
+	subTurn.diagSessionID = p.SessionID
+
 	gate := app.newAutonomousGate(p.Username, agent.ID, subSess)
 	// Live-activity registration: a recurring fire runs with no HTTP client
 	// attached, so without this it was invisible while running — the "Active
@@ -560,6 +568,20 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		record(RunFailed, "Recurring fire errored before it could post.", "", runErr.Error())
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-failed",
 			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v", recurringName(p), p.FireCount+1, runErr))
+		return nil
+	}
+	// A guardrail that stopped this fire is the single most useful thing the
+	// ledger can say about it, and it used to say nothing: the decline text
+	// became the reply and the run recorded OK, so a task silently doing nothing
+	// looked identical to one working fine. Named rules, human-readable status.
+	if rules := subTurn.guardrailRulesHit; len(rules) > 0 {
+		named := strings.Join(quoteAll(rules), ", ")
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d hit guardrail(s) %s", agentLabel, p.SessionID, p.FireCount+1, named)
+		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-guardrail",
+			fmt.Sprintf("Recurring task %q fire %d was stopped by guardrail %s. The fire is recorded in Activity; nothing was posted from the blocked content.", recurringName(p), p.FireCount+1, named))
+		record(RunAttention,
+			fmt.Sprintf("Stopped by guardrail %s.", named),
+			strings.TrimSpace(respContent(resp)), "")
 		return nil
 	}
 	reply := ""
@@ -987,4 +1009,23 @@ func runStepsFromToolCalls(calls []PersistedToolCall) []RunStep {
 		out = append(out, RunStep{Name: c.Name, Args: args, Result: c.Result, Err: c.Err})
 	}
 	return out
+}
+
+// quoteAll wraps each entry in quotes for a human-readable list — guardrail
+// rules are user-authored sentences, and an unquoted join of them reads as one
+// run-on rule rather than several.
+func quoteAll(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		out = append(out, fmt.Sprintf("%q", s))
+	}
+	return out
+}
+
+// respContent is the reply text, nil-safe.
+func respContent(r *Response) string {
+	if r == nil {
+		return ""
+	}
+	return r.Content
 }
