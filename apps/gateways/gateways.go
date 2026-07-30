@@ -1368,11 +1368,11 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						PostTo: "api/tools?action=disable&name={name}", HideIf: "disabled", OnlyIf: "disable_ok"},
 					{Type: "button", Label: "Enable", Method: "POST",
 						PostTo: "api/tools?action=enable&name={name}", OnlyIf: "disabled"},
-					// Builder-only exposes the tool to the Builder agent only.
-					{Type: "button", Label: "Builder-only", Method: "POST",
-						PostTo: "api/tools?action=builder_only_on&name={name}", HideIf: "builder_only", OnlyIf: "pool"},
-					{Type: "button", Label: "All agents", Method: "POST",
-						PostTo: "api/tools?action=builder_only_off&name={name}", OnlyIf: "builder_only"},
+					// Builder-only moved into the Access modal (a pill alongside the
+					// other access controls) — it is an access statement, and two
+					// surfaces for one flag is how toggles fight each other. The
+					// row badge stays as the at-a-glance state; the API actions
+					// stay for compatibility.
 					// Delete is hidden while locked — unlock first.
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "api/tools?name={name}",
@@ -1601,6 +1601,18 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 				items = append(items, pill{Key: d.AgentID, Label: d.AgentName})
 			}
 		}
+		// Builder-only rides the Access menu as the first pill — it IS an access
+		// statement ("only the authoring surface sees this"), so it belongs with
+		// the other access controls rather than as a standalone row button two
+		// clicks away from them. Builder itself is never a pill (it reads the
+		// whole pool by identity); this is the one Builder-shaped control that
+		// is real. Prepended AFTER the fallback above so the "no items → offer
+		// re-home targets" trigger keeps meaning what it says.
+		builderOnly := false
+		if row, ok := UserToolByName(db, user, name); ok {
+			builderOnly = row.Tool.BuilderOnly
+		}
+		items = append([]pill{{Key: "builder_only", Label: "Builder-only (authoring)", On: builderOnly}}, items...)
 		out["primary"] = map[string]any{"label": "All my agents", "on": found && st.Global}
 		switch {
 		case !found:
@@ -1613,6 +1625,8 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 					break
 				}
 			}
+		case builderOnly:
+			out["note"] = "Builder-only: hidden from every agent except Builder, whatever the pills below say. Turn it off to hand the tool back to the agents."
 		case st.Global:
 			out["note"] = "Shared with every one of your agents. Turn an agent off to deny it there, or turn All my agents off to keep it only on the agents left on."
 		default:
@@ -1646,6 +1660,26 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 		target := strings.TrimSpace(body.Target)
 		if target == "" {
 			http.Error(w, "missing target", http.StatusBadRequest)
+			return
+		}
+		// Builder-only is a FLAG on the tool record, not a scope transition, so
+		// it is handled before the provider. Written via the direct updater:
+		// AdminPersistTempTool deliberately preserves this flag from the stored
+		// copy (so a Builder re-persist can't clear it), which means writing it
+		// through a re-persist path would be silently stomped — the exact trap
+		// the enable toggle fell into elsewhere.
+		if target == "builder_only" {
+			row, ok := UserToolByName(db, user, name)
+			if !ok {
+				http.Error(w, "tool not found", http.StatusNotFound)
+				return
+			}
+			row.Tool.BuilderOnly = body.On
+			if !UpdatePersistentTempTool(db, user, row.Tool) {
+				http.Error(w, "update failed", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if _, found := prov.State(db, user, name); !found {
