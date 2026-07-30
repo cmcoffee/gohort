@@ -219,13 +219,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				{Value: "off", Label: "Off — force no reasoning (faster)"},
 			},
 			Help: "Top-level conversational agents default On (reasoning helps planners / synthesizers). Sub-agent specialists default Off (faster lookups). Pick Auto only when you want the framework route to decide."},
-		{Field: "think_escalate", Type: "select", Label: "Escalate on long turns",
-			Options: []ui.SelectOption{
-				{Value: "", Label: "Auto — follow the deployment setting (" + currentAutoEscalateLabel() + ")"},
-				{Value: "on", Label: "On — start reasoning once a turn does real work"},
-				{Value: "off", Label: "Off — never change mode mid-turn"},
-			},
-			Help: "A turn that calls tools, or runs long, stops being a question and starts being work — this lets it begin reasoning partway through, using the budget already configured above. Pairs with Think mode: Off + On is an agent that stays fast on questions and thinks once a turn proves it needs to. An agent whose Think mode you set to Off is left alone unless you set this to On explicitly."},
 		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
 			Placeholder: "0",
 			Help:        "Max thinking tokens per LLM call for this agent. 0 = inherit the deployment default (4096). The admin global budget is a hard ceiling — this can only LOWER the budget (snappier turns); a value above the admin ceiling is clamped. Only applies when Think is on."},
@@ -812,17 +805,4 @@ func currentAutoThinkLabel() string {
 		return "currently reasoning ON"
 	}
 	return "currently reasoning OFF"
-}
-
-func currentAutoEscalateLabel() string {
-	esc := resolveThinkEscalation(AgentRecord{})
-	switch {
-	case esc.AfterToolRounds > 0 && esc.AfterRound > 0:
-		return fmt.Sprintf("currently on — after %d tool round(s) or %d rounds", esc.AfterToolRounds, esc.AfterRound)
-	case esc.AfterToolRounds > 0:
-		return fmt.Sprintf("currently on — after %d tool round(s)", esc.AfterToolRounds)
-	case esc.AfterRound > 0:
-		return fmt.Sprintf("currently on — after %d rounds", esc.AfterRound)
-	}
-	return "currently off"
 }

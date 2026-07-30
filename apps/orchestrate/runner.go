@@ -140,31 +140,6 @@ func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, us
 // explicit Think="on"/"off" wins; empty Think falls through to the route default
 // rather than a dispatch-only override. Single source of truth: this was
 // copy-pasted at three dispatch sites.
-// resolveThinkEscalation decides whether a long turn for this agent lifts its
-// reasoning suppression, and after how many rounds.
-//
-// The deployment setting is a DEFAULT, not a mandate. An agent explicitly set to
-// Think "off" is an owner saying "this one does not reason", and a global knob
-// must not quietly overrule that — but an explicit ThinkEscalate does, because it
-// is the more specific statement about exactly this behaviour.
-func resolveThinkEscalation(agent AgentRecord) ThinkEscalation {
-	esc := ConfiguredThinkEscalation()
-	switch agent.ThinkEscalate {
-	case "off":
-		return ThinkEscalation{} // zero value: never
-	case "on":
-		if esc.AfterRound <= 0 {
-			// Deployment default is off, but this agent asked for it by name.
-			esc.AfterRound = DefaultThinkEscalateAfterRound
-		}
-		return esc
-	}
-	if agent.Think == "off" {
-		return ThinkEscalation{} // deliberate non-reasoning agent; leave it alone
-	}
-	return esc
-}
-
 func resolveDispatchThink(target AgentRecord) bool {
 	think := true
 	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
@@ -6834,11 +6809,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
-		// A turn a person is waiting on is exactly where a long one earns more
-		// reasoning: short answers stay cheap, and a turn that has already run
-		// several rounds has shown it is real work rather than a question. Sized by
-		// the operator (Admin → Tuning → Limits); either knob at 0 turns it off.
-		ThinkEscalation: resolveThinkEscalation(t.agent),
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply:       gDecline,

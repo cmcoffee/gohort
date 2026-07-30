@@ -215,21 +215,6 @@ type AgentRecord struct {
 	// Applied by passing it into AgentLoopConfig.ThinkBudget at each run path.
 	ThinkBudget int `json:"think_budget,omitempty"`
 
-	// ThinkEscalate controls whether a LONG turn for this agent lifts its
-	// reasoning suppression partway through (see core.ThinkEscalation). Tri-state
-	// like Think: "" inherits the deployment setting, "on" and "off" are explicit.
-	//
-	// It is separate from Think because the two say different things, and the most
-	// useful combination needs both: Think "off" with escalation "on" is an agent
-	// that stays cheap on questions and starts reasoning once a turn proves to be
-	// real work. Folding escalation into Think would make that inexpressible.
-	//
-	// Precedence, most specific first: an explicit setting here wins; otherwise an
-	// explicit Think "off" wins, because a deployment-wide default must not quietly
-	// overrule an agent the owner deliberately made non-reasoning; otherwise the
-	// deployment setting applies.
-	ThinkEscalate string `json:"think_escalate,omitempty"`
-
 	// LeadModel, when true, escalates THIS agent's main reasoning (the
 	// orchestrator plan + synthesis turns) to the lead/precision LLM instead
 	// of the worker-locked default. Opt-in per agent; the dispatched plan_set
