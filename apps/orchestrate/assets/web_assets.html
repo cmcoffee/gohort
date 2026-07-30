@@ -3997,6 +3997,8 @@
           // conversation at all. What the slider actually trades is how much of
           // the MIDDLE of a turn gets watched.
           var hookLevels = [
+            {name: 'Off', hooks: [], off: true,
+             desc: 'Enforcement suspended. Your rules stay exactly as written and nothing checks them \u2014 no warden calls, and live token streaming comes back. Use it to find out whether a guardrail is behind a wrong refusal, or what a turn costs without one, instead of deleting the rules to test.'},
             {name: 'Light', hooks: ['pre_input', 'pre_output'],
              desc: 'Checks the incoming request (with recent context) and the reply before it is sent.'},
             {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
@@ -4009,10 +4011,22 @@
           // Match the stored set to a level. An empty set is the DEFAULT, which
           // is deliberately the same as Balanced — so the slider shows the truth
           // for an agent that never picked hooks, instead of reading as "off".
-          function levelFromHooks() {
-            var have = (agent.guardrail_hooks || []).slice().sort().join(',');
-            if (!have) { return 1; }
+          // Tracked separately from the hook set so turning enforcement off and back
+          // on RESTORES the strictness that was chosen, rather than dropping the
+          // agent to the default.
+          var guardrailsOff = !!agent.guardrails_disabled;
+          function defaultLevelIndex() {
             for (var i = 0; i < hookLevels.length; i++) {
+              if (hookLevels[i].name === 'Balanced') { return i; }
+            }
+            return 0;
+          }
+          function levelFromHooks() {
+            if (guardrailsOff) { return 0; } // Off, whatever hooks are stored
+            var have = (agent.guardrail_hooks || []).slice().sort().join(',');
+            if (!have) { return defaultLevelIndex(); }
+            for (var i = 0; i < hookLevels.length; i++) {
+              if (hookLevels[i].off) { continue; }
               if (hookLevels[i].hooks.slice().sort().join(',') === have) { return i; }
             }
             return -1; // a combination the slider can't express
@@ -4029,7 +4043,7 @@
 
           var slider = document.createElement('input');
           slider.type = 'range'; slider.min = '0'; slider.max = String(hookLevels.length - 1);
-          slider.step = '1'; slider.value = String(custom ? 1 : level);
+          slider.step = '1'; slider.value = String(custom ? defaultLevelIndex() : level);
           slider.style.cssText = 'width:100%;max-width:320px;display:block';
           slider.disabled = custom;
 
@@ -4044,6 +4058,18 @@
 
           function applyLevel() {
             var lv = hookLevels[parseInt(slider.value, 10)];
+            guardrailsOff = !!lv.off;
+            if (lv.off) {
+              // Deliberately does NOT clear activeHooks: the stored strictness is
+              // what comes back when enforcement is switched on again, and the
+              // checkboxes below stay honest about what WOULD run.
+              var n = grules.filter(function(r) { return gBody(r).length > 0; }).length;
+              lvlDesc.textContent = 'Off — ' + lv.desc +
+                (n > 0 ? ' ' + n + ' rule' + (n === 1 ? '' : 's') + ' kept and NOT enforced.' : '');
+              lvlDesc.style.color = n > 0 ? 'var(--warning)' : 'var(--text-mute)';
+              return;
+            }
+            lvlDesc.style.color = 'var(--text-mute)';
             activeHooks = {};
             lv.hooks.forEach(function(h) { activeHooks[h] = true; });
             lvlDesc.textContent = lv.name + ' — ' + lv.desc +
@@ -4090,7 +4116,9 @@
               // Hand-editing leaves the presets behind; say so rather than let
               // the slider keep showing a level that is no longer in force.
               slider.disabled = true;
-              lvlDesc.textContent = 'Custom selection — the slider no longer applies.';
+              guardrailsOff = false; // hand-picking a hook is a choice to enforce it
+            lvlDesc.style.color = 'var(--text-mute)';
+            lvlDesc.textContent = 'Custom selection — the slider no longer applies.';
             };
             boxes.push({def: hd, cb: cb});
             row.appendChild(cb);
@@ -4289,7 +4317,7 @@
             }).then(function() {
               return fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines}),
+                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines, disabled: !!guardrailsOff}),
               });
             }).then(function(r) {
               if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); });

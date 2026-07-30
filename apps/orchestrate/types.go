@@ -664,6 +664,25 @@ type AgentRecord struct {
 	// feature is opt-in by authoring a rule). One rule per line.
 	Guardrails string `json:"guardrails,omitempty"`
 
+	// GuardrailsDisabled suspends enforcement while KEEPING the rules authored.
+	//
+	// There was no way to do this. Rules are inert only when the field is EMPTY, and
+	// clearing every hook doesn't help either — resolveGuardrailHooks reads an empty
+	// set as "use the default" and turns three hooks back on. So the only way to
+	// stop enforcement was to delete the rules, which loses the work: an owner who
+	// wants to check whether a guardrail is behind a wrong refusal, or what a turn
+	// costs without it, had to destroy what they wrote to find out.
+	//
+	// Off means OFF: no warden call at any hook, no pre_input pre-pass, and
+	// agentHasOutputGuardrail goes false so live token streaming comes back.
+	//
+	// Named for the DISABLED state so the zero value is enforcing — a field that
+	// defaulted to off would silently unprotect every agent that already has rules.
+	// Owner-only, like the rules themselves: written only by handleAgentGuardrails
+	// and preserved across the whole-record save, so no agent edit path can switch
+	// off the check it is about to be judged by.
+	GuardrailsDisabled bool `json:"guardrails_disabled,omitempty"`
+
 	// GuardrailFailClosed decides what happens when the warden cannot reach a
 	// verdict — its call errored, or its reply came back unreadable (the
 	// worker runs no-think, which some models degenerate under, producing

@@ -277,6 +277,9 @@ func guardrailRuleTexts(agent AgentRecord) []string {
 // valid values, or the pre_action default when rules exist but no hook was
 // picked.
 func resolveGuardrailHooks(agent AgentRecord) map[string]bool {
+	if agent.GuardrailsDisabled {
+		return nil // suspended by the owner; rules kept, enforcement off
+	}
 	if len(guardrailRules(agent)) == 0 {
 		return nil // inert — no rule authored
 	}
@@ -964,6 +967,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			"hooks":       agent.GuardrailHooks,
 			"fail_closed": agent.GuardrailFailClosed,
 			"declines":    agent.GuardrailDeclines,
+			"disabled":    agent.GuardrailsDisabled,
 		})
 	case http.MethodPost:
 		var body struct {
@@ -971,6 +975,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			Hooks      []string `json:"hooks"`
 			FailClosed bool     `json:"fail_closed"`
 			Declines   []string `json:"declines"`
+			Disabled   bool     `json:"disabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -987,11 +992,17 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		agent.GuardrailHooks = hooks
 		agent.GuardrailFailClosed = body.FailClosed
 		agent.GuardrailDeclines = sanitizeDeclines(body.Declines)
+		agent.GuardrailsDisabled = body.Disabled
 		if _, err := saveAgent(udb, agent); err != nil {
 			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v)", agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed)
+		// Stated at Log level, not Debug: an agent carrying rules that are not being
+		// enforced is the kind of state an owner forgets they left behind.
+		if agent.GuardrailsDisabled && len(guardrailRules(agent)) > 0 {
+			Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner — %d rule(s) kept but NOT enforced", agentID, len(guardrailRules(agent)))
+		}
+		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v)", agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed, agent.GuardrailsDisabled)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

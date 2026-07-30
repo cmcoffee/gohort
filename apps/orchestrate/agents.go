@@ -1607,6 +1607,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailHooks = existing.GuardrailHooks
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
 				req.GuardrailDeclines = existing.GuardrailDeclines
+				req.GuardrailsDisabled = existing.GuardrailsDisabled
 			}
 		} else if isSeedID(req.ID) {
 			// Seeds save as a per-user shadow. The form carries no `locked`
@@ -1618,6 +1619,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailHooks = existing.GuardrailHooks
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
 				req.GuardrailDeclines = existing.GuardrailDeclines
+				req.GuardrailsDisabled = existing.GuardrailsDisabled
 			}
 		}
 		// Tool-curation translation for seed agents. The modal sends the

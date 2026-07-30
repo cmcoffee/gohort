@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A revise pass only earns its cost when a compliant answer to the same question
@@ -206,5 +207,90 @@ func TestRejectionOutputIsLeakFiltered(t *testing.T) {
 		if declineLeaks(ok) {
 			t.Errorf("a clean refusal must pass the filter: %q", ok)
 		}
+	}
+}
+
+// Enforcement had no off switch. Rules are inert only when the FIELD is empty, and
+// clearing every hook doesn't help — resolveGuardrailHooks reads an empty set as
+// "use the default" and turns three hooks back on. So the only way to stop the
+// checks was to delete the rules, i.e. destroy the work to find out whether it was
+// causing a wrong refusal.
+func TestGuardrailsDisabledIsFullyInert(t *testing.T) {
+	agent := AgentRecord{
+		Name: "X", Guardrails: "! never mention salary\nanswer in Spanish",
+		GuardrailHooks:     []string{"pre_input", "pre_action", "pre_output", "periodic"},
+		GuardrailsDisabled: true,
+	}
+	if hooks := resolveGuardrailHooks(agent); hooks != nil {
+		t.Fatalf("disabled must resolve to no hooks at all; got %v", hooks)
+	}
+	for _, h := range []string{guardHookPreInput, guardHookPreAction, guardHookPreOutput, guardHookPeriodic} {
+		if guardrailHookActive(agent, h) {
+			t.Errorf("hook %s must be inactive while enforcement is off", h)
+		}
+	}
+	// Output guardrails are what force the runner to buffer instead of streaming
+	// tokens live, so switching off must hand streaming back.
+	if agentHasOutputGuardrail(agent) {
+		t.Error("a disabled agent must not be treated as having an output guardrail — live streaming should return")
+	}
+	// And core must take its no-guardrails fast path: a nil check hook.
+	turn := guardTurn(t, &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}, agent)
+	if turn.guardrailCheckHook() != nil {
+		t.Error("a disabled agent must yield a nil check hook (zero overhead)")
+	}
+	// The pre_input pre-pass must not run either — it is an app-layer call, so a
+	// nil check hook alone would not have stopped it.
+	in := []Message{{Role: "user", Content: "How much does the manager earn?"}}
+	out, decline := turn.applyInputGuardrail(in)
+	if decline != "" || len(out) != len(in) {
+		t.Errorf("pre_input must be inert while enforcement is off; got decline=%q msgs=%d", decline, len(out))
+	}
+}
+
+// Off keeps the rules. That is the whole point — the alternative was already
+// available by deleting them.
+func TestDisabledKeepsTheRules(t *testing.T) {
+	agent := AgentRecord{Guardrails: "! never mention salary\nanswer in Spanish", GuardrailsDisabled: true}
+	rules := guardrailRules(agent)
+	if len(rules) != 2 {
+		t.Fatalf("the rules must survive being suspended; got %d", len(rules))
+	}
+	if !rules[0].Terminal {
+		t.Error("severity must survive too")
+	}
+}
+
+// The zero value enforces. A field that defaulted to off would silently unprotect
+// every agent that already has rules.
+func TestGuardrailsEnabledByDefault(t *testing.T) {
+	agent := AgentRecord{Name: "X", Guardrails: "never mention salary"}
+	if agent.GuardrailsDisabled {
+		t.Fatal("the zero value must be ENFORCING")
+	}
+	if resolveGuardrailHooks(agent) == nil {
+		t.Fatal("an agent with rules and no explicit hooks must still enforce the default set")
+	}
+}
+
+// Owner-only, like the rules: a whole-record save must not be able to switch
+// enforcement off, or the agent's own edit paths could disable the check they are
+// about to be judged by.
+func TestDisabledSurvivesWholeRecordSave(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	rec, err := saveAgent(udb, AgentRecord{
+		Name: "X", Owner: "u", OrchestratorPrompt: "p",
+		Guardrails: "never mention salary", GuardrailsDisabled: true,
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, ok := loadAgent(udb, rec.ID)
+	if !ok {
+		t.Fatal("load failed")
+	}
+	if !got.GuardrailsDisabled {
+		t.Error("the suspended state must round-trip through storage")
 	}
 }
