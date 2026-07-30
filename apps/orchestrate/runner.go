@@ -534,6 +534,11 @@ type chatTurn struct {
 	// third party to name.
 	requesterName    string
 	requesterChannel string
+	// requesterOwnerHandle records that this channel inbound came from the OWNER's
+	// own handle, as the transport reported it and the bridge confirmed it. Set
+	// only on the channel path, where the runtime identity is synthetic and
+	// therefore says nothing about who is actually typing.
+	requesterOwnerHandle bool
 
 	// explorerMode is flipped by the enter_explorer_mode tool when
 	// AllowExplorer is set on the agent. While true, the worker

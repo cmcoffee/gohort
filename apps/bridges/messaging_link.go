@@ -103,6 +103,17 @@ func (p messagingLinkImpl) OwnerHandle(owner string) (string, bool) {
 	return h, h != ""
 }
 
+// IsOwnerHandle delegates to the bridge's own comparison so the two cannot
+// drift. Note it treats an EMPTY handle as the owner: the daemon clears the
+// handle on a native is_from_me iMessage. That is correct for this bridge and is
+// exactly the sort of detail a caller reimplementing the check would miss.
+func (p messagingLinkImpl) IsOwnerHandle(owner, handle string) bool {
+	if !p.ownsBridge(owner) {
+		return false
+	}
+	return p.T.isOwnerHandle(handle)
+}
+
 func (p messagingLinkImpl) DescribeChat(owner, chatID string) (MessagingChatSummary, bool) {
 	if !p.ownsBridge(owner) {
 		return MessagingChatSummary{}, false

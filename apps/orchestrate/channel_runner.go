@@ -283,6 +283,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			Kind:          "channel",
 			Title:         title,
 			MessageSender: in.SenderName,
+			SenderHandle:  in.Handle, // transport attribution; recognizes the owner's own phone
 			Message:       in.Text + videoNote + attachNote,
 			Images:        images,
 			Interactive:   true, // a real person is texting — no delegation marker

@@ -155,7 +155,14 @@ func (t *chatTurn) requester() requesterIdentity {
 	if t == nil {
 		return requesterIdentity{}
 	}
-	owner := t.ownerUser == "" || t.ownerUser == t.user
+	// Two ways to be the owner. Either the acting identity IS the owner's account
+	// (the web path authenticated them; a schedule fires as its author), or this is
+	// a channel inbound the bridge matched to the owner's own handle. The second
+	// exists because a channel run's identity is a synthetic per-chat user, so it
+	// cannot distinguish the owner's phone from a stranger's — and treating the
+	// owner as a stranger on their own device shut them out of their own
+	// audience-scoped rules.
+	owner := t.ownerUser == "" || t.ownerUser == t.user || t.requesterOwnerHandle
 	who := requesterIdentity{
 		Owner:   owner,
 		Name:    strings.TrimSpace(t.requesterName),

@@ -228,3 +228,36 @@ func TestWardenPromptKeepsItsContainmentClauses(t *testing.T) {
 		}
 	}
 }
+
+// The owner texting their own agent from their own phone runs as the same
+// synthetic phantom:<chatID> user a stranger does. Without recognizing the
+// handle, the owner was an "outside party" on their own device — so every
+// audience-scoped rule they wrote for themselves ("don't discuss pay with anyone
+// but me") refused them there, which is the opposite of what they asked for.
+func TestOwnerHandleOnChannelCountsAsOwner(t *testing.T) {
+	turn := channelTurn(t, &wardenStubLLM{}, AgentRecord{Name: "X", Guardrails: "r"}, "Someone")
+	if turn.requester().Owner {
+		t.Fatal("baseline: an unmatched channel handle is not the owner")
+	}
+	// The bridge matched the inbound handle to the owner's configured one.
+	turn.requesterOwnerHandle = true
+	who := turn.requester()
+	if !who.Owner {
+		t.Fatal("a channel inbound from the owner's own handle must count as the owner")
+	}
+	if who.Account == "" {
+		t.Error("the owner's account must be named so a person-scoped exception can resolve")
+	}
+}
+
+// The handle decides it, never the display name. Otherwise anyone could claim the
+// owner's carve-outs by renaming themselves.
+func TestDisplayNameNeverGrantsOwnerOnChannel(t *testing.T) {
+	for _, name := range []string{"the owner", "craig", "Owner (verified)", "+15551234567"} {
+		turn := channelTurn(t, &wardenStubLLM{}, AgentRecord{Name: "X", Guardrails: "r"}, name)
+		// requesterOwnerHandle deliberately left false: the bridge did NOT match.
+		if turn.requester().Owner {
+			t.Fatalf("display name %q must not confer owner status", name)
+		}
+	}
+}

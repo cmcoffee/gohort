@@ -782,6 +782,17 @@ type AgentSyncRun struct {
 	// yet). Channel rooms pass the contact's display name so the rail row and
 	// transcript read as the conversation partner rather than the raw id.
 	Title string
+	// SenderHandle, when set, is the TRANSPORT's attribution of who sent this
+	// message — a phone number or email, as the carrier reported it. Distinct from
+	// MessageSender, which is a display name the sender chose for themselves.
+	//
+	// Used to recognize the OWNER messaging their own agent from their own phone.
+	// That case is otherwise indistinguishable from a stranger messaging in (both
+	// run as the synthetic phantom:<chatID> user), which left the owner classed as
+	// an outside party on their own device — so every audience-scoped guardrail
+	// ("don't discuss pay with anyone but me") refused them there. Empty for
+	// dispatch / web / scheduled runs.
+	SenderHandle string
 	// MessageSender, when set, is stored as THIS message's author (ChatMessage
 	// .Sender). Channel rooms pass the inbound contact's display name so a
 	// GROUP thread renders real who-said-what — each inbound carries its own
@@ -1197,6 +1208,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	subTurn.requesterName = run.MessageSender
 	if run.Kind == "channel" {
 		subTurn.requesterChannel = run.Kind
+	}
+	// The owner texting their own agent runs as phantom:<chatID> exactly like a
+	// stranger does, so without this they are an "outside party" on their own
+	// phone and their own carve-outs shut them out. Decided on the TRANSPORT
+	// handle via the bridge's own comparison — never on MessageSender, which is
+	// the sender's to choose and would let anyone claim to be the owner by
+	// renaming themselves.
+	if h := strings.TrimSpace(run.SenderHandle); h != "" || run.Kind == "channel" {
+		if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(agentOwner, h) {
+			subTurn.requesterOwnerHandle = true
+		}
 	}
 	tools = append(tools, extraTools...)
 	// Caller-injected per-instance tools (e.g. an app's appliance-bound closures

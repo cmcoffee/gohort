@@ -63,6 +63,17 @@ type MessagingLink interface {
 	// OwnerHandle returns the device owner's own number (for self-notify), or
 	// ("", false) when it isn't configured.
 	OwnerHandle(owner string) (string, bool)
+	// IsOwnerHandle reports whether an inbound handle is the owner's own — the
+	// owner messaging their agent from their own phone rather than a third party
+	// messaging in. The transport's forms differ (a phone here, an email or
+	// chat-id form there), so the comparison is the bridge's to make; callers
+	// must not reimplement it against OwnerHandle and drift.
+	//
+	// This is CONFIGURED trust, weaker than an authenticated session: the owner
+	// declares their handle and we trust the transport's attribution of it. Fine
+	// for deciding whether the owner's own audience carve-outs apply to them;
+	// not a substitute for authentication.
+	IsOwnerHandle(owner, handle string) bool
 	// DescribeChat resolves one chat id to its summary (handle + display name)
 	// so callers can render a human-readable recipient — e.g. an approval row
 	// for a group addressed only by chat_id. ok is false when no such chat.
