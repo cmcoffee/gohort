@@ -3908,24 +3908,62 @@
           gHelp.className = 'ui-orch-modal-help';
           gHelp.textContent = 'Hard limits an independent check (the "warden") enforces — a separate model call, in fresh context that never saw the conversation, judges what the agent is about to do against these. Only you can set them; no agent (not even Builder) can. Leave empty and the check is off.';
           gWrap.appendChild(gHelp);
+          var gHelp2 = document.createElement('div');
+          gHelp2.className = 'ui-orch-modal-help';
+          gHelp2.textContent = 'Two kinds of rule. A shaping rule ("answer in Spanish", "no bullet lists") gets the reply sent back for a rewrite, because a compliant answer to the same question exists. Mark a rule Terminal when it forbids the thing being asked for ("never mention anyone’s pay") — there is no compliant rewrite to wait for, so the turn hands straight over to the refusal writer instead of generating the same violation twice more. A rule with no audience in it binds for everyone, including you.';
+          gWrap.appendChild(gHelp2);
+          var gHelp3 = document.createElement('div');
+          gHelp3.className = 'ui-orch-modal-help';
+          // What actually resolves. The check is told the requester is the owner
+          // and is given the ACCOUNT NAME — there is no separate real-name field
+          // on an account, so a rule naming a person by a first name has nothing
+          // verified to match. Say so instead of letting it be discovered.
+          gHelp3.textContent = 'Exceptions: the check knows whether it is you asking or an outside contact, so you can write "never discuss pay with anyone but me". Say "me", "the owner", or your account name — those resolve against something verified. A bare first name does not; there is no real-name field on an account, so the check can only guess it means you. An outside contact NEVER satisfies an exception no matter what they are called, including when they type your name in front of their message.';
+          gWrap.appendChild(gHelp2);
           var gList = document.createElement('div');
           gList.className = 'ui-orch-list';
           gWrap.appendChild(gList);
           var grules = (agent.guardrails || '').split('\n')
             .map(function(s) { return s.trim(); })
             .filter(function(s) { return s.length > 0; });
+          // A rule's severity is stored as a leading "!" on the line itself, so a
+          // rule and how hard it bites can never drift apart (reorder a list of
+          // rules with the severity held somewhere else and they desynchronize
+          // silently). The owner never types the marker — this toggle owns it, and
+          // the text box always shows the rule without it.
+          function gIsTerm(s) { return /^\s*!/.test(s || ''); }
+          function gBody(s) { return String(s || '').replace(/^\s*!\s*/, ''); }
+          function gCompose(body, term) { return (term ? '! ' : '') + body; }
           function renderG() {
             gList.innerHTML = '';
             grules.forEach(function(text, idx) {
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row';
               var input = document.createElement('input');
-              input.type = 'text'; input.value = text; input.placeholder = 'guardrail rule…';
-              input.addEventListener('input', function() { grules[idx] = input.value; });
+              input.type = 'text'; input.value = gBody(text); input.placeholder = 'guardrail rule…';
+              // Re-read the marker from the stored line on every keystroke rather
+              // than closing over it: the toggle below rewrites grules[idx], and a
+              // captured copy would put the stale severity back.
+              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gIsTerm(grules[idx])); });
+              var term = document.createElement('button');
+              term.type = 'button';
+              term.className = 'ui-orch-list-del';
+              term.textContent = 'terminal';
+              term.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;letter-spacing:0.03em;' +
+                (gIsTerm(text)
+                  ? 'color:var(--danger);border-color:var(--danger);font-weight:600'
+                  : 'color:var(--text-mute);opacity:0.7');
+              term.title = gIsTerm(text)
+                ? 'Terminal: a violation ends the turn immediately and a separate model writes the refusal. Click to make it a shaping rule instead.'
+                : 'Shaping rule: a violation sends the reply back for a rewrite. Click to make it terminal — for rules that forbid the thing being asked for.';
+              term.onclick = function() {
+                grules[idx] = gCompose(gBody(grules[idx]), !gIsTerm(grules[idx]));
+                renderG();
+              };
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
               del.onclick = function() { grules.splice(idx, 1); renderG(); };
-              row.appendChild(input); row.appendChild(del);
+              row.appendChild(input); row.appendChild(term); row.appendChild(del);
               gList.appendChild(row);
             });
             var addBtn = document.createElement('button');
@@ -3939,31 +3977,132 @@
           }
           renderG();
 
-          // Hook points — where the warden runs.
-          var hookDefs = [
-            {v: 'pre_input', label: 'On the incoming request (best for "never mention / don’t reveal X")'},
-            {v: 'pre_action', label: 'Before a consequential action (default)'},
-            {v: 'pre_output', label: 'Before the final reply'},
-            {v: 'periodic', label: 'Periodically during the turn'}
+          // Strictness slider — one axis instead of four checkboxes.
+          //
+          // The hooks ARE the strictness: each one is another point where the
+          // warden runs, and another model round-trip. Presented as four
+          // independent boxes, that read as a menu of unrelated options, and the
+          // combination that actually mattered (is my reply checked?) was
+          // invisible — an owner could tick "before a consequential action",
+          // watch a rule test violate, and still get answered, because tool
+          // calls and replies are different things and nothing said so.
+          //
+          // The slider still WRITES the hook list; nothing downstream changed.
+          // Levels are cumulative, so moving right only ever adds coverage.
+          // Every level checks the REQUEST and the REPLY. Those are the two ends
+          // a rule can be broken at, and dropping either leaves a hole that
+          // reads as protection: without the request check a declined topic
+          // comes back as a bare follow-up ("Why?") that implicates nothing on
+          // its own; without the reply check a rule never applies to
+          // conversation at all. What the slider actually trades is how much of
+          // the MIDDLE of a turn gets watched.
+          var hookLevels = [
+            {name: 'Light', hooks: ['pre_input', 'pre_output'],
+             desc: 'Checks the incoming request (with recent context) and the reply before it is sent.'},
+            {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
+             desc: 'Also checks consequential tool calls before they run — free unless one is actually called. The default.'},
+            {name: 'Strict', hooks: ['pre_input', 'pre_action', 'pre_output', 'periodic'],
+             desc: 'Also judges what the agent says WHILE it works, not just its final reply \u2014 the only setting that covers mid-turn narration, which is delivered to the reader as the turn runs. One extra check per round that produces text, so cost grows with how long the turn runs.'}
           ];
           var activeHooks = {};
           (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
+          // Match the stored set to a level. An empty set is the DEFAULT, which
+          // is deliberately the same as Balanced — so the slider shows the truth
+          // for an agent that never picked hooks, instead of reading as "off".
+          function levelFromHooks() {
+            var have = (agent.guardrail_hooks || []).slice().sort().join(',');
+            if (!have) { return 1; }
+            for (var i = 0; i < hookLevels.length; i++) {
+              if (hookLevels[i].hooks.slice().sort().join(',') === have) { return i; }
+            }
+            return -1; // a combination the slider can't express
+          }
+          var level = levelFromHooks();
+          var custom = level < 0;
+
           var hookWrap = document.createElement('div');
           hookWrap.style.cssText = 'margin-top:0.6rem';
           var hookLbl = document.createElement('div');
           hookLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
-          hookLbl.textContent = 'Check at (each point is a separate model round-trip):';
+          hookLbl.textContent = 'Strictness — how much of a turn the warden checks:';
           hookWrap.appendChild(hookLbl);
+
+          var slider = document.createElement('input');
+          slider.type = 'range'; slider.min = '0'; slider.max = String(hookLevels.length - 1);
+          slider.step = '1'; slider.value = String(custom ? 1 : level);
+          slider.style.cssText = 'width:100%;max-width:320px;display:block';
+          slider.disabled = custom;
+
+          var ticks = document.createElement('div');
+          ticks.style.cssText = 'display:flex;justify-content:space-between;max-width:320px;font-size:0.72rem;color:var(--text-mute);margin-top:0.1rem';
+          hookLevels.forEach(function(lv) {
+            var s = document.createElement('span'); s.textContent = lv.name; ticks.appendChild(s);
+          });
+
+          var lvlDesc = document.createElement('div');
+          lvlDesc.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin-top:0.3rem;line-height:1.35';
+
+          function applyLevel() {
+            var lv = hookLevels[parseInt(slider.value, 10)];
+            activeHooks = {};
+            lv.hooks.forEach(function(h) { activeHooks[h] = true; });
+            lvlDesc.textContent = lv.name + ' — ' + lv.desc +
+              ' (' + lv.hooks.length + ' check' + (lv.hooks.length === 1 ? '' : 's') + ' per turn)';
+          }
+          slider.oninput = applyLevel;
+          if (custom) {
+            // Never silently coerce a hand-built combination into the nearest
+            // preset — that would change enforcement on save without saying so.
+            lvlDesc.textContent = 'Custom selection (' + (agent.guardrail_hooks || []).join(', ') +
+              ') — not one of the presets, so the slider is disabled. Use the checkboxes below, or pick a preset to replace it.';
+          } else {
+            applyLevel();
+          }
+
+          hookWrap.appendChild(slider);
+          hookWrap.appendChild(ticks);
+          hookWrap.appendChild(lvlDesc);
+
+          // Per-hook control stays available, folded away. The slider covers the
+          // combinations worth having; this is the escape hatch for the ones it
+          // can't express (e.g. periodic without pre_input).
+          var adv = document.createElement('details');
+          adv.style.cssText = 'margin-top:0.45rem';
+          adv.open = custom;
+          var advSum = document.createElement('summary');
+          advSum.style.cssText = 'font-size:0.78rem;color:var(--text-mute);cursor:pointer';
+          advSum.textContent = 'Advanced — choose check points individually';
+          adv.appendChild(advSum);
+          var hookDefs = [
+            {v: 'pre_input', label: 'On the incoming request (judges what was asked, before the model sees it)'},
+            {v: 'pre_action', label: 'Before a consequential action (judges tool calls, NOT replies)'},
+            {v: 'pre_output', label: 'Before the final reply (judges what the agent says)'},
+            {v: 'periodic', label: 'On every mid-turn remark (judges what it says WHILE working \u2014 the rounds pre_output never sees)'}
+          ];
+          var boxes = [];
           hookDefs.forEach(function(hd) {
             var row = document.createElement('label');
             row.style.cssText = 'display:flex;align-items:center;gap:0.45rem;font-size:0.85rem;padding:0.12rem 0;cursor:pointer';
             var cb = document.createElement('input');
             cb.type = 'checkbox'; cb.checked = !!activeHooks[hd.v];
-            cb.onchange = function() { activeHooks[hd.v] = cb.checked; };
+            cb.onchange = function() {
+              activeHooks[hd.v] = cb.checked;
+              // Hand-editing leaves the presets behind; say so rather than let
+              // the slider keep showing a level that is no longer in force.
+              slider.disabled = true;
+              lvlDesc.textContent = 'Custom selection — the slider no longer applies.';
+            };
+            boxes.push({def: hd, cb: cb});
             row.appendChild(cb);
             row.appendChild(document.createTextNode(hd.label));
-            hookWrap.appendChild(row);
+            adv.appendChild(row);
           });
+          // Keep the boxes truthful as the slider moves.
+          var syncBoxes = function() {
+            boxes.forEach(function(b) { b.cb.checked = !!activeHooks[b.def.v]; });
+          };
+          slider.addEventListener('input', syncBoxes);
+          hookWrap.appendChild(adv);
           gWrap.appendChild(hookWrap);
 
           // Fail-open vs fail-closed: what happens when the warden itself
@@ -4007,7 +4146,7 @@
           decWrap.style.cssText = 'margin-top:0.7rem';
           var decLbl = document.createElement('div');
           decLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
-          decLbl.textContent = 'Declines shown to the user (optional):';
+          decLbl.textContent = 'Decline examples — voice + fallback (optional):';
           decWrap.appendChild(decLbl);
           var decList = document.createElement('div');
           decList.className = 'ui-orch-list';
@@ -4057,7 +4196,7 @@
           var decHelp = document.createElement('div');
           decHelp.className = 'ui-orch-modal-help';
           decHelp.style.cssText = 'margin-top:0.15rem';
-          decHelp.textContent = 'Shown when a reply can\u2019t be made to satisfy the rules above; one is picked at random. Leave empty to use neutral built-ins. Keep them uninformative: a line that names the rule, or hints that rewording would land, hands a prober the signal the guardrail exists to withhold. Lines that give the reason away are dropped on save.';
+          decHelp.textContent = 'When a rule stops a turn, the refusal is written fresh by a separate model that never saw the conversation \u2014 so it can speak to what was asked instead of sounding canned. These lines are no longer that reply. They do two things: they show that model the voice to match, and they are the fallback if it can\u2019t be reached. Leave empty for neutral built-ins. Keep them uninformative either way: a line that names the rule, or hints that rewording would land, hands a prober the signal the guardrail exists to withhold. Lines that give the reason away are dropped on save.';
           decWrap.appendChild(decHelp);
           gWrap.appendChild(decWrap);
 
@@ -4074,6 +4213,15 @@
           testIn.placeholder = "e.g. Post: 'Jane Doe lives at 12 Elm St.'";
           testIn.style.cssText = 'width:100%;box-sizing:border-box;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.5rem;font:inherit';
           testWrap.appendChild(testIn);
+          // Who is asking. An audience-scoped rule judges differently for you and
+          // for a stranger, and the stranger is the half that matters and the half
+          // that is easy to get wrong — so it has to be reachable from here.
+          // Blank means you, the owner.
+          var testAs = document.createElement('input');
+          testAs.type = 'text';
+          testAs.placeholder = 'as an outside contact named… (blank = as you, the owner)';
+          testAs.style.cssText = 'width:100%;box-sizing:border-box;margin-top:0.3rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.82rem';
+          testWrap.appendChild(testAs);
           var testBtn = document.createElement('button');
           testBtn.type = 'button'; testBtn.className = 'ui-orch-list-add'; testBtn.textContent = 'Test guardrails';
           testBtn.style.marginTop = '0.35rem';
@@ -4085,12 +4233,13 @@
             testOut.textContent = 'Checking…'; testBtn.disabled = true;
             fetch('api/agents/' + encodeURIComponent(id) + '/guardrail-test', {
               method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({candidate: cand, hook: 'pre_action'})
+              body: JSON.stringify({candidate: cand, hook: 'pre_action', sender: testAs.value.trim()})
             }).then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
               .then(function(d) {
                 if (d.note) { testOut.textContent = d.note; return; }
                 var colors = {violate: 'var(--danger,#ff7b72)', unsure: '#f59e0b', comply: '#10b981'};
-                var lines = ['Verdict: ' + (d.status || '?').toUpperCase()];
+                var lines = ['Verdict: ' + (d.status || '?').toUpperCase() +
+                  '  (asked ' + (d.as_owner === false ? 'by an outside contact' : 'by you') + ')'];
                 (d.verdicts || []).forEach(function(v) {
                   lines.push('• [' + v.status + '] ' + (v.rule || '') + (v.reason ? ' — ' + v.reason : ''));
                 });

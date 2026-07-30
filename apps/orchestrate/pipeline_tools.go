@@ -75,11 +75,22 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 	}
 
 	f := false
-	resp, _, err2 := t.app.RunAgentLoop(ctx, []Message{{Role: "user", Content: userMsg}}, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    maxRounds,
-		Confirm:      func(name, args string) bool { return true },
+	// A pipeline stage runs under the CALLING agent's rules — there is no separate
+	// agent record here, and the caller is the one producing this content, so a
+	// stage must not become a way to route around a guardrail its own agent
+	// carries. (The dispatch paths judge the target agent instead, because there
+	// a distinct agent with its own rules is doing the work.) The stage prompt can
+	// carry fetched or user-supplied text, so the input pre-pass applies too.
+	stageMsgs := t.applyInputGuardrail([]Message{{Role: "user", Content: userMsg}})
+	resp, _, err2 := t.app.RunAgentLoop(ctx, stageMsgs, AgentLoopConfig{
+		SystemPrompt:      sysPrompt,
+		Tools:             tools,
+		MaxRounds:         maxRounds,
+		Confirm:           func(name, args string) bool { return true },
+		GuardrailCheck:    t.guardrailEnforcer().Check,
+		GuardrailHalted:   t.guardrailEnforcer().Halted,
+		GuardrailReject:   t.guardrailEnforcer().Reject,
+		GuardrailDeclines: t.agent.GuardrailDeclines,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(f),

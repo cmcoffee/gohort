@@ -1004,13 +1004,24 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// target.ForcePrivate is false.
 	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
 	think := resolveDispatchThink(target)
+	// The warden judges the agent that is RUNNING, so a sub-agent answers to its
+	// OWN rules — the same wiring RunAgentSyncContinuing and the channel dispatch
+	// use. This path had neither hook: an inline agents(run) executed completely
+	// unguarded, which made it a laundering route around a guardrail the target
+	// agent's owner had authored. Nothing about the sub-run justified the
+	// exemption; the hooks were simply never added when this path was written.
+	llmMessages = subTurn.applyInputGuardrail(llmMessages)
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    resolveMaxWorkerRounds(target),
-		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Confirm:      func(name, args string) bool { return true },
-		OnStep:       stepNotice,
+		SystemPrompt:      sysPrompt,
+		Tools:             tools,
+		MaxRounds:         resolveMaxWorkerRounds(target),
+		ThinkBudget:       target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Confirm:           func(name, args string) bool { return true },
+		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
+		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
+		OnStep:            stepNotice,
 		// Custom-tool resolution, same as the channel/dispatch + web paths:
 		// lazyToolFallback resolves a direct call to a has-args custom tool;
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.

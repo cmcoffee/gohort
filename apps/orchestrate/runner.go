@@ -332,6 +332,15 @@ type chatTurn struct {
 	// written by the tool and read by nobody.
 	turnClosed bool
 
+	// guardrailBlocks counts enforced-guardrail blocks across THIS turn, at any
+	// hook. Lives on the turn because the check hook and the halt predicate are
+	// separate callbacks that must agree on one count — escalation is a property
+	// of the turn, not of a single interception point.
+	guardrailBlocks int
+
+	// guardrails caches this turn's enforcement set (see guardrailEnforcer).
+	guardrails *guardrailEnforcement
+
 	// appTools are extra per-run tools supplied by the HOST APP dispatching this
 	// turn (e.g. a workbench's co-author tool that writes into the open document's
 	// record store). Injected into the orchestrator's catalog so the agent can call
@@ -513,6 +522,18 @@ type chatTurn struct {
 	// udb already owns the fleet.
 	ownerDB   Database
 	ownerUser string
+
+	// requesterName / requesterChannel describe the HUMAN behind this turn when
+	// one is identifiable and is not the owner — the contact name and surface on
+	// an inbound channel message. Consumed by chatTurn.requester() so a guardrail
+	// can name an audience instead of being written for the worst-case asker.
+	//
+	// requesterName is attacker-controlled (a contact chooses their own display
+	// name); it is never what decides the owner classification. Both empty on
+	// interactive owner turns and on agent-to-agent dispatch, where there is no
+	// third party to name.
+	requesterName    string
+	requesterChannel string
 
 	// explorerMode is flipped by the enter_explorer_mode tool when
 	// AllowExplorer is set on the agent. While true, the worker
@@ -6892,7 +6913,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
 		Confirm:           t.confirmFuncFor(sess),
-		GuardrailCheck:    t.guardrailCheckHook(),
+		GuardrailCheck:    t.guardrailEnforcer().Check,
+		GuardrailHalted:   t.guardrailEnforcer().Halted,
+		GuardrailReject:   t.guardrailEnforcer().Reject,
 		GuardrailDeclines: t.agent.GuardrailDeclines,
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
@@ -7480,7 +7503,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
 		Confirm:           t.confirmFuncFor(sess),
-		GuardrailCheck:    t.guardrailCheckHook(),
+		GuardrailCheck:    t.guardrailEnforcer().Check,
+		GuardrailHalted:   t.guardrailEnforcer().Halted,
+		GuardrailReject:   t.guardrailEnforcer().Reject,
 		GuardrailDeclines: t.agent.GuardrailDeclines,
 		// A step must be able to END ITSELF. Without these, respond_directly
 		// inside a worker step is an ordinary tool call: it returns, the round

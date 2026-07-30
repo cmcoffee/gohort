@@ -667,7 +667,9 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		ThinkBudget:       target.ThinkBudget,        // per-agent override; 0 = inherit route/global
 		OnStep:            func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
 		Confirm:           confirm,
-		GuardrailCheck:    subTurn.guardrailCheckHook(),
+		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
+		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
 		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
@@ -677,6 +679,12 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		// Feed view_video's sampled frames to the model on the next round so a
 		// channel agent (phantom) actually sees a reel it was asked to watch.
 		DrainViewImages: subSess.DrainViewImages,
+		// Nothing here surfaces a non-final round's prose: only resp.Content is
+		// returned, no stream is wired, no round is settled into a transcript, and
+		// the telemetry above keeps len(info.Content) rather than the text. So the
+		// periodic guardrail check has nothing to protect and its per-round model
+		// call is pure latency — pre_output judges the reply that is handed back.
+		InterimContentHidden: true,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),
@@ -1179,6 +1187,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Per-turn closure tools + Available agents block (mirrors
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
 	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	// A channel inbound is the one path with a third party on the other end: the
+	// run identity is a synthetic per-chat user while the agent record lives in
+	// the owner's store, and MessageSender is the contact's own display name.
+	// Both go to the guardrail warden (chatTurn.requester) so a rule can name an
+	// audience rather than being written for the worst-case asker. Kind is set by
+	// the framework and is trusted; MessageSender is the contact's to choose and
+	// is not, which is why requester() derives the owner flag from neither.
+	subTurn.requesterName = run.MessageSender
+	if run.Kind == "channel" {
+		subTurn.requesterChannel = run.Kind
+	}
 	tools = append(tools, extraTools...)
 	// Caller-injected per-instance tools (e.g. an app's appliance-bound closures
 	// passed via AgentSyncRun.AppTools / RunScopedAgent). Mirror onto subTurn so
@@ -1344,7 +1363,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		MaxRounds:         resolveMaxWorkerRounds(target),
 		ThinkBudget:       target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:           func(name, args string) bool { return true },
-		GuardrailCheck:    subTurn.guardrailCheckHook(),
+		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
+		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
 		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
 		ToolFallbackResolver: subTurn.lazyToolFallback,
@@ -1388,6 +1409,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.DrainViewImages = subSess.DrainViewImages
 	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
 	loopCfg.OnStep = func(info StepInfo) { liveRun.SetProgress(info.Round, info.ToolCalls) }
+	// Nothing on this path shows or keeps a non-final round's prose: only the
+	// final reply is persisted (one assistant ChatMessage, below), OnStep forwards
+	// the round number and tool calls but never content, and no SettleRound folds
+	// rounds into a transcript. So the periodic guardrail check has nothing to
+	// protect here and its per-round model call is pure latency — pre_output
+	// judges the reply, which is the only text that leaves.
+	//
+	// UNLESS the caller wired a token stream: then interim deltas reach a person
+	// as they generate, the words ARE delivered, and the check has to run. Checked
+	// against loopCfg (not run.Stream) so it reads the value actually in effect.
+	loopCfg.InterimContentHidden = loopCfg.Stream == nil
 	llmMessages = subTurn.applyInputGuardrail(llmMessages)
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",

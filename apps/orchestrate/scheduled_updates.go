@@ -462,7 +462,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// NeedsConfirm tool runs only if the owner pre-authorized it (AutoApproveTools),
 	// else it's refused and queued. Replaces the old blanket auto-approve that
 	// silently bypassed every tool's "Require confirm" contract on a schedule.
-	gate := app.newAutonomousGate(p.Username, agent.ID)
+	gate := app.newAutonomousGate(p.Username, agent.ID, subSess)
 	// Live-activity registration: a recurring fire runs with no HTTP client
 	// attached, so without this it was invisible while running — the "Active
 	// now" surface only knew about interactive turns. No SSE ring is tailed;
@@ -483,7 +483,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		StampLocation:     UserLocation(p.Username), // stamp the turn in the owning user's zone
 		ThinkBudget:       agent.ThinkBudget,
 		Confirm:           gate.confirm,
-		GuardrailCheck:    subTurn.guardrailCheckHook(),
+		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
+		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
 		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
 		OnStep: func(s StepInfo) {
 			if s.Round > lastRound {

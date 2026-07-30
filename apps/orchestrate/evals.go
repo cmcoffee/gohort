@@ -173,11 +173,29 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 	// tools" question. OnStep fires per round with that round's tool calls.
 	var calledMu sync.Mutex
 	called := map[string]bool{}
-	resp, _, err := T.RunAgentLoop(caseCtx, []Message{{Role: "user", Content: c.Prompt}}, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    resolveMaxWorkerRounds(agent),
-		ThinkBudget:  agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+	// Evals measure the agent as it actually behaves, and guardrails are part of
+	// that behavior — an eval that runs unguarded grades a configuration nobody
+	// ships. A case written to probe a rule now shows whether the rule holds,
+	// instead of always passing straight through the warden. The turn exists only
+	// to carry the hook's inputs (app, agent, ctx); there is no live client, so
+	// its diagnostics land in the log rather than an SSE stream.
+	evalTurn := &chatTurn{
+		app:   T,
+		agent: agent,
+		user:  agent.Owner,
+		udb:   UserDB(T.DB, agent.Owner),
+		ctx:   caseCtx,
+	}
+	evalMsgs := evalTurn.applyInputGuardrail([]Message{{Role: "user", Content: c.Prompt}})
+	resp, _, err := T.RunAgentLoop(caseCtx, evalMsgs, AgentLoopConfig{
+		SystemPrompt:      sysPrompt,
+		Tools:             tools,
+		MaxRounds:         resolveMaxWorkerRounds(agent),
+		ThinkBudget:       agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		GuardrailCheck:    evalTurn.guardrailEnforcer().Check,
+		GuardrailHalted:   evalTurn.guardrailEnforcer().Halted,
+		GuardrailReject:   evalTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines: agent.GuardrailDeclines,
 		Confirm: func(name, args string) bool {
 			// Stub mode: handlers are side-effect-free, so approving is safe and
 			// lets the scripted stub result reach the model. Live mode: approve
