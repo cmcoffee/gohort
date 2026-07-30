@@ -214,14 +214,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Help: "Override the LLM's reasoning mode for this agent's turns."},
 		{Field: "think", Type: "select", Label: "Think mode",
 			Options: []ui.SelectOption{
-				{Value: "auto", Label: "Auto — use the route default"},
+				{Value: "auto", Label: "Auto — follow the deployment routing (" + currentAutoThinkLabel() + ")"},
 				{Value: "on", Label: "On — force reasoning for every turn"},
 				{Value: "off", Label: "Off — force no reasoning (faster)"},
 			},
 			Help: "Top-level conversational agents default On (reasoning helps planners / synthesizers). Sub-agent specialists default Off (faster lookups). Pick Auto only when you want the framework route to decide."},
 		{Field: "think_escalate", Type: "select", Label: "Escalate on long turns",
 			Options: []ui.SelectOption{
-				{Value: "", Label: "Auto — follow the deployment setting"},
+				{Value: "", Label: "Auto — follow the deployment setting (" + currentAutoEscalateLabel() + ")"},
 				{Value: "on", Label: "On — start reasoning once a turn does real work"},
 				{Value: "off", Label: "Off — never change mode mid-turn"},
 			},
@@ -791,4 +791,38 @@ func foldIntoDelegation(sections []ui.Section, picker ui.ChipPicker) bool {
 		return true
 	}
 	return false
+}
+
+// "Auto" told the reader nothing. It means "this agent declines to override, so
+// the deployment's routing decides" — and the deployment's routing lives in a
+// different app, under a key most people editing an agent have never seen. A
+// setting whose effect you cannot discover from where you set it is not a choice,
+// it is a shrug.
+//
+// So the label resolves it and says what Auto does RIGHT NOW. The alternatives
+// were worse: hiding the value in a record the Builder writes trades an opaque
+// label for an invisible one, and picks a model's guess over an owner's decision.
+//
+// Both helpers resolve through the SAME functions the call sites use, with a
+// blank record standing in for "no agent-level override", so the label cannot
+// drift from the behaviour it describes.
+
+func currentAutoThinkLabel() string {
+	if resolveDispatchThink(AgentRecord{}) {
+		return "currently reasoning ON"
+	}
+	return "currently reasoning OFF"
+}
+
+func currentAutoEscalateLabel() string {
+	esc := resolveThinkEscalation(AgentRecord{})
+	switch {
+	case esc.AfterToolRounds > 0 && esc.AfterRound > 0:
+		return fmt.Sprintf("currently on — after %d tool round(s) or %d rounds", esc.AfterToolRounds, esc.AfterRound)
+	case esc.AfterToolRounds > 0:
+		return fmt.Sprintf("currently on — after %d tool round(s)", esc.AfterToolRounds)
+	case esc.AfterRound > 0:
+		return fmt.Sprintf("currently on — after %d rounds", esc.AfterRound)
+	}
+	return "currently off"
 }

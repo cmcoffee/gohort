@@ -95,3 +95,27 @@ func TestThinkEscalationPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// "Auto" has to say what it will actually do. The label resolves through the same
+// functions the call sites use, with a blank record standing in for "no
+// agent-level override", so it cannot describe behaviour the system does not have.
+func TestAutoLabelsResolveToRealBehaviour(t *testing.T) {
+	think := currentAutoThinkLabel()
+	if !strings.Contains(think, "currently") {
+		t.Errorf("the Auto think label must state the resolved value; got %q", think)
+	}
+	// It must agree with what an un-overridden agent actually gets.
+	wantOn := resolveDispatchThink(AgentRecord{})
+	if wantOn != strings.Contains(think, "ON") {
+		t.Errorf("label %q disagrees with resolveDispatchThink(%v)", think, wantOn)
+	}
+
+	esc := currentAutoEscalateLabel()
+	enabled := func() bool {
+		e := resolveThinkEscalation(AgentRecord{})
+		return e.AfterRound > 0 || e.AfterToolRounds > 0
+	}()
+	if enabled == strings.Contains(esc, "currently off") {
+		t.Errorf("label %q disagrees with the resolved escalation setting (enabled=%v)", esc, enabled)
+	}
+}
