@@ -65,13 +65,19 @@ type autonomousGate struct {
 	agentID  string
 	subAgent bool // OwnedBy set → runs under the parent's authority
 	auto     map[string]bool
-	queued   []string // tool names refused + queued this run (for the caller's attention line)
+	sess     *ToolSession // resolves a tool call to the credential it dispatches through
+	queued   []string     // tool names refused + queued this run (for the caller's attention line)
 }
 
 // newAutonomousGate builds the gate for an agent's autonomous run, snapshotting
 // its pre-authorized tool set INHERITED down the ownership chain, and whether it's
 // a sub-agent (which runs under its parent's authority).
-func (app *OrchestrateApp) newAutonomousGate(owner, agentID string) *autonomousGate {
+//
+// sess is the run's tool session, used to resolve a tool call to the credential
+// it dispatches through. It may be nil (a standing fire creates its session
+// inside the dispatch); alwaysConfirms then resolves the credential from the
+// owner's stored kit instead, so both unattended surfaces apply one policy.
+func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSession) *autonomousGate {
 	udb := UserDB(app.DB, owner)
 	sub := false
 	if rec, ok := loadAgent(udb, agentID); ok {
@@ -80,7 +86,48 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string) *autonomousG
 	return &autonomousGate{
 		app: app, owner: owner, agentID: agentID, subAgent: sub,
 		auto: autonomousApprovedSet(udb, agentID),
+		sess: sess,
 	}
+}
+
+// alwaysConfirms reports whether a tool is CONFIGURED to ask before every call —
+// the owner-facing "Require confirm before each call" toggle on the credential it
+// dispatches through. This is the only thing that should stop an unattended run.
+//
+// The distinction matters because NeedsConfirm answers a different question. It
+// is a heuristic tier ("this reaches outside the sandbox", "this is a raw
+// endpoint"), and the gate used to refuse on it — so a tool the owner had
+// attached to the agent, and which ran without a murmur in chat, was refused the
+// moment the same agent ran on a timer. Nothing about the tool changed; only
+// whether a human happened to be watching. tempToolNeedsConfirm already
+// documents this split for the credential case ("tools enabled on the agent but
+// the scheduler can't call them"); this closes it for the rest.
+//
+// Attaching a tool to an agent IS the authorization — the same reasoning the
+// sub-agent bypass below already uses for a parent's toolset. What stays gated
+// is what the owner explicitly marked as gated, and outward-facing actions that
+// carry their own approval queue (a proactive send is still queued at the
+// channel layer, whatever this returns).
+func (g *autonomousGate) alwaysConfirms(name string) bool {
+	cred := credentialForToolCall(g.sess, name)
+	if cred == "" {
+		// A standing fire builds its session INSIDE the dispatch, so the gate is
+		// constructed without one. The name→credential mapping doesn't need a
+		// session though — it's on the stored tool. Resolving it here is what
+		// keeps the two unattended surfaces on the same policy instead of the
+		// session-less one quietly allowing everything.
+		if p, ok := UserToolByName(UserDB(g.app.DB, g.owner), g.owner, name); ok {
+			cred = strings.TrimSpace(p.Tool.Credential)
+		}
+	}
+	if cred == "" {
+		return false // no credential in play → nothing configured to ask
+	}
+	c, ok := Secure().Load(cred)
+	if !ok {
+		return true // named a credential we can't resolve — fail closed
+	}
+	return c.RequiresConfirm
 }
 
 // autonomousApprovedSet is the union of an agent's AutoApproveTools and every
@@ -121,6 +168,14 @@ func autonomousApprovedSet(udb Database, agentID string) map[string]bool {
 // anything else is queued for the owner to approve.
 func (g *autonomousGate) confirm(name, args string) bool {
 	if g.subAgent || g.auto[name] {
+		return true
+	}
+	// The tool is on this agent and nothing about it demands per-call approval,
+	// so run it — matching confirmFuncFor, the interactive policy, which
+	// escalates ONLY on a credential whose toggle asks for it. The two used to
+	// disagree, which meant an agent's own tools worked in chat and were refused
+	// on a schedule.
+	if !g.alwaysConfirms(name) {
 		return true
 	}
 	g.queue(name, args)

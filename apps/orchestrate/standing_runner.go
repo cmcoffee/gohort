@@ -40,7 +40,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 
 		// Unattended run: a NeedsConfirm tool runs only if the owner pre-authorized
 		// it (AutoApproveTools); otherwise it's refused and queued for approval.
-		gate := app.newAutonomousGate(sa.Owner, sa.AgentID)
+		gate := app.newAutonomousGate(sa.Owner, sa.AgentID, nil)
 
 		// Dispatch REQUIRES a non-empty message; a standing agent created without a
 		// mission (or one stored before create-time defaulting) would otherwise fail

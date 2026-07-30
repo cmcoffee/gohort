@@ -142,7 +142,16 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	if replaced {
 		verb, note = "UPDATED_OK", " (replaced the existing task with this same directive — no duplicate created)"
 	}
-	return fmt.Sprintf("%s id=%s%s — a recurring TASK now runs %s, appending its reply into this session each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor) and don't send them to the Bridges app. Manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), id), nil
+	out := fmt.Sprintf("%s id=%s%s — a recurring TASK now runs %s, appending its reply into this session each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor) and don't send them to the Bridges app. Manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), id)
+	// Unattended fires answer to gates an interactive turn never meets — a tool
+	// that needs confirmation with nobody there to give it, a proactive message
+	// with no inbound to reply to. Both used to surface only when the task fired,
+	// which is the worst possible moment: hours later, to no one. Report it here,
+	// where whoever is authoring the schedule can still act on it.
+	if warn := PreflightSummary(t.app.PreflightAutonomous(spec.Username, spec.AgentID)); warn != "" {
+		out += "\n\n" + warn
+	}
+	return out, nil
 }
 
 // recurringList shows the AGENT's active tasks, not just this session's —

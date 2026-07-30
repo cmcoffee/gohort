@@ -943,7 +943,15 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"id": newID})
+	// Same pre-flight the recurring() tool reports, for the human-authored path:
+	// what this task would be refused when it fires unattended. Advisory — the
+	// task is created either way, and an empty warning means it's clear.
+	resp := map[string]any{"id": newID}
+	if findings := T.PreflightAutonomous(spec.Username, spec.AgentID); len(findings) > 0 {
+		resp["warnings"] = findings
+		resp["warning"] = PreflightSummary(findings)
+	}
+	writeJSON(w, resp)
 }
 
 // handleConsoleMonitorGet returns an event monitor's editable schedule for the

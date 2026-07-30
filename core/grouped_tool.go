@@ -228,6 +228,18 @@ func (g *GroupedTool) Caps() []Capability {
 	return out
 }
 
+// isRunLikeAction reports whether an unknown action reads as "execute the
+// thing" — the intent that has no home on a management tool and sends a model
+// looking for a workaround. Kept to the words a model actually reaches for;
+// a wrong guess here only adds one clarifying sentence to an error.
+func isRunLikeAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "run", "call", "execute", "exec", "invoke", "use", "fetch", "do":
+		return true
+	}
+	return false
+}
+
 // NeedsConfirm returns true if any action in the group requires
 // confirmation. The per-action handler can re-check and skip the
 // prompt when the specific action doesn't need it; this is the
@@ -303,7 +315,23 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	}
 	def, ok := g.actions[action]
 	if !ok {
-		return "", fmt.Errorf("unknown action %q for tool %q. Available: %s. Call with action=\"help\" for the full usage spec", action, g.name, strings.Join(g.sortedActionNames(), ", "))
+		// Naming the valid actions is not enough when the model wanted one that
+		// was never here. The observed dead end: an agent inspected a custom tool
+		// through tool_def (list → get → test, all fine), then reached for
+		// action="run" to actually USE it, got back only the list of actions, and
+		// spent the rest of the turn improvising — inventing routes, then trying
+		// to execute the tool's underlying script by hand in the workspace with
+		// guessed paths. It never learned the one thing that would have worked:
+		// a custom tool is called DIRECTLY by its own name, and the loop's lazy
+		// fallback resolves it whether or not it is in the visible catalog. So
+		// say that, rather than leaving the model to guess a fourth time.
+		hint := ""
+		if isRunLikeAction(action) {
+			hint = " NOTE: to RUN a tool you do not go through " + g.name +
+				" — call the tool DIRECTLY by its own name with its own params, even if you do not see it listed in your catalog."
+		}
+		return "", fmt.Errorf("unknown action %q for tool %q. Available: %s.%s Call with action=\"help\" for the full usage spec",
+			action, g.name, strings.Join(g.sortedActionNames(), ", "), hint)
 	}
 	// Validate required params in ONE pass and report EVERY problem at once.
 	// The old first-miss-returns loop made the model discover its mistakes

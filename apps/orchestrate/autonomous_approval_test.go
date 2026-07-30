@@ -221,3 +221,53 @@ func TestInheritedChannelChainRespectsAllowList(t *testing.T) {
 		t.Errorf("empty chain stays empty, got %v", got)
 	}
 }
+
+// gateFor builds a gate with no live session — the standing-fire shape, which
+// is the one that must not quietly allow everything.
+func gateFor(app *OrchestrateApp, owner, agentID string) *autonomousGate {
+	return app.newAutonomousGate(owner, agentID, nil)
+}
+
+// The asymmetry this closes: the interactive policy (confirmFuncFor) escalates
+// ONLY on a credential whose "require confirm" toggle asks for it, while the
+// unattended gate refused anything absent from AutoApproveTools. So a tool the
+// owner had attached to an agent ran fine in chat and was refused the moment the
+// same agent ran on a timer — nothing about the tool changed, only whether
+// someone was watching.
+func TestUncredentialedToolRunsUnattended(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	app := &OrchestrateApp{}
+	app.DB = db
+	if _, err := saveAgent(db, AgentRecord{ID: "a", Owner: "u", Name: "A", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	g := gateFor(app, "u", "a")
+
+	// A tool with no credential has nothing configured to ask, so it runs.
+	if !g.confirm("get_top_stories", "{}") {
+		t.Error("a tool on the agent with no confirm requirement must run unattended")
+	}
+	if len(g.queued) != 0 {
+		t.Errorf("nothing should have been queued for approval, got %v", g.queued)
+	}
+}
+
+// A pre-authorized tool still runs, and a sub-agent still runs under its
+// parent's authority — the two existing bypasses must survive the change.
+func TestExistingBypassesStillHold(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	app := &OrchestrateApp{}
+	app.DB = db
+	if _, err := saveAgent(db, AgentRecord{ID: "p", Owner: "u", Name: "P", OrchestratorPrompt: "x", AutoApproveTools: []string{"spend"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveAgent(db, AgentRecord{ID: "s", Owner: "u", Name: "S", OrchestratorPrompt: "x", OwnedBy: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if !gateFor(app, "u", "p").confirm("spend", "{}") {
+		t.Error("a pre-authorized tool must still run")
+	}
+	if !gateFor(app, "u", "s").confirm("anything", "{}") {
+		t.Error("a sub-agent must still run under its parent's authority")
+	}
+}
