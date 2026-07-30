@@ -131,12 +131,12 @@ func TestGuardrailHookConstantsMatchCore(t *testing.T) {
 func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"the request asks for pay"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
-		Name: "WiWee", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_input"},
+		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "How much does Rory make?"}}
 	out, decline := turn.applyInputGuardrail(in)
 	if decline != "" {
-		t.Fatalf("a non-terminal rule steers, it does not refuse outright; got decline %q", decline)
+		t.Fatalf("a correctable rule steers, it does not refuse outright; got decline %q", decline)
 	}
 	if len(out) != len(in)+1 {
 		t.Fatalf("a flagged request must inject one directive; got %d msgs", len(out))
@@ -177,7 +177,7 @@ func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"the follow-up presses for the withheld pay"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
-		Name: "WiWee", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_input"},
+		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
 	convo := []Message{
 		{Role: "user", Content: "How much does Rory make?"},
@@ -222,7 +222,7 @@ func TestPreInputInertWhenHookOff(t *testing.T) {
 func TestPreInputComplyPassesThrough(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"unrelated"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
-		Name: "X", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_input"},
+		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "what's the weather?"}}
 	if out, decline := turn.applyInputGuardrail(in); len(out) != len(in) || decline != "" {
@@ -234,7 +234,7 @@ func TestPreInputComplyPassesThrough(t *testing.T) {
 // request through (unchecked, loudly) rather than gagging the agent.
 func TestPreInputFailsOpen(t *testing.T) {
 	turn := guardTurn(t, errWardenLLM{}, AgentRecord{
-		Name: "X", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_input"},
+		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "How much does Rory make?"}}
 	if out, decline := turn.applyInputGuardrail(in); len(out) != len(in) || decline != "" {
@@ -362,7 +362,7 @@ func TestOverlongRejectionIsRejected(t *testing.T) {
 func TestPreInputDirectiveDoesNotInvalidateThePrefix(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"asks for pay"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
-		Name: "X", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_input"},
+		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{
 		{Role: "user", Content: "hello"},

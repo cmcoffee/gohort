@@ -3919,7 +3919,7 @@
           gWrap.appendChild(gHelp);
           var gHelp2 = document.createElement('div');
           gHelp2.className = 'ui-orch-modal-help';
-          gHelp2.textContent = 'Rules here are Terminal by default, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Turn Terminal off only for a rule that SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists") — those get the reply sent back for a rewrite, and they are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
+          gHelp2.textContent = 'Rules here are Terminal, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "1 retry" only if it SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists") — those get sent back once for a rewrite and decline if it still breaks the rule, and they are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
           gWrap.appendChild(gHelp2);
           var gHelp3 = document.createElement('div');
           gHelp3.className = 'ui-orch-modal-help';
@@ -3935,14 +3935,19 @@
           var grules = (agent.guardrails || '').split('\n')
             .map(function(s) { return s.trim(); })
             .filter(function(s) { return s.length > 0; });
-          // A rule's severity is stored as a leading "!" on the line itself, so a
-          // rule and how hard it bites can never drift apart (reorder a list of
-          // rules with the severity held somewhere else and they desynchronize
-          // silently). The owner never types the marker — this toggle owns it, and
-          // the text box always shows the rule without it.
-          function gIsTerm(s) { return /^\s*!/.test(s || ''); }
-          function gBody(s) { return String(s || '').replace(/^\s*!\s*/, ''); }
-          function gCompose(body, term) { return (term ? '! ' : '') + body; }
+          // Severity is stored as a leading marker on the line itself, so a rule and
+          // how hard it bites can never drift apart (reorder a list of rules with the
+          // severity held somewhere else and they desynchronize silently). The owner
+          // never types it — this toggle owns it, and the text box always shows the
+          // rule without it.
+          //
+          // "?" marks the EXCEPTION: correctable. Terminal is the default because
+          // that is what this band is for. A legacy "!" (which used to mark terminal
+          // when correctable was the default) is stripped for display and means the
+          // same thing it always did.
+          function gIsCorr(s) { return /^\s*\?/.test(s || ''); }
+          function gBody(s) { return String(s || '').replace(/^\s*[?!]\s*/, ''); }
+          function gCompose(body, corr) { return (corr ? '? ' : '') + body; }
           function renderG() {
             gList.innerHTML = '';
             grules.forEach(function(text, idx) {
@@ -3953,20 +3958,20 @@
               // Re-read the marker from the stored line on every keystroke rather
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
-              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gIsTerm(grules[idx])); });
+              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gIsCorr(grules[idx])); });
               var term = document.createElement('button');
               term.type = 'button';
               term.className = 'ui-orch-list-del';
-              term.textContent = 'terminal';
+              term.textContent = gIsCorr(text) ? '1 retry' : 'terminal';
               term.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;letter-spacing:0.03em;' +
-                (gIsTerm(text)
-                  ? 'color:var(--danger);border-color:var(--danger);font-weight:600'
-                  : 'color:var(--text-mute);opacity:0.7');
-              term.title = gIsTerm(text)
-                ? 'Terminal: a violation ends the turn immediately and a separate model writes the refusal. Click to make it a shaping rule instead.'
-                : 'Shaping rule: a violation sends the reply back for a rewrite. Click to make it terminal — for rules that forbid the thing being asked for.';
+                (gIsCorr(text)
+                  ? 'color:var(--text-mute);opacity:0.8'
+                  : 'color:var(--danger);border-color:var(--danger);font-weight:600');
+              term.title = gIsCorr(text)
+                ? 'A violation sends the reply back for one rewrite, then declines if it still breaks the rule. For a rule that shapes an answer rather than forbidding it. Click to make it terminal.'
+                : 'A violation ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default, and what this band is for. Click only if this rule shapes an answer rather than forbidding it.';
               term.onclick = function() {
-                grules[idx] = gCompose(gBody(grules[idx]), !gIsTerm(grules[idx]));
+                grules[idx] = gCompose(gBody(grules[idx]), !gIsCorr(grules[idx]));
                 renderG();
               };
               var del = document.createElement('button');
@@ -3978,14 +3983,10 @@
             var addBtn = document.createElement('button');
             addBtn.type = 'button'; addBtn.className = 'ui-orch-list-add'; addBtn.textContent = '+ Add guardrail';
             addBtn.onclick = function() {
-              // Terminal by default. A correctable guardrail is guidance with an
+              // No marker: terminal. A correctable guardrail is guidance with an
               // expensive judge attached, and guidance belongs in the Rules band
-              // above; this band is for limits that don't negotiate. Existing rules
-              // are left exactly as authored — only new ones start here.
-              // The "!" here is the same marker gIsTerm/gCompose above use, and the
-              // same one guardrailTerminalMarker parses server-side. Three places,
-              // one character — changing it means changing all three.
-              grules.push('! '); renderG();
+              // above; this band is for limits that don't negotiate.
+              grules.push(''); renderG();
               var inputs = gList.querySelectorAll('input');
               if (inputs.length) inputs[inputs.length - 1].focus();
             };

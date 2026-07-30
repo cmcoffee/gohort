@@ -405,10 +405,17 @@ const (
 // lists") is corrected into a genuinely better reply. It is close to worthless
 // when the rule forbids the very content the question asks for: the model still
 // holds that content, still wants to say it, and each attempt manufactures
-// another leaking draft to retract and scrub. Rules of the second kind mark
-// their blocks Terminal (GuardrailDecision.Terminal) and skip this budget
-// entirely.
-const maxGuardrailOutputCorrections = 2
+// another leaking draft to retract and scrub. Guardrails are terminal by default
+// for exactly that reason and skip this budget entirely
+// (GuardrailDecision.Terminal); only a rule the owner marked correctable reaches
+// it.
+//
+// ONE retry, not two. The second was never observed to rescue a reply the first
+// couldn't: a model that missed a shaping rule twice with the correction in front
+// of it is not converging, and each pass costs a full generation the user waits
+// through plus another draft to retract. If one honest attempt at "you broke this
+// rule, try again" doesn't land, the decline is the better answer.
+const maxGuardrailOutputCorrections = 1
 
 // GuardrailDecision is what a guardrail check reports about one candidate.
 type GuardrailDecision struct {

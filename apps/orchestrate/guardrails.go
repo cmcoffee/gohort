@@ -177,7 +177,7 @@ func (t *chatTurn) requester() requesterIdentity {
 	return who
 }
 
-// guardrailTerminalMarker prefixes a rule the owner has marked TERMINAL: a
+// Severity marker. A rule is TERMINAL unless the owner marks it otherwise: a
 // violation of it is not correctable, so the turn hands over to the rejection
 // writer on the first flag instead of spending revise passes.
 //
@@ -185,20 +185,36 @@ func (t *chatTurn) requester() requesterIdentity {
 // together. A rule and its severity in different places drift the moment a line
 // is reordered, retyped, or elevated in from the soft Rules band, and a
 // guardrail that quietly loses its severity is worse than one that never had it.
-const guardrailTerminalMarker = "!"
+//
+// The marker names the EXCEPTION, and that is the whole point of which way round
+// it goes. Terminal is what this band is for — a hard limit that does not
+// negotiate — so it is the default and needs no marking. What needs declaring is
+// the rare rule that merely SHAPES an answer and can be satisfied on a retry.
+//
+// Inverting it also fixes the failure direction of ruleIsCorrectable below: when
+// the warden's requoted rule can't be matched back to an authored line, the rule
+// stays terminal instead of quietly becoming negotiable.
+const guardrailCorrectableMarker = "?"
+
+// guardrailLegacyTerminalMarker is accepted and ignored. "!" used to mark a rule
+// terminal when correctable was the default; terminal is now the default, so an
+// existing "! never mention salary" means exactly what it always did and must
+// keep working untouched.
+const guardrailLegacyTerminalMarker = "!"
 
 // guardrailRule is one authored rule plus how a violation of it is handled.
 type guardrailRule struct {
 	// Text is the rule as the warden sees it — marker stripped, so the judgment
 	// is made on what the owner wrote and nothing else.
 	Text string
-	// Terminal marks the rule as forbidding content rather than shaping it. See
-	// guardrailTerminalMarker.
-	Terminal bool
+	// Correctable marks the rare rule that shapes an answer rather than forbidding
+	// it, so a violation is worth sending back for a rewrite. Default false: a
+	// guardrail ends the turn. See guardrailCorrectableMarker.
+	Correctable bool
 }
 
 // guardrailRules splits an agent's Guardrails field into individual rules (one
-// per non-blank line), stripping and recording the terminal marker.
+// per non-blank line), stripping and recording the severity marker.
 func guardrailRules(agent AgentRecord) []guardrailRule {
 	var out []guardrailRule
 	for _, ln := range strings.Split(agent.Guardrails, "\n") {
@@ -207,37 +223,45 @@ func guardrailRules(agent AgentRecord) []guardrailRule {
 			continue
 		}
 		r := guardrailRule{Text: s}
-		if strings.HasPrefix(s, guardrailTerminalMarker) {
-			// Trim again: "! never mention salary" and "!never mention salary"
-			// must reach the warden as the same rule, or the same text authored
-			// two ways would judge differently.
-			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailTerminalMarker)); body != "" {
-				r = guardrailRule{Text: body, Terminal: true}
+		switch {
+		case strings.HasPrefix(s, guardrailCorrectableMarker):
+			// Trim again: "? answer in Spanish" and "?answer in Spanish" must reach
+			// the warden as the same rule, or the same text authored two ways would
+			// be judged differently.
+			//
+			// A line of nothing but the marker has no rule in it; it falls through
+			// as ordinary text rather than becoming a rule with an empty body that
+			// would match every candidate.
+			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailCorrectableMarker)); body != "" {
+				r = guardrailRule{Text: body, Correctable: true}
 			}
-			// A line of nothing but the marker has no rule in it; it falls
-			// through as ordinary (unmarked) text rather than becoming a
-			// terminal rule with an empty body that matches everything.
+		case strings.HasPrefix(s, guardrailLegacyTerminalMarker):
+			// Legacy "!": meant terminal, which is now the default. Strip it so the
+			// warden judges the rule text and not the punctuation.
+			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailLegacyTerminalMarker)); body != "" {
+				r = guardrailRule{Text: body}
+			}
 		}
 		out = append(out, r)
 	}
 	return out
 }
 
-// ruleIsTerminal reports whether the rule the warden named was authored as
-// terminal. The warden echoes the rule "verbatim or trimmed", so the match is
+// ruleIsCorrectable reports whether the rule the warden named was authored as
+// correctable. The warden echoes the rule "verbatim or trimmed", so the match is
 // normalized and tolerant of either side being a prefix of the other.
 //
-// An unrecognized rule text is NOT terminal. That is the conservative answer:
-// it costs a correction pass the owner may not have wanted, whereas guessing
-// terminal would convert a shaping rule into a hard refusal on the strength of
-// a fuzzy string match.
-func ruleIsTerminal(agent AgentRecord, named string) bool {
+// An unrecognized rule text is NOT correctable — it stays terminal. That is the
+// safe direction, and it is why the marker names the exception: a fuzzy string
+// match that fails now costs a refusal the owner could have avoided by marking
+// the rule, rather than silently downgrading a hard limit to a suggestion.
+func ruleIsCorrectable(agent AgentRecord, named string) bool {
 	want := normalizeRuleText(named)
 	if want == "" {
 		return false
 	}
 	for _, r := range guardrailRules(agent) {
-		if !r.Terminal {
+		if !r.Correctable {
 			continue
 		}
 		got := normalizeRuleText(r.Text)
@@ -256,7 +280,8 @@ func ruleIsTerminal(agent AgentRecord, named string) bool {
 // a trailing period, different casing, or wrapped quotes.
 func normalizeRuleText(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.TrimPrefix(s, guardrailTerminalMarker)
+	s = strings.TrimPrefix(s, guardrailCorrectableMarker)
+	s = strings.TrimPrefix(s, guardrailLegacyTerminalMarker)
 	s = strings.Trim(s, ` "'.,;:`)
 	return strings.Join(strings.Fields(s), " ")
 }
@@ -581,13 +606,13 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 			return pass
 		}
 		rule, reason := firstViolation(verdicts)
-		// Was the rule that fired authored as terminal? If so a revise pass has
-		// nothing to find: the rule forbids the content the request asked for, so
-		// each attempt regenerates the violation from the same context, and each
-		// one is another draft holding the protected thing that has to be
-		// retracted and scrubbed. Core skips the correction budget on these and
-		// hands the reply to the fresh-context rejection writer.
-		terminal := ruleIsTerminal(t.agent, rule)
+		// Terminal unless the owner marked this rule correctable. A revise pass only
+		// earns its cost when a compliant answer to the same question exists; where
+		// the rule forbids what was asked for, each attempt regenerates the
+		// violation from the same context and each one is another draft holding the
+		// protected thing to retract and scrub. So core skips the correction budget
+		// by default and hands the reply to the fresh-context rejection writer.
+		terminal := !ruleIsCorrectable(t.agent, rule)
 		terminalNote := ""
 		if terminal {
 			terminalNote = " (terminal rule — answered by a separate check, no revise pass)"
@@ -669,7 +694,7 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 		return "", false
 	}
 	rule, reason := firstViolation(verdicts)
-	if ruleIsTerminal(t.agent, rule) {
+	if !ruleIsCorrectable(t.agent, rule) {
 		// Nothing to steer. The rule forbids what was asked for, so the answer is
 		// already "decline" — running the model only buys a long deliberation about
 		// how to decline without saying why, which is the single biggest cost a
