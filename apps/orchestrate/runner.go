@@ -532,6 +532,11 @@ type chatTurn struct {
 	// name); it is never what decides the owner classification. Both empty on
 	// interactive owner turns and on agent-to-agent dispatch, where there is no
 	// third party to name.
+	// authoringLazyPrompt is the "Authoring tools (load before use)" index for an
+	// agent whose authoring catalog was deferred behind load_tool. Empty for
+	// Builder (which carries the catalog inline) and for agents that cannot author.
+	authoringLazyPrompt string
+
 	requesterName    string
 	requesterChannel string
 	// requesterOwnerHandle records that this channel inbound came from the OWNER's
@@ -2492,9 +2497,25 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		} else {
 			extra = builderWorkerResearchTools(sess, t)
 		}
-		tools = append(tools, extra...)
-		for _, td := range extra {
-			toolNames = append(toolNames, td.Tool.Name)
+		// Builder authors constantly, so it carries the catalog inline. Any OTHER
+		// agent has authoring as a CAPABILITY it uses occasionally — Wren answers
+		// "hello" far more often than it builds anything — and the catalog is
+		// ~18.7k tokens, about a third of that agent's whole prompt, paid on every
+		// turn including the eight-word ones.
+		//
+		// So for them it goes lazy: an index of names and one-liners in the prompt,
+		// full schemas on load_tool. The mechanism is the one custom tools already
+		// use, so the model already knows the move. Cost is one extra round on a
+		// turn that actually authors; saving is ~17.7k tokens on every turn that
+		// does not.
+		if forOrchestrator && !isBuilderAgent(t.agent.ID) {
+			t.authoringLazyPrompt = registerLazyAuthoringTools(t, extra)
+			Log("[orchestrate.tools] agent=%s: %d authoring tool(s) deferred to load_tool — index only in the prompt", t.agent.ID, len(extra))
+		} else {
+			tools = append(tools, extra...)
+			for _, td := range extra {
+				toolNames = append(toolNames, td.Tool.Name)
+			}
 		}
 	}
 	// Fleet agents get the exclusive fleet-management catalog on their
@@ -6308,6 +6329,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	}
 	directCustomTools, lazyCustomPrompt := t.setupCustomTools(sess)
 	sys += lazyCustomPrompt
+	// The authoring index, when the catalog was deferred (see
+	// registerLazyAuthoringTools). Set during tool resolution above, which runs
+	// before this point.
+	sys += t.authoringLazyPrompt
 	allTools := append(controlTools, knowTools...)
 	allTools = append(allTools, workerTools...)
 	allTools = append(allTools, directCustomTools...)

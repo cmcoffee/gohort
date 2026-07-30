@@ -996,3 +996,34 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
 - **Capture mistakes and gotchas via store_fact.** When you make a mistake the framework or test_args catches (forgot URL encoding, wrote a wrapper around gohort.fetch without importing it, tried urllib in the sandbox, used a library not present) — store_fact with the FAILURE PATH as a rule. When you discover an API quirk worth knowing (200 + empty body on missing key, User-Agent required, weird pagination shape) — store_fact that too. Same namespace as Builder, so the lesson surfaces in Builder's next session. NO permission needed for operational knowledge.
 
   Frame as a RULE not a story: "When using gohort.fetch, import gohort first or get NameError" (rule) — not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name) — that's a detail, not a lesson, and it bloats Builder's prompt without value.`
+
+// registerLazyAuthoringTools moves the authoring catalog out of the inline tool
+// list and behind load_tool, returning the prompt index that replaces it.
+//
+// Measured motivation: the catalog is ~18.7k tokens, roughly a third of an
+// Author-flagged agent's entire prompt, and it is prefilled on every turn — the
+// conversational ones included. The index costs about a twentieth of that.
+//
+// Reuses the custom-tool lazy path exactly (lazyCustomToolDefs +
+// lazyCustomToolNames), so load_tool needs no special case and the model is
+// already fluent in the move. Descriptions are clipped to the same 200 characters
+// the custom-tool index uses: enough to decide whether to load, not enough to
+// reproduce the schema.
+func registerLazyAuthoringTools(t *chatTurn, tools []AgentToolDef) string {
+	if len(tools) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Authoring tools (load before use)\n")
+	b.WriteString("You can build things — agents, tools, skills, credentials, bridges. These tools exist but their parameters aren't loaded yet. When a request needs one, call `load_tool(names=[\"<name>\", ...])` first, passing every tool you expect to need in that ONE call; it returns their parameters and makes them callable. Then use them normally.\n\n")
+	for _, td := range tools {
+		t.lazyCustomToolNames[td.Tool.Name] = true
+		t.lazyCustomToolDefs[td.Tool.Name] = td
+		desc := strings.TrimSpace(td.Tool.Description)
+		if len(desc) > 200 {
+			desc = desc[:200] + "…"
+		}
+		b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
+	}
+	return b.String()
+}
