@@ -175,6 +175,13 @@ type probeEvent struct {
 	Reason string     `json:"reason,omitempty"` // destructive reason for confirm events
 	IDs    []string   `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
 	Plan   []PlanStep `json:"plan,omitempty"`   // plan_set / plan_step: snapshot of the current plan for the UI to render
+	// PlanID identifies WHICH investigation's plan this snapshot belongs to.
+	// The UI keys blocks by id, and the plan block used to use a constant one —
+	// so a second investigation in the same session updated the first
+	// investigation's checklist in place instead of posting its own. One id per
+	// plan instance (per buildPlanTools call) gives each investigation its own
+	// card, which is what makes a follow-up investigation legible.
+	PlanID string `json:"plan_id,omitempty"`
 }
 
 // toInt extracts an int from an arbitrary JSON-decoded value. JSON numbers

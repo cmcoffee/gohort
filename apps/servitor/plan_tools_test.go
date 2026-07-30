@@ -81,3 +81,44 @@ func contains(hay, needle string) bool {
 		return false
 	})()
 }
+
+// Two investigations in one chat session must post two checklists. The plan
+// block used to carry a constant id, so the follow-up's plan rewrote the first
+// one's card in place — the original investigation's steps and findings were
+// replaced by the new plan rather than kept above it.
+func TestEachInvestigationGetsItsOwnPlanBlock(t *testing.T) {
+	first := buildPlanTools("same-session", false)
+	second := buildPlanTools("same-session", false)
+
+	if first.ID == "" || second.ID == "" {
+		t.Fatal("every plan instance needs an id to key its block on")
+	}
+	if first.ID == second.ID {
+		t.Fatal("a second investigation in the same session must not reuse the first's id")
+	}
+
+	// Through the real bridge: distinct plans must produce distinct block ids,
+	// and every event of ONE plan must keep landing on that same card.
+	blockID := func(planID, kind string) string {
+		out := translateProbeEvent(probeEvent{Kind: kind, PlanID: planID, Plan: []PlanStep{{ID: 1, Title: "x"}}})
+		id, _ := out["id"].(string)
+		return id
+	}
+	a := blockID(first.ID, "plan_set")
+	b := blockID(second.ID, "plan_set")
+	if a == "" || b == "" {
+		t.Fatal("plan events must render as identified blocks")
+	}
+	if a == b {
+		t.Fatal("two investigations rendered onto one block — the follow-up overwrites the first checklist")
+	}
+	if got := blockID(first.ID, "plan_step"); got != a {
+		t.Errorf("step updates must land on their own plan's card: %q vs %q", got, a)
+	}
+
+	// An event with no plan id (any other emitter) still renders, on the
+	// original shared block — no regression for callers that don't set one.
+	if got := blockID("", "plan_set"); got != "servitor-plan" {
+		t.Errorf("an unidentified plan must keep the legacy block id, got %q", got)
+	}
+}

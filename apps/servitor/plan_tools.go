@@ -13,6 +13,10 @@ import (
 // real discovery gets to run a tracked investigation instead of firing one-off
 // probes until it gives up. See buildPlanTools.
 type planToolSet struct {
+	// ID identifies this plan INSTANCE. It rides on every plan event so the UI
+	// can give each investigation its own checklist card instead of rewriting
+	// the previous one's.
+	ID       string
 	Plan     *Plan
 	Set      AgentToolDef
 	Start    AgentToolDef
@@ -50,6 +54,10 @@ func (p planToolSet) Pending() int {
 // be a tax on every follow-up. There the plan is what the investigator reaches
 // for when a question turns out to be bigger than it looked.
 func buildPlanTools(id string, required bool) planToolSet {
+	// One id per plan INSTANCE, not per session: chat builds a fresh group on
+	// every turn, so a follow-up investigation must post its own checklist card
+	// rather than rewriting the previous investigation's.
+	planID := cheapID()
 	// plan: session-scoped investigation plan. The investigator's
 	// system prompt requires set_plan as the first tool call;
 	// subsequent step lifecycle tools (mark_step_in_progress,
@@ -102,7 +110,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 			if err := plan.SetSteps(titles, finds); err != nil {
 				return "", err
 			}
-			emit(id, probeEvent{Kind: "plan_set", Plan: plan.Snapshot()})
+			emit(id, probeEvent{Kind: "plan_set", Plan: plan.Snapshot(), PlanID: planID})
 			return fmt.Sprintf("Plan set with %d steps. Begin step 1: mark_step_in_progress with id=1, then probe to investigate, then record_step_findings or mark_step_blocked.", len(titles)), nil
 		},
 	}
@@ -123,7 +131,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 			if err := plan.SetStatus(stepID, PlanStepInProgress); err != nil {
 				return "", err
 			}
-			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), PlanID: planID})
 			return fmt.Sprintf("Step %d marked in_progress. Delegate probe(s) to investigate.", stepID), nil
 		},
 	}
@@ -149,7 +157,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 			if err := plan.RecordFindings(stepID, strings.TrimSpace(findings)); err != nil {
 				return "", err
 			}
-			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), PlanID: planID})
 			return fmt.Sprintf("Step %d marked done. Move to the next pending step, OR if all pending steps are done, revisit any blocked steps now (call mark_step_in_progress on them — what you learned from the other steps often unblocks them).", stepID), nil
 		},
 	}
@@ -175,7 +183,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 			if err := plan.MarkBlocked(stepID, strings.TrimSpace(reason)); err != nil {
 				return "", err
 			}
-			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), PlanID: planID})
 			return fmt.Sprintf("Step %d marked blocked: %s. Move to the next pending step.", stepID, reason), nil
 		},
 	}
@@ -272,7 +280,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 				}
 				feedback.WriteString("Reordered.\n")
 			}
-			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), Reason: reason})
+			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), Reason: reason, PlanID: planID})
 			return strings.TrimSpace(feedback.String()), nil
 		},
 	}
@@ -287,7 +295,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
 			gaps := plan.MarkGapsReported()
-			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+			emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), PlanID: planID})
 			if len(gaps.Blocked) == 0 && len(gaps.Skipped) == 0 {
 				return "No gaps. Every plan step was completed with findings. Write your final answer now — no 'What I Couldn't Determine' section needed.", nil
 			}
@@ -316,7 +324,7 @@ func buildPlanTools(id string, required bool) planToolSet {
 			"A plan is a commitment the user can see in the checklist — set one when the work deserves it, skip it when a single probe answers the question."
 	}
 	return planToolSet{
-		Plan: plan, Set: set, Start: mark_step_in_progress_tool,
+		ID: planID, Plan: plan, Set: set, Start: mark_step_in_progress_tool,
 		Findings: record_step_findings_tool, Blocked: mark_step_blocked_tool,
 		Revise: revise_plan_tool, Gaps: report_gaps_tool,
 	}

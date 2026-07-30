@@ -134,9 +134,19 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 			"reason": ev.Reason,
 		}
 	case "plan_set", "plan_step":
+		// One block per INVESTIGATION. This id was a constant, so a second
+		// investigation in the same chat session silently rewrote the first
+		// one's checklist — the follow-up's plan replaced the original's
+		// findings in place. Keyed on the plan instance, each investigation
+		// keeps its own card and its own history; step updates still land on
+		// the right one because every event of a plan carries its id.
+		blockID := "servitor-plan"
+		if ev.PlanID != "" {
+			blockID += "-" + ev.PlanID
+		}
 		return map[string]any{
 			"kind": "block", "type": "servitor_plan",
-			"id":   "servitor-plan",
+			"id":   blockID,
 			"plan": ev.Plan,
 		}
 	case "notes_consumed":
