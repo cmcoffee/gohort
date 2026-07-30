@@ -3852,9 +3852,18 @@
               up.onclick = function() {
                 var t = (rules[idx] || '').trim();
                 if (!t) { window.uiAlert('Type the rule first, then elevate it.'); return; }
-                // Drop blank guardrail rows and de-dupe before adding.
-                grules = grules.filter(function(s) { return s.trim().length > 0; });
-                if (grules.indexOf(t) === -1) grules.push(t);
+                // Drop blank guardrail rows and de-dupe before adding. Compared on
+                // the rule BODY, not the raw line: a guardrail already carrying the
+                // terminal marker would not match the unmarked text being elevated,
+                // and the same rule would land twice under two severities.
+                grules = grules.filter(function(s) { return gBody(s).length > 0; });
+                var already = grules.some(function(s) { return gBody(s) === gBody(t); });
+                // Elevated rules keep their severity unset deliberately. A blank new
+                // row is authored in the hard band and defaults to Terminal; this is
+                // existing text the owner wrote as guidance, and whether it forbids or
+                // merely shapes is not something to guess at. The row toggle is right
+                // there.
+                if (!already) grules.push(t);
                 rules.splice(idx, 1);
                 if (!rules.length) rules.push('');
                 render();
@@ -3910,7 +3919,7 @@
           gWrap.appendChild(gHelp);
           var gHelp2 = document.createElement('div');
           gHelp2.className = 'ui-orch-modal-help';
-          gHelp2.textContent = 'Two kinds of rule. A shaping rule ("answer in Spanish", "no bullet lists") gets the reply sent back for a rewrite, because a compliant answer to the same question exists. Mark a rule Terminal when it forbids the thing being asked for ("never mention anyone’s pay") — there is no compliant rewrite to wait for, so the turn hands straight over to the refusal writer instead of generating the same violation twice more. A rule with no audience in it binds for everyone, including you.';
+          gHelp2.textContent = 'Rules here are Terminal by default, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Turn Terminal off only for a rule that SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists") — those get the reply sent back for a rewrite, and they are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
           gWrap.appendChild(gHelp2);
           var gHelp3 = document.createElement('div');
           gHelp3.className = 'ui-orch-modal-help';
@@ -3969,7 +3978,14 @@
             var addBtn = document.createElement('button');
             addBtn.type = 'button'; addBtn.className = 'ui-orch-list-add'; addBtn.textContent = '+ Add guardrail';
             addBtn.onclick = function() {
-              grules.push(''); renderG();
+              // Terminal by default. A correctable guardrail is guidance with an
+              // expensive judge attached, and guidance belongs in the Rules band
+              // above; this band is for limits that don't negotiate. Existing rules
+              // are left exactly as authored — only new ones start here.
+              // The "!" here is the same marker gIsTerm/gCompose above use, and the
+              // same one guardrailTerminalMarker parses server-side. Three places,
+              // one character — changing it means changing all three.
+              grules.push('! '); renderG();
               var inputs = gList.querySelectorAll('input');
               if (inputs.length) inputs[inputs.length - 1].focus();
             };
