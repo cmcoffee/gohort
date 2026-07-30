@@ -255,6 +255,18 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		type row struct {
+			// Key is the ROW's identity, unique across every bucket a name can
+			// live in. RowKey used to be the bare name, and a name can exist in
+			// several buckets at once — the pool row plus an orphan stashed when
+			// its agent was deleted, say. Two rows sharing one key made the UI's
+			// row identity flicker between the records: enable the pool copy and
+			// the re-render showed the orphan's Disabled badge, which read as
+			// "every time I enable it, it gets disabled." Renaming the tool
+			// "fixed" it by dodging the twin — the tell that found this.
+			Key string `json:"key"`
+			// Conflict marks every row whose NAME exists in more than one bucket,
+			// so the twin is visible instead of mysterious.
+			Conflict    bool   `json:"conflict"`
 			Name        string `json:"name"`
 			Description string `json:"description,omitempty"`
 			Mode        string `json:"mode,omitempty"`
@@ -321,6 +333,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			// suppress the badge even if a stale pending row survives.
 			pending := !p.Shared && PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
 			rows = append(rows, row{
+				Key:  "pool:" + p.Tool.Name,
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Category: p.Tool.Category,
 				Missing: missing, Shared: p.Shared, LastUsed: last,
@@ -380,6 +393,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			}
 			byName[st.Tool.Name] = len(rows)
 			rows = append(rows, row{
+				Key:  "scoped:" + st.AgentID + ":" + st.Tool.Name,
 				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
 				Credential: st.Tool.Credential, Category: st.Tool.Category, Missing: missing,
 				AgentTool: true, Trial: st.Trial, Disabled: st.Tool.Disabled, DisableOK: true,
@@ -400,6 +414,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				group += " · " + t
 			}
 			rows = append(rows, row{
+				Key:  "session:" + st.SessionID + ":" + st.Tool.Name,
 				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
 				Credential: st.Tool.Credential, Category: st.Tool.Category,
 				Session: true, SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
@@ -429,11 +444,29 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			rows = append(rows, row{
+				Key:  "orphan:" + o.Tool.Name,
 				Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
 				Credential: o.Tool.Credential, Category: o.Tool.Category, Missing: missing,
 				Orphan: true, Deletable: true,
 				Group: "Orphaned Tools — agent " + former + " was deleted",
 			})
+		}
+		// Name-conflict pass: the same name living in more than one bucket is
+		// exactly the state that made the old shared RowKey lie, and it stays
+		// confusing even with unique keys — a toggle on one row does not touch
+		// its twin. Badge every copy so the user can see there IS a twin and
+		// delete or re-home the stale one, instead of fighting a record they
+		// cannot see.
+		{
+			names := map[string]int{}
+			for i := range rows {
+				names[rows[i].Name]++
+			}
+			for i := range rows {
+				if names[rows[i].Name] > 1 {
+					rows[i].Conflict = true
+				}
+			}
 		}
 		// Re-heading by what a tool IS FOR rather than where its record lives,
 		// and re-ordering so the grouping (which follows record order — the
@@ -1217,7 +1250,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories section (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			Body: ui.Table{
 				Source:            "api/tools",
-				RowKey:            "name",
+				RowKey:            "key",
 				Search:            true,
 				SearchPlaceholder: "Filter tools by name, agent, category…",
 				// Rows arrive pre-ordered and grouped by CATEGORY (see the
@@ -1240,6 +1273,9 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					}},
 					{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Publish requested", Color: "warning"},
+					}},
+					{Field: "conflict", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Name conflict", Color: "danger"},
 					}},
 					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "⚠ missing", Color: "danger"},
