@@ -1651,7 +1651,21 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		//    user's persistent temp-tool unchecks fold into the deny list.
 		//    Wiping AllowedTools here would broaden the agent to the full
 		//    default pool (loadAgent does not restore the curated list).
-		if isSeedID(req.ID) && !isNoToolsSentinel(req.AllowedTools) {
+		// Only the Tools modal may recompute tool curation. Its save is the only
+		// payload whose AllowedTools carries the CHECKED temp tools; every other
+		// whole-record saver (the Rules modal, the editor form) round-trips the
+		// stored list, which never contains them — so folding on those saves
+		// re-denied every shared temp tool on the seed. From the owner's side:
+		// "every time I enable it, it gets disabled", by a save on a page with
+		// no tool checkboxes on it. Same preservation pattern as the guardrail
+		// fields above: a form that doesn't show a control must not rewrite it.
+		fromToolsModal := r.URL.Query().Get("tools_modal") == "1"
+		if isSeedID(req.ID) && !fromToolsModal {
+			if existing, ok := loadAgent(udb, req.ID); ok {
+				req.DisabledPersistentTools = existing.DisabledPersistentTools
+			}
+		}
+		if isSeedID(req.ID) && fromToolsModal && !isNoToolsSentinel(req.AllowedTools) {
 			seed, _ := seedAgentByID(req.ID)
 			if len(seed.AllowedTools) == 0 {
 				// Default-pool seed.

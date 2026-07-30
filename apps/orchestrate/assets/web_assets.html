@@ -2952,7 +2952,7 @@
               }
               agent.allowed_tools = picked;
               saveBtn.disabled = true;
-              fetch('api/agents', {
+              fetch('api/agents?tools_modal=1', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(agent),
