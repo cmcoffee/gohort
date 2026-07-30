@@ -1010,8 +1010,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// unguarded, which made it a laundering route around a guardrail the target
 	// agent's owner had authored. Nothing about the sub-run justified the
 	// exemption; the hooks were simply never added when this path was written.
-	llmMessages = subTurn.applyInputGuardrail(llmMessages)
+	llmMessages, gDecline := subTurn.applyInputGuardrail(llmMessages)
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
+		// A terminal-rule pre_input block refused this request outright: the loop
+		// delivers this text and never calls a model. Empty on every other turn.
+		PreEmptedReply:    gDecline,
 		SystemPrompt:      sysPrompt,
 		Tools:             tools,
 		MaxRounds:         resolveMaxWorkerRounds(target),

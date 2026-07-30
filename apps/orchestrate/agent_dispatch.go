@@ -657,8 +657,11 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// in the log. Without this, pipeline-internal tool calls are a
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
-	dispatchMsgs := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
+	dispatchMsgs, gDecline := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
 	resp, _, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
+		// A terminal-rule pre_input block refused this request outright: the loop
+		// delivers this text and never calls a model. Empty on every other turn.
+		PreEmptedReply:    gDecline,
 		SendGuardKey:      sendGuardKey,
 		SystemPrompt:      sysPrompt,
 		Tools:             tools,
@@ -1442,7 +1445,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// as they generate, the words ARE delivered, and the check has to run. Checked
 	// against loopCfg (not run.Stream) so it reads the value actually in effect.
 	loopCfg.InterimContentHidden = loopCfg.Stream == nil
-	llmMessages = subTurn.applyInputGuardrail(llmMessages)
+	llmMessages, gDecline := subTurn.applyInputGuardrail(llmMessages)
+	// A terminal-rule pre_input block refused this request outright; the loop
+	// delivers the decline without calling a model.
+	loopCfg.PreEmptedReply = gDecline
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)

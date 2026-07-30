@@ -491,6 +491,43 @@ func guardrailSafeFallbackReply(custom []string) string {
 	return pool[rand.IntN(len(pool))]
 }
 
+// deliverPreEmptedReply hands back a reply for a turn that never ran, shaped like
+// a turn that did.
+//
+// It streams the text and fires one Done step, because that is how every host
+// already renders an answer: the web path builds its transcript from streamed
+// content, so returning the text without streaming it persists a reply the
+// browser never paints — a blank bubble. Mimicking the normal terminal round is
+// what lets seven different callers deliver this without seven short-circuits.
+// Returns a well-formed history too — the input turns plus the reply as the
+// assistant's. A caller that persists the transcript (a scheduled fire does)
+// would otherwise record nothing for the turn, and a nil history reads as "the
+// loop produced no conversation" rather than "the conversation was one refusal".
+func (T *AppCore) deliverPreEmptedReply(messages []Message, reply string, cfg AgentLoopConfig) (*Response, []Message) {
+	if cfg.Stream != nil {
+		cfg.Stream(reply)
+	}
+	if cfg.OnStep != nil {
+		cfg.OnStep(StepInfo{Round: 0, Content: reply, Done: true})
+	}
+	Debug("[agent_loop] pre-empted before round 1: delivering an app-supplied reply (%d chars), no model call", len(reply))
+	history := make([]Message, 0, len(messages)+1)
+	history = append(history, messages...)
+	history = append(history, Message{Role: "assistant", Content: reply})
+	return &Response{Content: reply}, history
+}
+
+// GuardrailDecline returns a neutral decline for a turn that must not run at all
+// — the app-layer counterpart to the loop's own floor, for a request a guardrail
+// refuses before any model sees it.
+//
+// Exported so the pre_input hard-block can reuse the curated set rather than
+// inventing its own line. That matters: the set is deliberately interchangeable
+// in INFORMATION (see guardrailSafeFallbacks), so a second, differently-worded
+// pool would leak more than it replaced by letting a prober tell which check
+// fired from the shape of the answer.
+func GuardrailDecline(custom []string) string { return guardrailSafeFallbackReply(custom) }
+
 // guardrailRejectionReply produces the user-facing text for a halted turn: the
 // app's fresh-context rejection model when one is wired, else the canned
 // decline. Any empty or whitespace answer falls through to the canned line —
@@ -706,6 +743,21 @@ type AgentLoopConfig struct {
 	// no further tool calls. The app decides WHEN (repeated blocks in one turn);
 	// core guarantees the turn actually ends. nil ⇒ prior advisory behavior.
 	GuardrailHalted func() bool
+
+	// PreEmptedReply, when set, IS the turn: the loop delivers it and returns
+	// without calling a model at all.
+	//
+	// For a request an app-layer check refused before anything ran — a pre_input
+	// guardrail on a rule that forbids what was asked for. There is nothing to
+	// steer in that case, and running the agent only buys a long deliberation
+	// about how to decline without saying why, which is the largest single cost a
+	// blocked turn carries. It also cannot leak: no draft is generated, so there
+	// is no protected content anywhere in the turn.
+	//
+	// Delivered the way a normal terminal reply is (streamed, then a Done step) so
+	// every host renders it through the path it already has, rather than each
+	// caller needing its own short-circuit.
+	PreEmptedReply string
 
 	// InterimContentHidden tells the loop that assistant prose from NON-FINAL
 	// rounds is neither shown to anyone nor stored by this host — only the final
@@ -1122,6 +1174,13 @@ func (T *AppCore) Run(ctx context.Context, messages []Message, opts ...ChatOptio
 // The returned Response is from the final LLM call. The returned []Message
 // contains the full conversation history including all tool interactions.
 func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
+	// Pre-empted: an app-layer check already refused this request, so there is no
+	// turn to run. Handled at the OUTER boundary, before runAgentLoopInner, because
+	// nothing inside the loop should have to know about a turn that never happens.
+	if reply := strings.TrimSpace(cfg.PreEmptedReply); reply != "" {
+		resp, history := T.deliverPreEmptedReply(messages, reply, cfg)
+		return resp, history, nil
+	}
 	resp, history, err := T.runAgentLoopInner(ctx, messages, cfg)
 	// Think-tag leak backstop at THE loop boundary, so every surface (web
 	// chat, dispatch, scheduled fires) is covered by one seam — the channel

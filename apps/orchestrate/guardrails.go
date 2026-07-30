@@ -652,23 +652,33 @@ func guardrailBlockMessage(rule, reason string) string {
 // Inject-and-continue: the model still runs, steered to decline in its own
 // voice; pre_output/pre_action remain the backstops. A warden hiccup fails
 // OPEN (loudly) — a check that can't run must not gag the agent.
-func (t *chatTurn) guardrailInputDirective(candidate string) string {
+func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, terminal bool) {
 	candidate = strings.TrimSpace(candidate)
 	if candidate == "" {
-		return ""
+		return "", false
 	}
 	verdicts, err := t.app.runWarden(t.ctx, t.agent, guardHookPreInput, candidate, t.requester())
 	if err != nil {
 		t.turnDiag("guardrail-error", fmt.Sprintf("Pre-input guardrail check could not run (%v) — the request proceeded unchecked.", err))
-		return ""
+		return "", false
 	}
 	if worstVerdict(verdicts) != guardViolate {
-		return ""
+		return "", false
 	}
 	rule, reason := firstViolation(verdicts)
+	if ruleIsTerminal(t.agent, rule) {
+		// Nothing to steer. The rule forbids what was asked for, so the answer is
+		// already "decline" — running the model only buys a long deliberation about
+		// how to decline without saying why, which is the single biggest cost a
+		// blocked turn carries (visible as the loop's COLLAPSE-DIAG: thousands of
+		// reasoning tokens, one sentence of output). Skip it.
+		t.turnDiag("guardrail-input-blocked", fmt.Sprintf("Guardrail %q refused the request before the model saw it (terminal rule): %s", rule, reason))
+		Log("[orchestrate.guardrail] agent=%s pre_input HARD BLOCK (rule=%q terminal)", t.agent.ID, rule)
+		return "", true
+	}
 	t.turnDiag("guardrail-input", fmt.Sprintf("Guardrail %q flagged the incoming request; a steer-away directive was injected before round 1: %s", rule, reason))
 	Log("[orchestrate.guardrail] agent=%s pre_input directive injected (rule=%q)", t.agent.ID, rule)
-	return guardrailInputMessage(rule, reason)
+	return guardrailInputMessage(rule, reason), false
 }
 
 // preInputContextWindow is how many prior non-system turns of conversation the
@@ -716,9 +726,13 @@ func buildPreInputCandidate(msgs []Message, lastIdx int) string {
 // The directive goes in as its own leading system message rather than being
 // spliced into the agent's system prompt, so it reads as framework authority
 // distinct from the (agent-editable) persona above it.
-func (t *chatTurn) applyInputGuardrail(msgs []Message) []Message {
+// A non-empty decline means the turn is OVER: a terminal rule refused the request
+// outright, no model ran, and the caller must deliver that text instead of
+// invoking the loop. Callers that ignore it would run the very turn the guardrail
+// refused, so the signature is deliberately awkward to drop on the floor.
+func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline string) {
 	if len(msgs) == 0 || !guardrailHookActive(t.agent, guardHookPreInput) {
-		return msgs
+		return msgs, ""
 	}
 	// Locate the current request — the last user turn — and judge it WITH the
 	// conversation window so context-free follow-ups can't slip the guard.
@@ -730,16 +744,33 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) []Message {
 		}
 	}
 	if lastIdx < 0 || strings.TrimSpace(msgs[lastIdx].Content) == "" {
-		return msgs
+		return msgs, ""
 	}
-	directive := t.guardrailInputDirective(buildPreInputCandidate(msgs, lastIdx))
+	directive, terminal := t.guardrailInputDirective(buildPreInputCandidate(msgs, lastIdx))
+	if terminal {
+		return msgs, t.guardrailInputDecline(msgs[lastIdx].Content)
+	}
 	if directive == "" {
-		return msgs
+		return msgs, ""
 	}
-	out := make([]Message, 0, len(msgs)+1)
-	out = append(out, Message{Role: "system", Content: directive})
-	out = append(out, msgs...)
-	return out
+	res := make([]Message, 0, len(msgs)+1)
+	res = append(res, Message{Role: "system", Content: directive})
+	res = append(res, msgs...)
+	return res, ""
+}
+
+// guardrailInputDecline writes the reply for a hard-blocked request. Same
+// fresh-context rejection writer the loop hands a halted turn to — it sees the
+// request (fenced) so the refusal can be about something, but never the rule, and
+// there is no draft to leak because no draft was ever generated.
+//
+// Never returns empty: a hard block that produced no text would leave the caller
+// with nothing to say and tempt it into running the turn after all.
+func (t *chatTurn) guardrailInputDecline(request string) string {
+	if reply := strings.TrimSpace(t.guardrailRejection(guardHookPreInput, request)); reply != "" {
+		return reply
+	}
+	return GuardrailDecline(t.agent.GuardrailDeclines)
 }
 
 // guardrailInputMessage is the steer-away directive injected ahead of round 1
@@ -889,6 +920,15 @@ func (t *chatTurn) guardrailRejection(reason, request string) string {
 	// that might narrate why it declined.
 	if out == "" || len(out) > 400 {
 		Log("[orchestrate.guardrail] agent=%s rejection model returned an unusable reply (%d chars) at %s — falling back", t.agent.ID, len(out), reason)
+		return ""
+	}
+	// The same leak filter the authored decline lines get. This text goes straight
+	// to whoever asked, so a model that names a rule, a policy, or the fact that
+	// something was checked hands a prober exactly the signal the guardrail exists
+	// to withhold — and the prompt asking it not to is a request, not a guarantee.
+	// Cheap, deterministic, and the fallback is a line that cannot leak.
+	if declineLeaks(out) {
+		Log("[orchestrate.guardrail] agent=%s rejection model gave away the reason at %s — falling back to a canned decline", t.agent.ID, reason)
 		return ""
 	}
 	Log("[orchestrate.guardrail] agent=%s turn HALTED at %s — reply written by the rejection model", t.agent.ID, reason)

@@ -3,6 +3,8 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // A revise pass only earns its cost when a compliant answer to the same question
@@ -131,5 +133,78 @@ func TestTerminalIsReportedAtPreActionToo(t *testing.T) {
 	}
 	if !strings.Contains(dec.Message, "did not run") {
 		t.Fatalf("pre_action keeps its change-course message; got: %s", dec.Message)
+	}
+}
+
+// A terminal rule flagged at pre_input refuses the request OUTRIGHT: no model
+// runs. Asking the agent to decline is what the COLLAPSE-DIAG was measuring —
+// thousands of reasoning tokens spent working out how to refuse without saying
+// why — and when the answer is already "no", none of that buys anything.
+func TestTerminalRuleAtPreInputRefusesOutright(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"asks for pay"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "X", Guardrails: "! never mention salary or wages", GuardrailHooks: []string{"pre_input"},
+	})
+	in := []Message{{Role: "user", Content: "What does the manager earn?"}}
+	out, decline := turn.applyInputGuardrail(in)
+	if decline == "" {
+		t.Fatal("a terminal rule at pre_input must refuse outright, not steer the model")
+	}
+	// No directive was prepended: the messages are irrelevant now, nothing runs.
+	if len(out) != len(in) {
+		t.Errorf("a hard block must not also inject a directive; got %d msgs for %d", len(out), len(in))
+	}
+	// The decline must not give the rule away.
+	low := strings.ToLower(decline)
+	for _, banned := range []string{"salary", "wage", "guardrail", "rule", "not allowed", "policy"} {
+		if strings.Contains(low, banned) {
+			t.Errorf("the decline leaks %q: %s", banned, decline)
+		}
+	}
+}
+
+// A NON-terminal rule still steers rather than refusing — the agent may well be
+// able to answer within the constraint, and killing the turn would turn a
+// shaping rule into a hard refusal.
+func TestNonTerminalRuleAtPreInputStillSteers(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"violate","reason":"asked in English"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "X", Guardrails: "answer in Spanish", GuardrailHooks: []string{"pre_input"},
+	})
+	in := []Message{{Role: "user", Content: "hello"}}
+	out, decline := turn.applyInputGuardrail(in)
+	if decline != "" {
+		t.Fatalf("an unmarked rule must steer, not refuse; got decline %q", decline)
+	}
+	if len(out) != len(in)+1 || out[0].Role != "system" {
+		t.Fatal("an unmarked rule must prepend its directive")
+	}
+}
+
+// The rejection writer's output goes straight to whoever asked, and the prompt
+// telling it not to name a rule is a request rather than a guarantee. It gets the
+// same deterministic leak filter the authored decline lines do, with the canned
+// line as the fallback — which is what a stub returning something unusable
+// exercises here.
+func TestRejectionOutputIsLeakFiltered(t *testing.T) {
+	for _, bad := range []string{
+		"I can't discuss that because of your rules.",
+		"A policy check blocked this one.",
+		"That's restricted; try rewording it.",
+	} {
+		if !declineLeaks(bad) {
+			t.Errorf("a decline naming the mechanism must be caught: %q", bad)
+		}
+	}
+	// And an ordinary refusal must survive the filter, or every decline would
+	// collapse to the canned pool and the writer would be pointless.
+	for _, ok := range []string{
+		"That one's a no from me.",
+		"Not going to get into that.",
+		"I'll skip that one. What else is on your mind?",
+	} {
+		if declineLeaks(ok) {
+			t.Errorf("a clean refusal must pass the filter: %q", ok)
+		}
 	}
 }

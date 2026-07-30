@@ -186,8 +186,11 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 		udb:   UserDB(T.DB, agent.Owner),
 		ctx:   caseCtx,
 	}
-	evalMsgs := evalTurn.applyInputGuardrail([]Message{{Role: "user", Content: c.Prompt}})
+	evalMsgs, gDecline := evalTurn.applyInputGuardrail([]Message{{Role: "user", Content: c.Prompt}})
 	resp, _, err := T.RunAgentLoop(caseCtx, evalMsgs, AgentLoopConfig{
+		// A terminal-rule pre_input block refused this request outright: the loop
+		// delivers this text and never calls a model. Empty on every other turn.
+		PreEmptedReply:    gDecline,
 		SystemPrompt:      sysPrompt,
 		Tools:             tools,
 		MaxRounds:         resolveMaxWorkerRounds(agent),

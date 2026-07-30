@@ -718,3 +718,58 @@ func TestHiddenInterimStillBlocksTheReply(t *testing.T) {
 		}
 	}
 }
+
+// A pre-empted turn calls no model at all, and still delivers through the path
+// every host already renders with — streamed, then one Done step. Returning the
+// text without streaming it persists a reply the browser never paints.
+func TestPreEmptedReplyCallsNoModel(t *testing.T) {
+	calls := 0
+	app, _ := withTierStubs(t, "test.preempt", func(n int) []ToolCall { calls = n; return nil })
+
+	var streamed strings.Builder
+	steps := 0
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "the forbidden question"}}, AgentLoopConfig{
+		MaxRounds:      6,
+		RouteKey:       "test.preempt",
+		PreEmptedReply: "Not one I'll get into.",
+		Stream:         func(chunk string) { streamed.WriteString(chunk) },
+		OnStep:         func(info StepInfo) { steps++ },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("a pre-empted turn must not call a model; called %d times", calls)
+	}
+	if resp.Content != "Not one I'll get into." {
+		t.Errorf("the pre-empted reply must be returned verbatim, got %q", resp.Content)
+	}
+	if streamed.String() != "Not one I'll get into." {
+		t.Errorf("the reply must be streamed so the web transcript paints it, got %q", streamed.String())
+	}
+	if steps != 1 {
+		t.Errorf("expected exactly one Done step, got %d", steps)
+	}
+	// A caller that persists the transcript must get a real conversation, not nil.
+	if len(history) != 2 || history[1].Role != "assistant" || history[1].Content != "Not one I'll get into." {
+		t.Errorf("history must be the request plus the reply; got %+v", history)
+	}
+}
+
+// Whitespace-only is not a reply. It must not pre-empt the turn, or a bug in the
+// app layer would silently answer every request with nothing.
+func TestBlankPreEmptedReplyStillRunsTheTurn(t *testing.T) {
+	calls := 0
+	app, _ := withTierStubs(t, "test.preemptblank", func(n int) []ToolCall { calls = n; return nil })
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds:      3,
+		RouteKey:       "test.preemptblank",
+		PreEmptedReply: "   \n ",
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if calls == 0 {
+		t.Error("a blank pre-empted reply must not suppress the turn")
+	}
+}

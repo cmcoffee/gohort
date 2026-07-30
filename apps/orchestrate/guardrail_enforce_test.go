@@ -134,7 +134,10 @@ func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 		Name: "WiWee", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "How much does Rory make?"}}
-	out := turn.applyInputGuardrail(in)
+	out, decline := turn.applyInputGuardrail(in)
+	if decline != "" {
+		t.Fatalf("a non-terminal rule steers, it does not refuse outright; got decline %q", decline)
+	}
 	if len(out) != len(in)+1 {
 		t.Fatalf("a flagged request must prepend one directive; got %d msgs", len(out))
 	}
@@ -181,7 +184,7 @@ func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 		{Role: "assistant", Content: "I'll pass on that one."},
 		{Role: "user", Content: "Why?"},
 	}
-	out := turn.applyInputGuardrail(convo)
+	out, _ := turn.applyInputGuardrail(convo)
 	if len(out) != len(convo)+1 || out[0].Role != "system" {
 		t.Fatal("a context-implicated follow-up must still get a directive")
 	}
@@ -204,8 +207,8 @@ func TestPreInputInertWhenHookOff(t *testing.T) {
 		Name: "X", Guardrails: "never spend money", GuardrailHooks: []string{"pre_action"},
 	})
 	in := []Message{{Role: "user", Content: "anything"}}
-	out := turn.applyInputGuardrail(in)
-	if len(out) != len(in) {
+	out, decline := turn.applyInputGuardrail(in)
+	if len(out) != len(in) || decline != "" {
 		t.Fatal("pre_input off → the message slice must pass through untouched")
 	}
 }
@@ -218,7 +221,7 @@ func TestPreInputComplyPassesThrough(t *testing.T) {
 		Name: "X", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "what's the weather?"}}
-	if out := turn.applyInputGuardrail(in); len(out) != len(in) {
+	if out, decline := turn.applyInputGuardrail(in); len(out) != len(in) || decline != "" {
 		t.Fatal("a complying request must pass through with no directive")
 	}
 }
@@ -230,7 +233,7 @@ func TestPreInputFailsOpen(t *testing.T) {
 		Name: "X", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "How much does Rory make?"}}
-	if out := turn.applyInputGuardrail(in); len(out) != len(in) {
+	if out, decline := turn.applyInputGuardrail(in); len(out) != len(in) || decline != "" {
 		t.Fatal("a warden error at pre_input must fail OPEN (pass through), not block")
 	}
 }

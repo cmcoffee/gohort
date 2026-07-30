@@ -6804,11 +6804,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// pre_input guardrail: judge the incoming request before round 1 so a
 	// topical/disclosure rule ("never mention salary") is caught at the door,
 	// not after the model has already narrated the answer in an interim turn.
-	llmMsgs = t.applyInputGuardrail(llmMsgs)
+	llmMsgs, gDecline := t.applyInputGuardrail(llmMsgs)
 
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
+		// A terminal-rule pre_input block refused this request outright: the loop
+		// delivers this text and never calls a model. Empty on every other turn.
+		PreEmptedReply:       gDecline,
 		SendGuardKey:         sendGuardKey,
 		SystemPrompt:         sys,
 		Tools:                allTools,

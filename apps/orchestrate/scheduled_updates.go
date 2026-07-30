@@ -474,8 +474,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// status. This catches a panic/early-return path so the run can't be
 	// stuck "running" until the sweeper's retention window.
 	defer liveRun.Complete(RunStatusFailed)
-	msgs = subTurn.applyInputGuardrail(msgs)
+	msgs, gDecline := subTurn.applyInputGuardrail(msgs)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
+		// A terminal-rule pre_input block refused this request outright: the loop
+		// delivers this text and never calls a model. Empty on every other turn.
+		PreEmptedReply:    gDecline,
 		SendGuardKey:      sendGuardKey,
 		SystemPrompt:      sysPrompt,
 		Tools:             tools,
