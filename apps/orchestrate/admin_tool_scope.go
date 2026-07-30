@@ -184,10 +184,15 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 		}
 		// Framework seeds (Builder, the retired Chat seed, Research, …) are
 		// not offered as per-agent targets for USER tools: Builder always
-		// loads the full pool (its pill would be a no-op), and seeds reach
-		// pool tools through "All my agents" like everything else. Exception:
-		// a seed that already HOLDS this tool stays listed (see agentHas).
-		if a.Owner == seedOwner {
+		// loads the full pool (its pill would be a no-op), and the seed
+		// personas are retired in favour of archetype recipes. Matched BY
+		// IDENTITY, not ownership: a seed the user has customized exists as a
+		// SHADOW — the seed's ID with the user's Owner — and the old
+		// Owner==seedOwner test let every shadow through, which is exactly how
+		// "Chat" kept turning up in the pills after its retirement. Exception:
+		// a seed that already HOLDS this tool stays listed (see agentHas), so
+		// an existing grant is always revocable.
+		if isSeedID(a.ID) || a.Owner == seedOwner {
 			return agentHas[a.ID]
 		}
 		return true

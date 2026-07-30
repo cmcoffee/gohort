@@ -61,7 +61,16 @@ func pipelineScopeState(db Database, owner, name string) (ToolScopeState, bool) 
 		if isAppAgent(a.ID) {
 			continue
 		}
-		on := agentHasAttachedPipeline(a, def.ID)
+		holds := agentHasAttachedPipeline(a, def.ID)
+		// Framework seeds are retired from the pill surfaces — the tool plane's
+		// rule, applied here too (this plane previously had NO seed filter, so
+		// Builder and every seed shadow were offered as targets). Identity, not
+		// ownership, so shadows are covered; an explicit attach stays visible
+		// so it can be revoked.
+		if (isSeedID(a.ID) || a.Owner == seedOwner) && !holds {
+			continue
+		}
+		on := holds
 		if st.Global {
 			on = agentSeesGlobalPipeline(a, def.ID)
 		}
