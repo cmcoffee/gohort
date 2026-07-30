@@ -1168,8 +1168,12 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					RowKey: "name",
 					Columns: []ui.Col{
 						{Field: "name", Flex: 1},
-						{Field: "count", Label: "Tools", Flex: 0},
-						{Field: "tool_list", Label: "Members", Flex: 3, Mute: true},
+						// The members ARE the category — show the names as pills
+						// rather than a count plus a comma-joined mutter. A count
+						// column earns its place when the list is too long to show;
+						// these lists are a handful of tools, and the names answer
+						// the only question anyone brings here ("what's in it?").
+						{Field: "tools", Label: "Members", Flex: 3, Type: "pills"},
 					},
 					RowActions: []ui.RowAction{
 						// Category-first assignment: the whole point. Picking from
@@ -1184,7 +1188,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 							EmptyText:     "You have no tools yet.",
 						})),
 					},
-					EmptyText: "No categories yet. Add one below, or set a category on any tool in My tools.",
+					EmptyText: "No categories yet. Add one below and tick the tools that belong in it.",
 				},
 				ui.ModalButton{
 					Label:    "Add category",
@@ -1210,7 +1214,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "My tools",
-			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Set a tool's category from its row; type a new name there to create one. Tools that haven't claimed a category sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories section (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			Body: ui.Table{
 				Source:            "api/tools",
 				RowKey:            "name",
@@ -1297,25 +1301,11 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 							}},
 						},
 					}),
-					// Set category — the user claims a grouping label on their own
-					// tool. Free-form, but offers the categories that already exist
-					// so reuse is the easy path and near-duplicates ("Calendar" vs
-					// "calendars", which would split one heading in two) take
-					// deliberate effort. Not gated to pool rows: an agent-scoped
-					// tool has a category too, and set_category writes through to
-					// every agent holding a copy.
-					ui.Expand("Set category", ui.FormPanel{
-						Source:      "api/tools?name={name}",
-						PostURL:     "api/tools?action=set_category&name={name}",
-						SubmitLabel: "Save category",
-						Fields: []ui.FormField{
-							{Field: "category", Type: "text", Label: "Category",
-								Placeholder: "e.g. Acme API, Research, Messaging",
-								Suggestions: knownToolCategories(AuthDB(), user),
-								Help:        "Groups this tool under a header in the tool picker and your list. Pick an existing category or type a new name to create one. Leave blank to fall back to its capability label."},
-						},
-						Invalidate: []string{"api/tools"},
-					}),
+					// (Set category moved out of the rows: the Categories section's
+					// category-first picker is the assignment surface — one list to
+					// tick beats opening forty rows, and two surfaces for one label
+					// invited the "Calendar" vs "calendars" split. The set_category
+					// API action stays for Builder and compatibility.)
 					// Request to publish — ask an admin to Share this tool to the
 					// deployment-wide catalog. Only when it isn't already shared and
 					// has no request pending (can_request).
@@ -1612,6 +1602,18 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 		if row, ok := UserToolByName(db, user, name); ok {
 			builderOnly = row.Tool.BuilderOnly
 		}
+		if builderOnly {
+			// While Builder-only is ON, the selector below it is dead weight:
+			// every agent pill is overridden, and a wall of toggles that do
+			// nothing invites clicking them to find out. Return ONLY the
+			// Builder-only pill — turning it off re-loads the full selector
+			// (the renderer re-GETs after every toggle).
+			out["items"] = []pill{{Key: "builder_only", Label: "Builder-only (authoring)", On: true}}
+			out["note"] = "Builder-only: hidden from every agent except Builder. Turn this off to choose which agents get the tool."
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, out)
+			return
+		}
 		items = append([]pill{{Key: "builder_only", Label: "Builder-only (authoring)", On: builderOnly}}, items...)
 		out["primary"] = map[string]any{"label": "All my agents", "on": found && st.Global}
 		switch {
@@ -1625,8 +1627,6 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 					break
 				}
 			}
-		case builderOnly:
-			out["note"] = "Builder-only: hidden from every agent except Builder, whatever the pills below say. Turn it off to hand the tool back to the agents."
 		case st.Global:
 			out["note"] = "Shared with every one of your agents. Turn an agent off to deny it there, or turn All my agents off to keep it only on the agents left on."
 		default:

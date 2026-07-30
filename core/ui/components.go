@@ -206,7 +206,7 @@ type Col struct {
 	Flex   int            `json:"flex,omitempty"`   // CSS flex weight; 0 = auto
 	Format string         `json:"format,omitempty"` // "reltime", "bytes", "thousands", "" (plain)
 	Mute   bool           `json:"mute,omitempty"`   // render with --text-mute color
-	Type   string         `json:"type,omitempty"`   // "" | "badge" | "dot"
+	Type   string         `json:"type,omitempty"`   // "" | "badge" | "dot" | "pills" (array field -> inert chips)
 	Badges []BadgeMapping `json:"badges,omitempty"` // for type="badge" + type="dot" (Label ignored for "dot"; only Color used)
 	// Link names another field holding a URL; when set the cell renders as a
 	// clickable anchor (text = this column's Field value, href = the Link field's

@@ -152,6 +152,23 @@
             cellsWrap.appendChild(renderDotCell(col, v));
             return;
           }
+          if (col.type === 'pills') {
+            // An ARRAY field rendered as inert chips — a member list you can
+            // scan, not toggles (the scope-pill renderer owns interactive
+            // pills). A non-array value falls through as a single chip; an
+            // empty list renders an empty muted cell rather than noise.
+            var pc = el('div', {class: 'ui-table-cell'});
+            if (col.flex) pc.style.flex = col.flex;
+            var vals = Array.isArray(v) ? v : (v == null || v === '' ? [] : [v]);
+            vals.forEach(function(item) {
+              var chip = el('span', {text: String(item)});
+              chip.style.cssText = 'display:inline-block;margin:0.1rem 0.22rem 0.1rem 0;padding:0.1rem 0.5rem;' +
+                'border:1px solid var(--border,#3a3a4a);border-radius:999px;font-size:0.74rem;color:var(--text-mute,#999);white-space:nowrap';
+              pc.appendChild(chip);
+            });
+            cellsWrap.appendChild(pc);
+            return;
+          }
           var cell = el('div', {class: 'ui-table-cell' + (col.mute ? ' mute' : '')});
           if (col.flex) cell.style.flex = col.flex;
           // Full value on hover — cells ellipsize when crowded, so a long name
