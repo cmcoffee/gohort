@@ -187,20 +187,21 @@ func (t *chatTurn) requester() requesterIdentity {
 // guardrail that quietly loses its severity is worse than one that never had it.
 //
 // The marker names the EXCEPTION, and that is the whole point of which way round
-// it goes. Terminal is what this band is for — a hard limit that does not
+// it goes. Blocking is what this band is for — a hard limit that does not
 // negotiate — so it is the default and needs no marking. What needs declaring is
 // the rare rule that merely SHAPES an answer and can be satisfied on a retry.
 //
-// Inverting it also fixes the failure direction of ruleIsCorrectable below: when
-// the warden's requoted rule can't be matched back to an authored line, the rule
-// stays terminal instead of quietly becoming negotiable.
+// Which way round is also a safety property, not a preference: it sets the
+// failure direction of ruleIsCorrectable below. When the warden's requoted rule
+// can't be matched back to an authored line, the rule keeps blocking instead of
+// quietly becoming negotiable.
 const guardrailCorrectableMarker = "?"
 
-// guardrailLegacyTerminalMarker is accepted and ignored. "!" used to mark a rule
-// terminal when correctable was the default; terminal is now the default, so an
-// existing "! never mention salary" means exactly what it always did and must
-// keep working untouched.
-const guardrailLegacyTerminalMarker = "!"
+// guardrailLegacyBlockMarker is accepted and ignored. "!" used to mark a rule
+// non-negotiable back when correctable was the default; blocking is the default
+// now, so an existing "! never mention salary" means exactly what it always did
+// and must keep working untouched.
+const guardrailLegacyBlockMarker = "!"
 
 // guardrailRule is one authored rule plus how a violation of it is handled.
 type guardrailRule struct {
@@ -235,10 +236,10 @@ func guardrailRules(agent AgentRecord) []guardrailRule {
 			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailCorrectableMarker)); body != "" {
 				r = guardrailRule{Text: body, Correctable: true}
 			}
-		case strings.HasPrefix(s, guardrailLegacyTerminalMarker):
-			// Legacy "!": meant terminal, which is now the default. Strip it so the
-			// warden judges the rule text and not the punctuation.
-			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailLegacyTerminalMarker)); body != "" {
+		case strings.HasPrefix(s, guardrailLegacyBlockMarker):
+			// Legacy "!": meant non-negotiable, which is now the default. Strip it so
+			// the warden judges the rule text and not the punctuation.
+			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailLegacyBlockMarker)); body != "" {
 				r = guardrailRule{Text: body}
 			}
 		}
@@ -251,7 +252,7 @@ func guardrailRules(agent AgentRecord) []guardrailRule {
 // correctable. The warden echoes the rule "verbatim or trimmed", so the match is
 // normalized and tolerant of either side being a prefix of the other.
 //
-// An unrecognized rule text is NOT correctable — it stays terminal. That is the
+// An unrecognized rule text is NOT correctable — it keeps blocking. That is the
 // safe direction, and it is why the marker names the exception: a fuzzy string
 // match that fails now costs a refusal the owner could have avoided by marking
 // the rule, rather than silently downgrading a hard limit to a suggestion.
@@ -281,7 +282,7 @@ func ruleIsCorrectable(agent AgentRecord, named string) bool {
 func normalizeRuleText(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimPrefix(s, guardrailCorrectableMarker)
-	s = strings.TrimPrefix(s, guardrailLegacyTerminalMarker)
+	s = strings.TrimPrefix(s, guardrailLegacyBlockMarker)
 	s = strings.Trim(s, ` "'.,;:`)
 	return strings.Join(strings.Fields(s), " ")
 }
@@ -606,23 +607,23 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 			return pass
 		}
 		rule, reason := firstViolation(verdicts)
-		// Terminal unless the owner marked this rule correctable. A revise pass only
+		// Blocks unless the owner marked this rule correctable. A revise pass only
 		// earns its cost when a compliant answer to the same question exists; where
 		// the rule forbids what was asked for, each attempt regenerates the
 		// violation from the same context and each one is another draft holding the
 		// protected thing to retract and scrub. So core skips the correction budget
 		// by default and hands the reply to the fresh-context rejection writer.
-		terminal := !ruleIsCorrectable(t.agent, rule)
-		terminalNote := ""
-		if terminal {
-			terminalNote = " (terminal rule — answered by a separate check, no revise pass)"
+		correctable := ruleIsCorrectable(t.agent, rule)
+		modeNote := " (a blocking rule — answered by a separate check, no rewrite attempted)"
+		if correctable {
+			modeNote = " (one rewrite will be attempted)"
 		}
 		// Counted on the TURN, not in this closure: the halt predicate and the
 		// check are separate hooks that must read one number, and a turn's
 		// escalation state belongs to the turn.
 		t.guardrailBlocks++
-		t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail %q blocked a %s check%s: %s", rule, hookPoint, terminalNote, reason))
-		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q terminal=%v) block#%d", t.agent.ID, hookPoint, rule, terminal, t.guardrailBlocks)
+		t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail %q blocked a %s check%s: %s", rule, hookPoint, modeNote, reason))
+		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q correctable=%v) block#%d", t.agent.ID, hookPoint, rule, correctable, t.guardrailBlocks)
 		if t.guardrailBlocks >= guardBlockEscalateAt {
 			t.notifyOwnerGuardrail(rule, t.guardrailBlocks)
 			// The returned text still goes back as the blocked result, but it is
@@ -631,12 +632,12 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 			// be the entire mechanism: a string reading "STOP" handed to the very
 			// agent whose judgment the warden had just overruled.
 			return GuardrailDecision{
-				Blocked:  true,
-				Terminal: terminal,
-				Message:  fmt.Sprintf("STOP — you have hit enforced guardrails %d times this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
+				Blocked:     true,
+				Correctable: correctable,
+				Message:     fmt.Sprintf("STOP — you have hit enforced guardrails %d times this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
 			}
 		}
-		return GuardrailDecision{Blocked: true, Terminal: terminal, Message: guardrailBlockMessage(rule, reason)}
+		return GuardrailDecision{Blocked: true, Correctable: correctable, Message: guardrailBlockMessage(rule, reason)}
 	}
 }
 
@@ -680,7 +681,7 @@ func guardrailBlockMessage(rule, reason string) string {
 // Inject-and-continue: the model still runs, steered to decline in its own
 // voice; pre_output/pre_action remain the backstops. A warden hiccup fails
 // OPEN (loudly) — a check that can't run must not gag the agent.
-func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, terminal bool) {
+func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, blocked bool) {
 	candidate = strings.TrimSpace(candidate)
 	if candidate == "" {
 		return "", false
@@ -700,8 +701,8 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 		// how to decline without saying why, which is the single biggest cost a
 		// blocked turn carries (visible as the loop's COLLAPSE-DIAG: thousands of
 		// reasoning tokens, one sentence of output). Skip it.
-		t.turnDiag("guardrail-input-blocked", fmt.Sprintf("Guardrail %q refused the request before the model saw it (terminal rule): %s", rule, reason))
-		Log("[orchestrate.guardrail] agent=%s pre_input HARD BLOCK (rule=%q terminal)", t.agent.ID, rule)
+		t.turnDiag("guardrail-input-blocked", fmt.Sprintf("Guardrail %q refused the request before the model saw it, so no reply was generated: %s", rule, reason))
+		Log("[orchestrate.guardrail] agent=%s pre_input HARD BLOCK (rule=%q, not correctable)", t.agent.ID, rule)
 		return "", true
 	}
 	t.turnDiag("guardrail-input", fmt.Sprintf("Guardrail %q flagged the incoming request; a steer-away directive was injected before round 1: %s", rule, reason))
@@ -774,8 +775,8 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline s
 	if lastIdx < 0 || strings.TrimSpace(msgs[lastIdx].Content) == "" {
 		return msgs, ""
 	}
-	directive, terminal := t.guardrailInputDirective(buildPreInputCandidate(msgs, lastIdx))
-	if terminal {
+	directive, blocked := t.guardrailInputDirective(buildPreInputCandidate(msgs, lastIdx))
+	if blocked {
 		return msgs, t.guardrailInputDecline(msgs[lastIdx].Content)
 	}
 	if directive == "" {

@@ -405,10 +405,9 @@ const (
 // lists") is corrected into a genuinely better reply. It is close to worthless
 // when the rule forbids the very content the question asks for: the model still
 // holds that content, still wants to say it, and each attempt manufactures
-// another leaking draft to retract and scrub. Guardrails are terminal by default
-// for exactly that reason and skip this budget entirely
-// (GuardrailDecision.Terminal); only a rule the owner marked correctable reaches
-// it.
+// another leaking draft to retract and scrub. Guardrails block by default for
+// exactly that reason and skip this budget entirely (GuardrailDecision.Correctable
+// is false); only a rule the owner marked correctable reaches it.
 //
 // ONE retry, not two. The second was never observed to rescue a reply the first
 // couldn't: a model that missed a shaping rule twice with the correction in front
@@ -428,17 +427,29 @@ type GuardrailDecision struct {
 	// what the model is told about why its candidate did not go through.
 	Message string
 
-	// Terminal marks a block as not worth correcting: the rule forbids what was
-	// asked for, so a revise pass would regenerate the violation from the same
-	// context that just produced it. On a Terminal block the output gates skip
-	// the correction budget and hand the reply straight to the rejection writer.
+	// Correctable marks a block as worth one more attempt: the rule shapes the
+	// answer rather than forbidding it, so sending the reply back can produce a
+	// genuinely compliant version. When false the output gates skip the correction
+	// budget entirely and hand the reply straight to the rejection writer, because
+	// a revise pass against a rule that forbids what was asked would only
+	// regenerate the violation from the same context that just produced it.
+	//
+	// FALSE is the default, deliberately. GuardrailDecision{Blocked: true} with no
+	// severity set means block-and-refuse, which is the strict reading; a field
+	// named for the blocking case would have made the zero value the lax one.
+	//
+	// Not named Block, though that is what the UI calls it: this struct already has
+	// Blocked for "was the candidate stopped", and Block beside Blocked is a
+	// maintenance trap. One word per concept — the app parses rules into
+	// guardrailRule.Correctable, ruleIsCorrectable decides, and
+	// maxGuardrailOutputCorrections bounds it.
 	//
 	// It carries no weight at pre_action. A blocked tool call still has a
 	// compliant path available — pick a different tool, drop the offending
 	// argument, finish the task another way — and that is a change of course, not
-	// a refusal. Turning those terminal would convert every recoverable detour
-	// into a dead end.
-	Terminal bool
+	// a refusal. Ending the turn there would convert every recoverable detour into
+	// a dead end.
+	Correctable bool
 }
 
 // guardrailRedactedDraft replaces a blocked assistant draft in history so the
@@ -2671,11 +2682,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					// Halt overrides the correction budget: once the app has
 					// decided this turn is over, asking the same model for one
 					// more revision is another generation from the context that
-					// just failed. A Terminal block says the same thing about the
-					// FIRST attempt — the rule forbids what was asked for, so
-					// there is no compliant revision of this reply to wait for.
+					// just failed. A block on a rule that is not Correctable says the
+					// same thing about the FIRST attempt — the rule forbids what was
+					// asked for, so there is no compliant revision to wait for.
 					halted := cfg.GuardrailHalted != nil && cfg.GuardrailHalted()
-					if !halted && !dec.Terminal && guardrailOutputCorrections < maxGuardrailOutputCorrections && round < maxRounds {
+					if !halted && dec.Correctable && guardrailOutputCorrections < maxGuardrailOutputCorrections && round < maxRounds {
 						Debug("[agent_loop] guardrail blocked pre-output, re-prompting (correction %d/%d)", guardrailOutputCorrections+1, maxGuardrailOutputCorrections)
 						emitDiag("guardrail-blocked-output", "The reply was withheld by an enforced guardrail; re-prompted to revise.")
 						retractRound()                              // DISCARD the withheld bubble — not persisted or delivered (settle would commit it)
@@ -2684,12 +2695,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 						guardrailOutputCorrections++
 						continue
 					}
-					// Terminal, halted, or the budget/rounds are spent and the reply
-					// STILL violates. Do not release it — overwrite the draft in
+					// Not correctable, halted, or the budget/rounds are spent and the
+					// reply STILL violates. Do not release it — overwrite the draft in
 					// place with the safe decline and return that. The floor is a
 					// canned reply, not the leak, no matter how hard the turn was
 					// pushed.
-					Debug("[agent_loop] guardrail pre-output final (terminal=%v halted=%v) — handing the reply to the rejection model", dec.Terminal, halted)
+					Debug("[agent_loop] guardrail pre-output final (correctable=%v halted=%v) — handing the reply to the rejection model", dec.Correctable, halted)
 					emitDiag("guardrail-output-substituted", "A reply kept violating an enforced guardrail; a neutral decline was substituted so nothing protected was released.")
 					retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
 					fallback := guardrailRejectionReply(cfg, "pre_output", history)
@@ -2722,8 +2733,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// Done:false, which is what paints a mid-turn bubble), so an unsampled
 		// round reached both the transcript and the user having never been judged.
 		// An interval is defensible for a drift detector and indefensible for
-		// containment, and once a rule is marked terminal the owner is plainly
-		// asking for containment.
+		// containment, and a rule left blocking rather than correctable is an owner
+		// plainly asking for containment.
 		//
 		// Per-round checking also fixes the scrubbing scope for free.
 		// replaceBlockedDraft only rewrites the most recent assistant turn, which
@@ -2760,12 +2771,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				// one a different course could satisfy. Otherwise the turn ends
 				// here — the one thing that must never happen is releasing the
 				// narration because there was no correction left to spend.
-				canRedirect := !dec.Terminal &&
+				canRedirect := dec.Correctable &&
 					!(cfg.GuardrailHalted != nil && cfg.GuardrailHalted()) &&
 					guardrailOutputCorrections < maxGuardrailOutputCorrections &&
 					round < maxRounds
 				if !canRedirect {
-					Debug("[agent_loop] guardrail periodic final at round %d (terminal=%v) — handing over to the rejection model", round, dec.Terminal)
+					Debug("[agent_loop] guardrail periodic final at round %d (correctable=%v) — handing over to the rejection model", round, dec.Correctable)
 					emitDiag("guardrail-halted", "An enforced guardrail stopped this turn; the reply was written by a separate check, not by the agent.")
 					reply := guardrailRejectionReply(cfg, GuardHookPeriodic, history)
 					replaceBlockedDraft(reply)
@@ -2905,7 +2916,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// message (never fenced). guardBlockedThisRound feeds the wedge
 			// machinery so repeated blocks settle the turn.
 			if cfg.GuardrailCheck != nil && needsConfirm[tc.Name] {
-				// Decision.Terminal is deliberately ignored here: a blocked call
+				// Decision.Correctable is deliberately ignored here: a blocked call
 				// still leaves the agent a compliant way to finish the task, so
 				// this stays block-and-continue no matter which rule fired.
 				// Ending the turn is the escalation counter's job.

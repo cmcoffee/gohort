@@ -14,7 +14,7 @@ import (
 // than forbidding it, where a retry can genuinely satisfy it.
 //
 // Which way round the marker goes is a safety property, not a preference. See
-// TestUnmatchedRuleStaysTerminal.
+// TestUnmatchedRuleStaysBlocking.
 
 func TestGuardrailRulesParseSeverityMarker(t *testing.T) {
 	agent := AgentRecord{Guardrails: strings.Join([]string{
@@ -23,8 +23,8 @@ func TestGuardrailRulesParseSeverityMarker(t *testing.T) {
 		"?no bullet lists",
 		"   ",
 		"  ? spaced marker  ",
-		// Legacy "!" meant terminal back when correctable was the default.
-		// Terminal is the default now, so it means the same thing and must keep
+		// Legacy "!" meant non-negotiable back when correctable was the default.
+		// Blocking is the default now, so it means the same thing and must keep
 		// working — stripped so the warden judges the rule, not the punctuation.
 		"! no home addresses",
 	}, "\n")}
@@ -60,7 +60,7 @@ func TestSeverityMarkerStrippedFromWardenPrompt(t *testing.T) {
 }
 
 // A line that is nothing but the marker has no rule in it. It must not become a
-// terminal rule with an empty body, which would match every candidate.
+// blocking rule with an empty body, which would match every candidate.
 func TestBareMarkerIsNotARule(t *testing.T) {
 	for _, marker := range []string{"?", "!"} {
 		rules := guardrailRules(AgentRecord{Guardrails: marker})
@@ -100,7 +100,7 @@ func TestRuleIsCorrectableMatchesWardenRequoting(t *testing.T) {
 }
 
 // A rule marked correctable gets the revise pass.
-func TestCorrectableRuleIsNotTerminal(t *testing.T) {
+func TestCorrectableRuleGetsItsRevisePass(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"violate","reason":"it is English"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_output"},
@@ -109,7 +109,7 @@ func TestCorrectableRuleIsNotTerminal(t *testing.T) {
 	if !dec.Blocked {
 		t.Fatal("a violation must block")
 	}
-	if dec.Terminal {
+	if !dec.Correctable {
 		t.Fatal("a rule marked correctable must get its revise pass")
 	}
 }
@@ -117,10 +117,10 @@ func TestCorrectableRuleIsNotTerminal(t *testing.T) {
 // THE reason the marker names the exception rather than the rule. The warden hands
 // back a rule as TEXT ("verbatim or trimmed"), so mapping it to an authored line is
 // a fuzzy match — and a fuzzy match can fail. When it does, the rule must stay
-// terminal. Marking terminal instead would have made a match failure silently
+// blocking. Marking the blocking case instead would have made a match failure silently
 // downgrade a hard limit to a suggestion, in a mechanism whose whole job is to not
 // fail open.
-func TestUnmatchedRuleStaysTerminal(t *testing.T) {
+func TestUnmatchedRuleStaysBlocking(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"some paraphrase the matcher will not place","status":"violate","reason":"x"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_output"},
@@ -129,12 +129,12 @@ func TestUnmatchedRuleStaysTerminal(t *testing.T) {
 	if !dec.Blocked {
 		t.Fatal("a violation must block")
 	}
-	if !dec.Terminal {
-		t.Fatal("an unmatchable rule name must fail CLOSED (terminal), never open")
+	if dec.Correctable {
+		t.Fatal("an unmatchable rule name must fail CLOSED (blocking), never open")
 	}
 }
 
-func TestUnmarkedRuleIsTerminal(t *testing.T) {
+func TestUnmarkedRuleBlocks(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"states a figure"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_output"},
@@ -143,22 +143,22 @@ func TestUnmarkedRuleIsTerminal(t *testing.T) {
 	if !dec.Blocked {
 		t.Fatal("a violation must block")
 	}
-	if !dec.Terminal {
-		t.Fatal("an unmarked guardrail must be terminal — that is what the band is for")
+	if dec.Correctable {
+		t.Fatal("an unmarked guardrail must block — that is what the band is for")
 	}
 }
 
 // pre_action stays block-and-continue whichever rule fired: a blocked tool call
-// still leaves a compliant way to finish the task, and turning those terminal
+// still leaves a compliant way to finish the task, and ending the turn there
 // would convert every recoverable detour into a dead end. Pinned in core, where
 // the decision is honored; here we only pin that the app still reports it.
-func TestTerminalIsReportedAtPreActionToo(t *testing.T) {
+func TestSeverityIsReportedAtPreActionToo(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never spend money","status":"violate","reason":"a purchase"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never spend money", GuardrailHooks: []string{"pre_action"},
 	})
 	dec := turn.guardrailCheckHook()(guardHookPreAction, "purchase item=widget")
-	if !dec.Blocked || !dec.Terminal {
+	if !dec.Blocked || dec.Correctable {
 		t.Fatalf("the app reports the rule's severity at every hook; got %+v", dec)
 	}
 	if !strings.Contains(dec.Message, "did not run") {
@@ -166,11 +166,11 @@ func TestTerminalIsReportedAtPreActionToo(t *testing.T) {
 	}
 }
 
-// A terminal rule flagged at pre_input refuses the request OUTRIGHT: no model
+// A blocking rule flagged at pre_input refuses the request OUTRIGHT: no model
 // runs. Asking the agent to decline is what the COLLAPSE-DIAG was measuring —
 // thousands of reasoning tokens spent working out how to refuse without saying
 // why — and when the answer is already "no", none of that buys anything.
-func TestTerminalRuleAtPreInputRefusesOutright(t *testing.T) {
+func TestBlockingRuleAtPreInputRefusesOutright(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"asks for pay"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_input"},
@@ -178,7 +178,7 @@ func TestTerminalRuleAtPreInputRefusesOutright(t *testing.T) {
 	in := []Message{{Role: "user", Content: "What does the manager earn?"}}
 	out, decline := turn.applyInputGuardrail(in)
 	if decline == "" {
-		t.Fatal("a terminal rule at pre_input must refuse outright, not steer the model")
+		t.Fatal("a blocking rule at pre_input must refuse outright, not steer the model")
 	}
 	// No directive was prepended: the messages are irrelevant now, nothing runs.
 	if len(out) != len(in) {
@@ -196,7 +196,7 @@ func TestTerminalRuleAtPreInputRefusesOutright(t *testing.T) {
 // A CORRECTABLE rule still steers rather than refusing — the agent may well be
 // able to answer within the constraint, and killing the turn would turn a
 // shaping rule into a hard refusal.
-func TestNonTerminalRuleAtPreInputStillSteers(t *testing.T) {
+func TestCorrectableRuleAtPreInputStillSteers(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"violate","reason":"asked in English"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_input"},

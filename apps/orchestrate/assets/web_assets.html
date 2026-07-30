@@ -3919,7 +3919,7 @@
           gWrap.appendChild(gHelp);
           var gHelp2 = document.createElement('div');
           gHelp2.className = 'ui-orch-modal-help';
-          gHelp2.textContent = 'Rules here are Terminal, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "1 retry" only if it SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists") — those get sent back once for a rewrite and decline if it still breaks the rule, and they are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
+          gHelp2.textContent = 'A rule here BLOCKS, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "attempt-recovery" only if it SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists") — those get sent back once for a rewrite, and decline if they still break the rule. Shaping rules are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
           gWrap.appendChild(gHelp2);
           var gHelp3 = document.createElement('div');
           gHelp3.className = 'ui-orch-modal-help';
@@ -3962,14 +3962,14 @@
               var term = document.createElement('button');
               term.type = 'button';
               term.className = 'ui-orch-list-del';
-              term.textContent = gIsCorr(text) ? '1 retry' : 'terminal';
+              term.textContent = gIsCorr(text) ? 'attempt-recovery' : 'block';
               term.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;letter-spacing:0.03em;' +
                 (gIsCorr(text)
                   ? 'color:var(--text-mute);opacity:0.8'
                   : 'color:var(--danger);border-color:var(--danger);font-weight:600');
               term.title = gIsCorr(text)
-                ? 'A violation sends the reply back for one rewrite, then declines if it still breaks the rule. For a rule that shapes an answer rather than forbidding it. Click to make it terminal.'
-                : 'A violation ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default, and what this band is for. Click only if this rule shapes an answer rather than forbidding it.';
+                ? 'Attempt recovery: a violation sends the reply back for one rewrite, and declines if it still breaks the rule. For a rule that shapes an answer rather than forbidding it. Click to block instead.'
+                : 'Block: a violation ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default, and what this band is for. Click only if this rule shapes an answer rather than forbidding it.';
               term.onclick = function() {
                 grules[idx] = gCompose(gBody(grules[idx]), !gIsCorr(grules[idx]));
                 renderG();
@@ -3983,7 +3983,10 @@
             var addBtn = document.createElement('button');
             addBtn.type = 'button'; addBtn.className = 'ui-orch-list-add'; addBtn.textContent = '+ Add guardrail';
             addBtn.onclick = function() {
-              // No marker: terminal. A correctable guardrail is guidance with an
+              // No marker: blocks. ("block" in this UI is Terminal in the Go code —
+              // GuardrailDecision.Terminal. Same thing, different audience: the code
+              // says what it ends, the label says what it does.) A correctable
+              // guardrail is guidance with an
               // expensive judge attached, and guidance belongs in the Rules band
               // above; this band is for limits that don't negotiate.
               grules.push(''); renderG();

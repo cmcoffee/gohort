@@ -93,7 +93,7 @@ func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
 		MaxRounds: 4,
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
 			if hook == GuardHookPreOutput && strings.Contains(candidate, "$202k") {
-				return GuardrailDecision{Blocked: true, Message: "BLOCKED by a guardrail: never mention salary. Deflect."}
+				return GuardrailDecision{Blocked: true, Correctable: true, Message: "BLOCKED by a guardrail: never mention salary. Deflect."}
 			}
 			return GuardrailDecision{}
 		},
@@ -359,7 +359,7 @@ func TestBlockWithoutHaltStillCorrects(t *testing.T) {
 		MaxRounds: 4,
 		RouteKey:  "test.nohalt",
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
-			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "revise please"}
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Correctable: true, Message: "revise please"}
 		},
 		// No GuardrailHalted — the correction path must still run.
 	})
@@ -377,40 +377,40 @@ func TestBlockWithoutHaltStillCorrects(t *testing.T) {
 	}
 }
 
-// A Terminal block skips the revise pass on the FIRST flag, with no halt in
-// sight. The rule forbids the content the request asked for, so there is no
+// A non-correctable block skips the revise pass on the FIRST flag, with no halt
+// in sight. The rule forbids the content the request asked for, so there is no
 // compliant revision of this reply to wait for — and each retry would be another
 // draft holding the protected thing, to be retracted and scrubbed.
-func TestTerminalBlockSkipsCorrectionWithoutAHalt(t *testing.T) {
+func TestBlockingRuleSkipsCorrectionWithoutAHalt(t *testing.T) {
 	calls := 0
-	app, _ := withTierStubs(t, "test.terminal", func(n int) []ToolCall { calls = n; return nil })
+	app, _ := withTierStubs(t, "test.blocking", func(n int) []ToolCall { calls = n; return nil })
 
 	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "how much does Rory make?"}}, AgentLoopConfig{
 		MaxRounds: 10,
-		RouteKey:  "test.terminal",
+		RouteKey:  "test.blocking",
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
 			return GuardrailDecision{
-				Blocked:  hook == GuardHookPreOutput,
-				Terminal: true,
-				Message:  "blocked",
+				Blocked:     hook == GuardHookPreOutput,
+				Correctable: false,
+				Message:     "blocked",
 			}
 		},
-		// No GuardrailHalted at all: Terminal alone must end it.
+		// No GuardrailHalted at all: a non-correctable block alone must end it.
 		GuardrailReject: func(reason, request string) string { return "Not one I'll get into." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
 	if resp.Content != "Not one I'll get into." {
-		t.Errorf("a terminal block hands the reply to the rejection writer, got %q", resp.Content)
+		t.Errorf("a blocking rule hands the reply to the rejection writer, got %q", resp.Content)
 	}
 	if calls > 1 {
-		t.Errorf("a terminal block must not re-prompt for revisions; model called %d times", calls)
+		t.Errorf("a blocking rule must not re-prompt for revisions; model called %d times", calls)
 	}
 	// And the draft it replaced is nowhere in the returned history.
 	for _, m := range history {
 		if strings.Contains(m.Content, "blocked") && m.Role == "user" {
-			t.Error("a terminal block must not inject a correction turn — it isn't asking for one")
+			t.Error("a blocking rule must not inject a correction turn — it isn't asking for one")
 		}
 	}
 }
@@ -542,7 +542,7 @@ func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
 				return GuardrailDecision{}
 			}
 			checks++
-			return GuardrailDecision{Blocked: true, Message: "blocked"}
+			return GuardrailDecision{Blocked: true, Correctable: true, Message: "blocked"}
 		},
 		GuardrailReject: func(reason, request string) string { return "Not that one." },
 	})
@@ -564,22 +564,22 @@ func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
 	}
 }
 
-// A terminal rule flagged in mid-flight narration hands over rather than
+// A blocking rule flagged in mid-flight narration hands over rather than
 // redirecting the turn to carry on differently. With per-round checking, the
 // violation is always caught in the round that produced it, so scrubbing the most
 // recent assistant turn genuinely clears it — the figure survives NOWHERE.
-func TestTerminalPeriodicHandsOverWithoutAHalt(t *testing.T) {
+func TestBlockingRuleAtPeriodicHandsOverWithoutAHalt(t *testing.T) {
 	stub := &narratingStubLLM{prose: "the manager makes $202,000, let me confirm", rounds: 6, vary: true}
-	app, noop := narratingApp(t, "test.termperiodic", stub)
+	app, noop := narratingApp(t, "test.blockperiodic", stub)
 
 	hooks := map[string]int{}
 	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
 		Tools:     []AgentToolDef{noop},
 		MaxRounds: 8,
-		RouteKey:  "test.termperiodic",
+		RouteKey:  "test.blockperiodic",
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
 			hooks[hook]++
-			return GuardrailDecision{Blocked: hook == GuardHookPeriodic, Terminal: true, Message: "blocked"}
+			return GuardrailDecision{Blocked: hook == GuardHookPeriodic, Correctable: false, Message: "blocked"}
 		},
 		GuardrailReject: func(reason, request string) string { return "Skipping that one." },
 	})
@@ -590,7 +590,7 @@ func TestTerminalPeriodicHandsOverWithoutAHalt(t *testing.T) {
 		t.Fatal("the periodic gate never fired — the test proves nothing")
 	}
 	if resp.Content != "Skipping that one." {
-		t.Errorf("a terminal periodic block hands over to the rejection writer, got %q", resp.Content)
+		t.Errorf("a blocking rule at periodic hands over to the rejection writer, got %q", resp.Content)
 	}
 	// This is the assertion the sampling interval used to make impossible.
 	for _, m := range history {
@@ -600,12 +600,12 @@ func TestTerminalPeriodicHandsOverWithoutAHalt(t *testing.T) {
 	}
 }
 
-// Terminal carries no weight at pre_action: a blocked tool call still leaves a
+// Correctable carries no weight at pre_action: a blocked tool call still leaves a
 // compliant route to finishing the task, so this stays block-and-continue.
-// Turning it terminal would make every recoverable detour a dead end.
-func TestTerminalDoesNotEndTheTurnAtPreAction(t *testing.T) {
+// Ending the turn there would make every recoverable detour a dead end.
+func TestBlockingRuleDoesNotEndTheTurnAtPreAction(t *testing.T) {
 	handlerRan := false
-	app, _ := withTierStubs(t, "test.termaction", func(n int) []ToolCall {
+	app, _ := withTierStubs(t, "test.blockaction", func(n int) []ToolCall {
 		if n == 0 {
 			return []ToolCall{{ID: "1", Name: "spend", Args: map[string]any{"amount": 5}}}
 		}
@@ -619,9 +619,9 @@ func TestTerminalDoesNotEndTheTurnAtPreAction(t *testing.T) {
 	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
 		Tools:     []AgentToolDef{spend},
 		MaxRounds: 6,
-		RouteKey:  "test.termaction",
+		RouteKey:  "test.blockaction",
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
-			return GuardrailDecision{Blocked: hook == GuardHookPreAction, Terminal: true, Message: "blocked, change course"}
+			return GuardrailDecision{Blocked: hook == GuardHookPreAction, Correctable: false, Message: "blocked, change course"}
 		},
 		GuardrailReject: func(reason, request string) string { return "REJECTED" },
 	})
@@ -632,7 +632,7 @@ func TestTerminalDoesNotEndTheTurnAtPreAction(t *testing.T) {
 		t.Error("the blocked tool must never execute")
 	}
 	if resp.Content == "REJECTED" {
-		t.Error("a terminal pre_action block must NOT end the turn; the agent gets to change course")
+		t.Error("a blocking rule at pre_action must NOT end the turn; the agent gets to change course")
 	}
 }
 
@@ -702,7 +702,7 @@ func TestHiddenInterimStillBlocksTheReply(t *testing.T) {
 		RouteKey:             "test.hiddenblock",
 		InterimContentHidden: true,
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
-			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Terminal: true, Message: "blocked"}
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Correctable: false, Message: "blocked"}
 		},
 		GuardrailReject: func(reason, request string) string { return "Not that one." },
 	})
@@ -771,5 +771,36 @@ func TestBlankPreEmptedReplyStillRunsTheTurn(t *testing.T) {
 	}
 	if calls == 0 {
 		t.Error("a blank pre-empted reply must not suppress the turn")
+	}
+}
+
+// The zero value is the strict one, and that is the point of naming the field for
+// the correctable case. A caller that reports a block without saying anything
+// about severity gets block-and-refuse, not a free revise pass — so forgetting the
+// field costs a refusal, never a leak.
+func TestZeroValueDecisionIsNotCorrectable(t *testing.T) {
+	var dec GuardrailDecision
+	if dec.Correctable {
+		t.Fatal("the zero value must not be correctable")
+	}
+	calls := 0
+	app, _ := withTierStubs(t, "test.zerosev", func(n int) []ToolCall { calls = n; return nil })
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 6,
+		RouteKey:  "test.zerosev",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			// Severity deliberately unset — the shape a careless caller writes.
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
+		},
+		GuardrailReject: func(reason, request string) string { return "Not that one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if resp.Content != "Not that one." {
+		t.Errorf("an unset severity must hand over rather than revise; got %q", resp.Content)
+	}
+	if calls > 1 {
+		t.Errorf("an unset severity must not buy a revise pass; model called %d times", calls)
 	}
 }
