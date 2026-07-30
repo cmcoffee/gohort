@@ -2132,12 +2132,22 @@ func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (A
 // the tool loaded so its schema also rejoins the catalog next round.
 // Wired as the agent loop's ToolFallbackResolver.
 func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
-	td, ok := t.lazyCustomToolDefs[name]
-	if !ok {
-		return nil, false
+	if td, ok := t.lazyCustomToolDefs[name]; ok {
+		t.loadedCustomTools[name] = true
+		return td.Handler, true
 	}
-	t.loadedCustomTools[name] = true
-	return td.Handler, true
+	// A deferred authoring tool called DIRECTLY, load_tool skipped. The index
+	// asks for a load first, but a model acting on an index listing will often
+	// just call the tool it read about — the same habit this fallback already
+	// covers for lazy custom tools. Resolve the call and mark the tool loaded,
+	// so its schema surfaces render-late on the following rounds; refusing here
+	// would turn a working one-round authoring turn into an error plus a lecture
+	// about load_tool.
+	if td, ok := t.deferredAuthoringDefs[name]; ok {
+		t.deferredAuthoringLoaded[name] = true
+		return td.Handler, true
+	}
+	return nil, false
 }
 
 // dynamicTempTools returns a DynamicTools callback that exposes the

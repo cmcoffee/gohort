@@ -203,3 +203,33 @@ func TestDeferredIndexIsAFractionAndLosesNothing(t *testing.T) {
 		}
 	}
 }
+
+// A model acting on the index will often skip load_tool and call the tool it
+// read about directly. The fallback resolver must treat that exactly as it
+// treats a direct call to a lazy custom tool: resolve it, mark it loaded so the
+// schema surfaces on later rounds, and never convert a working authoring turn
+// into an unknown-tool error.
+func TestDeferredToolCalledDirectlyStillResolves(t *testing.T) {
+	turn, sess := newAuthoringTestTurn(t)
+	registerLazyAuthoringTools(turn, builderAuthoringTools(sess, turn))
+
+	handler, ok := turn.lazyToolFallback("tool_def")
+	if !ok || handler == nil {
+		t.Fatal("a direct call to a deferred authoring tool must resolve through the fallback")
+	}
+	// And having been called, it is now loaded: the schema joins the catalog
+	// render-late from the next round.
+	found := false
+	for _, td := range turn.loadedDeferredAuthoringTools() {
+		if td.Tool.Name == "tool_def" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a directly-called deferred tool must surface as loaded afterwards")
+	}
+	// Unknown names still miss.
+	if _, ok := turn.lazyToolFallback("no_such_tool"); ok {
+		t.Fatal("the fallback must not invent tools")
+	}
+}
