@@ -416,6 +416,32 @@ const (
 // rule, try again" doesn't land, the decline is the better answer.
 const maxGuardrailOutputCorrections = 1
 
+// Default think-escalation shape for a conversational turn. A turn still going
+// after three rounds has stopped being a question and started being a piece of
+// work; the budget is a middle setting, and the deployment's global ceiling still
+// caps it.
+const (
+	DefaultThinkEscalateAfterRound = 3
+	DefaultThinkEscalateBudget     = 2048
+)
+
+// ThinkEscalation is the round-count rule for raising a turn's thinking budget.
+// Both fields must be set for it to engage; either at zero leaves it off.
+type ThinkEscalation struct {
+	// AfterRound is how many rounds a turn must have completed before the larger
+	// budget applies. Escalation begins on the round AFTER this one.
+	AfterRound int
+	// Budget is the thinking allowance for the remaining rounds, in tokens. Still
+	// clamped by the deployment's global ceiling, which stays a hard maximum — an
+	// escalation cannot buy more reasoning than the operator allows.
+	Budget int
+}
+
+// Engaged reports whether the rule applies on the given 1-based round.
+func (e ThinkEscalation) Engaged(round int) bool {
+	return e.AfterRound > 0 && e.Budget > 0 && round > e.AfterRound
+}
+
 // GuardrailDecision is what a guardrail check reports about one candidate.
 type GuardrailDecision struct {
 	// Blocked stops the candidate: the action is not performed, or the reply is
@@ -761,6 +787,25 @@ type AgentLoopConfig struct {
 	// no further tool calls. The app decides WHEN (repeated blocks in one turn);
 	// core guarantees the turn actually ends. nil ⇒ prior advisory behavior.
 	GuardrailHalted func() bool
+
+	// ThinkEscalation raises the thinking budget once a turn has PROVEN itself
+	// multi-step, rather than predicting that it will be.
+	//
+	// The tempting design is a tool the model calls to ask for more thinking, and
+	// it has an ordering flaw that cannot be fixed: a tool call is emitted by a
+	// round that already happened, so the model must decide it needs to think
+	// WITHOUT thinking, and then spend a whole extra round-trip to act on it. The
+	// judgment most in need of reasoning is the one it has to make un-reasoned,
+	// and self-assessed need is the least reliable signal available — it
+	// over-asks when thinking feels safe and under-asks when it cannot see what
+	// it is missing.
+	//
+	// Round count needs no judgment at all. A turn still going at round 4 is
+	// demonstrably multi-step; that is evidence the turn produced, not a
+	// prediction about it.
+	//
+	// Zero value is OFF, so nothing changes for a caller that says nothing.
+	ThinkEscalation ThinkEscalation
 
 	// PreEmptedReply, when set, IS the turn: the loop delivers it and returns
 	// without calling a model at all.
@@ -1501,6 +1546,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// would duplicate the one the app already does.
 	judgedNarration := map[string]bool{}
 	skippedInterimGuard := false // logged once per turn, not once per round
+	thinkEscalated := false      // diag once when the budget goes up, not every round
 
 	// emitDiag breadcrumbs a silent correction into the app's session-diag
 	// trail (nil-safe). Kept here so every correction guard below records the
@@ -1988,6 +2034,24 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			roundOpts = cfg.ToolRoundOptions
 		}
 		opts = append(opts, roundOpts...)
+		// Think escalation, before RoundChatOptions so an explicit per-round hook
+		// still overrides it.
+		//
+		// WithThink(true) is not optional here, and leaving it out is a silent
+		// no-op rather than a smaller effect: llamacppThinkBudget short-circuits
+		// on a no-think call (Think=false with the operator's send-budget toggle
+		// on, which is the default) and returns the no-think budget without ever
+		// reading the per-call override. A budget alone would be discarded.
+		if cfg.ThinkEscalation.Engaged(round) {
+			if !thinkEscalated {
+				thinkEscalated = true
+				Debug("[agent_loop] think escalation: past round %d, remaining rounds get a %d-token budget", cfg.ThinkEscalation.AfterRound, cfg.ThinkEscalation.Budget)
+				emitDiag("think-escalated", fmt.Sprintf(
+					"This turn was still going after %d rounds, so the rest of it was given a larger thinking budget (%d tokens). Longer turns are the ones that need it; short ones are unaffected.",
+					cfg.ThinkEscalation.AfterRound, cfg.ThinkEscalation.Budget))
+			}
+			opts = append(opts, WithThink(true), WithThinkBudget(cfg.ThinkEscalation.Budget))
+		}
 		// Per-round dynamic override, appended after the static option
 		// slices so it wins (e.g. WithThink(false) on the round after a
 		// control-tool rejection).
