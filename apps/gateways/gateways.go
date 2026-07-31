@@ -1193,62 +1193,14 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 			Body:     ui.Card{HTML: connectionsHTML},
 		},
 		{
-			Title:    "Categories",
-			Subtitle: "Headings for your tools — the same ones the tool picker and each app's tool list use. Open a category to tick the tools that belong in it, or start a new one and fill it in the same step. A tool holds one category, so moving it here moves it out of wherever it was.",
-			Body: ui.Stack{Children: []ui.Component{
-				ui.Table{
-					Source: "api/tool-categories",
-					RowKey: "name",
-					Columns: []ui.Col{
-						{Field: "name", Flex: 1},
-						// The members ARE the category — show the names as pills
-						// rather than a count plus a comma-joined mutter. A count
-						// column earns its place when the list is too long to show;
-						// these lists are a handful of tools, and the names answer
-						// the only question anyone brings here ("what's in it?").
-						{Field: "tools", Label: "Members", Flex: 3, Type: "pills"},
-					},
-					RowActions: []ui.RowAction{
-						// Category-first assignment: the whole point. Picking from
-						// one list beats opening each tool and setting a label.
-						ui.Expand("Choose tools", ui.ACLPicker(ui.ACLPickerConfig{
-							OptionsSource: "api/tool-categories?options=1",
-							RecordSource:  "api/tool-categories?name={name}",
-							Field:         "tools",
-							PostTo:        "api/tool-categories?name={name}",
-							Noun:          "tool",
-							Intro:         "Tick the tools that belong under this heading. Unticking one clears its category — it does not delete anything.",
-							EmptyText:     "You have no tools yet.",
-						})),
-					},
-					EmptyText: "No categories yet. Add one below and tick the tools that belong in it.",
-				},
-				ui.ModalButton{
-					Label:    "Add category",
-					Title:    "New category",
-					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it — an empty one has nothing to show.",
-					Variant:  "primary",
-					Width:    "560px",
-					Body: ui.FormPanel{
-						PostURL:     "api/tool-categories?name={name}",
-						SubmitLabel: "Create category",
-						Fields: []ui.FormField{
-							{Field: "name", Type: "text", Label: "Category name",
-								Placeholder: "e.g. Calendar, Moltbook, Research",
-								Suggestions: knownToolCategories(AuthDB(), user),
-								Help:        "Reuse an existing name to add to that category, or type a new one."},
-							{Field: "tools", Type: "tags", Label: "Tools",
-								Help: "Tool names to file under it. You can also fill it from the Choose tools action once it exists."},
-						},
-						Invalidate: []string{"api/tool-categories", "api/tools"},
-					},
-				},
-			}},
-		},
-		{
 			Title:    "My tools",
-			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories section (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
-			Body: ui.Table{
+			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+			// Tools first, then the categories that head them. Categories used to
+			// be their own rail section, which put the fix one navigation away
+			// from the problem: you read "Uncategorized" in this table and had to
+			// leave the page to do anything about it. A category exists only to be
+			// a heading in the list above it, so it belongs under that list.
+			Body: ui.Stack{Children: []ui.Component{ui.Table{
 				Source:            "api/tools",
 				RowKey:            "key",
 				Search:            true,
@@ -1410,6 +1362,64 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 				},
 				EmptyText: "No tools yet. Ask the assistant in chat to build one for you.",
 			},
+				// Sub-heading for the categories block. Card is the escape hatch for
+				// a heading the framework doesn't model; it borrows the two section
+				// classes so this reads as a section within the section rather than
+				// a stray second table.
+				ui.Card{HTML: `<div class="ui-section-h" style="margin-top:1.6rem">Categories</div>` +
+					`<div class="ui-section-sub">The headings used above — and the same ones the tool picker and each app's tool list use. ` +
+					`Open one to tick the tools that belong in it, or start a new one and fill it in the same step. ` +
+					`A tool holds one category, so filing it here moves it out of wherever it was.</div>`},
+				ui.Table{
+					Source: "api/tool-categories",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Flex: 1},
+						// The members ARE the category — show the names as pills
+						// rather than a count plus a comma-joined mutter. A count
+						// column earns its place when the list is too long to show;
+						// these lists are a handful of tools, and the names answer
+						// the only question anyone brings here ("what's in it?").
+						{Field: "tools", Label: "Members", Flex: 3, Type: "pills"},
+					},
+					RowActions: []ui.RowAction{
+						// Category-first assignment: the whole point. Picking from
+						// one list beats opening each tool and setting a label.
+						ui.Expand("Choose tools", ui.ACLPicker(ui.ACLPickerConfig{
+							OptionsSource: "api/tool-categories?options=1",
+							RecordSource:  "api/tool-categories?name={name}",
+							Field:         "tools",
+							PostTo:        "api/tool-categories?name={name}",
+							Noun:          "tool",
+							Intro:         "Tick the tools that belong under this heading. Unticking one clears its category — it does not delete anything.",
+							EmptyText:     "You have no tools yet.",
+							// Filing a tool changes the heading it sits under in the
+							// table above, which is now on screen at the same time.
+							Invalidate: []string{"api/tools", "api/tool-categories"},
+						})),
+					},
+					EmptyText: "No categories yet. Add one below and tick the tools that belong in it.",
+				},
+				ui.ModalButton{
+					Label:    "Add category",
+					Title:    "New category",
+					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it — an empty one has nothing to show.",
+					Width:    "560px",
+					Body: ui.FormPanel{
+						PostURL:     "api/tool-categories?name={name}",
+						SubmitLabel: "Create category",
+						Fields: []ui.FormField{
+							{Field: "name", Type: "text", Label: "Category name",
+								Placeholder: "e.g. Calendar, Moltbook, Research",
+								Suggestions: knownToolCategories(AuthDB(), user),
+								Help:        "Reuse an existing name to add to that category, or type a new one."},
+							{Field: "tools", Type: "tags", Label: "Tools",
+								Help: "Tool names to file under it. You can also fill it from the Choose tools action once it exists."},
+						},
+						Invalidate: []string{"api/tool-categories", "api/tools"},
+					},
+				},
+			}},
 		},
 		{
 			Title:    "My skills",

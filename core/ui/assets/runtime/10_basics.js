@@ -938,6 +938,14 @@
         return fetchJSON(cfg.post_to, {
           method: cfg.method || 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(body)
+        }).then(function(res) {
+          // A picker often writes a field some other list on the page renders.
+          // Refetch those sources so the change lands everywhere at once
+          // instead of only after a manual reload.
+          if (cfg.invalidate && cfg.invalidate.length && window.uiInvalidate) {
+            window.uiInvalidate(cfg.invalidate);
+          }
+          return res;
         });
       }
 

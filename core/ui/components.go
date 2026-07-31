@@ -464,6 +464,14 @@ type ChipPicker struct {
 	Noun      string `json:"noun,omitempty"`       // "+ Add <Noun>". Default "item".
 	Intro     string `json:"intro,omitempty"`      // help line above the picker
 	EmptyText string `json:"empty_text,omitempty"` // shown when there are no options
+
+	// Invalidate — data sources to refetch after a successful save, same
+	// contract as FormPanel.Invalidate and RowAction.Invalidate. A picker
+	// often writes a field some OTHER list on the page renders (filing tools
+	// into a category changes the heading each tool sits under in the tools
+	// table); without this that list stays stale until a manual reload, which
+	// reads as "the picker didn't take".
+	Invalidate []string `json:"invalidate,omitempty"`
 }
 
 func (ChipPicker) componentType() string { return "chip_picker" }
@@ -511,6 +519,8 @@ type ACLPickerConfig struct {
 	Intro string
 	// EmptyText shows when there are no candidates.
 	EmptyText string
+	// Invalidate — sources to refetch after a save (see ChipPicker.Invalidate).
+	Invalidate []string
 }
 
 // ACLPicker builds a ChipPicker preconfigured as an access-control editor: a
@@ -535,6 +545,7 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 		Noun:          noun,
 		Intro:         c.Intro,
 		EmptyText:     c.EmptyText,
+		Invalidate:    c.Invalidate,
 	}
 	if c.RecordSource != "" {
 		// Record mode: current selection + save both go through the owning record.
