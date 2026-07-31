@@ -569,6 +569,17 @@ func guardrailRejectionReply(cfg AgentLoopConfig, reason string, history []Messa
 // several of those. Handing one to the rejection model would have it refuse the
 // framework's own correction text rather than the request. Skips them, and
 // strips the date stamp the loop prepends to the live turn.
+//
+// The skip is a BLOCKLIST — it recognizes frameworkNoticeTag and nothing else —
+// so the tag is load-bearing, not decoration. Four injections here shipped
+// without it (the wrap-up budget note, the hard-stop directive on its last
+// round, the give-up-with-errors re-prompt, and the failure-shape correction),
+// and each was a plausible tail at halt time: the refusal would then have been
+// written about the framework's own pacing text. Any new user-role message the
+// LOOP authors must carry the tag. The one exception that cannot is a
+// prompt-tools tool result (it is real data the model must act on, and the tag
+// tells it not to) — those are skipped by the empty-Content test in native
+// mode, where results ride in ToolResults instead.
 func lastUserRequest(history []Message) string {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role != "user" {
@@ -576,6 +587,17 @@ func lastUserRequest(history []Message) string {
 		}
 		c := history[i].Content
 		if strings.Contains(c, frameworkNoticeTag) {
+			continue
+		}
+		// Payload turns the LOOP built, recognized by what they CARRY rather
+		// than by a tag. The queued-images turn ("Here are N image(s)…") is
+		// framework-authored but must never wear the notice tag: the tag tells
+		// the model not to act on the message, and that one exists precisely to
+		// be acted on. Its Images field says what it is without putting a word
+		// in the prompt, so the structure is the discriminator. Same for a
+		// tool-results turn, whose Content is empty in native mode but need not
+		// be relied on to stay that way.
+		if len(history[i].Images) > 0 || len(history[i].ToolResults) > 0 {
 			continue
 		}
 		if strings.HasPrefix(c, "[Current date & time:") {
@@ -1899,11 +1921,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			var wrapUpMsg string
 			if pending > 0 {
 				wrapUpMsg = fmt.Sprintf(
-					"Budget checkpoint: %d rounds left of a %d-round budget, and %d authorized work item(s) still remain on your list. Finish the current item cleanly with a real result, then move to the next one — do NOT skip the remaining items and do NOT start new exploration outside the list. If you genuinely can't complete an item with the rounds remaining, mark it as such and continue.",
+					frameworkNoticeTag+"Budget checkpoint: %d rounds left of a %d-round budget, and %d authorized work item(s) still remain on your list. Finish the current item cleanly with a real result, then move to the next one — do NOT skip the remaining items and do NOT start new exploration outside the list. If you genuinely can't complete an item with the rounds remaining, mark it as such and continue.",
 					remaining, maxRounds, pending)
 			} else {
 				wrapUpMsg = fmt.Sprintf(
-					"You have %d rounds left of a %d-round budget. Stop exploring and produce a final answer NOW with what you've gathered. If the task isn't complete, summarize what you found, what you tried, and what's still open. Do NOT start new investigations — wind down cleanly.",
+					frameworkNoticeTag+"You have %d rounds left of a %d-round budget. Stop exploring and produce a final answer NOW with what you've gathered. If the task isn't complete, summarize what you found, what you tried, and what's still open. Do NOT start new investigations — wind down cleanly.",
 					remaining, maxRounds)
 			}
 			history = append(history, Message{Role: "user", Content: wrapUpMsg})
@@ -1917,7 +1939,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			left := hardStop - round + 1
 			var msg string
 			if left <= 1 {
-				msg = "[ROUND LIMIT — HARD STOP after this round. Produce your final answer NOW from what you already have. Start no new work; make a tool call only if it is the single step needed to finish, then answer.]"
+				msg = frameworkNoticeTag + "[ROUND LIMIT — HARD STOP after this round. Produce your final answer NOW from what you already have. Start no new work; make a tool call only if it is the single step needed to finish, then answer.]"
 			} else {
 				msg = fmt.Sprintf(frameworkNoticeTag+"[Round limit reached — wrap up and give your final answer. %d round(s) left before a hard stop. Finish in-flight work only; start nothing new.]", left)
 			}
@@ -2639,7 +2661,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				history = append(history, Message{
 					Role: "user",
 					Content: fmt.Sprintf(
-						"You stopped without producing a reply and without calling any tool, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
+						frameworkNoticeTag+"You stopped without producing a reply and without calling any tool, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
 						cumulativeToolErrors, errPlural, roundsLeft, roundPlural,
 					),
 				})
@@ -3286,7 +3308,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				// turn dies with loop_error, so the guard meant to rescue a
 				// struggling turn killed it instead. Queue it and let it land
 				// after the results.
-				pendingCorrections = append(pendingCorrections, Message{Role: "user", Content: msg})
+				pendingCorrections = append(pendingCorrections, Message{Role: "user", Content: frameworkNoticeTag + msg})
 				if consulted {
 					Log("[agent_loop] failure-shape guard: consulted on %q after %d hits", oneLineShape(shape), n)
 					if cfg.OnDiag != nil {
