@@ -84,11 +84,11 @@ func TestReplyBudgetTerminatesALoop(t *testing.T) {
 	LoopGuardReset()
 	const chat = "loopy"
 	tripped := false
-	for i := 0; i < replyBudget+3 && !tripped; i++ {
+	for i := 0; i < replyBudgetFor()+3 && !tripped; i++ {
 		tripped = noteReply(chat, "", false)
 	}
 	if !tripped {
-		t.Fatalf("budget of %d replies should have tripped", replyBudget)
+		t.Fatalf("budget of %d replies should have tripped", replyBudgetFor())
 	}
 	if !loopTripped(chat, "") {
 		t.Error("a tripped conversation must stay cut for its cooldown")
@@ -104,7 +104,7 @@ func TestReplyBudgetTerminatesALoop(t *testing.T) {
 func TestReplyBudgetToleratesNormalTraffic(t *testing.T) {
 	LoopGuardReset()
 	const chat = "busy"
-	for i := 0; i < replyBudget-1; i++ {
+	for i := 0; i < replyBudgetFor()-1; i++ {
 		if noteReply(chat, "", false) {
 			t.Fatalf("tripped after %d replies — the budget is too tight for a normal exchange", i+1)
 		}
@@ -118,7 +118,7 @@ func TestReplyBudgetToleratesNormalTraffic(t *testing.T) {
 // unrelated ones.
 func TestReplyBudgetIsPerConversation(t *testing.T) {
 	LoopGuardReset()
-	for i := 0; i < replyBudget+1; i++ {
+	for i := 0; i < replyBudgetFor()+1; i++ {
 		noteReply("runaway", "", false)
 	}
 	for i := 0; i < 3; i++ {
@@ -133,7 +133,7 @@ func TestReplyBudgetIsPerConversation(t *testing.T) {
 
 func TestNoteReplyIgnoresEmptyChat(t *testing.T) {
 	LoopGuardReset()
-	for i := 0; i < replyBudget+5; i++ {
+	for i := 0; i < replyBudgetFor()+5; i++ {
 		if noteReply("", "", false) {
 			t.Fatal("an empty chat id must not accumulate a budget")
 		}
@@ -158,7 +158,7 @@ func TestGuardsSurviveTheTransportSplit(t *testing.T) {
 	// The budget must accumulate across both legs, not split.
 	LoopGuardReset()
 	tripped := false
-	for i := 0; i < replyBudget && !tripped; i++ {
+	for i := 0; i < replyBudgetFor() && !tripped; i++ {
 		chat := native
 		if i%2 == 1 {
 			chat = sms // alternating transports, one conversation
@@ -221,16 +221,16 @@ func TestTagGuardCatchesRephrasedEchoes(t *testing.T) {
 func TestSelfThreadBudgetIsStrict(t *testing.T) {
 	LoopGuardReset()
 	tripped := false
-	for i := 0; i < selfThreadBudget && !tripped; i++ {
+	for i := 0; i < selfThreadBudgetFor() && !tripped; i++ {
 		tripped = noteReply("iMessage;-;+16504401019", "", true)
 	}
 	if !tripped {
-		t.Errorf("a self thread should cut at %d replies", selfThreadBudget)
+		t.Errorf("a self thread should cut at %d replies", selfThreadBudgetFor())
 	}
 
 	// The same count in a real conversation is nowhere near its limit.
 	LoopGuardReset()
-	for i := 0; i < selfThreadBudget+2; i++ {
+	for i := 0; i < selfThreadBudgetFor()+2; i++ {
 		if noteReply("iMessage;-;+15559998888", "", false) {
 			t.Fatalf("a conversation with another person must not cut at %d replies", i+1)
 		}
@@ -266,7 +266,7 @@ func TestTrippedThreadDoesNotCutGroups(t *testing.T) {
 	const group = "iMessage;+;chat9876543210"
 
 	// Blow the strict budget on the owner's own thread.
-	for i := 0; i < selfThreadBudget; i++ {
+	for i := 0; i < selfThreadBudgetFor(); i++ {
 		noteReply("iMessage;-;"+owner, "", true)
 	}
 	if !loopTripped("iMessage;-;"+owner, "") {
@@ -286,7 +286,7 @@ func TestTrippedThreadDoesNotCutGroups(t *testing.T) {
 func TestGroupKeepsTheGenerousBudget(t *testing.T) {
 	LoopGuardReset()
 	const group = "iMessage;+;chat9876543210"
-	for i := 0; i < selfThreadBudget+2; i++ {
+	for i := 0; i < selfThreadBudgetFor()+2; i++ {
 		if noteReply(group, "+16504401019", false) {
 			t.Fatalf("a group must not cut at %d replies", i+1)
 		}

@@ -40,8 +40,12 @@ func TestGuardrailRulesParseSeverityMarker(t *testing.T) {
 		{Text: "no home addresses", Correctable: false},
 	}
 	for i, w := range want {
-		if rules[i] != w {
-			t.Errorf("rule %d: got %+v want %+v", i, rules[i], w)
+		// Compared field-by-field rather than with ==: guardrailRule carries the
+		// linked-exception names, and a struct holding a slice is not comparable.
+		got := rules[i]
+		if got.Text != w.Text || got.Correctable != w.Correctable || got.Contestable != w.Contestable ||
+			got.ExceptAuthorized != w.ExceptAuthorized || len(got.Links) != len(w.Links) {
+			t.Errorf("rule %d: got %+v want %+v", i, got, w)
 		}
 	}
 }

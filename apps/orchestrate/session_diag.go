@@ -72,7 +72,17 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	if sessionID == "" {
 		return // genuinely no trail to write to
 	}
-	appendSessionDiag(t.udb, agentID, sessionID, kind, detail)
+	// Write to the OWNER's store, not the runtime user's. A breadcrumb exists
+	// for the person who configured the agent, and the trail is read back
+	// through the requesting user's own store (handleSessionDiag) — so a turn
+	// running as a synthetic per-chat identity that filed its diagnostics under
+	// that identity filed them where nobody can ever look. Falls back to the
+	// turn's own store for the ordinary case, where the two are the same.
+	db := t.ownerDB
+	if db == nil {
+		db = t.udb
+	}
+	appendSessionDiag(db, agentID, sessionID, kind, detail)
 }
 
 // handleSessionDiag serves the trail: GET /api/session-diag?agent=&session=

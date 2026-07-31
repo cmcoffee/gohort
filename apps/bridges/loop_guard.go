@@ -64,8 +64,8 @@ const (
 	// and the budget never tripped on the very case it was written for. The
 	// window has to outlast a slow loop, and the count has to stay above a real
 	// exchange — ten minutes and twelve replies clears both.
-	replyWindow = 10 * time.Minute
-	replyBudget = 12
+	replyWindowDefault = 10 * time.Minute
+	replyBudgetDefault = 12
 	// A loop of this shape is only possible in a thread addressed to YOURSELF:
 	// anywhere else the other end is a person who has to actually type, so the
 	// agent can never be answering its own words. That means the self thread can
@@ -73,11 +73,77 @@ const (
 	// is a backstop for real threads, this is the real limit for the one place a
 	// runaway can start. Three consecutive agent messages into your own thread
 	// is already unusual; thirty is a loop.
-	selfThreadBudget = 3
+	selfThreadBudgetDefault = 3
 	// loopCooldown is how long routing stays cut for a conversation once the
 	// budget trips. Inbound is still recorded; nothing wakes the agent.
-	loopCooldown = 10 * time.Minute
+	loopCooldownDefault = 10 * time.Minute
 )
+
+// The four numbers above are TUNABLE, because the right value depends on how
+// the deployment is actually used and the wrong one is invisible until it
+// bites. Twelve replies in ten minutes reads as generous until someone is
+// iterating on an agent from their phone — every guardrail decline is a reply,
+// so a testing session burns the budget and then loses ten minutes of routing
+// to a loop that was never happening. Defaults unchanged; the knob exists so
+// that costs a setting rather than a rebuild.
+func init() {
+	RegisterTunable(TunableSpec{
+		Key: "tune_bridge_reply_budget", Category: "Limits",
+		Label:   "Loop guard: agent replies per conversation",
+		Help:    "How many replies the agent may send into ONE conversation inside the window below before routing is cut as a suspected loop. Every reply counts, including a guardrail decline — so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
+		Kind:    KindInt,
+		Default: replyBudgetDefault, Min: 2, Max: 200,
+	})
+	RegisterTunable(TunableSpec{
+		Key: "tune_bridge_reply_window_min", Category: "Limits",
+		Label:   "Loop guard: reply window (minutes)",
+		Help:    "The window the reply budget is counted over. It has to outlast a slow loop (an agent loop runs at ~13s per round) while staying short enough that a normal conversation's replies age out.",
+		Kind:    KindInt,
+		Default: float64(replyWindowDefault / time.Minute), Min: 1, Max: 120,
+	})
+	RegisterTunable(TunableSpec{
+		Key: "tune_bridge_self_thread_budget", Category: "Limits",
+		Label:   "Loop guard: replies into your own thread",
+		Help:    "The stricter budget for a thread addressed to YOURSELF, where an agent can end up answering its own messages. Anywhere else a person has to type, so a runaway cannot start. Note this only applies when the transport keys the conversation by your handle; a conversation keyed by chat id falls under the general budget above.",
+		Kind:    KindInt,
+		Default: selfThreadBudgetDefault, Min: 1, Max: 50,
+	})
+	RegisterTunable(TunableSpec{
+		Key: "tune_bridge_loop_cooldown_min", Category: "Limits",
+		Label:   "Loop guard: cooldown (minutes)",
+		Help:    "How long routing stays cut for a conversation after the budget trips. Inbound messages are still recorded to the transcript throughout; nothing wakes the agent until it expires.",
+		Kind:    KindInt,
+		Default: float64(loopCooldownDefault / time.Minute), Min: 1, Max: 240,
+	})
+}
+
+func replyBudgetFor() int {
+	if n := TuneInt("tune_bridge_reply_budget"); n > 0 {
+		return n
+	}
+	return replyBudgetDefault
+}
+
+func selfThreadBudgetFor() int {
+	if n := TuneInt("tune_bridge_self_thread_budget"); n > 0 {
+		return n
+	}
+	return selfThreadBudgetDefault
+}
+
+func replyWindowFor() time.Duration {
+	if n := TuneInt("tune_bridge_reply_window_min"); n > 0 {
+		return time.Duration(n) * time.Minute
+	}
+	return replyWindowDefault
+}
+
+func loopCooldownFor() time.Duration {
+	if n := TuneInt("tune_bridge_loop_cooldown_min"); n > 0 {
+		return time.Duration(n) * time.Minute
+	}
+	return loopCooldownDefault
+}
 
 var loopGuard struct {
 	mu sync.Mutex
@@ -299,9 +365,9 @@ func noteReply(chatID, handle string, selfThread bool) (tripped bool) {
 	if id == "" {
 		return false
 	}
-	budget := replyBudget
+	budget := replyBudgetFor()
 	if selfThread {
-		budget = selfThreadBudget
+		budget = selfThreadBudgetFor()
 	}
 	loopGuard.mu.Lock()
 	defer loopGuard.mu.Unlock()
@@ -310,7 +376,7 @@ func noteReply(chatID, handle string, selfThread bool) (tripped bool) {
 	now := time.Now()
 	kept := loopGuard.replies[id][:0]
 	for _, at := range loopGuard.replies[id] {
-		if now.Sub(at) < replyWindow {
+		if now.Sub(at) < replyWindowFor() {
 			kept = append(kept, at)
 		}
 	}
@@ -333,7 +399,7 @@ func loopTripped(chatID, handle string) bool {
 	if !ok {
 		return false
 	}
-	if time.Since(at) > loopCooldown {
+	if time.Since(at) > loopCooldownFor() {
 		delete(loopGuard.tripped, id)
 		delete(loopGuard.replies, id)
 		return false
@@ -356,7 +422,7 @@ func sweepLocked() {
 		}
 	}
 	for k, at := range loopGuard.tripped {
-		if now.Sub(at) > loopCooldown {
+		if now.Sub(at) > loopCooldownFor() {
 			delete(loopGuard.tripped, k)
 			delete(loopGuard.replies, k)
 		}
@@ -377,5 +443,5 @@ func LoopGuardReset() {
 func logLoopCut(chatID string) {
 	Log("[bridges] LOOP GUARD: conversation %s produced %d agent replies in %s — routing CUT for %s. "+
 		"Inbound is still recorded; nothing wakes the agent. Common cause: a self-thread where the agent's own "+
-		"replies arrive back as owner messages.", chatID, replyBudget, replyWindow, loopCooldown)
+		"replies arrive back as owner messages.", chatID, replyBudgetFor(), replyWindowFor(), loopCooldownFor())
 }

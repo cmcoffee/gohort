@@ -23,6 +23,37 @@ import (
 // message so the agent stays grounded about its reply destination and won't
 // confabulate one or offer to "send it to" the channel it's already on.
 // Returns "" when no channel resolves (nothing trustworthy to say).
+// mergedMessagesNote tells the agent that what looks like one message is
+// several, sent in quick succession and folded together by the coalescer.
+//
+// It goes in the run-only SurfaceContext and NEVER into the message itself.
+// The message is the stored transcript of what the person actually typed —
+// numbering it or bracketing it would rewrite the record, and structural
+// scaffolding in history is the thing the assistant starts imitating. This
+// note is seen by the model for exactly one turn and stored nowhere.
+func mergedMessagesNote(in ChannelInbound) string {
+	if in.MergedCount < 2 {
+		return ""
+	}
+	return fmt.Sprintf("The user sent %d separate messages in quick succession; they are joined below in the order they arrived, separated by blank lines. Treat them as one turn with %d parts and address ALL of them — a later message may add to, correct, or replace an earlier one.", in.MergedCount, in.MergedCount)
+}
+
+// channelSurfaceContextFull is what the runner passes: the merge note (which
+// applies regardless of what the framework knows about the binding) plus the
+// binding's own provenance. Kept separate because channelSurfaceContext
+// returns EMPTY for an unrecognized chat, and the merge note must not be lost
+// with it — a coalesced pair is exactly as easy to half-answer either way.
+func channelSurfaceContextFull(in ChannelInbound) string {
+	parts := make([]string, 0, 2)
+	if note := mergedMessagesNote(in); note != "" {
+		parts = append(parts, note)
+	}
+	if ctx := channelSurfaceContext(in); ctx != "" {
+		parts = append(parts, ctx)
+	}
+	return strings.Join(parts, " ")
+}
+
 func channelSurfaceContext(in ChannelInbound) string {
 	ch, ok := channelForChat(in.Owner, in.ChatID, in.Handle)
 	if !ok {
@@ -294,7 +325,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// not persisted) so it knows its reply goes straight back here and
 			// doesn't confabulate a destination or offer to "send it to" the
 			// channel it's already on.
-			SurfaceContext: channelSurfaceContext(in),
+			SurfaceContext: channelSurfaceContextFull(in),
 			StatusCallback: in.StatusCallback,
 		})
 		if err != nil {

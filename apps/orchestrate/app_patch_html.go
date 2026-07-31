@@ -37,7 +37,15 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	}
 	find := stringArg(args, "find")
 	if strings.TrimSpace(find) == "" {
-		return "", errors.New("find is required — the EXACT text to replace, copied from the app's current html (app_def action=get). Include enough surrounding lines to be unique")
+		// An author reaching for patch_html with only a replacement in hand is
+		// almost always holding a rewritten FUNCTION and no anchor for it —
+		// observed twice in one session, both times followed by a full-document
+		// update that wiped working code. Name the action that wants exactly
+		// what it is holding.
+		if fn := strings.TrimSpace(stringArg(args, "function")); fn != "" {
+			return t.appDefReplaceFunction(args)
+		}
+		return "", errors.New("find is required — the EXACT text to replace, copied from the app's current html (app_def action=get). Include enough surrounding lines to be unique. If what you have is a rewritten FUNCTION, use action=\"replace_function\" with function=\"<name>\" and replace=\"<the whole new function>\" instead — it finds the old one for you, so you don't have to reproduce any of it")
 	}
 	replace := stringArg(args, "replace")
 	if find == replace {
@@ -55,16 +63,35 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	prior := mapStr(sections[idx], "html")
 	patched, err := applyHTMLPatch(sections, idx, find, replace, spec.Slug)
 	if err != nil {
 		return "", err
 	}
-	sections[idx]["html"] = patched
+	summary := fmt.Sprintf("Patched html section %%d of %%q (revision %%s) — replaced %d chars with %d.", len(find), len(replace))
+	return t.saveHTMLSectionEdit(spec, sections, idx, prior, patched, summary, "patch", "patch_html")
+}
 
-	// Parse BEFORE saving. A patch that doesn't compile never reaches the
-	// stored app — the author still has the old revision serving.
-	if problems, checked := htmlScriptSyntaxProblems(patched); checked && len(problems) > 0 {
-		return "", fmt.Errorf("that patch would break the page's JavaScript, so it was NOT applied — the app still serves the previous revision:\n- %s\n\nFix the replacement text and patch again", strings.Join(problems, "\n- "))
+// saveHTMLSectionEdit is the write path every partial html edit shares —
+// patch_html and replace_function differ only in how they arrive at the new
+// document, not in what has to be true before it is kept.
+//
+// Three gates, cheapest first, and the LAST two are the ones this exists for.
+// Parsing catches a broken edit. The dangling-call diff catches the edit that
+// parses and is still fatal: a replacement that dropped a helper the rest of
+// the code calls. And the browser load catches what neither can see — except
+// that for a canvas app it sees very little, because nothing runs until the
+// player clicks, which is exactly why the static check has to stand in front
+// of it rather than behind it.
+func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, idx int, prior, next, summary, verb, reason string) (string, error) {
+	sections[idx]["html"] = next
+
+	if problems, checked := htmlScriptSyntaxProblems(next); checked && len(problems) > 0 {
+		return "", fmt.Errorf("that %s would break the page's JavaScript, so it was NOT applied — the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, strings.Join(problems, "\n- "))
+	}
+	if broke := jsNewDanglingCalls(prior, next); len(broke) > 0 {
+		return "", fmt.Errorf("that %s was NOT applied — it removes code the rest of the page still calls, which parses fine and then dies the moment the app runs. Nothing now defines: %s\n\nEither keep those definitions in your replacement text, or remove the calls to them as well. The app still serves the previous revision.",
+			verb, strings.Join(broke, ", "))
 	}
 
 	raw := make([]any, len(sections))
@@ -73,7 +100,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	}
 	page, err := buildAppPage(spec, raw)
 	if err != nil {
-		return "", fmt.Errorf("patched sections no longer build a page: %w", err)
+		return "", fmt.Errorf("edited sections no longer build a page: %w", err)
 	}
 	blob, err := page.ConfigJSON()
 	if err != nil {
@@ -84,17 +111,19 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	if src, err := json.Marshal(raw); err == nil {
 		spec.Sections = src
 	}
-	saved := SaveAppSpec(spec)
+	saved := SaveAppSpecAs(spec, reason)
 
 	// Now the accurate check, against the revision that was just written. On
 	// failure put the previous revision back rather than leaving a dead app.
+	// The restore files no history of its own — the broken revision existed for
+	// milliseconds and is not a version anyone would want back.
 	if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
-		SaveAppSpec(before)
-		return "", fmt.Errorf("that patch broke the page in a real browser, so it was ROLLED BACK — the app is serving the previous revision again:\n- %s\n\nFix the replacement text and patch again",
-			strings.Join(errs, "\n- "))
+		SaveAppSpecAs(before, AppSaveNoHistory)
+		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK — the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
+			verb, strings.Join(errs, "\n- "))
 	}
-	return fmt.Sprintf("Patched html section %d of %q (revision %s) — replaced %d chars with %d. The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed.",
-		htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated, len(find), len(replace)), nil
+	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
+		" The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed.", nil
 }
 
 // applyHTMLPatch resolves the find/replace against one section's html and

@@ -485,11 +485,22 @@ var guardrailSafeFallbacks = []string{
 	"That one isn't something I can take on.",
 }
 
-// guardrailSafeFallbackReply picks a decline at random.
+// guardrailSafeFallbackReply picks a decline at random, never the one it
+// returned last.
 //
-// Uniform choice, no memory of prior picks: tracking "don't repeat the last
-// one" would make consecutive refusals distinguishable from independent ones,
-// which is a signal the caller shouldn't be handed.
+// The original was a uniform draw with no memory, on the argument that
+// "don't repeat the last one" makes consecutive refusals distinguishable from
+// independent ones. That is true and it is worth almost nothing: an observer
+// who probes twice sees two different lines with probability 7/8 under a
+// uniform draw and 1 under this one, so the whole signal is a fraction of a
+// bit, and it only exists for someone already able to trigger two blocks in a
+// row. Against that, a repeat is the single most obvious tell that a machine
+// answered — a user hitting the same wall twice reads the identical sentence
+// as a canned response, which is exactly what it is. Suppressing the immediate
+// repeat costs a rounding error of entropy and removes the tell.
+//
+// Only the IMMEDIATE repeat. Longer memory would start shaping the sequence
+// into something an observer really could read.
 func guardrailSafeFallbackReply(custom []string) string {
 	// The agent's own set wins when it has one. Those are authored ahead of
 	// time (the owner may have had the model write them, then reviewed them),
@@ -504,10 +515,34 @@ func guardrailSafeFallbackReply(custom []string) string {
 	// the thing it is a floor for is not a floor.
 	pool := guardrailSafeFallbacks
 	if clean := nonEmptyLines(custom); len(clean) > 0 {
+		// An owner who authored exactly one line chose to always say that. Not
+		// topped up from the built-ins: their voice wins outright, and mixing
+		// stock lines into it would be the framework overruling an explicit
+		// choice to fix a problem the owner may not have.
 		pool = clean
 	}
-	return pool[rand.IntN(len(pool))]
+	guardrailDeclineMu.Lock()
+	defer guardrailDeclineMu.Unlock()
+	if len(pool) > 1 {
+		var fresh []string
+		for _, line := range pool {
+			if line != guardrailLastDecline {
+				fresh = append(fresh, line)
+			}
+		}
+		if len(fresh) > 0 {
+			pool = fresh
+		}
+	}
+	pick := pool[rand.IntN(len(pool))]
+	guardrailLastDecline = pick
+	return pick
 }
+
+var (
+	guardrailDeclineMu   sync.Mutex
+	guardrailLastDecline string
+)
 
 // deliverPreEmptedReply hands back a reply for a turn that never ran, shaped like
 // a turn that did.

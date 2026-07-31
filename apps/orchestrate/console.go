@@ -159,6 +159,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/relink", gw(T.handleConsoleAgentRelink))
 	// Shared relink picker source: the owner's agents as {value:id,label:name}.
 	T.HandleFunc("/api/console/agent-options", g(T.handleConsoleAgentOptions))
+	// Fleet-wide guardrail review — read-only, so no gw() write wrapper.
+	T.HandleFunc("/api/console/guardrail-blocks", g(T.handleConsoleGuardrails))
 	T.HandleFunc("/api/console/monitors", g(T.handleConsoleMonitors))
 	T.HandleFunc("/api/console/monitors/delete", gw(T.handleConsoleMonitorDelete))
 	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))

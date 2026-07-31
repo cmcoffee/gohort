@@ -227,10 +227,29 @@ func RegisterAppSpecDeletedHook(fn func(owner, slug string)) {
 
 // SaveAppSpec writes a spec, stamping Owner/Created/Updated. Owner on the spec
 // wins; pass it set. No-op return when RootDB isn't available.
-func SaveAppSpec(s AppSpec) AppSpec {
+func SaveAppSpec(s AppSpec) AppSpec { return SaveAppSpecAs(s, "") }
+
+// SaveAppSpecAs is SaveAppSpec with a note about what is doing the writing,
+// filed against the version being REPLACED so an author reading the history
+// sees "update" or "replace_function drawBird" next to each entry instead of a
+// column of timestamps.
+//
+// Snapshotting here rather than at each call site is deliberate: history that
+// depends on every writer remembering to ask for it is history with holes in
+// exactly the sessions that needed it. Only writes that change what the app
+// SERVES are kept — toggling an app disabled is not a revision of its
+// document, and letting it push one out of the ring would trade a real version
+// for a metadata flip. Pass AppSaveNoHistory to suppress (the rollback paths
+// do, so a broken revision never gets filed as history).
+func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 	db := appSpecStore(s.Owner)
 	if db == nil {
 		return s
+	}
+	if reason != AppSaveNoHistory {
+		if prior, ok := LoadAppSpec(s.Owner, s.Slug); ok && specPageChanged(prior, s) {
+			PushAppRevision(prior, reason)
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if s.Created == "" {
@@ -265,6 +284,7 @@ func DeleteAppSpec(owner, slug string) {
 	if db := appSpecStore(owner); db != nil {
 		db.Unset(AppSpecTable, slug)
 	}
+	DeleteAppRevisions(owner, slug)
 	for _, fn := range appSpecDeletedHooks {
 		fn(owner, slug)
 	}

@@ -44,20 +44,32 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "app_def",
-			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /custom/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nUse this when the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
+			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /custom/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nReach for this whenever the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort — never a standalone downloadable HTML file. Actions: create · update · list · get · delete. Call action=\"help\" for every section field and the good defaults.",
 			Parameters: map[string]ToolParam{
-				"action": {Type: "string", Description: "One of: create | update | patch_html | test | verify | list | get | delete | help. To change PART of an html app (a constant, one function, a bug on one line), use patch_html — an exact find/replace — instead of re-sending the whole document through update; re-typing a long document is how working code gets silently rewritten around the fix. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
+				"action": {Type: "string", Description: "One of: create | update | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help. Every save keeps the version it replaced: if an edit turns out to have broken or deleted something, use revert (see revisions) — never try to reconstruct the app from memory, which is how the damage happens in the first place. To change PART of an html app, edit in place instead of re-sending the whole document through update — re-typing a long document is how working code gets silently rewritten around the fix. Rewriting a whole FUNCTION is replace_function (name it, hand over the new one; you never reproduce the old text). Anything smaller — a constant, a one-line bug, a couple of lines — is patch_html (exact find/replace). After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
 				"find": {
 					Type:        "string",
 					Description: "(patch_html) The EXACT text to replace, copied verbatim from the app's current html (read it with action=\"get\"), whitespace included. It must match EXACTLY ONCE — include the surrounding lines until it is unique. Zero matches or several are both refused rather than guessed at, so a patch can never land somewhere you didn't mean.",
 				},
 				"replace": {
 					Type:        "string",
-					Description: "(patch_html) What to put there instead. May be empty to delete the matched text. Only this region changes — everything else in the document is left byte-for-byte alone, which is the whole point of patching instead of re-sending it.",
+					Description: "(patch_html/replace_function) What to put there instead. For patch_html: the text replacing `find` — may be empty to delete it. For replace_function: the WHOLE new function, definition line included (`function drawBird(){ … }`), which replaces the old one wherever it sits. Either way only that region changes — everything else in the document is left byte-for-byte alone, which is the whole point of editing in place instead of re-sending it.",
+				},
+				"function": {
+					Type:        "string",
+					Description: "(replace_function) The NAME of the function to replace — just the identifier, e.g. \"drawBird\". The server locates it (declaration through closing brace, in any of the usual forms) and swaps in `replace`, so you never reproduce a single line of the old one. This is the action for rewriting a function: it cannot fail on whitespace, and it does not need the current document in front of you. If the name is defined twice, or is not defined at all, it refuses and tells you what the section does define.",
 				},
 				"section": {
 					Type:        "number",
-					Description: "(patch_html) Which html section to patch, 1-based among the app's html sections. Omit when the app has only one (the usual case, e.g. a game).",
+					Description: "(patch_html/replace_function) Which html section to edit, 1-based among the app's html sections. Omit when the app has only one (the usual case, e.g. a game).",
+				},
+				"to": {
+					Type:        "string",
+					Description: "(revert) Which kept revision to restore — the # id from action=\"revisions\" (e.g. 3 or \"#3\"). Omit to restore the most recent one, which is what you want immediately after an edit went wrong. The id is stable; a timestamp is also accepted but two saves can share one second, so prefer the id. The version being replaced is itself kept, so a revert is undoable.",
+				},
+				"confirm_rewrite": {
+					Type:        "boolean",
+					Description: "(update) Confirm that you MEANT to replace an html app's document with a much shorter one. An update whose html is drastically smaller than what is stored, or which drops functions the remaining code still calls, is refused by default — that pattern is a half-finished rewrite, not an edit, and it silently deletes working code that everything else still parses and loads fine around. Set true only when you are deliberately re-authoring the app from scratch and the new document is complete. If you are actually trying to change one part, use replace_function or patch_html instead.",
 				},
 				"sample": {
 					Type:        "array",
@@ -105,6 +117,12 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				return t.appDefGet(args)
 			case "patch_html", "patch":
 				return t.appDefPatchHTML(args)
+			case "replace_function", "patch_function":
+				return t.appDefReplaceFunction(args)
+			case "revisions", "history":
+				return t.appDefRevisions(args)
+			case "revert", "undo", "restore":
+				return t.appDefRevert(args)
 			case "test":
 				return t.appDefTest(args)
 			case "verify":
@@ -114,7 +132,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			case "help", "":
 				return appDefHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | patch_html | test | verify | list | get | delete | help", action)
+				return "", fmt.Errorf("unknown action %q — use create | update | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help", action)
 			}
 		},
 	}
@@ -122,8 +140,11 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 
 const appDefHelpText = `app_def actions:
 - create {name, slug?, description?, record_key?, sections:[…]} — author an app, served at /custom/<slug>/. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
-- update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document.
-- patch_html {id(slug), find, replace, section?} — change PART of an html section by exact find/replace. Prefer this for any edit smaller than a rewrite (a constant, one function, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. The patch is parsed and the page is loaded in a real browser BEFORE it is kept — a patch that breaks either is rolled back and the previous revision keeps serving.
+- update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document. An update that shrinks an html app sharply, or that drops functions the rest of the code still calls, is REFUSED (pass confirm_rewrite:true if you really are re-authoring from scratch) — that shape is a half-finished rewrite, and it deletes working code while still parsing and loading clean.
+- replace_function {id(slug), function, replace, section?} — swap ONE named function in an html section. Name it, hand over the whole new function, and the server finds the old one: you never reproduce a line of it, so this cannot fail on whitespace and does not need the current document in front of you. THE action for "rewrite drawBird" / "fix the collision function" / "make the car look different".
+- patch_html {id(slug), find, replace, section?} — change PART of an html section by exact find/replace. For edits smaller than a function (a constant, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. Both in-place edits are parsed, checked for calls to code they would delete, and loaded in a real browser BEFORE they are kept — an edit that breaks any of those is rolled back and the previous revision keeps serving.
+- revisions {id(slug)} — the last few versions of the app, newest first, each shown as its SIZE and FUNCTION COUNT next to the one serving now. A version much larger than the current one is an edit that removed code.
+- revert {id(slug), to?} — restore a kept revision (stamp, or its position in the listing; omit for the most recent). The version it replaces is kept too, so a revert is undoable. Reach for this the moment an edit turns out to have deleted something, instead of reconstructing the app from memory — reconstructing from memory is what deletes things.
 - list — your apps: [{slug, name, desc}].
 - get  {id(slug)} — one app's full section definition.
 - test {id(slug), sample?:[{...}], params?:{...}} — RUN every data_source + action script and report each one's output/errors (catches broken scripts before the user opens the app). Run this after authoring any app with scripts. Pass sample=[{field:value,...}] (example form submissions, keyed by the form's field names) to exercise the full form→record→data-source→output chain even before any real records exist — e.g. test that adding {"city":"Santa Cruz, CA"} actually yields a forecast.
@@ -182,6 +203,10 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	slug := slugify(stringArg(args, "slug"))
 
 	var spec AppSpec
+	// The html this app serves RIGHT NOW, captured before anything overwrites
+	// it — an update is only recognizable as a wipe by comparison with what it
+	// replaces (see appRewriteRisk).
+	var priorHTML string
 	if isUpdate {
 		key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), name))
 		existing, ok := LoadAppSpec(t.user, key)
@@ -189,6 +214,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			return "", errors.New("no matching app to update — check the slug (app_def action=list)")
 		}
 		spec = existing
+		priorHTML = appSpecHTMLText(existing)
 		if name != "" {
 			spec.Name = name
 		}
@@ -255,6 +281,15 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// Build the Page from the declarative sections. On update with no sections
 	// passed, keep the existing page.
 	if raw, ok := args["sections"]; ok && raw != nil {
+		// Refuse an update that reads as a half-finished rewrite BEFORE it can
+		// be stored. Everything downstream — the parser, the browser load —
+		// passes a document that deleted its own game loop, so this is the
+		// only place the loss is still visible.
+		if isUpdate && !boolArg(args, "confirm_rewrite") {
+			if risk := appRewriteRisk(priorHTML, appProposedHTMLText(raw)); risk != "" {
+				return "", errors.New(risk)
+			}
+		}
 		page, err := buildAppPage(spec, raw)
 		if err != nil {
 			return "", err
@@ -290,11 +325,15 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		return "", errors.New("sections is required to create an app")
 	}
 
-	saved := SaveAppSpec(spec)
 	verb := "Created"
+	reason := "create"
 	if isUpdate {
-		verb = "Updated"
+		verb, reason = "Updated", "update"
+		if boolArg(args, "confirm_rewrite") {
+			reason = "update (confirmed rewrite)"
+		}
 	}
+	saved := SaveAppSpecAs(spec, reason)
 	msg := fmt.Sprintf("%s app %q at /custom/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug)
 
@@ -328,6 +367,18 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			return fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE — the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
 				verb, saved.Name, strings.Join(scriptProblems, "\n- "), saved.Slug), nil
 		}
+		// Parsing says the document is well-formed, not that it is whole. A
+		// page that calls a function nothing defines parses, loads, and (for a
+		// canvas app, where nothing runs until the user clicks) reports clean
+		// in the browser too — so this is the only check standing between the
+		// author and a "success" on top of a dead app. The update path already
+		// REFUSED this shape; reaching here means either a create, or a
+		// rewrite the author explicitly confirmed. Say it plainly either way.
+		if dangling := jsDanglingCalls(appProposedHTMLText(raw)); len(dangling) > 0 {
+			return fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES — it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", …) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
+				verb, saved.Name, appNameList(dangling, 12)), nil
+		}
+
 		// Parsing is only the cheap half. An html section IS the page, so load
 		// the revision that was just written and report what the browser says
 		// about it. Doing this ON SAVE is the point: action=verify runs against
@@ -1394,6 +1445,20 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		report, _, _, fail := t.checkScripts(spec, true, appSampleRecords(args["sample"]), mapArg(args["params"]))
 		failures += fail
 		fmt.Fprintf(&b, "Script checks:\n%s\n", strings.TrimSpace(report))
+	}
+
+	// A browser load is a weak witness for an html app: a canvas game runs
+	// almost nothing until the player interacts, so a page missing half its
+	// functions loads silently clean and verify would sign off on it. Read the
+	// code statically first — calls to names the document never defines are the
+	// signature of a rewrite that dropped something.
+	if html := appSpecHTMLText(spec); html != "" {
+		if dangling := jsDanglingCalls(html); len(dangling) > 0 {
+			failures++
+			fmt.Fprintf(&b, "Code check:\nFAIL the page calls code it never defines: %s\nThese parse fine and the page below may well load clean — the failure happens when someone actually USES the app. Restore the missing functions (app_def action=\"replace_function\") or drop the calls.\n\n", appNameList(dangling, 12))
+		} else {
+			b.WriteString("Code check: OK — every function the page calls is defined somewhere in it.\n\n")
+		}
 	}
 
 	// The DOM probe counts what the runtime actually mounted. Empty-state

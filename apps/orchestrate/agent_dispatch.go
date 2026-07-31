@@ -625,6 +625,11 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// dispatched runs even though they were reachable from the
 	// Agency chat UI.
 	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	// Same reason as the continuing-dispatch path below: no *session on a
+	// dispatched turn means no trail, and a guard that leaves no breadcrumb is
+	// a guard nobody can account for after the fact.
+	subTurn.diagAgentID = target.ID
+	subTurn.diagSessionID = subSessID
 	tools = append(tools, extraTools...)
 	// ForcePrivate enforcement — drop network tools + attach blocked
 	// connector. Done AFTER tools are fully assembled (allowlist +
@@ -1212,6 +1217,18 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if run.Kind == "channel" {
 		subTurn.requesterChannel = run.Kind
 	}
+	// Name the trail this turn writes its breadcrumbs to. A dispatched run has
+	// no *session — the record belongs to the caller — so without this every
+	// turnDiag on this path hit the "no trail to write to" return and vanished.
+	//
+	// That is the whole of a channel/cortex turn's diagnostics: the guardrail
+	// that blocked a reply computed WHICH rule fired, wrote it to the trail, and
+	// the trail was discarded, leaving the owner a decline on their phone and no
+	// way to find out what stopped it. Same reasoning as the scheduled-fire path
+	// (scheduled_updates.go), which was given a trail for exactly this reason;
+	// this is the other half of it.
+	subTurn.diagAgentID = target.ID
+	subTurn.diagSessionID = subSessionID
 	// The owner texting their own agent runs as phantom:<chatID> exactly like a
 	// stranger does, so without this they are an "outside party" on their own
 	// phone and their own carve-outs shut them out. Decided on the TRANSPORT
@@ -1219,6 +1236,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// the sender's to choose and would let anyone claim to be the owner by
 	// renaming themselves.
 	if h := strings.TrimSpace(run.SenderHandle); h != "" || run.Kind == "channel" {
+		// Kept raw as well as classified: the boolean answers "is this the
+		// owner", and an authorized-identities roster has to be matched against
+		// the handle itself. Same source, same trust level, still never content.
+		subTurn.requesterHandle = h
 		if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(agentOwner, h) {
 			subTurn.requesterOwnerHandle = true
 		}

@@ -187,11 +187,17 @@ func (c *ChannelCoalescer) lead(key string, run ChannelAgentRunnerFunc, window t
 // status callback are preferred so nothing useful is lost in the merge.
 func mergeInbound(base, add ChannelInbound) ChannelInbound {
 	out := base
+	out.MergedCount = messageCount(base) + messageCount(add)
 	switch {
 	case strings.TrimSpace(out.Text) == "":
 		out.Text = add.Text
 	case strings.TrimSpace(add.Text) != "":
-		out.Text = out.Text + "\n" + add.Text
+		// A BLANK LINE, not a newline. Joined with "\n" the two bubbles read as
+		// one wrapped thought, which is exactly how a second question ends up
+		// unanswered; separated by a blank line they read as two, which is what
+		// they are. The runner also states the count out of band — this only
+		// makes the text itself honest about its own shape.
+		out.Text = out.Text + "\n\n" + add.Text
 	}
 	out.Images = append(append([]string(nil), out.Images...), add.Images...)
 	out.Videos = append(append([]string(nil), out.Videos...), add.Videos...)
@@ -203,4 +209,14 @@ func mergeInbound(base, add ChannelInbound) ChannelInbound {
 		out.Roster = add.Roster
 	}
 	return out
+}
+
+// messageCount reads how many original messages an inbound stands for. An
+// unmerged one counts as itself, so folding two singles gives two rather than
+// zero.
+func messageCount(in ChannelInbound) int {
+	if in.MergedCount < 1 {
+		return 1
+	}
+	return in.MergedCount
 }

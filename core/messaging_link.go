@@ -74,6 +74,17 @@ type MessagingLink interface {
 	// for deciding whether the owner's own audience carve-outs apply to them;
 	// not a substitute for authentication.
 	IsOwnerHandle(owner, handle string) bool
+	// SameHandle reports whether two handles name the same party, using the
+	// bridge's own comparison. Same doctrine as IsOwnerHandle and same reason
+	// it lives here: the transports disagree about form (+1 (555) 010-9999 vs
+	// +15550109999 vs an email vs a chat-id), so a caller matching handles with
+	// strings.EqualFold drifts from the bridge the moment either side reformats.
+	//
+	// Used to resolve an owner-authored roster of authorized people against the
+	// handle a message actually arrived on. CONFIGURED trust, exactly like
+	// IsOwnerHandle: it says the transport attributed the message to a handle
+	// the owner wrote down, not that anyone authenticated.
+	SameHandle(owner, a, b string) bool
 	// DescribeChat resolves one chat id to its summary (handle + display name)
 	// so callers can render a human-readable recipient — e.g. an approval row
 	// for a group addressed only by chat_id. ok is false when no such chat.

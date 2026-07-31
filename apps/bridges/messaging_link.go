@@ -114,6 +114,25 @@ func (p messagingLinkImpl) IsOwnerHandle(owner, handle string) bool {
 	return p.T.isOwnerHandle(handle)
 }
 
+// SameHandle compares two handles the way the bridge does, so a roster entry
+// the owner typed by hand ("+1 (555) 010-9999") matches the form the transport
+// actually delivers ("+15550109999").
+//
+// An empty handle is NOT a match here, unlike IsOwnerHandle where empty means
+// is_from_me. That asymmetry is deliberate: "the daemon cleared the handle"
+// identifies the owner and nobody else, so treating it as a match against an
+// arbitrary roster entry would hand every self-sent message somebody else's
+// authorization.
+func (p messagingLinkImpl) SameHandle(owner, a, b string) bool {
+	if !p.ownsBridge(owner) {
+		return false
+	}
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	return normalizeIdentity(a) == normalizeIdentity(b)
+}
+
 func (p messagingLinkImpl) DescribeChat(owner, chatID string) (MessagingChatSummary, bool) {
 	if !p.ownsBridge(owner) {
 		return MessagingChatSummary{}, false

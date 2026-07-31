@@ -372,6 +372,18 @@ type ChannelInbound struct {
 	Images           []string // base64 inbound attachments (a contact's photo) — delivered to the agent as multimodal content it can see this turn
 	Videos           []string // base64 inbound video clips (e.g. an mp4 in a text) — the runner samples frames into the multimodal stream so the vision model can analyze them (it can't ingest raw mp4)
 	Audios           []string // base64 inbound audio (a voice memo / m4a) — the runner transcribes it so the agent gets the spoken words (it can't ingest raw audio)
+	// MergedCount is how many separate inbound messages this one carries, after
+	// the coalescer folded rapid follow-ups together (see channel_coalesce.go).
+	// 0 or 1 means a single message; higher means Text is several bubbles the
+	// person sent in quick succession, joined in order.
+	//
+	// It exists because merging is LOSSY in the one way that matters: two asks
+	// become one user turn, and nothing in the text says they were two. A model
+	// answers the salient one and drops the rest, which is why the same code
+	// path sometimes produced a complete answer and sometimes half of one. The
+	// count travels so the runner can say so — out of band, never in the
+	// message itself, which is the stored transcript of what the person wrote.
+	MergedCount int
 	// StatusCallback, when set, receives mid-turn status pings (the agent's
 	// send_status / progress notes) so the transport can deliver them ahead
 	// of the final reply. nil = no status (graceful).

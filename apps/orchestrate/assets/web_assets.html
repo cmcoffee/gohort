@@ -3996,13 +3996,292 @@
           // never types it — this toggle owns it, and the text box always shows the
           // rule without it.
           //
-          // "?" marks the EXCEPTION: correctable. Terminal is the default because
-          // that is what this band is for. A legacy "!" (which used to mark terminal
-          // when correctable was the default) is stripped for display and means the
-          // same thing it always did.
-          function gIsCorr(s) { return /^\s*\?/.test(s || ''); }
-          function gBody(s) { return String(s || '').replace(/^\s*[?!]\s*/, ''); }
-          function gCompose(body, corr) { return (corr ? '? ' : '') + body; }
+          // "?" marks the EXCEPTION: correctable. "~" marks the other exception:
+          // contestable. Terminal is the default because that is what this band is
+          // for. A legacy "!" (which used to mark terminal when correctable was the
+          // default) is stripped for display and means the same thing it always did.
+          //
+          // gBody MUST strip every marker the parser understands. It stripped only
+          // [?!] for one build after "~" shipped, which meant a contestable rule
+          // showed its marker in the text box, was labelled "block", and — because
+          // gCompose then prepended "?" to a body that still began with "~" —
+          // turned into "? ~ rule" on a single click. The server matches "?" first,
+          // so that parsed as correctable with a literal "~" left at the front of
+          // the rule the warden reads. One click, two silent changes.
+          // "@" is on a DIFFERENT AXIS from the three above and so is not part of
+          // the cycle. Severity asks what happens on a breach; "@" asks whether
+          // this rule applies to this person at all. Both can be true, the server
+          // parses a stacked run of markers, and the UI has to read a run rather
+          // than one leading character — reading only the first is how "~" broke
+          // when it shipped (see above).
+          // "@" is on a DIFFERENT AXIS from the three above and so is not part of
+          // the cycle. Severity asks what happens on a breach; "@" asks when the
+          // rule applies at all. A bare "@" is the built-in authorized-people
+          // carve-out; "@name" links one of the owner's named exceptions, and a
+          // rule may carry several.
+          var G_BLOCK = 'block', G_RECOVER = 'recover', G_APPEAL = 'appeal';
+          var G_MARKER_RE = /^\s*(?:[?!~]|@[a-z0-9_-]*)\s*/i;
+          // Consume the whole leading RUN of markers. Reading only the first is
+          // the bug that broke "~" when it shipped, and with "@name" links a
+          // rule routinely carries three or four.
+          function gMarkers(s) {
+            var rest = String(s || ''), taken = '';
+            for (;;) {
+              var m = rest.match(G_MARKER_RE);
+              if (!m) { return taken; }
+              taken += m[0]; rest = rest.slice(m[0].length);
+            }
+          }
+          function gMode(s) {
+            var m = gMarkers(s);
+            if (m.indexOf('?') >= 0) { return G_RECOVER; }
+            if (m.indexOf('~') >= 0) { return G_APPEAL; }
+            return G_BLOCK;
+          }
+          // Bare "@" only — "@night-shift" is a link, not the built-in.
+          function gExempt(s) { return /(^|[^a-z0-9_-])@(?![a-z0-9_-])/i.test(gMarkers(s)); }
+          // Each link is {name, off}. "@-name" is switched off for THIS rule
+          // only; the link stays visible so a carve-out that is not applying is
+          // something you can see rather than something to remember.
+          function gLinks(s) {
+            var out = [], re = /@(-?)([a-z0-9_-]+)/gi, m, seen = {};
+            while ((m = re.exec(gMarkers(s)))) {
+              if (seen[m[2]]) { continue; }
+              seen[m[2]] = true;
+              out.push({name: m[2], off: m[1] === '-'});
+            }
+            return out;
+          }
+          function gBody(s) { return String(s || '').slice(gMarkers(s).length); }
+          function gCompose(body, mode, exempt, links) {
+            var pre = exempt ? '@' : '';
+            (links || []).forEach(function(l) { pre += '@' + (l.off ? '-' : '') + l.name; });
+            if (mode === G_RECOVER) { pre += '?'; }
+            else if (mode === G_APPEAL) { pre += '~'; }
+            return pre ? pre + ' ' + body : body;
+          }
+          function gSlug(s) {
+            return String(s || '').toLowerCase().replace(/[^a-z0-9_]+/g, '-').replace(/^-+|-+$/g, '');
+          }
+          // Declared up here, not beside its editor below, because renderG()
+          // reads it while drawing each rule's link button.
+          var gexceptions = (agent.guardrail_exceptions || []).slice();
+          // Legacy roster entries surface as person items, matching what the
+          // server does on read — so an owner who typed a roster before items
+          // existed sees it in the one list rather than losing track of it.
+          (function () {
+            var have = {};
+            gexceptions.forEach(function(e) {
+              if ((e.kind || 'condition') === 'person') { have[String(e.text || '').trim().toLowerCase()] = true; }
+            });
+            (agent.authorized_identities || []).forEach(function(id) {
+              var v = String(id || '').trim();
+              if (!v || have[v.toLowerCase()]) { return; }
+              have[v.toLowerCase()] = true;
+              gexceptions.push({name: gSlug(v) || 'person', text: v, kind: 'person'});
+            });
+          })();
+          // The link handle for one exception, matching what the SERVER will
+          // store: its name slugged, or derived from the condition's opening
+          // words when the name is still blank. Never falls back to '' — an
+          // empty handle composes to a bare "@", which is the built-in
+          // authorized-people carve-out, so linking an unnamed condition would
+          // silently grant a completely different exemption.
+          function gExcSlug(ex) {
+            if (!ex) { return ''; }
+            var s = gSlug(ex.name);
+            if (s) { return s; }
+            var words = String(ex.text || '').split(/\s+/).filter(Boolean).slice(0, 4);
+            return gSlug(words.join(' '));
+          }
+          function gLinkExists(name) {
+            for (var i = 0; i < gexceptions.length; i++) {
+              if (gExcSlug(gexceptions[i]) === name) { return true; }
+            }
+            return false;
+          }
+          function gLinkSummary(text) {
+            var names = gLinks(text).map(function(l) {
+              var label = l.name + ' (deleted)';
+              for (var i = 0; i < gexceptions.length; i++) {
+                if (gExcSlug(gexceptions[i]) === l.name) { label = gexceptions[i].name || l.name; break; }
+              }
+              return label + (l.off ? ' — off here' : '');
+            });
+            if (gExempt(text)) { names.unshift('authorized people'); }
+            return names.join(', ');
+          }
+          // The picker. Built-in first (gohort settles it itself), then the
+          // owner's own conditions, which the warden reads under the rule.
+          function openExceptionPicker(idx) {
+            var chosen = gLinks(grules[idx]).slice();   // [{name, off}]
+            var builtin = gExempt(grules[idx]);
+            function findLink(name) {
+              for (var i = 0; i < chosen.length; i++) { if (chosen[i].name === name) { return i; } }
+              return -1;
+            }
+            // Write the rule line back on every change, so the count behind the
+            // modal tracks what you are doing. Previously each click closed and
+            // reopened the whole dialog to refresh, which looked like a glitch
+            // and lost your place in the list.
+            function commit() {
+              grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), builtin, chosen);
+              renderG();
+            }
+            window.uiOpenModal({
+              title: 'Exceptions for this rule',
+              subtitle: 'Tick what this rule does NOT apply to. Each one can be switched off for this rule alone — the link is kept and the other rules using it are untouched.',
+              width: '600px',
+              mount: function(body, api) {
+                var rows = document.createElement('div');
+                body.appendChild(rows);
+
+                function drawRow(opts) {
+                  var wrap = document.createElement('div');
+                  wrap.style.cssText = 'display:flex;gap:0.55rem;align-items:flex-start;padding:0.45rem 0;border-bottom:1px solid var(--border)';
+                  var cb = document.createElement('input');
+                  cb.type = 'checkbox'; cb.checked = !!opts.linked;
+                  cb.style.cssText = 'margin-top:0.25rem;flex:0 0 auto;cursor:pointer';
+                  cb.onchange = function() { opts.onLink(cb.checked); };
+                  var txt = document.createElement('div');
+                  txt.style.cssText = 'flex:1 1 auto;min-width:0';
+                  if (opts.linked && opts.off) { txt.style.opacity = '0.55'; }
+                  var head = document.createElement('div');
+                  head.style.cssText = 'font-size:0.85rem;display:flex;gap:0.4rem;align-items:baseline;flex-wrap:wrap';
+                  var name = document.createElement('span');
+                  name.textContent = opts.label;
+                  head.appendChild(name);
+                  if (opts.badge) {
+                    var b = document.createElement('span');
+                    b.textContent = opts.badge;
+                    b.style.cssText = 'font-size:0.66rem;letter-spacing:0.03em;color:var(--text-mute);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem';
+                    head.appendChild(b);
+                  }
+                  txt.appendChild(head);
+                  if (opts.hint) {
+                    var sub = document.createElement('div');
+                    sub.textContent = opts.hint;
+                    sub.style.cssText = 'font-size:0.75rem;color:var(--text-mute);line-height:1.4;margin-top:0.1rem;overflow-wrap:anywhere';
+                    txt.appendChild(sub);
+                  }
+                  wrap.appendChild(cb); wrap.appendChild(txt);
+                  if (opts.onToggle) {
+                    var pill = document.createElement('button');
+                    pill.type = 'button'; pill.className = 'ui-orch-list-del';
+                    pill.textContent = (opts.linked && opts.off) ? 'off' : 'on';
+                    pill.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;align-self:center;' +
+                      ((opts.linked && opts.off)
+                        ? 'color:var(--text-mute);opacity:0.7'
+                        : 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1);font-weight:600');
+                    // Always clickable. Requiring the tick first meant "switch
+                    // this off for this rule" — the commonest thing you want —
+                    // took two clicks on two different controls, and looked
+                    // broken until you found the first one.
+                    pill.title = (opts.linked && opts.off)
+                      ? 'Switched off for THIS rule. Click to apply it here again.'
+                      : (opts.linked
+                        ? 'Applying to this rule. Click to switch it off here only — the link is kept.'
+                        : 'Not on this rule. Click to attach it switched OFF, so it is visible here without applying.');
+                    pill.onclick = function() { opts.onToggle(); };
+                    wrap.appendChild(pill);
+                  }
+                  rows.appendChild(wrap);
+                }
+
+                function redraw() {
+                  rows.innerHTML = '';
+                  if (builtin) {
+                    drawRow({
+                      label: 'Anyone on the authorized list',
+                      hint: 'The older whole-list carve-out. Untick it and link people individually for finer control.',
+                      badge: 'checked by gohort', linked: true, off: false,
+                      onLink: function(on) { builtin = on; commit(); redraw(); },
+                    });
+                  }
+                  if (!gexceptions.length) {
+                    var none = document.createElement('div');
+                    none.style.cssText = 'font-size:0.78rem;color:var(--text-mute);line-height:1.45;padding-top:0.5rem';
+                    none.textContent = 'Nothing to link yet. Add people and conditions under “Exceptions” at the bottom of this panel, then come back.';
+                    rows.appendChild(none);
+                  }
+                  // Links whose carve-out is GONE. Listed first, because they
+                  // are the only rows here that are a problem rather than a
+                  // choice — and without a row there is no way to remove one:
+                  // the item it names is not in the list to untick.
+                  chosen.forEach(function(l) {
+                    if (gLinkExists(l.name)) { return; }
+                    drawRow({
+                      label: l.name,
+                      hint: 'This no longer exists, so it applies to nothing and the rule is at full strength. Untick to clear it off the rule.',
+                      badge: 'missing', linked: true, off: false,
+                      onLink: function() {
+                        var i = findLink(l.name);
+                        if (i >= 0) { chosen.splice(i, 1); }
+                        commit(); redraw();
+                      },
+                    });
+                  });
+                  gexceptions.forEach(function(ex) {
+                    var slug = gExcSlug(ex);
+                    if (!slug) {
+                      var blank = document.createElement('div');
+                      blank.style.cssText = 'font-size:0.78rem;color:var(--text-mute);padding:0.45rem 0;opacity:0.7';
+                      blank.textContent = 'An unnamed, empty entry — give it a name or a value below before linking it.';
+                      rows.appendChild(blank);
+                      return;
+                    }
+                    var at = findLink(slug);
+                    drawRow({
+                      label: ex.name || slug,
+                      hint: ex.text,
+                      badge: (ex.kind === 'person') ? 'checked by gohort' : 'judged',
+                      linked: at >= 0,
+                      off: at >= 0 ? chosen[at].off : false,
+                      onLink: function(on) {
+                        var i = findLink(slug);
+                        if (on && i < 0) { chosen.push({name: slug, off: false}); }
+                        if (!on && i >= 0) { chosen.splice(i, 1); }
+                        commit(); redraw();
+                      },
+                      onToggle: function() {
+                        var i = findLink(slug);
+                        if (i < 0) { chosen.push({name: slug, off: true}); }
+                        else { chosen[i].off = !chosen[i].off; }
+                        commit(); redraw();
+                      },
+                    });
+                  });
+                }
+                redraw();
+
+                var done = document.createElement('button');
+                done.type = 'button'; done.className = 'ui-orch-list-add'; done.textContent = 'Done';
+                done.style.cssText = 'margin-top:0.7rem';
+                done.onclick = function() { commit(); api.close(); };
+                body.appendChild(done);
+              },
+            });
+          }
+          // block → attempt-recovery → allow-appeal → block. Blocking is first
+          // because it is the default and the safe end of the cycle: a click too
+          // many lands back on the strictest setting rather than the loosest.
+          function gNextMode(m) {
+            if (m === G_BLOCK) { return G_RECOVER; }
+            if (m === G_RECOVER) { return G_APPEAL; }
+            return G_BLOCK;
+          }
+          var gModeLabel = {};
+          gModeLabel[G_BLOCK] = 'block';
+          gModeLabel[G_RECOVER] = 'attempt-recovery';
+          gModeLabel[G_APPEAL] = 'allow-appeal';
+          var gModeStyle = {};
+          gModeStyle[G_BLOCK] = 'color:var(--danger);border-color:var(--danger);font-weight:600';
+          gModeStyle[G_RECOVER] = 'color:var(--text-mute);opacity:0.8';
+          gModeStyle[G_APPEAL] = 'color:var(--accent,#4a9eff);border-color:var(--accent,#4a9eff)';
+          var gModeTitle = {};
+          gModeTitle[G_BLOCK] = 'Block: a violation ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default, and what this band is for. Click to cycle.';
+          gModeTitle[G_RECOVER] = 'Attempt recovery: a violation sends the reply back for one rewrite, and declines if it still breaks the rule. For a rule that SHAPES an answer rather than forbidding it. Click to cycle.';
+          gModeTitle[G_APPEAL] = 'Allow appeal: the agent may dispute the block ONCE, by quoting the user’s own words. The framework looks the quote up itself and re-checks — an explanation is not evidence. For a rule with a CONDITION the check cannot see, like "unless it’s requested twice". Click to cycle.';
           function renderG() {
             gList.innerHTML = '';
             grules.forEach(function(text, idx) {
@@ -4013,26 +4292,58 @@
               // Re-read the marker from the stored line on every keystroke rather
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
-              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gIsCorr(grules[idx])); });
+              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx])); });
               var term = document.createElement('button');
               term.type = 'button';
               term.className = 'ui-orch-list-del';
-              term.textContent = gIsCorr(text) ? 'attempt-recovery' : 'block';
+              term.textContent = gModeLabel[gMode(text)];
               term.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;letter-spacing:0.03em;' +
-                (gIsCorr(text)
-                  ? 'color:var(--text-mute);opacity:0.8'
-                  : 'color:var(--danger);border-color:var(--danger);font-weight:600');
-              term.title = gIsCorr(text)
-                ? 'Attempt recovery: a violation sends the reply back for one rewrite, and declines if it still breaks the rule. For a rule that shapes an answer rather than forbidding it. Click to block instead.'
-                : 'Block: a violation ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default, and what this band is for. Click only if this rule shapes an answer rather than forbidding it.';
+                gModeStyle[gMode(text)];
+              term.title = gModeTitle[gMode(text)];
               term.onclick = function() {
-                grules[idx] = gCompose(gBody(grules[idx]), !gIsCorr(grules[idx]));
+                grules[idx] = gCompose(gBody(grules[idx]), gNextMode(gMode(grules[idx])), gExempt(grules[idx]), gLinks(grules[idx]));
                 renderG();
               };
+              // Separate control, not a fourth position in the cycle: a rule can
+              // block AND carry carve-outs. Opens the picker rather than
+              // toggling, because there is more than one thing to link to.
+              // ACTIVE links only. Counting the switched-off ones made a rule
+              // read "@1" after you had just turned its only carve-out off,
+              // which is indistinguishable from the toggle not working.
+              var allLinks = gLinks(text);
+              var deadLinks = allLinks.filter(function(l) { return !gLinkExists(l.name); }).length;
+              var activeLinks = allLinks.filter(function(l) { return !l.off && gLinkExists(l.name); }).length;
+              var offLinks = allLinks.filter(function(l) { return l.off && gLinkExists(l.name); }).length;
+              var linkCount = activeLinks + (gExempt(text) ? 1 : 0);
+              var exempt = document.createElement('button');
+              exempt.type = 'button';
+              exempt.className = 'ui-orch-list-del';
+              exempt.textContent = linkCount ? '@' + linkCount : '@';
+              exempt.style.cssText = 'width:auto;padding:0 0.45rem;font-size:0.75rem;font-weight:600;' +
+                (linkCount ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)' : 'color:var(--text-mute);opacity:0.55');
+              exempt.title = (linkCount || offLinks)
+                ? 'Exceptions on this rule: ' + gLinkSummary(text) + '. Click to change.'
+                : 'Link exceptions — people or conditions this rule does not apply to. Click to choose.';
+              // A rule whose only carve-outs are switched off shows a plain "@"
+              // (nothing is applying) but keeps the accent, so "off" is visibly
+              // different from "never linked".
+              // A link whose carve-out was deleted applies to nothing — the rule
+              // is at full strength — but it sits on the line and cannot be
+              // seen anywhere else, so flag it here and let the picker clear it.
+              if (deadLinks) {
+                exempt.textContent = '@' + (linkCount ? linkCount + '!' : '!');
+                exempt.style.cssText = 'width:auto;padding:0 0.45rem;font-size:0.75rem;font-weight:600;color:var(--danger);border-color:var(--danger)';
+                exempt.title = 'This rule links ' + deadLinks + ' exception' + (deadLinks === 1 ? '' : 's') +
+                  ' that no longer exist, so ' + (deadLinks === 1 ? 'it applies' : 'they apply') +
+                  ' to nothing. Click to remove ' + (deadLinks === 1 ? 'it' : 'them') + '.';
+              } else if (!linkCount && offLinks) {
+                exempt.style.cssText = 'width:auto;padding:0 0.45rem;font-size:0.75rem;font-weight:600;color:var(--text-mute);border-color:var(--accent,#6366f1);opacity:0.8';
+              }
+              exempt.onclick = function() { openExceptionPicker(idx); };
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
               del.onclick = function() { grules.splice(idx, 1); renderG(); };
-              row.appendChild(input); row.appendChild(term); row.appendChild(del);
+              row.appendChild(input); row.appendChild(term); row.appendChild(exempt); row.appendChild(del);
               gList.appendChild(row);
             });
             var addBtn = document.createElement('button');
@@ -4243,6 +4554,150 @@
           failWrap.appendChild(failHelp);
           gWrap.appendChild(failWrap);
 
+          // What these rules have actually STOPPED. Reviewing a guardrail
+          // belongs next to the guardrail, not in a separate console — and on a
+          // channel this is the only place it can be reviewed at all, because
+          // the conversation happened on somebody else's phone.
+          var recWrap = document.createElement('div');
+          recWrap.style.cssText = 'margin-top:0.7rem';
+          var recLbl = document.createElement('div');
+          recLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
+          recLbl.textContent = 'Recent blocks:';
+          recWrap.appendChild(recLbl);
+          var recBody = document.createElement('div');
+          recWrap.appendChild(recBody);
+          gWrap.appendChild(recWrap);
+          // Fetched, not read off the agent record: a log is not part of the
+          // agent's definition and has no business riding on every record read.
+          // Rendered when it arrives so the modal opens at full speed either way.
+          fetch('api/agents/' + encodeURIComponent(id) + '/guardrails')
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) {
+              var recent = (d && d.recent) || [];
+              recBody.innerHTML = '';
+              if (!recent.length) {
+                var none = document.createElement('div');
+                none.className = 'ui-orch-modal-help';
+                none.textContent = 'Nothing yet. Every time a rule stops this agent it is recorded here — the rule, where it fired, and what the check objected to. Nothing is sent anywhere.';
+                recBody.appendChild(none);
+                return;
+              }
+              recLbl.textContent = 'Recent blocks (' + recent.length + '):';
+              var list = document.createElement('div');
+              list.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem;max-height:14rem;overflow-y:auto';
+              recent.forEach(function(b) {
+                var row = document.createElement('div');
+                row.style.cssText = 'font-size:0.78rem;line-height:1.4;padding:0.35rem 0.5rem;border:1px solid var(--border);border-radius:4px';
+                var head = document.createElement('div');
+                var when = '';
+                try { when = new Date(b.at).toLocaleString(); } catch (e) { when = String(b.at || ''); }
+                head.textContent = when + (b.hook ? '  ·  ' + b.hook : '');
+                head.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
+                row.appendChild(head);
+                var rule = document.createElement('div');
+                rule.textContent = b.rule || '(rule not recorded)';
+                rule.style.cssText = 'font-weight:600;margin-top:0.1rem';
+                row.appendChild(rule);
+                var where = [];
+                if (b.channel) { where.push(b.channel); }
+                if (b.sender) { where.push(b.sender); }
+                if (b.reason || where.length) {
+                  var sub = document.createElement('div');
+                  sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
+                  sub.textContent = (where.length ? where.join(' · ') + ' — ' : '') + (b.reason || '');
+                  row.appendChild(sub);
+                }
+                list.appendChild(row);
+              });
+              recBody.appendChild(list);
+              var help = document.createElement('div');
+              help.className = 'ui-orch-modal-help';
+              help.style.cssText = 'margin-top:0.3rem';
+              help.textContent = 'Newest first, kept on this box and sent nowhere. The same block is also in the ⚠ trail of the thread it happened in, with the full entry.';
+              recBody.appendChild(help);
+            })
+            .catch(function() { /* the log is informational; never block the modal on it */ });
+
+          // Exceptions: named conditions rules link to. The text is read by the
+          // WARDEN, under the rule it is linked to, so it is written as a
+          // condition about the situation being judged rather than as an
+          // instruction to the model.
+          var excWrap = document.createElement('div');
+          excWrap.style.cssText = 'margin-top:0.7rem';
+          var excLbl = document.createElement('div');
+          excLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
+          excLbl.textContent = 'Exceptions — people and conditions a rule can be linked to (optional):';
+          excWrap.appendChild(excLbl);
+          var excList = document.createElement('div');
+          excList.className = 'ui-orch-list';
+          excWrap.appendChild(excList);
+          function renderE() {
+            excList.innerHTML = '';
+            gexceptions.forEach(function(ex, idx) {
+              var row = document.createElement('div');
+              row.className = 'ui-orch-list-row';
+              var nameIn = document.createElement('input');
+              var kind = (ex.kind === 'person') ? 'person' : 'condition';
+              var kindBtn = document.createElement('button');
+              kindBtn.type = 'button';
+              kindBtn.className = 'ui-orch-list-del';
+              kindBtn.textContent = kind;
+              kindBtn.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;letter-spacing:0.03em;' +
+                (kind === 'person'
+                  ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)'
+                  : 'color:var(--text-mute)');
+              kindBtn.title = kind === 'person'
+                ? 'A PERSON: gohort checks this itself against who is asking (a signed-in account, or a handle your messaging channel verified). A linked rule is skipped for them before the check even runs. Click to make it a condition.'
+                : 'A CONDITION: the check reads it under the rule and decides whether it holds. Prose, judged by a model. Click to make it a person.';
+              kindBtn.onclick = function() {
+                gexceptions[idx].kind = (kind === 'person') ? 'condition' : 'person';
+                renderE(); renderG();
+              };
+              nameIn.type = 'text'; nameIn.value = ex.name || ''; nameIn.placeholder = 'name…';
+              nameIn.style.cssText = 'flex:0 0 8rem';
+              nameIn.oninput = function() { gexceptions[idx].name = nameIn.value; };
+              var textIn = document.createElement('input');
+              textIn.type = 'text'; textIn.value = ex.text || '';
+              textIn.placeholder = kind === 'person'
+                ? 'account, phone, or email…'
+                : 'the condition, e.g. the user has already confirmed…';
+              textIn.className = 'ui-orch-list-input';
+              textIn.oninput = function() { gexceptions[idx].text = textIn.value; };
+              // Name the condition for them if they didn't. The server derives
+              // one anyway, and deriving it silently would leave the field
+              // looking empty while a different name was what actually linked.
+              textIn.onblur = function() {
+                if (gSlug(gexceptions[idx].name)) { return; }
+                var words = String(gexceptions[idx].text || '').split(/\s+/).filter(Boolean).slice(0, 4);
+                var derived = gSlug(words.join(' '));
+                if (!derived) { return; }
+                gexceptions[idx].name = derived;
+                nameIn.value = derived;
+                renderG();
+              };
+              var del = document.createElement('button');
+              del.type = 'button'; del.className = 'ui-orch-list-del'; del.textContent = '×';
+              // Deleting an exception TIGHTENS every rule that linked it: the
+              // dangling name resolves to nothing and the rule goes back to
+              // full strength. Say so, because the opposite would be a quiet
+              // hole in a rule the owner still believes is absolute.
+              del.title = 'Delete. Rules linked to it go back to applying in full. To turn it off temporarily, use the on/off button instead — that keeps the wording and the links.';
+              del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); };
+              row.appendChild(kindBtn); row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
+              excList.appendChild(row);
+            });
+            var addE = document.createElement('button');
+            addE.type = 'button'; addE.className = 'ui-orch-list-add'; addE.textContent = '+ Add exception';
+            addE.onclick = function() { gexceptions.push({name: '', text: ''}); renderE(); };
+            excList.appendChild(addE);
+          }
+          renderE();
+          var excHelp = document.createElement('div');
+          excHelp.style.cssText = 'font-size:0.75rem;color:var(--text-mute);margin-top:0.3rem;line-height:1.4';
+          excHelp.textContent = 'The warden reads a linked condition on an “Except:” line under the rule, and treats the rule as satisfied when it plainly holds. Write it as a condition about the request, not as an instruction. These are judged by a model, so keep them off rules protecting anything you cannot undo.';
+          excWrap.appendChild(excHelp);
+          gWrap.appendChild(excWrap);
+
           // Declines: the lines the USER sees when a reply can't be made to
           // satisfy the rules. A SET, not one line — an identical refusal
           // every time is a fingerprint that tells a prober exactly which
@@ -4328,10 +4783,39 @@
           // for a stranger, and the stranger is the half that matters and the half
           // that is easy to get wrong — so it has to be reachable from here.
           // Blank means you, the owner.
+          // WHO is asking now decides which rules are even checked, because a
+          // rule can be excepted for one person and not another. A free-text
+          // name alone could only ever produce "a stranger" — the people on the
+          // list were untestable, which is the half exceptions exist for.
+          var testWho = document.createElement('select');
+          testWho.style.cssText = 'width:100%;box-sizing:border-box;margin-top:0.3rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.82rem';
+          function fillTestWho() {
+            var keep = testWho.value;
+            testWho.innerHTML = '';
+            function opt(v, label) {
+              var o = document.createElement('option');
+              o.value = v; o.textContent = label;
+              testWho.appendChild(o);
+            }
+            opt('', 'as you (the owner)');
+            opt('__stranger__', 'as an outside contact');
+            gexceptions.forEach(function(ex) {
+              if (ex.kind !== 'person') { return; }
+              var slug = gExcSlug(ex);
+              if (slug) { opt(slug, 'as ' + (ex.name || slug) + ' — ' + (ex.text || '')); }
+            });
+            testWho.value = keep;
+            if (!testWho.value) { testWho.selectedIndex = 0; }
+          }
+          fillTestWho();
+          testWrap.appendChild(testWho);
           var testAs = document.createElement('input');
           testAs.type = 'text';
-          testAs.placeholder = 'as an outside contact named… (blank = as you, the owner)';
-          testAs.style.cssText = 'width:100%;box-sizing:border-box;margin-top:0.3rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.82rem';
+          testAs.placeholder = 'the outside contact’s self-reported name (optional)';
+          testAs.style.cssText = 'width:100%;box-sizing:border-box;margin-top:0.3rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.82rem;display:none';
+          testWho.onchange = function() {
+            testAs.style.display = (testWho.value === '__stranger__') ? '' : 'none';
+          };
           testWrap.appendChild(testAs);
           var testBtn = document.createElement('button');
           testBtn.type = 'button'; testBtn.className = 'ui-orch-list-add'; testBtn.textContent = 'Test guardrails';
@@ -4344,16 +4828,33 @@
             testOut.textContent = 'Checking…'; testBtn.disabled = true;
             fetch('api/agents/' + encodeURIComponent(id) + '/guardrail-test', {
               method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({candidate: cand, hook: 'pre_action', sender: testAs.value.trim()})
+              body: JSON.stringify({
+                candidate: cand, hook: 'pre_action',
+                as: (testWho.value && testWho.value !== '__stranger__') ? testWho.value : '',
+                sender: (testWho.value === '__stranger__') ? (testAs.value.trim() || 'an outside contact') : ''
+              })
             }).then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
               .then(function(d) {
                 if (d.note) { testOut.textContent = d.note; return; }
                 var colors = {violate: 'var(--danger,#ff7b72)', unsure: '#f59e0b', comply: '#10b981'};
-                var lines = ['Verdict: ' + (d.status || '?').toUpperCase() +
-                  '  (asked ' + (d.as_owner === false ? 'by an outside contact' : 'by you') + ')'];
+                var askedBy = d.as_owner ? 'by you' : (d.as ? 'by ' + d.as : 'by an outside contact');
+                var lines = ['Verdict: ' + (d.status || '?').toUpperCase() + '  (asked ' + askedBy + ')'];
                 (d.verdicts || []).forEach(function(v) {
                   lines.push('• [' + v.status + '] ' + (v.rule || '') + (v.reason ? ' — ' + v.reason : ''));
                 });
+                // Rules this person is excepted from were never asked about.
+                // Said out loud, because "no verdicts" otherwise reads as
+                // "nothing objected" when the truth is "nothing was checked".
+                var skipped = d.excepted || [];
+                if (skipped.length) {
+                  lines.push('');
+                  lines.push('Not checked — excepted for this person (' + skipped.length + '):');
+                  skipped.forEach(function(rule) { lines.push('· ' + rule); });
+                }
+                if (!skipped.length && !(d.verdicts || []).length && d.checked === 0) {
+                  lines.push('');
+                  lines.push('No rules were in play for this requester.');
+                }
                 testOut.textContent = lines.join('\n');
                 testOut.style.color = colors[d.status] || 'var(--text)';
               })
@@ -4400,11 +4901,31 @@
             }).then(function() {
               return fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines, disabled: !!guardrailsOff}),
+                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines, disabled: !!guardrailsOff, exceptions: gexceptions}),
               });
             }).then(function(r) {
               if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); });
-            }).then(function() {
+              // The save answers with what it STORED. Compare against what we
+              // sent and say so if anything didn't make it: a list that comes
+              // back shorter than it went in is the failure mode that reads as
+              // "it won't save", and it went unreported for days because the
+              // modal trusted its own copy and closed.
+              return r.json().then(function(d) { return d; }, function() { return null; });
+            }).then(function(stored) {
+              if (stored) {
+                // Counts every row the owner TOUCHED, not just the well-formed
+                // ones. Counting only rows with both halves filled would stay
+                // silent about the exact case worth reporting: a row where they
+                // typed one and not the other, which the server drops.
+                var sent = gexceptions.filter(function(x){
+                  return x && (String(x.name || '').trim() || String(x.text || '').trim());
+                }).length;
+                var lost = sent - (stored.exceptions || []).length;
+                if (lost > 0) {
+                  window.uiAlert('Saved, but ' + lost + ' exception' + (lost === 1 ? '' : 's') +
+                    ' could not be stored (an entry needs both a name and a value; blanks and duplicates are dropped). Reopen Rules to see what was kept.');
+                }
+              }
               m.close();
               refreshAgentCounts();
             }).catch(function(err) {

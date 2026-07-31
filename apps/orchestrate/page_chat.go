@@ -250,6 +250,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
+						// What the enforced rules have actually STOPPED, across every
+						// agent. The per-agent log lives in the Rules modal, which is
+						// the right place while editing one agent's rules and the
+						// wrong one for "is anything being blocked that shouldn't
+						// be" — that question is about the fleet. Read-only: the
+						// block already happened; the only action is to go and look
+						// at the rule.
+						{Label: "Guardrail blocks", Source: "api/console/guardrail-blocks", Layout: "cards"},
 						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
 							// Test = run the check once now. Only scheduled kinds
 							// (poll / http_poll / watch) have a check to run — a

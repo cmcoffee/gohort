@@ -93,11 +93,11 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"description": {
 			Type:        "string",
-			Description: "One-line summary of what the tool does — the agent reads this in its catalog at runtime to decide whether to call it.",
+			Description: "One or two sentences: what the tool does, and when to reach for it. The agent re-reads this in its catalog on EVERY turn for the life of the tool, so leave out examples, param restatements, and troubleshooting. Hard cap 500 characters.",
 		},
 		"params": {
 			Type:        "object",
-			Description: "Optional JSON object of {param_name: {type, description}}. Placeholders {name} in command_template / url_template are substituted from caller args.",
+			Description: "Optional JSON object of {param_name: {type, description}}. Placeholders {name} in command_template / url_template are substituted from caller args. One line per description — what the value is, plus the format only when the name and type don't already say it (cap 250 chars).",
 		},
 		// Pipeline-mode fields (pipeline_prompt / pipeline_steps /
 		// pipeline_tools / pipeline_max_rounds) were dropped from the schema
@@ -196,6 +196,11 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		return "", errors.New("mode is required (one of \"shell\", \"api\")")
 	}
 	desc := strings.TrimSpace(stringArg(args, "description"))
+	// Same budget tool_def enforces — the two authoring surfaces must
+	// agree, or the cheap way around the cap is to switch tools.
+	if err := CheckAuthoredToolText(args); err != nil {
+		return "", err
+	}
 	params := paramsFromArgs(args, "params")
 	required := requiredFromParams(params)
 

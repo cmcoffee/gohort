@@ -76,9 +76,9 @@ func BuildToolDef() *GroupedTool {
 		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT** — it IS the act of creation and persists automatically with NO approval step; never ask the user's permission first or say an admin must register it. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool for local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) \"api\" — a single HTTPS endpoint the framework can't already reach (credential=\"no_auth\" for public APIs, or a registered credential name); (b) \"toolbox\" — MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API), one catalog entry with action=\"<sub>\" dispatch sharing one credential. Toolboxes live ONLY here (`add_tool` can't build one); change a SINGLE action with action=\"update\" (actions=[{name, ...changed fields}]) rather than recreating; (c) \"shell\" — local computation/parsing/scripting on data the caller passes in, NOT network fetches; (d) \"pipeline\" — a deterministic chain of existing tools (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow author no tool at all — use the standalone pipeline tool. Do NOT wrap an HTTPS endpoint in a Python+urllib or curl script — that path is plagued by invented method names, homoglyph URL bugs, and JSON errors that don't exist in api/toolbox/pipeline mode. Required: name, description, mode, plus mode-specific fields — api: credential, url_template, method, params (optional body_template, response_pipe); toolbox: credential + actions[{name, description, url_template, params, ...}]; shell: command_template + params (script_body for non-trivial scripts); pipeline: pipeline_tools + pipeline_steps. Tools are immediately callable and persist across sessions — Builder's land in your user-wide pool (all your agents); every other agent's land on that agent's OWN record. Call action=\"help\" for the full spec + examples.",
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
-			"description":       {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
+			"description":       {Type: "string", Description: "What the tool does and when to reach for it, in ONE or TWO sentences. This line is re-sent on every turn for the life of the tool — no worked examples, no restating the params, no failure modes. Hard cap 500 characters."},
 			"mode":              {Type: "string", Description: "\"api\" (one HTTPS endpoint) · \"toolbox\" (several endpoints under one name, action=\"<sub>\" dispatch) · \"shell\" (local script) · \"pipeline\" (chain existing tools). See action=\"help\"."},
-			"params":            {Type: "object", Description: "Object of {param: {type, description}}. Types: string|integer|number|boolean|array|object. Full rules + coercion in action=\"help\"."},
+			"params":            {Type: "object", Description: "Object of {param: {type, description}}. Types: string|integer|number|boolean|array|object. Keep each description to one line — what the value is, plus the format only if it isn't obvious (cap 250 chars). Full rules + coercion in action=\"help\"."},
 			"command_template":  {Type: "string", Description: "(shell) Shell command with {param} placeholders. Use script_body for anything non-trivial. See action=\"help\" for the sandbox fact sheet."},
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only — no pip. See action=\"help\"."},
 			"script_name":       {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\") — the extension drives interpreter selection when command_template is omitted."},
@@ -114,10 +114,10 @@ func BuildToolDef() *GroupedTool {
 					Type: "object",
 					Properties: map[string]ToolParam{
 						"name":             {Type: "string", Description: "Sub-action name, unique within the toolbox."},
-						"description":      {Type: "string", Description: "What this sub-action does."},
+						"description":      {Type: "string", Description: "What this sub-action does, in one sentence (cap 250 chars). The toolbox pays for this line once per action, on every turn."},
 						"url_template":     {Type: "string", Description: "Endpoint URL with {param} placeholders."},
 						"method":           {Type: "string", Description: "HTTP method. Default GET."},
-						"params":           {Type: "object", Description: "Object of {param: {type, description}}."},
+						"params":           {Type: "object", Description: "Object of {param: {type, description}}. One line per description (cap 250 chars)."},
 						"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
 						"body_template":    {Type: "string", Description: "Request body with {param} placeholders."},
 						"headers":          {Type: "object", Description: "Extra request headers as {name: value}."},
@@ -144,6 +144,13 @@ func BuildToolDef() *GroupedTool {
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
+			}
+			// Enforced HERE rather than inside createGrouped: update
+			// round-trips a stored tool back through that function, and a
+			// legacy over-long description would then block edits that
+			// aren't touching the description at all.
+			if err := CheckAuthoredToolText(args); err != nil {
+				return "", err
 			}
 			out, err := createGrouped(args, sess)
 			if err == nil {
@@ -176,7 +183,7 @@ func BuildToolDef() *GroupedTool {
 		Description: "THE way to fix a broken tool — ALWAYS reach for update before delete+recreate. Deleting loses the tool's working actions AND its credential wiring, and a from-scratch rebuild routinely fails on a detail you already had right. PARTIALLY edit an existing tool WITHOUT recreating it whole: pass name plus only the fields you're changing. For a TOOLBOX: pass actions=[{name, ...}] to upsert (an action name that already exists is replaced, a new one is added) — the OTHER actions are preserved untouched; pass remove_actions=[\"x\"] to drop actions. For an api/shell tool: pass any of description / params / required / url_template / command_template / method / body_template / response_pipe / script_body to change just those. (A POST action missing a body_template is auto-scaffolded — you don't have to hand-write it.)",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "The tool to update."},
-			"description":      {Type: "string", Description: "(optional) New top-level description."},
+			"description":      {Type: "string", Description: "(optional) New top-level description — one or two sentences, cap 500 chars. Omit to leave the current one alone."},
 			"credential":       {Type: "string", Description: "(api/toolbox, optional) Name of a registered secure credential; auth is injected server-side and never reaches you. Use \"no_auth\" for public APIs. See action=\"help\"."},
 			"actions":          {Type: "array", Description: "(toolbox) Action objects to UPSERT by name — same shape as create's actions (including optional `disabled` to quarantine/re-enable one action). Existing actions not listed here are kept as-is."},
 			"remove_actions":   {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Names of actions to remove."},
@@ -1272,6 +1279,11 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
 	if name == "" {
 		return "", fmt.Errorf("name is required")
+	}
+	// Only the fields this call actually passes — a patch to url_template
+	// must not be refused over a description it inherited.
+	if err := CheckAuthoredToolText(args); err != nil {
+		return "", err
 	}
 	// Stage breadcrumbs. An update that never returns leaves the UI showing
 	// "running" forever with nothing in the log to say WHERE it stopped —
@@ -2809,6 +2821,52 @@ Notes:
 
 URL placeholders are URL-encoded at dispatch. Body placeholders are
 JSON-encoded. Both are safe against injection.
+
+================================================================
+WRITING THE DESCRIPTION — one or two sentences, then stop
+================================================================
+
+A tool's description and its param descriptions are re-sent on EVERY
+turn the tool sits in a catalog, for the whole life of the tool. You
+write them once; every future conversation pays for them. Treat the
+length as a budget you are spending on someone else's behalf.
+
+CAPS (enforced — create and update are refused over them):
+  tool description          500 characters
+  toolbox action            250 characters
+  each param description    250 characters
+
+The description answers exactly two questions: WHAT does this do, and
+WHEN do I reach for it instead of something else. That is one or two
+sentences.
+
+  RIGHT: "Get a GitHub issue by number, including title, state, body
+          and author."
+  RIGHT: "Search Moltbook posts by keyword. Use get_post for the full
+          body of a single hit."
+
+Do NOT put these in the description:
+  * worked examples or sample calls (the params already show the shape)
+  * a restatement of the params (they are right there, with their own
+    descriptions)
+  * failure modes and troubleshooting ("if you get a 404, check the
+    id") — that belongs in the ERROR the tool returns, where it is
+    read only when it actually happens, instead of on every turn
+  * setup or authoring history ("built against v2 of the API, uses the
+    acme_api credential") — the caller cannot act on it
+  * emphasis markup and repetition. Saying it once is saying it.
+
+Param descriptions are one line: what the value is, plus the format
+only when it is not obvious from the name and type.
+
+  RIGHT: "Issue number, e.g. 1421."
+  RIGHT: "Sort order: newest | oldest | top."
+  WRONG: "The number of the issue you want to fetch. You can find this
+          in the URL of the issue page, after /issues/. It must be a
+          number, not the issue title..."
+
+If a rule genuinely has to reach the caller before they call, it goes
+in the ONE param it constrains, not in the tool description.
 
 ================================================================
 WHAT THE TOOL RETURNS — anchor list items, never omit a field

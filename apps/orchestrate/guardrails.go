@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,7 +113,37 @@ type requesterIdentity struct {
 	// it the warden was told only "the owner", which no rule naming a human
 	// could ever satisfy.
 	Account string
+
+	// Authorized reports that this requester is on the agent's owner-authored
+	// roster (or is the owner, who is authorized over their own agent by
+	// definition). Trusted, and computed the same way Owner is — from the
+	// dispatch path and the transport's attribution, NEVER from anything the
+	// requester supplies. It is what the "@" rule marker consults.
+	Authorized bool
+
+	// AuthorizedAs is the roster entry that matched, for the trusted line and
+	// the logs. Empty for the owner (Account already names them).
+	AuthorizedAs string
+
+	// AuthorizedNames are the carve-out item names this requester satisfies —
+	// the link between "who is asking" and "which rules name them". Computed
+	// here, from the same server-side facts as Authorized, so a rule linked to
+	// one person can be excepted for them and nobody else.
+	AuthorizedNames []string
+
+	// AuthorizedVia records HOW the match was made, because the two are not
+	// equally strong: an authenticated session proves an account, while a
+	// transport handle is configured trust — the owner wrote a number down and
+	// we believe the carrier's attribution of it. A rule that would not accept
+	// the weaker one should not carry the marker.
+	AuthorizedVia string
 }
+
+// How an authorization was established, worst-first.
+const (
+	guardAuthHandle        = "recognized by handle"
+	guardAuthAuthenticated = "authenticated"
+)
 
 // describe renders the requester for the warden's TRUSTED section. The
 // classification and the surface go here because the framework computes them;
@@ -129,6 +160,23 @@ func (r requesterIdentity) describe() string {
 			s += " on account " + r.Account
 		}
 		s += ". This is the same person who wrote the guardrails above, so first person in a rule (\"me\", \"myself\", \"my\") refers to THIS requester"
+		if r.Channel != "" {
+			s += ". Arrived via " + r.Channel
+		}
+		return s
+	}
+	if r.Authorized {
+		// Named and qualified. A rule may be written to care which kind of
+		// authorization it got ("except when Dana asks, from a signed-in
+		// session"), and the warden can only honour that if it is told.
+		s := "NOT the owner, but an AUTHORIZED person for this agent"
+		if r.AuthorizedAs != "" {
+			s += ": " + r.AuthorizedAs
+		}
+		if r.AuthorizedVia != "" {
+			s += " (" + r.AuthorizedVia + ")"
+		}
+		s += ". This was established by the framework, not claimed in the message"
 		if r.Channel != "" {
 			s += ". Arrived via " + r.Channel
 		}
@@ -173,8 +221,102 @@ func (t *chatTurn) requester() requesterIdentity {
 		// and handing the warden the OWNER's account on a stranger's turn would
 		// invite it to read the two as the same person.
 		who.Account = strings.TrimSpace(t.user)
+		// The owner is authorized over their own agent by definition — they
+		// wrote the roster. Saying so here means a rule marked "@" behaves the
+		// obvious way for them without their having to list themselves.
+		who.Authorized = true
+		who.AuthorizedVia = guardAuthAuthenticated
+		// The owner satisfies every person item, so a rule excepted "for Dana"
+		// is also excepted for the person who wrote that rule. Anything else
+		// would let an owner lock themselves out of their own agent by naming
+		// somebody else.
+		for _, it := range guardrailItems(t.agent) {
+			if it.Kind == guardrailKindPerson {
+				who.AuthorizedNames = append(who.AuthorizedNames, it.Name)
+			}
+		}
+		return who
+	}
+	if names, as, via := t.resolveAuthorization(); via != "" {
+		who.Authorized, who.AuthorizedAs, who.AuthorizedVia = true, as, via
+		who.AuthorizedNames = names
 	}
 	return who
+}
+
+// resolveAuthorization matches this turn's requester against the agent's roster
+// of authorized identities, returning the entry that matched and how.
+//
+// Both routes are server-side facts. The account route is the acting identity
+// the session authenticated; the handle route is what the transport attributed
+// the message to, compared by the bridge's own rule. Nothing the requester
+// writes is consulted — in particular NOT the self-reported display name, which
+// is the field an attacker would set to a roster entry's name.
+func (t *chatTurn) resolveAuthorization() (names []string, as, via string) {
+	var people []guardrailItem
+	for _, it := range guardrailItems(t.agent) {
+		if it.Kind == guardrailKindPerson && strings.TrimSpace(it.Text) != "" {
+			people = append(people, it)
+		}
+	}
+	if len(people) == 0 {
+		return nil, "", ""
+	}
+	// EVERY matching item is collected, not just the first. One person can be
+	// listed more than once — an account and a phone are the same human — and a
+	// rule linked to either spelling has to except them.
+	//
+	// An authenticated account. A channel inbound runs as a synthetic per-chat
+	// user, which authenticates nobody, so it is excluded by name.
+	if acct := strings.TrimSpace(t.user); acct != "" && !isSyntheticRequester(acct) {
+		for _, p := range people {
+			if strings.EqualFold(p.Text, acct) {
+				names = append(names, p.Name)
+				if as == "" {
+					as, via = p.Text, guardAuthAuthenticated
+				}
+			}
+		}
+	}
+	// A handle the transport attributed the message to. Weaker, and labelled as
+	// such wherever it is reported — so an account match, if there was one,
+	// keeps its stronger label.
+	if handle := strings.TrimSpace(t.requesterHandle); handle != "" {
+		if link, ok := ActiveMessagingLink(); ok {
+			for _, p := range people {
+				if link.SameHandle(t.agent.Owner, p.Text, handle) {
+					names = append(names, p.Name)
+					if as == "" {
+						as, via = p.Text, guardAuthHandle
+					}
+				}
+			}
+		}
+	}
+	return names, as, via
+}
+
+// isSyntheticRequester reports whether an acting identity is a framework-minted
+// stand-in rather than an account anyone signed into. A channel inbound runs as
+// "phantom:<chatID>", which says only which conversation it arrived in.
+func isSyntheticRequester(user string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(user)), "phantom:")
+}
+
+// authorizedIdentities returns the roster entries that can currently confer
+// authorization: trimmed, de-blanked, and minus anything switched off.
+//
+// A switched-off entry stays on the roster and stops counting, so every rule
+// marked "@" applies to that person again. Same direction as a disabled
+// exception and a dangling link: off means the rule APPLIES.
+func authorizedIdentities(agent AgentRecord) []string {
+	var out []string
+	for _, it := range guardrailItems(agent) {
+		if it.Kind == guardrailKindPerson && strings.TrimSpace(it.Text) != "" {
+			out = append(out, it.Text)
+		}
+	}
+	return out
 }
 
 // Severity marker. A rule is TERMINAL unless the owner marks it otherwise: a
@@ -203,6 +345,53 @@ const guardrailCorrectableMarker = "?"
 // and must keep working untouched.
 const guardrailLegacyBlockMarker = "!"
 
+// guardrailContestableMarker marks a rule whose APPLICABILITY is a question of
+// fact the agent may be right about and the warden cannot check.
+//
+// The other two markers say what happens after a violation. This one says the
+// violation itself is disputable, which is a different axis. A rule like "don't
+// tell a joke unless it's requested twice" carries a precondition that lives in
+// the conversation, and the warden judges one candidate in fresh context: a
+// joke on its own is always a violation to it, because the thing that would
+// excuse it is in turns it never sees. Observed exactly that — the agent
+// counted correctly, called get_joke on the second ask, and was overruled; the
+// correctable rewrite then met the same blind warden and was overruled again.
+//
+// Correctable cannot fix that, and it is worth being precise about why: it
+// gives the agent another attempt at SATISFYING the rule, which is useless when
+// the agent already satisfied it. What is missing is a way to say "this rule
+// does not apply here", plus something other than the warden's credence to
+// check that claim. See guardrail_appeal.go.
+const guardrailContestableMarker = "~"
+
+// guardrailAuthorizedMarker exempts a rule for a requester the FRAMEWORK has
+// established as authorized (see AgentRecord.AuthorizedIdentities).
+//
+// The alternative was writing "…unless an authorized person asks" into the text
+// of every rule that wants the carve-out. That fails twice. It is N restatements
+// the warden has to read identically, so a reworded line silently judges
+// differently from its neighbours. And it makes authorization something a model
+// REASONS ABOUT from prose, when it is a fact this process already computed — the
+// same mistake as asking the warden who the requester is instead of telling it.
+//
+// So the marker is resolved BEFORE the warden call: an exempted rule is not
+// judged at all, it is simply not in play for that person. That is what keeps it
+// off the judge's plate — this adds no verdict, no third answer, and nothing the
+// warden can grant itself. Compare the correctable/contestable markers, which are
+// resolved AFTER a violate verdict by matching the warden's requoted text back to
+// an authored line; this one never has to match anything.
+//
+// Failure direction, as everywhere else in this file: no authorization
+// established means the rule applies. An unreachable bridge, a roster that
+// doesn't match, an empty handle — all leave the rule enforced.
+const guardrailAuthorizedMarker = "@"
+
+// guardrailLinkOffMarker follows "@" to switch ONE rule's link off without
+// unlinking it: "@-night-shift". The link stays visible on the rule, so a
+// carve-out that is not applying is something you can see rather than something
+// you have to remember.
+const guardrailLinkOffMarker = "-"
+
 // guardrailRule is one authored rule plus how a violation of it is handled.
 type guardrailRule struct {
 	// Text is the rule as the warden sees it — marker stripped, so the judgment
@@ -212,6 +401,27 @@ type guardrailRule struct {
 	// it, so a violation is worth sending back for a rewrite. Default false: a
 	// guardrail ends the turn. See guardrailCorrectableMarker.
 	Correctable bool
+	// Contestable marks a rule the agent may appeal with evidence. See
+	// guardrailContestableMarker.
+	Contestable bool
+	// ExceptAuthorized marks a rule that does not apply when the framework has
+	// established the requester as an authorized person. See
+	// guardrailAuthorizedMarker.
+	ExceptAuthorized bool
+	// Links are the carve-outs this rule is linked to, in the order written.
+	// "@night-shift" links one; "@-night-shift" links it and switches it OFF
+	// for THIS rule, leaving every other rule that shares it untouched.
+	//
+	// The off-state lives on the link rather than on the item because that is
+	// what people mean: dropping a carve-out from one rule is ordinary, and
+	// silencing it everywhere at once almost never is.
+	Links []guardrailLink
+}
+
+// guardrailLink is one rule's reference to a carve-out.
+type guardrailLink struct {
+	Name string
+	Off  bool
 }
 
 // guardrailRules splits an agent's Guardrails field into individual rules (one
@@ -223,29 +433,109 @@ func guardrailRules(agent AgentRecord) []guardrailRule {
 		if s == "" {
 			continue
 		}
-		r := guardrailRule{Text: s}
-		switch {
-		case strings.HasPrefix(s, guardrailCorrectableMarker):
-			// Trim again: "? answer in Spanish" and "?answer in Spanish" must reach
-			// the warden as the same rule, or the same text authored two ways would
-			// be judged differently.
-			//
-			// A line of nothing but the marker has no rule in it; it falls through
-			// as ordinary text rather than becoming a rule with an empty body that
-			// would match every candidate.
-			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailCorrectableMarker)); body != "" {
-				r = guardrailRule{Text: body, Correctable: true}
-			}
-		case strings.HasPrefix(s, guardrailLegacyBlockMarker):
-			// Legacy "!": meant non-negotiable, which is now the default. Strip it so
-			// the warden judges the rule text and not the punctuation.
-			if body := strings.TrimSpace(strings.TrimPrefix(s, guardrailLegacyBlockMarker)); body != "" {
-				r = guardrailRule{Text: body}
-			}
-		}
-		out = append(out, r)
+		out = append(out, parseGuardrailRule(s))
 	}
 	return out
+}
+
+// parseGuardrailRule reads the markers off the front of one authored line.
+//
+// Markers STACK, because they answer different questions. Severity is one axis
+// (does a breach end the turn, or is it worth a rewrite) and the escape hatches
+// are another (may this be disputed with evidence; does it apply to this person
+// at all). "@? keep answers under 200 words" — shape the reply, and not for an
+// authorized asker — is a coherent thing to want, and the struct already carried
+// separate fields for each; only the single-prefix switch made them exclusive.
+//
+// Order doesn't matter and repeats are harmless. A line of nothing BUT markers
+// has no rule in it: it is kept verbatim as ordinary text rather than becoming
+// an empty rule, which would match every candidate ever judged.
+func parseGuardrailRule(line string) guardrailRule {
+	orig := strings.TrimSpace(line)
+	r := guardrailRule{}
+	body := orig
+	for {
+		// Trim between markers as well as after them: "? ~rule", "?~rule" and
+		// "~ ? rule" must all reach the warden as the same text, or the same
+		// rule authored two ways would be judged differently.
+		trimmed := strings.TrimSpace(body)
+		rest, ok := stripGuardrailMarker(trimmed, &r)
+		if !ok {
+			body = trimmed
+			break
+		}
+		body = rest
+	}
+	if body = strings.TrimSpace(body); body == "" {
+		return guardrailRule{Text: orig}
+	}
+	r.Text = body
+	return r
+}
+
+// stripGuardrailMarker removes one leading marker, recording it on r. Returns
+// the remainder and whether a marker was found.
+func stripGuardrailMarker(s string, r *guardrailRule) (string, bool) {
+	switch {
+	case strings.HasPrefix(s, guardrailCorrectableMarker):
+		r.Correctable = true
+		return strings.TrimPrefix(s, guardrailCorrectableMarker), true
+	case strings.HasPrefix(s, guardrailContestableMarker):
+		// Contestable rules stay TERMINAL by default like any unmarked rule —
+		// the marker says the verdict may be DISPUTED with evidence, not that
+		// a confirmed breach is treated more softly.
+		r.Contestable = true
+		return strings.TrimPrefix(s, guardrailContestableMarker), true
+	case strings.HasPrefix(s, guardrailAuthorizedMarker):
+		// "@name" links a carve-out, "@-name" links it switched OFF for this
+		// rule, and a bare "@" is the legacy whole-roster marker the framework
+		// settles itself.
+		rest := strings.TrimPrefix(s, guardrailAuthorizedMarker)
+		off := strings.HasPrefix(rest, guardrailLinkOffMarker)
+		if off {
+			rest = strings.TrimPrefix(rest, guardrailLinkOffMarker)
+		}
+		name := leadingExceptionName(rest)
+		if name == "" {
+			if off {
+				// "@-" names nothing, so it grants nothing: the marker is
+				// consumed and no flag is set. Deliberately NOT folded into the
+				// bare-"@" case below — that one excepts the rule for anyone on
+				// the list, and a typo must never widen a rule. Inert is the
+				// only safe reading of a carve-out that names no one.
+				return rest, true
+			}
+			r.ExceptAuthorized = true
+			return rest, true
+		}
+		r.Links = append(r.Links, guardrailLink{Name: name, Off: off})
+		return rest[len(name):], true
+	case strings.HasPrefix(s, guardrailLegacyBlockMarker):
+		// Legacy "!": meant non-negotiable, which is now the default. Strip it so
+		// the warden judges the rule text and not the punctuation.
+		return strings.TrimPrefix(s, guardrailLegacyBlockMarker), true
+	}
+	return s, false
+}
+
+// leadingExceptionName reads an exception name off the front of a string.
+//
+// The character set is deliberately narrow — letters, digits, hyphen,
+// underscore — so a name can never run into the rule text behind it. That is
+// also why the UI slugifies what the owner types: "@night shift never page me"
+// would otherwise link an exception called "night" and leave "shift" in the
+// rule, which reads as authored and is not.
+func leadingExceptionName(s string) string {
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		if c == '-' || c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			i++
+			continue
+		}
+		break
+	}
+	return s[:i]
 }
 
 // ruleIsCorrectable reports whether the rule the warden named was authored as
@@ -283,8 +573,34 @@ func normalizeRuleText(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimPrefix(s, guardrailCorrectableMarker)
 	s = strings.TrimPrefix(s, guardrailLegacyBlockMarker)
+	s = strings.TrimPrefix(s, guardrailContestableMarker)
 	s = strings.Trim(s, ` "'.,;:`)
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// ruleIsContestable reports whether the named rule (as the warden requoted it)
+// was authored with the contestable marker. Same fold-and-match as
+// ruleIsCorrectable, and the same failure direction: a rule that cannot be
+// matched back to an authored line is NOT contestable, so an unrecognized
+// requote keeps blocking rather than quietly becoming appealable.
+func ruleIsContestable(agent AgentRecord, named string) bool {
+	want := normalizeRuleText(named)
+	if want == "" {
+		return false
+	}
+	for _, r := range guardrailRules(agent) {
+		if !r.Contestable {
+			continue
+		}
+		got := normalizeRuleText(r.Text)
+		if got == "" {
+			continue
+		}
+		if got == want || strings.Contains(got, want) || strings.Contains(want, got) {
+			return true
+		}
+	}
+	return false
 }
 
 // guardrailRuleTexts returns just the rule strings, for the callers that only
@@ -414,8 +730,32 @@ Output ONLY a JSON object, no prose:
 // slice (not an error) when the agent has no rules — callers treat "no rules"
 // as "nothing to check".
 func (T *OrchestrateApp) runWarden(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity) ([]guardrailVerdict, error) {
-	rules := guardrailRules(agent)
+	return T.runWardenWithFinding(ctx, agent, hookPoint, candidate, req, "")
+}
+
+// runWardenWithFinding is runWarden plus one TRUSTED line: something the
+// FRAMEWORK checked and is willing to vouch for.
+//
+// The trust boundary is the point. Everything else the warden reads about the
+// turn is fenced untrusted, because it was written by whoever is talking to the
+// agent — or by the agent. A finding is different: it is the result of a
+// deterministic check this process ran itself (see guardrail_appeal.go), so the
+// only thing the agent chose was which question to ask, never the answer.
+//
+// That is what makes an appeal safe. An agent arguing "this is fine, I already
+// checked" is persuasion, and a compromised agent is the more persuasive one.
+// An agent saying "that phrase appears twice in the user's turns" is a claim
+// the framework can verify without believing anybody, and it either holds or it
+// does not.
+//
+// Empty finding = ordinary check, byte-identical to what runWarden always sent.
+func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, finding string) ([]guardrailVerdict, error) {
+	rules := rulesInPlayFor(guardrailRules(agent), req)
 	if len(rules) == 0 {
+		// Either nothing was authored, or every authored rule is exempt for this
+		// person. Both mean there is nothing to judge — and skipping the call
+		// entirely is the point of resolving the marker here rather than asking
+		// the warden to reason about who is asking.
 		return nil, nil
 	}
 	if T == nil || T.LLM == nil {
@@ -423,8 +763,25 @@ func (T *OrchestrateApp) runWarden(ctx context.Context, agent AgentRecord, hookP
 	}
 	var b strings.Builder
 	b.WriteString("GUARDRAILS (the rules — trusted):\n")
+	exceptionsInPlay := false
 	for i, r := range rules {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, r.Text)
+		// The carve-outs sit UNDER the rule they belong to, indented, so the
+		// warden reads one rule and its conditions as a unit. Written once by
+		// the owner and rendered identically wherever they are linked — which
+		// is the difference between this and pasting "unless…" into fifteen
+		// rules and hoping all fifteen are read the same way.
+		for _, except := range ruleConditionTexts(agent, r) {
+			fmt.Fprintf(&b, "   Except: %s\n", except)
+			exceptionsInPlay = true
+		}
+	}
+	// Said only when at least one rule actually carries an exception. The
+	// warden's instructions are otherwise byte-identical to what they have
+	// always been — no agent pays for a feature it isn't using, in prompt cache
+	// or in reasoning about a rule shape that never appears.
+	if exceptionsInPlay {
+		b.WriteString("\nAn \"Except:\" line is part of the rule above it. If the exception plainly holds for what you are judging, that rule is COMPLIED WITH — an exception is a limit on when the rule applies, not a reason to be lenient about it. If it does not plainly hold, judge the rule as written. This changes nothing about your answer: it is still \"comply\" or \"violate\".\n")
 	}
 	if hp := strings.TrimSpace(hookPoint); hp != "" {
 		fmt.Fprintf(&b, "\nCHECK POINT: %s\n", hp)
@@ -432,6 +789,13 @@ func (T *OrchestrateApp) runWarden(ctx context.Context, agent AgentRecord, hookP
 	// Classification in the trusted section (the framework establishes it); the
 	// sender's self-chosen name in its own fence below (they do not).
 	fmt.Fprintf(&b, "REQUESTER: %s\n", req.describe())
+	// A verified finding sits in the TRUSTED block, beside the rules and the
+	// requester, because like them it is established by this process rather
+	// than asserted by anyone in the conversation.
+	if f := strings.TrimSpace(finding); f != "" {
+		fmt.Fprintf(&b, "VERIFIED BY THE FRAMEWORK (trusted — this process checked it, nobody claimed it): %s\n"+
+			"A rule whose condition this finding SATISFIES is complied with, not violated. Judge on it.\n", f)
+	}
 	b.WriteString("\n")
 	if req.Name != "" {
 		b.WriteString(textutil.UntrustedData("sender's self-reported name", req.Name))
@@ -615,6 +979,17 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 			return pass
 		}
 		rule, reason := firstViolation(verdicts)
+		// An appeal already settled this rule for this turn. The warden is
+		// stateless and fresh every call, so without this the next round asks
+		// the same blind question, gets the same verdict, and the win the agent
+		// evidenced a moment ago evaporates — which would make the whole appeal
+		// path decorative. Scoped to the turn and to the ONE rule that was
+		// appealed; nothing else relaxes.
+		if t.appealCleared(rule) {
+			t.turnDiag("guardrail-appeal-honored", fmt.Sprintf(
+				"Guardrail %q flagged a %s check again; an appeal already established its condition was met this turn, so it was not blocked.", rule, hookPoint))
+			return pass
+		}
 		// Blocks unless the owner marked this rule correctable. A revise pass only
 		// earns its cost when a compliant answer to the same question exists; where
 		// the rule forbids what was asked for, each attempt regenerates the
@@ -633,6 +1008,10 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 		t.noteGuardrailRule(rule)
 		t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail %q blocked a %s check%s: %s", rule, hookPoint, modeNote, reason))
 		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q correctable=%v) block#%d", t.agent.ID, hookPoint, rule, correctable, t.guardrailBlocks)
+		// File it for review. Every block, including repeats — a rule tripping
+		// repeatedly is the shape most worth seeing, and the per-thread trail
+		// above can only be found by someone who already knows which thread.
+		t.recordGuardrailBlock(rule, hookPoint, reason)
 		if t.guardrailBlocks >= guardBlockEscalateAt {
 			t.notifyOwnerGuardrail(rule, t.guardrailBlocks)
 			// The returned text still goes back as the blocked result, but it is
@@ -646,7 +1025,20 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 				Message:     fmt.Sprintf("STOP — you have hit enforced guardrails %d times this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
 			}
 		}
-		return GuardrailDecision{Blocked: true, Correctable: correctable, Message: guardrailBlockMessage(rule, reason)}
+		// A contestable rule adds one sentence inviting an appeal, and arms the
+		// tool. Appended to the block message rather than replacing it: the
+		// block still stands unless and until evidence overturns it, so the
+		// instructions for complying have to survive the invitation.
+		msg := guardrailBlockMessage(rule, reason)
+		if invite := t.offerGuardrailAppeal(rule, hookPoint, candidate); invite != "" {
+			msg += invite
+			// Correctable regardless of the rule's own severity: an appeal is
+			// worthless if the turn ends before the agent can make it. This is
+			// the ONE place a contestable rule bends, and it buys a round to
+			// present evidence, not a softer verdict.
+			correctable = true
+		}
+		return GuardrailDecision{Blocked: true, Correctable: correctable, Message: msg}
 	}
 }
 
@@ -713,6 +1105,9 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 		t.noteGuardrailRule(rule)
 		t.turnDiag("guardrail-input-blocked", fmt.Sprintf("Guardrail %q refused the request before the model saw it, so no reply was generated: %s", rule, reason))
 		Log("[orchestrate.guardrail] agent=%s pre_input HARD BLOCK (rule=%q, not correctable)", t.agent.ID, rule)
+		// A pre_input hard block is the quietest failure of all — no reply was
+		// ever generated, so there is not even a turn for the owner to read back.
+		t.recordGuardrailBlock(rule, guardHookPreInput, reason)
 		return "", true
 	}
 	t.turnDiag("guardrail-input", fmt.Sprintf("Guardrail %q flagged the incoming request; a steer-away directive was injected before round 1: %s", rule, reason))
@@ -998,6 +1393,27 @@ func (t *chatTurn) guardrailRejection(reason, request string) string {
 		b.WriteString(" Match the voice of these approved examples, without copying one verbatim:\n" + strings.Join(style, "\n"))
 	}
 	user := b.String()
+	// Two attempts. The first discard used to be final, which put every
+	// fumbled sentence straight onto the canned line — and since the canned
+	// pool is short and neutral, a run of blocks reads as the same reply over
+	// and over. A retry costs one short worker call on a path that has already
+	// halted the turn, and it is the only thing standing between a written
+	// refusal and a stock one.
+	for attempt := 0; attempt < 2; attempt++ {
+		ask := user
+		if attempt > 0 {
+			ask += "\n\nYour previous attempt was unusable. One short sentence, in your own voice, saying only that you won't do this. Do not explain, do not mention anything about how the decision was made, and do not suggest asking again."
+		}
+		if out := t.guardrailRejectionAttempt(ask, reason, request); out != "" {
+			return out
+		}
+	}
+	return ""
+}
+
+// guardrailRejectionAttempt runs one rejection generation and returns the
+// usable refusal, or "" when it has to be thrown away.
+func (t *chatTurn) guardrailRejectionAttempt(user, reason, request string) string {
 	cctx, cancel := context.WithTimeout(t.ctx, 30*time.Second)
 	defer cancel()
 	resp, err := t.app.WorkerChat(cctx, []Message{
@@ -1038,8 +1454,8 @@ func (t *chatTurn) guardrailRejection(reason, request string) string {
 	// something was checked hands a prober exactly the signal the guardrail exists
 	// to withhold — and the prompt asking it not to is a request, not a guarantee.
 	// Cheap, deterministic, and the fallback is a line that cannot leak.
-	if declineLeaks(out) {
-		Log("[orchestrate.guardrail] agent=%s rejection model gave away the reason at %s — falling back to a canned decline", t.agent.ID, reason)
+	if declineLeaksAgainst(out, request) {
+		Log("[orchestrate.guardrail] agent=%s rejection model gave away the reason at %s — discarding this attempt", t.agent.ID, reason)
 		return ""
 	}
 	Log("[orchestrate.guardrail] agent=%s turn HALTED at %s — reply written by the rejection model", t.agent.ID, reason)
@@ -1076,6 +1492,9 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			"fail_closed": agent.GuardrailFailClosed,
 			"declines":    agent.GuardrailDeclines,
 			"disabled":    agent.GuardrailsDisabled,
+			"recent":      listGuardrailBlocks(udb, agent.ID, 25),
+			"authorized":  agent.AuthorizedIdentities,
+			"exceptions":  agent.GuardrailExceptions,
 		})
 	case http.MethodPost:
 		var body struct {
@@ -1084,6 +1503,16 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			FailClosed bool     `json:"fail_closed"`
 			Declines   []string `json:"declines"`
 			Disabled   bool     `json:"disabled"`
+			// POINTERS: absent means LEAVE UNCHANGED, empty array means CLEAR.
+			// A plain slice cannot tell those apart, so any client that does
+			// not know about these fields — a browser holding a cached copy of
+			// the page from before they existed — silently wiped them on every
+			// save. That is a data-destroying default for a field whose whole
+			// job is to be remembered, and it is indistinguishable from "it
+			// won't save" at the other end.
+			Authorized    *[]string             `json:"authorized"`
+			AuthorizedOff *[]string             `json:"authorized_off"`
+			Exceptions    *[]GuardrailException `json:"exceptions"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -1101,6 +1530,17 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		agent.GuardrailFailClosed = body.FailClosed
 		agent.GuardrailDeclines = sanitizeDeclines(body.Declines)
 		agent.GuardrailsDisabled = body.Disabled
+		// The roster reaches the record ONLY here. Every other save path
+		// preserves it from the stored copy, so no agent-facing edit can add an
+		// identity to it — the same protection Guardrails itself has, and for
+		// the same reason: a roster the agent could write is a roster that
+		// exempts whoever talked it into an entry.
+		if body.Authorized != nil {
+			agent.AuthorizedIdentities = sanitizeAuthorizedIdentities(*body.Authorized)
+		}
+		if body.Exceptions != nil {
+			agent.GuardrailExceptions = sanitizeGuardrailExceptions(*body.Exceptions)
+		}
 		if _, err := saveAgent(udb, agent); err != nil {
 			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1110,8 +1550,23 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		if agent.GuardrailsDisabled && len(guardrailRules(agent)) > 0 {
 			Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner — %d rule(s) kept but NOT enforced", agentID, len(guardrailRules(agent)))
 		}
-		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v)", agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed, agent.GuardrailsDisabled)
-		w.WriteHeader(http.StatusNoContent)
+		// Counts BOTH sides of each list — submitted and kept. A silent drop
+		// (an exception with no condition, a roster entry that could never
+		// match) is otherwise invisible to everyone: the owner sees a clean
+		// save and the thing they typed simply is not there afterwards.
+		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v, authorized=%d/%d kept, exceptions=%d/%d kept)",
+			agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed, agent.GuardrailsDisabled,
+			len(agent.AuthorizedIdentities), lenOrNil(body.Authorized), len(agent.GuardrailExceptions), lenOrNil(body.Exceptions))
+		// Answer with what was actually STORED, not just "no content". The
+		// caller can then render the truth instead of its own optimistic copy —
+		// which is the difference between an entry the server declined to keep
+		// being visible immediately and it being reported days later as "it
+		// won't save".
+		writeJSON(w, map[string]any{
+			"authorized": agent.AuthorizedIdentities,
+			"exceptions": agent.GuardrailExceptions,
+			"declines":   agent.GuardrailDeclines,
+		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1144,6 +1599,11 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 		// the point of this endpoint is to feel the rule before trusting it — so
 		// the half that is easy to get wrong has to be reachable from here.
 		Sender string `json:"sender"`
+		// As names a PERSON item to stand in as, so a rule excepted for one
+		// person can be felt from their side. Without it the test could only be
+		// run as the owner or as a nobody, and person-linked rules — the whole
+		// reason exceptions exist — were untestable.
+		As string `json:"as"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if strings.TrimSpace(body.Candidate) == "" {
@@ -1159,16 +1619,37 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 	// place the flag is chosen rather than derived, and it is safe because the
 	// caller is already the authenticated owner of the record: the worst they can
 	// do is run a dry check against their own rules.
-	who := requesterIdentity{Owner: true}
-	if s := strings.TrimSpace(body.Sender); s != "" {
-		who = requesterIdentity{Owner: false, Name: s, Channel: "channel"}
+	who := testRequester(agent, body.As, body.Sender)
+
+	// Which rules this person is EXCEPTED from, worked out exactly as the live
+	// path does. Reported separately, because a rule that was skipped and a
+	// rule that complied both come back as silence otherwise — and "no
+	// verdicts" reading as "nothing objected" when the truth is "nothing was
+	// asked" is the one way a test can be worse than no test.
+	all := guardrailRules(agent)
+	inPlay := rulesInPlayFor(all, who)
+	stillThere := map[string]bool{}
+	for _, r := range inPlay {
+		stillThere[r.Text] = true
 	}
+	excepted := []string{}
+	for _, r := range all {
+		if !stillThere[r.Text] {
+			excepted = append(excepted, r.Text)
+		}
+	}
+
 	verdicts, err := T.runWarden(r.Context(), agent, body.Hook, body.Candidate, who)
 	if err != nil {
 		http.Error(w, "warden error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	resp := map[string]any{"status": worstVerdict(verdicts), "verdicts": verdicts, "as_owner": who.Owner}
+	resp := map[string]any{
+		"status": worstVerdict(verdicts), "verdicts": verdicts, "as_owner": who.Owner,
+		"as":       who.AuthorizedAs,
+		"excepted": excepted,
+		"checked":  len(inPlay),
+	}
 	// The test runs the warden UNCONDITIONALLY; the live path runs it only at the
 	// agent's ACTIVE hooks. Without saying so, a "violate" here reads as "this is
 	// blocked in production" when the configuration may never invoke the warden
@@ -1256,18 +1737,60 @@ func guardrailNoVerdictMessage() string {
 // failure mode is the same either way.
 // STEMS, not whole words: "rephrase" does not match "rephrasing", which is
 // exactly how a leaky line slipped the first version of this filter.
+//
+// TWO TIERS, because one list could not tell a leak from a topic. The original
+// single list held "system", "check", "verif", "configur", "permission" — all
+// of which name the MECHANISM in "I can't tell you what the filter checked"
+// and name the SUBJECT in "I can't get into the billing system for you".
+// Measured against twenty ordinary refusals, seven were thrown out, and the
+// seven were exactly the ones that said something specific. Every discard falls
+// back to a canned line, so the filter was quietly converting useful refusals
+// into the same generic sentence — the more the refusal was about anything, the
+// likelier it was replaced.
+//
+// Tier one leaks on its own: nothing in an ordinary refusal says "guardrail" or
+// "not allowed" unless the mechanism is being described. Tier two only leaks
+// when the word did NOT come from the person asking. If they said "system", a
+// refusal that says "system" is repeating them, not disclosing anything.
 var declineLeakWords = []string{
-	"guardrail", "rule", "polic", "block", "restrict", "not allowed",
-	"forbid", "prohibit", "complian", "violat", "filter", "system",
-	"instruct", "rephras", "reword", "try again", "ask again",
-	"differently", "verif", "check", "permission", "configur",
+	"guardrail", "not allowed", "not permitted", "forbid", "prohibit",
+	"violat", "against my", "my rules",
+	"content filter", "safety filter", "flagged",
+	"rephras", "reword", "try again", "ask again", "differently",
 }
 
-// declineLeaks reports whether a candidate decline gives away why it fired.
-func declineLeaks(line string) bool {
+// declineTopicalLeakWords leak only when the asker didn't raise them first.
+// "complian" and the bare "rule" stem live down here rather than above because
+// they are subject matter as often as mechanism — a deployment whose actual
+// work is compliance reporting or account rules would otherwise be unable to
+// decline in the vocabulary of its own domain.
+var declineTopicalLeakWords = []string{
+	"rule", "polic", "block", "restrict", "filter", "system",
+	"instruct", "verif", "check", "permission", "configur", "complian",
+}
+
+// declineLeaks reports whether a candidate decline gives away why it fired,
+// judged with no knowledge of what was asked. This is the AUTHORING-time gate
+// (owner-typed and suggested lines), where there is no request to compare
+// against and the lines have to be safe for every future block, so both tiers
+// apply.
+func declineLeaks(line string) bool { return declineLeaksAgainst(line, "") }
+
+// declineLeaksAgainst is the BLOCK-time gate: same tier-one words, but a
+// tier-two word is allowed through when it appears in the request being
+// declined. Echoing the asker's own noun discloses nothing — they already know
+// they said it — while a mechanism word they never used is the bisection signal
+// a decline exists to withhold.
+func declineLeaksAgainst(line, request string) bool {
 	low := strings.ToLower(line)
 	for _, w := range declineLeakWords {
 		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	asked := strings.ToLower(request)
+	for _, w := range declineTopicalLeakWords {
+		if strings.Contains(low, w) && !strings.Contains(asked, w) {
 			return true
 		}
 	}
@@ -1296,6 +1819,135 @@ func sanitizeDeclines(in []string) []string {
 }
 
 const maxDeclines = 12
+
+// lenOrNil reports a submitted list's length, or -1 when the key was absent —
+// so the save log distinguishes "sent none" from "did not mention them", which
+// is the difference between a user clearing a list and a stale page that has
+// never heard of it.
+func lenOrNil[T any](p *[]T) int {
+	if p == nil {
+		return -1
+	}
+	return len(*p)
+}
+
+// maxGuardrailExceptions caps the exception list. Every entry is a carve-out in
+// something the owner wrote to be absolute, so the list has to stay short
+// enough to read in one sitting.
+const maxGuardrailExceptions = 16
+
+// sanitizeGuardrailExceptions normalizes a submitted exception list: slugified
+// names, trimmed text, no duplicates, capped.
+//
+// A blank name is DERIVED from the condition rather than dropped. The first
+// version dropped it, which produced the worst possible result: the owner typed
+// a condition, saved, saw no error, reopened, and found it gone — the feature
+// reading as broken when it was doing exactly what it was told. Nothing that
+// carries a real condition may fail to store; a name is a handle this code can
+// invent, so it invents one.
+//
+// A blank CONDITION is still dropped, because there is nothing to invent from.
+// An empty "Except:" line under a rule reads to the warden as a carve-out with
+// no condition on it, which is indistinguishable from no rule at all.
+func sanitizeGuardrailExceptions(in []GuardrailException) []GuardrailException {
+	var out []GuardrailException
+	seen := map[string]bool{}
+	for _, raw := range in {
+		text := strings.TrimSpace(raw.Text)
+		if text == "" {
+			continue
+		}
+		name := slugifyExceptionName(raw.Name)
+		if name == "" {
+			name = deriveExceptionName(text)
+		}
+		// A collision after slugging would silently merge two different
+		// conditions under one handle, so suffix instead of dropping.
+		base, n := name, 2
+		for seen[name] {
+			name = base + "-" + strconv.Itoa(n)
+			n++
+		}
+		seen[name] = true
+		out = append(out, GuardrailException{Name: name, Text: text, Kind: normalizeExceptionKind(raw.Kind)})
+		if len(out) >= maxGuardrailExceptions {
+			break
+		}
+	}
+	return out
+}
+
+// deriveExceptionName invents a linkable handle from a condition's opening
+// words, for an owner who wrote the condition and left the name blank.
+func deriveExceptionName(text string) string {
+	words := strings.Fields(text)
+	if len(words) > 4 {
+		words = words[:4]
+	}
+	if name := slugifyExceptionName(strings.Join(words, " ")); name != "" {
+		return name
+	}
+	return "exception"
+}
+
+// slugifyExceptionName folds an owner's label into the character set a "@name"
+// link can carry. Done at SAVE time, not at read time, so what is stored is
+// what links: a name normalized on the way in can never disagree with the
+// marker the rule was written with.
+func slugifyExceptionName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '\t':
+			// Collapse runs, and never lead with a separator.
+			if cur := b.String(); cur != "" && !strings.HasSuffix(cur, "-") {
+				b.WriteByte('-')
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// maxAuthorizedIdentities caps the roster. It is a master key for every rule
+// marked "@", so a list long enough to lose track of is a list that stops being
+// reviewed — and an unreviewed exemption roster is the whole failure mode this
+// feature could have.
+const maxAuthorizedIdentities = 24
+
+// sanitizeAuthorizedIdentities trims, de-blanks and de-duplicates a submitted
+// roster. It does NOT judge an entry's shape.
+//
+// It used to reject anything containing a space, on the theory that a bare
+// display name ("Dana Whitfield") can never match and storing it would read as
+// an authorization the owner believes they granted. Two things were wrong with
+// that. It was factually incorrect for the commonest entry of all — SameHandle
+// compares through the bridge's normalizeIdentity, which strips spaces and
+// punctuation, so "+1 555 010 9999" matches the wire form perfectly and was
+// being thrown away. And the rejection was SILENT: the owner typed a person,
+// saved, saw no error, and found the roster empty, which is exactly the report
+// that led here (authorized=0/1 kept in the save log).
+//
+// A stored entry that never matches is inert and VISIBLE — the owner can see it
+// sitting in the list and work out that it is not doing anything. An entry the
+// server ate is neither. Between those, keep it.
+func sanitizeAuthorizedIdentities(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range in {
+		entry := strings.TrimSpace(raw)
+		if entry == "" || seen[strings.ToLower(entry)] {
+			continue
+		}
+		seen[strings.ToLower(entry)] = true
+		out = append(out, entry)
+		if len(out) >= maxAuthorizedIdentities {
+			break
+		}
+	}
+	return out
+}
 
 // handleAgentDeclineSuggest writes a set of declines in the AGENT'S VOICE.
 //

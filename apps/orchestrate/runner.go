@@ -356,6 +356,18 @@ type chatTurn struct {
 	// guardrails caches this turn's enforcement set (see guardrailEnforcer).
 	guardrails *guardrailEnforcement
 
+	// Appeal state for contestable rules (guardrail_appeal.go). appealOffer is
+	// the block the agent is currently invited to dispute — nil when there is
+	// nothing to appeal, which is what makes the tool refuse rather than invite
+	// speculative use. appealSpent caps it at one attempt per turn, so a context
+	// probing for a wording that gets through cannot grind. appealWon records
+	// rules an appeal cleared, and the check hook honours it for the rest of the
+	// turn: without that the very next round re-blocks on the same blind verdict
+	// and the win evaporates.
+	appealOffer *guardrailAppealOffer
+	appealSpent bool
+	appealWon   map[string]bool
+
 	// appTools are extra per-run tools supplied by the HOST APP dispatching this
 	// turn (e.g. a workbench's co-author tool that writes into the open document's
 	// record store). Injected into the orchestrator's catalog so the agent can call
@@ -570,6 +582,12 @@ type chatTurn struct {
 	// only on the channel path, where the runtime identity is synthetic and
 	// therefore says nothing about who is actually typing.
 	requesterOwnerHandle bool
+	// requesterHandle is the transport's raw attribution of who sent this — the
+	// phone/email/chat-id an inbound arrived from. Kept alongside the boolean
+	// above because the boolean answers only "is this the owner", and an
+	// authorized-identities roster has to be matched against the handle itself.
+	// Empty everywhere except the channel path. Never set from message content.
+	requesterHandle string
 
 	// explorerMode is flipped by the enter_explorer_mode tool when
 	// AllowExplorer is set on the agent. While true, the worker
@@ -6000,7 +6018,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	askTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user",
-			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is. Call ask_user when: (a) a tool returned 2+ plausible matches and you'd be picking arbitrarily (\"there are 3 users named Sam — which one?\"), (b) the user must choose between meaningfully different approaches (\"PDF or HTML?\"), (c) they must supply personal info (which appliance, which file, their preference), or (d) the request is genuinely ambiguous beyond what a search could resolve. DON'T ask for things you could just look up — call the right tool instead. **DEFAULT TO `options`**: whenever the answer space is bounded — yes/no confirmations, picking a format / mode / category, choosing among matches you already found — pass the choices as `options=[\"…\",\"…\"]` so the user clicks one button instead of typing. Free-text fields are friction; click-to-choose is one tap. Only OMIT `options` when the user must type something open-ended you couldn't enumerate (a name, a description, content). If you find yourself writing \"(yes / no / maybe)\" or similar choices into the question TEXT, you should be passing them as `options` instead — a question WITHOUT options renders as plain chat text (no card, no buttons), and the user answers in the normal composer. For multi-step builds (Builder agent), pass `plan` to paint a visible checklist card above the question — each item flips to ✓ as later turns mark steps done.",
+			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is: 2+ plausible matches you'd be picking between arbitrarily, a choice between meaningfully different approaches, personal info only they have, or an ambiguity no tool could resolve. Don't ask for what you could look up. **DEFAULT TO `options`** whenever the answer space is bounded — one tap beats typing — and never write the choices into the question TEXT instead; without `options` this renders as plain chat text, no card and no buttons. For multi-step builds, pass `plan` to paint a checklist card above the question.",
 			Parameters: map[string]ToolParam{
 				"question": {
 					Type:        "string",
@@ -6008,7 +6026,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				},
 				"options": {
 					Type:        "array",
-					Description: "**STRONGLY PREFERRED — pass options whenever the answer has any natural choices.** Click-to-choose is one tap; a free-text field is friction. MUST be an array of STRINGS, each being one option label. Concrete examples: options=[\"yes\", \"edit\", \"no\"], options=[\"PDF\", \"HTML\", \"Markdown\"], options=[\"Sam Patel\", \"Sam Reyes\", \"Sam Chen\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders radios (or checkboxes when multi=true) plus a free-text fallback. PUT THE CHOICES HERE, not in the question text — without options there is no card at all, just the question as chat text. Keep labels short (1-4 words each), 8 max. Only OMIT options when the user must type something genuinely open-ended you couldn't enumerate.",
+					Description: "**STRONGLY PREFERRED whenever the answer has natural choices.** Array of STRINGS, one label each — options=[\"yes\", \"edit\", \"no\"] — not a count, not a number, not a JSON-encoded string. Renders radios (checkboxes when multi=true) plus a free-text fallback. Labels 1-4 words, 8 max. Omit only for genuinely open-ended typed answers.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"multi": {
@@ -6017,7 +6035,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				},
 				"plan": {
 					Type:        "array",
-					Description: "Optional ordered list of build-plan steps rendered as a visible checklist above the question. MUST be an array of OBJECTS, each with a 'title' (one-line summary) and optional 'detail' (tool + args summary). NOT a count, NOT a list of numbers, NOT a string. Concrete example: plan=[{\"title\": \"Create agent shell\", \"detail\": \"create_agent\"}, {\"title\": \"Add search tool\", \"detail\": \"add_tool(mode=api)\"}, {\"title\": \"Verify by dispatch\", \"detail\": \"test call\"}, {\"title\": \"Report completion\"}]. When this is set, the framework paints an orchestrate_plan card; subsequent authoring-tool calls auto-update individual rows to ✓.",
+					Description: "Optional build-plan steps, rendered as a checklist above the question. Array of OBJECTS with 'title' and optional 'detail' — e.g. [{\"title\":\"Create agent shell\",\"detail\":\"create_agent\"},{\"title\":\"Add search tool\",\"detail\":\"add_tool(mode=api)\"}]. Not a count, not a list of numbers, not a string. Later authoring calls flip rows to ✓.",
 					Items: &ToolParam{
 						Type: "object",
 						Properties: map[string]ToolParam{
@@ -6271,6 +6289,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// rhythm Builder follows. Other agents (Chat, Research, etc.)
 	// don't need a build-plan card. Reduces their tool surface
 	// without touching Builder's authoring flow.
+	// The appeal channel, only for agents that actually have a rule worth
+	// appealing. Mounting it everywhere would put a tool about guardrails in
+	// front of agents that have none, which is both noise and a hint.
+	if agentHasContestableRule(t.agent) {
+		knowTools = append(knowTools, t.guardrailAppealToolDef())
+	}
 	if agentCanAuthor(t.agent) {
 		knowTools = append(knowTools,
 			t.presentBuildPlanToolDef(),

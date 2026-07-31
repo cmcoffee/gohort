@@ -26,6 +26,33 @@ import (
 //
 // Named AgentRecord (not Agent) because core.Agent is the dot-imported
 // interface used for CLI-tier agents and the names would collide.
+// GuardrailException is one named carve-out a rule can be linked to — a PERSON
+// or a CONDITION, in one list because a rule wants them in one picker.
+//
+// Kind decides who settles it. A "person" is checked by the framework against
+// the requester this process established (an authenticated account, or a handle
+// the bridge verified), so the rule is dropped before the warden is even
+// called. A "condition" is prose the warden reads on an "Except:" line under
+// the rule. Nothing else differs: same list, same linking, same names.
+//
+// Text is the payload for both: the condition's wording, or the person's
+// identity (an account name, phone, email or chat-id). Name is only a handle
+// for linking — it never reaches the warden, so renaming cannot change a
+// judgment.
+//
+// There is no per-exception on/off. Switching one off globally would silence it
+// on every rule at once, which is almost never what someone means; the switch
+// lives on the LINK, so a rule can drop a carve-out without disturbing the
+// other rules that share it.
+type GuardrailException struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+	// Kind is "person" or "condition". Empty means condition — that was the
+	// only kind when this field did not exist, so an older record reads back
+	// as what it was.
+	Kind string `json:"kind,omitempty"`
+}
+
 type AgentRecord struct {
 	ID          string `json:"id"`
 	Owner       string `json:"owner"`
@@ -702,6 +729,45 @@ type AgentRecord struct {
 	// policy up by in precisely the case the policy exists for. An agent whose
 	// rules differ in severity should carry the strict ones on their own agent.
 	GuardrailFailClosed bool `json:"guardrail_fail_closed,omitempty"`
+
+	// GuardrailExceptions are named conditions a rule can be linked to. The
+	// warden receives each linked condition on an "Except:" line under the rule
+	// it belongs to, and a rule whose exception holds is COMPLIED WITH — no new
+	// verdict, no third answer, just a rule with its carve-out attached.
+	//
+	// Named and linked rather than written into each rule's text, which is the
+	// whole point: fifteen rules sharing one carve-out meant fifteen
+	// restatements for the warden to read identically, and a reworded one
+	// silently judged differently from its neighbours. Authored once, rendered
+	// the same way everywhere.
+	//
+	// Owner-only, protected exactly like Guardrails — an agent that could write
+	// its own exceptions could write itself out of every rule it has.
+	GuardrailExceptions []GuardrailException `json:"guardrail_exceptions,omitempty"`
+
+	// AuthorizedIdentities is the LEGACY roster: a bare list of people, excepted
+	// from any rule marked with a plain "@". Superseded by GuardrailExceptions
+	// entries of kind "person", which can be linked to rules individually — but
+	// still read, and surfaced as person items, so a roster typed before that
+	// existed keeps working and keeps showing. Entries are
+	// identities the FRAMEWORK can verify: a gohort account name (matched
+	// against the authenticated acting identity) or a messaging handle — phone,
+	// email, chat-id — matched by the bridge's own comparison.
+	//
+	// Never a display name. A contact picks their own, so a roster matched on
+	// display names would be an open door: anyone could type Dana's name and
+	// inherit Dana's exemptions. The two routes above are both established
+	// server-side, which is the entire property that makes the "@" marker safe.
+	//
+	// Owner-only, protected exactly like Guardrails: preserved across
+	// whole-record saves and writable only through the dedicated guardrails
+	// endpoint, so no agent-facing edit path can add itself to the roster.
+	//
+	// The roster is a MASTER KEY for every rule carrying the marker, so its
+	// weakest entry sets the strength of the whole set. A handle is configured
+	// trust (see MessagingLink.IsOwnerHandle); rules that warrant more than
+	// that should be left unmarked.
+	AuthorizedIdentities []string `json:"authorized_identities,omitempty"`
 
 	// GuardrailDeclines are the lines shown when a reply cannot be made
 	// guardrail-compliant. Empty rotates through the framework's neutral

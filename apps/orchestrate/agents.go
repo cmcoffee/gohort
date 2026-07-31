@@ -274,6 +274,27 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	// saved and then read back false every time, so the toggle appeared to
 	// refuse to turn on.
 	seed.LeadModel = shadow.LeadModel
+	// The owner's enforced limits. These are deployment state in the strictest
+	// sense — the framework owns Builder's PROMPT, the deployment owns what it
+	// is allowed to do — and they are owner-only fields no agent edit path can
+	// reach, so rebasing them onto code protects nothing and destroys the one
+	// thing the owner wrote by hand.
+	//
+	// Left off this list they saved and read back empty, silently: the
+	// guardrails endpoint wrote them to the shadow, loadAgent rebuilt Builder
+	// from the seed without them, and migrateBuilderShadows then wrote that
+	// stripped copy BACK over the shadow at boot, so a restart erased them for
+	// good. The visible symptom was "exceptions won't save"; the real one was
+	// that guardrails never applied to Builder AT ALL — no rules, no hooks, no
+	// declines — which is the agent with authoring access and therefore the one
+	// an owner is most likely to want limits on.
+	seed.Guardrails = shadow.Guardrails
+	seed.GuardrailHooks = shadow.GuardrailHooks
+	seed.GuardrailFailClosed = shadow.GuardrailFailClosed
+	seed.GuardrailDeclines = shadow.GuardrailDeclines
+	seed.GuardrailsDisabled = shadow.GuardrailsDisabled
+	seed.GuardrailExceptions = shadow.GuardrailExceptions
+	seed.AuthorizedIdentities = shadow.AuthorizedIdentities
 }
 
 func (T *OrchestrateApp) migrateBuilderShadows() {
@@ -1236,7 +1257,7 @@ WHAT TO BUILD — first match wins:
 - "When I do X, also do Y" / a behavior or style tweak -> skill_def.
 - "Make THESE docs / this rulebook searchable" -> a Collection (collections tool). Ingest the REAL document pages (not a table-of-contents or index), then confirm the text actually landed.
 - "A workflow that runs A then B then C" -> pipeline.
-- "An app" / "a page to log / track / visualize / graph X" / a multi-panel tool -> app_def. This builds a real dashboard surface at /custom/<slug>/ with a free per-record store — it is NOT a standalone HTML file. Do not hand over an HTML file as "your app" (it misleads users); produce one only if they explicitly ask for a downloadable file. Compose it from sections: form (a create form — modal=true + a submit_label), table (the record list — set empty_text, deletable, auto_refresh_ms=2000), display (read-only pairs), chart (bar/line/area/pie — set chart_type plus inline labels+series OR a source_script that PRINTS {"labels":[...],"series":[...]}; this is how an app graphs/plots/trends, the answer whenever the ask says graph/chart/plot/trend), and workbench (the SINGLE section that IS a "list | document viewer | chat" three-panel app — don't also add form/table/chat). For anything the typed kinds can't express — a GAME, a canvas animation, a simulation — use ONE html section (call action="help" for its spec); that is a real app, not the standalone-file case warned about above. If the app needs a brain, build that agent too (create_agent) and pass its name as agent_id; a workbench agent adds content by calling the auto-provided add_section(title, markdown) into the OPEN document — never give it its own storage tools, they write to the wrong place. After creating, give the user the /custom/<slug>/ URL. To iterate: patch_html (exact find/replace) for anything short of a rewrite — a constant, one function, a one-line bug — and action="update" only when you are genuinely re-authoring the page, since update replaces it and re-typing a long document is how working code gets rewritten around the fix.
+- "An app" / "a page to log / track / visualize / graph X" / a multi-panel tool -> app_def. This builds a real dashboard surface at /custom/<slug>/ with a free per-record store — it is NOT a standalone HTML file. Do not hand over an HTML file as "your app" (it misleads users); produce one only if they explicitly ask for a downloadable file. Compose it from sections: form (a create form — modal=true + a submit_label), table (the record list — set empty_text, deletable, auto_refresh_ms=2000), display (read-only pairs), chart (bar/line/area/pie — set chart_type plus inline labels+series OR a source_script that PRINTS {"labels":[...],"series":[...]}; this is how an app graphs/plots/trends, the answer whenever the ask says graph/chart/plot/trend), and workbench (the SINGLE section that IS a "list | document viewer | chat" three-panel app — don't also add form/table/chat). For anything the typed kinds can't express — a GAME, a canvas animation, a simulation — use ONE html section (call action="help" for its spec); that is a real app, not the standalone-file case warned about above. If the app needs a brain, build that agent too (create_agent) and pass its name as agent_id; a workbench agent adds content by calling the auto-provided add_section(title, markdown) into the OPEN document — never give it its own storage tools, they write to the wrong place. After creating, give the user the /custom/<slug>/ URL. To iterate on an html app, EDIT IN PLACE — never re-send the document to fix part of it. Rewriting a whole function (make the car look different, fix the collision check) is action="replace_function" {function:"<name>", replace:"<the whole new function>"}: you name it, the server finds it, and you reproduce none of the old text. Smaller than a function (a constant, a one-line bug) is action="patch_html" (exact find/replace). Reach for action="update" only when you are genuinely re-authoring the page from scratch — it replaces the whole document, and re-typing a long one is how working code gets rewritten around the fix. If an update is refused for shrinking the app or dropping functions the code still calls, do NOT force it through with confirm_rewrite: that refusal means you were holding a partial reconstruction, so go back to replace_function. Every save keeps the version it replaced — if an edit turns out to have broken or deleted something, action="revisions" then action="revert" restores it in one call. Do that instead of rebuilding the app from memory, and tell the user you did.
 - A single capability (call an API, run a script, produce a file) -> tool_def: mode="api" for HTTP (author url_template as a PATH like /v1/clients — it resolves against the credential's base_url), mode="shell" for a script.
 
 SCRIPTS + NETWORK: all network goes through gohort. Inside a script: from gohort import fetch_url, browse_page, log (automatic — no declaration). curl / wget / requests / urllib-network / http.client / socket are BLOCKED; a 4xx is NEVER fixed by a different HTTP client — fix the URL or escalate to browse_page. A gohort tool is not a shell binary — you cannot subprocess it; call the underlying API directly instead.
@@ -1652,6 +1673,8 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
 				req.GuardrailDeclines = existing.GuardrailDeclines
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
+				req.AuthorizedIdentities = existing.AuthorizedIdentities
+				req.GuardrailExceptions = existing.GuardrailExceptions
 			}
 		} else if isSeedID(req.ID) {
 			// Seeds save as a per-user shadow. The form carries no `locked`
@@ -1664,6 +1687,8 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
 				req.GuardrailDeclines = existing.GuardrailDeclines
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
+				req.AuthorizedIdentities = existing.AuthorizedIdentities
+				req.GuardrailExceptions = existing.GuardrailExceptions
 			}
 		}
 		// Tool-curation translation for seed agents. The modal sends the
