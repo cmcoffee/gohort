@@ -366,6 +366,11 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
+/* Scoped-tools group in the Tools modal. It is an ordinary checklist —
+ * same box, same section, same rows as the catalog below it — with the
+ * tool names in mono, because they are identifiers rather than prose. */
+.ui-orch-scoped-tools { margin-bottom: 0.8rem; }
+.ui-orch-scoped-tools .ui-checklist-name { font-family: var(--mono, monospace); }
 .ui-orch-modal-ftr {
   display: flex; gap: 0.5rem; justify-content: flex-end;
   padding: 0.7rem 1rem;
@@ -2581,70 +2586,142 @@
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
           if (isBuilder) {
-            help.textContent = "Builder's tool catalog is fixed by the framework — the list below shows what it runs with, but there's no per-agent knob here. The Session tools panel is the actionable part: review and prune the drafts Builder's workers authored mid-conversation.";
+            help.textContent = "Builder's tool catalog is fixed by the framework — the lists below show what it runs with, but there's no per-agent knob here. Builder also loads every tool it can edit, including ones switched off elsewhere: a tool it couldn't run would be a tool it couldn't fix.";
           } else {
-            help.textContent = "Pick which tools this agent's worker may call. Uncheck everything to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
+            help.textContent = "Pick which tools this agent's worker may call. Tools scoped to this agent are the first group; the rest is the shared catalog. Uncheck everything in the catalog to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
           }
           m.body.appendChild(help);
 
-          // Custom-tools section — authored specifically for this agent
-          // (the Tools field on the record). Read-only here; edits
-          // happen via Builder. Renders nothing when the agent has no
-          // bundled tools so the modal stays uncluttered.
+          // Scoped tools — the rows in the unified store scoped to THIS
+          // agent: authored by the agent for itself, or built for it by
+          // Builder. They don't appear in other agents' catalogs.
+          //
+          // Rendered as an ordinary checklist section — same caret, same
+          // master checkbox, same rows as every catalog group below —
+          // because a scoped tool is not a different KIND of thing, it is
+          // just a tool whose availability is narrower. It used to be a
+          // bespoke read-only card list, which made the one part of this
+          // modal you cannot act on look like the part you can.
+          //
+          // Checked = this agent loads it. Unchecked writes the name into
+          // disabled_persistent_tools, which the runtime honors for scoped
+          // rows (see loadAgentTempTools) — an opt-out, not a detach: the
+          // tool stays scoped here and Builder can still run and fix it.
+          // Detaching entirely is the Scope button's job.
+          //
           // Flattened namespace: agent.tools is a server-synthesized view of
-          // the unified store's rows scoped to THIS agent. One name is one
-          // record, so the old duplicate/fork filtering ("shadowed by pool
-          // copy") is structurally impossible and gone — render verbatim.
+          // the store's rows scoped to this agent. One name is one record, so
+          // the old duplicate/fork filtering is structurally impossible.
           var customTools = (agent.tools || []);
-          // Agent-Scoped Tools — the tools that live on THIS agent's
-          // record (AgentRecord.Tools): authored by the agent for itself,
-          // or built for it by Builder. Scoped to this one agent; they
-          // don't appear in other agents' catalogs. Rendered
-          // unconditionally so the panel is always discoverable, with an
-          // empty state when the agent has none. (Replaces the old
-          // always-on "Session tools" panel — session drafts now auto-
-          // attach here or go global, so there's nothing transient to prune.)
+          // Scoped checkboxes are deliberately NOT pushed into `checkboxes`:
+          // that array drives the allowed_tools math ("all checked" collapses
+          // to the default-pool empty list), and a scoped tool is never an
+          // allowed_tools option. Mixing them would leak scoped names into
+          // the allowlist and break the collapse.
+          var scopedCbs = [];
           {
             var customSection = document.createElement('div');
-            customSection.className = 'ui-orch-custom-tools';
-            var ch = document.createElement('div');
-            ch.className = 'ui-orch-custom-tools-h';
-            ch.textContent = 'Agent-Scoped Tools' + (customTools.length ? ' (' + customTools.length + ')' : '');
-            customSection.appendChild(ch);
+            customSection.className = 'ui-checklist ui-checklist-section ui-orch-scoped-tools';
+            var scopedHeader = document.createElement('div');
+            scopedHeader.className = 'ui-checklist-group ui-checklist-group-collapsible';
+            var scopedCaret = document.createElement('span');
+            scopedCaret.className = 'ui-checklist-caret';
+            scopedCaret.textContent = '▸';
+            scopedHeader.appendChild(scopedCaret);
+            var scopedMaster = null;
+            if (!isBuilder && customTools.length) {
+              scopedMaster = document.createElement('input');
+              scopedMaster.type = 'checkbox';
+              scopedMaster.className = 'ui-checklist-cb ui-checklist-master';
+              scopedMaster.addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                var want = scopedMaster.checked; // browser already flipped it
+                scopedCbs.forEach(function(cb) { cb.checked = want; });
+                scopedMaster.indeterminate = false;
+              });
+              scopedHeader.appendChild(scopedMaster);
+            }
+            var scopedLabel = document.createElement('span');
+            scopedLabel.className = 'ui-checklist-group-name';
+            scopedLabel.textContent = 'Scoped to this agent' + (customTools.length ? ' (' + customTools.length + ')' : '');
+            scopedHeader.appendChild(scopedLabel);
+            customSection.appendChild(scopedHeader);
+
+            var scopedBody = document.createElement('div');
+            scopedBody.className = 'ui-checklist-section-body';
+            // Open by default unless it's long — this is the section a user
+            // came here to find, and collapsing three rows hides the answer.
+            // Empty counts as open too: the empty state IS the answer to "what
+            // does this agent have of its own?", and a closed caret isn't.
+            var scopedOpen = customTools.length <= 8;
+            scopedBody.style.display = scopedOpen ? '' : 'none';
+            scopedCaret.textContent = scopedOpen ? '▾' : '▸';
+            scopedHeader.addEventListener('click', function(ev) {
+              if (scopedMaster && ev.target === scopedMaster) return;
+              var open = scopedBody.style.display !== 'none';
+              scopedBody.style.display = open ? 'none' : '';
+              scopedCaret.textContent = open ? '▸' : '▾';
+            });
+            customSection.appendChild(scopedBody);
+
             var ci = document.createElement('div');
             ci.className = 'ui-orch-custom-tools-help';
-            ci.textContent = 'Tools scoped to this agent only. Authored by the agent for itself, or built for it by Builder. Remove to unbundle it here; promote it to your user-wide pool from the Admin tools page. Edit via Builder.';
-            customSection.appendChild(ci);
+            ci.textContent = isBuilder
+              ? 'Tools scoped to this agent. Builder always loads every tool it can edit, so there is no on/off here — turning one off elsewhere must not make it unfixable from the surface that fixes tools.'
+              : 'Tools available only to this agent. Uncheck one to stop this agent loading it — it stays scoped here and keeps working everywhere else it is scoped. Scope is where you detach it or share it with other agents; edits go through Builder.';
+            scopedBody.appendChild(ci);
             if (customTools.length === 0) {
               var emptyC = document.createElement('div');
               emptyC.className = 'ui-orch-custom-tools-help';
               emptyC.style.fontStyle = 'italic';
               emptyC.textContent = '(No tools are scoped to this agent yet.)';
-              customSection.appendChild(emptyC);
+              scopedBody.appendChild(emptyC);
             }
-            customTools.forEach(function(t) {
+            // Tri-state master, same contract as the catalog groups': all on,
+            // all off, or indeterminate.
+            function refreshScopedMaster() {
+              if (!scopedMaster) return;
+              var on = 0;
+              scopedCbs.forEach(function(cb) { if (cb.checked) on++; });
+              scopedMaster.checked = on === scopedCbs.length && on > 0;
+              scopedMaster.indeterminate = on > 0 && on < scopedCbs.length;
+            }
+            customTools.forEach(function(t, idx) {
+              // A div, not a <label>: the row carries buttons, and inside a
+              // label every click on them would also toggle the checkbox.
+              // The text gets its own <label for=…> so clicking it still does.
               var row = document.createElement('div');
-              row.className = 'ui-orch-custom-tool';
-              var icon = document.createElement('span');
-              icon.className = 'ui-orch-custom-tool-icon';
+              row.className = 'ui-checklist-row';
+              var cbID = 'orch-scoped-cb-' + idx;
+              if (!isBuilder) {
+                var cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'ui-checklist-cb';
+                cb.id = cbID;
+                cb.value = t.name || '';
+                cb.checked = !userDisabled[t.name];
+                cb.addEventListener('change', refreshScopedMaster);
+                row.appendChild(cb);
+                scopedCbs.push(cb);
+              }
+              var meta = document.createElement('label');
+              meta.className = 'ui-checklist-lbl';
+              if (!isBuilder) meta.htmlFor = cbID;
+              var nm = document.createElement('span');
+              nm.className = 'ui-checklist-name';
               var mode = (t.mode || 'shell');
-              icon.textContent = (mode === 'pipeline') ? '⚙' : (mode === 'api') ? '🌐' : '🐚';
-              icon.title = 'mode: ' + mode;
-              row.appendChild(icon);
-              var meta = document.createElement('div');
-              meta.className = 'ui-orch-custom-tool-meta';
-              var nm = document.createElement('div');
-              nm.className = 'ui-orch-custom-tool-name';
-              nm.textContent = t.name || '(unnamed)';
+              var icon = (mode === 'pipeline') ? '⚙' : (mode === 'api') ? '🌐' : '🐚';
+              nm.textContent = icon + ' ' + (t.name || '(unnamed)');
+              nm.title = 'mode: ' + mode;
               meta.appendChild(nm);
               if (t.description) {
-                var desc = document.createElement('div');
-                desc.className = 'ui-orch-custom-tool-desc';
+                var desc = document.createElement('span');
+                desc.className = 'ui-checklist-help';
                 desc.textContent = t.description;
                 meta.appendChild(desc);
               }
-              // Mode-specific brief summary so the user can sanity-check
-              // at a glance without expanding into JSON.
+              // Mode-specific one-liner so the row can be sanity-checked at a
+              // glance without expanding into the full definition.
               var summary = '';
               if (mode === 'shell' && t.command_template) {
                 summary = '$ ' + t.command_template;
@@ -2659,23 +2736,27 @@
                 }
               }
               if (summary) {
-                var sm = document.createElement('div');
+                var sm = document.createElement('span');
                 sm.className = 'ui-orch-custom-tool-summary';
                 if (summary.length > 140) summary = summary.slice(0, 140) + '…';
                 sm.textContent = summary;
                 meta.appendChild(sm);
               }
               row.appendChild(meta);
-              // Expand toggle → reveals the full tool definition below
-              // the row. Read-only here; edits flow through Builder.
               var rowActions = document.createElement('div');
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
-              // Scope button — opens the shared pill editor (Global + one
-              // pill per agent) against api/tool-scope. Promote to global,
-              // descope, or toggle per-agent availability, all in place. The
-              // renderer (window.uiRenderScopePills) lives in core/ui.
+              // Scope — the shared pill editor (Global + one pill per agent)
+              // against api/tool-scope. This is where a tool is detached from
+              // this agent or shared with others; the checkbox above is the
+              // reversible per-agent mute. The renderer lives in core/ui.
+              //
+              // (The old Remove button lived here and was a no-op: it trimmed
+              // agent.tools and POSTed the record, but the save path clears
+              // that field — it is a synthesized view of the store, not
+              // storage — so the row came back on reload. One detach surface
+              // that actually writes beats two where one lies.)
               (function(tool){
                 var scopeBtn = document.createElement('button');
                 scopeBtn.className = 'ui-row-btn';
@@ -2729,55 +2810,11 @@
                 });
                 rowActions.appendChild(scopeBtn);
               })(t);
-              // Remove button — available on EVERY agent. Previously
-              // gated to seed agents only ("user-authored agents'
-              // bundles are a real authoring decision"), but in
-              // practice that paternalism breaks the common case:
-              // when an LLM re-authors a bundled tool, the new
-              // version sits in the session draft / pending pool
-              // while the OLD agent.Tools[] snapshot keeps running
-              // at dispatch (the load order prefers persistent →
-              // agent.Tools → drafts, and a draft can't override an
-              // existing agent.Tools entry by AppendTempTool's
-              // collision semantics). Operator needs an unbundle
-              // path to clear the stale snapshot so the new version
-              // can take over. Same path for seeds + user-authored.
-              if (true) {
-                var rm = document.createElement('button');
-                rm.className = 'ui-row-btn';
-                rm.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.78rem;padding:0.25rem 0.55rem';
-                rm.textContent = 'Remove';
-                rm.title = 'Unbundle this tool from the agent (seed agents only)';
-                rm.addEventListener('click', async function(){
-                  if (!(await window.uiConfirm('Unbundle ' + (t.name || 'this tool') + ' from this agent?'))) return;
-                  rm.disabled = true;
-                  row.style.opacity = '0.4'; // optimistic: visually dim, restore on fail
-                  var trimmed = (agent.tools || []).filter(function(x){ return x.name !== t.name; });
-                  var patched = Object.assign({}, agent, {tools: trimmed});
-                  fetch('api/agents', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(patched)
-                  }).then(function(r){
-                    if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-                    // Hide the row + its expand panel. Mutate the
-                    // local agent.tools too so subsequent modal opens
-                    // reflect the change without a full reload.
-                    row.remove();
-                    detailEl.remove();
-                    agent.tools = trimmed;
-                  }).catch(function(err){
-                    window.uiAlert('Remove failed: ' + (err && err.message || err));
-                    row.style.opacity = '';
-                    rm.disabled = false;
-                  });
-                });
-                rowActions.appendChild(rm);
-              }
               row.appendChild(rowActions);
-              customSection.appendChild(row);
-              customSection.appendChild(detailEl);
+              scopedBody.appendChild(row);
+              scopedBody.appendChild(detailEl);
             });
+            refreshScopedMaster();
             m.body.appendChild(customSection);
           }
 
@@ -2957,6 +2994,18 @@
                 picked = ['__none__'];
               }
               agent.allowed_tools = picked;
+              // Scoped tools carry their decision in the deny list instead:
+              // they are never allowed_tools options, so "not in the picked
+              // list" says nothing about them. Rebuild only OUR names — the
+              // existing entries for pool tools stay untouched (the server
+              // recomputes those from the checklist for seed agents).
+              var scopedNames = {};
+              scopedCbs.forEach(function(cb) { scopedNames[cb.value] = true; });
+              var denied = (agent.disabled_persistent_tools || []).filter(function(n) {
+                return !scopedNames[n];
+              });
+              scopedCbs.forEach(function(cb) { if (!cb.checked) denied.push(cb.value); });
+              agent.disabled_persistent_tools = denied;
               saveBtn.disabled = true;
               fetch('api/agents?tools_modal=1', {
                 method: 'POST',

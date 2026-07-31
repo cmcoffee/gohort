@@ -1534,16 +1534,17 @@ func foldUncheckedIntoDenyList(db Database, user string, picked, currentDisabled
 		disabledSet[n] = true
 	}
 	for _, p := range LoadPersistentTempTools(db, user) {
-		// Scoped rows never appear in the modal's CHECKLIST — they render in the
-		// read-only Agent-Scoped Tools section — so "not picked" is not a
-		// statement the owner made about them; it is a checkbox that never
-		// existed. Folding them in anyway re-disabled such a tool on every save
-		// of the agent editor, which from the owner's side looked like "every
-		// time I enable it, it gets disabled", with nothing on screen to explain
-		// why. Scope management owns these rows; the deny list must not. Deleting
-		// (not just skipping) also self-heals records the old behavior polluted.
+		// Scoped rows are not part of THIS fold's vocabulary: `picked` is the
+		// allowed_tools checklist, and a scoped tool is never one of those
+		// options, so "not picked" says nothing about it. Folding them in
+		// anyway re-disabled such a tool on every save — "every time I enable
+		// it, it gets disabled", with nothing on screen to explain why.
+		//
+		// Skipped, NOT deleted: the Tools modal now renders scoped tools as
+		// their own checklist group and sends its decisions in
+		// DisabledPersistentTools directly. Deleting here would erase the
+		// owner's explicit off the moment they saved it.
 		if len(p.ScopeAgents) > 0 {
-			delete(disabledSet, p.Tool.Name)
 			continue
 		}
 		if pickedSet[p.Tool.Name] {
@@ -1555,6 +1556,37 @@ func foldUncheckedIntoDenyList(db Database, user string, picked, currentDisabled
 	out := make([]string, 0, len(disabledSet))
 	for n := range disabledSet {
 		out = append(out, n)
+	}
+	return out
+}
+
+// keepScopedDenials filters a deny list down to the SCOPED tools in it.
+//
+// The "everything checked" save on a default-pool seed clears the deny list —
+// correct for pool tools, since checked means "on" and the empty list restores
+// auto-include. But a scoped tool has no checkbox in that list at all: its
+// on/off is its own group in the Tools modal, sent in the same field. Clearing
+// wholesale would re-enable a tool the owner just switched off, in the same
+// save that switched it off. Keep what the client said about scoped rows; drop
+// the rest, which is what "all checked" means.
+func keepScopedDenials(db Database, user string, disabled []string) []string {
+	if len(disabled) == 0 {
+		return nil
+	}
+	scoped := map[string]bool{}
+	for _, p := range LoadPersistentTempTools(db, user) {
+		if len(p.ScopeAgents) > 0 {
+			scoped[p.Tool.Name] = true
+		}
+	}
+	out := make([]string, 0, len(disabled))
+	for _, n := range disabled {
+		if scoped[n] {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -1670,8 +1702,10 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			if len(seed.AllowedTools) == 0 {
 				// Default-pool seed.
 				if len(req.AllowedTools) == 0 {
-					// All-checked: clear the deny list.
-					req.DisabledPersistentTools = nil
+					// All-checked: clear the deny list, except what the modal
+					// said about SCOPED tools — they have no checkbox in the
+					// list this "all" describes (see keepScopedDenials).
+					req.DisabledPersistentTools = keepScopedDenials(T.DB, user, req.DisabledPersistentTools)
 				} else {
 					req.DisabledPersistentTools = foldUncheckedIntoDenyList(T.DB, user, req.AllowedTools, req.DisabledPersistentTools)
 				}

@@ -1502,6 +1502,16 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 			if !p.ScopedToAgent(t.agent.ID) && !isBuilderAgent(t.agent.ID) {
 				continue
 			}
+			// An explicit per-agent opt-out beats "attached by intent". Scoping
+			// says WHICH agents may have the tool; the deny list is the owner
+			// saying this agent should not USE it right now. Without this check
+			// a scoped tool had no off switch at all — which is why the Tools
+			// modal could only list it read-only while every other tool got a
+			// checkbox. Builder still loads it: turning a tool off must not make
+			// it unfixable by the surface that fixes tools.
+			if disabledPersistent[p.Tool.Name] && !isBuilderAgent(t.agent.ID) {
+				continue
+			}
 			tool := p.Tool
 			t.agentOwnTools[tool.Name] = true // the agent's deliberate kit (first-classed in setupCustomTools)
 			if err := sess.AppendTempTool(&tool); err != nil {
