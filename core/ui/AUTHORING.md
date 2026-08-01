@@ -171,8 +171,14 @@ The public surface, ordered most → least stable:
 6. **CSS class names** — generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
 
 Deprecations: a symbol slated for removal is marked `// Deprecated:` for at
-least one minor release before it goes. Changes are recorded in the repo-root
-`CHANGELOG.md`.
+least one minor release before it goes.
+
+Changes to this surface are recorded in the **commit log**, not a separate
+changelog file. Every commit names the version it ships (`(v0.5.x)`) and its
+message explains what moved and why, so `git log -- core/ core/ui/` is the
+authoritative history — and unlike a hand-maintained list, it cannot drift out
+of date. A `CHANGELOG.md` used to live at the repo root; it fell 600+ versions
+behind, which is worse than not having one, so it was retired.
 
 ---
 
