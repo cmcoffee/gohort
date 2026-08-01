@@ -403,6 +403,17 @@
 
 /* Memory + rules: a list of removable line items inside the modal. */
 .ui-orch-list { display: flex; flex-direction: column; gap: 0.35rem; }
+/* A capped-height list that scrolls. Two things a bare overflow-y:auto gets
+ * wrong once a row carries a right-edge action: the scrollbar lands on top of
+ * that action (the delete ×, which sits flush against the edge, becomes hard to
+ * hit and easy to miss), and the whole list jumps sideways the moment enough
+ * results arrive to overflow. scrollbar-gutter reserves the lane so the width
+ * never changes, and the padding keeps the button clear of the bar. */
+.ui-orch-scrolllist {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: 0.45rem;
+}
 .ui-orch-list-row {
   display: flex; gap: 0.4rem; align-items: flex-start;
   padding: 0.35rem 0.5rem;
@@ -3248,7 +3259,8 @@
         searchHelp.textContent = 'Find memories steering this agent. “Stored text” greps every layer; “Recall preview” shows what the agent actually sees for a query — the problem memory is usually the top hit.';
         searchSection.appendChild(searchHelp);
         var searchResults = document.createElement('div');
-        searchResults.style.cssText = 'margin-top:0.5rem;display:none;max-height:16rem;overflow-y:auto';
+        searchResults.className = 'ui-orch-scrolllist';
+        searchResults.style.cssText = 'margin-top:0.5rem;display:none;max-height:16rem';
         searchSection.appendChild(searchResults);
         m.body.appendChild(searchSection);
 
