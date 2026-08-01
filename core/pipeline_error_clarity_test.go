@@ -262,3 +262,82 @@ func TestLoopBodyProblemsFlattenIntoOneList(t *testing.T) {
 		t.Errorf("the count must match the bullets listed, got:\n%s", msg)
 	}
 }
+
+// when:"stage:critic.polished" is not a forward reference and not a typo — the
+// stage it names is directly above it. But the whole "stage:critic" read as the
+// NAME, nothing matched, and the answer was "has not run at that point … move
+// it earlier": false, and unfollowable. The author reordered stages that were
+// already in order, six times in one session.
+func TestBarePrefixIsNamedRatherThanReportedAsOrdering(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "loop", Kind: StageLoop, Count: 5, Body: []PipelineStage{
+			{Name: "critic", Kind: StageWorker, Prompt: "critique",
+				Output: []PipelineField{{Name: "polished", Type: FieldBool}}},
+			{Name: "check", Kind: StageBranch, When: "stage:critic.polished"},
+		}},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("a bare reference cannot carry the stage: prefix")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "stage: PREFIX") {
+		t.Errorf("name the prefix as the problem, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, `"critic.polished"`) {
+		t.Errorf("show the corrected bare form, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "move it earlier") {
+		t.Errorf("this is NOT an ordering problem and must not be reported as one:\n%s", msg)
+	}
+	// The corrected form validates, so the advice can be followed. (Top level:
+	// a branch inside a loop body may only skip within the pass, which is a
+	// separate rule and not what this test is about.)
+	ok := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "critic", Kind: StageWorker, Prompt: "critique",
+			Output: []PipelineField{{Name: "polished", Type: FieldBool}}},
+		{Name: "check", Kind: StageBranch, When: "critic.polished"},
+		{Name: "ship", Kind: StageWorker, Prompt: "ship it"},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("the bare form must validate: %v", err)
+	}
+	// until shares the checker.
+	u := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "loop", Kind: StageLoop, Count: 5, Until: "stage:check.done", Body: []PipelineStage{
+			{Name: "check", Kind: StageWorker, Prompt: "done?",
+				Output: []PipelineField{{Name: "done", Type: FieldBool}}},
+		}},
+	}}
+	if err := u.Validate(); err == nil || !strings.Contains(err.Error(), "stage: PREFIX") {
+		t.Errorf("until takes a bare reference too: %v", err)
+	}
+}
+
+// {{handlebars}} resolved to nothing, stayed in the prompt verbatim, and the
+// model was handed the braces — no error anywhere. An entire session was
+// authored that way and validated clean.
+func TestDoubleBracesAreRefusedRatherThanIgnored(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "one", Kind: StageWorker, Prompt: "polish this: {{input}}"},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("{{input}} resolves to nothing — silently, which is the problem")
+	}
+	if !strings.Contains(err.Error(), "SINGLE") {
+		t.Errorf("name the correct form, got: %v", err)
+	}
+	// Single braces are untouched.
+	ok := PipelineDef{Name: "p", Stages: []PipelineStage{{Name: "one", Kind: StageWorker, Prompt: "polish: {input}"}}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("single braces are the correct form: %v", err)
+	}
+	// A tool stage's args are templated too, so they get the same check.
+	args := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "t", Kind: StageTool, Tool: "calc", Args: map[string]string{"expr": "{{input}} + 1"}},
+	}}
+	if err := args.Validate(); err == nil || !strings.Contains(err.Error(), "SINGLE") {
+		t.Errorf("args are templated and need the same guard: %v", err)
+	}
+}

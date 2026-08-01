@@ -417,6 +417,14 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		} else if s.Tool != "" || len(s.Args) > 0 {
 			probs = append(probs, "stage "+s.Name+": tool/args are only valid on kind=tool")
 		}
+		if p := doubleBraceProblem(s.Name, "prompt", s.Prompt); p != nil {
+			add(p)
+		}
+		for k, v := range s.Args {
+			if p := doubleBraceProblem(s.Name, "args."+k, v); p != nil {
+				add(p)
+			}
+		}
 		for _, ref := range stageRefs(s.Prompt) {
 			if name, _ := SplitStageRef(ref); !badOutput[name] {
 				add(checkStageRef(s.Name, "prompt", ref, done))
@@ -511,6 +519,9 @@ func checkLoopUntil(s PipelineStage, ref string, done, inner map[string]map[stri
 	}
 	if strings.ContainsAny(ref, "={}<>!'\"") || strings.Contains(ref, " ") {
 		return bad("is written as a condition (" + strconv.Quote(ref) + ")")
+	}
+	if p := barePrefixProblem(s.Name, "until", ref); p != nil {
+		return p
 	}
 	name, field := SplitStageRef(ref)
 	if field == "" {
@@ -644,6 +655,41 @@ func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done m
 	return Error("stage " + s.Name + ": skip_to names " + target + ", which is not a later stage in the same list")
 }
 
+// doubleBraceProblem catches {{handlebars}} templating.
+//
+// This vocabulary uses SINGLE braces. A double brace resolves to nothing, is
+// left in the prompt verbatim, and the model is handed the braces — a silent
+// failure with no error anywhere, which is worse than a refusal. Seen across an
+// entire authoring session: every prompt written {{input}}, every one of them
+// dead, and the pipeline validated clean.
+func doubleBraceProblem(stage, where, text string) error {
+	if !strings.Contains(text, "{{") {
+		return nil
+	}
+	return Error("stage " + stage + " " + where + " uses {{double braces}} — this vocabulary takes SINGLE ones: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}. A double brace resolves to nothing and reaches the model as literal braces, so it fails silently rather than loudly.")
+}
+
+// barePrefixProblem catches a reference written with the prompt-text PREFIX in
+// a slot that takes a bare one.
+//
+// when:"stage:critic.polished" is not a forward reference and not a typo — the
+// stage it names sits directly above it. But SplitStageRef reads the whole
+// "stage:critic" as the stage name, nothing matches, and the generic answer was
+// "has not run at that point … move it earlier", which is false and unfollowable:
+// the author dutifully reordered stages that were already in order, six times.
+//
+// Covers every bare-reference site at once — when, until, fan_over, and a tool
+// stage's args — because they share this checker.
+func barePrefixProblem(stage, where, ref string) error {
+	trimmed := strings.TrimSpace(ref)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "stage:") {
+		return nil
+	}
+	bare := strings.TrimSpace(trimmed[len("stage:"):])
+	return Error("stage " + stage + " " + where + " is written with the stage: PREFIX (" + strconv.Quote(trimmed) +
+		"). Here a reference is BARE — " + strconv.Quote(bare) + " — and the stage:NAME form belongs only inside prompt TEXT.")
+}
+
 // builtinTemplateTokens are the template names the interpreter resolves itself.
 // An author who writes {stage:prev} has the right idea through the wrong door:
 // prev is real, it is just not a stage. (reservedTemplateVars in the
@@ -668,6 +714,9 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 		bare = strings.TrimPrefix(bare, "stage:")
 		return Error("stage " + stage + " " + where + " is written as a prompt template (" + trimmed +
 			"). It takes a BARE reference — " + strconv.Quote(bare) + " — not {…}. The {stage:NAME.field} form is for PROMPT text only.")
+	}
+	if p := barePrefixProblem(stage, where, ref); p != nil {
+		return p
 	}
 	name, field := SplitStageRef(ref)
 	// {stage:prev} and friends: the author reached for a real token through the
