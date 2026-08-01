@@ -1,6 +1,9 @@
 package orchestrate
 
-// The guard on action=update for an html app.
+// The guards on action=update: an html app being wiped, and a functional
+// section being dropped. Both are the same shape of loss — an update that
+// replaces more than the author meant to replace, and passes every check
+// downstream because what survives is internally consistent.
 //
 // update replaces the page with whatever it is handed, and for a one-section
 // html app that means the entire program. When an author has spent several
@@ -23,6 +26,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -125,4 +129,67 @@ func pluralIt(n int) string {
 		return "it"
 	}
 	return "them"
+}
+
+// functionalSectionKinds are the section kinds that ARE what an app does. A
+// form, a table, or a display presents data; these three RUN something — a
+// multi-stage job, a conversation, a document workbench. Losing one does not
+// degrade the page, it removes the reason the page exists.
+var functionalSectionKinds = map[string]string{
+	"pipeline":  "runs the app's pipeline (submit, live stages, run history)",
+	"run":       "runs the app's pipeline (submit, live stages, run history)",
+	"chat":      "the app's conversation with its agent",
+	"workbench": "the app's list | document | chat surface",
+}
+
+// appDroppedFunctionSection reports an update that REMOVES a functional section
+// the stored revision had, or "" when nothing load-bearing was lost.
+//
+// Same failure as the html wipe above, arrived at from the other direction. An
+// author several rounds deep in fixing one part of a page re-sends the sections
+// array from what it can reconstruct, and a section it stopped thinking about
+// is simply absent. Every gate downstream passes: the page renders, verify
+// reports the sections that remain, and it PASSES — a form and a table are a
+// perfectly good page. The app just cannot do the thing it was built for, and
+// the save says success.
+//
+// This is not hypothetical. An app built to run a five-pass writing pipeline
+// had a working pipeline section, verified; the next update dropped it while
+// the author narrated adding live progress. What shipped was a form, a table,
+// and a button that set a status field.
+//
+// Only removals count. Adding, reordering, and re-titling are ordinary edits.
+func appDroppedFunctionSection(prior, next []map[string]any) string {
+	have := func(secs []map[string]any) map[string]bool {
+		out := map[string]bool{}
+		for _, m := range secs {
+			k := strings.ToLower(strings.TrimSpace(mapStr(m, "kind")))
+			if _, ok := functionalSectionKinds[k]; ok {
+				out[k] = true
+			}
+		}
+		return out
+	}
+	before, after := have(prior), have(next)
+	var lost []string
+	for kind := range before {
+		if !after[kind] {
+			lost = append(lost, kind)
+		}
+	}
+	if len(lost) == 0 {
+		return ""
+	}
+	sort.Strings(lost)
+	var b strings.Builder
+	b.WriteString("this update DROPS the section(s) that make the app work: ")
+	for i, kind := range lost {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "%q — %s", kind, functionalSectionKinds[kind])
+	}
+	b.WriteString(".\n\nupdate REPLACES the sections array, so a section you left out is a section you deleted. The page will still render and verify will still pass — a form and a table are a valid page — but the thing the app is FOR will be gone, and the save would have reported success.\n\n")
+	b.WriteString("Send the sections you want plus the ones already there (app_def(action=\"get\") returns them in the shape update accepts). If you really do mean to remove it, send this again with confirm_rewrite:true — the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.")
+	return b.String()
 }

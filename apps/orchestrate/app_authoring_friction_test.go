@@ -226,3 +226,51 @@ func TestBoundPipelineWithNoPipelineSectionIsReported(t *testing.T) {
 		t.Errorf("an app with no pipeline_id has nothing missing: %v", n)
 	}
 }
+
+// An app built to run a five-pass pipeline had a working pipeline section,
+// verified. The next update dropped it while the author narrated adding live
+// progress, and everything downstream passed — a form and a table render fine.
+// What shipped was a form, a table, and a button that set a status field.
+func TestUpdateRefusesToSilentlyDropAFunctionalSection(t *testing.T) {
+	prior := []map[string]any{
+		{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		{"kind": "pipeline"},
+		{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+	}
+	next := []map[string]any{
+		{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+	}
+	risk := appDroppedFunctionSection(prior, next)
+	if risk == "" {
+		t.Fatal("dropping the section that runs the pipeline must not pass silently")
+	}
+	for _, want := range []string{"pipeline", "REPLACES the sections array", "confirm_rewrite"} {
+		if !strings.Contains(risk, want) {
+			t.Errorf("the refusal must contain %q so it is actionable, got:\n%s", want, risk)
+		}
+	}
+	// Ordinary edits are not refusals: adding, reordering and re-titling all
+	// keep the functional section, and a guard that fires on those gets muted.
+	if r := appDroppedFunctionSection(prior, []map[string]any{
+		{"kind": "pipeline", "title": "Renamed"},
+		{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+		{"kind": "display"},
+	}); r != "" {
+		t.Errorf("reordering, re-titling and adding are ordinary edits: %s", r)
+	}
+	// A page with nothing load-bearing has nothing to lose.
+	if r := appDroppedFunctionSection([]map[string]any{{"kind": "form"}}, nil); r != "" {
+		t.Errorf("no functional section to drop: %s", r)
+	}
+	// A spec stored before authoring-sections existed gives the guard nothing
+	// to compare — staying quiet is the right way to be wrong.
+	if r := appDroppedFunctionSection(nil, next); r != "" {
+		t.Errorf("no prior sections recorded means no verdict: %s", r)
+	}
+	// chat and workbench are load-bearing for the same reason.
+	if r := appDroppedFunctionSection([]map[string]any{{"kind": "workbench"}}, []map[string]any{{"kind": "table"}}); !strings.Contains(r, "workbench") {
+		t.Errorf("a workbench IS the app; dropping it must be refused: %s", r)
+	}
+}

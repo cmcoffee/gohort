@@ -142,7 +142,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 
 const appDefHelpText = `app_def actions:
 - create {name, slug?, description?, record_key?, sections:[…]} — author an app, served at /custom/<slug>/. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
-- update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document. An update that shrinks an html app sharply, or that drops functions the rest of the code still calls, is REFUSED (pass confirm_rewrite:true if you really are re-authoring from scratch) — that shape is a half-finished rewrite, and it deletes working code while still parsing and loading clean.
+- update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document AND a sections array means the WHOLE set — a section you leave out is a section you delete. Dropping the one that runs the app (pipeline / chat / workbench) is REFUSED for that reason: the page still renders and verify still passes without it, so the loss is invisible everywhere else. Call action="get" first; it returns the sections in the shape update accepts. An update that shrinks an html app sharply, or that drops functions the rest of the code still calls, is REFUSED (pass confirm_rewrite:true if you really are re-authoring from scratch) — that shape is a half-finished rewrite, and it deletes working code while still parsing and loading clean.
 - replace_function {id(slug), function, replace, section?} — swap ONE named function in an html section. Name it, hand over the whole new function, and the server finds the old one: you never reproduce a line of it, so this cannot fail on whitespace and does not need the current document in front of you. THE action for "rewrite drawBird" / "fix the collision function" / "make the car look different".
 - patch_html {id(slug), find, replace, section?} — change PART of an html section by exact find/replace. For edits smaller than a function (a constant, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. Both in-place edits are parsed, checked for calls to code they would delete, and loaded in a real browser BEFORE they are kept — an edit that breaks any of those is rolled back and the previous revision keeps serving.
 - revisions {id(slug)} — the last few versions of the app, newest first, each shown as its SIZE and FUNCTION COUNT next to the one serving now. A version much larger than the current one is an edit that removed code.
@@ -334,6 +334,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// only place the loss is still visible.
 		if isUpdate && !boolArg(args, "confirm_rewrite") {
 			if risk := appRewriteRisk(priorHTML, appProposedHTMLText(raw)); risk != "" {
+				return "", errors.New(risk)
+			}
+			// The same loss from the other direction: the sections array is
+			// replaced wholesale, so a functional section left out of the new
+			// one is deleted — silently, because what remains still renders.
+			if risk := appDroppedFunctionSection(appSpecSections(spec), appProposedSections(raw)); risk != "" {
 				return "", errors.New(risk)
 			}
 		}
@@ -1150,6 +1156,36 @@ func entryListError(section, item, plural string, raw any) error {
 		}
 	}
 	return errors.New(msg)
+}
+
+// appSpecSections reads the stored AUTHORING sections off a spec — the shape
+// update accepts, which is what a comparison against an incoming update needs.
+// Empty for a spec written before that field existed; the guard then has
+// nothing to compare and stays quiet, which is the right way to be wrong.
+func appSpecSections(spec AppSpec) []map[string]any {
+	if len(spec.Sections) == 0 {
+		return nil
+	}
+	var raw []any
+	if json.Unmarshal(spec.Sections, &raw) != nil {
+		return nil
+	}
+	return appProposedSections(raw)
+}
+
+// appProposedSections normalizes an incoming sections array for comparison.
+func appProposedSections(raw any) []map[string]any {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(arr))
+	for _, item := range arr {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, normalizeSection(m))
+		}
+	}
+	return out
 }
 
 // appFormFields converts the declarative fields array into ui.FormField values.
