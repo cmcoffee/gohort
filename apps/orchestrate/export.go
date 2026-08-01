@@ -22,6 +22,19 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// foldCountPhrase renders how many times a thread has been folded, for the
+// export's compaction note. The count matters to a reader deciding how much of
+// the conversation is behind the summary.
+func foldCountPhrase(seq int) string {
+	switch {
+	case seq <= 0:
+		return "at least once"
+	case seq == 1:
+		return "once"
+	}
+	return fmt.Sprintf("%d times", seq)
+}
+
 // handleSessionExport serves the session at /api/sessions/{id}/export.
 // agent_id is required as a query param (sessions are stored under
 // per-agent buckets). format=json | md (default md). Sets a
@@ -52,7 +65,7 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 	filenameBase := fmt.Sprintf("%s-%s", slugifyAgentName(agent.Name), sess.ID)
 	switch format {
 	case "json":
-		payload := buildExportPayload(agent, sess)
+		payload := buildExportPayload(agent, sess, udb)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.json"`)
 		_ = json.NewEncoder(w).Encode(payload)
@@ -92,9 +105,20 @@ type exportedSession struct {
 	AwaitingUserConfirm bool           `json:"awaiting_user_confirm,omitempty"`
 	Messages            []ChatMessage  `json:"messages,omitempty"`
 	Plans               []PlanSnapshot `json:"plans,omitempty"`
+	// Compacted records that `messages` is a TAIL, not the whole thread — the
+	// leading span was folded into a summary and archived to recall before
+	// being dropped from storage. Absent when nothing has been folded, so a
+	// short session's payload is unchanged. This file calls JSON the lossless
+	// shape; a truncation it does not mention is the one way it could lie.
+	Compacted *exportedCompaction `json:"compacted,omitempty"`
 }
 
-func buildExportPayload(agent AgentRecord, sess ChatSession) sessionExportPayload {
+type exportedCompaction struct {
+	Summary string `json:"summary"`
+	Folds   int    `json:"folds,omitempty"`
+}
+
+func buildExportPayload(agent AgentRecord, sess ChatSession, udb Database) sessionExportPayload {
 	return sessionExportPayload{
 		ExportedAt: time.Now(),
 		Agent: exportedAgent{
@@ -112,8 +136,23 @@ func buildExportPayload(agent AgentRecord, sess ChatSession) sessionExportPayloa
 			AwaitingUserConfirm: sess.AwaitingUserConfirm,
 			Messages:            sess.Messages,
 			Plans:               sess.Plans,
+			Compacted:           exportCompaction(udb, agent.ID, sess.ID),
 		},
 	}
+}
+
+// exportCompaction reports the fold state when a thread has one, so an export
+// can say that its message list is a tail. nil when nothing has been folded, or
+// when the caller has no store to read.
+func exportCompaction(udb Database, agentID, sessID string) *exportedCompaction {
+	if udb == nil {
+		return nil
+	}
+	st := loadCompactState(udb, agentID, sessID)
+	if strings.TrimSpace(st.Summary) == "" {
+		return nil
+	}
+	return &exportedCompaction{Summary: strings.TrimSpace(st.Summary), Folds: st.FoldSeq}
 }
 
 // renderSessionMarkdown produces a readable transcript suitable for
@@ -146,6 +185,20 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 		fmt.Fprintf(&b, "- **Authoring focus:** %s\n", sess.AuthoringAgentID)
 	}
 	fmt.Fprintf(&b, "- **Exported:** %s\n", time.Now().Format(time.RFC3339))
+
+	// A long thread is TRIMMED in storage (trimStoredHistory): leading messages
+	// already folded into the running summary and archived to recall are dropped
+	// so the thread doesn't grow without bound. The export can only show what is
+	// stored — and printing the original Created timestamp above a transcript
+	// that starts hours later reads as a broken copy rather than a retention
+	// policy. Say what happened, and carry the summary that stands in for the
+	// missing span, so the export is complete in substance even when it cannot
+	// be complete in verbatim.
+	if st := exportCompaction(udb, agent.ID, sess.ID); st != nil {
+		fmt.Fprintf(&b, "\n> **Earlier turns are not reproduced verbatim.** This thread has been compacted %s: the messages before the first one below were folded into the running summary and archived to this agent's recall index, then dropped from the stored thread to bound its size. The summary follows; the verbatim tail starts after it. Nothing was lost by the export — ask the agent about an earlier turn and it can still recall it.\n",
+			foldCountPhrase(st.Folds))
+		fmt.Fprintf(&b, "\n## Summary of earlier turns\n\n%s\n", st.Summary)
+	}
 	fmt.Fprintf(&b, "\n---\n\n")
 
 	// Guardrail activity, if any. Placed BEFORE the transcript so a reader meets it

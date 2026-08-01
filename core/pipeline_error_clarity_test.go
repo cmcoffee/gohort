@@ -149,3 +149,116 @@ func TestValidateDoesNotCascadeFromABadOutput(t *testing.T) {
 		t.Errorf("a stage that failed validation still EXISTS — referencing it is not an unknown-stage error:\n%s", msg)
 	}
 }
+
+// Seven attempts at one loop, then the loop was abandoned for five hand-copied
+// stage pairs that cannot stop early. These are the four messages that failed
+// to teach, taken verbatim from that session.
+
+// until is the least guessable thing in the vocabulary: it is not a condition,
+// it is the NAME of a bool a body stage promised to return. The author reached
+// for a comparison three times.
+func TestUntilRefusalTeachesItsShape(t *testing.T) {
+	body := []PipelineStage{
+		{Name: "critic", Kind: StageWorker, Prompt: "critique {prev}",
+			Output: []PipelineField{{Name: "feedback", Type: FieldString}}},
+	}
+	for _, until := range []string{
+		"{stage:critic.feedback} == 'SATISFIED'", // what was written first
+		"stage:critic.feedback == 'SATISFIED'",   // and second
+		"critic.feedback == 'SATISFIED'",
+	} {
+		def := PipelineDef{Name: "p", Stages: []PipelineStage{
+			{Name: "loop", Kind: StageLoop, Count: 5, Body: body, Until: until},
+		}}
+		err := def.Validate()
+		if err == nil {
+			t.Fatalf("until=%q is a condition, not a field reference", until)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, `until:"check.done"`) {
+			t.Errorf("every until refusal must show the shape; until=%q gave:\n%s", until, msg)
+		}
+		if !strings.Contains(msg, "not an expression") {
+			t.Errorf("say that a comparison is not what until takes; until=%q gave:\n%s", until, msg)
+		}
+	}
+	// A field that exists but is prose, not a bool — the same steer applies.
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "loop", Kind: StageLoop, Count: 5, Body: body, Until: "critic.feedback"},
+	}}
+	if err := def.Validate(); err == nil || !strings.Contains(err.Error(), "not bool") {
+		t.Errorf("a string field cannot end a loop: %v", err)
+	}
+	// And the correct shape validates, so the advice is followable.
+	ok := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "loop", Kind: StageLoop, Count: 5, Until: "check.done", Body: []PipelineStage{
+			{Name: "check", Kind: StageWorker, Prompt: "done?",
+				Output: []PipelineField{{Name: "done", Type: FieldBool}}},
+		}},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("the shape the error describes must validate: %v", err)
+	}
+}
+
+// Reaching into a loop for the body stage that produced the result — four times
+// in one session. "declares no output field writer.text" is true and teaches
+// nothing; the loop answers under its own name.
+func TestLoopResultIsReadByTheLoopsOwnName(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "polish", Kind: StageLoop, Count: 3, Body: []PipelineStage{
+			{Name: "writer", Kind: StageWorker, Prompt: "rewrite {prev}"},
+		}},
+		{Name: "final", Kind: StageWorker, Prompt: "ship {stage:polish.writer.text}"},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("a loop's body stage is not addressable from outside it")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "{stage:polish}") {
+		t.Errorf("point at the loop's own name, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "each pass") {
+		t.Errorf("say WHY a body name cannot be read from outside, got:\n%s", msg)
+	}
+}
+
+// {stage:prev} — the right idea through the wrong door. Reporting "no stage
+// named prev" is true and useless.
+func TestBuiltinTokenWrittenAsAStageReference(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "one", Kind: StageWorker, Prompt: "hi"},
+		{Name: "two", Kind: StageWorker, Prompt: "use {stage:prev}"},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("prev is not a stage")
+	}
+	if !strings.Contains(err.Error(), "BUILT-IN") || !strings.Contains(err.Error(), "{prev}") {
+		t.Errorf("name the built-in and its correct spelling, got: %v", err)
+	}
+}
+
+// A loop body's problems belong to the pipeline's problem list, not wrapped as
+// one entry inside it: nested, the count was wrong and the header printed
+// twice — "this pipeline has 2 problems" followed by a bullet repeating it.
+func TestLoopBodyProblemsFlattenIntoOneList(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "loop", Kind: StageLoop, Count: 3, Body: []PipelineStage{
+			{Name: "a", Kind: StageWorker, Prompt: "x", Output: []PipelineField{{Name: "f", Type: "array"}}},
+			{Name: "b", Kind: StageAgent, Prompt: "y"},
+		}},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("two body problems, no error")
+	}
+	msg := err.Error()
+	if strings.Count(msg, "problems — fix them all") != 1 {
+		t.Errorf("the header must appear exactly once, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "2 problems") {
+		t.Errorf("the count must match the bullets listed, got:\n%s", msg)
+	}
+}

@@ -346,6 +346,21 @@ func (d PipelineDef) Validate() error {
 // reference into a stage whose output failed is that stage's problem, not a
 // second one.
 func validateStageList(stages []PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) error {
+	probs := stageListProblems(stages, done, inLoop)
+	switch len(probs) {
+	case 0:
+		return nil
+	case 1:
+		return Error(probs[0])
+	}
+	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
+}
+
+// stageListProblems is validateStageList's collector. Split out so a LOOP
+// BODY's problems flatten into the caller's list instead of arriving as one
+// already-joined string: nested, the count was wrong and the header printed
+// twice ("this pipeline has 2 problems" followed by a bullet repeating it).
+func stageListProblems(stages []PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) []string {
 	var probs []string
 	badOutput := map[string]bool{} // stages whose declared output didn't parse
 	for i, s := range stages {
@@ -387,7 +402,9 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 			probs = append(probs, "stage "+s.Name+": body is only valid on kind=loop")
 		}
 		if s.Kind == StageLoop {
-			add(validateLoopStage(s, done, inLoop))
+			own, bodyProbs := validateLoopStage(s, done, inLoop)
+			add(own)
+			probs = append(probs, bodyProbs...)
 		}
 		if s.Kind == StageBranch {
 			add(validateBranchStage(s, stages, i, done, inLoop))
@@ -430,13 +447,7 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 		}
 		done[s.Name] = own
 	}
-	switch len(probs) {
-	case 0:
-		return nil
-	case 1:
-		return Error(probs[0])
-	}
-	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
+	return probs
 }
 
 // validateLoopStage checks a kind="loop" stage and its Body. The body is
@@ -445,26 +456,26 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 // the caller's scope, so a later stage referencing one is an unknown-
 // stage error rather than a silent read of whichever value the last
 // iteration left behind.
-func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) error {
+func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) (error, []string) {
 	if inLoop {
-		return Error("stage " + s.Name + ": loops do not nest — one level only (put the inner work in its own pipeline and call it from a stage)")
+		return Error("stage " + s.Name + ": loops do not nest — one level only (put the inner work in its own pipeline and call it from a stage)"), nil
 	}
 	if len(s.Body) == 0 {
-		return Error("stage " + s.Name + " is kind=loop but has no body stages to repeat")
+		return Error("stage " + s.Name + " is kind=loop but has no body stages to repeat"), nil
 	}
 	if len(s.Output) > 0 {
-		return Error("stage " + s.Name + ": output is not valid on kind=loop (a loop's output is its last pass, or the joined passes when collect=all)")
+		return Error("stage " + s.Name + ": output is not valid on kind=loop (a loop's output is its last pass, or the joined passes when collect=all)"), nil
 	}
 	if s.Count < 1 {
-		return Error("stage " + s.Name + ": kind=loop needs count (how many times to repeat, 1-" + strconv.Itoa(loopMaxIterations) + ")")
+		return Error("stage " + s.Name + ": kind=loop needs count (how many times to repeat, 1-" + strconv.Itoa(loopMaxIterations) + ")"), nil
 	}
 	if s.Count > loopMaxIterations {
-		return Error("stage " + s.Name + ": count " + strconv.Itoa(s.Count) + " exceeds the maximum of " + strconv.Itoa(loopMaxIterations) + " — a pipeline runs unattended, so the ceiling is fixed")
+		return Error("stage " + s.Name + ": count " + strconv.Itoa(s.Count) + " exceeds the maximum of " + strconv.Itoa(loopMaxIterations) + " — a pipeline runs unattended, so the ceiling is fixed"), nil
 	}
 	switch strings.TrimSpace(s.Collect) {
 	case "", "last", "all":
 	default:
-		return Error("stage " + s.Name + ": collect must be \"last\" or \"all\", got " + strconv.Quote(s.Collect))
+		return Error("stage " + s.Name + ": collect must be \"last\" or \"all\", got " + strconv.Quote(s.Collect)), nil
 	}
 	// Body scope starts as a copy of the outer one so the body can read
 	// earlier stages without leaking its own names back out.
@@ -472,23 +483,51 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 	for k, v := range done {
 		inner[k] = v
 	}
-	if err := validateStageList(s.Body, inner, true); err != nil {
-		return err
-	}
+	bodyProbs := stageListProblems(s.Body, inner, true)
 	if ref := strings.TrimSpace(s.Until); ref != "" {
-		name, field := SplitStageRef(ref)
-		if field == "" {
-			return Error("stage " + s.Name + ": until must name a BOOL FIELD of a body stage (e.g. \"check.done\"), not just a stage")
+		if err := checkLoopUntil(s, ref, done, inner); err != nil {
+			return err, bodyProbs
 		}
-		if err := checkStageRef(s.Name, "until", ref, inner); err != nil {
-			return err
-		}
-		if t := inner[name][field]; t != FieldBool {
-			return Error("stage " + s.Name + ": until references " + ref + ", which is declared " + string(t) + ", not bool")
-		}
-		if _, outer := done[name]; outer {
-			return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop — its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
-		}
+	}
+	return nil, bodyProbs
+}
+
+// untilShape is the one sentence that turns "until is wrong" into "here is what
+// until is". Appended to every until refusal, because the field is the least
+// guessable thing in the vocabulary: it is not a condition, it is the NAME of a
+// bool a body stage promised to return.
+const untilShape = "until reads ONE bool field, by bare name: until:\"check.done\", where a body stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is not an expression — there is no ==, no quotes, no braces. To stop when a critic is satisfied, have the critic stage declare a bool (\"satisfied\") alongside its prose and point until at it."
+
+// checkLoopUntil validates a loop's early exit.
+//
+// Every refusal carries the shape, because the observed failures were not typos
+// — they were an author reaching for a CONDITION. Written as
+// {stage:critic.feedback} == 'SATISFIED', then as stage:critic.feedback ==
+// 'SATISFIED', then abandoned: three rounds, after which the loop was replaced
+// by five hand-copied stage pairs that cannot stop early at all.
+func checkLoopUntil(s PipelineStage, ref string, done, inner map[string]map[string]PipelineFieldType) error {
+	bad := func(why string) error {
+		return Error("stage " + s.Name + ": until " + why + ". " + untilShape)
+	}
+	if strings.ContainsAny(ref, "={}<>!'\"") || strings.Contains(ref, " ") {
+		return bad("is written as a condition (" + strconv.Quote(ref) + ")")
+	}
+	name, field := SplitStageRef(ref)
+	if field == "" {
+		return bad("names a stage (" + strconv.Quote(ref) + ") and not a field of one")
+	}
+	if _, ok := inner[name]; !ok {
+		return bad("references " + strconv.Quote(name) + ", which is not a stage in this loop's body")
+	}
+	t, declared := inner[name][field]
+	if !declared {
+		return bad("references " + strconv.Quote(ref) + ", but " + name + " declares no output field " + strconv.Quote(field))
+	}
+	if t != FieldBool {
+		return bad("references " + ref + ", which is declared " + string(t) + ", not bool")
+	}
+	if _, outer := done[name]; outer {
+		return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop — its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
 	}
 	return nil
 }
@@ -605,6 +644,15 @@ func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done m
 	return Error("stage " + s.Name + ": skip_to names " + target + ", which is not a later stage in the same list")
 }
 
+// builtinTemplateTokens are the template names the interpreter resolves itself.
+// An author who writes {stage:prev} has the right idea through the wrong door:
+// prev is real, it is just not a stage. (reservedTemplateVars in the
+// interpreter is the same set plus "stage", guarding a different seam — what a
+// submit form may not redefine.)
+var builtinTemplateTokens = map[string]bool{
+	"input": true, "prev": true, "item": true, "iteration": true, "iterations": true,
+}
+
 // checkStageRef verifies one "NAME" or "NAME.field" reference resolves
 // to an already-validated stage (and, for the field form, to a field
 // that stage actually declares). where names the site of the reference
@@ -622,6 +670,13 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 			"). It takes a BARE reference — " + strconv.Quote(bare) + " — not {…}. The {stage:NAME.field} form is for PROMPT text only.")
 	}
 	name, field := SplitStageRef(ref)
+	// {stage:prev} and friends: the author reached for a real token through the
+	// wrong door. Reporting "no stage named prev" is true and useless — prev
+	// exists, it is just spelled {prev}.
+	if builtinTemplateTokens[strings.ToLower(name)] && field == "" {
+		return Error("stage " + stage + " " + where + " references " + strconv.Quote(name) +
+			", which is a BUILT-IN, not a stage. Write {" + strings.ToLower(name) + "} — the {stage:NAME} form is only for a stage you named yourself.")
+	}
 	fields, ok := done[name]
 	if !ok {
 		// "unknown or later stage: X" named two possibilities and neither fix.
@@ -636,6 +691,15 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 		return nil
 	}
 	if _, ok := fields[field]; !ok {
+		if len(fields) == 0 {
+			// The loop case, and the single most repeated failure in authoring:
+			// reaching into a loop for the body stage that produced the result.
+			// Body names hold a different value every pass, so they are not
+			// addressable from outside — the loop answers under its OWN name.
+			return Error("stage " + stage + " " + where + " references " + ref + ", but " + name +
+				" declares no output fields. If " + name + " is a LOOP, read its result as {stage:" + name +
+				"} — a loop's body stage names are not visible outside it (they hold a different value each pass), and collect:\"all\" makes that output every pass rather than the last.")
+		}
 		return Error("stage " + stage + " " + where + " references " + ref + ", but stage " + name + " declares no output field " + field)
 	}
 	return nil

@@ -276,3 +276,24 @@ func TestUpdateRefusesToSilentlyDropAFunctionalSection(t *testing.T) {
 		t.Errorf("a workbench IS the app; dropping it must be refused: %s", r)
 	}
 }
+
+// An app bound to a pipeline that does not exist renders perfectly: the panel
+// touches the pipeline only when someone presses Start. So every check passed
+// and the app was declared ready, and the first person to use it met the
+// failure instead — which is the wrong order for finding it out.
+func TestVerifyChecksTheBoundPipelineResolves(t *testing.T) {
+	src, err := os.ReadFile("app_def_tool.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify := string(src)[strings.Index(string(src), "func (t *chatTurn) appDefVerify"):]
+	if !strings.Contains(verify[:4000], "LookupAppPipeline") {
+		t.Fatal("verify never resolves the app's pipeline binding — a dangling pipeline_id passes every check")
+	}
+	if !strings.Contains(verify[:4000], "FAIL binding") {
+		t.Error("a binding that resolves to nothing has to FAIL, not pass quietly")
+	}
+	if !strings.Contains(verify[:4000], "author the pipeline first") {
+		t.Error("say what to do about it — the fix is ordering, not syntax")
+	}
+}

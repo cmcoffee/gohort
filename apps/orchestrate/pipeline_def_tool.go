@@ -154,7 +154,11 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	if isUpdate {
 		existing, ok := t.findPipeline(args)
 		if !ok {
-			return "", errors.New("no matching pipeline to update — check the name/id (pipeline action=list)")
+			// Name the likeliest cause. This fires almost every time right
+			// after a REFUSED create: the definition was never stored, so the
+			// reflex to "fix it with update" has nothing to update, and two
+			// rounds go to discovering that.
+			return "", errors.New("no matching pipeline to update — nothing is stored under that name/id. If a create just failed, the pipeline was never saved: fix the definition and call action=\"create\" again. pipeline(action=\"list\") shows what you actually have")
 		}
 		def = existing
 		if name != "" {

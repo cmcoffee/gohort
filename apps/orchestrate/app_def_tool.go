@@ -1862,6 +1862,23 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	// never landed.
 	fmt.Fprintf(&b, "Verified app %q end-to-end (spec revision saved %s — if you updated the app AFTER that, this report describes the OLD revision; verify again).\n\n", spec.Name, spec.Updated)
 
+	// A bound pipeline that does not resolve. The page renders fine without it
+	// — the panel does not touch the pipeline until someone presses Start — so
+	// every other check passes and the app is declared ready. The first person
+	// to use it gets the failure instead, which is the wrong order.
+	//
+	// This is not hypothetical: an app was created with pipeline_id naming a
+	// pipeline that did not exist yet, verified PASS, and only worked because
+	// the pipeline happened to be authored a minute later under that same name.
+	if ref := strings.TrimSpace(spec.PipelineID); ref != "" {
+		if def, ok := t.app.LookupAppPipeline(t.user, ref); !ok {
+			failures++
+			fmt.Fprintf(&b, "FAIL binding — pipeline_id %q resolves to nothing. The page will render and Start will fail; author the pipeline first (pipeline action=list shows yours), then update the app.\n\n", ref)
+		} else {
+			fmt.Fprintf(&b, "OK   binding — pipeline_id resolves to %q (%d stage(s)).\n\n", def.Name, len(def.Stages))
+		}
+	}
+
 	if len(spec.DataSources) > 0 || len(spec.Actions) > 0 {
 		report, _, _, fail := t.checkScripts(spec, true, appSampleRecords(args["sample"]), mapArg(args["params"]))
 		failures += fail
