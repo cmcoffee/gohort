@@ -84,3 +84,66 @@ func TestBuilderPromptExplainsPipelineParameters(t *testing.T) {
 		t.Error("the ordering matters: the pipeline is authored against the form's names, not adapted to them later")
 	}
 }
+
+// One build produced six apologies — four "My apologies", two "I apologize
+// again" — none of which changed a single tool call. A refused validation is
+// the normal way authoring works, not a transgression, and contrition spends
+// the reader's attention on the author's feelings instead of their build.
+func TestBuilderPromptForbidsApologizing(t *testing.T) {
+	seed, _ := seedAgentByID("seed-builder")
+	p := seed.OrchestratorPrompt
+	if !strings.Contains(p, "DON'T APOLOGIZE") {
+		t.Fatal("nothing tells Builder to stop apologizing")
+	}
+	// The rule has to say what to do INSTEAD, or it just suppresses a phrase
+	// and leaves the turn shapeless.
+	if !strings.Contains(p, "Say what was wrong and what you are changing") {
+		t.Error("give the replacement behaviour, not only the prohibition")
+	}
+	// The specific habit worth naming: retry after retry, each opening with
+	// contrition about the last one.
+	if !strings.Contains(p, "never stack apologies across retries") {
+		t.Error("the observed pattern was per-retry contrition; name it")
+	}
+}
+
+// store_fact has been called zero times across 20MB of production logs, while
+// the same validator refusals recur build after build: "boolean" instead of
+// bool, a condition where a bool field name goes, the stage: prefix. The read
+// path works and Explicit Memory is on — nothing is ever written to it.
+//
+// The old instruction asked for "a durable gotcha that VERIFIABLY worked",
+// which is a judgement call made at the end of a long turn by a model that has
+// just succeeded and wants to answer. The trigger is countable now.
+func TestBuilderPromptSavesRepeatedValidatorRefusals(t *testing.T) {
+	seed, _ := seedAgentByID("seed-builder")
+	p := seed.OrchestratorPrompt
+	if !strings.Contains(p, "SAVE ONE WHEN A VALIDATOR REFUSES YOU TWICE FOR THE SAME REASON") {
+		t.Fatal("the save trigger is not countable; 'a durable gotcha' is a judgement nobody makes at turn's end")
+	}
+	// Rule, not incident — a stored "I got it wrong again" helps no future build.
+	if !strings.Contains(p, "Write the rule, not the incident") {
+		t.Error("say what to store; the shape of the fact is the whole value")
+	}
+	// Timing: after the turn ends there is no turn left to save in.
+	if !strings.Contains(p, "before you answer") {
+		t.Error("the save has to happen before the summary, or it does not happen")
+	}
+}
+
+// A Forge build ended with "Here is what I have built so far: ... Pipeline
+// Structure (Draft) — I defined a pipeline named forge_pipeline" after five
+// consecutive refusals had stored exactly nothing. The STORED — line cannot
+// catch this: it only appends to a SUCCESSFUL save, so a turn that saved
+// nothing has nothing contradicting it. The prompt has to carry it.
+func TestBuilderPromptDeniesCreditForRefusedCalls(t *testing.T) {
+	seed, _ := seedAgentByID("seed-builder")
+	p := seed.OrchestratorPrompt
+	if !strings.Contains(p, "A REFUSED CALL BUILT NOTHING") {
+		t.Fatal("a refused definition is not a draft; the summary must not claim it")
+	}
+	// The same build then asked whether to keep trying, mid-repair.
+	if !strings.Contains(p, "don't stop to ask permission to fix your own error") {
+		t.Error("a validator refusal is a step, not a decision point for the user")
+	}
+}

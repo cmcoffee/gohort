@@ -472,7 +472,9 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 		return Error("stage " + s.Name + " is kind=loop but has no body stages to repeat"), nil
 	}
 	if len(s.Output) > 0 {
-		return Error("stage " + s.Name + ": output is not valid on kind=loop (a loop's output is its last pass, or the joined passes when collect=all)"), nil
+		// Naming the loop's result is a reasonable thing to want, so say where
+		// the name already is rather than only that this slot is wrong.
+		return Error("stage " + s.Name + ": output is not valid on kind=loop — a loop has no shape of its own to declare. Drop it: a later stage reads this loop as {stage:" + s.Name + "}, which is the last pass (or every pass joined, with collect=\"all\"). Declare output on the BODY stage that produces the value if a body stage needs to read it mid-pass, or if until has to test a bool"), nil
 	}
 	if s.Count < 1 {
 		return Error("stage " + s.Name + ": kind=loop needs count (how many times to repeat, 1-" + strconv.Itoa(loopMaxIterations) + ")"), nil
@@ -506,6 +508,24 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 // bool a body stage promised to return.
 const untilShape = "until reads ONE bool field, by bare name: until:\"check.done\", where a body stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is not an expression — there is no ==, no quotes, no braces. To stop when a critic is satisfied, have the critic stage declare a bool (\"satisfied\") alongside its prose and point until at it."
 
+// looksLikeCondition reports a bare-reference slot written as a comparison.
+//
+// until and when both read the NAME of a bool, and an author reaching for a
+// condition is the failure both of them actually see —
+// "critic.satisfied == true", "{stage:critic}.lower() == \"ok\"". Only until
+// used to detect it; when fell through to "declares no output field
+// satisfied == true", which is true, unhelpful, and cost two rounds of one
+// build on its own.
+//
+// A space alone does not qualify: a stage name may legitimately contain one,
+// and every real instance carries an operator or a quote anyway.
+func looksLikeCondition(ref string) bool {
+	return strings.ContainsAny(ref, "={}<>!'\"")
+}
+
+// boolRefShape is what both slots need said when one is written as a condition.
+const boolRefShape = "It reads ONE bool field, by bare name — when:\"check.done\" — where the stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is NOT an expression: no ==, no quotes, no braces, no method calls. To branch on a critic being satisfied, have that stage declare a bool alongside its prose and point when at it."
+
 // checkLoopUntil validates a loop's early exit.
 //
 // Every refusal carries the shape, because the observed failures were not typos
@@ -517,7 +537,7 @@ func checkLoopUntil(s PipelineStage, ref string, done, inner map[string]map[stri
 	bad := func(why string) error {
 		return Error("stage " + s.Name + ": until " + why + ". " + untilShape)
 	}
-	if strings.ContainsAny(ref, "={}<>!'\"") || strings.Contains(ref, " ") {
+	if looksLikeCondition(ref) {
 		return bad("is written as a condition (" + strconv.Quote(ref) + ")")
 	}
 	if p := barePrefixProblem(s.Name, "until", ref); p != nil {
@@ -622,9 +642,12 @@ func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done m
 	if ref == "" {
 		return Error("stage " + s.Name + " is kind=branch but has no when (a \"NAME.field\" bool reference to an earlier stage)")
 	}
+	if looksLikeCondition(ref) {
+		return Error("stage " + s.Name + ": when is written as a condition (" + strconv.Quote(ref) + "). " + boolRefShape)
+	}
 	name, field := SplitStageRef(ref)
 	if field == "" {
-		return Error("stage " + s.Name + ": when must name a BOOL FIELD (e.g. \"frame.rejected\"), not just a stage")
+		return Error("stage " + s.Name + ": when must name a BOOL FIELD (e.g. \"frame.rejected\"), not just a stage. " + boolRefShape)
 	}
 	if err := checkStageRef(s.Name, "when", ref, done); err != nil {
 		return err

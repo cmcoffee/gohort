@@ -151,18 +151,30 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	}
 
 	var def PipelineDef
+	createdViaUpdate := false
 	if isUpdate {
 		existing, ok := t.findPipeline(args)
-		if !ok {
-			// Name the likeliest cause. This fires almost every time right
-			// after a REFUSED create: the definition was never stored, so the
-			// reflex to "fix it with update" has nothing to update, and two
-			// rounds go to discovering that.
-			return "", errors.New("no matching pipeline to update — nothing is stored under that name/id. If a create just failed, the pipeline was never saved: fix the definition and call action=\"create\" again. pipeline(action=\"list\") shows what you actually have")
-		}
-		def = existing
-		if name != "" {
-			def.Name = name
+		switch {
+		case ok:
+			def = existing
+			if name != "" {
+				def.Name = name
+			}
+		case name != "" && len(stages) > 0:
+			// Upsert. After a REFUSED create the definition was never stored,
+			// and the reflex is to "fix it" with update — which used to spend a
+			// round discovering there was nothing to fix. Saying so in the
+			// error did not stop it (one observed build made the same call
+			// twice in six rounds), and the intent is not ambiguous: a name
+			// plus a full stage list is a complete definition. Store it and
+			// name what happened, so the transcript still shows a create.
+			createdViaUpdate = true
+			isUpdate = false
+			def = PipelineDef{Name: name, Owner: t.user}
+		default:
+			// A partial patch with nothing to patch is still an error: there is
+			// no definition here to save, only edits to one that doesn't exist.
+			return "", errors.New("no matching pipeline to update — nothing is stored under that name/id, and this call carries no stages to store as a new one. pipeline(action=\"list\") shows what you actually have")
 		}
 	} else {
 		def = PipelineDef{Name: name, Owner: t.user}
@@ -181,6 +193,9 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	verb := "Created"
 	if isUpdate {
 		verb = "Updated"
+	}
+	if createdViaUpdate {
+		verb = "Created (nothing was stored under that name yet, so this was saved as a new pipeline rather than an edit)"
 	}
 
 	// Optional replaces pass — when Builder writes a v2 pipeline meant

@@ -341,3 +341,70 @@ func TestDoubleBracesAreRefusedRatherThanIgnored(t *testing.T) {
 		t.Errorf("args are templated and need the same guard: %v", err)
 	}
 }
+
+// until detected a condition; when did not. So the same author, in the same
+// build, wrote when:"{stage:critic}.lower().strip() == \"ok\"" and got the
+// brace-stripper echoing garbage back, then wrote
+// when:"critic.satisfied == true" and got "declares no output field
+// satisfied == true" — true, unhelpful, and two of that build's six refusals.
+func TestWhenDetectsAConditionLikeUntilDoes(t *testing.T) {
+	for _, when := range []string{
+		`{stage:critic}.lower().strip() == "satisfied"`,
+		"critic.satisfied == true",
+		"critic.satisfied != false",
+	} {
+		def := PipelineDef{Name: "p", Stages: []PipelineStage{
+			{Name: "critic", Kind: StageWorker, Prompt: "review",
+				Output: []PipelineField{{Name: "satisfied", Type: FieldBool}}},
+			{Name: "check", Kind: StageBranch, When: when},
+			{Name: "ship", Kind: StageWorker, Prompt: "ship"},
+		}}
+		err := def.Validate()
+		if err == nil {
+			t.Fatalf("when=%q is a condition, not a bool field name", when)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "written as a condition") {
+			t.Errorf("when=%q must be named as a condition, got:\n%s", when, msg)
+		}
+		if !strings.Contains(msg, "NOT an expression") {
+			t.Errorf("when=%q needs the shape spelled out, got:\n%s", when, msg)
+		}
+		if strings.Contains(msg, "declares no output field satisfied ==") {
+			t.Errorf("when=%q must not report the expression as a field name:\n%s", when, msg)
+		}
+	}
+	// The corrected form validates, so the advice is followable.
+	ok := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "critic", Kind: StageWorker, Prompt: "review",
+			Output: []PipelineField{{Name: "satisfied", Type: FieldBool}}},
+		{Name: "check", Kind: StageBranch, When: "critic.satisfied"},
+		{Name: "ship", Kind: StageWorker, Prompt: "ship"},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("the bare bool reference must validate: %v", err)
+	}
+}
+
+// Wanting to name a loop's result is reasonable — the old refusal said only
+// that the slot was wrong, and the author's next move was another rejected
+// create. Downstream, {stage:LOOPNAME} already IS that result.
+func TestLoopOutputRefusalNamesTheReplacement(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "refine", Kind: StageLoop, Count: 5,
+			Output: []PipelineField{{Name: "final_draft", Type: FieldString}},
+			Body: []PipelineStage{
+				{Name: "writer", Kind: StageWorker, Prompt: "rewrite {prev}"},
+			}},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("output on a loop must still refuse")
+	}
+	if !strings.Contains(err.Error(), "{stage:refine}") {
+		t.Errorf("name the reference that replaces it, got:\n%s", err)
+	}
+	if !strings.Contains(err.Error(), "BODY stage") {
+		t.Errorf("say where output does belong, got:\n%s", err)
+	}
+}
