@@ -614,6 +614,56 @@ func guardrailRuleTexts(agent AgentRecord) []string {
 	return out
 }
 
+// defaultNewAgentGuardrailHooks is the hook set a NEWLY created agent starts
+// with: the request, consequential tool calls, and the reply.
+//
+// This briefly defaulted to the first two only, on latency grounds — pre_output
+// sits between "reply ready" and "reply delivered", it buffers the token stream
+// until the verdict lands, and it was the most expensive hook in the set. The
+// cost was real; dropping the hook was the wrong answer to it.
+//
+// What made the reply check expensive was fixable and has been fixed: a blocked
+// round no longer spends a reasoning pass (the one-shot thinking-off), the
+// warden's retry re-samples instead of reproducing a collapsed generation, and
+// the pre_output block message finally describes what happened instead of
+// reporting a tool call that was never made. Pay down the cost, keep the check.
+//
+// And the check is the one that guarantees anything. pre_input judges the
+// REQUEST and pre_action judges the ACTIONS; neither sees what a tool result
+// put into the context mid-turn, so an agent steered by an injection after
+// round 1 walks past both. pre_output is the only hook that reads what is
+// actually about to be said. A default that leaves it off protects the two ends
+// nobody attacks and none of the middle.
+//
+// Stamped on the record at creation rather than left to the resolver's fallback
+// so it is a starting point an owner can see and change, not a rule buried in
+// code. It happens to match the fallback today; the slider exposes it as
+// "Balanced".
+func defaultNewAgentGuardrailHooks() []string {
+	return []string{guardHookPreInput, guardHookPreAction, guardHookPreOutput}
+}
+
+// defaultNewAgentFailClosed is where a NEWLY created agent starts on the
+// "refuse when the check can't run" question: YES.
+//
+// The warden is a model call and can collapse — this deployment's worker is
+// known to degenerate with thinking off, which is how the warden runs. Observed
+// live: a check reached no verdict twice and the reply went out, because
+// failing open is what an unset flag means.
+//
+// Open was the old default on the reasoning that an unchecked action beats a
+// wrongly-refused one for style and tone rules. That is true of style and tone
+// rules and false of the rules people actually write — the ones about what must
+// not be disclosed or done. A guardrail authored to stop something, that stops
+// nothing whenever the checker hiccups, is not a guardrail; it is a guardrail
+// most of the time, which is the property an attacker gets to choose.
+//
+// Stamped at creation rather than changed in the resolver, so an agent already
+// running open keeps running open. Flipping it under an existing agent would
+// convert warden flakiness into user-visible refusals on a redeploy, with
+// nothing said — the owner should make that trade knowingly.
+const defaultNewAgentFailClosed = true
+
 // resolveGuardrailHooks returns the hook points active for this agent: nil
 // when guardrails are unauthored (inert), the owner's chosen set filtered to
 // valid values, or the pre_action default when rules exist but no hook was
@@ -729,9 +779,39 @@ Output ONLY a JSON object, no prose:
 // worker tier, thinking off, no tools, low temperature. Returns an empty
 // slice (not an error) when the agent has no rules — callers treat "no rules"
 // as "nothing to check".
-func (T *OrchestrateApp) runWarden(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity) ([]guardrailVerdict, error) {
-	return T.runWardenWithFinding(ctx, agent, hookPoint, candidate, req, "")
+func (T *OrchestrateApp) runWarden(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, opts ...ChatOption) ([]guardrailVerdict, error) {
+	return T.runWardenWithFinding(ctx, agent, hookPoint, candidate, req, "", opts...)
 }
+
+// wardenRetryOptions re-sample a warden call that produced no readable verdict.
+//
+// The retry used to repeat the call EXACTLY: same prompt, same near-greedy
+// temperature, same thinking-off. A collapsed generation is a fixed point under
+// those conditions — re-running it reproduces the collapse, so the retry
+// existed without being able to change the answer, and the turn fell through to
+// the fail-open policy having spent a second warden call to learn nothing.
+//
+// Two changes, both aimed at the known cause. Thinking-off is what this
+// deployment's model degenerates under, so the retry gets a small budget — far
+// below what a judgement needs, enough to stop the collapse. And the
+// temperature comes up, for the same reason the loop's shake-out round does:
+// near-greedy sampling on identical context is what makes the orbit stable.
+//
+// Retry only. A verdict is meant to be near-deterministic, so the first call
+// keeps its 0.1 and no thinking, and nothing pays for this unless a check has
+// already failed.
+func wardenRetryOptions() []ChatOption {
+	return []ChatOption{
+		WithThink(true),
+		WithThinkBudget(wardenRetryThinkBudget),
+		WithTemperature(wardenRetryTemperature),
+	}
+}
+
+const (
+	wardenRetryThinkBudget = 256
+	wardenRetryTemperature = 0.6
+)
 
 // runWardenWithFinding is runWarden plus one TRUSTED line: something the
 // FRAMEWORK checked and is willing to vouch for.
@@ -749,7 +829,7 @@ func (T *OrchestrateApp) runWarden(ctx context.Context, agent AgentRecord, hookP
 // does not.
 //
 // Empty finding = ordinary check, byte-identical to what runWarden always sent.
-func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, finding string) ([]guardrailVerdict, error) {
+func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, finding string, opts ...ChatOption) ([]guardrailVerdict, error) {
 	rules := rulesInPlayFor(guardrailRules(agent), req)
 	if len(rules) == 0 {
 		// Either nothing was authored, or every authored rule is exempt for this
@@ -809,11 +889,13 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	resp, err := T.WorkerChat(cctx, msgs,
+	// Caller options last so a retry's re-sampling overrides these defaults.
+	call := append([]ChatOption{
 		WithRouteKey("app.orchestrate.warden"),
 		WithThink(false),
 		WithTemperature(0.1),
-	)
+	}, opts...)
+	resp, err := T.WorkerChat(cctx, msgs, call...)
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +1037,7 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 		// which is the house rule for every guard that drops something.
 		if worstVerdict(verdicts) == guardNoVerdict {
 			Log("[orchestrate.guardrail] agent=%s warden reached NO VERDICT at %s — retrying once", t.agent.ID, hookPoint)
-			retried, rerr := t.app.runWarden(t.ctx, t.agent, hookPoint, candidate, who)
+			retried, rerr := t.app.runWarden(t.ctx, t.agent, hookPoint, candidate, who, wardenRetryOptions()...)
 			if rerr == nil && worstVerdict(retried) != guardNoVerdict {
 				verdicts = retried
 			} else {
@@ -1029,7 +1111,7 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 		// tool. Appended to the block message rather than replacing it: the
 		// block still stands unless and until evidence overturns it, so the
 		// instructions for complying have to survive the invitation.
-		msg := guardrailBlockMessage(rule, reason)
+		msg := guardrailBlockMessageAt(hookPoint, rule, reason)
 		if invite := t.offerGuardrailAppeal(rule, hookPoint, candidate); invite != "" {
 			msg += invite
 			// Correctable regardless of the rule's own severity: an appeal is
@@ -1062,11 +1144,33 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 // restatement that the guardrail will keep blocking (already implied by "don't
 // retry"), and the note about the owner's view (nothing for the agent to act on).
 func guardrailBlockMessage(rule, reason string) string {
+	return guardrailBlockMessageAt("", rule, reason)
+}
+
+// guardrailBlockMessageAt is guardrailBlockMessage told WHICH hook fired, so it
+// can describe what actually happened.
+//
+// The single message said "That call did not run" at every hook. At pre_output
+// the model made no call — it wrote a reply — so on exactly the turns where a
+// reply is withheld it was told about a tool call it never attempted. Being
+// corrected for something you did not do is not a useful correction, and it
+// arrives on the round that most needs to land: the one deciding what to say
+// instead.
+func guardrailBlockMessageAt(hookPoint, rule, reason string) string {
 	msg := "Not permitted here: \"" + strings.TrimSpace(rule) + "\"."
 	if r := strings.TrimSpace(reason); r != "" {
 		msg += " " + r + "."
 	}
-	msg += " That call did not run. Do not reach the same result another way. Carry on with something that fits, or finish up and tell the user briefly that you couldn't do that part — without mentioning a rule or a restriction."
+	switch strings.TrimSpace(hookPoint) {
+	case guardHookPreOutput, guardHookPeriodic:
+		// No call was made. What was withheld is the text, and the useful
+		// instruction is about the NEXT text — including not circling back to
+		// the thing that was just refused, which is how a refused request gets
+		// answered a turn later.
+		msg += " That reply was WITHHELD and the user did not see it. Answer what was asked without touching what the rule protects, or say briefly that you can't help with that part — and do not return to it afterwards. Do not mention a rule or a restriction."
+	default:
+		msg += " That call did not run. Do not reach the same result another way. Carry on with something that fits, or finish up and tell the user briefly that you couldn't do that part — without mentioning a rule or a restriction."
+	}
 	return msg
 }
 

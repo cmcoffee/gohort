@@ -187,6 +187,107 @@ func (r *pipelineRun) openBlock(stage PipelineStage, title string) (string, func
 	}
 }
 
+// transcriptBody renders what a stage produced for a HUMAN reading the run.
+//
+// A stage that declares output fields returns JSON — that is the point, it is
+// what {stage:NAME.field}, fan_over, and until all read. But the transcript is
+// not a data path, and dumping the envelope there showed the reader a wall of
+// braces and quoted strings where the answer should be: the first card of a
+// research run displayed its four sub-questions as a JSON object, which reads
+// as a bug in the app even though the pipeline is working perfectly.
+//
+// So the JSON is rendered, not replaced. `raw` still goes to every consumer
+// unchanged; only the card body differs, and only for declared-output stages.
+// Free-text stages are passed through untouched.
+//
+// Field ORDER follows the declaration, never the map: two runs of the same
+// pipeline should read identically, and Go's map iteration guarantees they
+// wouldn't.
+func transcriptBody(stage PipelineStage, raw string, fields map[string]any) string {
+	if len(fields) == 0 || len(stage.Output) == 0 {
+		return raw
+	}
+	// One field carries the whole stage — a synthesized answer, a verdict. Its
+	// name is the stage's job, already on the card as the title, so a label
+	// above it says nothing twice.
+	single := len(stage.Output) == 1
+	var b strings.Builder
+	for _, f := range stage.Output {
+		v, ok := fields[f.Name]
+		if !ok {
+			continue
+		}
+		body := readableFieldValue(v)
+		if body == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		if !single {
+			b.WriteString(displayFromSnake(f.Name))
+			b.WriteString("\n")
+		}
+		b.WriteString(body)
+	}
+	if b.Len() == 0 {
+		return raw // nothing rendered — better the envelope than an empty card
+	}
+	return b.String()
+}
+
+// readableFieldValue turns one declared field's value into lines a reader can
+// scan. A list becomes bullets (the shape it almost always is: sub-questions,
+// findings, sources); a scalar becomes its own text; anything structured falls
+// back to indented JSON, which is still better than a single-line blob.
+func readableFieldValue(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(t)
+	case bool:
+		if t {
+			return "yes"
+		}
+		return "no"
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case []any:
+		var lines []string
+		for _, item := range t {
+			s := readableFieldValue(item)
+			if s == "" {
+				continue
+			}
+			// A nested structure inside a list keeps its own shape rather than
+			// being flattened onto a bullet that would run off the line.
+			if strings.Contains(s, "\n") {
+				lines = append(lines, "- "+strings.ReplaceAll(s, "\n", "\n  "))
+				continue
+			}
+			lines = append(lines, "- "+s)
+		}
+		return strings.Join(lines, "\n")
+	default:
+		if b, err := json.MarshalIndent(v, "", "  "); err == nil {
+			return string(b)
+		}
+		return fmt.Sprint(v)
+	}
+}
+
+// displayFromSnake turns a declared field name into a label: "sub_questions" →
+// "Sub questions". The inverse of SnakeFromDisplay, for the one direction that
+// needed it.
+func displayFromSnake(name string) string {
+	s := strings.TrimSpace(strings.ReplaceAll(name, "_", " "))
+	if s == "" {
+		return name
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 // runList executes a stage list in order and returns the last stage's
 // output. label prefixes the progress lines ("Stage" at the top level,
 // "  Stage" inside a loop pass) so the activity pane reads as a tree.
@@ -393,7 +494,9 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		}
 		out = strings.TrimSpace(out)
 		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
-		closeBlock(out)
+		// The transcript gets a READABLE rendering; `out` — the JSON a declared
+		// stage produces — stays exactly as it is for everything downstream.
+		closeBlock(transcriptBody(stage, out, fields))
 		if status != nil {
 			// Tail preview lets the user see WHAT the stage produced
 			// without having to wait for the whole pipeline to finish.

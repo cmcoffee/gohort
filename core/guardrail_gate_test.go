@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 	"sync"
 	"testing"
 )
@@ -343,7 +345,7 @@ func TestHaltSkipsOutputCorrectionRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if resp.Content != "Sorry, not this one." {
+	if deliveredReply(resp.Content) != "Sorry, not this one." {
 		t.Errorf("expected the rejection reply, got %q", resp.Content)
 	}
 	if calls > 1 {
@@ -401,7 +403,7 @@ func TestBlockingRuleSkipsCorrectionWithoutAHalt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if resp.Content != "Not one I'll get into." {
+	if deliveredReply(resp.Content) != "Not one I'll get into." {
 		t.Errorf("a blocking rule hands the reply to the rejection writer, got %q", resp.Content)
 	}
 	if calls > 1 {
@@ -551,7 +553,7 @@ func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
 	}
 	// Blocked every time, so once the redirect budget is spent the turn must hand
 	// over rather than let a round through.
-	if resp.Content != "Not that one." {
+	if deliveredReply(resp.Content) != "Not that one." {
 		t.Errorf("a block with no redirect left must hand over, got %q", resp.Content)
 	}
 	if checks < maxGuardrailOutputCorrections+1 {
@@ -709,7 +711,7 @@ func TestHiddenInterimStillBlocksTheReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if resp.Content != "Not that one." {
+	if deliveredReply(resp.Content) != "Not that one." {
 		t.Errorf("a hidden-interim path must still substitute on a pre_output block, got %q", resp.Content)
 	}
 	for _, m := range history {
@@ -741,7 +743,7 @@ func TestPreEmptedReplyCallsNoModel(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("a pre-empted turn must not call a model; called %d times", calls)
 	}
-	if resp.Content != "Not one I'll get into." {
+	if deliveredReply(resp.Content) != "Not one I'll get into." {
 		t.Errorf("the pre-empted reply must be returned verbatim, got %q", resp.Content)
 	}
 	if streamed.String() != "Not one I'll get into." {
@@ -797,10 +799,19 @@ func TestZeroValueDecisionIsNotCorrectable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if resp.Content != "Not that one." {
+	if deliveredReply(resp.Content) != "Not that one." {
 		t.Errorf("an unset severity must hand over rather than revise; got %q", resp.Content)
 	}
 	if calls > 1 {
 		t.Errorf("an unset severity must not buy a revise pass; model called %d times", calls)
 	}
+}
+
+// deliveredReply is the reply as the READER receives it. A guardrail-substituted
+// decline carries guardrailClosedNote for the model — telling it the refused
+// request is closed so it does not answer it a turn later — and every delivery
+// boundary strips it. Assertions about what someone sees have to strip it too,
+// or they are testing the internal copy.
+func deliveredReply(s string) string {
+	return strings.TrimSpace(textutil.StripMetaTags(s))
 }

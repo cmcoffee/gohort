@@ -338,6 +338,34 @@
       sectionsHost = el('div', {class: 'ui-section-grid'});
       root.appendChild(sectionsHost);
     }
+    // bareSectionHead writes a no-chrome section's title/subtitle above its
+    // body. No card, no padding, no wrapper around the body — the panel keeps
+    // managing its own layout, which is the whole reason it asked for
+    // no_chrome; it just stops being the one section kind whose heading is
+    // silently discarded.
+    //
+    // Nothing renders when there is no title and no subtitle, so every existing
+    // no-chrome section (which sets neither) is untouched.
+    function bareSectionHead(s, into) {
+      if (!s.title && !s.subtitle) return;
+      var head = el('div', {class: 'ui-section-bare-head'});
+      if (s.title) head.appendChild(el('div', {class: 'ui-section-h'}, [el('span', {text: s.title})]));
+      if (s.subtitle) head.appendChild(el('div', {class: 'ui-section-sub'}, [s.subtitle]));
+      into.appendChild(head);
+    }
+    // markMounted stamps every element a section mounted with data-ui-section,
+    // so "how many sections actually rendered?" has ONE answer for chromed and
+    // no-chrome sections alike. Anything reading the page from outside — a
+    // headless render check, a screenshot tool — can count
+    // '.ui-section,[data-ui-section]' instead of guessing at each panel's own
+    // root class and reporting a working page as blank.
+    function markMounted(nodes) {
+      (nodes || []).forEach(function(n) {
+        if (n && n.nodeType === 1 && !n.hasAttribute('data-ui-section')) {
+          n.setAttribute('data-ui-section', '');
+        }
+      });
+    }
     function hostForSection(s) {
       if (s.__host) return s.__host;
       if (tabbed) return groupHosts[s.group || 'General'] || sectionsHost;
@@ -353,14 +381,26 @@
       if (s.no_chrome) {
         if (inGrid) {
           var ncWrap = el('div', {class: 'ui-section-wide'});
+          bareSectionHead(s, ncWrap);
           if (s.body) mountComponent(s.body, ncWrap);
+          markMounted([ncWrap]);
           host.appendChild(ncWrap);
         } else if (s.body) {
+          bareSectionHead(s, host);
+          // Mount directly, then MARK what landed. A no-chrome section has no
+          // .ui-section card by design, so from outside the page it used to be
+          // invisible — and a page built only of them (chat, workbench,
+          // pipeline) counted zero sections and read as blank to anything
+          // inspecting the DOM. The marker is inert: no class, no style, no
+          // wrapper element that could break a panel's 100%-height layout.
+          var before = host.childNodes.length;
           mountComponent(s.body, host);
+          markMounted(Array.prototype.slice.call(host.childNodes, before));
         }
         return;
       }
       var section = el('div', {class: 'ui-section'});
+      markMounted([section]);
       // Collapsible — when the section is declared with Collapsed:true
       // and HAS a title, render the title bar clickable with a caret
       // that hides/shows the subtitle + body. Without a title there's
@@ -400,6 +440,23 @@
       if (inGrid && s.wide) section.classList.add('ui-section-wide');
       host.appendChild(section);
     });
+
+    // A full-height panel is a two-column layout that owns the viewport: a
+    // rail beside a working column. Every hand-written page that hosts one sets
+    // max_width 100%, arrived at independently each time — which is the tell
+    // that the requirement belongs to the PANEL rather than to each page.
+    //
+    // A STORED page cannot make that call reliably. Its width was decided when
+    // it was authored, so a page whose panel arrived later opens in a narrow
+    // column with a sidebar eating a quarter of it, and the only repair is to
+    // re-author it. Deciding it here, from what actually mounted, fixes the
+    // pages already written and means an author cannot get it wrong.
+    //
+    // Keyed on the panel roots, deliberately not on "has any section": a
+    // no-chrome section holding ordinary content keeps the column it asked for.
+    if (root.querySelector('.ui-chat, .ui-agent, .ui-pl, .ui-wb, .ui-cw, .ui-tw')) {
+      root.style.maxWidth = '100%';
+    }
 
     // Masonry packing for grid sections. Plain CSS grid aligns every row to its
     // tallest card, leaving holes under shorter cards (the "missing puzzle pieces"

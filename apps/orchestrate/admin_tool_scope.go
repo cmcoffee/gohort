@@ -569,15 +569,21 @@ func resolveAgentOwner(db Database, agentID string) string {
 }
 
 // attachGlobalToolToAgent makes a global tool reachable by one agent.
-// Additive and non-destructive:
+// Additive and non-destructive, and it clears BOTH gates in one save:
 //  1. If the tool is opted out on this agent (DisabledPersistentTools),
 //     drop it from the deny-list — the tool flows back in.
-//  2. Else if the agent carries a user-crafted allow-list (non-empty,
+//  2. AND if the agent carries a user-crafted allow-list (non-empty,
 //     non-sentinel AllowedTools), append the tool so its restricted view
 //     now includes it.
-//  3. Else the agent already sees the whole pool (nil/empty allow-list) —
-//     no-op. We deliberately do NOT create an allow-list here; that would
-//     flip the agent from "sees everything" to "sees only this tool".
+//  3. Otherwise the agent already sees the whole pool (nil/empty allow-list) —
+//     nothing more to do. We deliberately do NOT create an allow-list here;
+//     that would flip the agent from "sees everything" to "sees only this one".
+//
+// Steps 1 and 2 used to be alternatives, and that was the bug: agentSeesGlobalTool
+// requires the deny-list to be silent AND the allow-list to name the tool, so an
+// agent that had both a deny entry and an allow-list came back OFF no matter how
+// many times the pill was switched on — it returned 204, and the pill was
+// unchecked again on the next load.
 func attachGlobalToolToAgent(db Database, owner, agentID, toolName string) error {
 	if db == nil || agentID == "" || toolName == "" {
 		return fmt.Errorf("attach requires db, agent, and tool")
@@ -598,28 +604,50 @@ func attachGlobalToolToAgent(db Database, owner, agentID, toolName string) error
 	if !ok {
 		return fmt.Errorf("agent %q not found", agentID)
 	}
+	// A "no tools" sentinel is refused rather than silently un-pinned:
+	// attaching a tool to an agent the user pinned to zero tools is
+	// contradictory. Said out loud, because the alternative — accept the toggle
+	// and store nothing — is indistinguishable from the bug above.
+	if isNoToolsSentinel(rec.AllowedTools) {
+		return fmt.Errorf("%q is set to no optional tools — turn tools on in its Tools modal before granting one here", agentName(rec))
+	}
+	changed := false
 	// 1) Re-enable an explicitly opted-out tool.
 	for i, n := range rec.DisabledPersistentTools {
 		if n == toolName {
 			rec.DisabledPersistentTools = append(rec.DisabledPersistentTools[:i], rec.DisabledPersistentTools[i+1:]...)
-			_, err := saveAgent(udb, rec)
-			return err
+			changed = true
+			break
 		}
 	}
-	// 2) Add to a user-crafted allow-list. A "no tools" sentinel is left
-	// alone — attaching a tool to an agent the user pinned to zero tools is
-	// contradictory, so we no-op rather than silently un-pin it.
-	if len(rec.AllowedTools) > 0 && !isNoToolsSentinel(rec.AllowedTools) {
+	// 2) Add to a user-crafted allow-list.
+	if len(rec.AllowedTools) > 0 {
 		canon := canonicalToolName(toolName)
+		listed := false
 		for _, n := range rec.AllowedTools {
 			if canonicalToolName(n) == canon {
-				return nil // already allowed
+				listed = true
+				break
 			}
 		}
-		rec.AllowedTools = append(rec.AllowedTools, toolName)
-		_, err := saveAgent(udb, rec)
-		return err
+		if !listed {
+			rec.AllowedTools = append(rec.AllowedTools, toolName)
+			changed = true
+		}
 	}
 	// 3) Default agent already sees the whole pool — nothing to do.
-	return nil
+	if !changed {
+		return nil
+	}
+	_, err := saveAgent(udb, rec)
+	return err
+}
+
+// agentName is the agent's display name, falling back to its id — for error
+// text a user reads, where "agent-1754…" is better than an empty string.
+func agentName(rec AgentRecord) string {
+	if n := strings.TrimSpace(rec.Name); n != "" {
+		return n
+	}
+	return rec.ID
 }

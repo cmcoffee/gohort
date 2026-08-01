@@ -199,9 +199,77 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// bound to the app's agent. Reuses ALL the chat/session/runner plumbing
 		// — customapps stores no chat state of its own.
 		T.handleChat(w, r, appdb, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
+	case rest == "pipeline" || strings.HasPrefix(rest, "pipeline/"):
+		// The app's RUN surface, the same trick one level over: a pipeline
+		// section's PipelinePanel points at pipeline/*, and these dispatch into
+		// orchestrate's run machinery bound to the app's pipeline. customapps
+		// stores no transcript of its own.
+		T.handlePipeline(w, r, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "pipeline"), "/"))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// latestRunForApp returns the app pipeline's last finished run for the CALLING
+// user, as (final output, full run JSON). Both empty when the app binds no
+// pipeline or nothing has finished — an action script then reads its defaults
+// and reports honestly, instead of failing on a missing variable.
+//
+// The full JSON carries the per-stage blocks, because "save the debate" means
+// the rounds, not just the verdict.
+func (T *CustomApps) latestRunForApp(spec AppSpec, r *http.Request) (string, string) {
+	if strings.TrimSpace(spec.PipelineID) == "" {
+		return "", ""
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		return "", ""
+	}
+	def, ok := orch.LookupAppPipeline(spec.Owner, spec.PipelineID)
+	if !ok {
+		return "", ""
+	}
+	// AuthCurrentUser, not RequireUser: this is an enrichment, so a missing
+	// session means "no run to offer", never a 401 written over the action's
+	// own response.
+	user := AuthCurrentUser(r)
+	if user == "" {
+		return "", ""
+	}
+	run, ok := orch.PublicLatestPipelineRun(user, def.ID)
+	if !ok {
+		return "", ""
+	}
+	b, err := json.Marshal(run)
+	if err != nil {
+		return run.Output, ""
+	}
+	return run.Output, string(b)
+}
+
+// handlePipeline dispatches the app's pipeline sub-routes to orchestrate. sub is
+// the path after "pipeline/" ("stream" | "sessions" | "sessions/<id>").
+//
+// The definition is resolved against the app's OWNER — a shared app runs the
+// owner's recipe — while orchestrate scopes the run transcripts to the calling
+// user, so each user keeps their own history. Same ownership split the record
+// store uses.
+func (T *CustomApps) handlePipeline(w http.ResponseWriter, r *http.Request, spec AppSpec, sub string) {
+	if strings.TrimSpace(spec.PipelineID) == "" {
+		http.Error(w, "this app has no pipeline bound", http.StatusNotFound)
+		return
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	def, ok := orch.LookupAppPipeline(spec.Owner, spec.PipelineID)
+	if !ok {
+		http.Error(w, "the app's pipeline could not be resolved", http.StatusNotFound)
+		return
+	}
+	orch.PublicHandlePipeline(w, r, def, sub)
 }
 
 // recordsInvalidationBridge returns a <script> that refreshes the app's
@@ -425,6 +493,10 @@ const shareModalScript = `<script>
             if (!ok) { cb.checked = false; return; }
             post('_app/public?slug=' + encodeURIComponent(slug) + '&on=true', cb, function(d){
               if (d.url) { input.value = d.url; linkRow.style.display = 'flex'; }
+              // Say up front which parts the link cannot carry. Found out the
+              // hard way, the answer looks like a broken app: the panel renders
+              // and then every request behind it is refused.
+              if (d.note && window.uiAlert) window.uiAlert(d.note);
             });
           });
         }
@@ -836,6 +908,17 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner 
 	}
 	recJSON, _ := json.Marshal(records)
 	args := map[string]any{"records": string(recJSON)}
+	// An app bound to a pipeline also hands its actions the LAST FINISHED RUN.
+	// The transcript lives in the pipeline's run store, not the app's records,
+	// so without this an action cannot reach the thing the user just watched
+	// happen — which makes the obvious button, "save this run to history",
+	// unwritable. It was written anyway, against an invented `pipeline_output`
+	// env var, and it printed valid JSON saying "run a debate first" forever.
+	// Always set, empty when there is no finished run, so a script reads them
+	// with a default like every other input.
+	out, runJSON := T.latestRunForApp(spec, r)
+	args["pipeline_output"] = out
+	args["pipeline_run"] = runJSON
 	for k, vs := range r.URL.Query() {
 		if len(vs) > 0 {
 			args[k] = vs[0]
@@ -1103,7 +1186,11 @@ func (T *CustomApps) handlePublishApp(w http.ResponseWriter, r *http.Request, us
 		}
 		SaveAppSpec(spec)
 		T.DB.Set(publicAppsIndex, spec.PublicToken, publicRef{Owner: user, Slug: slug})
-		writeJSON(w, map[string]any{"ok": true, "public": true, "url": T.publicURL(spec.PublicToken)})
+		out := map[string]any{"ok": true, "public": true, "url": T.publicURL(spec.PublicToken)}
+		if note := publishLimitationNote(spec); note != "" {
+			out["note"] = note
+		}
+		writeJSON(w, out)
 		return
 	}
 	if spec.PublicToken != "" {
@@ -1196,11 +1283,103 @@ func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
 	}
 	page["public"] = true    // runtime: suppress the live-sessions pill
 	delete(page, "back_url") // no Back link to the gated dashboard
+	publicizeSessionPanels(page)
 	out, err := json.Marshal(page)
 	if err != nil {
 		out = spec.Page
 	}
 	return bytes.ReplaceAll(out, oldPrefix, newPrefix)
+}
+
+// sessionBoundPanels are the component types whose endpoints exist only on the
+// AUTHENTICATED surface — they run a model on the owner's account and keep
+// per-user state, which is exactly what a public capability URL must not hand
+// to anyone holding a link.
+var sessionBoundPanels = map[string]string{
+	"pipeline_panel":   "multi-stage run",
+	"chat_panel":       "chat",
+	"agent_loop_panel": "chat",
+	"workbench_panel":  "document workbench",
+	"codewriter_panel": "workbench",
+	"article_editor":   "editor",
+}
+
+// publishLimitationNote warns, at the moment the link is minted, which parts of
+// the app the link cannot carry. Empty when everything in it works publicly.
+func publishLimitationNote(spec AppSpec) string {
+	var page map[string]any
+	if err := json.Unmarshal(spec.Page, &page); err != nil {
+		return ""
+	}
+	secs, _ := page["sections"].([]any)
+	seen := map[string]bool{}
+	var kinds []string
+	for _, item := range secs {
+		sec, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		body, ok := sec["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if kind, ok := sessionBoundPanels[strings.TrimSpace(fmt.Sprint(body["type"]))]; ok && !seen[kind] {
+			seen[kind] = true
+			kinds = append(kinds, kind)
+		}
+	}
+	if len(kinds) == 0 {
+		return ""
+	}
+	sort.Strings(kinds)
+	return "Heads up: the " + strings.Join(kinds, " and the ") + " won't work on the public link. " +
+		"Those run a model on your account and keep their own history, so they need a signed-in session — " +
+		"visitors will see a short note in their place. Everything else on the page (tables, charts, data sources) works normally."
+}
+
+// publicizeSessionPanels swaps any session-bound panel for an empty state that
+// says why it isn't there.
+//
+// Published, those panels rendered in full and then 403'd on every request they
+// made: the run history sat on "Loading…", the submit button did nothing, and
+// the page gave no clue that the link — not the app — was the reason. The app
+// works perfectly for the signed-in owner, so the report is always "it's a bit
+// buggy" rather than "publishing doesn't support this", and the hunt starts in
+// the wrong place.
+//
+// A refusal the reader can see beats a control that lies. The rest of the page
+// (tables, charts, data sources) still works, so a mixed app stays publishable
+// and only loses the part that could never have worked.
+func publicizeSessionPanels(page map[string]any) {
+	secs, ok := page["sections"].([]any)
+	if !ok {
+		return
+	}
+	for _, item := range secs {
+		sec, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		body, ok := sec["body"].(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, ok := sessionBoundPanels[strings.TrimSpace(fmt.Sprint(body["type"]))]
+		if !ok {
+			continue
+		}
+		sec["body"] = map[string]any{
+			"type":  "empty_state",
+			"icon":  "🔒",
+			"title": "This part needs a signed-in session",
+			"hint": "The " + kind + " runs on the owner's account and keeps its own history, so it is not part of a shared link. " +
+				"Open the app from the dashboard to use it.",
+		}
+		// The panel managed its own layout; an empty state wants the ordinary
+		// card, and the section's title is worth keeping now that something
+		// under it needs explaining.
+		delete(sec, "no_chrome")
+	}
 }
 
 // handlePublicData runs one data source for the public surface: in the OWNER's

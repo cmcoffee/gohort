@@ -30,12 +30,21 @@ const AppSpecTable = "app_specs"
 // the primary-key field of the per-app record store. AgentID optionally binds an
 // agent that powers the app's chat surface.
 type AppSpec struct {
-	Slug      string          `json:"slug"`
-	Name      string          `json:"name"`
-	Desc      string          `json:"desc"`
-	Owner     string          `json:"owner"`
-	AgentID   string          `json:"agent_id,omitempty"`
-	Page      json.RawMessage `json:"page"`
+	Slug    string `json:"slug"`
+	Name    string `json:"name"`
+	Desc    string `json:"desc"`
+	Owner   string `json:"owner"`
+	AgentID string `json:"agent_id,omitempty"`
+	// PipelineID optionally binds a stored PipelineDef that a `pipeline`
+	// section runs: the app's page becomes a submit form + streaming stage
+	// transcript + run history, served by the host proxying to orchestrate's
+	// existing run surface. The agent binding's counterpart — AgentID is "a
+	// conversation lives here", PipelineID is "a multi-stage RUN lives here".
+	// Resolved against the OWNER's pipelines (like scripts, which run in the
+	// owner's sandbox); the run TRANSCRIPTS are per calling user, so a shared
+	// app gives everyone the same recipe and their own history.
+	PipelineID string          `json:"pipeline_id,omitempty"`
+	Page       json.RawMessage `json:"page"`
 	// Sections is the AUTHORING form of the page — the declarative sections
 	// array the author passed to app_def, stored verbatim alongside the Page it
 	// compiled into. Page is the RENDERED shape (bodies keyed by component

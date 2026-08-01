@@ -1,6 +1,9 @@
 package orchestrate
 
 import (
+	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -325,5 +328,171 @@ func TestDisabledSurvivesWholeRecordSave(t *testing.T) {
 	}
 	if !got.GuardrailsDisabled {
 		t.Error("the suspended state must round-trip through storage")
+	}
+}
+
+// A newly created agent starts on all three of request / actions / reply.
+//
+// It briefly started on the first two, for latency. What made the reply check
+// expensive was fixed instead (no reasoning pass on a blocked round, a warden
+// retry that re-samples, a block message that describes the right event), and
+// the reply check is the only hook that reads what is about to be SAID — the
+// other two never see what a tool result put into the context mid-turn.
+func TestNewAgentStartsOnAllThreeEnds(t *testing.T) {
+	rec := agentRecordFromArgs(map[string]any{
+		"name": "Fresh", "orchestrator_prompt": "p",
+	})
+	got := map[string]bool{}
+	for _, h := range rec.GuardrailHooks {
+		got[h] = true
+	}
+	for _, want := range []string{guardHookPreInput, guardHookPreAction, guardHookPreOutput} {
+		if !got[want] {
+			t.Errorf("a new agent is missing %s: %v", want, rec.GuardrailHooks)
+		}
+	}
+	// periodic stays opt-in — it is the only hook whose cost grows with how
+	// long a turn runs.
+	if got[guardHookPeriodic] {
+		t.Errorf("periodic should not be on by default: %v", rec.GuardrailHooks)
+	}
+	// Inert until a rule exists — a new agent pays nothing for carrying this.
+	if h := resolveGuardrailHooks(rec); h != nil {
+		t.Errorf("hooks must stay inert with no guardrail authored, got %v", h)
+	}
+	rec.Guardrails = "never send money"
+	active := resolveGuardrailHooks(rec)
+	if !active[guardHookPreInput] || !active[guardHookPreAction] || !active[guardHookPreOutput] {
+		t.Errorf("the stamped set should be what runs, got %v", active)
+	}
+}
+
+// An agent that never chose hooks keeps the broader fallback. Changing that
+// would silently strip pre_output — the only check that guarantees a reply is
+// clean — from every existing agent, on a redeploy, with nothing said.
+func TestExistingAgentsKeepTheBroaderFallback(t *testing.T) {
+	rec := AgentRecord{Name: "Old", Guardrails: "never send money"} // no hooks stored
+	active := resolveGuardrailHooks(rec)
+	for _, h := range []string{guardHookPreInput, guardHookPreAction, guardHookPreOutput} {
+		if !active[h] {
+			t.Errorf("the fallback lost %s: %v", h, active)
+		}
+	}
+}
+
+// The strictness slider's presets and the server's defaults have to name the
+// same sets. A new agent stamped with a combination no level expresses would
+// open the Rules modal to a slider greyed out as "Custom" — the setting looking
+// broken on a brand-new agent, which is the first thing anyone sees.
+func TestSliderHasALevelForEveryDefault(t *testing.T) {
+	raw, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatalf("read asset: %v", err)
+	}
+	// Every hooks:[...] array the slider declares, as a SET. Compared
+	// order-insensitively because the UI sorts both sides before matching — a
+	// test stricter than the code it guards fails on a reordering that changes
+	// nothing.
+	levels := map[string]bool{}
+	for _, m := range regexp.MustCompile(`hooks:\s*\[([^\]]*)\]`).FindAllStringSubmatch(string(raw), -1) {
+		var names []string
+		for _, q := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(m[1], -1) {
+			names = append(names, q[1])
+		}
+		sort.Strings(names)
+		levels[strings.Join(names, ",")] = true
+	}
+	if len(levels) < 3 {
+		t.Fatalf("could not read the slider's levels out of the asset (found %d)", len(levels))
+	}
+
+	key := func(hooks []string) string {
+		c := append([]string(nil), hooks...)
+		sort.Strings(c)
+		return strings.Join(c, ",")
+	}
+	if k := key(defaultNewAgentGuardrailHooks()); !levels[k] {
+		t.Errorf("no strictness level matches the new-agent default (%s).\n"+
+			"The slider would read \"Custom\" and sit disabled on every new agent.", k)
+	}
+	var fb []string
+	for h := range resolveGuardrailHooks(AgentRecord{Guardrails: "x"}) {
+		fb = append(fb, h)
+	}
+	if k := key(fb); !levels[k] {
+		t.Errorf("no strictness level matches the server fallback (%s) — an older agent would read as Custom", k)
+	}
+}
+
+// A warden retry has to be able to reach a DIFFERENT answer than the call it is
+// retrying. Repeating the same prompt at the same near-greedy temperature with
+// thinking off reproduces a collapsed generation — the retry spent a second
+// call to learn nothing, then fell through to the fail-open policy. Observed
+// live: "warden reached NO VERDICT at pre_output — retrying once", and the
+// reply went out.
+func TestWardenRetryIsResampled(t *testing.T) {
+	opts := wardenRetryOptions()
+	if len(opts) == 0 {
+		t.Fatal("the retry re-runs the identical call and cannot change its answer")
+	}
+	// Applied the way the warden applies them: defaults first, retry last.
+	var cfg ChatConfig
+	for _, o := range append([]ChatOption{WithThink(false), WithTemperature(0.1)}, opts...) {
+		o(&cfg)
+	}
+
+	if cfg.Think == nil || !*cfg.Think {
+		t.Error("thinking-off is the known degeneration trigger; the retry must not inherit it")
+	}
+	if cfg.ThinkBudget == nil || *cfg.ThinkBudget != wardenRetryThinkBudget {
+		t.Errorf("retry think budget = %v, want %d", cfg.ThinkBudget, wardenRetryThinkBudget)
+	}
+	if cfg.Temperature == nil || *cfg.Temperature <= 0.1 {
+		t.Errorf("retry temperature = %v; near-greedy on identical context is what makes a collapse stable", cfg.Temperature)
+	}
+	// The budget stays small — this is a verdict, not an essay, and every
+	// retry is latency a person is waiting through.
+	if wardenRetryThinkBudget > 512 {
+		t.Errorf("retry think budget %d is too large for a two-word verdict", wardenRetryThinkBudget)
+	}
+}
+
+// The FIRST call stays near-deterministic. A verdict that varies run to run is
+// worse than one that occasionally needs retrying, and nothing should pay for
+// the retry's settings unless a check has already failed.
+func TestWardenFirstCallStaysDeterministic(t *testing.T) {
+	var cfg ChatConfig
+	for _, o := range []ChatOption{WithRouteKey("app.orchestrate.warden"), WithThink(false), WithTemperature(0.1)} {
+		o(&cfg)
+	}
+	if cfg.Think == nil || *cfg.Think {
+		t.Error("the first warden call should not think")
+	}
+	if cfg.Temperature == nil || *cfg.Temperature != 0.1 {
+		t.Errorf("the first warden call should stay near-greedy, got %v", cfg.Temperature)
+	}
+}
+
+// A new agent starts fail-CLOSED: when the warden cannot reach a verdict, the
+// action does not happen. Observed live before this: a check collapsed twice
+// and the reply went out, because an unset flag means fail open.
+func TestNewAgentStartsFailClosed(t *testing.T) {
+	rec := agentRecordFromArgs(map[string]any{"name": "Fresh", "orchestrator_prompt": "p"})
+	if !rec.GuardrailFailClosed {
+		t.Error("a new agent should refuse when the check cannot run")
+	}
+	// Inert until a rule exists — carrying it costs a new agent nothing.
+	if h := resolveGuardrailHooks(rec); h != nil {
+		t.Errorf("guardrails must stay inert with no rule authored, got %v", h)
+	}
+}
+
+// An existing agent keeps whatever it was running. Flipping this under one
+// already in service would turn warden flakiness into user-visible refusals on
+// a redeploy, with nothing said — that trade is the owner's to make.
+func TestExistingAgentsKeepTheirFailPolicy(t *testing.T) {
+	open := AgentRecord{Name: "Old", Guardrails: "never send money"} // never asked
+	if open.GuardrailFailClosed {
+		t.Error("an existing record must not gain fail-closed implicitly")
 	}
 }

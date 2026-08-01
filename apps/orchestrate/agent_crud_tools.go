@@ -657,6 +657,14 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 		// unified store scoped to the agent (see create_agent, post-save) —
 		// the record no longer embeds tool copies.
 		Evals: evalsFromArgs(args),
+		// The hook set a new agent starts on. Inert until a guardrail is
+		// authored (resolveGuardrailHooks returns nil with no rules), so this
+		// costs a brand-new agent nothing — it just decides what happens the
+		// first time someone writes a rule.
+		GuardrailHooks: defaultNewAgentGuardrailHooks(),
+		// Inert until a rule is authored, like the hooks above — this only
+		// decides what happens the first time a check cannot reach a verdict.
+		GuardrailFailClosed: defaultNewAgentFailClosed,
 	}
 	if v, ok := args["gap_check"].(bool); ok {
 		rec.GapCheck = v

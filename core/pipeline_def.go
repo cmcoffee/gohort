@@ -335,81 +335,108 @@ func (d PipelineDef) Validate() error {
 // validated stage's declared fields, so a lookup miss IS the
 // forward/unknown-reference error. inLoop marks the recursive call, which
 // is how the one-level depth rule is enforced.
+// Every INDEPENDENT problem is reported, not just the first.
+//
+// A pipeline is authored as one object, so its mistakes arrive as a set: a
+// wrong field type, an output on a stage that can't take one, and a fan_over
+// written as a prompt template were all present in the same submission, and
+// returning them one at a time turned one fix into three round-trips, each
+// costing a full re-send of the definition. Checks that would CASCADE are still
+// suppressed — an unnamed stage skips its own remaining checks, and a field
+// reference into a stage whose output failed is that stage's problem, not a
+// second one.
 func validateStageList(stages []PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) error {
+	var probs []string
+	badOutput := map[string]bool{} // stages whose declared output didn't parse
 	for i, s := range stages {
-		if s.Name == "" {
-			return Error("stage " + strconv.Itoa(i+1) + " has no name")
-		}
-		if _, dup := done[s.Name]; dup {
-			return Error("duplicate stage name: " + s.Name)
-		}
-		if strings.Contains(s.Name, ".") {
+		// Identity first: every check below reads the name, and reporting
+		// "stage : output field..." for a nameless stage helps nobody. These
+		// end the stage rather than adding to it.
+		switch {
+		case s.Name == "":
+			probs = append(probs, "stage "+strconv.Itoa(i+1)+" has no name")
+			continue
+		case done[s.Name] != nil || badOutput[s.Name]:
+			probs = append(probs, "duplicate stage name: "+s.Name)
+			continue
+		case strings.Contains(s.Name, "."):
 			// A dot would make {stage:a.b} ambiguous between a stage
 			// named "a.b" and field "b" of stage "a".
-			return Error("stage name may not contain a dot: " + s.Name)
+			probs = append(probs, "stage name may not contain a dot: "+s.Name)
+			continue
+		}
+		add := func(err error) {
+			if err != nil {
+				probs = append(probs, err.Error())
+			}
 		}
 		if s.Kind == StageAgent && s.Agent == "" {
-			return Error("stage " + s.Name + " is kind=agent but names no agent")
+			probs = append(probs, "stage "+s.Name+" is kind=agent but names no agent")
 		}
 		// A fanout stage runs as a worker by default (over the stage's
 		// resolved tools) and dispatches only when it names an agent — so
 		// the agent is optional. What it MUST have is something to fan
 		// over.
 		if s.Kind == StageFanout && s.FanOver == "" {
-			return Error("stage " + s.Name + " is kind=fanout but names no fan_over stage")
+			probs = append(probs, "stage "+s.Name+" is kind=fanout but names no fan_over stage")
 		}
 		if s.Kind == StageFanout && len(s.Output) > 0 {
-			return Error("stage " + s.Name + ": output is not valid on kind=fanout (a fanout produces a joined per-branch block, not one JSON object)")
+			probs = append(probs, "stage "+s.Name+": output is not valid on kind=fanout (a fanout produces a joined per-branch block, not one JSON object)")
 		}
 		if s.Kind != StageLoop && len(s.Body) > 0 {
-			return Error("stage " + s.Name + ": body is only valid on kind=loop")
+			probs = append(probs, "stage "+s.Name+": body is only valid on kind=loop")
 		}
 		if s.Kind == StageLoop {
-			if err := validateLoopStage(s, done, inLoop); err != nil {
-				return err
-			}
+			add(validateLoopStage(s, done, inLoop))
 		}
 		if s.Kind == StageBranch {
-			if err := validateBranchStage(s, stages, i, done, inLoop); err != nil {
-				return err
-			}
+			add(validateBranchStage(s, stages, i, done, inLoop))
 		} else if s.When != "" || s.SkipTo != "" {
-			return Error("stage " + s.Name + ": when/skip_to are only valid on kind=branch")
+			probs = append(probs, "stage "+s.Name+": when/skip_to are only valid on kind=branch")
 		}
-		if err := validateStageModel(s); err != nil {
-			return err
-		}
+		add(validateStageModel(s))
 		if s.Kind == StageTool {
-			if err := validateToolStage(s, done); err != nil {
-				return err
-			}
+			add(validateToolStage(s, done))
 		} else if s.Tool != "" || len(s.Args) > 0 {
-			return Error("stage " + s.Name + ": tool/args are only valid on kind=tool")
+			probs = append(probs, "stage "+s.Name+": tool/args are only valid on kind=tool")
 		}
 		for _, ref := range stageRefs(s.Prompt) {
-			if err := checkStageRef(s.Name, "prompt", ref, done); err != nil {
-				return err
+			if name, _ := SplitStageRef(ref); !badOutput[name] {
+				add(checkStageRef(s.Name, "prompt", ref, done))
 			}
 		}
 		if s.FanOver != "" {
-			if err := checkStageRef(s.Name, "fan_over", s.FanOver, done); err != nil {
-				return err
-			}
-			// A field reference has to BE a list; the whole-output form
-			// is parsed leniently at run time and can't be checked here.
-			if src, field := SplitStageRef(s.FanOver); field != "" {
-				if t := done[src][field]; t != FieldList {
-					return Error("stage " + s.Name + " fans over " + s.FanOver + ", which is declared " + string(t) + ", not list")
+			src, field := SplitStageRef(s.FanOver)
+			if !badOutput[src] {
+				add(checkStageRef(s.Name, "fan_over", s.FanOver, done))
+				// A field reference has to BE a list; the whole-output form
+				// is parsed leniently at run time and can't be checked here.
+				if field != "" && done[src] != nil {
+					if t := done[src][field]; t != FieldList {
+						probs = append(probs, "stage "+s.Name+" fans over "+s.FanOver+", which is declared "+string(t)+", not list")
+					}
 				}
 			}
 		}
 		own, err := validateOutputFields(s.Name, s.Output, false)
 		if err != nil {
-			return err
+			probs = append(probs, err.Error())
+			badOutput[s.Name] = true
+		}
+		// Registered even when it failed, so a LATER stage referencing this one
+		// by name doesn't also report "unknown stage" — one mistake, one line.
+		if own == nil {
+			own = map[string]PipelineFieldType{}
 		}
 		done[s.Name] = own
 	}
-	return nil
+	switch len(probs) {
+	case 0:
+		return nil
+	case 1:
+		return Error(probs[0])
+	}
+	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
 // validateLoopStage checks a kind="loop" stage and its Body. The body is
@@ -583,10 +610,27 @@ func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done m
 // that stage actually declares). where names the site of the reference
 // so the error tells the author which part of the stage to fix.
 func checkStageRef(stage, where, ref string, done map[string]map[string]PipelineFieldType) error {
+	// A reference written as a PROMPT template — "{stage:decompose.items}" or
+	// "{decompose.items}" — is the single most common way this fails, because
+	// prompts really do use that form and the two sites look alike. Say which
+	// form belongs here instead of reporting the braces as part of a stage name
+	// nobody named that.
+	if trimmed := strings.TrimSpace(ref); strings.ContainsAny(trimmed, "{}") {
+		bare := strings.TrimSpace(strings.Trim(trimmed, "{}"))
+		bare = strings.TrimPrefix(bare, "stage:")
+		return Error("stage " + stage + " " + where + " is written as a prompt template (" + trimmed +
+			"). It takes a BARE reference — " + strconv.Quote(bare) + " — not {…}. The {stage:NAME.field} form is for PROMPT text only.")
+	}
 	name, field := SplitStageRef(ref)
 	fields, ok := done[name]
 	if !ok {
-		return Error("stage " + stage + " " + where + " references unknown or later stage: " + name)
+		// "unknown or later stage: X" named two possibilities and neither fix.
+		// They are opposite fixes — rename, or reorder — and the reader cannot
+		// choose between them without knowing that position in the array IS
+		// execution order. So state the rule, not just the symptom.
+		return Error("stage " + stage + " " + where + " references " + strconv.Quote(name) +
+			", which has not run at that point. Either no stage is named that, or it is listed AFTER this one — " +
+			"stages run in the order given and a reference only ever reaches BACKWARD, so a later stage has to be moved earlier in the array.")
 	}
 	if field == "" {
 		return nil
@@ -650,7 +694,14 @@ func validateOutputFields(stage string, fields []PipelineField, nested bool) (ma
 		switch f.resolved() {
 		case FieldString, FieldNumber, FieldBool, FieldList, FieldObject:
 		default:
-			return nil, Error("stage " + stage + ": output field " + f.Name + " has unknown type " + string(f.Type))
+			// Name the valid set. Without it the author has to guess which
+			// spelling of "a bunch of things" this vocabulary uses — and the
+			// obvious guesses ("array", "string[]") each cost a round-trip,
+			// after which the usual recovery is to abandon the declared output
+			// entirely and hand-parse a JSON string, losing the field
+			// addressing that fan_over and until depend on.
+			return nil, Error("stage " + stage + ": output field " + f.Name + " has unknown type " + strconv.Quote(string(f.Type)) +
+				" — use one of: string, number, bool, list, object. A list of items (sub-questions, findings, links) is type list, which is also what fan_over reads.")
 		}
 		if len(f.Fields) > 0 {
 			if nested {

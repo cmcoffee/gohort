@@ -1,0 +1,151 @@
+package core
+
+import (
+	"strings"
+	"testing"
+)
+
+// Six authoring rounds were spent on three error messages that each named a
+// symptom without its fix. A pipeline is authored by someone who cannot see the
+// validator, so the message IS the documentation at that moment.
+
+func TestOutputTypeErrorNamesTheValidTypes(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "decompose", Kind: StageWorker, Prompt: "split",
+			Output: []PipelineField{{Name: "items", Type: "array"}}},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("array is not a field type — it must be refused")
+	}
+	for _, want := range []string{"string", "number", "bool", "list", "object"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error must name the valid type %q so the author stops guessing: %v", want, err)
+		}
+	}
+	// The nearest right answer for the thing they were declaring.
+	if !strings.Contains(err.Error(), "fan_over") {
+		t.Errorf("a rejected list-shaped type should point at list + fan_over: %v", err)
+	}
+}
+
+func TestFanOverRejectsThePromptTemplateForm(t *testing.T) {
+	for _, ref := range []string{"{stage:decompose.items}", "{decompose.items}"} {
+		def := PipelineDef{Name: "p", Stages: []PipelineStage{
+			{Name: "decompose", Kind: StageWorker, Prompt: "split",
+				Output: []PipelineField{{Name: "items", Type: FieldList}}},
+			{Name: "dig", Kind: StageFanout, Prompt: "look at {item}", FanOver: ref},
+		}}
+		err := def.Validate()
+		if err == nil {
+			t.Fatalf("%s is a prompt template, not a fan_over reference", ref)
+		}
+		// It must say WHICH form belongs here, and show the corrected one.
+		if !strings.Contains(err.Error(), "decompose.items") {
+			t.Errorf("the error should show the bare form to use, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "PROMPT") {
+			t.Errorf("the error should say the braced form is for prompts, got %v", err)
+		}
+	}
+	// The bare form still validates — the fix the error describes has to work.
+	ok := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "decompose", Kind: StageWorker, Prompt: "split",
+			Output: []PipelineField{{Name: "items", Type: FieldList}}},
+		{Name: "dig", Kind: StageFanout, Prompt: "look at {item}", FanOver: "decompose.items"},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("the corrected form must validate: %v", err)
+	}
+}
+
+func TestForwardReferenceExplainsStageOrder(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "dig", Kind: StageFanout, Prompt: "look at {item}", FanOver: "decompose.items"},
+		{Name: "decompose", Kind: StageWorker, Prompt: "split",
+			Output: []PipelineField{{Name: "items", Type: FieldList}}},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("a stage cannot read one that runs after it")
+	}
+	// The rule, not just the symptom: order in the array is execution order.
+	if !strings.Contains(err.Error(), "order") {
+		t.Errorf("the error must explain that array order is run order: %v", err)
+	}
+	if !strings.Contains(err.Error(), "BACKWARD") {
+		t.Errorf("the error must say which direction a reference may reach: %v", err)
+	}
+}
+
+// A pipeline is authored as ONE object, so its mistakes arrive as a set. This
+// is the exact shape of a real first submission: a wrong field type, an output
+// on a stage that cannot carry one, and a fan_over written as a prompt
+// template. Reported one at a time it cost three round-trips, each re-sending
+// the whole definition; every message was right, and that was the problem.
+func TestValidateReportsEveryIndependentProblemAtOnce(t *testing.T) {
+	def := PipelineDef{Name: "Deep Dive Research", Stages: []PipelineStage{
+		{Name: "Decompose", Kind: StageWorker, Prompt: "split {input}",
+			Output: []PipelineField{{Name: "sub_questions", Type: "array"}}},
+		{Name: "Investigate", Kind: StageFanout, Prompt: "search {item}",
+			FanOver: "{stage:Decompose.sub_questions}",
+			Output:  []PipelineField{{Name: "findings", Type: FieldList}}},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("three problems, no error")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		`has unknown type "array"`,           // Decompose
+		"output is not valid on kind=fanout", // Investigate
+		"is written as a prompt template",    // Investigate, second problem
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("all independent problems must arrive together; missing %q in:\n%s", want, msg)
+		}
+	}
+	if !strings.Contains(msg, "3 problems") {
+		t.Errorf("say how many there are, so the author knows the list is the whole list:\n%s", msg)
+	}
+}
+
+// One problem still reads as one sentence — a list of one is a worse message.
+func TestValidateKeepsASingleProblemPlain(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "s", Kind: StageAgent, Prompt: "hi"},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("an agent stage with no agent must fail")
+	}
+	if strings.Contains(err.Error(), "problems") || strings.Contains(err.Error(), "\n- ") {
+		t.Errorf("a lone problem should not be dressed up as a list: %q", err)
+	}
+}
+
+// Cascades stay suppressed: a stage whose OUTPUT failed must not also generate
+// "declares no output field" for everything that reads it. One mistake, one
+// line — otherwise the count is noise and the real fix is buried.
+func TestValidateDoesNotCascadeFromABadOutput(t *testing.T) {
+	def := PipelineDef{Name: "p", Stages: []PipelineStage{
+		{Name: "first", Kind: StageWorker, Prompt: "go",
+			Output: []PipelineField{{Name: "items", Type: "array"}}},
+		{Name: "second", Kind: StageWorker, Prompt: "use {stage:first.items}"},
+		{Name: "third", Kind: StageFanout, Prompt: "{item}", FanOver: "first.items"},
+	}}
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("the bad output type must still be reported")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `has unknown type "array"`) {
+		t.Errorf("the real problem is missing: %s", msg)
+	}
+	if strings.Contains(msg, "declares no output field") {
+		t.Errorf("a reference into a stage whose output failed is that stage's problem, not a second one:\n%s", msg)
+	}
+	if strings.Contains(msg, "unknown stage") {
+		t.Errorf("a stage that failed validation still EXISTS — referencing it is not an unknown-stage error:\n%s", msg)
+	}
+}

@@ -366,11 +366,19 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
-/* Scoped-tools group in the Tools modal. It is an ordinary checklist —
- * same box, same section, same rows as the catalog below it — with the
- * tool names in mono, because they are identifiers rather than prose. */
-.ui-orch-scoped-tools { margin-bottom: 0.8rem; }
+/* Scoped-tools group in the Tools modal. It is the first CATEGORY inside the
+ * one checklist — no box of its own, no separating margin — so it collapses,
+ * indents, and is drilled into exactly like every catalog category under it.
+ * Only the names differ: mono, because they are identifiers, not prose. */
 .ui-orch-scoped-tools .ui-checklist-name { font-family: var(--mono, monospace); }
+/* A category one level down, inside the scoped group. Mixed case and lighter
+ * than the ALL-CAPS group headers above it, so depth is legible without a
+ * second kind of box: it reads as a sub-heading, not a peer. */
+.ui-orch-scoped-sub > .ui-checklist-group-collapsible .ui-checklist-group-name {
+  text-transform: none; letter-spacing: 0;
+  font-size: 0.74rem; font-weight: 500;
+  color: var(--text);
+}
 .ui-orch-modal-ftr {
   display: flex; gap: 0.5rem; justify-content: flex-end;
   padding: 0.7rem 1rem;
@@ -2588,20 +2596,24 @@
           if (isBuilder) {
             help.textContent = "Builder's tool catalog is fixed by the framework — the lists below show what it runs with, but there's no per-agent knob here. Builder also loads every tool it can edit, including ones switched off elsewhere: a tool it couldn't run would be a tool it couldn't fix.";
           } else {
-            help.textContent = "Pick which tools this agent's worker may call. Tools scoped to this agent are the first group; the rest is the shared catalog. Uncheck everything in the catalog to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
+            help.textContent = "Pick which tools this agent's worker may call. Open a category to see its tools — the first one is what is scoped to this agent, the rest is your shared catalog. Uncheck everything in the catalog categories to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
           }
           m.body.appendChild(help);
+
+          // ONE tree for every tool this agent could load. The scoped group is
+          // the first category in it, and the catalog's categories follow —
+          // same box, same carets, same master checkboxes, drilled into the
+          // same way. It used to be a separate section stacked above the
+          // checklist, which made a scoped tool read as a different KIND of
+          // thing needing its own mental model, when the only difference is
+          // that its availability is narrower.
+          var list = document.createElement('div');
+          list.className = 'ui-checklist';
+          var checkboxes = [];
 
           // Scoped tools — the rows in the unified store scoped to THIS
           // agent: authored by the agent for itself, or built for it by
           // Builder. They don't appear in other agents' catalogs.
-          //
-          // Rendered as an ordinary checklist section — same caret, same
-          // master checkbox, same rows as every catalog group below —
-          // because a scoped tool is not a different KIND of thing, it is
-          // just a tool whose availability is narrower. It used to be a
-          // bespoke read-only card list, which made the one part of this
-          // modal you cannot act on look like the part you can.
           //
           // Checked = this agent loads it. Unchecked writes the name into
           // disabled_persistent_tools, which the runtime honors for scoped
@@ -2621,7 +2633,7 @@
           var scopedCbs = [];
           {
             var customSection = document.createElement('div');
-            customSection.className = 'ui-checklist ui-checklist-section ui-orch-scoped-tools';
+            customSection.className = 'ui-checklist-section ui-orch-scoped-tools';
             var scopedHeader = document.createElement('div');
             scopedHeader.className = 'ui-checklist-group ui-checklist-group-collapsible';
             var scopedCaret = document.createElement('span');
@@ -2637,25 +2649,28 @@
                 ev.stopPropagation();
                 var want = scopedMaster.checked; // browser already flipped it
                 scopedCbs.forEach(function(cb) { cb.checked = want; });
-                scopedMaster.indeterminate = false;
+                // Through the tree refresher, not by hand: the category
+                // sub-masters below have to follow the group they belong to.
+                refreshScopedTree();
               });
               scopedHeader.appendChild(scopedMaster);
             }
             var scopedLabel = document.createElement('span');
             scopedLabel.className = 'ui-checklist-group-name';
-            scopedLabel.textContent = 'Scoped to this agent' + (customTools.length ? ' (' + customTools.length + ')' : '');
+            // The count is always shown, zero included: a group in a tree is
+            // read from its header, and "(0)" is the answer to what this agent
+            // has of its own without opening anything.
+            scopedLabel.textContent = 'Scoped to this agent (' + customTools.length + ')';
             scopedHeader.appendChild(scopedLabel);
             customSection.appendChild(scopedHeader);
 
             var scopedBody = document.createElement('div');
             scopedBody.className = 'ui-checklist-section-body';
-            // Open by default unless it's long — this is the section a user
-            // came here to find, and collapsing three rows hides the answer.
-            // Empty counts as open too: the empty state IS the answer to "what
-            // does this agent have of its own?", and a closed caret isn't.
-            var scopedOpen = customTools.length <= 8;
-            scopedBody.style.display = scopedOpen ? '' : 'none';
-            scopedCaret.textContent = scopedOpen ? '▾' : '▸';
+            // Collapsed, like every other category. The header carries the
+            // count, so "what does this agent have of its own?" is answered
+            // without drilling in — which is what a group in a tree owes the
+            // reader, and all a permanently-open section was buying.
+            scopedBody.style.display = 'none';
             scopedHeader.addEventListener('click', function(ev) {
               if (scopedMaster && ev.target === scopedMaster) return;
               var open = scopedBody.style.display !== 'none';
@@ -2686,7 +2701,21 @@
               scopedMaster.checked = on === scopedCbs.length && on > 0;
               scopedMaster.indeterminate = on > 0 && on < scopedCbs.length;
             }
-            customTools.forEach(function(t, idx) {
+            // One entry per category sub-group: {master, cbs}. Their masters are
+            // NOT in scopedCbs — that array is the tool checkboxes and decides
+            // what gets saved. Every level is refreshed from one place, so a
+            // click anywhere leaves the whole tree agreeing with itself.
+            var scopedSubs = [];
+            function refreshScopedTree() {
+              scopedSubs.forEach(function(s) {
+                var on = 0;
+                s.cbs.forEach(function(cb) { if (cb.checked) on++; });
+                s.master.checked = on === s.cbs.length && on > 0;
+                s.master.indeterminate = on > 0 && on < s.cbs.length;
+              });
+              refreshScopedMaster();
+            }
+            function addScopedRow(t, idx, host, bucketCbs) {
               // A div, not a <label>: the row carries buttons, and inside a
               // label every click on them would also toggle the checkbox.
               // The text gets its own <label for=…> so clicking it still does.
@@ -2700,9 +2729,10 @@
                 cb.id = cbID;
                 cb.value = t.name || '';
                 cb.checked = !userDisabled[t.name];
-                cb.addEventListener('change', refreshScopedMaster);
+                cb.addEventListener('change', refreshScopedTree);
                 row.appendChild(cb);
                 scopedCbs.push(cb);
+                if (bucketCbs) bucketCbs.push(cb);
               }
               var meta = document.createElement('label');
               meta.className = 'ui-checklist-lbl';
@@ -2811,16 +2841,91 @@
                 rowActions.appendChild(scopeBtn);
               })(t);
               row.appendChild(rowActions);
-              scopedBody.appendChild(row);
-              scopedBody.appendChild(detailEl);
+              host.appendChild(row);
+              host.appendChild(detailEl);
+            }
+
+            // Categories INSIDE the group, keyed on the same self-declared
+            // Tool.Category the catalog groups by — so a kit of a dozen tools
+            // reads the way the catalog does instead of as one long list.
+            // Sorted by name with the uncategorized bucket last; a tool that
+            // claims no category lands there rather than inventing a heading.
+            var UNCATEGORIZED = 'Uncategorized';
+            var scopedBuckets = [];
+            var scopedBucketIdx = {};
+            customTools.forEach(function(t) {
+              var cat = ((t.category || '').trim()) || UNCATEGORIZED;
+              if (!(cat in scopedBucketIdx)) {
+                scopedBucketIdx[cat] = scopedBuckets.length;
+                scopedBuckets.push({name: cat, items: []});
+              }
+              scopedBuckets[scopedBucketIdx[cat]].items.push(t);
             });
-            refreshScopedMaster();
-            m.body.appendChild(customSection);
+            scopedBuckets.sort(function(a, b) {
+              if (a.name === b.name) return 0;
+              if (a.name === UNCATEGORIZED) return 1;
+              if (b.name === UNCATEGORIZED) return -1;
+              return a.name < b.name ? -1 : 1;
+            });
+
+            var scopedRowIdx = 0;
+            if (scopedBuckets.length < 2) {
+              // One bucket is not a category, it is the group itself. A lone
+              // heading repeating what the group header already said is a level
+              // of tree that carries no information.
+              scopedBuckets.forEach(function(b) {
+                b.items.forEach(function(t) { addScopedRow(t, scopedRowIdx++, scopedBody, null); });
+              });
+            } else {
+              scopedBuckets.forEach(function(b) {
+                var sub = document.createElement('div');
+                sub.className = 'ui-checklist-section ui-orch-scoped-sub';
+                var subHeader = document.createElement('div');
+                subHeader.className = 'ui-checklist-group ui-checklist-group-collapsible';
+                var subCaret = document.createElement('span');
+                subCaret.className = 'ui-checklist-caret';
+                subCaret.textContent = '▾';
+                subHeader.appendChild(subCaret);
+                var bucketCbs = [];
+                var subMaster = null;
+                if (!isBuilder) {
+                  subMaster = document.createElement('input');
+                  subMaster.type = 'checkbox';
+                  subMaster.className = 'ui-checklist-cb ui-checklist-master';
+                  subMaster.addEventListener('click', function(ev) {
+                    ev.stopPropagation();
+                    var want = subMaster.checked; // browser already flipped it
+                    bucketCbs.forEach(function(cb) { cb.checked = want; });
+                    refreshScopedTree();
+                  });
+                  subHeader.appendChild(subMaster);
+                }
+                var subLabel = document.createElement('span');
+                subLabel.className = 'ui-checklist-group-name';
+                subLabel.textContent = b.name + ' (' + b.items.length + ')';
+                subHeader.appendChild(subLabel);
+                sub.appendChild(subHeader);
+
+                var subBody = document.createElement('div');
+                subBody.className = 'ui-checklist-section-body';
+                // Open. The parent's caret already hides all of this; asking for
+                // a second click to reach three rows is a toll, not a tree.
+                subHeader.addEventListener('click', function(ev) {
+                  if (subMaster && ev.target === subMaster) return;
+                  var open = subBody.style.display !== 'none';
+                  subBody.style.display = open ? 'none' : '';
+                  subCaret.textContent = open ? '▸' : '▾';
+                });
+                sub.appendChild(subBody);
+                b.items.forEach(function(t) { addScopedRow(t, scopedRowIdx++, subBody, bucketCbs); });
+                if (subMaster) scopedSubs.push({master: subMaster, cbs: bucketCbs});
+                scopedBody.appendChild(sub);
+              });
+            }
+            refreshScopedTree();
+            list.appendChild(customSection);
           }
 
-          var list = document.createElement('div');
-          list.className = 'ui-checklist';
-          var checkboxes = [];
           // Builder gets a READ-ONLY catalog listing instead of the
           // checklist — its tool set is code-driven, so checkboxes
           // would be a knob that does nothing, but rendering NOTHING
@@ -3655,7 +3760,7 @@
                   if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from ' + deleteScope + '?'))) return;
                   del.disabled = true;
                   fetch(listURL + '/' + encodeURIComponent(s.id), {method: 'DELETE'})
-                    .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); refresh(); refreshCorpusCount(); })
+                    .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); refresh(); })
                     .catch(function(err){ del.disabled = false; window.uiAlert('Remove failed: ' + (err && err.message || err)); });
                 };
                 row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
@@ -3686,7 +3791,7 @@
                 upStatus.style.color = 'var(--accent,#56d364)';
                 upStatus.textContent = 'Added ' + (out.chunks || 0) + ' chunks';
                 upInp.value = '';
-                refresh(); refreshCorpusCount();
+                refresh();
               }).catch(function(err){
                 upStatus.style.color = 'var(--danger,#ff7b72)';
                 upStatus.textContent = 'Upload failed: ' + (err && err.message || err);
@@ -4385,18 +4490,28 @@
           var hookLevels = [
             {name: 'Off', hooks: [], off: true,
              desc: 'Enforcement suspended. Your rules stay exactly as written and nothing checks them \u2014 no warden calls, and live token streaming comes back. Use it to find out whether a guardrail is behind a wrong refusal, or what a turn costs without one, instead of deleting the rules to test.'},
+            {name: 'Fast', hooks: ['pre_input', 'pre_action'],
+             desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call, and live token streaming stays on because nothing has to hold the reply back. It does NOT judge what the agent SAYS, so a rule about disclosure can be broken by a reply — pick it when latency matters more than that.'},
             {name: 'Light', hooks: ['pre_input', 'pre_output'],
-             desc: 'Checks the incoming request (with recent context) and the reply before it is sent.'},
+             desc: 'Checks the incoming request (with recent context) and the reply before it is sent. Covers what the agent says but not what it DOES — a consequential tool call runs unjudged.'},
             {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
-             desc: 'Also checks consequential tool calls before they run — free unless one is actually called. The default.'},
+             desc: 'Also checks consequential tool calls before they run — free unless one is actually called. The reply check is the only one that reads what is about to be SAID, so this is the first setting that covers all three ends. Where a new agent starts.'},
             {name: 'Strict', hooks: ['pre_input', 'pre_action', 'pre_output', 'periodic'],
              desc: 'Also judges what the agent says WHILE it works, not just its final reply \u2014 the only setting that covers mid-turn narration, which is delivered to the reader as the turn runs. One extra check per round that produces text, so cost grows with how long the turn runs.'}
           ];
           var activeHooks = {};
           (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
-          // Match the stored set to a level. An empty set is the DEFAULT, which
-          // is deliberately the same as Balanced — so the slider shows the truth
-          // for an agent that never picked hooks, instead of reading as "off".
+          // Match the stored set to a level. An EMPTY set means this agent has
+          // never had one stored, and the server falls back to Balanced for it —
+          // so that is what the slider shows, rather than reading as "off". New
+          // agents are stamped with Fast at creation and so never land here;
+          // this branch is the older records.
+          //
+          // Fast and Light both check two things and are NOT ordered by coverage
+          // — one watches actions, the other watches speech. The slider puts
+          // Fast lower because it is cheaper (nothing buffers the reply), and
+          // the descriptions carry what each one gives up, since a position on
+          // a line cannot say "different, not less".
           // Tracked separately from the hook set so turning enforcement off and back
           // on RESTORES the strictness that was chosen, rather than dropping the
           // agent to the default.
@@ -4430,11 +4545,11 @@
           var slider = document.createElement('input');
           slider.type = 'range'; slider.min = '0'; slider.max = String(hookLevels.length - 1);
           slider.step = '1'; slider.value = String(custom ? defaultLevelIndex() : level);
-          slider.style.cssText = 'width:100%;max-width:320px;display:block';
+          slider.style.cssText = 'width:100%;max-width:380px;display:block';
           slider.disabled = custom;
 
           var ticks = document.createElement('div');
-          ticks.style.cssText = 'display:flex;justify-content:space-between;max-width:320px;font-size:0.72rem;color:var(--text-mute);margin-top:0.1rem';
+          ticks.style.cssText = 'display:flex;justify-content:space-between;max-width:380px;font-size:0.72rem;color:var(--text-mute);margin-top:0.1rem';
           hookLevels.forEach(function(lv) {
             var s = document.createElement('span'); s.textContent = lv.name; ticks.appendChild(s);
           });
@@ -4550,7 +4665,7 @@
           var failHelp = document.createElement('div');
           failHelp.className = 'ui-orch-modal-help';
           failHelp.style.cssText = 'margin-top:0.15rem';
-          failHelp.textContent = 'The warden is itself a model call, so it can fail or return something unreadable. Off (default): the action proceeds unchecked and the gap is recorded in the ⚠ trail — right for style and tone rules. On: no verdict means no action — right for consequential rules, where an unchecked action is the thing the rule exists to prevent.';
+          failHelp.textContent = 'The warden is itself a model call, so it can fail or return something unreadable. On (where a new agent starts): no verdict means no action — right for any rule about what must not be disclosed or done, because a check that fails open stops nothing exactly when it breaks, and a persistent asker can keep pushing until it does. Off: the action proceeds unchecked and the gap is recorded in the ⚠ trail — reasonable for style and tone rules, where a wrong refusal costs more than an unchecked reply.';
           failWrap.appendChild(failHelp);
           gWrap.appendChild(failWrap);
 

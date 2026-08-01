@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/nfo"
 	"math/rand/v2"
 )
@@ -581,6 +582,26 @@ func (T *AppCore) deliverPreEmptedReply(messages []Message, reply string, cfg Ag
 // fired from the shape of the answer.
 func GuardrailDecline(custom []string) string { return guardrailSafeFallbackReply(custom) }
 
+// guardrailClosedNote is appended to a substituted decline, for the MODEL only.
+//
+// Without it the transcript reads as a question that was dodged rather than one
+// that was refused, and the next turn quietly completes it — the user asks the
+// date and gets the answer to the blocked question. The decline is deliberately
+// terse and in the agent's own voice, which makes it read as deferral; nothing
+// in it says the matter is settled.
+//
+// Stripped at every delivery boundary by textutil.StripMetaTags, kept in the
+// persisted history the next turn loads. It states the outcome and the two
+// behaviours that follow from it, and deliberately does NOT restate the subject
+// — repeating it here would re-seed the very topic the block removed.
+//
+// It also does not name a CHECK, a rule, or a guardrail. Naming the mechanism
+// is what guardrailInputMessage dropped for the same reason: it invites the
+// model to reason about the system it is inside, which is the deliberation the
+// one-shot thinking-off exists to stop. "Declined and closed" is the whole of
+// what the next turn needs — the outcome, not the machinery behind it.
+const guardrailClosedNote = "\n<gohort-meta>That request was declined and is closed. Do not answer it later, do not return to it unprompted, and do not treat it as unfinished business. Answer only what is asked from here.</gohort-meta>"
+
 // guardrailRejectionReply produces the user-facing text for a halted turn: the
 // app's fresh-context rejection model when one is wired, else the canned
 // decline. Any empty or whitespace answer falls through to the canned line —
@@ -662,6 +683,10 @@ func nonEmptyLines(in []string) []string {
 // isGuardrailSafeFallback reports whether s is one of the built-in declines.
 // Exists so tests can assert "the floor fired" without pinning which line.
 func isGuardrailSafeFallback(s string) bool {
+	// Compared as DELIVERED. A substituted decline carries guardrailClosedNote
+	// for the model, which every delivery boundary strips — so the reader's
+	// copy is the decline alone, and that is what this answers about.
+	s = strings.TrimSpace(textutil.StripMetaTags(s))
 	for _, f := range guardrailSafeFallbacks {
 		if s == f {
 			return true
@@ -1158,6 +1183,88 @@ func formatArgs(args map[string]any) string {
 		lines = append(lines, fmt.Sprintf("%s: %s", k, display))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// guardrailArgCharsDefault is how much of each argument value the pre_action
+// warden gets to read.
+//
+// It used to read formatArgs, which caps values at 200 characters — a number
+// chosen for the confirm dialog and the loop-guard signature, where 200 is
+// plenty, and inherited by the guardrail check without anyone deciding it
+// should judge a prefix. A rule about what an agent SENDS someone was being
+// applied to the first 200 characters of the message; anything withheld
+// further in was invisible to it.
+//
+// Uncapped is not the answer either. Tool arguments carry base64 images and
+// whole documents, and an unbounded warden prompt on one of those is a slow,
+// expensive check that may not fit the context at all — so the cap stays and
+// only its size changes. 4000 covers essentially any message body, post, or
+// commit text a rule would be written about.
+const guardrailArgCharsDefault = 4000
+
+// guardrailArgTotalFactor bounds the WHOLE candidate relative to the per-value
+// cap, because a call with twenty large arguments would otherwise multiply past
+// any per-value limit.
+const guardrailArgTotalFactor = 4
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_guardrail_action_arg_chars",
+		Category: "Limits",
+		Label:    "Guardrail: argument text read per tool call",
+		Help:     "How much of each argument the pre-action guardrail check reads when judging a consequential tool call. A rule about the CONTENT of what an agent sends is applied to this much of it — raise it if your rules need to see long message bodies or documents, at the cost of a bigger check on every consequential call. The whole candidate is additionally capped at four times this. Does not affect the reply check, which always sees the complete reply.",
+		Kind:     KindInt,
+		Default:  guardrailArgCharsDefault,
+		Min:      200,
+		Max:      50000,
+	})
+}
+
+func guardrailArgChars() int {
+	if n := TuneInt("tune_guardrail_action_arg_chars"); n > 0 {
+		return n
+	}
+	return guardrailArgCharsDefault
+}
+
+// formatArgsForGuardrail renders a tool call's arguments for the pre_action
+// warden. Same deterministic key order as formatArgs — a candidate that varies
+// with map iteration order would judge the same call differently on different
+// runs — but with a cap sized for JUDGING rather than for display.
+//
+// Truncation is ANNOUNCED. A warden handed a silent prefix reports that it
+// found nothing objectionable, which is true of the prefix and says nothing
+// about the rest; told it is looking at part of a value, it can weigh that.
+func formatArgsForGuardrail(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	perValue := guardrailArgChars()
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var lines []string
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf("%s: %s", k, truncateRunes(stringify(args[k]), perValue)))
+	}
+	out := strings.Join(lines, "\n")
+	return truncateRunes(out, perValue*guardrailArgTotalFactor)
+}
+
+// truncateRunes cuts to a rune count, never mid-character, and says so when it
+// cuts. Bytes would split a multi-byte rune and hand the warden a replacement
+// glyph, which reads as corruption rather than as a trim.
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…[truncated for length; more follows that is NOT shown here]"
 }
 
 // repeatFailHistoryWindow bounds how far back seedRepeatFailFromHistory
@@ -1711,6 +1818,24 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// zero cost in the steady state (unlike a global penalty sampler, which
 	// measured ~23% tok/s on this rig).
 	shakeoutNextRound := false
+	// guardrailQuietNextRound: a guardrail blocked last round, so the NEXT LLM
+	// call runs with thinking OFF.
+	//
+	// A block is the one round where deliberation reliably goes wrong. The model
+	// is handed a refusal it did not expect, about a mechanism it is told not to
+	// name, and asked to carry on — and it reasons at length about the system it
+	// is inside instead of answering. That is the failure COLLAPSE-DIAG was
+	// written to detect: a huge reasoning block, almost no output, no tool call.
+	// Trimming the block messages from eight imperatives to three helped and did
+	// not fix it, because the deliberation is caused by the SITUATION, not only
+	// by the wording.
+	//
+	// There is nothing to think about anyway. The block message says what
+	// happened, that the call did not run, and not to reach the same end another
+	// way. Acting on it is a short step; the reasoning budget buys nothing and
+	// costs the user the wait. Same lever the shake-out uses, same one-shot
+	// scope — one round, then back to route defaults.
+	guardrailQuietNextRound := false
 	repeatSame := map[string]int{}
 	lastToolContent := map[string]string{}
 	const repeatSameLimit = 4
@@ -2057,6 +2182,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			shakeoutNextRound = false
 			opts = append(opts, WithTemperature(shakeoutTemperature))
 			Debug("[agent_loop] shake-out round: one-shot temperature %.2f after a repeat-guard trip", shakeoutTemperature)
+		}
+		// One-shot thinking-off after a guardrail block (see the
+		// guardrailQuietNextRound decl). Appended last so it beats the static
+		// option slices and any per-agent think budget.
+		if guardrailQuietNextRound {
+			guardrailQuietNextRound = false
+			opts = append(opts, WithThink(false))
+			Debug("[agent_loop] guardrail round: thinking OFF for one round after a block")
 		}
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
@@ -2750,6 +2883,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 						replaceBlockedDraft(guardrailRedactedDraft) // scrub the leaked draft from history — never persisted or delivered
 						history = append(history, Message{Role: "user", Content: frameworkNoticeTag + gmsg})
 						guardrailOutputCorrections++
+						// The revise pass is a rewrite of text the model just
+						// produced, against one stated constraint — the most
+						// expensive round in the turn and the one with least to
+						// reason about.
+						guardrailQuietNextRound = true
 						continue
 					}
 					// Not correctable, halted, or the budget/rounds are spent and the
@@ -2762,7 +2900,19 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
 					fallback := guardrailRejectionReply(cfg, "pre_output", history)
 					replaceBlockedDraft(fallback)
-					resp.Content = fallback
+					// The decline alone leaves the request looking OPEN. A model
+					// reading back "user asked X / assistant brushed it off"
+					// treats X as unfinished business and answers it at the next
+					// opportunity — observed live: an agent asked the date
+					// answered the refused question instead. The refusal has to
+					// be recorded as a CLOSED outcome, not an evasion.
+					//
+					// Carried in a meta note because it is for the model and not
+					// for the reader: StripMetaTags runs at every delivery
+					// boundary (channel, web, phantom) while the persisted copy
+					// keeps it, so the next turn sees it and the contact never
+					// does.
+					resp.Content = fallback + guardrailClosedNote
 					resp.Reasoning = ""
 					resp.ToolCalls = nil
 					return resp, history, nil
@@ -2977,9 +3127,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				// still leaves the agent a compliant way to finish the task, so
 				// this stays block-and-continue no matter which rule fired.
 				// Ending the turn is the escalation counter's job.
-				if dec := cfg.GuardrailCheck(GuardHookPreAction, tc.Name+" "+formatArgs(tc.Args)); dec.Blocked {
+				if dec := cfg.GuardrailCheck(GuardHookPreAction, tc.Name+" "+formatArgsForGuardrail(tc.Args)); dec.Blocked {
 					Debug("[agent_loop] guardrail blocked pre-action: %s", tc.Name)
 					guardBlockedThisRound = true
+					// The next round reads a refusal it did not expect and is
+					// told not to name the mechanism. Deliberating on that is
+					// how a blocked turn burns thousands of reasoning tokens
+					// and emits nothing. Acting on the message is a short step.
+					guardrailQuietNextRound = true
 					results[i] = ToolResult{ID: tc.ID, Content: dec.Message, IsError: true}
 					toolErrors++
 					// Blocking one call is not enforcement when the model can

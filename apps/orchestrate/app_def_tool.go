@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -88,6 +89,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"full_width":  {Type: "boolean", Description: "(create/update) Render the page EDGE-TO-EDGE instead of the default centered ~900px column. Set true for DATA-HEAVY surfaces — a dashboard, a wide table with many columns, a live monitor — where the extra horizontal space helps. Leave false (default) for forms and simple lists, which read better in a narrow column. A workbench app is always full-width regardless of this flag."},
 				"private_db":  {Type: "boolean", Description: "(create/update) Give this app its OWN dedicated database file instead of sharing the common custom-apps store. Set true for a data-heavy app (many records, or data you want isolated / independently disposable) — its records live in a separate hardware-encrypted file, and deleting the app removes that data cleanly. Leave false (default) for ordinary small apps; the shared store is fine. Opt-in only: flipping this on an EXISTING app starts a fresh empty store and does NOT migrate records already saved in the shared store, so choose it at create time."},
 				"agent_id":    {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app (reserved for the chat surface). Stored on the app; not required."},
+				"pipeline_id": {Type: "string", Description: "(create/update) Optional name or id of a stored pipeline this app RUNS — required by a \"pipeline\" section, which gives the app a submit form, a live stage-by-stage transcript, and a history of past runs. Author the pipeline first with the `pipeline` tool. This is how a multi-stage recipe (research, review, debate) becomes an app the user can open, rather than a tool only an agent can call."},
 				"data_sources": {
 					Type:        "array",
 					Description: "(create/update) Optional script-backed data endpoints — the way to give an app real LOGIC instead of plain stored-record CRUD. Each is {name, script, language?, capabilities?}. The script (python by default; set language:\"bash\" for shell) COMPUTES the JSON a table/display renders: the app's stored records arrive as an ENVIRONMENT VARIABLE named records holding a JSON string, and each request query param arrives as its own env var; the script must PRINT a JSON value to stdout (a JSON array for a table, a JSON object for a display). Read the records like this (python): `import os, json` then `records = json.loads(os.environ.get('records', '[]'))` — do NOT write `json.loads(\"records\")` (that parses the literal word, not the data) or `os.environ['records']` without a default. Bash: `echo \"$records\"`. INPUTS COME FROM records, NOT query params: when the app has a FORM that saves entries (a city, a name, an item), the user's typed value was saved as a RECORD — read it from `records`, e.g. `recs = json.loads(os.environ.get('records','[]')); city = recs[-1].get('city')` (match the form field's name). Nothing passes form fields as query-param env vars, so `os.environ.get('city')` is ALWAYS empty and the panel shows nothing — this is the #1 reason a form-driven app looks 'disconnected' (you add a location but no forecast appears). A data source reads the SAVED RECORDS; query params are only for filters you wire yourself. CRITICAL: the section fetches this data source the moment the page LOADS, with NO query params set yet — so read EVERY param defensively (`os.environ.get('city', '')`, never `os.environ['city']`) and return valid JSON even when params are empty, or the app errors on open. To pull external data, call the gohort hook (fetch is granted by default — you need NOT declare capabilities for a public URL): `from gohort import fetch_url` then `r = fetch_url(url)` — the host performs the fetch (the sandbox has no raw network); the result is a dict `{status, headers, body}`. For a host behind one of the OWNER's API credentials, use `from gohort import fetch_via` then `fetch_via(\"<cred>\", url)` — auth is injected server-side, and the owner's credentials are AUTO-GRANTED to app scripts, so you do NOT declare capabilities for them (a plain fetch_url of a credential-covered host also auto-routes through it). Reuse an existing tool's credential + path here rather than hardcoding auth. fetch_url RAISES on a transport failure (bad/blocked host, timeout), so wrap it: `try: r = fetch_url(url)` / `except Exception as e:` and still PRINT valid JSON (e.g. `[]` or `{\"error\": str(e)}`) so the panel renders instead of 500ing. Then check `r['status']` and `json.loads(r['body'])`. URL-ENCODE every value you interpolate into a URL: `from urllib.parse import quote` then `url = f\"...?name={quote(city)}\"` — an unencoded space or comma (e.g. a city like 'Santa Cruz, CA') makes the fetch REFUSE the URL. Network HTTP libs (requests, urllib.request, curl, http.client) are BLOCKED — only fetch_url reaches the network — but urllib.parse (quote/urlencode) is fine and is the right tool for building URLs. A table/display section then sets source_script:\"<name>\" to read from it instead of the record store. Run app_def action=test after authoring to confirm the script prints valid JSON. Use this for apps that fetch/aggregate/transform (a dashboard over an API, a computed report) rather than just collecting form entries. Owner-only today.",
@@ -151,13 +153,15 @@ const appDefHelpText = `app_def actions:
 - verify {id(slug), sample?:[{...}]} — the FINAL gate before telling the user the app is ready: runs every script (like test) AND loads /custom/<slug>/ in a real headless browser as the user, reporting JS console errors, uncaught exceptions, failed requests, whether the sections actually rendered, and — per data source — whether the page really fetched its live endpoint (catches a working script no section is wired to). An app is NOT done until verify passes.
 - delete {id(slug)}.
 
-Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (a full HTML/CSS/JS canvas — set the html field; inline <script> RUNS, so this covers anything the typed kinds can't express: games, canvas animation, simulations, custom visualizations, bespoke widgets).
+Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | pipeline (submit a run, watch its stages stream, browse past runs — requires pipeline_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (a full HTML/CSS/JS canvas — set the html field; inline <script> RUNS, so this covers anything the typed kinds can't express: games, canvas animation, simulations, custom visualizations, bespoke widgets).
 
 Minimal good app = a form (modal=true) + a table (editable, deletable) over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
 
 For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that reads the app's records with 'records = json.loads(os.environ.get("records", "[]"))' (the records env var is a JSON STRING; never json.loads("records")) + query params, and PRINTS JSON; reach external data with 'from gohort import fetch_url; r = fetch_url(url)' (granted by default; r is {status,headers,body}; it RAISES on transport failure so wrap it in try/except and still print JSON). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Run app_def action=test to execute the scripts and see their output/errors before telling the user it's ready. Owner-only.
 
-For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?, schedule?}] — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Surface them with an "actions" section. Served at /custom/<slug>/action/<name>.
+For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?, schedule?}] at the TOP LEVEL of the call, beside sections (NOT inside a section) — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Add a section of kind "actions" to render the buttons; that section takes no fields of its own. Served at /custom/<slug>/action/<name>.
+
+An action on an app with a pipeline_id ALSO receives the last FINISHED run, so a button can move a run into the record store: pipeline_output (the final stage's text) and pipeline_run (JSON: id, title, date, output, and blocks — one per stage, so the rounds survive, not just the verdict). Both are empty strings when nothing has finished, so read them with a default: run = json.loads(os.environ.get('pipeline_run') or '{}'). This is how "save this debate to history" is written — there is no other route from a run to the records, and inventing an env var name yields a script that prints valid JSON and does nothing forever.
 
 For SELF-UPDATING apps (dashboard/tracker): add schedule:{interval_seconds?|cron?, max_idle_days?} to an action to run it unattended on a timer (no click, no open page). interval_seconds is floored to 300s; cron uses NextCronOccurrence ("MON 09:00"). Each fire runs the same script and upserts what it returns — return a new-key record to APPEND a row (tracker/history), a fixed-key record to REPLACE the snapshot (dashboard). max_idle_days auto-pauses after N unviewed days (re-arms on next visit). Owner copy only; imported apps don't fire until enabled.
 
@@ -181,6 +185,23 @@ GRAPHICS IN AN html SECTION: draw them in code. There is NO static asset route f
 kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> RUNS) and optional 'height' (any CSS length, e.g. "640px" / "80vh" — only used when the blob is a whole document; default min(80vh, 860px)). WRITE A COMPLETE DOCUMENT for anything with its own layout (a game, a canvas animation, a simulation): doctype, <head>, <style>, <body>. A whole document is given its OWN FRAME, so its CSS reset and body rules style only itself and its 100vh measures its own box; a bare fragment is spliced into the page and its styles apply page-wide. Same origin either way — a framed document still fetches 'data/<name>' and shares the page's cookies/storage. Anything that runs in a browser page runs here: <canvas> with a requestAnimationFrame loop, keyboard/pointer handlers, physics, collision, audio, SVG, WebGL. So YES — a game, an animation, a simulation, or a custom visualization is buildable, and this is how you build one. Do not tell the user an interactive or graphical app is out of scope; the typed sections are not the limit of what an app can be. The steer is about FIT, not permission: for a DATA app (records, forms, lists, dashboards) reach for a typed section first, because those give you the record store, editing, refresh, and styling for free, and hand-rolling that in html is wasted work. When the thing genuinely isn't a data app, html is the right and intended choice — use it without apology. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it.
 
 kind="chat" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: 'list_title', 'empty_text', 'placeholder'. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.
+
+kind="pipeline" — the RUN surface: a submit form on top, the run's stages streaming in below it as they finish, and every past run in a sidebar. REQUIRES pipeline_id on the app. Fields: 'fields' (the submit form — array of {name, label, type, placeholder, default, required, rows, options}; DEFAULTS to one required textarea named "topic", which is what the run surface reads as the pipeline's input), 'submit_label' (default "Start"), 'empty_text'. The stage transcript renders as markdown and past runs are batch-deletable. Nothing to wire: the endpoints are relative to the app, the transcript persists per completed stage (so closing the tab loses the live view, never the result), and each user of a shared app gets their own run history over the owner's recipe.
+
+Name the input field "topic" or "input" — those are what the run reads. Extra fields are carried in the request but not consumed, so ask for the run's parameters IN the topic text ("compare X and Y, 3 rounds") rather than as separate fields that go nowhere.
+
+=== BUILDING A MULTI-STAGE APP (research, debate, review) ===
+This is the composition to reach for when the user asks for "deep research", "a debate", "a panel", "have several agents argue/critique/review X" — a job that is several LLM turns with structure between them, not one conversation. Build it in this order, and do not stop at the pipeline: a pipeline with no app is a tool only an agent can call, which is not what the user asked for.
+
+1. AGENTS (create_agent) — one per distinct VOICE the run needs, each with a persona that states its stance and what it must not do. A debate wants two opposed advocates plus a judge; a research app often wants none at all (worker stages are cheaper and have no persona to leak).
+2. PIPELINE (the pipeline tool) — the recipe, as data:
+   • deep research: a worker stage that DECOMPOSES the question into sub-questions (declare an Output field holding the list), a fanout stage over that field that searches + reads each one, then a synthesize stage that writes the answer with citations. Add a loop around the fanout when the user wants it to chase gaps.
+   • debate: a loop whose Body is one agent stage per debater (each prompt references the other's prior output via {stage:NAME}, which carries the previous ROUND's text on later passes — that is the rebuttal), Count = rounds, Collect "all" so the whole transcript survives, then a final judge stage.
+   • ANY stage that must reach the web has to DECLARE its tools (e.g. tools:["web_search","fetch_url"]). A stage that declares none is a pure LLM transform with no access to anything — which is exactly right for synthesis and exactly wrong for research. This is the single most common way a research pipeline comes back fluent and sourceless.
+3. APP (this tool) — create the app with pipeline_id set to that pipeline and ONE pipeline section. That is the whole app; do not add a form/table alongside it (the panel already has its own submit form and history).
+4. VERIFY — run the pipeline ONCE (one narrow question; each run costs real searches and minutes) and read what came back. A run that returns confident prose with no sources means step 3's tools were not declared.
+
+NEVER hand-roll the run surface in an html section. The pipeline section already streams the stages, persists each one as it completes, and lists past runs; a hand-written version has to reimplement SSE parsing, and the obvious shortcut for its history — localStorage — is per-browser and silently loses everything the moment the user opens the app anywhere else, which is precisely the "come back tomorrow and re-read it" promise the app was built for. If a pipeline section looks wrong, fix the section or say what it does; do not replace it with markup. The same rule holds generally: an app's data belongs in its record store or the run store, never in localStorage.
 
 kind="workbench" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: 'item_label' (record field for the list label, default title), 'body_field' (the markdown field shown + appended-to in the viewer, default content), 'item_noun' (e.g. 'guide' — used in the New button + 'Add to <noun>' label), 'new_fields' (form fields for creating an item; defaults to a single title field), 'list_title', 'empty_title', 'empty_hint', 'empty_icon'.
 
@@ -248,6 +269,27 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			spec.AgentID = ag.ID
 		} else {
 			spec.AgentID = a // store as given; resolution is the chat surface's problem (step 2)
+		}
+	}
+	// pipeline_id: the multi-stage RUN this app's pipeline section drives.
+	// Resolved to a stored id where possible so a later rename of the pipeline
+	// doesn't unbind the app; an unresolvable value is kept verbatim, since the
+	// binding is looked up again by name at serve time.
+	// Accepted at the app level OR on the pipeline SECTION itself. The section
+	// is the more natural place to write it — that is where the binding is
+	// used — and an author who guesses that way is not wrong about anything
+	// except which object holds the field. Silently ignoring it produced an app
+	// with a pipeline section and no pipeline, which fails at serve time with
+	// nothing on the authoring side to explain it.
+	pipeRef := strings.TrimSpace(stringArg(args, "pipeline_id"))
+	if pipeRef == "" {
+		pipeRef = sectionPipelineRef(args["sections"])
+	}
+	if pipeRef != "" {
+		if def, ok := t.app.LookupAppPipeline(t.user, pipeRef); ok {
+			spec.PipelineID = def.ID
+		} else {
+			spec.PipelineID = pipeRef
 		}
 	}
 	// full_width: opt the app's page into edge-to-edge layout. Only honored when
@@ -321,6 +363,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 				}
 			}
 		}
+		parseNotes = append(parseNotes, unknownSectionKeyNotes(raw)...)
+		parseNotes = append(parseNotes, appShapeNotes(raw)...)
 	} else if !isUpdate {
 		return "", errors.New("sections is required to create an app")
 	}
@@ -462,6 +506,16 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 			}, nil
 		}
 	}
+	// A pipeline panel is a two-column shape too — run history beside a stage
+	// transcript — so it takes the full width the same way a workbench does,
+	// without the author having to know to ask. It does NOT own the page: a
+	// pipeline section can sit under a display panel or beside a table.
+	for _, m := range secs {
+		if k := strings.ToLower(strings.TrimSpace(mapStr(m, "kind"))); k == "pipeline" || k == "run" {
+			spec.FullWidth = true
+			break
+		}
+	}
 	// Default to a centered ~900px column; the author opts into full width for
 	// data-heavy surfaces (wide tables / dashboards).
 	maxWidth := "900px"
@@ -503,6 +557,197 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 // implied by the field that was set (an `html` blob, a `columns` list). Both
 // state the intent unambiguously, so infer rather than reject — a hard error
 // here reads as "the app can't be edited" and the author re-writes it blind.
+// sectionKeys is what each section kind actually READS, so a key that is not
+// listed here is a key the framework threw away. Kept beside the builder it
+// mirrors: if a kind learns a field, it belongs in both places, and the cost of
+// forgetting is one spurious note, never a refused save.
+var sectionKeys = map[string][]string{
+	"":          {"kind", "title", "subtitle", "group", "collapsed"}, // every kind
+	"form":      {"fields", "submit_label", "modal"},
+	"table":     {"columns", "empty_text", "editable", "edit_fields", "deletable", "auto_refresh_ms", "source_script"},
+	"display":   {"pairs", "source_script"},
+	"chart":     {"chart_type", "labels", "series", "source_script", "stacked", "legend", "height"},
+	"actions":   {"empty_text"},
+	"empty":     {"icon", "hint"},
+	"chat":      {"list_title", "empty_text", "placeholder"},
+	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id"},
+	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id"},
+	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder"},
+	"html":      {"html", "height"},
+	"card":      {"html", "height"},
+}
+
+// topLevelAppKeys are app_def parameters that sit BESIDE sections, not inside
+// one. A section carrying one of these isn't using a key that doesn't exist —
+// it put a real key one level too deep, which is a different mistake with a
+// different fix. pipeline_id is absent deliberately: it is valid in both places.
+var topLevelAppKeys = map[string]bool{
+	"actions": true, "data_sources": true, "agent_id": true,
+	"full_width": true, "private_db": true, "record_key": true,
+	"name": true, "description": true, "slug": true,
+}
+
+// unknownSectionKeyNotes reports keys a section carried that its kind does not
+// read.
+//
+// A dropped key used to be perfectly silent: the save succeeded, the app came
+// back missing the behavior the key was supposed to add, and the only way to
+// find out was to guess. Guessing is what actually happened — an invented
+// pipeline_label and a borrowed source_script were both accepted without
+// comment, so the author concluded the SECTION KIND was broken and rewrote a
+// working app by hand.
+//
+// A note, not an error: the section is otherwise valid and saving it is right.
+// The note just makes the difference between "what I sent" and "what was
+// stored" visible in the same breath as the save.
+func unknownSectionKeyNotes(raw any) []string {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var notes []string
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		m = normalizeSection(m)
+		kind := strings.ToLower(strings.TrimSpace(mapStr(m, "kind")))
+		known, ok := sectionKeys[kind]
+		if !ok {
+			continue // an unknown kind is buildAppSection's error to raise, not ours
+		}
+		allowed := map[string]bool{}
+		for _, k := range append(append([]string{}, sectionKeys[""]...), known...) {
+			allowed[k] = true
+		}
+		var stray []string
+		for k := range m {
+			if !allowed[strings.ToLower(strings.TrimSpace(k))] {
+				stray = append(stray, k)
+			}
+		}
+		if len(stray) == 0 {
+			continue
+		}
+		sort.Strings(stray) // map order is not an order
+		note := fmt.Sprintf("section %d (kind %q): ignored %s — this kind reads: %s. Nothing you sent under those keys was stored.",
+			i+1, kind, strings.Join(stray, ", "), strings.Join(append(append([]string{}, known...), sectionKeys[""]...), ", "))
+		// Where it DOES belong, when the key is a real parameter one level up.
+		// Listing what the kind reads answers "why was this dropped" and not
+		// "where does it go", and the difference is rounds: an actions array
+		// nested in an actions SECTION was re-sent unchanged, then moved on a
+		// guess, because the note never said the word "top-level".
+		var misplaced []string
+		for _, k := range stray {
+			if topLevelAppKeys[strings.ToLower(strings.TrimSpace(k))] {
+				misplaced = append(misplaced, k)
+			}
+		}
+		if len(misplaced) > 0 {
+			note += fmt.Sprintf(" %s is a TOP-LEVEL app_def parameter — move it out of the section, beside \"sections\".",
+				strings.Join(misplaced, " and "))
+		}
+		notes = append(notes, note)
+	}
+	return notes
+}
+
+// appShapeNotes reports section COMBINATIONS that parse cleanly and then don't
+// do what the author is about to promise. Every one of these produced a working
+// page and a false claim to the user.
+func appShapeNotes(raw any) []string {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var notes []string
+	pipelineAt := -1
+	var recordViews []string
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		m = normalizeSection(m)
+		switch strings.ToLower(strings.TrimSpace(mapStr(m, "kind"))) {
+		case "pipeline", "run":
+			if pipelineAt < 0 {
+				pipelineAt = i
+			}
+			// Extra submit fields look like pipeline parameters and are not.
+			// A run takes exactly ONE input — the field named input/topic, else
+			// the first one — and the rest are posted and ignored, so a debate
+			// app asking for two sides in their own boxes templates {side_a}
+			// against a value that never arrives.
+			fields := appPipelineFields(m["fields"])
+			var stray []string
+			for i, f := range fields {
+				switch {
+				case strings.EqualFold(f.Name, "input"), strings.EqualFold(f.Name, "topic"):
+				case i == 0 && !pipelineFieldsNameTheInput(fields):
+					// The first field IS the input when nothing else claims it.
+				default:
+					stray = append(stray, f.Name)
+				}
+			}
+			if len(stray) > 0 {
+				sort.Strings(stray)
+				notes = append(notes, fmt.Sprintf("section %d (pipeline): the submit form's %s field(s) are sent but NOT read — a run takes exactly one input. Ask for those parameters inside the question text instead, or the pipeline's prompts will template against values that never arrive.",
+					i+1, strings.Join(stray, ", ")))
+			}
+		case "table", "display":
+			// A record-backed view; a source_script one computes its own rows.
+			if strings.TrimSpace(mapStr(m, "source_script")) == "" {
+				recordViews = append(recordViews, strconv.Itoa(i+1))
+			}
+		}
+	}
+	if pipelineAt >= 0 && len(recordViews) > 0 {
+		notes = append(notes, fmt.Sprintf("section(s) %s read the app's RECORD store, which a pipeline never writes to — a run's history lives in the pipeline panel's own sidebar (section %d). Those sections will stay on their empty state forever unless an action script writes records, so do not tell the user past runs will appear there.",
+			strings.Join(recordViews, ", "), pipelineAt+1))
+	}
+	return notes
+}
+
+// pipelineFieldsNameTheInput reports whether the form explicitly names its
+// input field, in which case the first field carries no special meaning.
+func pipelineFieldsNameTheInput(fields []ui.PipelineField) bool {
+	for _, f := range fields {
+		if strings.EqualFold(f.Name, "input") || strings.EqualFold(f.Name, "topic") {
+			return true
+		}
+	}
+	return false
+}
+
+// sectionPipelineRef finds a pipeline_id written on a pipeline SECTION rather
+// than at the app level — the same binding, one object down. First one wins:
+// an app has a single pipeline binding, so two different values is a conflict
+// no guess resolves, and taking the first keeps the behavior predictable
+// (the stray one is reported by unknownSectionKeyNotes... it isn't, since
+// pipeline_id IS a key this kind reads — which is the point: it is honored).
+func sectionPipelineRef(raw any) string {
+	arr, ok := raw.([]any)
+	if !ok {
+		return ""
+	}
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		m = normalizeSection(m)
+		switch strings.ToLower(strings.TrimSpace(mapStr(m, "kind"))) {
+		case "pipeline", "run":
+			if p := strings.TrimSpace(mapStr(m, "pipeline_id")); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
 func normalizeSection(m map[string]any) map[string]any {
 	if strings.TrimSpace(mapStr(m, "kind")) != "" {
 		return m
@@ -563,7 +808,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			Invalidate: appRecordWriteInvalidations(spec),
 		}
 		if len(form.Fields) == 0 {
-			return ui.Section{}, errors.New("a form section needs at least one field")
+			return ui.Section{}, entryListError("form", "field", "fields", m["fields"])
 		}
 		if boolArg(m, "modal") {
 			// Structured-create: the form opens from a "New" button in a dialog —
@@ -589,7 +834,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			AutoRefreshMS: intFromArgs(m, "auto_refresh_ms"),
 		}
 		if len(tbl.Columns) == 0 {
-			return ui.Section{}, errors.New("a table section needs at least one column")
+			return ui.Section{}, entryListError("table", "column", "columns", m["columns"])
 		}
 		// editable: an Edit button per row opens the record in a prefilled
 		// dialog (FormPanel: Source GETs the row, submit upserts it back to
@@ -676,6 +921,45 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			Markdown:     true,
 			EmptyText:    firstNonEmptyStr(mapStr(m, "empty_text"), "Ask the assistant to get started."),
 			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything…"),
+		}
+	case "pipeline", "run":
+		// The RUN surface: submit form on top, live stage-by-stage transcript
+		// below, past runs in the sidebar. Bound to the app's pipeline_id;
+		// customapps serves the SSE + session endpoints under pipeline/*
+		// (handlePipeline → orchestrate's PublicHandlePipeline), so the URLs are
+		// relative to the app mount exactly like chat/* and the record store.
+		//
+		// This is what makes a multi-stage recipe an APP rather than a tool an
+		// agent happens to own: the user gets a page to launch it, watch it
+		// work, and read what it produced last week.
+		if strings.TrimSpace(spec.PipelineID) == "" {
+			return ui.Section{}, errors.New("a pipeline section needs the app to have a pipeline_id (the stored pipeline this app runs) — author the pipeline first with the `pipeline` tool, then pass its name or id as pipeline_id")
+		}
+		sec.NoChrome = true // the panel manages its own layout
+		fields := appPipelineFields(m["fields"])
+		if len(fields) == 0 {
+			// The default is the one field every pipeline takes: its input. Named
+			// "topic" because the stream endpoint accepts input|topic and the
+			// panel titles a run from it.
+			fields = []ui.PipelineField{{
+				Name: "topic", Type: "textarea", Required: true, Rows: 3,
+				Label:       firstNonEmptyStr(mapStr(m, "input_label"), "What should this run?"),
+				Placeholder: mapStr(m, "placeholder"),
+			}}
+		}
+		sec.Body = ui.PipelinePanel{
+			SessionsListURL:  "pipeline/sessions",
+			SessionLoadURL:   "pipeline/sessions/{id}",
+			SessionDeleteURL: "pipeline/sessions/{id}",
+			SubmitURL:        "pipeline/stream",
+			SubmitLabel:      firstNonEmptyStr(mapStr(m, "submit_label"), "Start"),
+			Fields:           fields,
+			// A stage transcript is prose — headings, lists, citations — so it
+			// renders as markdown, and past runs get checkboxes because a run
+			// history is something you prune in batches.
+			Markdown:   true,
+			BulkSelect: true,
+			EmptyText:  firstNonEmptyStr(mapStr(m, "empty_text"), "Start a run to see it here."),
 		}
 	case "chart":
 		// A chart is either STATIC (inline labels + series) or COMPUTED by
@@ -801,6 +1085,56 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 	}, nil
 }
 
+// entryListError explains why a fields/columns list came out EMPTY.
+//
+// "a form section needs at least one field" was true of the parsed result and
+// false of what the author sent: three fields arrived and all three were
+// dropped for lacking the key the parser reads. The author, reading a message
+// that contradicted the payload in front of them, re-sent the same shape six
+// times and then simplified to a single field to isolate it — which produced
+// the same sentence, because the count was never the problem.
+//
+// So: distinguish "you sent none" from "every one was discarded, here is what
+// yours carry instead."
+func entryListError(section, item, plural string, raw any) error {
+	arr, isArr := raw.([]any)
+	switch {
+	case raw == nil, !isArr && raw == nil:
+		return fmt.Errorf("a %s section needs at least one %s — pass %s:[{%q:…, \"label\":…}]", section, item, plural, "field")
+	case !isArr:
+		return fmt.Errorf("a %s section's %s must be an ARRAY of objects, got %T", section, plural, raw)
+	case len(arr) == 0:
+		return fmt.Errorf("a %s section needs at least one %s — %s was empty", section, item, plural)
+	}
+	// Non-empty in, nothing out: every entry lacked the key. Report the keys
+	// they DO carry, which is the fastest possible route to the fix.
+	keys := map[string]bool{}
+	for _, item := range arr {
+		if m, ok := item.(map[string]any); ok {
+			for k := range m {
+				keys[k] = true
+			}
+		}
+	}
+	have := make([]string, 0, len(keys))
+	for k := range keys {
+		have = append(have, k)
+	}
+	sort.Strings(have)
+	msg := fmt.Sprintf("a %s section got %d %s but every one was DROPPED: each needs a \"field\" key naming the record field it reads or writes.",
+		section, len(arr), plural)
+	if len(have) > 0 {
+		msg += " Yours carry: " + strings.Join(have, ", ") + "."
+	}
+	for _, alias := range []string{"key", "id", "column", "value"} {
+		if keys[alias] {
+			msg += fmt.Sprintf(" Rename %q to \"field\".", alias)
+			break
+		}
+	}
+	return errors.New(msg)
+}
+
 // appFormFields converts the declarative fields array into ui.FormField values.
 func appFormFields(raw any) []ui.FormField {
 	arr, ok := raw.([]any)
@@ -813,7 +1147,12 @@ func appFormFields(raw any) []ui.FormField {
 		if !ok {
 			continue
 		}
-		field := strings.TrimSpace(mapStr(m, "field"))
+		// `name` is accepted as an alias for `field`. The two spellings mean the
+		// same thing to an author, the pipeline section already took `name`, and
+		// refusing it here made ONE key behave differently in three sections —
+		// which cost six round-trips of "a form section needs at least one
+		// field" against a payload that plainly carried three.
+		field := strings.TrimSpace(firstNonEmptyStr(mapStr(m, "field"), mapStr(m, "name")))
 		if field == "" {
 			continue
 		}
@@ -829,6 +1168,46 @@ func appFormFields(raw any) []ui.FormField {
 			ff.Options = opts
 		}
 		out = append(out, ff)
+	}
+	return out
+}
+
+// appPipelineFields converts the declarative fields array into the submit-form
+// fields of a pipeline section. Accepts the same `field`/`name` spelling the
+// form sections use, so an author who has written one section already doesn't
+// have to learn a second key for the same idea.
+//
+// The names matter more here than in a form: the panel POSTs them as the run's
+// JSON body, and the run surface reads `input` (or `topic`) as the pipeline's
+// input. A field named anything else is carried but not consumed.
+func appPipelineFields(raw any) []ui.PipelineField {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var out []ui.PipelineField
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(firstNonEmptyStr(mapStr(m, "name"), mapStr(m, "field")))
+		if name == "" {
+			continue
+		}
+		pf := ui.PipelineField{
+			Name:        name,
+			Label:       firstNonEmptyStr(mapStr(m, "label"), name),
+			Type:        firstNonEmptyStr(strings.ToLower(strings.TrimSpace(mapStr(m, "type"))), "text"),
+			Placeholder: mapStr(m, "placeholder"),
+			Default:     mapStr(m, "default"),
+			Required:    boolArg(m, "required"),
+			Rows:        intFromArgs(m, "rows"),
+		}
+		for _, o := range appSelectOptions(m["options"]) {
+			pf.Options = append(pf.Options, o.Value)
+		}
+		out = append(out, pf)
 	}
 	return out
 }
@@ -864,7 +1243,8 @@ func appTableCols(raw any) []ui.Col {
 		if !ok {
 			continue
 		}
-		field := strings.TrimSpace(mapStr(m, "field"))
+		// Same alias as appFormFields — one spelling, one meaning, everywhere.
+		field := strings.TrimSpace(firstNonEmptyStr(mapStr(m, "field"), mapStr(m, "name")))
 		if field == "" {
 			continue
 		}
@@ -1207,8 +1587,12 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"desc":       spec.Desc,
 		"record_key": spec.RecordKey,
 		"agent_id":   spec.AgentID,
-		"full_width": spec.FullWidth,
-		"url":        "/custom/" + spec.Slug + "/",
+		// Echoed like agent_id so an author reading the app back can see what a
+		// pipeline section is bound to — a get that omits a binding invites an
+		// update that silently drops it.
+		"pipeline_id": spec.PipelineID,
+		"full_width":  spec.FullWidth,
+		"url":         "/custom/" + spec.Slug + "/",
 	}
 	// Hand back the AUTHORING sections — the shape action=update accepts — not
 	// the rendered page. Returning the page invited the obvious next move (feed
@@ -1481,7 +1865,8 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			} catch (e) {}
 		});
 		return JSON.stringify({
-			sections: document.querySelectorAll('.ui-section').length,
+			sections: document.querySelectorAll('.ui-section,[data-ui-section]').length,
+			panels: document.querySelectorAll('.ui-pl,.ui-chat,.ui-wb,.ui-cw').length,
 			tables: document.querySelectorAll('.ui-table-list').length,
 			empty_texts: Array.prototype.slice.call(document.querySelectorAll('.ui-table-empty'), 0, 8).map(function(e){ return e.textContent.trim(); }),
 			body_chars: txt.length,
@@ -1555,6 +1940,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		}
 		var pr struct {
 			Sections   int      `json:"sections"`
+			Panels     int      `json:"panels"`
 			Tables     int      `json:"tables"`
 			EmptyTexts []string `json:"empty_texts"`
 			BodyChars  int      `json:"body_chars"`
@@ -1574,11 +1960,23 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 				fmt.Fprintf(&b, "OK   render — %d section(s) mounted (%d table(s)).\n", pr.Sections, pr.Tables)
 			}
 			// A canvas app draws instead of writing, so visuals count as
-			// content — only a page with neither text nor anything drawn is
-			// actually blank.
-			if pr.BodyChars < 40 && pr.Visuals == 0 {
+			// content — and a LIVE panel (chat, pipeline, workbench) is mostly
+			// empty until someone types in it, which is the correct look for a
+			// fresh one, not a broken page. Only a page with none of the three
+			// is actually blank.
+			//
+			// This used to fail an app whose one table was legitimately showing
+			// its empty state, two lines above a NOTE saying exactly that. A
+			// verdict that contradicts its own evidence gets believed anyway:
+			// the reported fix is to rebuild the page, and rebuilding a page
+			// that was never broken is how a working app becomes a hand-rolled
+			// one.
+			if pr.BodyChars < 40 && pr.Visuals == 0 && pr.Panels == 0 && len(pr.EmptyTexts) == 0 {
 				failures++
 				fmt.Fprintf(&b, "FAIL render — page body is nearly empty (%d chars of text, nothing drawn).\n", pr.BodyChars)
+			}
+			if pr.Panels > 0 {
+				fmt.Fprintf(&b, "OK   %d live panel(s) mounted (chat / pipeline / workbench) — these look empty until a run or a message starts, which is correct for a fresh one.\n", pr.Panels)
 			}
 			if pr.Frames > 0 {
 				fmt.Fprintf(&b, "OK   %d framed document(s) rendered (an html section holding a complete page gets its own frame).\n", pr.Frames)

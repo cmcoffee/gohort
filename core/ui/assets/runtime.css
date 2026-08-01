@@ -272,6 +272,13 @@ body { min-height: 100vh; min-height: 100dvh; }
   /* Long subtitles wrap onto multiple lines; never truncate. */
   white-space: normal; overflow-wrap: break-word;
 }
+/* Heading for a NO-CHROME section (chat / pipeline / workbench panels). It sits
+ * above the panel rather than inside a card, so it supplies the padding the
+ * card would have given it and nothing else — the panel's own layout, which is
+ * why it asked for no chrome, stays untouched. */
+.ui-section-bare-head { margin: 0 0 0.2rem 0; padding: 0 0.1rem; }
+.ui-section-bare-head .ui-section-h { margin-bottom: 0.35rem; }
+.ui-section-bare-head .ui-section-sub { margin: 0 0 0.5rem 0; }
 
 /* --- PanicBar (sticky top) --- */
 .ui-panic-bar {

@@ -289,6 +289,94 @@ func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (AgentRecord, boo
 	return findAgentByNameOrID(udb, owner, agentID)
 }
 
+// LookupAppPipeline resolves a pipeline by ID or name within an owner's store,
+// for a data-driven app whose `pipeline` section runs it. Name fallback for the
+// same reason LookupAppAgent has one: an imported bundle carries the reference
+// as a NAME because the pipeline is reborn under a fresh ID on import, so a
+// binding that only understood IDs would break every imported app.
+func (T *OrchestrateApp) LookupAppPipeline(owner, pipelineID string) (PipelineDef, bool) {
+	if T.DB == nil || owner == "" || strings.TrimSpace(pipelineID) == "" {
+		return PipelineDef{}, false
+	}
+	udb := UserDB(T.DB, owner)
+	if udb == nil {
+		return PipelineDef{}, false
+	}
+	if def, ok := LoadPipelineDef(udb, owner, pipelineID); ok {
+		return def, true
+	}
+	want := SnakeFromDisplay(strings.TrimSpace(pipelineID))
+	for _, d := range ListPipelineDefs(udb, owner) {
+		if SnakeFromDisplay(d.Name) == want {
+			return d, true
+		}
+	}
+	return PipelineDef{}, false
+}
+
+// PublicHandlePipeline serves the PipelinePanel protocol for a pipeline a HOST
+// app has bound — the pipeline counterpart of PublicHandleSend and friends.
+// sub is the path after "pipeline/": "stream" | "sessions" | "sessions/<id>".
+//
+// The split that makes a shared app work: the DEFINITION is the owner's (the
+// caller resolved it via LookupAppPipeline), while the run transcripts are
+// stored and listed under the CALLING user — so every user of a shared app
+// runs the same recipe and sees only their own history. Same shape as the
+// records store, where the definition is shared and the data is not.
+func (T *OrchestrateApp) PublicHandlePipeline(w http.ResponseWriter, r *http.Request, def PipelineDef, sub string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch {
+	case sub == "stream":
+		T.handlePipelineStream(w, r, user, def)
+	case sub == "sessions":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		T.handlePipelineSessions(w, r, user, def.ID)
+	case strings.HasPrefix(sub, "sessions/"):
+		sid := strings.TrimPrefix(sub, "sessions/")
+		if sid == "" || strings.Contains(sid, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		T.handlePipelineSessionOne(w, r, user, def.ID, sid)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// PublicLatestPipelineRun returns a user's most recent run of a pipeline —
+// what it produced, and the per-stage transcript.
+//
+// For a host app whose action scripts need the run that just finished. Without
+// it, the only way to get a completed run into an app's record store was to
+// guess at an environment variable the framework never set, which is exactly
+// what happened: a "save this debate to history" button read `pipeline_output`,
+// found nothing, and reported "run a debate first" after every debate. The
+// script ran and printed valid JSON, so every check passed.
+//
+// Scoped to the CALLING user, like the run store itself: a shared app's users
+// each see their own last run.
+func (T *OrchestrateApp) PublicLatestPipelineRun(user, pipelineID string) (PipelineRun, bool) {
+	if T.DB == nil || user == "" || pipelineID == "" {
+		return PipelineRun{}, false
+	}
+	runs := T.listPipelineRuns(user, pipelineID) // newest first
+	for _, run := range runs {
+		// Skip one still in flight: a half-written transcript saved as history
+		// is worse than no history, and the button is meant for a debate that
+		// has finished.
+		if !run.Running {
+			return run, true
+		}
+	}
+	return PipelineRun{}, false
+}
+
 // LookupExposedAgent resolves a slug to an exposed AgentRecord plus
 // the owner's username (used to scope memory/sessions in the right
 // sub-store). Returns (zero, "", false) when no exposed agent has

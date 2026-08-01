@@ -1612,6 +1612,103 @@ func keepScopedDenials(db Database, user string, disabled []string) []string {
 	return out
 }
 
+// dropPickedDenials removes from a deny list every name the Tools modal just
+// CHECKED. It is the other half of foldUncheckedIntoDenyList: a user-crafted
+// agent expresses "off" by leaving a name OUT of AllowedTools, so its unchecks
+// have nothing to fold — but a checked box still has to be able to clear a deny
+// entry some other surface wrote, or the checkbox is decorative.
+//
+// Scoped rows are left alone: their decisions arrive in this same field from
+// their own checklist group, and they are never in the picked set.
+func dropPickedDenials(db Database, user string, picked, disabled []string) []string {
+	if len(disabled) == 0 {
+		return nil
+	}
+	scoped := map[string]bool{}
+	for _, p := range LoadPersistentTempTools(db, user) {
+		if len(p.ScopeAgents) > 0 {
+			scoped[p.Tool.Name] = true
+		}
+	}
+	pickedSet := make(map[string]bool, len(picked))
+	for _, n := range picked {
+		pickedSet[canonicalToolName(n)] = true
+	}
+	out := make([]string, 0, len(disabled))
+	for _, n := range disabled {
+		if pickedSet[canonicalToolName(n)] && !scoped[n] {
+			continue // the box the owner just ticked
+		}
+		out = append(out, n)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// curateToolsFromModal translates ONE Tools-modal save into stored curation.
+//
+// The modal sends two things: the CHECKED catalog names as AllowedTools, and
+// the scoped group's decisions already made in DisabledPersistentTools. A tool
+// is on for an agent only when the allow-list admits it AND the deny list is
+// silent about it, so the one surface that shows both gates has to write both.
+// It is also the only save allowed to — see the preservation branch at the call
+// site.
+func curateToolsFromModal(db Database, user string, req *AgentRecord) {
+	// The no-tools sentinel (["__none__"]) means exactly that; the runtime
+	// handles it via noTools and there is no checked set to translate.
+	if isNoToolsSentinel(req.AllowedTools) {
+		return
+	}
+	seed, isSeed := seedAgentByID(req.ID)
+	switch {
+	case isSeed && len(seed.AllowedTools) == 0:
+		// Default-pool seed (seed-chat): the in-code seed ships an EMPTY
+		// AllowedTools, meaning "every approved tool, including ones approved
+		// in the future". Unchecks fold into the deny list, and AllowedTools is
+		// forced back to nil so it never freezes into a snapshot that blocks
+		// auto-add.
+		if len(req.AllowedTools) == 0 {
+			// All-checked: clear the deny list, except what the modal said
+			// about SCOPED tools — they have no checkbox in the list this
+			// "all" describes (see keepScopedDenials).
+			req.DisabledPersistentTools = keepScopedDenials(db, user, req.DisabledPersistentTools)
+		} else {
+			req.DisabledPersistentTools = foldUncheckedIntoDenyList(db, user, req.AllowedTools, req.DisabledPersistentTools)
+		}
+		req.AllowedTools = nil
+	case isSeed:
+		// Curated seed (research, kb): the in-code seed ships a real
+		// framework-tool allowlist that resolveWorkerTools intersects against.
+		// Preserve it as the literal picked list; only the user's persistent
+		// temp-tool unchecks fold into the deny list. Wiping AllowedTools here
+		// would broaden the agent to the full default pool (loadAgent does not
+		// restore the curated list).
+		if len(req.AllowedTools) > 0 {
+			req.DisabledPersistentTools = foldUncheckedIntoDenyList(db, user, req.AllowedTools, req.DisabledPersistentTools)
+		}
+	default:
+		// A user-crafted agent gates the catalog through AllowedTools alone, so
+		// nothing here folds unchecks INTO the deny list — leaving the name out
+		// of the allow-list already said it. Entries land there all the same:
+		// the per-agent Scope pill's OFF writes one whenever the agent has no
+		// allow-list to trim (disableGlobalToolForAgent). Until this branch
+		// existed, nothing could ever take one back — re-checking the box saved
+		// an allow-list the stale deny entry then overrode, so the tool read
+		// unchecked again on every reload, permanently. Seeds were given this in
+		// v0.5.698/699; agents the user made themselves were the case left
+		// standing.
+		if len(req.AllowedTools) == 0 {
+			// Every catalog box checked: nothing in the pool is off. What the
+			// scoped group said still stands — it is not part of that "all".
+			req.DisabledPersistentTools = keepScopedDenials(db, user, req.DisabledPersistentTools)
+		} else {
+			req.DisabledPersistentTools = dropPickedDenials(db, user, req.AllowedTools, req.DisabledPersistentTools)
+		}
+	}
+}
+
 func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -1691,23 +1788,6 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailExceptions = existing.GuardrailExceptions
 			}
 		}
-		// Tool-curation translation for seed agents. The modal sends the
-		// set of CHECKED tools as req.AllowedTools; the no-tools sentinel
-		// (["__none__"]) bypasses this and the runtime handles it via
-		// noTools. Two seed shapes:
-		//
-		//  - Default-pool seeds (seed-chat): the in-code seed ships an
-		//    EMPTY AllowedTools, meaning "every approved tool, including
-		//    ones approved in the future." Unchecks fold into
-		//    DisabledPersistentTools and AllowedTools is forced back to nil
-		//    so it never freezes into a snapshot that blocks auto-add.
-		//
-		//  - Curated seeds (research, kb): the in-code seed ships a real
-		//    framework-tool allowlist that resolveWorkerTools intersects
-		//    against. Preserve it as the literal picked list; only the
-		//    user's persistent temp-tool unchecks fold into the deny list.
-		//    Wiping AllowedTools here would broaden the agent to the full
-		//    default pool (loadAgent does not restore the curated list).
 		// Only the Tools modal may recompute tool curation. Its save is the only
 		// payload whose AllowedTools carries the CHECKED temp tools; every other
 		// whole-record saver (the Rules modal, the editor form) round-trips the
@@ -1722,31 +1802,26 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.DisabledPersistentTools = existing.DisabledPersistentTools
 			}
 		}
-		if isSeedID(req.ID) && fromToolsModal && !isNoToolsSentinel(req.AllowedTools) {
-			seed, _ := seedAgentByID(req.ID)
-			if len(seed.AllowedTools) == 0 {
-				// Default-pool seed.
-				if len(req.AllowedTools) == 0 {
-					// All-checked: clear the deny list, except what the modal
-					// said about SCOPED tools — they have no checkbox in the
-					// list this "all" describes (see keepScopedDenials).
-					req.DisabledPersistentTools = keepScopedDenials(T.DB, user, req.DisabledPersistentTools)
-				} else {
-					req.DisabledPersistentTools = foldUncheckedIntoDenyList(T.DB, user, req.AllowedTools, req.DisabledPersistentTools)
-				}
-				// Force the auto-include sentinel so future approvals appear
-				// without a per-tool enable step.
-				req.AllowedTools = nil
-			} else if len(req.AllowedTools) > 0 {
-				// Curated seed: keep the framework allowlist intact, fold only
-				// persistent temp-tool unchecks into the deny list.
-				req.DisabledPersistentTools = foldUncheckedIntoDenyList(T.DB, user, req.AllowedTools, req.DisabledPersistentTools)
-			}
+		if fromToolsModal {
+			curateToolsFromModal(T.DB, user, &req)
 		}
 		// Flattened namespace: tools live in the unified store; the GET view
 		// synthesizes them onto the record, so a full-form save must never
 		// write that view back into storage.
 		req.Tools = nil
+		// A record with no id is a NEW agent — stamp the starting hook set so it
+		// does not fall through to resolveGuardrailHooks' broader default. Only
+		// when the caller sent none: the Rules modal posts the whole record, and
+		// an owner who deliberately cleared every hook must stay cleared.
+		if req.ID == "" && len(req.GuardrailHooks) == 0 {
+			req.GuardrailHooks = defaultNewAgentGuardrailHooks()
+			// Safe to set unconditionally on a NEW record: the create form
+			// carries no fail-closed control, so a false here means "not
+			// asked", never "deliberately open". The Rules modal owns the
+			// setting afterwards and reaches it through the guardrails
+			// endpoint, which this branch never runs for.
+			req.GuardrailFailClosed = defaultNewAgentFailClosed
+		}
 		saved, err := saveAgent(udb, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
