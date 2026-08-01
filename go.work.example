@@ -1,20 +1,50 @@
-// Copy to go.work and fix the paths for your checkout:
+// A local development workspace. Copy it OUTSIDE this repo — to the directory
+// that CONTAINS gohort and its sibling modules — and fix the paths:
 //
-//	cp go.work.example go.work
+//	.../github.com/cmcoffee/
+//	├── go.work        <- here, not inside gohort
+//	├── gohort/
+//	└── snugforge/
 //
-// You need this ONLY if you are developing gohort alongside a local checkout of
-// one of its dependencies. To build a release from a clean clone you do not
-// need it at all — go.mod resolves published modules on its own.
+// You need this ONLY if you develop gohort alongside a local checkout of one of
+// its dependencies. Building a release from a clean clone does not need it:
+// go.mod resolves published modules by itself, which is the entire reason the
+// overrides are not in go.mod any more.
 //
-// Absolute paths are recommended. A repo is often reachable through more than
-// one path (a symlink, a bind mount, /home vs a mounted volume), and a relative
-// override silently resolves to a different directory depending on which one
-// you happen to cd through.
+// What it buys: edit snugforge, and gohort picks the change up on the next
+// build. No tag, no version bump, nothing to remember to undo before pushing.
+//
+// TWO PATH RULES, both learned the hard way on a tree reachable through a
+// symlink (/home/craig/workshop/cmcoffee -> /mnt/workshop/go/src/...):
+//
+//   - `use` paths RELATIVE. Go has to match your current directory against one
+//     of them textually; an absolute path stops the workspace applying when you
+//     cd in through the other name.
+//   - `replace` targets ABSOLUTE whenever they climb above the workspace
+//     directory. A relative "../go-pdf/fpdf" resolves to a different place
+//     depending on which name you came in through — one of them nonexistent.
+//
+// A module with no go.mod cannot join a workspace (kitebroker, for one). It
+// keeps building the old way, untouched.
 
 go 1.25.0
 
-use .
+use (
+	./gohort
+	./snugforge
+)
 
 replace (
-	github.com/cmcoffee/snugforge => /path/to/your/snugforge
+	// Third-party copies patched locally: overrides, not modules under
+	// development, so they are replaced rather than `use`d.
+	github.com/go-pdf/fpdf      => /abs/path/to/go-pdf/fpdf
+	github.com/rwcarlsen/goexif => /abs/path/to/rwcarlsen/goexif
+
+	// Only needed while snugforge is untagged. `use` above supplies its source,
+	// but gohort's go.mod requires v0.0.0 — a placeholder that exists nowhere —
+	// and the module graph still has to resolve that version. Pinned to v0.0.0
+	// rather than all versions, which Go refuses alongside `use`.
+	//
+	// Delete this the day snugforge is tagged and the requirement is bumped.
+	github.com/cmcoffee/snugforge v0.0.0 => /abs/path/to/cmcoffee/snugforge
 )
