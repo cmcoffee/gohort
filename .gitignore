@@ -19,3 +19,10 @@ private.go
 # Claude Code local settings
 .claude/
 fuzz
+
+# Local multi-module development workspace. The replace directives it carries
+# are paths on one machine, which is exactly why they no longer live in go.mod —
+# committing this would put the same clone-breaking problem back, one file over.
+# Start from go.work.example.
+go.work
+go.work.sum

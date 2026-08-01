@@ -1,0 +1,20 @@
+// Copy to go.work and fix the paths for your checkout:
+//
+//	cp go.work.example go.work
+//
+// You need this ONLY if you are developing gohort alongside a local checkout of
+// one of its dependencies. To build a release from a clean clone you do not
+// need it at all — go.mod resolves published modules on its own.
+//
+// Absolute paths are recommended. A repo is often reachable through more than
+// one path (a symlink, a bind mount, /home vs a mounted volume), and a relative
+// override silently resolves to a different directory depending on which one
+// you happen to cd through.
+
+go 1.25.0
+
+use .
+
+replace (
+	github.com/cmcoffee/snugforge => /path/to/your/snugforge
+)

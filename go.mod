@@ -49,9 +49,3 @@ require (
 	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 )
-
-replace (
-	github.com/cmcoffee/snugforge => ../snugforge
-	github.com/go-pdf/fpdf => ../../src/github.com/go-pdf/fpdf
-	github.com/rwcarlsen/goexif => /mnt/workshop/go/src/github.com/rwcarlsen/goexif
-)
