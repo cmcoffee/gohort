@@ -297,3 +297,39 @@ func TestVerifyChecksTheBoundPipelineResolves(t *testing.T) {
 		t.Error("say what to do about it — the fix is ordering, not syntax")
 	}
 }
+
+// A tool is not importable from a script. The author reached for
+// "from gohort import create_docx", got Python's bare ImportError, tried
+// "from gohort import workspace", got the same, then invented
+// default_api.create_docx — three rounds against a message that names the
+// missing symbol and nothing about what is actually available.
+func TestScriptImportErrorNamesWhatGohortActuallyExports(t *testing.T) {
+	traceback := `Traceback (most recent call last):
+  File "/opt/gohort/data/workspaces/u/action_forge_save.py", line 4, in <module>
+    from gohort import create_docx, workspace
+ImportError: cannot import name 'create_docx' [exit: exit status 1]`
+
+	hint := scriptFailureHint(traceback)
+	if hint == "" {
+		t.Fatal("a gohort ImportError is the recognizable case; it must carry a hint")
+	}
+	for _, want := range []string{"fetch_url", "fetch_via", "secret", "NOT the tool catalog"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("the hint must list what IS exported (%q), got:\n%s", want, hint)
+		}
+	}
+	if !strings.Contains(hint, `"create_docx" is a gohort TOOL`) {
+		t.Errorf("name the symbol the author reached for, got:\n%s", hint)
+	}
+	if !strings.Contains(hint, "pipeline tool stage") {
+		t.Errorf("say where the work belongs if it really does need a tool, got:\n%s", hint)
+	}
+
+	// Unrelated failures get no invented advice.
+	if h := scriptFailureHint("NameError: name 'records' is not defined"); h != "" {
+		t.Errorf("only the recognized case gets a hint, got: %s", h)
+	}
+	if h := scriptFailureHint("ImportError: No module named 'requests'"); h != "" {
+		t.Errorf("a non-gohort import is a different problem: %s", h)
+	}
+}

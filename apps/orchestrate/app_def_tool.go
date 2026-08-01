@@ -1144,6 +1144,36 @@ func entryListError(section, item, plural string, raw any) error {
 	return errors.New(msg)
 }
 
+// gohortScriptHelpers is everything the sandbox's gohort module actually
+// exports. Kept beside the hint because the point of the hint is this list.
+var gohortScriptHelpers = []string{"fetch_url", "fetch", "fetch_via", "browse_page", "log", "secret", "HookError"}
+
+// scriptFailureHint turns a raw Python traceback into the one sentence that
+// resolves it, when the traceback is one we recognize.
+//
+// A tool is not importable from a script. An author reached for
+// "from gohort import create_docx", got Python's bare ImportError, tried
+// "from gohort import workspace", got the same, then tried default_api.create_docx
+// — three rounds against a message that names the missing symbol and nothing
+// about what IS available.
+func scriptFailureHint(output string) string {
+	if !strings.Contains(output, "ImportError") || !strings.Contains(output, "gohort") {
+		return ""
+	}
+	name := ""
+	if i := strings.Index(output, "cannot import name "); i >= 0 {
+		rest := output[i+len("cannot import name "):]
+		if j := strings.IndexAny(strings.TrimPrefix(rest, "'"), "'\""); j >= 0 {
+			name = strings.TrimPrefix(rest, "'")[:j]
+		}
+	}
+	msg := "HINT: the gohort module exports only " + strings.Join(gohortScriptHelpers, ", ") + " — that is the network/secret channel, NOT the tool catalog."
+	if name != "" {
+		msg += " " + strconv.Quote(name) + " is a gohort TOOL, and a tool cannot be imported or subprocessed from a script."
+	}
+	return msg + " A script does its own work in plain Python (with fetch_url for anything off-box); if the job genuinely needs a tool, it belongs in a pipeline tool stage, not in here."
+}
+
 // appSpecSections reads the stored AUTHORING sections off a spec — the shape
 // update accepts, which is what a comparison against an incoming update needs.
 // Empty for a spec written before that field existed; the guard then has
@@ -2171,6 +2201,9 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 		if !json.Valid([]byte(trimmed)) {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s — did not print valid JSON. Output:\n%s\n", label, truncate(trimmed, 800))
+			if hint := scriptFailureHint(trimmed); hint != "" {
+				fmt.Fprintf(&b, "     %s\n", hint)
+			}
 			if strings.Contains(trimmed, `json.loads("records")`) || strings.Contains(trimmed, "json.loads('records')") {
 				b.WriteString("     Hint: read records with json.loads(os.environ.get('records', '[]')) — json.loads(\"records\") parses the literal word, not the data.\n")
 			} else if strings.Contains(trimmed, "KeyError") || strings.Contains(trimmed, "os.environ[") {
