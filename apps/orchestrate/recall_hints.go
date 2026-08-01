@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -80,13 +81,25 @@ func (t *chatTurn) renderRecallHints(userMsg string) string {
 	// Embed the user message ONCE through the turn memo — both scored retrievals
 	// below (and a same-turn knowledge_search/memory over the same text) reuse
 	// this vector instead of re-embedding.
+	// Every step of this phase is timed separately. The phase as a whole once
+	// held a turn for 45 seconds and the log showed a silent gap: instrumenting
+	// only the embed proved the embed innocent (44-202ms) and left the rest of
+	// the window just as dark. A stage that can block the user reports its own
+	// cost, or the next investigation is another read of the source.
+	phaseStart := time.Now()
+	embedStart := time.Now()
 	qVec := t.embedQuery(ctx, q)
+	embedMS := time.Since(embedStart)
 	threshold := RecallHintThreshold()
 
+	knStart := time.Now()
 	kn := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID,
 		generalTopic, q, qVec, max*3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+	knMS := time.Since(knStart)
+	memStart := time.Now()
 	mem := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID,
 		generalTopic, q, qVec, max*3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	memMS := time.Since(memStart)
 
 	// Auto-promote: the single opt-in to automatic RAG. Curated hits at or above
 	// the promote score get their body injected; they're excluded from the
@@ -105,7 +118,25 @@ func (t *chatTurn) renderRecallHints(userMsg string) string {
 
 	// Graph bridges: structural pointers for named entities the agent has a graph
 	// for. No cosine score; appended after the scored hits.
+	graphStart := time.Now()
 	graph := t.graphBridgeHints(q, recallGraphMax)
+	graphMS := time.Since(graphStart)
+
+	// One line, every step, always — the phase is on the critical path of every
+	// message, so its cost belongs in the log whether or not it was slow. Above
+	// the budget it warns instead, because that is a turn the user waited on and
+	// then got no hints for anyway.
+	total := time.Since(phaseStart)
+	timings := fmt.Sprintf("embed=%s knowledge=%s(%d hits) memory=%s(%d hits) graph=%s total=%s",
+		embedMS.Round(time.Millisecond), knMS.Round(time.Millisecond), len(kn),
+		memMS.Round(time.Millisecond), len(mem), graphMS.Round(time.Millisecond),
+		total.Round(time.Millisecond))
+	if total > RecallHintTimeout() {
+		Log("[recall.hints] SLOW agent=%s %s — over the %s budget, so this turn was delayed and sent without hints; the slowest step above is the one to fix",
+			t.agent.ID, timings, RecallHintTimeout())
+	} else {
+		Debug("[recall.hints] agent=%s %s", t.agent.ID, timings)
+	}
 
 	block := formatRecallHints(promoted, merged, graph)
 	if block != "" {

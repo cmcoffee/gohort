@@ -85,3 +85,27 @@ func mustCoreFile(t *testing.T, name string) string {
 }
 
 func mustAppFile(t *testing.T, path string) string { return mustCoreFile(t, path) }
+
+// Instrumenting only the embed proved the embed innocent (44-202ms) and left
+// the rest of the 45-second window exactly as dark as before. Every step of the
+// phase reports its own cost now, so the next slow turn names its own culprit
+// instead of requiring another read of the source.
+func TestRecallHintPhaseTimesEveryStep(t *testing.T) {
+	src := mustAppFile(t, "../apps/orchestrate/recall_hints.go")
+	for _, step := range []string{"embed=", "knowledge=", "memory=", "graph=", "total="} {
+		if !strings.Contains(src, step) {
+			t.Errorf("the phase timing line is missing %q — a step with no number cannot be the one you rule out", step)
+		}
+	}
+	// Hit counts alongside the durations: a slow scan reads differently
+	// depending on whether it returned 3 rows or 30,000.
+	if !strings.Contains(src, "len(kn)") || !strings.Contains(src, "len(mem)") {
+		t.Error("log the hit counts too — duration alone cannot distinguish a big corpus from a slow store")
+	}
+	if !strings.Contains(src, "SLOW agent=") {
+		t.Error("over-budget turns must warn without DEBUG on")
+	}
+	if !strings.Contains(src, "RecallHintTimeout()") {
+		t.Error("the SLOW threshold must be the budget itself, so the two cannot drift apart")
+	}
+}
