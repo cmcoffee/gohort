@@ -29,6 +29,11 @@
 
 go 1.25.0
 
+// A `use`d module needs no replace: the workspace supplies its source and the
+// go.mod requirement resolves against the published version. (While snugforge
+// was untagged this also needed a replace pinned to the bogus v0.0.0, because
+// the module graph has to resolve a version even when the code is local. Tagging
+// it removed that.)
 use (
 	./gohort
 	./snugforge
@@ -40,11 +45,4 @@ replace (
 	github.com/go-pdf/fpdf      => /abs/path/to/go-pdf/fpdf
 	github.com/rwcarlsen/goexif => /abs/path/to/rwcarlsen/goexif
 
-	// Only needed while snugforge is untagged. `use` above supplies its source,
-	// but gohort's go.mod requires v0.0.0 — a placeholder that exists nowhere —
-	// and the module graph still has to resolve that version. Pinned to v0.0.0
-	// rather than all versions, which Go refuses alongside `use`.
-	//
-	// Delete this the day snugforge is tagged and the requirement is bumped.
-	github.com/cmcoffee/snugforge v0.0.0 => /abs/path/to/cmcoffee/snugforge
 )
