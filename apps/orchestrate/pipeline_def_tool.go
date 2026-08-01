@@ -322,6 +322,17 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 			}
 		}
 	}
+	// A pipeline whose whole body is one tool call has composed nothing: it is a
+	// wrapper around whatever that tool already did, and it inherits that tool's
+	// behavior including the parts that do not exist. Observed exactly once and
+	// shipped: a "polish this through five rounds" pipeline that was a single
+	// tool stage over a stub whose body printed {"status":"started"} — the
+	// stage list said one thing, the tool's DESCRIPTION promised five rounds,
+	// and the summary repeated the description.
+	if len(saved.Stages) == 1 && saved.Stages[0].Kind == StageTool {
+		msg += " WARNING: this pipeline is ONE tool stage — it composes nothing and does exactly what " +
+			strconv.Quote(saved.Stages[0].Tool) + " already does, no more. A tool stage is a STEP (arithmetic, a lookup, one API call), not a whole pipeline. If the user asked for rounds, passes or multi-step work, that work belongs in stages here — read the tool's script body, not its description, before trusting it to do it for you."
+	}
 	if len(currentAttachments) == 0 {
 		msg += " WARNING: this pipeline is not attached to ANY agent — if it's meant for one, call pipeline(action=\"update\", name=" + saved.Name + ", attach_to_agents=[\"<agent_name>\"]) to wire it up."
 	} else {

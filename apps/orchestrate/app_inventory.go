@@ -25,7 +25,7 @@ import (
 
 // appInventoryLine lists the app's stored parts and forbids going beyond them.
 // Derived from the spec, so it cannot be optimistic.
-func appInventoryLine(spec AppSpec) string {
+func (t *chatTurn) appInventoryLine(spec AppSpec) string {
 	var parts []string
 
 	// Sections, by kind, in page order, with a count when repeated.
@@ -74,12 +74,34 @@ func appInventoryLine(spec AppSpec) string {
 	} else {
 		parts = append(parts, "no data sources")
 	}
+	// The pipeline by SHAPE, not by id. A bare UUID told the author nothing,
+	// and the claim a summary makes about a pipeline is never "it is bound" —
+	// it is "it runs five passes". Stage kinds are what makes that checkable:
+	// one tool stage cannot be five rounds of anything, and an app whose whole
+	// pipeline is a single wrapped tool is the shape that shipped a stub.
 	if id := strings.TrimSpace(spec.PipelineID); id != "" {
-		parts = append(parts, "pipeline: "+id)
+		def, ok := t.app.LookupAppPipeline(t.user, id)
+		if ok {
+			kinds := make([]string, 0, len(def.Stages))
+			for _, st := range def.Stages {
+				k := string(st.Kind)
+				if k == "" {
+					k = "worker"
+				}
+				if st.Kind == StageLoop && st.Count > 0 {
+					k = fmt.Sprintf("loop×%d", st.Count)
+				}
+				kinds = append(kinds, k)
+			}
+			parts = append(parts, fmt.Sprintf("pipeline: %q — %d stage(s): %s",
+				def.Name, len(def.Stages), strings.Join(kinds, " → ")))
+		} else {
+			parts = append(parts, "pipeline: "+id+" (DOES NOT RESOLVE)")
+		}
 	}
 	if id := strings.TrimSpace(spec.AgentID); id != "" {
 		parts = append(parts, "agent: "+id)
 	}
 
-	return "STORED — " + strings.Join(parts, "; ") + ".\nDescribe ONLY what this line contains. If the user asked for something that is not in it, either add it now or SAY it is missing; a button, a saved history, or a table you describe and did not build is the first thing they will go looking for."
+	return "STORED — " + strings.Join(parts, "; ") + ".\nDescribe ONLY what this line contains. If the user asked for something that is not in it, either add it now or SAY it is missing; a button, a saved history, or a table you describe and did not build is the first thing they will go looking for. The pipeline's stage list is part of this: do not describe rounds, passes or steps the stages do not actually perform."
 }

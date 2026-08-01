@@ -295,7 +295,7 @@ func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (AgentRecord, boo
 // as a NAME because the pipeline is reborn under a fresh ID on import, so a
 // binding that only understood IDs would break every imported app.
 func (T *OrchestrateApp) LookupAppPipeline(owner, pipelineID string) (PipelineDef, bool) {
-	if T.DB == nil || owner == "" || strings.TrimSpace(pipelineID) == "" {
+	if T == nil || T.DB == nil || owner == "" || strings.TrimSpace(pipelineID) == "" {
 		return PipelineDef{}, false
 	}
 	udb := UserDB(T.DB, owner)
@@ -344,6 +344,9 @@ func (T *OrchestrateApp) PublicHandlePipeline(w http.ResponseWriter, r *http.Req
 // Scoped to the CALLING user, like the run store itself: a shared app's users
 // each see their own last run.
 func (T *OrchestrateApp) PublicLatestPipelineRun(user, pipelineID string) (PipelineRun, bool) {
+	if T == nil {
+		return PipelineRun{}, false
+	}
 	return LatestPipelineRun(T.DB, user, pipelineID)
 }
 
