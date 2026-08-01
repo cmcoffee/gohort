@@ -188,7 +188,7 @@ kind="chat" — a live chat panel bound to the app's agent (REQUIRES agent_id on
 
 kind="pipeline" — the RUN surface: a submit form on top, the run's stages streaming in below it as they finish, and every past run in a sidebar. REQUIRES pipeline_id on the app. Fields: 'fields' (the submit form — array of {name, label, type, placeholder, default, required, rows, options}; DEFAULTS to one required textarea named "topic", which is what the run surface reads as the pipeline's input), 'submit_label' (default "Start"), 'empty_text'. The stage transcript renders as markdown and past runs are batch-deletable. Nothing to wire: the endpoints are relative to the app, the transcript persists per completed stage (so closing the tab loses the live view, never the result), and each user of a shared app gets their own run history over the owner's recipe.
 
-Name the input field "topic" or "input" — those are what the run reads. Extra fields are carried in the request but not consumed, so ask for the run's parameters IN the topic text ("compare X and Y, 3 rounds") rather than as separate fields that go nowhere.
+EVERY field is a PARAMETER: it arrives in the pipeline's prompts as {field_name}. So a debate form asking for proposition / side_a / side_b lets the stages say "Argue {side_a} on: {proposition}". The RUN'S INPUT — what {input} resolves to and what titles the run in the sidebar — is the field named "input" or "topic", or else the first one. Non-strings come through as text ({rounds} is "3", a toggle is "true"). The interpreter's own tokens are reserved: a field named input, prev, item or iteration is not substituted, because it would redefine the template language. A loop's count is NOT templatable — how many passes is authored in the pipeline, not asked on the form.
 
 === BUILDING A MULTI-STAGE APP (research, debate, review) ===
 This is the composition to reach for when the user asks for "deep research", "a debate", "a panel", "have several agents argue/critique/review X" — a job that is several LLM turns with structure between them, not one conversation. Build it in this order, and do not stop at the pipeline: a pipeline with no app is a tool only an agent can call, which is not what the user asked for.
@@ -686,27 +686,11 @@ func appShapeNotes(raw any, boundPipeline bool) []string {
 			if pipelineAt < 0 {
 				pipelineAt = i
 			}
-			// Extra submit fields look like pipeline parameters and are not.
-			// A run takes exactly ONE input — the field named input/topic, else
-			// the first one — and the rest are posted and ignored, so a debate
-			// app asking for two sides in their own boxes templates {side_a}
-			// against a value that never arrives.
-			fields := appPipelineFields(m["fields"])
-			var stray []string
-			for i, f := range fields {
-				switch {
-				case strings.EqualFold(f.Name, "input"), strings.EqualFold(f.Name, "topic"):
-				case i == 0 && !pipelineFieldsNameTheInput(fields):
-					// The first field IS the input when nothing else claims it.
-				default:
-					stray = append(stray, f.Name)
-				}
-			}
-			if len(stray) > 0 {
-				sort.Strings(stray)
-				notes = append(notes, fmt.Sprintf("section %d (pipeline): the submit form's %s field(s) are sent but NOT read — a run takes exactly one input. Ask for those parameters inside the question text instead, or the pipeline's prompts will template against values that never arrive.",
-					i+1, strings.Join(stray, ", ")))
-			}
+			// Extra submit fields are the pipeline's PARAMETERS: each arrives as
+			// {name} in every stage's prompt. Nothing to warn about — the note
+			// that used to live here said they went nowhere, which was true of
+			// the run surface before it carried them.
+			_ = appPipelineFields(m["fields"])
 		case "table", "display":
 			// A record-backed view; a source_script one computes its own rows.
 			if strings.TrimSpace(mapStr(m, "source_script")) == "" {

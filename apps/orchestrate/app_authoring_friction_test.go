@@ -146,9 +146,14 @@ func TestFieldAndNameAreTheSameKeyEverywhere(t *testing.T) {
 	}
 }
 
-// A page can parse perfectly and still promise something it cannot do. Both of
-// these shipped: a table of "past debates" that nothing ever writes, and two
-// extra submit fields templated into prompts that never receive them.
+// A page can parse perfectly and still promise something it cannot do: a table
+// of "past debates" that nothing ever writes.
+//
+// Extra submit fields used to be reported here too, because the run surface
+// dropped them. They are the pipeline's PARAMETERS now — each arrives as
+// {name} in every stage's prompt — so a form asking for three things is a
+// correct form, and warning about it would be the framework describing its own
+// former limitation as the author's mistake.
 func TestShapeNotesCatchThePromisesAPageCannotKeep(t *testing.T) {
 	notes := appShapeNotes([]any{
 		map[string]any{"kind": "pipeline", "fields": []any{
@@ -159,14 +164,11 @@ func TestShapeNotesCatchThePromisesAPageCannotKeep(t *testing.T) {
 		map[string]any{"kind": "table", "columns": []any{map[string]any{"field": "winner"}}},
 	}, true)
 	joined := strings.Join(notes, "\n")
-	if !strings.Contains(joined, "side_a") || !strings.Contains(joined, "side_b") {
-		t.Errorf("submit fields the run never reads must be named: %s", joined)
-	}
-	if strings.Contains(joined, "proposition") {
-		t.Errorf("a field named proposition is stray too, but the note should not claim the INPUT field is: %s", joined)
+	if strings.Contains(joined, "side_a") || strings.Contains(joined, "NOT read") {
+		t.Errorf("a multi-field submit form is now a parameterized run, not a mistake: %s", joined)
 	}
 	if !strings.Contains(joined, "RECORD store") {
-		t.Errorf("a record-backed table beside a pipeline never fills: %s", joined)
+		t.Errorf("a record-backed table beside a pipeline still never fills: %s", joined)
 	}
 	// A computed table is fine beside a pipeline — it fills itself.
 	quiet := appShapeNotes([]any{

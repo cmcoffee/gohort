@@ -179,3 +179,64 @@ func TestLatestPipelineRunSkipsOneStillRunning(t *testing.T) {
 		t.Error("no pipeline bound, no run")
 	}
 }
+
+// A pipeline app that asks for three things and can only use one is asking for
+// two of them as decoration: the debate app that wanted a proposition and two
+// sides templated {side_a} against a value that never arrived, and the model
+// saw the braces.
+func TestSubmissionExposesEveryFieldAsATemplateVar(t *testing.T) {
+	input, vars := PipelineRunSubmission([]byte(
+		`{"proposition":"remote work is worse","side_a":"FOR","side_b":"AGAINST","rounds":3,"strict":true}`))
+	if input != "remote work is worse" {
+		t.Errorf("the first string field is still the input, got %q", input)
+	}
+	for k, want := range map[string]string{
+		"{proposition}": "remote work is worse",
+		"{side_a}":      "FOR",
+		"{side_b}":      "AGAINST",
+		"{rounds}":      "3",    // not 3.0 — JSON has one number type
+		"{strict}":      "true", // a toggle reads as text, not as nothing
+	} {
+		if vars[k] != want {
+			t.Errorf("vars[%s] = %q, want %q", k, vars[k], want)
+		}
+	}
+	// The field taken as the input is ALSO a var, so a prompt can name it
+	// either way.
+	if vars["{proposition}"] == "" {
+		t.Error("the input field must still be addressable by its own name")
+	}
+}
+
+// The form belongs to the app author; the template vocabulary belongs to the
+// framework. A field named "input" must not be able to redefine {input} under a
+// pipeline that was authored against it.
+func TestSubmissionSkipsReservedTemplateNames(t *testing.T) {
+	_, vars := PipelineRunSubmission([]byte(
+		`{"topic":"real question","input":"also real","item":"x","iteration":"9","prev":"y"}`))
+	for _, reserved := range []string{"{input}", "{item}", "{iteration}", "{prev}"} {
+		if _, taken := vars[reserved]; taken {
+			t.Errorf("%s is the interpreter's; a form field must not claim it", reserved)
+		}
+	}
+	if vars["{topic}"] != "real question" {
+		t.Errorf("an ordinary field is unaffected, got %q", vars["{topic}"])
+	}
+}
+
+// Run vars reach EVERY stage, including inside a loop body — which is the whole
+// reason they live on the run instead of being threaded through runList, since
+// a loop body builds its own vars and passes those down.
+func TestRunVarsReachLoopBodies(t *testing.T) {
+	r := &pipelineRun{vars: map[string]string{"{side_a}": "FOR", "{tone}": "harsh"}}
+	got := r.applyRunVars("Argue {side_a} in a {tone} register, pass {iteration}")
+	want := "Argue FOR in a harsh register, pass {iteration}"
+	if got != want {
+		t.Errorf("applyRunVars = %q, want %q", got, want)
+	}
+	// No vars is not a crash, and leaves the template alone.
+	empty := &pipelineRun{}
+	if s := empty.applyRunVars("nothing {here}"); s != "nothing {here}" {
+		t.Errorf("a run with no form values must not alter the prompt, got %q", s)
+	}
+}

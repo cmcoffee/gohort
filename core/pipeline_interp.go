@@ -126,6 +126,13 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 }
 
 func (T *AppCore) executePipelineDefSink(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
+	return T.executePipelineDefVars(ctx, def, input, nil, dispatch, sink, inheritedTools)
+}
+
+// executePipelineDefVars is executePipelineDefSink plus RUN-scoped template
+// values. Unexported and called from within core (the run surface), so the four
+// exported Run* entry points keep the signatures they have.
+func (T *AppCore) executePipelineDefVars(ctx context.Context, def PipelineDef, input string, vars map[string]string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
 	if err := def.Validate(); err != nil {
 		return "", err
 	}
@@ -135,6 +142,7 @@ func (T *AppCore) executePipelineDefSink(ctx context.Context, def PipelineDef, i
 		dispatch:  dispatch,
 		sink:      sink,
 		inherited: inheritedTools,
+		vars:      vars,
 		outputs:   make(map[string]stageOutput, len(def.Stages)),
 	}
 	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
@@ -151,8 +159,14 @@ type pipelineRun struct {
 	dispatch  PipelineDispatch
 	sink      PipelineSink
 	inherited []AgentToolDef
-	outputs   map[string]stageOutput
-	blockSeq  atomic.Int64 // block ids, unique across parallel fanout branches
+	// vars are RUN-scoped template values — the submit form's fields, keyed
+	// "{name}". Kept on the run rather than threaded through runList because a
+	// loop body builds its own vars ({iteration}) and passes those down: a
+	// threaded value would be visible everywhere EXCEPT inside a loop, which is
+	// where a refinement pipeline does its work.
+	vars     map[string]string
+	outputs  map[string]stageOutput
+	blockSeq atomic.Int64 // block ids, unique across parallel fanout branches
 }
 
 // status emits a soft progress line. Kept as a method so the interpreter's
@@ -288,6 +302,25 @@ func displayFromSnake(name string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// reservedTemplateVars are the tokens the interpreter owns. A submit field
+// named "input" or "iteration" must not be able to redefine the template
+// language out from under a pipeline that was authored against it — the form is
+// the app author's, the vocabulary is the framework's.
+var reservedTemplateVars = map[string]bool{
+	"input": true, "prev": true, "item": true,
+	"iteration": true, "iterations": true, "stage": true,
+}
+
+// applyRunVars substitutes the run's form values. Applied LAST, so a built-in
+// resolves first and a collision can only ever fail to substitute, never
+// silently take over.
+func (r *pipelineRun) applyRunVars(s string) string {
+	for k, v := range r.vars {
+		s = strings.ReplaceAll(s, k, v)
+	}
+	return s
+}
+
 // runList executes a stage list in order and returns the last stage's
 // output. label prefixes the progress lines ("Stage" at the top level,
 // "  Stage" inside a loop pass) so the activity pane reads as a tree.
@@ -412,6 +445,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		for k, v := range vars {
 			prompt = strings.ReplaceAll(prompt, k, v)
 		}
+		prompt = r.applyRunVars(prompt)
 
 		stageStart := time.Now()
 		var out string
@@ -861,7 +895,7 @@ func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, pre
 		for from, to := range vars {
 			v = strings.ReplaceAll(v, from, to)
 		}
-		args[k] = v
+		args[k] = r.applyRunVars(v)
 	}
 	if ctx.Err() != nil {
 		return "", ctx.Err()

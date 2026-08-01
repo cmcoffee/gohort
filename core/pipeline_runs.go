@@ -154,12 +154,31 @@ func PipelineRunTitle(input string) string {
 // and therefore the order the author declared them — a Go map would have made
 // that a coin flip between two text boxes.
 func PipelineRunInput(body []byte) string {
+	input, _ := PipelineRunSubmission(body)
+	return input
+}
+
+// PipelineRunSubmission reads a submitted form into the run's input and its
+// RUN-SCOPED template values.
+//
+// Every field becomes {name} in the pipeline's prompts — including whichever
+// one was taken as the input, so {topic} works alongside {input}. That is the
+// difference between a pipeline app that takes a question and one that takes
+// PARAMETERS: a debate wants a proposition and two sides, and asking for those
+// in three boxes only to drop two of them on the floor produced prompts
+// templating {side_a} against a value that never arrived.
+//
+// Non-strings come through as text via the same renderer declared output fields
+// use, so a toggle reads "true" and a count reads "3" rather than "3.0".
+// Reserved tokens are skipped: a field named "input" cannot redefine {input}.
+func PipelineRunSubmission(body []byte) (string, map[string]string) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	if _, err := dec.Token(); err != nil { // opening '{'
-		return ""
+		return "", nil
 	}
 	var first string
 	byName := map[string]string{}
+	vars := map[string]string{}
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
@@ -170,6 +189,10 @@ func PipelineRunInput(body []byte) string {
 		if err := dec.Decode(&val); err != nil {
 			break
 		}
+		lower := strings.ToLower(strings.TrimSpace(key))
+		if text := strings.TrimSpace(renderFieldValue(val)); text != "" && !reservedTemplateVars[lower] {
+			vars["{"+key+"}"] = text
+		}
 		s, ok := val.(string)
 		if !ok {
 			continue // a toggle or a number is never the question being asked
@@ -178,17 +201,20 @@ func PipelineRunInput(body []byte) string {
 		if s == "" {
 			continue
 		}
-		byName[strings.ToLower(key)] = s
+		byName[lower] = s
 		if first == "" {
 			first = s
 		}
 	}
+	if len(vars) == 0 {
+		vars = nil
+	}
 	for _, s := range []string{byName["input"], byName["topic"], first} {
 		if s != "" {
-			return s
+			return s, vars
 		}
 	}
-	return ""
+	return "", vars
 }
 
 // PipelineRunSurface is everything a host supplies to serve the PipelinePanel
@@ -273,7 +299,7 @@ func (T *AppCore) streamPipelineRun(w http.ResponseWriter, r *http.Request, s Pi
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
-	input := PipelineRunInput(body)
+	input, vars := PipelineRunSubmission(body)
 	if input == "" {
 		http.Error(w, "input required", http.StatusBadRequest)
 		return
@@ -332,7 +358,10 @@ func (T *AppCore) streamPipelineRun(w http.ResponseWriter, r *http.Request, s Pi
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	out, runErr := T.RunPipelineDefSyncWithSink(ctx, s.Def, input, s.Dispatch, sink, s.Tools)
+	// executePipelineDefVars, not the exported RunPipelineDefSyncWithSink: the
+	// form's fields are run-scoped template values, and this is the only entry
+	// point that carries them. Same package, so no public surface grows for it.
+	out, runErr := T.executePipelineDefVars(ctx, s.Def, input, vars, s.Dispatch, sink, s.Tools)
 
 	mu.Lock()
 	run.Running = false

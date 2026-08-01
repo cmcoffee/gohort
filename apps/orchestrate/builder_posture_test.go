@@ -60,3 +60,17 @@ func TestBuilderPromptWarnsOffTheRunsTable(t *testing.T) {
 		t.Error("nothing says where a pipeline's runs live, so a 'past runs' table keeps getting added")
 	}
 }
+
+// A pipeline app's form fields are the run's parameters. Builder has to know
+// that when it WRITES the pipeline, because the prompts have to name them —
+// discovering it afterwards means re-authoring every stage.
+func TestBuilderPromptExplainsPipelineParameters(t *testing.T) {
+	seed, _ := seedAgentByID("seed-builder")
+	p := seed.OrchestratorPrompt
+	if !strings.Contains(p, "{field_name}") {
+		t.Error("nothing tells Builder a submit field reaches the prompts, so it will ask for parameters it never uses")
+	}
+	if !strings.Contains(p, "Write the pipeline's prompts against those names") {
+		t.Error("the ordering matters: the pipeline is authored against the form's names, not adapted to them later")
+	}
+}
