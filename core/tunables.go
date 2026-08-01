@@ -226,6 +226,7 @@ const (
 	TunableRecallHintMax         = "tune_recall_hint_max"
 	TunableRecallHintMinChars    = "tune_recall_hint_minchars"
 	TunableRecallHintAutoPromote = "tune_recall_hint_autopromote"
+	TunableRecallHintTimeout     = "tune_recall_hint_timeout"
 )
 
 func init() {
@@ -249,6 +250,8 @@ func init() {
 		Help: "Most recall-hint pointers injected per turn (deduped by document). Keeps the nudge compact so it doesn't crowd the worker's context.", Kind: KindInt, Default: 4, Min: 1, Max: 12})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintMinChars, Category: "Retrieval", Label: "Recall-hint min query chars",
 		Help: "Skip recall hints when the user message is shorter than this — a greeting shouldn't trigger a corpus search.", Kind: KindInt, Default: 12, Min: 0, Max: 200})
+	RegisterTunable(TunableSpec{Key: TunableRecallHintTimeout, Category: "Retrieval", Label: "Recall-hint budget (seconds)",
+		Help: "How long a turn may spend building recall hints before giving up and sending the prompt without them. Hints are an optional nudge, so this is a LATENCY cap, not a correctness one: exceeding it costs a hint, while a generous value costs the user their turn. It was previously borrowing the knowledge-INGEST timeout, which is sized for bulk work and made a slow embedding backend stall every message for up to a minute.", Kind: KindSeconds, Default: 3, Min: 1, Max: 60})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintAutoPromote, Category: "Retrieval", Label: "Recall-hint auto-promote score (0 = off)",
 		Help: "When a curated-knowledge recall hit scores at or above this, inject its BODY into the turn (not just a pointer) — the one opt-in to automatic RAG. 0 = off (pointers only, the safe default); ~0.92 promotes only near-certain matches. Only curated knowledge is ever auto-injected, never derived memory.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
 }
@@ -267,3 +270,8 @@ func RecallHintThreshold() float64   { return TuneFloat(TunableRecallHintThresho
 func RecallHintMax() int             { return TuneInt(TunableRecallHintMax) }
 func RecallHintMinChars() int        { return TuneInt(TunableRecallHintMinChars) }
 func RecallHintAutoPromote() float64 { return TuneFloat(TunableRecallHintAutoPromote) }
+
+// RecallHintTimeout bounds the whole recall-hint phase. Optional work on the
+// critical path needs its own budget; borrowing one sized for ingestion is how
+// a hint came to cost a minute.
+func RecallHintTimeout() time.Duration { return TuneDuration(TunableRecallHintTimeout) }

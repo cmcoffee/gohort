@@ -94,6 +94,23 @@ func SaveEmbeddingConfigToDB(db Database, cfg EmbeddingConfig) error {
 // Returns an error when embeddings are disabled or the endpoint is
 // unreachable — caller should treat this as a skip condition, not a
 // fatal error.
+// embedSlowWarn is when an embed stops being a detail and becomes the reason a
+// message felt slow. Well under the recall-hint budget, so a hint that is about
+// to be abandoned still leaves a trace explaining why.
+const embedSlowWarn = 1500 * time.Millisecond
+
+// embedOutcome renders what happened for the log line — a transport failure and
+// a 500 are different problems and the operator should not have to guess which.
+func embedOutcome(err error, resp *http.Response) string {
+	if err != nil {
+		return "FAILED"
+	}
+	if resp != nil && resp.StatusCode != 200 {
+		return fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	return "ok"
+}
+
 // Embed embeds text using the globally-configured embedding backend.
 func Embed(ctx context.Context, text string) ([]float32, error) {
 	return EmbedWith(ctx, GetEmbeddingConfig(), text)
@@ -135,8 +152,24 @@ func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
 
+	// 60s is the CEILING for a caller that sets no deadline (bulk ingestion).
+	// Latency-sensitive callers pass a ctx with their own budget — the request
+	// is context-aware, so the shorter of the two wins.
 	client := &http.Client{Timeout: 60 * time.Second}
+	started := time.Now()
 	resp, err := client.Do(req)
+	elapsed := time.Since(started)
+	// A blocking call on the turn's critical path has to be visible. This one
+	// logged NOTHING, so 45 seconds of a 50-second turn appeared in the log as
+	// a silent gap between two unrelated lines, and finding it took reading the
+	// source to work out what could even live there. Slow embeds warn without
+	// DEBUG on, because that is the case an operator needs to see.
+	if elapsed > embedSlowWarn {
+		Log("[embed] SLOW %s in %s (endpoint=%s, %d chars) — an embed on a turn's critical path delays the whole message; check whether this endpoint shares a server with the worker model",
+			embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(text))
+	} else {
+		Debug("[embed] %s in %s (endpoint=%s, %d chars)", embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(text))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("embed request failed (%s): %w", url, err)
 	}

@@ -69,7 +69,13 @@ func (t *chatTurn) renderRecallHints(userMsg string) string {
 	if max <= 0 {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
+	// Recall hints are optional by construction — this function no-ops when
+	// nothing scores. So they get a LATENCY budget of their own rather than the
+	// knowledge-INGEST timeout they used to borrow, which is sized for bulk work
+	// and let a slow embedding backend hold every message for up to a minute
+	// before the prompt was even assembled. Exceeding this costs a hint; the
+	// turn goes out without one.
+	ctx, cancel := context.WithTimeout(context.Background(), RecallHintTimeout())
 	defer cancel()
 	// Embed the user message ONCE through the turn memo — both scored retrievals
 	// below (and a same-turn knowledge_search/memory over the same text) reuse
