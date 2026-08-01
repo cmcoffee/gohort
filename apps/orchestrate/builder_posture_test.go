@@ -35,19 +35,29 @@ func TestBuilderPromptOffersThePipelineSection(t *testing.T) {
 }
 
 // Three apps were announced with features they did not have — live streaming
-// with no pipeline section, saved history with nothing writing records. That is
-// not a verification failure (verify passed on all three); it is a summary
-// written from intent instead of from what was stored.
+// with no pipeline section, saved history with nothing writing records, a save
+// button on an app with no actions. None were verification failures; verify
+// passed on all three. They were summaries written from intent.
+//
+// The first version of this rule enumerated those false claims and told the
+// author to re-read what it had stored. It did not hold: re-reading is a step,
+// and a model that feels finished skips it. The rule now defers to a line the
+// framework writes into every save and verify (see appInventoryLine), so the
+// evidence arrives without being fetched — which is what the assertions here
+// pin, rather than any particular list of past mistakes.
 func TestBuilderPromptRequiresHonestSummaries(t *testing.T) {
 	seed, _ := seedAgentByID("seed-builder")
 	p := seed.OrchestratorPrompt
 	if !strings.Contains(p, "DESCRIBE ONLY WHAT YOU BUILT") {
-		t.Fatal("nothing tells Builder to summarize from what is stored rather than from what it meant to do")
+		t.Fatal("nothing bounds the summary to what was actually stored")
 	}
-	for _, cue := range []string{"do not say the stages stream live", "do not say history is saved"} {
-		if !strings.Contains(p, cue) {
-			t.Errorf("the rule needs the concrete claims that were actually made: %q", cue)
-		}
+	if !strings.Contains(p, "STORED —") {
+		t.Error("the rule must point at the inventory line, or it is an instruction with no evidence attached")
+	}
+	// The escape hatch matters as much as the prohibition: an author that
+	// cannot claim the missing thing needs somewhere to go other than silence.
+	if !strings.Contains(p, "add it before you answer or tell them plainly it is missing") {
+		t.Error("say what to do when the user's ask is not in the inventory")
 	}
 }
 

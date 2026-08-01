@@ -392,6 +392,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	msg := fmt.Sprintf("%s app %q at /custom/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug)
 
+	msg += "\n\n" + appInventoryLine(saved)
+
 	// Report any name-normalization or dropped entries up front — a
 	// slugified data-source name silently breaks a source_script/fetch
 	// reference the author spelled the original way, and a dropped entry
@@ -2043,6 +2045,8 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			b.WriteString("FAIL render — the DOM probe returned nothing; the page runtime likely never booted.\n")
 		}
 	}
+
+	b.WriteString("\n" + appInventoryLine(spec) + "\n")
 
 	if failures > 0 {
 		fmt.Fprintf(&b, "\nVERDICT: FAIL — %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
