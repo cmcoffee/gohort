@@ -241,7 +241,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		}
 	} else {
 		if name == "" {
-			return "", errors.New("name is required to create an app")
+			// Point at the OTHER action too. This fires when an author is
+			// re-sending a large payload to fix one thing, and three times in a
+			// row the reflex was to re-send the same create rather than to
+			// switch verbs — an app that already exists is revised, not
+			// recreated, and the message never said so.
+			return "", errors.New("name is required to create an app — pass name:\"My App\" (the slug is derived from it; pass slug explicitly to override). If the app already exists, use action=\"update\" with id=\"<slug>\" instead — app_def(action=\"list\") shows what you have")
 		}
 		if slug == "" {
 			slug = slugify(name)
@@ -364,7 +369,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			}
 		}
 		parseNotes = append(parseNotes, unknownSectionKeyNotes(raw)...)
-		parseNotes = append(parseNotes, appShapeNotes(raw)...)
+		parseNotes = append(parseNotes, appShapeNotes(raw, strings.TrimSpace(spec.PipelineID) != "")...)
 	} else if !isUpdate {
 		return "", errors.New("sections is required to create an app")
 	}
@@ -656,7 +661,7 @@ func unknownSectionKeyNotes(raw any) []string {
 // appShapeNotes reports section COMBINATIONS that parse cleanly and then don't
 // do what the author is about to promise. Every one of these produced a working
 // page and a false claim to the user.
-func appShapeNotes(raw any) []string {
+func appShapeNotes(raw any, boundPipeline bool) []string {
 	arr, ok := raw.([]any)
 	if !ok {
 		return nil
@@ -702,6 +707,18 @@ func appShapeNotes(raw any) []string {
 				recordViews = append(recordViews, strconv.Itoa(i+1))
 			}
 		}
+	}
+	// A pipeline bound with nothing to run it. The app carries a pipeline_id,
+	// so the author means to run it — and without the section there is no
+	// button, no transcript, and no history anywhere on the page. It is the
+	// exact end state of an app that grew a form, a table and a script-backed
+	// "run" button instead: everything parses, verify passes, and the thing the
+	// app is for cannot be started.
+	//
+	// Only when a binding exists: an app with no pipeline_id is simply not a
+	// pipeline app, and has nothing to be missing.
+	if pipelineAt < 0 && boundPipeline {
+		notes = append(notes, "this app binds a pipeline (pipeline_id) but has NO section of kind \"pipeline\" — nothing on the page can start a run, show its stages, or list past ones. Add {kind:\"pipeline\"}. An action script cannot run a pipeline; the section is the only surface that does.")
 	}
 	if pipelineAt >= 0 && len(recordViews) > 0 {
 		notes = append(notes, fmt.Sprintf("section(s) %s read the app's RECORD store, which a pipeline never writes to — a run's history lives in the pipeline panel's own sidebar (section %d). Those sections will stay on their empty state forever unless an action script writes records, so do not tell the user past runs will appear there.",

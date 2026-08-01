@@ -177,19 +177,15 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		T.runPipelineHTTP(w, r, user, def)
-	case "stream":
+	case "stream", "sessions":
 		// The streaming twin of "run": same execution, transcript instead of a
-		// lump. This is what lets a PipelineDef be an APP — see pipeline_runs.go.
-		T.handlePipelineStream(w, r, user, def)
-	case "sessions":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		T.handlePipelineSessions(w, r, user, def.ID)
+		// lump. This is what lets a PipelineDef be an APP — core serves the
+		// protocol (core/pipeline_runs.go); orchestrate supplies the store and
+		// the agent-dispatch hook.
+		T.handlePipelineRuns(w, r, user, def, action)
 	default:
 		if sid, ok := strings.CutPrefix(action, "sessions/"); ok && sid != "" && !strings.Contains(sid, "/") {
-			T.handlePipelineSessionOne(w, r, user, def.ID, sid)
+			T.handlePipelineRuns(w, r, user, def, action)
 			return
 		}
 		http.NotFound(w, r)

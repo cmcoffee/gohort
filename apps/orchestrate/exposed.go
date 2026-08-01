@@ -328,25 +328,7 @@ func (T *OrchestrateApp) PublicHandlePipeline(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	switch {
-	case sub == "stream":
-		T.handlePipelineStream(w, r, user, def)
-	case sub == "sessions":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		T.handlePipelineSessions(w, r, user, def.ID)
-	case strings.HasPrefix(sub, "sessions/"):
-		sid := strings.TrimPrefix(sub, "sessions/")
-		if sid == "" || strings.Contains(sid, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		T.handlePipelineSessionOne(w, r, user, def.ID, sid)
-	default:
-		http.NotFound(w, r)
-	}
+	T.handlePipelineRuns(w, r, user, def, sub)
 }
 
 // PublicLatestPipelineRun returns a user's most recent run of a pipeline —
@@ -362,19 +344,7 @@ func (T *OrchestrateApp) PublicHandlePipeline(w http.ResponseWriter, r *http.Req
 // Scoped to the CALLING user, like the run store itself: a shared app's users
 // each see their own last run.
 func (T *OrchestrateApp) PublicLatestPipelineRun(user, pipelineID string) (PipelineRun, bool) {
-	if T.DB == nil || user == "" || pipelineID == "" {
-		return PipelineRun{}, false
-	}
-	runs := T.listPipelineRuns(user, pipelineID) // newest first
-	for _, run := range runs {
-		// Skip one still in flight: a half-written transcript saved as history
-		// is worse than no history, and the button is meant for a debate that
-		// has finished.
-		if !run.Running {
-			return run, true
-		}
-	}
-	return PipelineRun{}, false
+	return LatestPipelineRun(T.DB, user, pipelineID)
 }
 
 // LookupExposedAgent resolves a slug to an exposed AgentRecord plus

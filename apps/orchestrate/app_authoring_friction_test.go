@@ -157,7 +157,7 @@ func TestShapeNotesCatchThePromisesAPageCannotKeep(t *testing.T) {
 			map[string]any{"name": "side_b", "type": "text"},
 		}},
 		map[string]any{"kind": "table", "columns": []any{map[string]any{"field": "winner"}}},
-	})
+	}, true)
 	joined := strings.Join(notes, "\n")
 	if !strings.Contains(joined, "side_a") || !strings.Contains(joined, "side_b") {
 		t.Errorf("submit fields the run never reads must be named: %s", joined)
@@ -172,7 +172,7 @@ func TestShapeNotesCatchThePromisesAPageCannotKeep(t *testing.T) {
 	quiet := appShapeNotes([]any{
 		map[string]any{"kind": "pipeline", "fields": []any{map[string]any{"name": "topic", "type": "textarea"}}},
 		map[string]any{"kind": "table", "source_script": "summary", "columns": []any{map[string]any{"field": "x"}}},
-	})
+	}, true)
 	if len(quiet) != 0 {
 		t.Errorf("a clean shape must produce no notes, got %v", quiet)
 	}
@@ -200,5 +200,29 @@ func TestMisplacedTopLevelKeysSayWhereTheyBelong(t *testing.T) {
 	// pipeline_id is valid in BOTH places, so it is never reported at all.
 	if n := unknownSectionKeyNotes([]any{map[string]any{"kind": "pipeline", "pipeline_id": "p1"}}); len(n) != 0 {
 		t.Errorf("pipeline_id is accepted on the section; it must not be flagged: %v", n)
+	}
+}
+
+// The end state of the worst run: an app that binds a pipeline, grows a form, a
+// table and a script-backed "run" button, and has no way to start the thing it
+// is for. Everything parsed, verify passed, and the promised behavior did not
+// exist anywhere on the page.
+func TestBoundPipelineWithNoPipelineSectionIsReported(t *testing.T) {
+	notes := appShapeNotes([]any{
+		map[string]any{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		map[string]any{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+	}, true)
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "NO section of kind") {
+		t.Errorf("a bound pipeline with no section to run it must be reported: %v", notes)
+	}
+	if !strings.Contains(joined, "action script cannot run a pipeline") {
+		t.Errorf("say why the obvious workaround is not one: %v", notes)
+	}
+	// No binding, no complaint — that app is simply not a pipeline app.
+	if n := appShapeNotes([]any{
+		map[string]any{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+	}, false); len(n) != 0 {
+		t.Errorf("an app with no pipeline_id has nothing missing: %v", n)
 	}
 }
