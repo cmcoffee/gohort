@@ -551,9 +551,7 @@
       }
     }
 
-    if (cfg.auto_refresh_ms && cfg.auto_refresh_ms > 0) {
-      setInterval(function(){ reload(true); }, cfg.auto_refresh_ms);
-    }
+    uiAutoRefresh(cfg.auto_refresh_ms, function(){ return reload(true); });
     if (cfg.pull_to_refresh) setupPTR(function(){ reload(false); });
     reload(true);
 
@@ -2807,7 +2805,7 @@
       if (sources && cfg.source && sources.indexOf(cfg.source) >= 0) reload();
     });
     reload();
-    if (cfg.auto_refresh_ms && cfg.auto_refresh_ms > 0) setInterval(reload, cfg.auto_refresh_ms);
+    uiAutoRefresh(cfg.auto_refresh_ms, reload);
     return wrap;
   };
 
@@ -3604,9 +3602,8 @@
       return {type: cfg.chart_type, title: cfg.title, labels: cfg.labels, series: cfg.series, options: cfg.options};
     }
     function render(spec) { wrap.innerHTML = uiChartSVG(spec); }
-    if (cfg.source) {
-      wrap.textContent = 'Loading…';
-      fetchJSON(cfg.source).then(function(d) {
+    function reload() {
+      return fetchJSON(cfg.source).then(function(d) {
         var spec = specFromCfg();
         if (d) {
           // Endpoint fields override the declared defaults, so a
@@ -3620,6 +3617,19 @@
         render(spec);
       }).catch(function(err) {
         wrap.textContent = 'Failed to load chart: ' + (err && err.message ? err.message : err);
+      });
+    }
+    if (cfg.source) {
+      wrap.textContent = 'Loading…';
+      reload();
+      // A chart of live data is the case auto-refresh exists for, and this was
+      // the one source-backed component that could not do it.
+      uiAutoRefresh(cfg.auto_refresh_ms, reload);
+      // Same event-driven refresh the table and display panels honor, so a
+      // record write updates a chart computed FROM those records.
+      document.addEventListener('ui-data-changed', function(ev) {
+        var sources = ev.detail && ev.detail.sources;
+        if (sources && cfg.source && sources.indexOf(cfg.source) >= 0) reload();
       });
     } else {
       render(specFromCfg());

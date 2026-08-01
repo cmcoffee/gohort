@@ -1081,6 +1081,12 @@ type ChartPanel struct {
 	Series    []ChartSeries `json:"series,omitempty"`
 	Options   *ChartOptions `json:"options,omitempty"`
 	Source    string        `json:"source,omitempty"` // JSON endpoint for dynamic data
+	// AutoRefreshMS re-fetches Source on an interval, for data that changes on
+	// its own rather than when the reader does something.
+	// Paused while the tab is hidden and skipped while a fetch is in flight
+	// (see uiAutoRefresh); a chart also refreshes on ui-data-changed for its
+	// Source, so a record write updates a chart computed from those records.
+	AutoRefreshMS int `json:"auto_refresh_ms,omitempty"`
 }
 
 // ChartSeries is one series in a ChartPanel. Points feeds bar/line/area

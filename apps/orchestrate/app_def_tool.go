@@ -174,7 +174,7 @@ kind="table" — a list of the app's records. Fields: 'columns' (array of {field
 
 kind="display" — a read-only labeled-value panel. Fields: 'pairs' (array of {label, field}), 'source_script' (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).
 
-kind="chart" — a bar / line / area / pie chart. Set 'chart_type' (bar|line|area|pie; default bar). Data is EITHER inline — 'labels':[...] + 'series':[{name, points:[numbers]}] (one point per label; for pie use 'series':[{name, value}]) — OR computed: set 'source_script' to a data_sources entry whose script PRINTS a JSON object {"labels":[...], "series":[...]} (optionally chart_type/title/options), i.e. a chart OF the app's records. Options (flat on the section): 'stacked' (bars), 'height'. The section title is the heading; the chart draws no duplicate title. Use this to VISUALIZE what a table lists — e.g. a form logging {day, amount} + a data source that buckets them, rendered as a bar chart.
+kind="chart" — a bar / line / area / pie chart. Set 'chart_type' (bar|line|area|pie; default bar). Data is EITHER inline — 'labels':[...] + 'series':[{name, points:[numbers]}] (one point per label; for pie use 'series':[{name, value}]) — OR computed: set 'source_script' to a data_sources entry whose script PRINTS a JSON object {"labels":[...], "series":[...]} (optionally chart_type/title/options), i.e. a chart OF the app's records. Options (flat on the section): 'stacked' (bars), 'height', 'auto_refresh_ms' (poll interval for a source_script chart — this is how a live monitor stays live; polling pauses while the tab is hidden and resumes on return, so an unattended dashboard does not run your script forever). The section title is the heading; the chart draws no duplicate title. Use this to VISUALIZE what a table lists — e.g. a form logging {day, amount} + a data source that buckets them, rendered as a bar chart.
 
 kind="actions" — a row of script-backed action buttons (one per entry in the app's top-level 'actions'). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in 'actions' (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).
 
@@ -579,7 +579,7 @@ var sectionKeys = map[string][]string{
 	"form":      {"fields", "submit_label", "modal"},
 	"table":     {"columns", "empty_text", "editable", "edit_fields", "deletable", "auto_refresh_ms", "source_script"},
 	"display":   {"pairs", "source_script"},
-	"chart":     {"chart_type", "labels", "series", "source_script", "stacked", "legend", "height"},
+	"chart":     {"chart_type", "labels", "series", "source_script", "stacked", "legend", "height", "auto_refresh_ms"},
 	"actions":   {"empty_text"},
 	"empty":     {"icon", "hint"},
 	"chat":      {"list_title", "empty_text", "placeholder"},
@@ -977,10 +977,11 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		// app (a chart of the records). The section title is the heading;
 		// the SVG carries no duplicate title.
 		cp := ui.ChartPanel{
-			ChartType: firstNonEmptyStr(strings.ToLower(strings.TrimSpace(mapStr(m, "chart_type"))), "bar"),
-			Labels:    appChartLabels(m["labels"]),
-			Series:    appChartSeries(m["series"]),
-			Options:   appChartOptions(m),
+			ChartType:     firstNonEmptyStr(strings.ToLower(strings.TrimSpace(mapStr(m, "chart_type"))), "bar"),
+			Labels:        appChartLabels(m["labels"]),
+			Series:        appChartSeries(m["series"]),
+			Options:       appChartOptions(m),
+			AutoRefreshMS: intFromArgs(m, "auto_refresh_ms"),
 		}
 		if name := slugify(mapStr(m, "source_script")); name != "" {
 			cp.Source = "data/" + name

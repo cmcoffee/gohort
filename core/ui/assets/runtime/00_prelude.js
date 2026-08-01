@@ -1075,6 +1075,50 @@
     return input;
   }
 
+  // --- auto-refresh ------------------------------------------------------
+  // One poller for every component that re-fetches on an interval.
+  //
+  // Each renderer used to write its own bare setInterval, which has three
+  // problems the copies all shared. It never stops, so a dashboard left open in
+  // a background tab polls for as long as the tab lives — and a source_script
+  // panel's "poll" runs a sandboxed script on the server, sometimes with an
+  // outbound fetch behind it, so an unattended tab quietly spends real budget.
+  // It never checks whether the last fetch finished, so a slow source stacks
+  // requests. And returning to a hidden tab showed stale data until the next
+  // tick came round.
+  //
+  // uiAutoRefresh fixes all three in one place: nothing fires while the page is
+  // hidden, a tick is skipped while the previous one is still running, and
+  // becoming visible again refreshes immediately rather than waiting out the
+  // interval. fn may return a promise; if it does, that is what "still running"
+  // means. Returns a stop function.
+  function uiAutoRefresh(ms, fn) {
+    ms = Number(ms) || 0;
+    if (ms <= 0 || typeof fn !== 'function') return function(){};
+    var busy = false, stopped = false;
+    function tick() {
+      if (stopped || busy || document.hidden) return;
+      busy = true;
+      var done = function(){ busy = false; };
+      try {
+        var r = fn();
+        if (r && typeof r.then === 'function') { r.then(done, done); return; }
+      } catch (e) { /* a throwing source must not wedge the poller */ }
+      done();
+    }
+    var timer = setInterval(tick, ms);
+    // Catch up on return rather than making the reader wait a full interval for
+    // data that was already stale when they looked away.
+    function onVisible() { if (!document.hidden) tick(); }
+    document.addEventListener('visibilitychange', onVisible);
+    return function stop() {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }
+  window.uiAutoRefresh = uiAutoRefresh;
+
   // --- component renderers ---------------------------------------------
   var components = {};
 
