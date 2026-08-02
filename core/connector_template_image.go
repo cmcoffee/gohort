@@ -92,14 +92,25 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	if err != nil {
 		return nil, nil, err
 	}
+	// The workflow box wins when it has anything in it; the type picker only
+	// chooses which built-in graph a BLANK box starts from. That ordering keeps
+	// "paste my export" the primary path — a dropdown that could silently
+	// replace a pasted graph would be worse than no dropdown.
 	wf := TemplateStr(vals, "workflow")
 	if wf == "" {
-		wf = comfyDefaultGraph
+		wf = ComfyStarterGraph(TemplateStr(vals, "workflow_type"))
 	}
 	var warns []string
 	// A provided node map (Configure edits, or a Detect the user ran) is used
 	// as-is; a bare workflow with no map is auto-wired so Save always works.
-	if TemplateStr(vals, "output_node") != "" && len(TemplateCSV(vals, "prompt_nodes")) > 0 {
+	//
+	// "Has a map" means prompt nodes OR image nodes — a blend graph has no text
+	// node at all, so keying only on prompt_nodes sent every re-save of one down
+	// the auto-wire path and discarded the admin's edits. Image-node ORDER is
+	// exactly what gets hand-corrected on a compose backend (it decides subject
+	// vs background), so that was the edit most likely to be silently undone.
+	mapped := len(TemplateCSV(vals, "prompt_nodes")) > 0 || len(TemplateCSV(vals, "image_nodes")) > 0
+	if TemplateStr(vals, "output_node") != "" && mapped {
 		spec.ComfyWorkflow = PrettyComfyJSON(wf)
 		spec.ComfyMap = comfyMapFromVals(vals)
 		spec.SubmitBody, spec.PollReadyPath, spec.PollFields = "", "", nil
@@ -132,6 +143,7 @@ func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
 	_ = json.Unmarshal(spec, &s)
 	vals := map[string]any{
 		"base_url":        strings.TrimSuffix(s.SubmitURL, "/prompt"),
+		"workflow_type":   ComfyWorkflowTypeOf(s.ComfyMap),
 		"workflow":        s.ComfyWorkflow,
 		"credential":      s.Credential,
 		"default_width":   s.DefaultWidth,
@@ -152,6 +164,7 @@ func comfyDetect(_ ConnectorTemplate, vals map[string]any) (map[string]any, []st
 		return nil, warns, err
 	}
 	out := map[string]any{
+		"workflow_type":  ComfyWorkflowTypeOf(s.ComfyMap),
 		"default_width":  s.DefaultWidth,
 		"default_height": s.DefaultHeight,
 	}
@@ -208,7 +221,8 @@ func comfyuiTemplate() ConnectorTemplate {
 		Params:      map[string]string{"preset": "comfyui"},
 		Fields: []TemplateField{
 			{Key: "base_url", Label: "ComfyUI URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:8188"},
-			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave blank for a default SD1.5 graph. Enable Dev Mode in ComfyUI to get the API-format export."},
+			{Key: "workflow_type", Label: "What this backend does", Type: "select", Group: "Connection", Options: ComfyWorkflowTypes(), Default: ComfyTypeGenerate, Help: "generate = text to image. edit = change a photo you give it (img2img). blend = combine two photos, with no model loaded at all. This picks the STARTING graph; paste your own below to override it. One backend does one of these — add a second connector, pointed at the same ComfyUI, for another."},
+			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave blank to start from the graph the type above selects. Enable Dev Mode in ComfyUI to get the API-format export. After saving, this shows the graph actually in use."},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local LAN box; a SecureAPI credential name for a hosted/authenticated server."},
 			{Key: "prompt_nodes", Label: "Prompt node(s)", Type: "text", Group: "Node mapping", Help: "node id(s) the prompt is written into"},
 			{Key: "negative_nodes", Label: "Negative node(s)", Type: "text", Group: "Node mapping"},

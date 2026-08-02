@@ -65,6 +65,36 @@ const comfyBlendDefaultGraph = `{
   "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["3",0]}}
 }`
 
+// Workflow types the setup form offers. A ComfyUI backend IS its workflow, so
+// this is really "which starting graph" — it only applies when the workflow box
+// is left blank, and pasting an export overrides it entirely.
+const (
+	ComfyTypeGenerate = "generate" // text → image
+	ComfyTypeEdit     = "edit"     // photo + text → image
+	ComfyTypeBlend    = "blend"    // two photos → image, no model
+	ComfyTypeCustom   = "custom"   // whatever was pasted
+)
+
+// ComfyWorkflowTypes lists the pickable starting points, in the order the form
+// should show them.
+func ComfyWorkflowTypes() []string {
+	return []string{ComfyTypeGenerate, ComfyTypeEdit, ComfyTypeBlend}
+}
+
+// ComfyStarterGraph returns the built-in graph for a workflow type. Unknown or
+// empty types fall back to the text-to-image graph, which is what a ComfyUI
+// backend meant before edit existed.
+func ComfyStarterGraph(workflowType string) string {
+	switch strings.ToLower(strings.TrimSpace(workflowType)) {
+	case ComfyTypeEdit:
+		return comfyEditDefaultGraph
+	case ComfyTypeBlend:
+		return comfyBlendDefaultGraph
+	default:
+		return comfyDefaultGraph
+	}
+}
+
 // ComfyEditDefaultGraph exposes the built-in img2img starting graph so the admin
 // form and the Builder can offer "edit photos" without the user pasting one.
 func ComfyEditDefaultGraph() string { return comfyEditDefaultGraph }
@@ -72,6 +102,23 @@ func ComfyEditDefaultGraph() string { return comfyEditDefaultGraph }
 // ComfyBlendDefaultGraph exposes the built-in two-photo blend graph, for
 // "combine these two pictures" with nothing to paste and no model to load.
 func ComfyBlendDefaultGraph() string { return comfyBlendDefaultGraph }
+
+// ComfyWorkflowTypeOf names what a WIRED backend actually turned out to be,
+// read back from its node map rather than from what was picked at setup. The
+// two can differ — someone selects "edit" and then pastes an upscale graph —
+// and the map is the thing that decides which action the backend serves, so
+// it's the honest thing to show on re-edit.
+func ComfyWorkflowTypeOf(m ComfyNodeMap) string {
+	switch {
+	case len(m.ImageNodes) == 0:
+		return ComfyTypeGenerate
+	case len(m.PromptNodes) == 0:
+		// No text anywhere: pure pixel work over the inputs.
+		return ComfyTypeBlend
+	default:
+		return ComfyTypeEdit
+	}
+}
 
 // NewComfyImageSpec builds a ready-to-save ComfyUI rest_image spec: it applies the
 // comfyui preset (endpoints, from base_url) then auto-wires the workflow into the
