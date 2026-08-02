@@ -20,6 +20,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -80,7 +81,9 @@ type TaskRun struct {
 //
 // Nil means detaching is unavailable and every call stays inline — the exact
 // behaviour before this existed, so a host that doesn't wire it is no worse off.
-var TaskRunnerFunc func(sess *ToolSession, label string, fn func() (string, error)) (TaskRun, error)
+// fn receives the TASK's context, not the turn's. Everything the detached call
+// touches must hang off that instead — see ForDetachedTask.
+var TaskRunnerFunc func(sess *ToolSession, label string, fn func(ctx context.Context) (string, error)) (TaskRun, error)
 
 // taskDetachThreshold is the duration past which a call is detached.
 func taskDetachThreshold() time.Duration { return TuneDuration("tune_task_detach_threshold") }
@@ -166,3 +169,67 @@ func truncateTaskLabel(s string, n int) string {
 // errNoTaskHost is what a host returns when it cannot start a task — no chat
 // session to deliver into, most often. The caller runs inline instead.
 var errNoTaskHost = fmt.Errorf("no host available to run a detached task")
+
+// ForDetachedTask returns a session for work that OUTLIVES the turn that
+// started it.
+//
+// The turn's session cannot be reused as-is. Its Ctx is the turn's context and
+// the turn cancels it on the way out, so a detached call reading sess.Context()
+// — which the governed dispatch and the image poll loop both now do, so that
+// Stop reaches them — dies the instant the turn ends. It cannot be mutated in
+// place either: the turn keeps using the same session for its remaining rounds.
+//
+// What carries over is identity and authority: who this is, what they may
+// reach, where their files live. What does NOT carry over is anything wired to
+// a surface that is about to disappear — the status callback writes to an SSE
+// stream that will be closed, and the approval/connect prompts need a person
+// watching a turn that has ended. Those are left nil, which every one of them
+// documents as "fall back to an error", rather than firing into a closed
+// writer.
+//
+// Output accumulators start empty rather than shared. A detached call appending
+// to the turn's Images would race the turn's own flush and deliver into a reply
+// that has already been sent; its real delivery is the wake message.
+func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
+	if s == nil {
+		return &ToolSession{Ctx: ctx}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &ToolSession{
+		Ctx: ctx,
+
+		// Identity + storage.
+		Username:      s.Username,
+		AgentID:       s.AgentID,
+		ChatSessionID: s.ChatSessionID,
+		DB:            s.DB,
+		WorkspaceDir:  s.WorkspaceDir,
+		WorkspaceID:   s.WorkspaceID,
+
+		// Authority. Network in particular: a detached call must stay inside
+		// the same egress gate as the turn that spawned it, and the connector
+		// is shared deliberately so a Private toggle still reaches it.
+		Network:               s.Network,
+		DeniedCredentials:     s.DeniedCredentials,
+		CanScopeGlobal:        s.CanScopeGlobal,
+		DispatchParentAgentID: s.DispatchParentAgentID,
+		AuthoringAgentFn:      s.AuthoringAgentFn,
+
+		// What the work needs to run.
+		LLM:                s.LLM,
+		LeadLLM:            s.LeadLLM,
+		SubAgentRunner:     s.SubAgentRunner,
+		TempTools:          s.TempTools,
+		BundledToolNames:   s.BundledToolNames,
+		UnbundleTool:       s.UnbundleTool,
+		BundleTool:         s.BundleTool,
+		IntentText:         s.IntentText,
+		RoutingTarget:      s.RoutingTarget,
+		availableTools:     s.availableTools,
+		imageBackends:      s.imageBackends,
+		imageBackendsSet:   s.imageBackendsSet,
+		InboundMedia:       s.InboundMedia,
+		ReplyAuthorizedKey: s.ReplyAuthorizedKey,
+	}
+}

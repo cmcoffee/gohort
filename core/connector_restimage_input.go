@@ -99,7 +99,16 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		return verifyInputImage(strings.ReplaceAll(ref, "#", "")+".png", data)
 	}
 	if strings.HasPrefix(ref, "media#") {
-		return out, fmt.Errorf("%s isn't in this turn's media — it expires with the turn, so re-attach the photo or use a workspace path", ref)
+		// media#N is turn-scoped by construction: the bytes ride the message
+		// and the session is rebuilt next turn. But the same photo was copied
+		// into the image space when it arrived, so it has NOT been lost — and
+		// telling the model to ask for it again, when a durable handle is
+		// sitting right there, is how "the photo expired" ends a conversation
+		// that could have continued.
+		if m := RecentImageManifest(sess); m != "" {
+			return out, fmt.Errorf("%s is a THIS-TURN id and this is a later turn, so it no longer resolves. The picture itself is still here under a lasting id — use one of these instead of asking the user to send it again:\n%s", ref, m)
+		}
+		return out, fmt.Errorf("%s isn't in this turn's media — it expires with the turn, so ask the user to re-attach the photo, or pass a workspace filename", ref)
 	}
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
 		return out, fmt.Errorf("no workspace available to read %q from", ref)

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -287,8 +288,16 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			if !detach {
 				return inline(args)
 			}
-			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func() (string, error) {
-				return inline(args)
+			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func(taskCtx context.Context) (string, error) {
+				// Re-resolve the handler against a session built for work that
+				// outlives the turn. Reusing the turn's session here is what
+				// killed the call the moment the turn ended: its context is the
+				// turn's, and the dispatch and poll loop both honour it.
+				detached := sess.ForDetachedTask(taskCtx)
+				if sct, ok := ct.(SessionChatTool); ok {
+					return sct.RunWithSession(args, detached)
+				}
+				return ct.Run(args)
 			})
 			if err != nil {
 				// Could not detach — run it inline rather than refuse. A slow

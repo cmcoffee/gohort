@@ -6,6 +6,7 @@ package core
 // back, which is the part most able to go wrong.
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -34,9 +35,9 @@ func withTaskRunner(t *testing.T) *[]string {
 	t.Helper()
 	saved := TaskRunnerFunc
 	var started []string
-	TaskRunnerFunc = func(_ *ToolSession, label string, fn func() (string, error)) (TaskRun, error) {
+	TaskRunnerFunc = func(_ *ToolSession, label string, fn func(context.Context) (string, error)) (TaskRun, error) {
 		started = append(started, label)
-		go fn()
+		go fn(context.Background())
 		return TaskRun{ID: "task_1", Label: label}, nil
 	}
 	t.Cleanup(func() { TaskRunnerFunc = saved })
@@ -116,7 +117,7 @@ func TestFailureToDetachFallsBackToRunningInline(t *testing.T) {
 	// If the host can't start a task — no chat session to deliver into, say —
 	// a slow answer beats no answer. The user never asked for this machinery.
 	saved := TaskRunnerFunc
-	TaskRunnerFunc = func(*ToolSession, string, func() (string, error)) (TaskRun, error) {
+	TaskRunnerFunc = func(*ToolSession, string, func(context.Context) (string, error)) (TaskRun, error) {
 		return TaskRun{}, errNoTaskHost
 	}
 	t.Cleanup(func() { TaskRunnerFunc = saved })
@@ -164,4 +165,113 @@ func TestGenerateStaysInlineAndEditDetaches(t *testing.T) {
 	if editDeadline < threshold {
 		t.Errorf("an image edit (%v ceiling) would stay inline at a %v threshold — that is the case detaching exists for", editDeadline, threshold)
 	}
+}
+
+func TestDetachedWorkSurvivesTheTurnEnding(t *testing.T) {
+	// The bug this exists for: the turn does `defer cancel()` on its context,
+	// and a detached call closing over the turn's session still reads
+	// sess.Context() — which the governed dispatch and the image poll loop both
+	// honour, deliberately, so Stop reaches them. So the work died milliseconds
+	// after the turn returned, and the user got a failure or nothing at all.
+	turnCtx, endTurn := context.WithCancel(context.Background())
+	turnSess := &ToolSession{Ctx: turnCtx, Username: "alice", WorkspaceDir: "/tmp/ws"}
+
+	saw := make(chan context.Context, 1)
+	saved := TaskRunnerFunc
+	taskCtx, cancelTask := context.WithCancel(context.Background())
+	defer cancelTask()
+	TaskRunnerFunc = func(_ *ToolSession, _ string, fn func(context.Context) (string, error)) (TaskRun, error) {
+		go fn(taskCtx)
+		return TaskRun{ID: "task_1"}, nil
+	}
+	t.Cleanup(func() { TaskRunnerFunc = saved })
+
+	tool := &ctxCapturingTool{dur: taskDetachThreshold() + time.Hour, saw: saw}
+	def := ChatToolToAgentToolDefWithSession(tool, turnSess)
+	if _, err := def.Handler(map[string]any{}); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	var got context.Context
+	select {
+	case got = <-saw:
+	case <-time.After(2 * time.Second):
+		t.Fatal("detached work never ran")
+	}
+
+	// The turn ends. This is the moment that used to kill the work.
+	endTurn()
+	if turnCtx.Err() == nil {
+		t.Fatal("test setup: the turn context should be cancelled")
+	}
+	if got.Err() != nil {
+		t.Fatal("detached work was cancelled when the turn ended — it must outlive it")
+	}
+	// And cancelling the TASK still reaches it, or Stop has nothing to grab.
+	cancelTask()
+	if got.Err() == nil {
+		t.Error("cancelling the task must reach the detached work")
+	}
+}
+
+func TestDetachedSessionKeepsIdentityAndDropsDeadSurfaces(t *testing.T) {
+	fired := false
+	turn := &ToolSession{
+		Ctx: context.Background(), Username: "alice", AgentID: "a1",
+		WorkspaceDir: "/tmp/ws", ChatSessionID: "s1",
+		DeniedCredentials: map[string]bool{"x": true},
+		Network:           NewNetworkConnector(false),
+		StatusCallback:    func(string) { fired = true },
+		ConnectPrompt:     func(string) { fired = true },
+	}
+	taskCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := turn.ForDetachedTask(taskCtx)
+
+	// Identity and authority carry: without these the work cannot find the
+	// user's workspace or stay inside their egress gate.
+	if d.Username != "alice" || d.AgentID != "a1" || d.WorkspaceDir != "/tmp/ws" || d.ChatSessionID != "s1" {
+		t.Errorf("identity did not carry over: %+v", d)
+	}
+	if !d.DeniedCredentials["x"] {
+		t.Error("credential denials must carry — a detached call is not more privileged")
+	}
+	if d.Network != turn.Network {
+		t.Error("the network gate must be SHARED, so a Private toggle still reaches detached work")
+	}
+	// Surfaces do not: the SSE stream is closed and nobody is watching a turn
+	// that ended. Every one of these documents a nil fallback.
+	if d.StatusCallback != nil || d.ConnectPrompt != nil {
+		t.Error("callbacks wired to the finished turn must not carry over")
+	}
+	if fired {
+		t.Error("no surface callback should have fired")
+	}
+	// Output accumulators start empty — appending to the turn's would race a
+	// reply that has already been sent.
+	if len(d.Images) != 0 || len(d.Files) != 0 {
+		t.Error("output accumulators must start empty")
+	}
+	if d.Ctx != taskCtx {
+		t.Error("the detached session must run on the TASK's context, not the turn's")
+	}
+}
+
+type ctxCapturingTool struct {
+	dur time.Duration
+	saw chan context.Context
+}
+
+func (c *ctxCapturingTool) Name() string                 { return "ctx_tool" }
+func (c *ctxCapturingTool) Desc() string                 { return "d" }
+func (c *ctxCapturingTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
+func (c *ctxCapturingTool) Run(map[string]any) (string, error) {
+	return "", nil
+}
+func (c *ctxCapturingTool) RunWithSession(_ map[string]any, sess *ToolSession) (string, error) {
+	c.saw <- sess.Context()
+	return "done", nil
+}
+func (c *ctxCapturingTool) ExpectedDuration(map[string]any, *ToolSession) time.Duration {
+	return c.dur
 }

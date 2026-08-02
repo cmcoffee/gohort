@@ -303,3 +303,44 @@ func TestInboundVideoDoesNotJoinTheImageSpace(t *testing.T) {
 		t.Errorf("space holds %d, want 0 — a clip is not an editable image", got)
 	}
 }
+
+func TestExpiredMediaRefPointsAtTheLastingOne(t *testing.T) {
+	// "The photo expired from memory after my last attempt." media#N is
+	// turn-scoped by construction, but the picture was copied into the space
+	// when it arrived — so it was never lost, and telling the model to ask for
+	// it again ends a conversation that could have continued.
+	sess := imageSpaceSession(t)
+	sess.RegisterInboundMedia("image", testPNG(t, 8, 8), "")
+
+	// A later turn: fresh session, same user, so media#1 is gone but the space
+	// is not.
+	later := &ToolSession{Username: sess.Username, WorkspaceDir: t.TempDir()}
+	_, err := resolveInputImage(later, "media#1")
+	if err == nil {
+		t.Fatal("a this-turn id must not resolve on a later turn")
+	}
+	if !strings.Contains(err.Error(), "image#1") {
+		t.Errorf("the error must name the lasting handle:\n%v", err)
+	}
+	if strings.Contains(err.Error(), "re-attach") {
+		t.Errorf("must not ask for the photo again when it is still here:\n%v", err)
+	}
+	// And that handle has to actually work.
+	if _, err := resolveInputImage(later, "image#1"); err != nil {
+		t.Errorf("the suggested handle must resolve: %v", err)
+	}
+}
+
+func TestExpiredMediaWithNothingKeptStillExplains(t *testing.T) {
+	// No space (no username, or nothing recorded) — then asking is the only
+	// option left, and the message should say so rather than name ids that
+	// don't exist.
+	sess := &ToolSession{WorkspaceDir: t.TempDir()}
+	_, err := resolveInputImage(sess, "media#2")
+	if err == nil {
+		t.Fatal("an unresolvable media id must fail")
+	}
+	if !strings.Contains(err.Error(), "re-attach") {
+		t.Errorf("with nothing kept, the error should ask for the photo:\n%v", err)
+	}
+}
