@@ -192,3 +192,97 @@ func TestMappingOntoALiteralInputIsFine(t *testing.T) {
 		t.Fatalf("a plain txt2img graph must validate: %v", err)
 	}
 }
+
+func qwenBlendGraph(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "qwen_blend_workflow.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return string(raw)
+}
+
+func TestQwenBlendWorkflowTakesTwoImages(t *testing.T) {
+	// The same workflow with a second LoadImage wired into the encoders'
+	// image2. One LoadImage caps the backend at a single source photo, so
+	// "combine these two" had nowhere to put the second one.
+	spec, warns, err := NewComfyImageSpec("http://localhost:8188", "no_auth", qwenBlendGraph(t), "")
+	if err != nil {
+		t.Fatalf("the two-image variant must import: %v", err)
+	}
+	if !eqStrs(spec.ComfyMap.ImageNodes, []string{"41", "42"}) {
+		t.Fatalf("image nodes = %v, want [41 42]", spec.ComfyMap.ImageNodes)
+	}
+	if spec.MaxImages() != 2 {
+		t.Errorf("MaxImages = %d, want 2", spec.MaxImages())
+	}
+	if got := ComfyWorkflowTypeOf(spec.ComfyMap); got != ComfyTypeEdit {
+		t.Errorf("type = %q, want edit — it still takes a prompt", got)
+	}
+	// The prompt wiring must be unchanged by the addition.
+	if !eqStrs(spec.ComfyMap.PromptNodes, []string{"170:151"}) {
+		t.Errorf("prompt nodes = %v, want the positive encoder", spec.ComfyMap.PromptNodes)
+	}
+	for _, w := range warns {
+		if strings.Contains(w, "no text node") || strings.Contains(w, "no sampler") {
+			t.Errorf("unexpected warning: %q", w)
+		}
+	}
+
+	c := Connector{Name: "qwen_blend", Kind: RestImageConnectorKind}
+	c.Spec, _ = json.Marshal(spec)
+	if err := (restImageHandler{}).Validate(c); err != nil {
+		t.Fatalf("must validate: %v", err)
+	}
+}
+
+func TestQwenBlendPlacesCallerImagesInOrder(t *testing.T) {
+	// image#1 is the base — it also drives the VAEEncode latent, so it defines
+	// the output canvas. image#2 composites onto it. That has to match what the
+	// images param promises: "the first is the base/subject".
+	spec, _, err := NewComfyImageSpec("http://localhost:8188", "no_auth", qwenBlendGraph(t), "")
+	if err != nil {
+		t.Fatalf("NewComfyImageSpec: %v", err)
+	}
+	body, err := BuildComfyBody(spec.ComfyWorkflow, spec.ComfyMap, ComfyBuildInput{
+		Prompt: "a clown terminator",
+		Images: []ComfyUploadedImage{
+			{Name: "terminator.png", Subfolder: "gohort"},
+			{Name: "clown.png", Subfolder: "gohort"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildComfyBody: %v", err)
+	}
+	g := parseBody(t, body)
+	if got := nodeInput(t, g, "41", "image"); got != "gohort/terminator.png" {
+		t.Errorf("node 41 = %v, want the caller's FIRST image", got)
+	}
+	if got := nodeInput(t, g, "42", "image"); got != "gohort/clown.png" {
+		t.Errorf("node 42 = %v, want the caller's SECOND image", got)
+	}
+	// The base image is what the latent is encoded from — swapping that would
+	// silently change which picture defines the canvas.
+	pixels, ok := nodeInput(t, g, "170:156", "pixels").([]any)
+	if !ok || pixels[0] != "170:160" {
+		t.Errorf("VAEEncode pixels = %v, want the FIRST image's scale node", nodeInput(t, g, "170:156", "pixels"))
+	}
+}
+
+func TestQwenBlendConditionsBothSidesOnBothImages(t *testing.T) {
+	// Positive and negative conditioning must reference the SAME image set. If
+	// only the positive encoder gets image2, the negative side is conditioned
+	// on a different picture and the guidance fights itself.
+	g, err := parseComfyGraph(qwenBlendGraph(t))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, node := range []string{"170:149", "170:151"} {
+		in := comfyInputs(g, node)
+		for _, key := range []string{"image1", "image2"} {
+			if _, ok := in[key]; !ok {
+				t.Errorf("encoder %s is missing %s", node, key)
+			}
+		}
+	}
+}
