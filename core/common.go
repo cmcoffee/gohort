@@ -1904,6 +1904,22 @@ type TempTool struct {
 	// and the header is sent as declared. This is what lets an XML/text API be
 	// a first-class api-mode tool instead of forcing a shell detour.
 	ContentType string `json:"content_type,omitempty"`
+	// UploadParam names the tool parameter that carries a FILE to send, turning
+	// this api tool into a multipart uploader. The model passes a
+	// workspace-relative filename in that parameter; the dispatch reads it and
+	// streams it as the form's file part. Every OTHER declared parameter is
+	// sent alongside as a plain form field, so BodyTemplate is unused here —
+	// multipart is the body.
+	//
+	// This is what makes "upload a file" DECLARABLE. Before it, a file could
+	// only leave through Go written for one endpoint, which is how the
+	// transcription client came to bypass the governed dispatch entirely.
+	UploadParam string `json:"upload_param,omitempty"`
+	// UploadFormField is the multipart field name the file goes in. Endpoints
+	// disagree — OpenAI-compatible transcription wants "file", ComfyUI wants
+	// "image" — and getting it wrong is a 4xx with no useful message, so it is
+	// declared rather than guessed. Default "file".
+	UploadFormField string `json:"upload_form_field,omitempty"`
 	// Trial marks a tool authored mid-conversation that the user has not
 	// confirmed. It is a real tool on a real agent — callable, visible, and
 	// governed by the normal access controls — the flag only records that

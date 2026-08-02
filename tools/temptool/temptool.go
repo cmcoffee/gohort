@@ -18,6 +18,7 @@
 package temptool
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -3294,6 +3295,42 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if method == "" {
 		method = "GET"
 	}
+
+	// A declared upload takes over the body: multipart IS the request, so
+	// BodyTemplate and ContentType do not apply. Everything the caller passed
+	// other than the file itself rides along as plain form fields, which is how
+	// an endpoint gets its model / response_format / subfolder alongside the
+	// bytes without a template author writing any Go.
+	if up := strings.TrimSpace(tt.UploadParam); up != "" {
+		src, err := ResolveUploadSource(sess, StringArg(args, up))
+		if err != nil {
+			return "", fmt.Errorf("tool %q: %w", tt.Name, err)
+		}
+		fields := map[string]string{}
+		for k, v := range args {
+			if k == up || strings.HasPrefix(k, "__") {
+				continue
+			}
+			if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
+				fields[k] = s
+			}
+		}
+		field := strings.TrimSpace(tt.UploadFormField)
+		if field == "" {
+			field = "file"
+		}
+		if method == "GET" {
+			method = "POST" // an upload is never a GET; the default would 405
+		}
+		Debug("[temptool] api tool %q uploading %q (%d bytes) as field %q", tt.Name, src.Name, len(src.Data), field)
+		return Secure().DispatchUpload(sess, tt.Credential, urlStr, method, FileUpload{
+			Reader:    bytes.NewReader(src.Data),
+			FieldName: field,
+			FileName:  src.Name,
+			Fields:    fields,
+		})
+	}
+
 	var body string
 	// A non-JSON ContentType (e.g. application/xml for CalDAV/SOAP) switches the
 	// body to RAW substitution: placeholders insert verbatim and the body is NOT

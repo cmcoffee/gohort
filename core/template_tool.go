@@ -64,6 +64,21 @@ func restToolBuildSpec(t Template, vals map[string]any) (json.RawMessage, []stri
 		}
 	}
 
+	// A declared upload adds its own parameter: the file is not a {placeholder}
+	// in the URL, it IS the body. Declaring it here rather than making the
+	// author remember to add a matching param is what keeps "upload a file" a
+	// one-field decision.
+	uploadParam := firstNonBlank(TemplateStr(vals, "upload_param"), t.Params["upload_param"])
+	if uploadParam != "" {
+		if _, seen := params[uploadParam]; !seen {
+			params[uploadParam] = ToolParam{
+				Type:        "string",
+				Description: "Workspace filename of the file to upload (not a URL, and not an absolute path).",
+			}
+			required = append(required, uploadParam)
+		}
+	}
+
 	tt := TempTool{
 		Description:     TemplateStr(vals, "description"),
 		Mode:            TempToolModeAPI,
@@ -74,6 +89,8 @@ func restToolBuildSpec(t Template, vals map[string]any) (json.RawMessage, []stri
 		ResponsePipe:    TemplateStr(vals, "response_pipe"),
 		Params:          params,
 		Required:        required,
+		UploadParam:     uploadParam,
+		UploadFormField: firstNonBlank(TemplateStr(vals, "upload_form_field"), t.Params["upload_form_field"]),
 	}
 	raw, err := json.Marshal(tt)
 	return raw, nil, err
@@ -86,12 +103,14 @@ func restToolReadValues(_ Template, artifact json.RawMessage) map[string]any {
 	var tt TempTool
 	_ = json.Unmarshal(artifact, &tt)
 	return map[string]any{
-		"description":   tt.Description,
-		"url":           tt.CommandTemplate,
-		"method":        tt.Method,
-		"credential":    tt.Credential,
-		"body":          tt.BodyTemplate,
-		"response_pipe": tt.ResponsePipe,
+		"description":       tt.Description,
+		"url":               tt.CommandTemplate,
+		"method":            tt.Method,
+		"credential":        tt.Credential,
+		"body":              tt.BodyTemplate,
+		"response_pipe":     tt.ResponsePipe,
+		"upload_param":      tt.UploadParam,
+		"upload_form_field": tt.UploadFormField,
 	}
 }
 
@@ -137,6 +156,8 @@ func restGetTemplate() Template {
 			{Key: "method", Label: "Method", Type: "select", Group: "Request", Options: []string{"GET", "POST", "PUT", "PATCH", "DELETE"}},
 			{Key: "body", Label: "Body template (optional)", Type: "textarea", Group: "Request", Help: "JSON with {placeholders}, for POST/PUT/PATCH"},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Auth", Help: "no_auth for a public API; a SecureAPI credential name for an authenticated one"},
+			{Key: "upload_param", Label: "File parameter (optional)", Type: "text", Group: "Request", Help: "Name a parameter here to make this an UPLOAD tool, e.g. \"file\". The model passes a workspace filename in it and the file is streamed as multipart; every other argument rides along as a form field, and the body template is unused."},
+			{Key: "upload_form_field", Label: "Multipart field name", Type: "text", Group: "Advanced", Advanced: true, Help: "The form field the file goes in. Endpoints disagree — OpenAI-compatible transcription wants \"file\", ComfyUI wants \"image\". Blank uses \"file\"."},
 			{Key: "response_pipe", Label: "Response filter (optional)", Type: "text", Group: "Advanced", Advanced: true, Help: "a jq/awk/sed command to reshape the response before the model sees it, e.g. \"jq '.items'\""},
 		},
 	}
