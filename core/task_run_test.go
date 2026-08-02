@@ -145,3 +145,23 @@ func TestDurationReadsLikeAPersonWroteIt(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateStaysInlineAndEditDetaches(t *testing.T) {
+	// The bug this guards: a tool's estimate is its DEADLINE, not its duration.
+	// At a 120s threshold the 180s generate ceiling cleared it, so every image
+	// generation detached — including ones that finish in twenty seconds, which
+	// would hand back "STARTED, NOT FINISHED" and deliver as a separate message.
+	//
+	// Pinned against the real defaults, so moving either one without thinking
+	// about the other fails here rather than in a conversation.
+	threshold := taskDetachThreshold()
+	genDeadline := TuneDuration("tune_image_poll_max_secs")
+	editDeadline := TuneDuration("tune_image_edit_poll_max_secs")
+
+	if genDeadline >= threshold {
+		t.Errorf("a plain image generate (%v ceiling) would detach at a %v threshold — it usually finishes in seconds", genDeadline, threshold)
+	}
+	if editDeadline < threshold {
+		t.Errorf("an image edit (%v ceiling) would stay inline at a %v threshold — that is the case detaching exists for", editDeadline, threshold)
+	}
+}

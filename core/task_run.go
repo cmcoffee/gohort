@@ -30,7 +30,22 @@ func init() {
 		Key: "tune_task_detach_threshold", Category: "Timeouts",
 		Label: "Detach long tool calls after",
 		Help:  "A tool call expected to take longer than this runs detached: it returns straight away, keeps working in the background, and delivers its result into the conversation when it finishes. Set high to keep everything inline.",
-		Kind:  KindSeconds, Default: 120, Min: 15, Max: 3600,
+		// 300s clears the image-generate deadline (180s) and sits under the edit
+		// one (900s), so today only edits detach.
+		//
+		// It is a workaround, and worth replacing. A tool's estimate is its
+		// DEADLINE — how long before we give up — not how long the work takes,
+		// so it over-reports by however much headroom the operator left. At 120s
+		// that made every generate detach, including ones that finish in twenty
+		// seconds. Tuning the threshold around a bad estimate only holds while
+		// the two backends stay this far apart; measuring what a backend
+		// actually takes is the fix.
+		//
+		// Detaching is not free either: the conversation pauses between rounds,
+		// and a long enough gap lets other traffic evict its prefix from the
+		// llama slot, so the wake turn re-prefills. An unnecessary detach buys a
+		// cold prefill nobody asked for.
+		Kind: KindSeconds, Default: 300, Min: 15, Max: 3600,
 	})
 }
 
