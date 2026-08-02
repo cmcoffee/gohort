@@ -1831,6 +1831,18 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	if t.session != nil {
 		sess.ChatSessionID = t.session.ID
 	}
+	// An uploaded picture reaches the LLM as vision content, which lets the
+	// model SEE it and gives it no way to NAME it. Asked to blend that photo
+	// with one it generated, the only handle it has is the generated image#1 —
+	// so it passes what it can, gets a picture back, and reports success while
+	// the user's photo was never involved.
+	//
+	// Registering it here gives it the same handles the dispatch path already
+	// mints: media#N for this turn, and (through RegisterInboundMedia) a place
+	// in the image space, so it stays editable on later turns too.
+	for _, img := range t.userImages {
+		sess.RegisterInboundMedia("image", img, "")
+	}
 	// send_status delivery for chat. Renders as a PERSISTENT muted line in
 	// the conversation flow (kind:status_note → appended to convoLog),
 	// above the eventual reply — NOT the topbar status bar, which is
@@ -2307,6 +2319,25 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 		}
 		return out
 	}
+}
+
+// uploadedImageHandles tells the model how to REFER to the pictures it can see.
+// Deliberately not the channel manifest: that one is about a group thread
+// (don't echo a photo back to the people who just posted it), which is the
+// wrong advice here and would suppress exactly the delivery the user wants.
+func uploadedImageHandles(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n[the user attached ")
+	if n == 1 {
+		b.WriteString("this image, and you can see it above. Refer to it as media#1")
+	} else {
+		fmt.Fprintf(&b, "these %d images, and you can see them above. Refer to them as media#1 through media#%d, in the order they were sent", n, n)
+	}
+	b.WriteString(". Pass those ids to the image tool to edit, blend, or combine them — do NOT invent a filename, and do NOT substitute a picture you made earlier.]")
+	return b.String()
 }
 
 // decodeUserImages turns the base64 strings the chat panel ships in
@@ -6873,6 +6904,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		for i := len(llmMsgs) - 1; i >= 0; i-- {
 			if llmMsgs[i].Role == "user" {
 				llmMsgs[i].Images = t.userImages
+				// Seeing a picture is not the same as being able to name one.
+				// Without this the model has the pixels and no id, so a request
+				// to edit or combine them resolves to whatever handle it DOES
+				// have — usually an image it made earlier.
+				llmMsgs[i].Content += uploadedImageHandles(len(t.userImages))
 				break
 			}
 		}
