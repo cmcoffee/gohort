@@ -1598,6 +1598,17 @@ type ChatPanel struct {
 	// POST → 204 expected; runtime fires alongside the client-side
 	// AbortController so server-side resources release immediately.
 	CancelURL string `json:"cancel_url,omitempty"`
+	// InjectURL accepts a message the user sends WHILE a turn is
+	// streaming — the same contract AgentLoopPanel.InjectURL uses, so an
+	// app wires one endpoint for both surfaces. POST {id, text} → 204;
+	// 404 when the turn already finished, which the runtime treats as
+	// "put the text back and let them press send".
+	//
+	// Without it this panel silently DROPS a second message: doSend
+	// returns early while a stream is in flight, so what the user typed
+	// is simply lost. The agent-loop panel has had this for a while;
+	// this brings the plain chat panel to the same behaviour.
+	InjectURL string `json:"inject_url,omitempty"`
 	// Field names for the session summary records — defaults match
 	// chat's ChatSession schema. Override only when migrating an app
 	// with a different shape.

@@ -4934,3 +4934,12 @@ select:-webkit-autofill {
   #ui-root { padding: 1rem; }
   .ui-panic-bar { margin: -1rem -1rem 0.8rem; padding: 1rem; }
 }
+
+/* A message handed to a turn that is already running. It is real and it will
+ * be delivered between rounds, but it has not been picked up yet — so it reads
+ * as sent-but-waiting rather than answered. */
+.ui-chat-msg-pending { opacity: 0.55; }
+.ui-chat-msg-pending .ui-chat-msg-body::after {
+  content: " · queued for the running turn";
+  font-size: 0.75rem; color: var(--text-mute); font-style: italic;
+}

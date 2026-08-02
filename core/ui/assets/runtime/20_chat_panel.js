@@ -877,11 +877,42 @@
       statsBar.style.display = '';
     }
 
+    // Deliver a message into the turn that is already running. Falls back to
+    // leaving the text in the box when the app wires no queue, or when the turn
+    // finished between the keystroke and the request — the user can then just
+    // press send again, which is the behaviour they expect anyway.
+    function interject(text) {
+      if (!cfg.inject_url || !currentSessionId) return;
+      var pending = appendMessage('user', text);
+      if (pending) pending.classList.add('ui-chat-msg-pending');
+      input.value = '';
+      autoresize();
+      fetch(cfg.inject_url, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: currentSessionId, text: text})
+      }).then(function(r) {
+        if (r.ok) { if (pending) pending.classList.remove('ui-chat-msg-pending'); return; }
+        // 404 means the turn ended first. Give the text back rather than
+        // pretending it landed.
+        if (pending && pending.parentNode) pending.parentNode.removeChild(pending);
+        input.value = text;
+        autoresize();
+      }).catch(function() {
+        if (pending && pending.parentNode) pending.parentNode.removeChild(pending);
+        input.value = text;
+        autoresize();
+      });
+    }
+
     // --- Send + SSE handling ---------------------------------------------
     function doSend() {
-      if (sending) return;
       var text = input.value.trim();
       if (!text) return;
+      // A turn is already streaming. Rather than drop what was typed — the old
+      // behaviour, and invisible, so it read as the app ignoring you — hand it
+      // to the running turn, which picks notes up between rounds.
+      if (sending) { interject(text); return; }
       input.value = '';
       autoresize();
       sending = true;
