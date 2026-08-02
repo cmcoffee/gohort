@@ -1607,7 +1607,13 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if connector != nil && !connector.Allowed() {
 		return "", fmt.Errorf("blocked by Private mode: network egress is OFF for this turn, so the call to %q was NOT attempted. The credential and host are fine — this is a local privacy setting, NOT a connectivity or firewall problem. To reach it, turn off Private mode on this agent (or dispatch to an agent that has network). Do NOT report the host as down or unreachable", rawURL)
 	}
-	baseCtx, releaseConn := connector.DeriveCancelCtx(context.Background())
+	// Derive from the TURN's context, not Background. Every governed call —
+	// fetch_url, api-mode temp tools, connectors, the image poll — went through
+	// here detached, so Stop cancelled the agent loop while the HTTP call it was
+	// waiting on ran to completion. On a single 30s request that reads as a slow
+	// cancel; on a tool that makes many calls in sequence it reads as Stop not
+	// working at all.
+	baseCtx, releaseConn := connector.DeriveCancelCtx(sess.Context())
 	defer releaseConn()
 	ctx, cancel := context.WithTimeout(baseCtx, secureAPIRequestTimeout())
 	defer cancel()

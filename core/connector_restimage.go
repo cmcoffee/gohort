@@ -88,6 +88,13 @@ type RestImageSpec struct {
 	PollURLTemplate string            `json:"poll_url_template,omitempty"` // a URL built from poll_fields tokens, then FETCHED to bytes (ComfyUI /view)
 	PollFields      map[string]string `json:"poll_fields,omitempty"`       // token -> dot-path (may use {id}), resolved against the poll response to fill poll_url_template
 
+	// Failure detection while polling. Without these a job that DIED is
+	// indistinguishable from one still running, so the caller waits out the
+	// whole deadline and reports a timeout — pointing at the wrong problem.
+	PollErrorPath       string `json:"poll_error_path,omitempty"`        // dot-path (may use {id}) to a status field
+	PollErrorValue      string `json:"poll_error_value,omitempty"`       // the value at that path meaning "failed" (compared case-insensitively)
+	PollErrorDetailPath string `json:"poll_error_detail_path,omitempty"` // optional dot-path to a human-readable reason
+
 	PollIntervalSecs int `json:"poll_interval_secs,omitempty"` // poll cadence (default 2, min 1)
 	PollMaxSecs      int `json:"poll_max_secs,omitempty"`      // give-up deadline (default 120)
 
@@ -200,7 +207,95 @@ func (s RestImageSpec) MaxImages() int {
 	return 1
 }
 
-func init() { RegisterConnectorKind(RestImageConnectorKind, restImageHandler{}) }
+func init() {
+	RegisterConnectorKind(RestImageConnectorKind, restImageHandler{})
+	// The render deadline was a hardcoded 120s fallback with 180s from the
+	// ComfyUI preset, reachable only by hand-editing the spec JSON. That is
+	// nowhere near enough for an EDIT: a large edit checkpoint has to load
+	// before the first step runs, and on a GPU shared with a resident LLM it
+	// loads slowly or in low-VRAM mode. Two knobs, because the two cases differ
+	// by an order of magnitude and a single number punishes one of them.
+	RegisterTunable(TunableSpec{Key: "tune_image_poll_max_secs", Category: "Timeouts", Label: "Image render deadline", Help: "How long to wait for a text-to-image backend to finish before giving up. A connector can override this in its own settings.", Kind: KindSeconds, Default: 180, Min: 30, Max: 3600})
+	RegisterTunable(TunableSpec{Key: "tune_image_edit_poll_max_secs", Category: "Timeouts", Label: "Image edit deadline", Help: "Same, for backends that take a source photo. Higher by default: an edit model is usually larger, and the first request after another model was resident pays a full load before it starts.", Kind: KindSeconds, Default: 900, Min: 30, Max: 3600})
+	RegisterTunable(TunableSpec{Key: "tune_image_poll_interval_secs", Category: "Timeouts", Label: "Image poll interval", Help: "How often to ask an image backend whether it has finished. A connector can override this in its own settings.", Kind: KindSeconds, Default: 2, Min: 1, Max: 60})
+}
+
+// pollEvery is how often to ask whether the render has finished. Same shape as
+// pollDeadline: an explicit value on the connector wins, else the tunable.
+func (s RestImageSpec) pollEvery() time.Duration {
+	if s.PollIntervalSecs > 0 {
+		return time.Duration(s.PollIntervalSecs) * time.Second
+	}
+	return TuneDuration("tune_image_poll_interval_secs")
+}
+
+// MigrateFrozenImageDefaults unfreezes knobs that a PRESET wrote into stored
+// specs before those knobs became tunables.
+//
+// Every connector was saved as the preset merged INTO the spec, so installation
+// defaults got baked in per-connector: change the default and nothing already
+// saved moved. That is what made a longer edit deadline invisible to the very
+// backend it was added for.
+//
+// Only values that still EQUAL the old preset constants are cleared — nobody
+// chose those, the preset put them there. Anything else is an operator's
+// decision and is left exactly as it is.
+func MigrateFrozenImageDefaults(db Database) {
+	NewMigrationRunner("core", "").Once("unfreeze_rest_image_defaults:v1", func() int {
+		if db == nil {
+			return 0
+		}
+		// The values the presets used to write. A stored knob matching one of
+		// these is preset residue, not a choice.
+		const (
+			legacyPollMax      = 180 // comfyui preset
+			legacyPollMaxOther = 120 // the old hardcoded fallback
+			legacyPollInterval = 2   // both presets
+		)
+		changed := 0
+		for _, c := range ListConnectors(db) {
+			if c.Kind != RestImageConnectorKind {
+				continue
+			}
+			var spec RestImageSpec
+			if json.Unmarshal(c.Spec, &spec) != nil {
+				continue
+			}
+			before := spec
+			if spec.PollMaxSecs == legacyPollMax || spec.PollMaxSecs == legacyPollMaxOther {
+				spec.PollMaxSecs = 0
+			}
+			if spec.PollIntervalSecs == legacyPollInterval {
+				spec.PollIntervalSecs = 0
+			}
+			if spec.PollMaxSecs == before.PollMaxSecs && spec.PollIntervalSecs == before.PollIntervalSecs {
+				continue
+			}
+			raw, err := json.Marshal(spec)
+			if err != nil {
+				continue
+			}
+			c.Spec = raw
+			db.Set(connectorsTable, c.Name, &c)
+			Log("[rest_image] unfroze preset defaults on connector %q (deadline %ds -> tunable, interval %ds -> tunable)",
+				c.Name, before.PollMaxSecs, before.PollIntervalSecs)
+			changed++
+		}
+		return changed
+	})
+}
+
+// pollDeadline is how long this backend gets to finish. An explicit
+// PollMaxSecs on the connector wins; otherwise the tunable for its kind.
+func (s RestImageSpec) pollDeadline() time.Duration {
+	if s.PollMaxSecs > 0 {
+		return time.Duration(s.PollMaxSecs) * time.Second
+	}
+	if s.SupportsImageInput() {
+		return TuneDuration("tune_image_edit_poll_max_secs")
+	}
+	return TuneDuration("tune_image_poll_max_secs")
+}
 
 type restImageHandler struct{}
 
@@ -298,6 +393,9 @@ func (s RestImageSpec) validateImageInput() error {
 	if err != nil {
 		return err
 	}
+	if err := s.validateWritableInputs(graph); err != nil {
+		return err
+	}
 	for label, nodes := range map[string][]string{
 		"image_nodes": m.ImageNodes,
 		"mask_nodes":  m.MaskNodes,
@@ -312,6 +410,63 @@ func (s RestImageSpec) validateImageInput() error {
 		return fmt.Errorf("max_input_images is %d but only %d image node(s) are mapped — a caller's extra images would have nowhere to go", s.MaxInputImages, len(m.ImageNodes))
 	}
 	return nil
+}
+
+// validateWritableInputs rejects a mapping that points at an input the graph
+// DRIVES from another node.
+//
+// Filling in steps_nodes for a workflow whose steps come from a switch node
+// looks completely reasonable — the node id is right, the input name is right —
+// but the value can never be applied: writing it would sever the switch, so the
+// setter skips it. The result is a field an admin populated correctly that
+// silently does nothing. Say so at save time instead.
+func (s RestImageSpec) validateWritableInputs(graph map[string]map[string]any) error {
+	m := s.ComfyMap
+	imageKey := m.ImageKey
+	if imageKey == "" {
+		imageKey = "image"
+	}
+	seedKey := m.SeedKey
+	if seedKey == "" {
+		seedKey = "seed"
+	}
+	checks := []struct {
+		label string
+		nodes []string
+		keys  []string
+	}{
+		{"steps_nodes", m.StepsNodes, []string{"steps"}},
+		{"seed_nodes", m.SeedNodes, []string{seedKey}},
+		{"width_nodes", m.WidthNodes, []string{"width"}},
+		{"height_nodes", m.HeightNodes, []string{"height"}},
+		{"image_nodes", m.ImageNodes, []string{imageKey}},
+		{"mask_nodes", m.MaskNodes, []string{imageKey}},
+		{"prompt_nodes", m.PromptNodes, m.TextKeys},
+		{"negative_nodes", m.NegativeNodes, m.TextKeys},
+	}
+	for _, c := range checks {
+		for _, id := range c.nodes {
+			in := comfyInputs(graph, id)
+			if in == nil {
+				continue // the node-exists check above already covers this
+			}
+			for _, k := range c.keys {
+				if v, ok := in[k]; ok && comfyIsLink(v) {
+					return fmt.Errorf("comfy_map.%s points at node %q, but its %q input is driven by another node in the workflow (it reads from node %v). A value here could not be applied without breaking that wiring — clear this field, or change the graph so %q is a plain value",
+						c.label, id, k, firstComfyLinkID(v), k)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// firstComfyLinkID names the upstream node a link points at, for error copy.
+func firstComfyLinkID(v any) any {
+	if arr, ok := v.([]any); ok && len(arr) > 0 {
+		return arr[0]
+	}
+	return "?"
 }
 
 // sameImageHost reports whether two of the backend's endpoints share a host.
@@ -703,17 +858,14 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		readyPath = substituteTokens(s.PollReadyPath, idTok)
 	}
 
-	interval := s.PollIntervalSecs
-	if interval < 1 {
-		interval = 2
-	}
-	maxSecs := s.PollMaxSecs
-	if maxSecs <= 0 {
-		maxSecs = 120
-	}
-	deadline := time.Now().Add(time.Duration(maxSecs) * time.Second)
+	interval := s.pollEvery()
+	wait := s.pollDeadline()
+	deadline := time.Now().Add(wait)
+	ctx := sess.Context()
 	var pollNode any
 	ready := false
+	failure := ""
+	errPath := substituteTokens(s.PollErrorPath, idTok)
 	for {
 		praw, perr := s.dispatchImage(sess, pollURL, pollMethod, "")
 		if perr == nil {
@@ -723,15 +875,34 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 					ready = true
 					break
 				}
+				if errPath != "" && strings.EqualFold(strings.TrimSpace(restJSONString(pollNode, errPath)), s.PollErrorValue) {
+					failure = firstNonEmpty(restJSONString(pollNode, substituteTokens(s.PollErrorDetailPath, idTok)), "the workflow reported an error")
+					break
+				}
 			}
 		}
 		if time.Now().After(deadline) {
 			break
 		}
-		time.Sleep(time.Duration(interval) * time.Second)
+		// Sleep on the TURN's context, not the clock. A plain time.Sleep here
+		// meant Stop did nothing until the whole render finished — the loop kept
+		// polling a job the user had already abandoned, for up to the full
+		// deadline, and then attached the result to a turn that was over.
+		select {
+		case <-ctx.Done():
+			return out, fmt.Errorf("image generation canceled")
+		case <-time.After(interval):
+		}
+	}
+	if failure != "" {
+		// The backend REPORTED a failure. Without this the loop just kept
+		// polling a job that was already dead and reported a timeout, which
+		// reads as "too slow" and sends everyone to raise the deadline instead
+		// of at the actual error.
+		return out, fmt.Errorf("the image backend failed to run this workflow: %s", truncateForError(failure))
 	}
 	if !ready {
-		return out, fmt.Errorf("image generation timed out after %ds waiting on %q", maxSecs, readyPath)
+		return out, fmt.Errorf("image generation timed out after %s. If the backend is simply slow — a large model loading, or a GPU shared with something else — raise this connector's render timeout in Admin > Connectors, or the deadline in Admin > Tunables > Timeouts", wait)
 	}
 	if useMap {
 		fields := resolvePollFields(map[string]string{
@@ -1216,11 +1387,11 @@ var restImagePresets = map[string]RestImageSpec{
 			"subfolder": "{id}.outputs.9.images.0.subfolder",
 			"type":      "{id}.outputs.9.images.0.type",
 		},
-		PollIntervalSecs: 2,
-		PollMaxSecs:      180,
-		DefaultWidth:     512,
-		DefaultHeight:    512,
-		DefaultSteps:     20,
+		PollErrorPath:  "{id}.status.status_str",
+		PollErrorValue: "error",
+		DefaultWidth:   512,
+		DefaultHeight:  512,
+		DefaultSteps:   20,
 	},
 }
 
@@ -1297,6 +1468,9 @@ func MergeRestImageSpec(base, over RestImageSpec) RestImageSpec {
 	fill(&out.PollB64Path, base.PollB64Path)
 	fill(&out.PollURLPath, base.PollURLPath)
 	fill(&out.PollURLTemplate, base.PollURLTemplate)
+	fill(&out.PollErrorPath, base.PollErrorPath)
+	fill(&out.PollErrorValue, base.PollErrorValue)
+	fill(&out.PollErrorDetailPath, base.PollErrorDetailPath)
 	fill(&out.UploadURL, base.UploadURL)
 	fill(&out.UploadFileField, base.UploadFileField)
 	fill(&out.UploadNamePath, base.UploadNamePath)

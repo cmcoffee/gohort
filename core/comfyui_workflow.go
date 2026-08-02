@@ -246,7 +246,10 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	default:
 		warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
 	}
-	if hasKey(sIn, "steps") {
+	if v, ok := sIn["steps"]; ok && !comfyIsLink(v) {
+		// A linked steps input is computed by the graph (this workflow drives it
+		// from a switch node). Mapping it would advertise a knob that can only
+		// damage the wiring, so leave it out and let the graph decide.
 		m.StepsNodes = []string{sampler}
 	}
 
@@ -307,11 +310,20 @@ func traceComfyText(graph map[string]map[string]any, linkVal any) string {
 	return findComfyTextNode(graph, tid, 4, map[string]bool{})
 }
 
+// comfyTextKeyNames are the input names a prompt can arrive under, in priority
+// order. "text" covers CLIPTextEncode, "text_g"/"text_l" the SDXL dual encoder,
+// and "prompt" the newer per-model encoders — TextEncodeQwenImageEditPlus and
+// friends name their input `prompt`, and looking only for `text` left those
+// graphs with no prompt node at all: a working edit workflow imported as a
+// promptless one, misread as a blend.
+var comfyTextKeyNames = []string{"text", "text_g", "text_l", "prompt"}
+
 // comfyTextKeys returns the prompt input key(s) present on a text node: ["text"]
-// for a standard CLIPTextEncode, ["text_g","text_l"] for an SDXL encoder.
+// for a standard CLIPTextEncode, ["text_g","text_l"] for an SDXL encoder,
+// ["prompt"] for a Qwen-style edit encoder.
 func comfyTextKeys(in map[string]any) []string {
 	var keys []string
-	for _, k := range []string{"text", "text_g", "text_l"} {
+	for _, k := range comfyTextKeyNames {
 		if hasKey(in, k) {
 			keys = append(keys, k)
 		}
@@ -363,11 +375,17 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	if err != nil {
 		return "", fmt.Errorf("stored workflow is invalid: %w", err)
 	}
+	// Both setters refuse to overwrite a LINKED input. A workflow can drive any
+	// parameter from another node — this graph feeds steps and cfg from switch
+	// nodes — and writing a plain value over ["<id>",slot] severs that wiring
+	// silently: ComfyUI runs a graph the author never built and the output looks
+	// like a bad render rather than a broken import. The graph wins; it was
+	// built that way on purpose.
 	setStr := func(nodes, keys []string, val string) {
 		for _, id := range nodes {
 			if inputs := comfyInputs(graph, id); inputs != nil {
 				for _, k := range keys {
-					if hasKey(inputs, k) {
+					if v, ok := inputs[k]; ok && !comfyIsLink(v) {
 						inputs[k] = val
 					}
 				}
@@ -377,7 +395,7 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	setNum := func(nodes []string, key string, val any) {
 		for _, id := range nodes {
 			if inputs := comfyInputs(graph, id); inputs != nil {
-				if hasKey(inputs, key) {
+				if v, ok := inputs[key]; ok && !comfyIsLink(v) {
 					inputs[key] = val
 				}
 			}
@@ -556,7 +574,7 @@ func findComfyTextNode(graph map[string]map[string]any, start string, depth int,
 	seen[start] = true
 	class := comfyClass(graph, start)
 	in := comfyInputs(graph, start)
-	if strings.Contains(class, "CLIPTextEncode") || hasKey(in, "text") || hasKey(in, "text_g") || hasKey(in, "text_l") {
+	if strings.Contains(class, "CLIPTextEncode") || hasComfyTextKey(in) {
 		return start
 	}
 	for _, v := range in {
@@ -567,6 +585,32 @@ func findComfyTextNode(graph map[string]map[string]any, start string, depth int,
 		}
 	}
 	return ""
+}
+
+// hasComfyTextKey reports whether a node exposes any prompt-carrying input. The
+// value has to be a LITERAL: on these encoders `prompt` is the text, but the
+// same name can arrive as a link from an upstream node, and that is wiring, not
+// a field we can write into.
+func hasComfyTextKey(in map[string]any) bool {
+	for _, k := range comfyTextKeyNames {
+		if v, ok := in[k]; ok && !comfyIsLink(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// comfyIsLink reports whether a graph value is a NODE REFERENCE — ["<id>",slot]
+// — rather than a literal the caller may replace.
+//
+// This is the guard that keeps a parameter-driving graph intact. A workflow can
+// feed steps / cfg / a prompt from another node (a switch, a primitive, a
+// preset chain), and writing a plain value over that link silently severs the
+// wiring: ComfyUI then runs a graph the author never built, and the result
+// looks like a bad render rather than a broken import.
+func comfyIsLink(v any) bool {
+	arr, ok := v.([]any)
+	return ok && len(arr) >= 1
 }
 
 // comfyInt coerces a graph value (json.Number under UseNumber, or a stray

@@ -4,7 +4,6 @@ package imagefetch
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -101,9 +100,13 @@ func liveImageActions(sess *ToolSession) imageActions {
 		}
 	}
 	return imageActions{
-		find:     cfg.Provider == "serper" && cfg.APIKey != "",
-		fetch:    true,
-		generate: ImageGenerationAvailable() || len(generators) > 0,
+		find:  cfg.Provider == "serper" && cfg.APIKey != "",
+		fetch: true,
+		// Not ImageGenerationAvailable(): that only asks whether a provider is
+		// SET, and the provider can be an editing backend. reachableImageBackends
+		// already folds a configured built-in into this list, so counting
+		// generators is both simpler and the honest question.
+		generate: len(generators) > 0,
 		edit:     len(editors) > 0,
 		backends: generators,
 		editors:  editors,
@@ -325,21 +328,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	case "fetch":
 		return (&FetchImageTool{}).RunWithSession(args, sess)
 	case "generate":
-		if !avail.generate {
-			return "", fmt.Errorf("the generate action is unavailable — no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
-		}
-		// ENFORCEMENT. The filtered enum is a hint to the model; nothing stops
-		// it naming a backend that isn't in it, so reachability is re-checked
-		// here against the same list before anything dispatches.
-		backend := strings.TrimSpace(StringArg(args, "backend"))
-		if !ImageBackendReachable(sess, backend) {
-			names := avail.backendNames()
-			if len(names) == 0 {
-				return "", fmt.Errorf("image backend %q is not available to you; omit backend to use the configured default", backend)
-			}
-			return "", fmt.Errorf("image backend %q is not available to you — use one of: %s (or omit backend for the default)", backend, strings.Join(names, ", "))
-		}
-		return generateImageInto(sess, StringArg(args, "prompt"), backend)
+		return generateImage(sess, args, avail)
 	case "edit":
 		if !avail.edit {
 			return "", fmt.Errorf("the edit action is unavailable — no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
@@ -436,10 +425,17 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			return "", fmt.Errorf("save image: %w", err)
 		}
 		Log("[imagefetch/find_image] query=%q delivered %q (title: %q, source: %s)", query, name, meta.Title, meta.Source)
-		return fmt.Sprintf(
+		msg := fmt.Sprintf(
 			"NOT sent yet — this only SAVED the image to your workspace as %q (title: %q, source: %s). It is NOT delivered, and your reply text alone will NOT include it. To actually send it you MUST call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about it (describe / identify / summarize), not the image itself.",
 			name, meta.Title, meta.Source, name,
-		), nil
+		)
+		// A found image belongs in the image space too. Without this, "find a
+		// photo of a barn, now make it snowy" only worked while the filename was
+		// still in context, and not at all on a later turn.
+		if ref := RecordRecentImage(sess, data, "found: "+truncate(query, 60)); ref != "" {
+			msg += fmt.Sprintf(" It is also kept as %s — pass that to image(action=\"edit\") to change it.", ref)
+		}
+		return msg, nil
 	}
 
 	// LAZY short-circuit: evaluate results ONE AT A TIME and stop at the first
@@ -555,6 +551,41 @@ func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSessio
 	return generateImageInto(sess, StringArg(args, "prompt"), "")
 }
 
+// generateImage runs the generate action. Split out of the switch for the same
+// reason editImage is: the argument checks are worth testing without a live
+// connector behind them.
+func generateImage(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
+	if !avail.generate {
+		return "", fmt.Errorf("the generate action is unavailable — no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
+	}
+	backend := strings.TrimSpace(StringArg(args, "backend"))
+	// Resolve an omitted backend to a GENERATOR rather than letting it fall
+	// through to the configured provider. The provider setting can point at
+	// an editing backend, and an img2img graph run with no source photo
+	// doesn't fail — it renders the placeholder image baked into the
+	// workflow and returns it as if it were the answer.
+	if backend == "" {
+		backend = defaultGenerateBackend(avail)
+	}
+	// Same argument-before-reachability ordering as edit, and the same
+	// reason: reachability is the broadest failure, so running it first
+	// reports every mistake as a permissions problem.
+	if backend != "" && !isGenerator(avail, backend) {
+		return "", fmt.Errorf("image backend %q edits existing photos and can't generate from text alone — use one of: %s, or switch to action=\"edit\" and pass images", backend, strings.Join(generatorNames(avail), ", "))
+	}
+	// ENFORCEMENT. The filtered enum is a hint to the model; nothing stops
+	// it naming a backend that isn't in it, so reachability is re-checked
+	// here against the same list before anything dispatches.
+	if !ImageBackendReachable(sess, backend) {
+		names := avail.backendNames()
+		if len(names) == 0 {
+			return "", fmt.Errorf("image backend %q is not available to you; omit backend to use the configured default", backend)
+		}
+		return "", fmt.Errorf("image backend %q is not available to you — use one of: %s (or omit backend for the default)", backend, strings.Join(names, ", "))
+	}
+	return generateImageInto(sess, StringArg(args, "prompt"), backend)
+}
+
 // editImage runs the edit action: resolve the backend, hand the caller's image
 // references to the connector (which verifies and uploads them), and save the
 // result the same way generation does.
@@ -623,6 +654,38 @@ func defaultEditBackend(a imageActions) string {
 	return ""
 }
 
+// defaultGenerateBackend picks the backend a generate lands on when the caller
+// names none: the configured default if it can generate, else the first
+// generator. Mirrors defaultEditBackend.
+func defaultGenerateBackend(a imageActions) string {
+	for _, b := range a.backends {
+		if b.Default {
+			return b.Name
+		}
+	}
+	if len(a.backends) > 0 {
+		return a.backends[0].Name
+	}
+	return ""
+}
+
+func generatorNames(a imageActions) []string {
+	out := make([]string, 0, len(a.backends))
+	for _, b := range a.backends {
+		out = append(out, b.Name)
+	}
+	return out
+}
+
+func isGenerator(a imageActions, name string) bool {
+	for _, b := range a.backends {
+		if b.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func editorNames(a imageActions) []string {
 	out := make([]string, 0, len(a.editors))
 	for _, e := range a.editors {
@@ -686,7 +749,9 @@ func generateImageInto(sess *ToolSession, prompt, backend string) (string, error
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-	result, err := GenerateImageWithBackend(context.Background(), backend, prompt, true)
+	// The turn's context, not Background: a render is the longest thing a turn
+	// does, so it's the call most likely to be Stopped mid-flight.
+	result, err := GenerateImageWithBackend(sess.Context(), backend, prompt, true)
 	if err != nil {
 		if backend != "" {
 			return "", fmt.Errorf("image generation via %q failed: %w", backend, err)
@@ -970,7 +1035,7 @@ func scoreImageMatch(sess *ToolSession, img []byte, query string) int {
 			"Then rate from 0 to 100 how well it depicts: %q "+
 			"(0 = unrelated or the wrong subject, 100 = exactly that subject). "+
 			"Put the rating as a plain number on its own FINAL line.", query)
-	resp, err := sess.LLM.Chat(context.Background(),
+	resp, err := sess.LLM.Chat(sess.Context(),
 		[]Message{{Role: "user", Content: prompt, Images: [][]byte{img}}},
 		WithCaller("imagefetch/find_image"),
 		WithMaxRetries(0),
@@ -1076,8 +1141,14 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("save image: %w", err)
 	}
 	Log("[imagefetch/fetch_image] fetched %d bytes from %s → %s", len(data), rawURL, name)
-	return fmt.Sprintf("NOT sent yet — this only SAVED the image to your workspace as %q (%s, %d bytes). It is NOT delivered, and your reply text alone will NOT include it. To actually send it, call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about what's in it.",
-		name, ct, len(data), name), nil
+	msg := fmt.Sprintf("NOT sent yet — this only SAVED the image to your workspace as %q (%s, %d bytes). It is NOT delivered, and your reply text alone will NOT include it. To actually send it, call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about what's in it.",
+		name, ct, len(data), name)
+	// Downloaded images join the space as well — this is also the path a model
+	// is told to use when it tries to pass a URL straight to edit.
+	if ref := RecordRecentImage(sess, data, "downloaded: "+truncate(rawURL, 60)); ref != "" {
+		msg += fmt.Sprintf(" It is also kept as %s — pass that to image(action=\"edit\") to change it.", ref)
+	}
+	return msg, nil
 }
 
 // extForMime returns a file extension matching a mime type. Used to

@@ -181,3 +181,55 @@ func TestEditSchemaIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateNeverLandsOnAnEditor(t *testing.T) {
+	// An img2img graph run with no source photo does NOT fail — it renders the
+	// placeholder image baked into the workflow and hands it back as if it were
+	// the answer. So generate has to refuse an editing backend outright, both
+	// when the model names one and when nothing is named at all.
+	avail := imageActions{
+		fetch:    true,
+		generate: true,
+		edit:     true,
+		backends: []ImageBackendChoice{{Name: "comfy_txt"}},
+		editors:  []ImageBackendChoice{{Name: "qwen_edit", Edits: true, MaxImages: 1, Default: true}},
+	}
+	// Named explicitly — the enum lists both, so this is a legal-looking call.
+	_, err := generateImage(&ToolSession{}, map[string]any{
+		"prompt": "a dragon", "backend": "qwen_edit",
+	}, avail)
+	if err == nil {
+		t.Fatal("generate on an editing backend must be refused")
+	}
+	if !strings.Contains(err.Error(), "can't generate from text alone") {
+		t.Errorf("error should explain the mismatch: %v", err)
+	}
+
+	// Omitted — and the editor is flagged as the configured default, which is
+	// exactly how this reached the wrong backend in the first place.
+	if got := defaultGenerateBackend(avail); got != "comfy_txt" {
+		t.Errorf("default generate backend = %q, want the generator, never the editor", got)
+	}
+	if isGenerator(avail, "qwen_edit") {
+		t.Error("an editing backend must not count as a generator")
+	}
+}
+
+func TestGenerateIsUnofferedWhenOnlyEditorsExist(t *testing.T) {
+	// A provider setting pointing at an editing connector used to make
+	// ImageGenerationAvailable() true, so generate was advertised with nothing
+	// behind it that could serve it.
+	only := imageActions{
+		fetch:   true,
+		edit:    true,
+		editors: []ImageBackendChoice{{Name: "qwen_edit", Edits: true, MaxImages: 1, Default: true}},
+	}
+	only.generate = len(only.backends) > 0
+	s := imageSchemaFor(only)
+	if slices.Contains(s.params["action"].Enum, "generate") {
+		t.Errorf("generate must not be offered with no generator wired: %v", s.params["action"].Enum)
+	}
+	if !slices.Contains(s.params["action"].Enum, "edit") {
+		t.Error("edit must still be offered")
+	}
+}

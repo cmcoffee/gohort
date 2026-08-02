@@ -283,6 +283,10 @@ func DeleteConnector(db Database, name string) error {
 // (idempotent). Call once at startup, after the subsystems the handlers
 // target (e.g. MCP) are ready. Mirrors MCP().Reload's restore behavior.
 func ReloadApprovedConnectors(db Database) {
+	// Unfreeze knobs a preset baked into stored specs before they became
+	// tunables. Runs BEFORE materialize so a connector comes up on the resolved
+	// default rather than the frozen one. Marker-guarded, so it fires once.
+	MigrateFrozenImageDefaults(db)
 	for _, c := range ListConnectors(db) {
 		if !c.Approved {
 			continue
