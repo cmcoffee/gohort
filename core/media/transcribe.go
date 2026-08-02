@@ -110,6 +110,22 @@ func TranscribeRuntimeFlagScript() string {
 	return `<script>window.GOHORT_TRANSCRIBE_ENABLED = false;</script>`
 }
 
+// GovernedUploadFunc, when set, is how Transcribe reaches the network. The
+// core package installs it at startup so the audio goes out through the
+// credentialed dispatch — URL allow-list, audit entry, rate limit, and the
+// Private-mode kill switch all apply.
+//
+// It is a function VARIABLE rather than a direct call because core imports this
+// package, so this package cannot import core. Same seam as GeminiKeyFunc and
+// friends.
+//
+// Nil means the raw fallback below runs: an http.Client of our own, with none
+// of those controls. That was the ONLY path until this seam existed — user
+// audio left the machine on an unaudited connection — so a deployment that
+// wires this is strictly better off, and one that doesn't is no worse than it
+// was.
+var GovernedUploadFunc func(ctx context.Context, url, field, filename string, body []byte, fields map[string]string) (string, error)
+
 // Transcribe sends audio bytes to the configured STT endpoint and
 // returns the recognized text. Filename hints the server about the
 // container/codec (whisper.cpp inspects the extension); pass a
@@ -137,6 +153,20 @@ func Transcribe(ctx context.Context, audio []byte, filename string) (string, err
 	nfo.Debug("[transcribe] POST %s/audio/transcriptions filename=%q bytes=%d model=%q",
 		strings.TrimRight(cfg.Endpoint, "/"), filename, len(audio), cfg.Model)
 
+	url := strings.TrimRight(cfg.Endpoint, "/") + "/audio/transcriptions"
+	if GovernedUploadFunc != nil {
+		fields := map[string]string{"response_format": "text"}
+		if cfg.Model != "" {
+			fields["model"] = cfg.Model
+		}
+		out, err := GovernedUploadFunc(ctx, url, "file", filepath.Base(filename), audio, fields)
+		if err != nil {
+			nfo.Debug("[transcribe] governed upload failed: %v", err)
+			return "", err
+		}
+		return strings.TrimSpace(out), nil
+	}
+
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	// "file" is the OpenAI-compatible field name.
@@ -158,7 +188,6 @@ func Transcribe(ctx context.Context, audio []byte, filename string) (string, err
 		return "", fmt.Errorf("transcribe: close: %w", err)
 	}
 
-	url := strings.TrimRight(cfg.Endpoint, "/") + "/audio/transcriptions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &body)
 	if err != nil {
 		return "", err

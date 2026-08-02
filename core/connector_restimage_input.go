@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"mime/multipart"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -206,27 +205,23 @@ func (s RestImageSpec) uploadImage(sess *ToolSession, img inputImage) (ComfyUplo
 	if field == "" {
 		field = "image"
 	}
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
+	// The form is built by mimebody as the request is written, so the photo is
+	// never held twice: once in a buffer and again in the string the old
+	// hand-rolled multipart handed to the dispatch.
+	//
 	// ComfyUI keys its input store by FILENAME. Two turns uploading "photo.png"
 	// would land on the same key, and the second upload could replace the first
 	// between its upload and its graph run — the first turn then renders the
 	// wrong photo, silently and non-reproducibly. A unique name per upload
 	// removes the shared key entirely.
-	fw, err := mw.CreateFormFile(field, uniqueUploadName(img.name))
-	if err != nil {
-		return out, fmt.Errorf("build upload: %w", err)
-	}
-	if _, err := fw.Write(img.data); err != nil {
-		return out, fmt.Errorf("build upload: %w", err)
-	}
-	_ = mw.WriteField("subfolder", "gohort")
-	_ = mw.WriteField("type", "input")
-	if err := mw.Close(); err != nil {
-		return out, fmt.Errorf("build upload: %w", err)
+	up := FileUpload{
+		Reader:    bytes.NewReader(img.data),
+		FieldName: field,
+		FileName:  uniqueUploadName(img.name),
+		Fields:    map[string]string{"subfolder": "gohort", "type": "input"},
 	}
 
-	raw, err := s.dispatchImageCT(sess, s.UploadURL, "POST", body.String(), mw.FormDataContentType())
+	raw, err := s.dispatchImageUpload(sess, s.UploadURL, up)
 	if err != nil {
 		return out, fmt.Errorf("uploading %q to the image backend failed: %w", img.name, err)
 	}

@@ -41,6 +41,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/snugforge/mimebody"
 )
 
 // isTimeoutErr reports whether err is a request timeout (deadline exceeded or a
@@ -332,6 +334,7 @@ func init() {
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes", Category: "Limits", Label: "SecureAPI response byte cap", Help: "Max response body returned directly to the LLM as text (no response pipe).", Kind: KindInt, Default: 262144, Min: 16384, Max: 4194304})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes_pipe", Category: "Limits", Label: "SecureAPI response byte cap (piped)", Help: "Higher response read cap used when a response_pipe is configured.", Kind: KindInt, Default: 4194304, Min: 262144, Max: 67108864})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_save_bytes", Category: "Limits", Label: "SecureAPI save byte cap", Help: "Max response body written to the workspace via save_to.", Kind: KindInt, Default: 104857600, Min: 1048576, Max: 1073741824})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_upload_timeout", Category: "Timeouts", Label: "SecureAPI upload timeout", Help: "Wall-clock cap for a streaming file upload through a credential. Separate from the request timeout: a file takes as long as the link allows.", Kind: KindSeconds, Default: 300, Min: 30, Max: 3600})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_request_timeout", Category: "Timeouts", Label: "SecureAPI request timeout", Help: "Wall-clock cap per SecureAPI call.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_audit_ring_size", Category: "Limits", Label: "SecureAPI audit ring size", Help: "Per-credential audit-log retention; older entries drop FIFO.", Kind: KindInt, Default: 50, Min: 10, Max: 1000})
 }
@@ -1295,12 +1298,44 @@ type ToolCallRequest struct {
 	// sandboxed pipe, so the body is read with a higher byte cap and without
 	// the truncation marker. Only set it when a pipe genuinely runs.
 	PipeFollowing bool
+	// Upload, when set, makes this a streaming multipart request. Body is
+	// ignored — the form is built from Upload instead.
+	Upload *FileUpload
+}
+
+// secureUploadArg keys a *FileUpload inside the dispatch args map. Underscored
+// like the other internal arg keys so it can never collide with a caller's
+// declared parameter.
+const secureUploadArg = "__upload"
+
+// FileUpload declares a STREAMING multipart upload. The source is read as the
+// request is written rather than buffered, so a large file never sits in memory
+// twice — which is the whole reason this exists rather than another
+// hand-rolled mime/multipart building a string.
+//
+// It rides the same governed dispatch as every other call, which is the point:
+// an upload gets the credential's URL allow-list, the audit entry, the rate
+// limit, and the Private-mode kill switch. Code that builds its own
+// http.Client to POST a file has none of those.
+type FileUpload struct {
+	Reader    io.Reader         // the source; required
+	FieldName string            // form field the file goes in (default "file")
+	FileName  string            // filename recorded in the part
+	Fields    map[string]string // extra form fields, written before the file
+	ByteLimit int64             // cap on bytes read from Reader; 0 or negative = unlimited
 }
 
 // DispatchToolCallRequest is the full-shape entry point behind the
 // DispatchToolCall* wrappers.
 func (s *SecureAPI) DispatchToolCallRequest(sess *ToolSession, r ToolCallRequest) (string, error) {
-	return s.dispatchToolCall(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers)
+	return s.dispatchToolCallFull(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers, r.Upload)
+}
+
+// DispatchUpload streams a file to url through the credential's governed
+// dispatch. Prefer this over building an http.Client: the allow-list, audit
+// log, rate limit, and Private-mode gate all live on this path.
+func (s *SecureAPI) DispatchUpload(sess *ToolSession, credName, urlStr, method string, up FileUpload) (string, error) {
+	return s.dispatchToolCallFull(sess, credName, urlStr, firstNonEmpty(method, "POST"), "", "", false, nil, &up)
 }
 
 // DispatchToolCallCT is DispatchToolCall with an explicit request Content-Type
@@ -1329,6 +1364,10 @@ func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr,
 }
 
 func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string) (string, error) {
+	return s.dispatchToolCallFull(sess, credName, urlStr, method, body, contentType, pipeFollowing, headers, nil)
+}
+
+func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string, up *FileUpload) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -1358,6 +1397,9 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 		if h := toolCallHeaderArgs(headers); h != nil {
 			args["request_headers"] = h
 		}
+		if up != nil {
+			args[secureUploadArg] = up
+		}
 		return s.dispatch(synth, args, sess)
 	}
 	c, ok := s.Resolve(credName, sessUsername(sess))
@@ -1379,6 +1421,9 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 	}
 	if h := toolCallHeaderArgs(headers); h != nil {
 		args["request_headers"] = h
+	}
+	if up != nil {
+		args[secureUploadArg] = up
 	}
 	return s.dispatch(c, args, sess)
 }
@@ -1615,11 +1660,21 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// working at all.
 	baseCtx, releaseConn := connector.DeriveCancelCtx(sess.Context())
 	defer releaseConn()
-	ctx, cancel := context.WithTimeout(baseCtx, secureAPIRequestTimeout())
+	callTimeout := secureAPIRequestTimeout()
+	if _, isUpload := args[secureUploadArg].(*FileUpload); isUpload {
+		// A file goes over the wire at whatever the link allows; the 30s cap
+		// that suits an API call would abort a photo on a slow uplink.
+		callTimeout = TuneDuration("tune_secure_api_upload_timeout")
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, callTimeout)
 	defer cancel()
 
+	upload, _ := args[secureUploadArg].(*FileUpload)
 	var bodyReader io.Reader
-	if body != "" {
+	switch {
+	case upload != nil:
+		bodyReader = upload.Reader // wrapped into a multipart stream below
+	case body != "":
 		bodyReader = bytes.NewReader([]byte(body))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, parsed.String(), bodyReader)
@@ -1645,6 +1700,19 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 				}
 				req.Header.Set(k, str)
 			}
+		}
+	}
+	// Multipart conversion runs AFTER caller headers so the boundary
+	// Content-Type it sets cannot be overwritten by one of them. mimebody
+	// rewrites Body into a stream that emits the form as the source is read and
+	// sets ContentLength -1, so the file is never held whole.
+	if upload != nil {
+		field := strings.TrimSpace(upload.FieldName)
+		if field == "" {
+			field = "file"
+		}
+		if err := mimebody.ConvertFormFile(req, field, upload.FileName, upload.Fields, upload.ByteLimit); err != nil {
+			return "", fmt.Errorf("build upload: %w", err)
 		}
 	}
 	if body != "" && req.Header.Get("Content-Type") == "" {

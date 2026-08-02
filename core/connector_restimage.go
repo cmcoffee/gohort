@@ -930,8 +930,27 @@ func (s RestImageSpec) dispatchImage(sess *ToolSession, rawURL, method, body str
 	return s.dispatchImageCT(sess, rawURL, method, body, "")
 }
 
+// dispatchImageUpload streams a file to the backend through the same governed
+// dispatch the JSON calls use, so an upload is covered by the credential's
+// allow-list, audit entry, and Private-mode gate rather than bypassing them.
+func (s RestImageSpec) dispatchImageUpload(sess *ToolSession, rawURL string, up FileUpload) (string, error) {
+	cred := strings.TrimSpace(s.Credential)
+	if cred != "" && cred != "no_auth" && cred != "none" {
+		return Secure().DispatchUpload(sess, cred, rawURL, "POST", up)
+	}
+	scoped := SecureCredential{
+		Name:              "rest_image_local",
+		Type:              SecureCredNone,
+		AllowedURLPattern: imageHostPattern(s.SubmitURL),
+		Description:       "Unauthenticated rest_image dispatch, scoped to the backend host.",
+	}
+	return Secure().dispatch(scoped, map[string]any{
+		"url": rawURL, "method": "POST", "__pipe_following": true, secureUploadArg: &up,
+	}, sess)
+}
+
 // dispatchImageCT is dispatchImage with an explicit request Content-Type, for
-// the multipart image upload (empty keeps the JSON default).
+// a non-JSON body (empty keeps the JSON default).
 func (s RestImageSpec) dispatchImageCT(sess *ToolSession, rawURL, method, body, contentType string) (string, error) {
 	cred := strings.TrimSpace(s.Credential)
 	if cred != "" && cred != "no_auth" && cred != "none" {
