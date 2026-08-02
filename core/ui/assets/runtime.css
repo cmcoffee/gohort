@@ -12,6 +12,44 @@ html, body {
  * taller than the viewport while the keyboard is open. See .ui-agent-grid. */
 body { min-height: 100vh; min-height: 100dvh; }
 
+/* --- Form controls inherit the theme, even unstyled ---
+ *
+ * An app that writes a bare <input> gets the BROWSER default: white box, black
+ * text. On a dark theme that's a glaring white rectangle, and it's an easy
+ * thing to ship — the toolkit's own fields carry .ui-form-input, but a
+ * hand-written search box or topic field in an app's own HTML has nothing.
+ *
+ * These are element selectors, so every .ui-* class rule and any inline style
+ * still wins on specificity. This is purely the floor.
+ *
+ * Excluded: checkbox / radio / file / range / color, whose native rendering is
+ * the point — painting a background on those breaks the control. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="submit"]):not([type="button"]),
+textarea,
+select {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+}
+input::placeholder, textarea::placeholder { color: var(--text-mute); opacity: 1; }
+
+/* Chrome paints autofilled fields with its own near-white background and
+ * ignores `background`, which turns a themed field white the moment the
+ * browser fills it. The inset shadow is the only way to override it; the
+ * long transition keeps the flash from showing on focus. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-2) inset;
+  box-shadow: 0 0 0 1000px var(--bg-2) inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 #ui-root {
   margin: 0 auto;
   padding: 0.95rem;
