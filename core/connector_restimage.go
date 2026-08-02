@@ -1711,3 +1711,30 @@ func intArgOr(v any, def int) int {
 	}
 	return def
 }
+
+// ImageBackendDeadline reports how long a render on this backend is allowed to
+// take — the same number the poll loop enforces. Exported so the framework can
+// decide whether a call is too slow to hold a turn open, rather than guessing
+// or asking the model.
+//
+// An unnamed backend resolves to the caller's default, and an unknown one to
+// zero, which reads as "no estimate" and keeps the call inline.
+func ImageBackendDeadline(sess *ToolSession, backend string) time.Duration {
+	backend = strings.TrimSpace(backend)
+	if backend == "" {
+		for _, c := range ReachableImageBackends(sess) {
+			if c.Default {
+				backend = c.Name
+				break
+			}
+		}
+	}
+	if backend == "" {
+		return 0
+	}
+	s, err := resolveImageConnector(backend)
+	if err != nil {
+		return 0
+	}
+	return s.pollDeadline()
+}

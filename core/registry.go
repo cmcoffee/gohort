@@ -276,6 +276,29 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	if handler == nil {
 		handler = ct.Run
 	}
+	// Detach a call the tool says will outrun the turn. Wrapping HERE rather
+	// than inside each tool means the decision, the notice the model gets back,
+	// and the lifecycle are written once — a tool only has to answer how long it
+	// expects to take.
+	if sess != nil {
+		inline := handler
+		handler = func(args map[string]any) (string, error) {
+			expected, detach := ShouldDetach(ct, args, sess)
+			if !detach {
+				return inline(args)
+			}
+			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func() (string, error) {
+				return inline(args)
+			})
+			if err != nil {
+				// Could not detach — run it inline rather than refuse. A slow
+				// answer beats no answer, and the caller never asked for this.
+				Debug("[task] %s stayed inline: %v", ct.Name(), err)
+				return inline(args)
+			}
+			return detachedNotice(run, expected), nil
+		}
+	}
 	// Framework-level attachment-success signal. Any tool that
 	// produces attachments (calls sess.AppendImage / AppendVideo /
 	// AppendFile) gets its result text appended with an explicit

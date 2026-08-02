@@ -517,6 +517,9 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/cancel", g(T.handleCancelRouter))
 	T.HandleFunc("/api/confirm", g(T.handleConfirmRouter))
 	T.HandleFunc("/api/inject", g(T.handleInject))
+	// A tool call the framework judges too slow to hold a turn open runs as a
+	// detached task instead. core decides; this supplies the run + delivery.
+	T.installTaskRunner()
 	// Operator event webhook — PUBLIC (the unguessable per-monitor token is the
 	// credential), so it bypasses cookie auth. External watchers POST here to
 	// wake the Operator. Registered ungated + as a public path.

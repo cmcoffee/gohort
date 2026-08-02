@@ -327,6 +327,19 @@ func (t *ImageTool) SchemaWithSession(sess *ToolSession) (string, map[string]Too
 	return s.desc, s.params
 }
 
+// ExpectedDuration reports how long THIS call is likely to take, so the
+// framework can decide whether to detach it. The number is not a guess: an
+// image backend already carries its own render deadline, and an edit backend's
+// is an order of magnitude larger than a generate's because the model has to
+// load first. find and fetch are ordinary HTTP and stay inline.
+func (t *ImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	case "generate", "edit":
+		return ImageBackendDeadline(sess, strings.TrimSpace(StringArg(args, "backend")))
+	}
+	return 0
+}
+
 func (t *ImageTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("image requires a session context — use GetAgentToolsWithSession")
 }
