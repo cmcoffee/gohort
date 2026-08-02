@@ -1353,6 +1353,28 @@ var restImagePresets = map[string]RestImageSpec{
 		DefaultSteps:  20,
 	},
 
+	// Automatic1111 img2img — the INLINE image-input shape. Where ComfyUI
+	// uploads a photo and references it by server-side filename, A1111 wants the
+	// bytes in the request: {images} expands to a JSON array of base64 strings,
+	// which is exactly what init_images takes. This is the declaration that
+	// exercises the token half of image input; without one, only the
+	// upload-then-reference path had any users.
+	//
+	// denoising_strength is fixed here rather than exposed. A1111 has no
+	// workflow to hold it, so the request body IS the configuration, and it
+	// follows the same rule as a ComfyUI graph: the operator sets it, the model
+	// does not get a knob it cannot evaluate.
+	"a1111_img2img": {
+		SubmitURL:    "{base_url}/sdapi/v1/img2img",
+		SubmitMethod: "POST",
+		SubmitBody: `{"init_images":{images},"prompt":"{prompt}","negative_prompt":"{negative}",` +
+			`"denoising_strength":0.6,"width":{width},"height":{height},"steps":{steps},"seed":{seed}}`,
+		ImageB64Path:  "images.0",
+		DefaultWidth:  512,
+		DefaultHeight: 512,
+		DefaultSteps:  20,
+	},
+
 	// ComfyUI — STARTING TEMPLATE exercising the poll stage. Var: base_url (e.g.
 	// http://localhost:8188). submit_body is a minimal SD1.5 txt2img graph; you
 	// will likely need to edit it to match your installed checkpoint and node

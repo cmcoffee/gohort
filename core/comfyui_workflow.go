@@ -246,11 +246,16 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	default:
 		warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
 	}
-	if v, ok := sIn["steps"]; ok && !comfyIsLink(v) {
-		// A linked steps input is computed by the graph (this workflow drives it
-		// from a switch node). Mapping it would advertise a knob that can only
-		// damage the wiring, so leave it out and let the graph decide.
-		m.StepsNodes = []string{sampler}
+	if v, ok := sIn["steps"]; ok {
+		if comfyIsLink(v) {
+			// Computed by the graph — a switch, a primitive, a preset chain.
+			// Mapping it would advertise a knob that can only damage the wiring,
+			// so leave it unmapped and say why: an empty steps field otherwise
+			// looks like a detection failure worth "fixing" by hand.
+			warnings = append(warnings, fmt.Sprintf("steps is driven by node %v in this workflow, so it stays unmapped and the graph keeps deciding it", firstComfyLinkID(v)))
+		} else {
+			m.StepsNodes = []string{sampler}
+		}
 	}
 
 	// 5. Locate the latent node the sampler draws from (used for size, below).

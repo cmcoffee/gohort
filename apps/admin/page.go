@@ -2717,6 +2717,22 @@ window.uiTemplateForm = function(cfg, reload){
       if(f.type==='textarea'){ inp=document.createElement('textarea'); inp.spellcheck=false; inp.style.cssText=taCss; }
       else if(f.type==='bool'){ inp=document.createElement('input'); inp.type='checkbox'; }
       else if(f.type==='select'){ inp=document.createElement('select'); inp.style.cssText=inCss; (f.options||[]).forEach(function(o){ var op=document.createElement('option'); op.value=o; op.textContent=o; inp.appendChild(op); }); }
+      else if(f.type==='file'){
+        // Reads in the browser and drops the text into f.into, so the user
+        // reviews it before saving. Never a value itself: excluded from
+        // collect() below, which is what the 'file' type check there is for.
+        inp=document.createElement('input'); inp.type='file'; inp.style.cssText=inCss;
+        if(f.accept) inp.accept=f.accept;
+        inp.onchange=function(){
+          var file=inp.files&&inp.files[0]; if(!file) return;
+          var target=inputs[f.into];
+          if(!target){ msg.style.color='#e5484d'; msg.textContent='Nothing to load this into.'; return; }
+          var rd=new FileReader();
+          rd.onload=function(){ target.el.value=rd.result; msg.style.color=''; msg.textContent='Loaded '+file.name+' ('+rd.result.length+' chars). Review it, then Detect or Save.'; };
+          rd.onerror=function(){ msg.style.color='#e5484d'; msg.textContent='Could not read '+file.name; };
+          rd.readAsText(file);
+        };
+      }
       else { inp=document.createElement('input'); inp.type=(f.type==='number'?'number':'text'); inp.style.cssText=inCss; }
       var v=(vals[f.key]!=null?vals[f.key]:(f.default!=null?f.default:''));
       if(f.type==='bool'){ inp.checked=!!v; } else { inp.value=v; }
@@ -2730,7 +2746,7 @@ window.uiTemplateForm = function(cfg, reload){
     var groups={}, order=[];
     (cfg.fields||[]).forEach(function(f){ if(!groups[f.group]){groups[f.group]=[];order.push(f.group);} groups[f.group].push(f); });
     order.forEach(function(g){ heading(g); groups[g].forEach(makeField); });
-    function collect(){ var out={}; Object.keys(inputs).forEach(function(k){ if(k==='__name')return; var it=inputs[k]; out[k]=(it.type==='bool'?it.el.checked:(it.type==='number'?(parseInt(it.el.value,10)||0):it.el.value)); }); return out; }
+    function collect(){ var out={}; Object.keys(inputs).forEach(function(k){ if(k==='__name'||inputs[k].type==='file')return; var it=inputs[k]; out[k]=(it.type==='bool'?it.el.checked:(it.type==='number'?(parseInt(it.el.value,10)||0):it.el.value)); }); return out; }
     var msg=document.createElement('div'); msg.style.cssText='font-size:12px;white-space:pre-wrap;min-height:16px;margin:6px 0;';
     var actions=document.createElement('div'); actions.style.cssText='margin-top:10px;display:flex;gap:8px;justify-content:flex-end;align-items:center;';
     if(cfg.detect){

@@ -32,6 +32,17 @@ type TemplateField struct {
 	Options  []string `json:"options,omitempty"`
 	Default  any      `json:"default,omitempty"`
 	Advanced bool     `json:"advanced,omitempty"`
+
+	// File-picker wiring (Type "file"). The picked file is read in the BROWSER
+	// and its text dropped into the field named by Into, so the user reviews it
+	// before saving. The picker itself never becomes a value — it only fills
+	// another field.
+	//
+	// Client-side on purpose: these are text documents (a ComfyUI API export is
+	// JSON), so there is nothing for a server to extract. Reading locally means
+	// no upload endpoint, and nothing leaves the browser until Save.
+	Accept string `json:"accept,omitempty"` // input accept attribute, e.g. ".json,application/json"
+	Into   string `json:"into,omitempty"`   // key of the field this file's text populates
 }
 
 // ConnectorTemplate is a DECLARATION — pure data (no funcs), so it can be a Go

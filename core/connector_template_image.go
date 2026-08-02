@@ -24,6 +24,7 @@ func init() {
 	})
 	RegisterConnectorTemplate(comfyuiTemplate())
 	RegisterConnectorTemplate(a1111Template())
+	RegisterConnectorTemplate(a1111Img2ImgTemplate())
 }
 
 // --- rest_image_preset strategy (generic; reused by a1111 and future presets) --
@@ -175,7 +176,20 @@ func comfyDetect(_ ConnectorTemplate, vals map[string]any) (map[string]any, []st
 		"default_width":  s.DefaultWidth,
 		"default_height": s.DefaultHeight,
 	}
-	comfyMapToVals(s.ComfyMap, out)
+	// Only report what was actually FOUND. comfyMapToVals writes every key,
+	// empty ones included, and the panel applies whatever Detect returns — so a
+	// field auto-wiring has no opinion about came back as "" and wiped what the
+	// admin had typed there. Steps is the case that bites: a graph can drive it
+	// from a switch, or carry several nodes plausibly named "Steps", and the
+	// honest answer is "no opinion", not "".
+	detected := map[string]any{}
+	comfyMapToVals(s.ComfyMap, detected)
+	for k, v := range detected {
+		if str, ok := v.(string); ok && strings.TrimSpace(str) == "" {
+			continue
+		}
+		out[k] = v
+	}
 	return out, warns, nil
 }
 
@@ -229,6 +243,7 @@ func comfyuiTemplate() ConnectorTemplate {
 		Fields: []TemplateField{
 			{Key: "base_url", Label: "ComfyUI URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:8188"},
 			{Key: "workflow_type", Label: "What this backend does", Type: "select", Group: "Connection", Options: ComfyWorkflowTypes(), Default: ComfyTypeGenerate, Help: "generate = text to image. edit = change a photo you give it (img2img). blend = combine two photos, with no model loaded at all. This picks the STARTING graph; paste your own below to override it. One backend does one of these — add a second connector, pointed at the same ComfyUI, for another."},
+			{Key: "workflow_file", Label: "Load workflow from a file", Type: "file", Group: "Connection", Accept: ".json,application/json", Into: "workflow", Help: "Pick the .json ComfyUI wrote with “Save (API Format)”. It is read here in your browser and dropped into the box below for review — nothing is sent until you Save."},
 			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave blank to start from the graph the type above selects. Enable Dev Mode in ComfyUI to get the API-format export. After saving, this shows the graph actually in use."},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local LAN box; a SecureAPI credential name for a hosted/authenticated server."},
 			{Key: "prompt_nodes", Label: "Prompt node(s)", Type: "text", Group: "Node mapping", Help: "node id(s) the prompt is written into"},
@@ -303,4 +318,29 @@ func TemplateForConnector(c Connector) (ConnectorTemplate, bool) {
 		name = "comfyui"
 	}
 	return GetConnectorTemplate(name)
+}
+
+// a1111Img2ImgTemplate is a PURE DECLARATION, like a1111 — no strategy code of
+// its own, just a different preset. That it takes one line to add an EDITING
+// backend is the point of the split: image input is a property of the preset's
+// request body, not of the machinery.
+func a1111Img2ImgTemplate() ConnectorTemplate {
+	return ConnectorTemplate{
+		Name:        "a1111_img2img",
+		Label:       "Automatic1111 (edit a photo)",
+		Category:    "Image generation",
+		Description: "A local or self-hosted Automatic1111, wired for img2img: it takes a source photo and a prompt and returns a changed version. Add the plain Automatic1111 template as well if you also want text-to-image.",
+		Kind:        RestImageConnectorKind,
+		Strategy:    "rest_image_preset",
+		Params:      map[string]string{"preset": "a1111_img2img"},
+		Fields: []TemplateField{
+			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860 — the same server as your text-to-image backend, if you have one."},
+			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local box; a SecureAPI credential name for an authenticated server."},
+			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
+			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
+			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
+			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the image tool's description the model reads (NOT the prompt). For an editing backend, say what it is good at changing."},
+		},
+	}
 }
