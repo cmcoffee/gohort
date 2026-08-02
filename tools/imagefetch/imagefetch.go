@@ -290,7 +290,17 @@ func imageSchemaFor(a imageActions) imageSchema {
 	if len(a.backendNames()) > 1 {
 		params["backend"] = ToolParam{Type: "string", Enum: a.backendNames(), Description: a.backendParamDesc()}
 	}
-	desc += "help. Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=..., cleanup=true) to ship the file."
+	desc += "help. Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
+	// Omitting an action hides that the capability EXISTS, and that cuts both
+	// ways. For find, fetch is a fair substitute and silence costs nothing. For
+	// edit it is actively harmful: asked to blend two pictures with no editing
+	// backend wired, a model has no idea blending was ever a thing, so it writes
+	// a prompt describing the combination and generates a NEW image — handing
+	// back something that looks like an answer and isn't. Say the capability is
+	// missing so it can say so too.
+	if a.generate && !a.edit {
+		desc += " NOTE: this deployment can only CREATE images from text — nothing here can modify, blend, or combine existing pictures. If the user asks you to edit, blend, composite, or change a photo, tell them image editing is not configured. Do NOT write a prompt describing the combination and generate a new image instead: that is a different picture, not their photo, and presenting it as the edit is worse than saying it can't be done."
+	}
 	// The decision rule only helps when there's a decision to make.
 	if len(names) > 1 {
 		desc += " Decision:"
@@ -808,9 +818,14 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	}
 	Log("[imagefetch] %s → %s (%d bytes)", note, name, len(data))
 
-	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery — call workspace(action=\"attach\", path=%q) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it — rare.)", name, len(data), name)
+	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery — call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it — rare.)", name, len(data), name)
+	// Spell out that the workspace copy is one-shot. Saying "do not delete it"
+	// next to a path the model is told to clean up reads as a contradiction, and
+	// what it did instead was attach with cleanup and then try to attach the
+	// same path AGAIN — which errors, because the file is gone. From there it
+	// regenerated the picture and delivered the wrong one.
 	if ref := RecordRecentImage(sess, data, note); ref != "" {
-		msg += fmt.Sprintf(" It is also kept as %s: pass that to image(action=\"edit\") later to change it. Do NOT delete it — recent images are pruned automatically.", ref)
+		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working; %s is the lasting handle for this picture. Use %s to edit it later, or to send it again. Never re-attach the workspace path after a cleanup — it is already delivered.", ref, ref)
 	}
 	return msg, nil
 }

@@ -233,3 +233,28 @@ func TestGenerateIsUnofferedWhenOnlyEditorsExist(t *testing.T) {
 		t.Error("edit must still be offered")
 	}
 }
+
+func TestMissingEditCapabilityIsStated(t *testing.T) {
+	// Asked to "blend the two", with no editing backend wired, a model that
+	// can't see the capability at all writes a prompt describing the
+	// combination and GENERATES a new picture — handing back something that
+	// looks like an answer and isn't. Omitting an action hides that it exists;
+	// here that silence is worse than the gap.
+	noEdit := imageSchemaFor(imageActions{
+		fetch:    true,
+		generate: true,
+		backends: []ImageBackendChoice{{Name: "comfy_txt", Default: true}},
+	})
+	for _, want := range []string{"nothing here can modify, blend, or combine", "not configured", "Do NOT write a prompt describing the combination"} {
+		if !strings.Contains(noEdit.desc, want) {
+			t.Errorf("description must state editing is unavailable (%q):\n%s", want, noEdit.desc)
+		}
+	}
+
+	// With an editor present the note must vanish — it would be a lie, and it
+	// tells the model not to do the thing it should be doing.
+	withEdit := imageSchemaFor(editActions(ImageBackendChoice{Name: "e1", Edits: true, MaxImages: 2, NeedsPrompt: true}))
+	if strings.Contains(withEdit.desc, "not configured") {
+		t.Errorf("the unavailable-editing note must not appear when an editor exists:\n%s", withEdit.desc)
+	}
+}
