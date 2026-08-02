@@ -275,3 +275,24 @@ func (c *ctxCapturingTool) RunWithSession(_ map[string]any, sess *ToolSession) (
 func (c *ctxCapturingTool) ExpectedDuration(map[string]any, *ToolSession) time.Duration {
 	return c.dur
 }
+
+func TestDetachedNoticeAsksForAPromiseNotAnExplanation(t *testing.T) {
+	// "I'll get that going and let you know when it's done" — not a briefing on
+	// how the system works. Telling the user they may keep talking, or to check
+	// back, narrates machinery they never asked about, and the live indicator
+	// already shows the work is running.
+	notice := detachedNotice(TaskRun{ID: "task_1", Label: "image edit"}, 15*time.Minute)
+	if !strings.Contains(notice, "let you know when it's done") {
+		t.Errorf("notice should model the phrasing:\n%s", notice)
+	}
+	for _, banned := range []string{"they can keep talking", "invite them to check"} {
+		if !strings.Contains(notice, "do NOT tell them they can keep talking") &&
+			!strings.Contains(notice, "do NOT invite them to check") {
+			t.Errorf("notice should rule out %q as prose:\n%s", banned, notice)
+		}
+	}
+	// The estimate is still there when it is worth saying.
+	if !strings.Contains(notice, "15 minutes") {
+		t.Errorf("notice should carry the estimate:\n%s", notice)
+	}
+}

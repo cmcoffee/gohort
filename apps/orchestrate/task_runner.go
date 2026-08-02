@@ -41,10 +41,11 @@ func (T *OrchestrateApp) installTaskRunner() {
 		// The agent that owns the conversation, read off the turn that spawned
 		// us: the wake has to run as that agent, or the result arrives in the
 		// thread wearing the wrong identity.
-		agentID := ""
+		agentID, agentName := "", ""
 		if parentID != "" {
 			if pr := T.runsRegistry().Get(parentID); pr != nil {
-				agentID = pr.AgentID
+				snap := pr.Snapshot()
+				agentID, agentName = snap.AgentID, snap.AgentName
 			}
 		}
 		if agentID == "" {
@@ -53,7 +54,12 @@ func (T *OrchestrateApp) installTaskRunner() {
 
 		ctx, cancel := context.WithCancel(withParentRun(context.Background(), parentID))
 		run := T.runsRegistry().Create(sess.Username, agentID, "", cancel).
-			Describe("task", "", label).
+			// The agent's NAME, not just its id: the live provider falls back to
+			// the id when the name is empty, so a background task would sit in
+			// the pill labelled with a raw UUID — which is how a user learns
+			// nothing from the one surface that was meant to tell them work is
+			// still running.
+			Describe("task", agentName, label).
 			Parent(parentID)
 
 		go func() {

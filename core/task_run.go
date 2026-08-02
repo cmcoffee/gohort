@@ -122,8 +122,9 @@ func detachedNotice(run TaskRun, expected time.Duration) string {
 		b.WriteString(" (" + l + ")")
 	}
 	b.WriteString(".\n")
-	b.WriteString("There is NO result yet and nothing has been delivered. Tell the user plainly that you have started it and roughly how long it takes. Do NOT describe the outcome, do NOT claim anything was sent, and do NOT call this tool again for the same request — a second call starts a second job.\n")
-	b.WriteString("The result arrives on its own as a new message when it is done; you will be told then, and that is when you deliver it. Until then keep answering normally — the user can carry on talking to you while it runs.")
+	b.WriteString("There is NO result yet and nothing has been delivered. Do NOT describe the outcome, do NOT claim anything was sent, and do NOT call this tool again for the same request — a second call starts a second job.\n")
+	b.WriteString("Say you are doing it and that you will report back, in one line, the way a person would: \"I'll get that going and let you know when it's done.\" Mention roughly how long if it is worth knowing. Do NOT explain that you are running in the background, do NOT tell them they can keep talking to you, and do NOT invite them to check on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
+	b.WriteString("The result arrives on its own as a new message when it is done; you will be told then, and that is when you deliver it. Until then answer whatever they say next as normal.")
 	return b.String()
 }
 
