@@ -120,6 +120,9 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	}
 	spec.PromptSuffix = TemplateStr(vals, "prompt_suffix")
 	spec.PromptGuidance = TemplateStr(vals, "prompt_guidance")
+	if u := TemplateStr(vals, "upload_url"); u != "" {
+		spec.UploadURL = u
+	}
 	raw, err := json.Marshal(spec)
 	return raw, warns, err
 }
@@ -136,6 +139,7 @@ func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
 		"default_steps":   s.DefaultSteps,
 		"prompt_suffix":   s.PromptSuffix,
 		"prompt_guidance": s.PromptGuidance,
+		"upload_url":      s.UploadURL,
 	}
 	comfyMapToVals(s.ComfyMap, vals)
 	return vals
@@ -155,6 +159,10 @@ func comfyDetect(_ ConnectorTemplate, vals map[string]any) (map[string]any, []st
 	return out, warns, nil
 }
 
+// comfyMapFromVals and comfyMapToVals are two halves of one round trip. Wire
+// every new field into BOTH: a field read but never written (or the reverse)
+// makes Configure silently drop it on save, which is how image wiring would
+// vanish the first time an admin edited an unrelated field.
 func comfyMapFromVals(vals map[string]any) ComfyNodeMap {
 	return ComfyNodeMap{
 		PromptNodes:   TemplateCSV(vals, "prompt_nodes"),
@@ -166,6 +174,9 @@ func comfyMapFromVals(vals map[string]any) ComfyNodeMap {
 		SeedNodes:     TemplateCSV(vals, "seed_nodes"),
 		SeedKey:       TemplateStr(vals, "seed_key"),
 		OutputNode:    TemplateStr(vals, "output_node"),
+		ImageNodes:    TemplateCSV(vals, "image_nodes"),
+		ImageKey:      TemplateStr(vals, "image_key"),
+		MaskNodes:     TemplateCSV(vals, "mask_nodes"),
 	}
 }
 
@@ -179,6 +190,9 @@ func comfyMapToVals(m ComfyNodeMap, into map[string]any) {
 	into["seed_nodes"] = JoinCSV(m.SeedNodes)
 	into["seed_key"] = m.SeedKey
 	into["output_node"] = m.OutputNode
+	into["image_nodes"] = JoinCSV(m.ImageNodes)
+	into["image_key"] = m.ImageKey
+	into["mask_nodes"] = JoinCSV(m.MaskNodes)
 }
 
 // --- declarations (pure data) -------------------------------------------------
@@ -205,6 +219,10 @@ func comfyuiTemplate() ConnectorTemplate {
 			{Key: "seed_nodes", Label: "Seed node(s)", Type: "text", Group: "Node mapping"},
 			{Key: "seed_key", Label: "Seed key", Type: "text", Group: "Node mapping", Help: "\"seed\" or \"noise_seed\""},
 			{Key: "output_node", Label: "Output (SaveImage) node", Type: "text", Group: "Node mapping", Help: "the image is read from this node"},
+			{Key: "image_nodes", Label: "Input image node(s)", Type: "text", Group: "Image input", Help: "LoadImage node id(s) a source photo is written into — this is what makes the backend able to EDIT a photo rather than only generate one. ORDER MATTERS for a multi-image compose: the first id gets the caller's first image."},
+			{Key: "image_key", Label: "Image input key", Type: "text", Group: "Image input", Advanced: true, Help: "usually \"image\""},
+			{Key: "mask_nodes", Label: "Mask node(s)", Type: "text", Group: "Image input", Advanced: true, Help: "LoadImageMask node id(s), for inpainting a selected region"},
+			{Key: "upload_url", Label: "Upload endpoint", Type: "text", Group: "Image input", Advanced: true, Help: "where source photos are POSTed before the graph runs; defaults to <ComfyUI URL>/upload/image. Must be the same host as the ComfyUI URL."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},

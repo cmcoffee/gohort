@@ -1,0 +1,183 @@
+package imagefetch
+
+// The edit action. Generators and editors are disjoint sets — an img2img graph
+// requires its input, a txt2img graph has nowhere to put one — so a backend
+// belongs to exactly one action, and naming the wrong one has to say so.
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+func editActions(editors ...ImageBackendChoice) imageActions {
+	return imageActions{
+		fetch:    true,
+		generate: true,
+		edit:     len(editors) > 0,
+		backends: []ImageBackendChoice{{Name: "comfy_txt", Default: true}},
+		editors:  editors,
+	}
+}
+
+func TestEditActionAppearsOnlyWithAnEditingBackend(t *testing.T) {
+	none := imageSchemaFor(genActions(ImageBackendChoice{Name: "comfy_txt", Default: true}))
+	if slices.Contains(none.params["action"].Enum, "edit") {
+		t.Error("edit must not be offered with no image-input backend wired")
+	}
+	if _, ok := none.params["images"]; ok {
+		t.Error("the images param must not appear without an edit action")
+	}
+	with := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true}))
+	if !slices.Contains(with.params["action"].Enum, "edit") {
+		t.Errorf("edit missing from enum %v", with.params["action"].Enum)
+	}
+	if p, ok := with.params["images"]; !ok || p.Type != "array" {
+		t.Errorf("images param = %+v, want an array", p)
+	}
+}
+
+func TestImagesParamNamesTheSpaceFirst(t *testing.T) {
+	// image#N is what makes "edit the one you just made" work; a model that
+	// doesn't know the form falls back to guessing filenames.
+	s := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true}))
+	d := s.params["images"].Description
+	for _, want := range []string{"image#1", "media#1", "workspace filename"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("images description missing %q:\n%s", want, d)
+		}
+	}
+	// The refusal is easier to avoid than to explain after the fact.
+	if !strings.Contains(d, "URL is NOT accepted") {
+		t.Errorf("images description should rule out URLs up front:\n%s", d)
+	}
+}
+
+func TestMultiImageBackendAdvertisesOrderAndCount(t *testing.T) {
+	// Order decides subject vs background in a compose. Silence here produces a
+	// swapped result that looks like a backend bug.
+	one := imageSchemaFor(editActions(ImageBackendChoice{Name: "e1", Edits: true, MaxImages: 1, NeedsPrompt: true}))
+	if strings.Contains(one.params["images"].Description, "ORDER MATTERS") {
+		t.Error("a single-image backend has no order to explain")
+	}
+	two := imageSchemaFor(editActions(ImageBackendChoice{Name: "blend", Edits: true, MaxImages: 2}))
+	d := two.params["images"].Description
+	if !strings.Contains(d, "Up to 2") {
+		t.Errorf("images description should state the cap:\n%s", d)
+	}
+	if !strings.Contains(d, "ORDER MATTERS") {
+		t.Errorf("a multi-image backend must explain ordering:\n%s", d)
+	}
+}
+
+func TestMaskParamFollowsTheBackend(t *testing.T) {
+	no := imageSchemaFor(editActions(ImageBackendChoice{Name: "e1", Edits: true, MaxImages: 1}))
+	if _, ok := no.params["mask"]; ok {
+		t.Error("mask must not be offered when no backend has a mask node")
+	}
+	yes := imageSchemaFor(editActions(ImageBackendChoice{Name: "e1", Edits: true, MaxImages: 1, AcceptsMask: true}))
+	if _, ok := yes.params["mask"]; !ok {
+		t.Error("mask must be offered when a backend supports inpainting")
+	}
+}
+
+func TestNoTuningKnobsOnTheToolSurface(t *testing.T) {
+	// Strength / denoise / blend amount live in the ComfyUI workflow, hard-set
+	// by whoever built it. Exposing them invites the model to tune something it
+	// has no way to evaluate.
+	s := imageSchemaFor(editActions(ImageBackendChoice{Name: "e1", Edits: true, MaxImages: 2, AcceptsMask: true}))
+	for _, banned := range []string{"denoise", "strength", "blend_factor", "cfg", "steps"} {
+		if _, ok := s.params[banned]; ok {
+			t.Errorf("param %q must not be exposed — it belongs in the workflow", banned)
+		}
+	}
+}
+
+func TestGeneratorBackendRefusesTheEditAction(t *testing.T) {
+	avail := editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true})
+	_, err := editImage(&ToolSession{}, map[string]any{
+		"images":  []any{"image#1"},
+		"prompt":  "make it snowy",
+		"backend": "comfy_txt", // a generator, not an editor
+	}, avail)
+	if err == nil {
+		t.Fatal("a text-only backend must not accept an edit")
+	}
+	if !strings.Contains(err.Error(), "can't edit") {
+		t.Errorf("error should explain the mismatch: %v", err)
+	}
+}
+
+func TestEditWithNoImagesSaysWhatToPass(t *testing.T) {
+	avail := editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true})
+	_, err := editImage(&ToolSession{}, map[string]any{"prompt": "make it snowy"}, avail)
+	if err == nil {
+		t.Fatal("edit with no source image must fail")
+	}
+	if !strings.Contains(err.Error(), "source image") {
+		t.Errorf("error should name what's missing: %v", err)
+	}
+}
+
+func TestPromptlessBackendDoesNotDemandAPrompt(t *testing.T) {
+	// A blend has no text node. Requiring a prompt makes the model invent one
+	// that goes nowhere.
+	avail := editActions(ImageBackendChoice{Name: "blend", Edits: true, MaxImages: 2, NeedsPrompt: false})
+	_, err := editImage(&ToolSession{}, map[string]any{
+		"images":  []any{"image#1", "image#2"},
+		"backend": "blend",
+	}, avail)
+	// It fails on the unreachable backend (no connector in this unit test), but
+	// it must NOT fail on the missing prompt.
+	if err != nil && strings.Contains(err.Error(), "prompt is required") {
+		t.Errorf("a promptless backend must not demand a prompt: %v", err)
+	}
+
+	needy := editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true})
+	_, err = editImage(&ToolSession{}, map[string]any{
+		"images":  []any{"image#1"},
+		"backend": "comfy_edit",
+	}, needy)
+	if err == nil || !strings.Contains(err.Error(), "prompt is required") {
+		t.Errorf("a prompt-driven backend must ask for one: %v", err)
+	}
+}
+
+func TestImagesAcceptsASingleStringNotJustAnArray(t *testing.T) {
+	// Models routinely send images="photo.png". Refusing costs a round and
+	// teaches nothing.
+	got := stringsArg(map[string]any{"images": "photo.png"}, "images")
+	if !slices.Equal(got, []string{"photo.png"}) {
+		t.Errorf("single string = %v, want it accepted as one image", got)
+	}
+	got = stringsArg(map[string]any{"images": []any{"a.png", "b.png"}}, "images")
+	if !slices.Equal(got, []string{"a.png", "b.png"}) {
+		t.Errorf("array = %v, want both preserved in order", got)
+	}
+	got = stringsArg(map[string]any{"images": "a.png, b.png"}, "images")
+	if !slices.Equal(got, []string{"a.png", "b.png"}) {
+		t.Errorf("comma string = %v, want it split", got)
+	}
+}
+
+func TestEditSchemaIsDeterministic(t *testing.T) {
+	set := editActions(
+		ImageBackendChoice{Name: "blend", Edits: true, MaxImages: 2},
+		ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, AcceptsMask: true, NeedsPrompt: true},
+	)
+	first := imageSchemaFor(set)
+	for i := 0; i < 20; i++ {
+		next := imageSchemaFor(set)
+		if first.desc != next.desc {
+			t.Fatalf("description drifted:\n%s\n%s", first.desc, next.desc)
+		}
+		if !slices.Equal(first.params["action"].Enum, next.params["action"].Enum) {
+			t.Fatalf("action enum drifted")
+		}
+		if first.params["backend"].Description != next.params["backend"].Description {
+			t.Fatalf("backend description drifted")
+		}
+	}
+}

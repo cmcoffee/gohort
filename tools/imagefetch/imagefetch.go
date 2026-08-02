@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,45 +45,314 @@ func init() {
 // them); orchestrate drops them from its default pool in favor of this
 // (see supersededWorkerTools). The handler just delegates to the existing
 // per-action tools, so behavior is identical.
+//
+// The schema is DYNAMIC (core.DynamicChatTool): only the actions whose backing
+// config exists are advertised. `find` without a serper key and `generate`
+// without a provider used to be offered anyway and refused at call time, which
+// the model couldn't predict and would retry.
 
 type ImageTool struct{}
 
 func (t *ImageTool) Name() string         { return "image" }
 func (t *ImageTool) Caps() []Capability   { return []Capability{CapNetwork, CapRead} }
 func (t *ImageTool) IsInternetTool() bool { return true }
+
+// allImageActions is the full shape, used by the STATIC Desc/Params that the
+// semantic tool index and the session-less picker surfaces read. The catalog an
+// LLM sees comes from SchemaWithSession instead.
+var allImageActions = imageActions{find: true, fetch: true, generate: true}
+
 func (t *ImageTool) Desc() string {
-	return "Work with images — single entry point; pick the action matching intent. " +
-		"actions: find (search the web for a picture/meme/GIF/photo by description and save the best match — use whenever the user wants a picture of something and has no URL), " +
-		"fetch (download a specific image URL you already have), " +
-		"generate (create a NEW image from a text prompt — DALL·E / Stable Diffusion / whatever's wired; generation makes things up, so NOT for real-world reference), " +
-		"help. " +
-		"Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=..., cleanup=true) to ship the file. " +
-		"Decision: wants a picture of something, no URL → find. Gave an image URL → fetch. Wants something drawn / created / imagined → generate."
+	return imageSchemaFor(allImageActions).desc
 }
 func (t *ImageTool) Params() map[string]ToolParam {
-	return map[string]ToolParam{
-		"action": {Type: "string", Enum: []string{"find", "fetch", "generate"}, Description: "find | fetch | generate."},
-		"query":  {Type: "string", Description: "(find) Description of the image to find (e.g. 'funny cat meme', 'golden gate bridge sunset', 'surprised pikachu')."},
-		"url":    {Type: "string", Description: "(fetch) Direct URL of the image to download (must resolve to an image file: jpg, png, gif, webp, etc.)."},
-		"prompt": {Type: "string", Description: "(generate) Detailed description of the image to create."},
+	return imageSchemaFor(allImageActions).params
+}
+
+// imageActions is which of the grouped tool's actions can actually run right
+// now. Split out as plain data so the availability RULES are testable without a
+// configured search provider or image backend.
+type imageActions struct {
+	find     bool // needs the serper search provider + key
+	fetch    bool // needs nothing — a plain HTTP download
+	generate bool // needs an image-generation provider (built-in or a rest_image connector)
+	edit     bool // needs a backend wired for image INPUT (img2img / inpaint / compose)
+	// backends are the generation backends this caller may pick between. The
+	// `backend` param is advertised only when there's more than one — asking a
+	// model to choose from a set of one is pure schema weight.
+	backends []ImageBackendChoice
+	// editors are the subset that take source photos. Disjoint from backends:
+	// an img2img graph requires its input, a txt2img graph has nowhere to put
+	// one, so a backend belongs to exactly one action.
+	editors []ImageBackendChoice
+}
+
+// liveImageActions reads what's configured for this caller. The backend list is
+// memoized on the session (ReachableImageBackends), so the DynamicChatTool
+// cheapness contract holds across repeated catalog builds.
+func liveImageActions(sess *ToolSession) imageActions {
+	cfg := LoadWebSearchConfig()
+	var generators, editors []ImageBackendChoice
+	for _, b := range ReachableImageBackends(sess) {
+		if b.Edits {
+			editors = append(editors, b)
+		} else {
+			generators = append(generators, b)
+		}
 	}
+	return imageActions{
+		find:     cfg.Provider == "serper" && cfg.APIKey != "",
+		fetch:    true,
+		generate: ImageGenerationAvailable() || len(generators) > 0,
+		edit:     len(editors) > 0,
+		backends: generators,
+		editors:  editors,
+	}
+}
+
+// maxEditImages is the largest source-photo count any reachable editing backend
+// accepts — what the `images` param can promise.
+func (a imageActions) maxEditImages() int {
+	max := 0
+	for _, e := range a.editors {
+		if e.MaxImages > max {
+			max = e.MaxImages
+		}
+	}
+	return max
+}
+
+// imagesParamDesc names every reference form a source image can take. The
+// framework's own image space (image#N) leads, because it's the one that makes
+// "edit the picture you just made" work without the model tracking filenames.
+//
+// The CONTENTS of the space are deliberately absent: they change on every image
+// operation, and a tool schema that changes every turn re-pays cold prefill.
+// The ids come back in tool results and from action="help".
+func (a imageActions) imagesParamDesc() string {
+	d := "(edit) Source image(s) to change, as references — \"image#1\" for a recent image (newest first; call action=\"help\" to list them), \"media#1\" for a photo the user attached this turn, or a workspace filename. "
+	if n := a.maxEditImages(); n > 1 {
+		d += "Up to " + strconv.Itoa(n) + ". ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
+	}
+	return d + "A web URL is NOT accepted — fetch it first, then pass the saved filename."
+}
+
+// anyEditorTakesMask reports whether inpainting is possible on some backend.
+func (a imageActions) anyEditorTakesMask() bool {
+	for _, e := range a.editors {
+		if e.AcceptsMask {
+			return true
+		}
+	}
+	return false
+}
+
+// selectableBackends is every backend a caller may name, generators and editors
+// together, in ReachableImageBackends' sorted order. One `backend` param covers
+// both actions: the model holds one concept ("which backend"), and picking one
+// that can't do the requested action is caught at run with an explanation.
+func (a imageActions) selectableBackends() []ImageBackendChoice {
+	out := make([]ImageBackendChoice, 0, len(a.backends)+len(a.editors))
+	out = append(out, a.backends...)
+	out = append(out, a.editors...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// defaultBackend names the backend a caller lands on when it omits `backend`.
+func (a imageActions) defaultBackend() string {
+	for _, b := range a.selectableBackends() {
+		if b.Default {
+			return b.Name
+		}
+	}
+	return ""
+}
+
+// backendNames lists the selectable backends in sorted order — never re-derived
+// from a map, so the enum is stable between turns.
+func (a imageActions) backendNames() []string {
+	sel := a.selectableBackends()
+	out := make([]string, 0, len(sel))
+	for _, b := range sel {
+		out = append(out, b.Name)
+	}
+	return out
+}
+
+// backendParamDesc folds each backend's role and PromptGuidance into the one
+// description the param can carry. JSON Schema has no per-enum-value docs, and
+// that guidance used to live on each generate_image_<name> tool's own
+// description — without this it would be lost in the collapse.
+func (a imageActions) backendParamDesc() string {
+	var b strings.Builder
+	b.WriteString("Which image backend to render with.")
+	if d := a.defaultBackend(); d != "" {
+		b.WriteString(" Omit to use the default (" + d + ").")
+	} else {
+		b.WriteString(" Omit to use the configured default.")
+	}
+	var notes []string
+	for _, c := range a.selectableBackends() {
+		note := c.Name + ": "
+		if c.Edits {
+			note += "edits photos (use with action=edit)"
+			if c.MaxImages > 1 {
+				note += ", takes up to " + strconv.Itoa(c.MaxImages) + " images"
+			}
+		} else {
+			note += "generates from text (use with action=generate)"
+		}
+		if c.Guidance != "" {
+			note += " — " + c.Guidance
+		}
+		notes = append(notes, note)
+	}
+	if len(notes) > 0 {
+		b.WriteString(" Backends — " + strings.Join(notes, " "))
+	}
+	return b.String()
+}
+
+// names lists the enabled actions in a FIXED order. Never derived from a map —
+// a reordering enum invalidates the prompt prefix cache every turn.
+func (a imageActions) names() []string {
+	var out []string
+	for _, c := range []struct {
+		name string
+		on   bool
+	}{{"find", a.find}, {"fetch", a.fetch}, {"generate", a.generate}, {"edit", a.edit}} {
+		if c.on {
+			out = append(out, c.name)
+		}
+	}
+	return out
+}
+
+// imageSchema is one action set's advertised schema.
+type imageSchema struct {
+	desc   string
+	params map[string]ToolParam
+}
+
+// imageSchemaFor builds the description + parameters for exactly the actions
+// that will run. An action whose backing config is missing is not mentioned at
+// all: advertising `find` with no serper key produced a guaranteed-failing call
+// ("find_image requires the serper search provider…") that the model had no way
+// to predict, and it would retry it.
+//
+// A schema with NO actions returns the zero value (nil params), which marks the
+// tool unavailable — an empty enum would invalidate the whole tool payload for
+// the turn.
+func imageSchemaFor(a imageActions) imageSchema {
+	names := a.names()
+	if len(names) == 0 {
+		return imageSchema{}
+	}
+	desc := "Work with images — single entry point; pick the action matching intent. actions: "
+	params := map[string]ToolParam{
+		"action": {Type: "string", Enum: names, Description: strings.Join(names, " | ") + "."},
+	}
+	if a.find {
+		desc += "find (search the web for a picture/meme/GIF/photo by description and save the best match — use whenever the user wants a picture of something and has no URL), "
+		params["query"] = ToolParam{Type: "string", Description: "(find) Description of the image to find (e.g. 'funny cat meme', 'golden gate bridge sunset', 'surprised pikachu')."}
+	}
+	if a.fetch {
+		desc += "fetch (download a specific image URL you already have), "
+		params["url"] = ToolParam{Type: "string", Description: "(fetch) Direct URL of the image to download (must resolve to an image file: jpg, png, gif, webp, etc.)."}
+	}
+	if a.generate {
+		desc += "generate (create a NEW image from a text prompt — DALL·E / Stable Diffusion / whatever's wired; generation makes things up, so NOT for real-world reference), "
+		params["prompt"] = ToolParam{Type: "string", Description: "(generate) Detailed description of the image to create."}
+	}
+	if a.edit {
+		desc += "edit (change an EXISTING photo, or combine several — retouch, restyle, replace a background, composite; needs source image(s), not a blank canvas), "
+		params["images"] = ToolParam{
+			Type:        "array",
+			Items:       &ToolParam{Type: "string"},
+			Description: a.imagesParamDesc(),
+		}
+		if a.anyEditorTakesMask() {
+			params["mask"] = ToolParam{Type: "string", Description: "(edit) Optional black-and-white mask image (same reference forms as images) marking WHICH PART to change. White = repaint, black = keep. Use for \"change just the sky\"."}
+		}
+	}
+	if len(a.backendNames()) > 1 {
+		params["backend"] = ToolParam{Type: "string", Enum: a.backendNames(), Description: a.backendParamDesc()}
+	}
+	desc += "help. Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=..., cleanup=true) to ship the file."
+	// The decision rule only helps when there's a decision to make.
+	if len(names) > 1 {
+		desc += " Decision:"
+		if a.find {
+			desc += " wants a picture of something, no URL → find."
+		}
+		if a.fetch {
+			desc += " Gave an image URL → fetch."
+		}
+		if a.generate {
+			desc += " Wants something drawn / created / imagined → generate."
+		}
+		if a.edit {
+			desc += " Points at an EXISTING picture (\"this photo\", \"the one you just made\", \"combine these\") → edit."
+		}
+	}
+	return imageSchema{desc: desc, params: params}
+}
+
+// SchemaWithSession narrows the advertised actions to the ones that will
+// actually run. See imageSchemaFor for why.
+func (t *ImageTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
+	s := imageSchemaFor(liveImageActions(sess))
+	return s.desc, s.params
 }
 
 func (t *ImageTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("image requires a session context — use GetAgentToolsWithSession")
 }
 func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	// The action set is re-read here, not trusted from the schema: a model can
+	// name an action that wasn't in its enum (stale context, a copied call), and
+	// an unconfigured action must say WHY rather than fall through to a generic
+	// "unknown action".
+	avail := liveImageActions(sess)
+	action := strings.ToLower(strings.TrimSpace(StringArg(args, "action")))
+	switch action {
 	case "find":
+		if !avail.find {
+			return "", fmt.Errorf("the find action is unavailable — image search needs the serper provider with an API key configured. Use fetch with a direct image URL, or ask the user to configure search")
+		}
 		return (&FindImageTool{}).RunWithSession(args, sess)
 	case "fetch":
 		return (&FetchImageTool{}).RunWithSession(args, sess)
 	case "generate":
-		return (&GenerateImageTool{}).RunWithSession(args, sess)
+		if !avail.generate {
+			return "", fmt.Errorf("the generate action is unavailable — no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
+		}
+		// ENFORCEMENT. The filtered enum is a hint to the model; nothing stops
+		// it naming a backend that isn't in it, so reachability is re-checked
+		// here against the same list before anything dispatches.
+		backend := strings.TrimSpace(StringArg(args, "backend"))
+		if !ImageBackendReachable(sess, backend) {
+			names := avail.backendNames()
+			if len(names) == 0 {
+				return "", fmt.Errorf("image backend %q is not available to you; omit backend to use the configured default", backend)
+			}
+			return "", fmt.Errorf("image backend %q is not available to you — use one of: %s (or omit backend for the default)", backend, strings.Join(names, ", "))
+		}
+		return generateImageInto(sess, StringArg(args, "prompt"), backend)
+	case "edit":
+		if !avail.edit {
+			return "", fmt.Errorf("the edit action is unavailable — no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
+		}
+		return editImage(sess, args, avail)
 	case "", "help":
-		return "image actions: find (query) | fetch (url) | generate (prompt). Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...).", nil
+		help := "image actions: " + strings.Join(avail.names(), " | ") + ". Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...)."
+		if m := RecentImageManifest(sess); m != "" {
+			help += "\n\n" + m
+		}
+		return help, nil
 	default:
-		return "", fmt.Errorf("unknown action %q for image — use find | fetch | generate", StringArg(args, "action"))
+		return "", fmt.Errorf("unknown action %q for image — use %s", StringArg(args, "action"), strings.Join(avail.names(), " | "))
 	}
 }
 
@@ -279,15 +549,169 @@ func (t *GenerateImageTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("generate_image requires a session context — use GetAgentToolsWithSession")
 }
 func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
-	prompt := StringArg(args, "prompt")
+	// The standalone tool has no backend selector — it always renders through
+	// the configured default. Backend choice arrives via the grouped `image`
+	// tool, which owns the reachability check.
+	return generateImageInto(sess, StringArg(args, "prompt"), "")
+}
+
+// editImage runs the edit action: resolve the backend, hand the caller's image
+// references to the connector (which verifies and uploads them), and save the
+// result the same way generation does.
+func editImage(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
+	prompt := strings.TrimSpace(StringArg(args, "prompt"))
+	refs := stringsArg(args, "images")
+	if len(refs) == 0 {
+		hint := "pass the image to change"
+		if m := RecentImageManifest(sess); m != "" {
+			hint = m
+		}
+		return "", fmt.Errorf("edit needs at least one source image — %s", hint)
+	}
+	backend := strings.TrimSpace(StringArg(args, "backend"))
+	if backend == "" {
+		backend = defaultEditBackend(avail)
+	}
+	// Argument checks BEFORE the reachability check, so a wrong argument is
+	// named as one. Reachability is the broadest failure — run it first and
+	// every mistake reports as "backend not available", which sends the model
+	// looking for a permissions problem it doesn't have.
+	//
+	// This doesn't weaken the boundary: avail.editors is itself derived from
+	// ReachableImageBackends, so anything passing isEditor was already
+	// reachable, and the explicit check below still gates the dispatch.
+	if !isEditor(avail, backend) {
+		if len(avail.editors) == 0 {
+			return "", fmt.Errorf("no image backend here can edit photos")
+		}
+		return "", fmt.Errorf("image backend %q generates from text and can't edit a photo — use one of: %s, or switch to action=\"generate\"", backend, strings.Join(editorNames(avail), ", "))
+	}
+	// Some editing workflows have no text node at all — a blend or an upscale is
+	// pure pixel work. Demanding a prompt there makes the model invent one that
+	// goes nowhere.
+	if prompt == "" && backendNeedsPrompt(avail, backend) {
+		return "", fmt.Errorf("prompt is required for this backend — describe what should CHANGE (e.g. \"make it snowy\", \"put the subject on a beach\")")
+	}
+	// ENFORCEMENT, same as generate: the enum is a hint, this is the boundary.
+	if !ImageBackendReachable(sess, backend) {
+		return "", fmt.Errorf("image backend %q is not available to you — use one of: %s", backend, strings.Join(editorNames(avail), ", "))
+	}
+	result, err := EditImageWithBackend(sess, EditImageRequest{
+		Backend: backend,
+		Prompt:  prompt,
+		Images:  refs,
+		Mask:    StringArg(args, "mask"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("image edit via %q failed: %w", backend, err)
+	}
+	return saveImageResult(sess, result, "edit", "edited "+strings.Join(refs, "+")+": "+truncate(prompt, 60))
+}
+
+// defaultEditBackend picks the editing backend when the caller names none: the
+// configured default if it can edit, else the first editor. With one editor
+// wired — the common case — the `backend` param isn't even advertised.
+func defaultEditBackend(a imageActions) string {
+	for _, e := range a.editors {
+		if e.Default {
+			return e.Name
+		}
+	}
+	if len(a.editors) > 0 {
+		return a.editors[0].Name
+	}
+	return ""
+}
+
+func editorNames(a imageActions) []string {
+	out := make([]string, 0, len(a.editors))
+	for _, e := range a.editors {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
+// backendNeedsPrompt reports whether the named editing backend has a text node
+// to write a prompt into.
+func backendNeedsPrompt(a imageActions, name string) bool {
+	for _, e := range a.editors {
+		if e.Name == name {
+			return e.NeedsPrompt
+		}
+	}
+	return true
+}
+
+func isEditor(a imageActions, name string) bool {
+	for _, e := range a.editors {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// stringsArg reads a string-array tool argument, tolerating a single string —
+// models routinely send images="photo.png" instead of ["photo.png"], and
+// refusing that costs a round to teach nothing.
+func stringsArg(args map[string]any, key string) []string {
+	var out []string
+	switch v := args[key].(type) {
+	case []string:
+		out = v
+	case []any:
+		for _, item := range v {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+	case string:
+		for _, part := range strings.Split(v, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// generateImageInto renders prompt through the named backend (empty = the
+// configured default), saves the result into the session workspace, and returns
+// the delivery instruction. Shared by the standalone generate_image tool and the
+// grouped `image` tool's generate action so the two can't drift.
+//
+// Callers are responsible for authorizing backend first (ImageBackendReachable).
+func generateImageInto(sess *ToolSession, prompt, backend string) (string, error) {
+	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-	result, err := GenerateImage(context.Background(), "", prompt)
+	result, err := GenerateImageWithBackend(context.Background(), backend, prompt, true)
 	if err != nil {
+		if backend != "" {
+			return "", fmt.Errorf("image generation via %q failed: %w", backend, err)
+		}
 		return "", fmt.Errorf("image generation failed: %w", err)
 	}
+	via := backend
+	if via == "" {
+		via = "default"
+	}
+	Log("[imagefetch/generate_image] backend=%s generating for prompt: %s", via, truncate(prompt, 80))
+	return saveImageResult(sess, result, "gen", "generated: "+truncate(prompt, 60))
+}
+
+// saveImageResult lands a finished image in both places it needs to be: the
+// session workspace (so workspace(attach) can deliver it) and the image space
+// (so a LATER turn can edit it by id).
+//
+// The image space is what replaced telling the model to clean up after itself.
+// It keeps a bounded ring and prunes on write, so the reply no longer has to
+// push cleanup=true — the file is retained on purpose and named something the
+// model can actually refer back to.
+func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note string) (string, error) {
 	var data []byte
+	var err error
 	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
 		data, err = downloadImageBytes(result.URL)
 	} else {
@@ -295,14 +719,13 @@ func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSessio
 		os.Remove(result.URL)
 	}
 	if err != nil {
-		return "", fmt.Errorf("failed to retrieve generated image: %w", err)
+		return "", fmt.Errorf("failed to retrieve the finished image: %w", err)
 	}
-	// Save to session workspace, return the path. No auto-attach.
 	wsDir, err := EnsureSessionWorkspace(sess)
 	if err != nil {
 		return "", fmt.Errorf("session workspace unavailable: %w", err)
 	}
-	name := "gen-" + shortID() + ".png"
+	name := prefix + "-" + shortID() + ".png"
 	target := filepath.Join(wsDir, name)
 	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 		return "", fmt.Errorf("create parent dir: %w", err)
@@ -310,9 +733,13 @@ func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSessio
 	if err := os.WriteFile(target, data, 0600); err != nil {
 		return "", fmt.Errorf("save image: %w", err)
 	}
-	Log("[imagefetch/generate_image] generated image for prompt: %s → %s", truncate(prompt, 80), name)
-	return fmt.Sprintf("Stored at %q (%d bytes). Generated images are normally meant for delivery — call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short text describing what you made. (Skip the attach only if the user explicitly asked you to generate WITHOUT sending — rare; default is attach.)",
-		name, len(data), name), nil
+	Log("[imagefetch] %s → %s (%d bytes)", note, name, len(data))
+
+	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery — call workspace(action=\"attach\", path=%q) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it — rare.)", name, len(data), name)
+	if ref := RecordRecentImage(sess, data, note); ref != "" {
+		msg += fmt.Sprintf(" It is also kept as %s: pass that to image(action=\"edit\") later to change it. Do NOT delete it — recent images are pruned automatically.", ref)
+	}
+	return msg, nil
 }
 
 // --- Serper image search ---

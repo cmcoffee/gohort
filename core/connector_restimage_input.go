@@ -1,0 +1,250 @@
+// Source photos for an image-EDIT backend: resolving what the caller named into
+// bytes, and getting those bytes onto the backend before the graph runs.
+//
+// Two halves:
+//
+//   - resolveInputImages turns the references a model can hold — a media id for
+//     something the user just sent, a workspace-relative path for something a
+//     tool produced — into verified image bytes.
+//   - uploadInputImages puts them on the backend. ComfyUI's graph references an
+//     input by SERVER-SIDE filename, so the bytes go to /upload/image first and
+//     the returned name is what lands in the LoadImage node. Backends that take
+//     images inline (the {image} token) skip the upload entirely.
+package core
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"image"
+	"mime/multipart"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// maxInputImageBytes caps one source photo. Generous for a phone photo, small
+// enough that a mistaken reference to a video or an archive fails fast instead
+// of streaming megabytes into a multipart body.
+const maxInputImageBytes = 8 << 20 // 8 MB
+
+// inputImage is one caller-supplied source photo, already read and verified.
+type inputImage struct {
+	name string // a filename for the upload part; cosmetic on the server
+	data []byte
+	mime string
+}
+
+// resolveInputImages turns caller references into verified image bytes, in the
+// ORDER given — the first reference is the base/subject for a compose backend,
+// so the sequence is meaningful and must be preserved.
+//
+// Four reference forms, and one deliberate omission:
+//
+//   - "image#1" — the image space (image_space.go): pictures this user recently
+//     produced or received, kept and pruned by the framework. This is what
+//     "edit the one you just made" resolves through, including across turns.
+//   - "media#1" — media that arrived on THIS turn. Makes "change this photo"
+//     work the moment the user attaches one, with no file anywhere.
+//   - "edited.png" — a workspace-relative path, for something a tool produced.
+//     ResolveWorkspacePath rejects absolute paths and `..`.
+//   - an http(s) URL — REFUSED. Fetching arbitrary URLs here would be SSRF
+//     through a dispatch scoped to the backend's own host. The model already
+//     has a tool for this: fetch the URL first, pass the workspace path.
+func resolveInputImages(sess *ToolSession, refs []string, max int) ([]inputImage, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if max > 0 && len(refs) > max {
+		return nil, fmt.Errorf("this backend takes at most %d image(s), got %d", max, len(refs))
+	}
+	out := make([]inputImage, 0, len(refs))
+	for _, raw := range refs {
+		img, err := resolveInputImage(sess, raw)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, img)
+	}
+	return out, nil
+}
+
+func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
+	var out inputImage
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return out, fmt.Errorf("empty image reference")
+	}
+	if u, err := url.Parse(ref); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		return out, fmt.Errorf("a URL can't be used as a source image directly — download it first (image action=\"fetch\", url=%q), then pass the saved workspace path", ref)
+	}
+	// The image space first: "image#1" is the framework's own ring of recently
+	// produced/received pictures, which is what "edit the one you just made"
+	// resolves through.
+	if data, ok := ResolveRecentImage(sess, ref); ok {
+		return verifyInputImage(strings.ReplaceAll(ref, "#", "")+".png", data)
+	}
+	if strings.HasPrefix(strings.ToLower(ref), RecentImageRefPrefix) {
+		return out, fmt.Errorf("%s isn't in the recent images — call image(action=\"help\") to see what's there", ref)
+	}
+	if b64, kind, ok := sess.ResolveInboundMedia(ref); ok {
+		if kind != "" && kind != "image" {
+			return out, fmt.Errorf("%s is a %s, not an image", ref, kind)
+		}
+		data, err := decodeBase64Image(b64)
+		if err != nil {
+			return out, fmt.Errorf("%s: %w", ref, err)
+		}
+		return verifyInputImage(strings.ReplaceAll(ref, "#", "")+".png", data)
+	}
+	if strings.HasPrefix(ref, "media#") {
+		return out, fmt.Errorf("%s isn't in this turn's media — it expires with the turn, so re-attach the photo or use a workspace path", ref)
+	}
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
+		return out, fmt.Errorf("no workspace available to read %q from", ref)
+	}
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, ref)
+	if err != nil {
+		return out, fmt.Errorf("%q is not a readable workspace path: %w", ref, err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return out, fmt.Errorf("no file %q in your workspace", ref)
+	}
+	if info.Size() > maxInputImageBytes {
+		return out, fmt.Errorf("%q is %s — the limit for a source image is %s", ref, HumanSize(info.Size()), HumanSize(maxInputImageBytes))
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return out, fmt.Errorf("read %q: %w", ref, err)
+	}
+	return verifyInputImage(filepath.Base(ref), data)
+}
+
+// verifyInputImage confirms the bytes really decode as an image. A text file
+// renamed .png would otherwise upload cleanly and fail deep inside the backend
+// with something unreadable.
+func verifyInputImage(name string, data []byte) (inputImage, error) {
+	var out inputImage
+	if len(data) == 0 {
+		return out, fmt.Errorf("%q is empty", name)
+	}
+	if len(data) > maxInputImageBytes {
+		return out, fmt.Errorf("%q is %s — the limit for a source image is %s", name, HumanSize(int64(len(data))), HumanSize(maxInputImageBytes))
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return out, fmt.Errorf("%q isn't a readable image (%v) — pass a png/jpg/webp", name, err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return out, fmt.Errorf("%q has no dimensions", name)
+	}
+	return inputImage{name: name, data: data, mime: "image/" + format}, nil
+}
+
+// uniqueUploadName keeps the caller's extension (backends sniff format from it)
+// but makes the stored key collision-proof.
+func uniqueUploadName(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		ext = ".png"
+	}
+	return "gohort-" + UUIDv4() + ext
+}
+
+func decodeBase64Image(b64 string) ([]byte, error) {
+	data, err := base64.StdEncoding.DecodeString(stripDataURIPrefix(b64))
+	if err != nil {
+		return nil, fmt.Errorf("not decodable image data: %w", err)
+	}
+	return data, nil
+}
+
+// uploadInputImages puts every source photo where the backend expects it and
+// returns the references the graph will carry. A backend with no UploadURL
+// takes its images inline (the {image} token), so this is a no-op for it —
+// p.images still reaches the token substitution.
+func (s RestImageSpec) uploadInputImages(sess *ToolSession, p restImageParams) ([]ComfyUploadedImage, *ComfyUploadedImage, error) {
+	if len(p.images) == 0 && p.mask == nil {
+		return nil, nil, nil
+	}
+	if strings.TrimSpace(s.UploadURL) == "" {
+		return nil, nil, nil // inline shape — nothing to upload
+	}
+	out := make([]ComfyUploadedImage, 0, len(p.images))
+	for _, img := range p.images {
+		up, err := s.uploadImage(sess, img)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, up)
+	}
+	var mask *ComfyUploadedImage
+	if p.mask != nil {
+		up, err := s.uploadImage(sess, *p.mask)
+		if err != nil {
+			return nil, nil, err
+		}
+		mask = &up
+	}
+	return out, mask, nil
+}
+
+// uploadImage POSTs one image as multipart/form-data and reads back the
+// server-side name the graph will reference.
+//
+// This rides the SAME governed dispatch as every other call the backend makes —
+// the credential's URL allow-list, the audit entry, and the Private-mode kill
+// switch all apply. The request body is binary, which the dispatch handles
+// (it writes the body through bytes.NewReader and never assumes JSON) and
+// never logs.
+func (s RestImageSpec) uploadImage(sess *ToolSession, img inputImage) (ComfyUploadedImage, error) {
+	var out ComfyUploadedImage
+	field := strings.TrimSpace(s.UploadFileField)
+	if field == "" {
+		field = "image"
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	// ComfyUI keys its input store by FILENAME. Two turns uploading "photo.png"
+	// would land on the same key, and the second upload could replace the first
+	// between its upload and its graph run — the first turn then renders the
+	// wrong photo, silently and non-reproducibly. A unique name per upload
+	// removes the shared key entirely.
+	fw, err := mw.CreateFormFile(field, uniqueUploadName(img.name))
+	if err != nil {
+		return out, fmt.Errorf("build upload: %w", err)
+	}
+	if _, err := fw.Write(img.data); err != nil {
+		return out, fmt.Errorf("build upload: %w", err)
+	}
+	_ = mw.WriteField("subfolder", "gohort")
+	_ = mw.WriteField("type", "input")
+	if err := mw.Close(); err != nil {
+		return out, fmt.Errorf("build upload: %w", err)
+	}
+
+	raw, err := s.dispatchImageCT(sess, s.UploadURL, "POST", body.String(), mw.FormDataContentType())
+	if err != nil {
+		return out, fmt.Errorf("uploading %q to the image backend failed: %w", img.name, err)
+	}
+	status, jsonBody := parseHTTPDispatchResult(raw)
+	if status != 0 && (status < 200 || status >= 300) {
+		return out, fmt.Errorf("image backend rejected the upload of %q with HTTP %d: %s", img.name, status, truncateForError(jsonBody))
+	}
+	var node any
+	if err := json.Unmarshal([]byte(jsonBody), &node); err != nil {
+		return out, fmt.Errorf("image backend's upload response was not JSON: %s", truncateForError(jsonBody))
+	}
+	namePath := firstNonEmpty(s.UploadNamePath, "name")
+	out.Name = strings.TrimSpace(restJSONString(node, namePath))
+	if out.Name == "" {
+		return out, fmt.Errorf("image backend's upload response had no filename at %q: %s", namePath, truncateForError(jsonBody))
+	}
+	if p := strings.TrimSpace(s.UploadSubfolderPath); p != "" {
+		out.Subfolder = strings.TrimSpace(restJSONString(node, p))
+	}
+	return out, nil
+}

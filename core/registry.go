@@ -372,11 +372,25 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	if to, ok := ct.(TrustedOutputTool); ok {
 		trusted = to.TrustedOutput()
 	}
+	// Dynamic schema: a tool that computes what it advertises from live state
+	// (see DynamicChatTool) so the model never sees an action whose backing
+	// config is missing. Session-gated — a nil session carries no caller to
+	// resolve against, so the static schema stands and the tool index / picker
+	// surfaces keep seeing the full shape.
+	desc, params := ct.Desc(), ct.Params()
+	if d, ok := ct.(DynamicChatTool); ok && sess != nil {
+		// Fall back to the static schema when the computed one isn't shippable
+		// (see dynamicSchemaUsable). Worst case the model sees the full shape,
+		// which is the pre-dynamic behavior — never a broken payload.
+		if dd, dp := d.SchemaWithSession(sess); dynamicSchemaUsable(dp) {
+			desc, params = dd, dp
+		}
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:          ct.Name(),
-			Description:   ct.Desc(),
-			Parameters:    ct.Params(),
+			Description:   desc,
+			Parameters:    params,
 			Caps:          caps,
 			TrustedOutput: trusted,
 		},
@@ -385,6 +399,58 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 		SingleFirePerBatch: singleFire,
 		SerialFirePerBatch: serialFire,
 	}
+}
+
+// ChatToolAvailable reports whether ct has anything to offer under sess. Static
+// tools are always available. A DynamicChatTool that returns nil params has
+// nothing that would work for this caller, so catalog builders drop it instead
+// of advertising a tool whose every action would refuse.
+//
+// Call this BEFORE ChatToolToAgentToolDefWithSession. It re-runs
+// SchemaWithSession, which the interface requires to be cheap.
+func ChatToolAvailable(ct ChatTool, sess *ToolSession) bool {
+	d, ok := ct.(DynamicChatTool)
+	if !ok || sess == nil {
+		return true
+	}
+	_, params := d.SchemaWithSession(sess)
+	return dynamicSchemaUsable(params)
+}
+
+// dynamicSchemaUsable reports whether a computed schema is safe to ship.
+//
+// Nil params means the tool has nothing to offer this caller. An EMPTY but
+// non-nil Enum is worse than nothing: a single one of those invalidates the
+// entire tool payload for the turn, disabling every OTHER tool along with it
+// (the same failure TestNoEmptyEnumValuesInSource guards at the literal level —
+// a dynamic schema can reach it at runtime by filtering its last value out).
+// Either way the tool is dropped, or the caller falls back to its static shape.
+func dynamicSchemaUsable(params map[string]ToolParam) bool {
+	if params == nil {
+		return false
+	}
+	for _, p := range params {
+		if !paramEnumsPopulated(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// paramEnumsPopulated checks a param and its nested shapes for an empty enum.
+func paramEnumsPopulated(p ToolParam) bool {
+	if p.Enum != nil && len(p.Enum) == 0 {
+		return false
+	}
+	if p.Items != nil && !paramEnumsPopulated(*p.Items) {
+		return false
+	}
+	for _, nested := range p.Properties {
+		if !paramEnumsPopulated(nested) {
+			return false
+		}
+	}
+	return true
 }
 
 // dataURIImage returns the base64 payload of a tool result that is
@@ -416,6 +482,13 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 	secureBuilt := false
 	for _, name := range names {
 		if ct, ok := FindChatTool(name); ok {
+			// A dynamic tool with nothing to offer this caller is omitted
+			// rather than advertised-then-refused. Not an error: the grant is
+			// still valid, the backing config just isn't there right now, so a
+			// later turn with the provider configured resolves it normally.
+			if !ChatToolAvailable(ct, sess) {
+				continue
+			}
 			tools = append(tools, ChatToolToAgentToolDefWithSession(ct, sess))
 			continue
 		}

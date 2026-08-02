@@ -81,6 +81,20 @@ var supersededWorkerTools = []string{
 	"find_image", "fetch_image", "generate_image",
 }
 
+// isSupersededWorkerTool covers the fixed list above plus the per-connector
+// image backends, which can't be listed statically — every approved rest_image
+// connector materializes its own generate_image_<name> tool, and `image` now
+// reaches all of them through its `backend` param. Ten connectors used to mean
+// ten near-identical tools in the picker.
+//
+// They stay REGISTERED and grantable: an agent already allowlisted onto one
+// specific backend keeps exactly that access, which is what makes the collapse
+// non-breaking. This only drops them from the default pool and the picker.
+func isSupersededWorkerTool(name string) bool {
+	return slices.Contains(supersededWorkerTools, name) ||
+		strings.HasPrefix(name, RestImageToolPrefix)
+}
+
 func availableWorkerToolOptions(user string) []ui.SelectOption {
 	pool := FilterChatTools(BlockedTools)
 	defs := make([]AgentToolDef, 0, len(pool))
@@ -96,8 +110,8 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		if slices.Contains(frameworkUtilityTools, t.Name()) {
 			continue // always-on utilities — never curated, hidden from the picker + default pool
 		}
-		if slices.Contains(supersededWorkerTools, t.Name()) {
-			continue // covered by a grouped tool (video) — registered but out of the default pool
+		if isSupersededWorkerTool(t.Name()) {
+			continue // covered by a grouped tool (image/video) — registered but out of the default pool
 		}
 		defs = append(defs, ChatToolToAgentToolDefWithSession(t, nil))
 	}

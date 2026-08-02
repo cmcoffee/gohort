@@ -361,6 +361,35 @@ func GenerateImageLandscape(ctx context.Context, apiKey, prompt string) (*ImageG
 	return generateWithProvider(ctx, provider, apiKey, prompt, true)
 }
 
+// GenerateImageWithBackend generates through a NAMED backend — a registered
+// rest_image connector or a built-in provider. An empty name (or "default")
+// uses whatever the admin configured, which is the behavior every caller had
+// before the backend became selectable.
+//
+// The caller is responsible for checking the name is reachable first
+// (ImageBackendReachable); this routes, it doesn't authorize.
+func GenerateImageWithBackend(ctx context.Context, backend, prompt string, landscape bool) (*ImageGenResult, error) {
+	backend = strings.TrimSpace(backend)
+	if backend == "" || backend == "default" {
+		provider, key := resolveDefaultProviderAndKey()
+		return generateWithProvider(ctx, provider, key, prompt, landscape)
+	}
+	// A built-in provider named explicitly still needs its key resolved; a
+	// connector backend carries its own credential and takes none.
+	var key string
+	switch backend {
+	case "gemini":
+		if GeminiKeyFunc != nil {
+			key = GeminiKeyFunc()
+		}
+	case "openai":
+		if OpenAIKeyFunc != nil {
+			key = OpenAIKeyFunc()
+		}
+	}
+	return generateWithProvider(ctx, backend, key, prompt, landscape)
+}
+
 // GenerateImageWithProfile generates an image using a named profile.
 // Falls back to the default provider when the named profile is not configured.
 func GenerateImageWithProfile(ctx context.Context, profile, prompt string) (*ImageGenResult, error) {

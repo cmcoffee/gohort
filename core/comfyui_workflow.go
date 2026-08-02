@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -35,6 +36,42 @@ const comfyDefaultGraph = `{
   "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
   "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}}
 }`
+
+// comfyEditDefaultGraph is a minimal SD1.5 IMG2IMG graph: LoadImage → VAEEncode
+// → KSampler(denoise 0.55) → SaveImage. It's the edit counterpart to
+// comfyDefaultGraph, so "add a ComfyUI backend that edits photos" works from the
+// config panel with the workflow box left blank, exactly as generate does.
+const comfyEditDefaultGraph = `{
+  "3":{"class_type":"KSampler","inputs":{"seed":0,"steps":20,"cfg":7,"sampler_name":"euler","scheduler":"normal","denoise":0.55,"model":["4",0],"positive":["6",0],"negative":["7",0],"latent_image":["10",0]}},
+  "4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"v1-5-pruned-emaonly.safetensors"}},
+  "6":{"class_type":"CLIPTextEncode","inputs":{"text":"a scenic landscape","clip":["4",1]}},
+  "7":{"class_type":"CLIPTextEncode","inputs":{"text":"","clip":["4",1]}},
+  "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}},
+  "10":{"class_type":"VAEEncode","inputs":{"pixels":["11",0],"vae":["4",2]}},
+  "11":{"class_type":"LoadImage","inputs":{"image":"example.png"}}
+}`
+
+// comfyBlendDefaultGraph is a two-photo BLEND: two LoadImage nodes into
+// ImageBlend into SaveImage. No checkpoint, no sampler, no prompt — it's pure
+// pixel work, so it runs in a fraction of a second and needs no model loaded.
+//
+// It's also the reason auto-wiring tolerates a sampler-less graph: this is a
+// perfectly good backend that the old "no KSampler found" check rejected.
+const comfyBlendDefaultGraph = `{
+  "1":{"class_type":"LoadImage","inputs":{"image":"example.png"}},
+  "2":{"class_type":"LoadImage","inputs":{"image":"example.png"}},
+  "3":{"class_type":"ImageBlend","inputs":{"blend_factor":0.5,"blend_mode":"normal","image1":["1",0],"image2":["2",0]}},
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["3",0]}}
+}`
+
+// ComfyEditDefaultGraph exposes the built-in img2img starting graph so the admin
+// form and the Builder can offer "edit photos" without the user pasting one.
+func ComfyEditDefaultGraph() string { return comfyEditDefaultGraph }
+
+// ComfyBlendDefaultGraph exposes the built-in two-photo blend graph, for
+// "combine these two pictures" with nothing to paste and no model to load.
+func ComfyBlendDefaultGraph() string { return comfyBlendDefaultGraph }
 
 // NewComfyImageSpec builds a ready-to-save ComfyUI rest_image spec: it applies the
 // comfyui preset (endpoints, from base_url) then auto-wires the workflow into the
@@ -89,36 +126,72 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	}
 	m.OutputNode = save
 
-	// 2. Sampler → positive/negative conditioning → text nodes.
+	// 2. Image input: LoadImage nodes a source photo is written into. Detected
+	//    BEFORE the sampler, because whether a missing sampler is fatal depends
+	//    on it — see step 3. Ordered by node id for determinism; that order is
+	//    arbitrary relative to what a user means by "the first photo", so a
+	//    compose/blend graph's order is worth checking in the config panel.
+	//    Mask loaders are a separate list: they take a mask, not a photo, and
+	//    one sitting in ImageNodes would silently eat a source image.
+	for _, id := range sortedComfyNodes(graph) {
+		switch class := comfyClass(graph, id); {
+		case strings.Contains(class, "LoadImageMask"):
+			m.MaskNodes = append(m.MaskNodes, id)
+		case strings.Contains(class, "LoadImage"):
+			m.ImageNodes = append(m.ImageNodes, id)
+		}
+	}
+	if len(m.ImageNodes) > 0 {
+		m.ImageKey = "image"
+	}
+
+	// 3. Sampler → positive/negative conditioning → text nodes.
+	//
+	// A graph need not HAVE a sampler. A pure image-processing workflow — blend
+	// two photos, upscale, composite — is nodes in, image out, with no
+	// diffusion and no text anywhere. Those are legitimate backends, and
+	// demanding a KSampler rejected them at import with a message about prompt
+	// nodes that made no sense for what the user had built. So: a sampler is
+	// required only when there's no image input to work from, because a graph
+	// with neither has no way to produce anything.
 	sampler := findComfyNode(graph, func(class string) bool { return strings.Contains(class, "KSampler") })
 	if sampler == "" {
 		// Fallback: any node exposing a `positive` input behaves like a sampler.
-		for id := range graph {
+		for _, id := range sortedComfyNodes(graph) {
 			if _, ok := comfyInputs(graph, id)["positive"]; ok {
 				sampler = id
 				break
 			}
 		}
 	}
-	if sampler == "" {
-		return nil, fmt.Errorf("no KSampler (or node with a positive input) found — can't locate the prompt node")
+	if sampler == "" && len(m.ImageNodes) == 0 {
+		return nil, fmt.Errorf("no KSampler (or node with a positive input) found, and no LoadImage node either — this graph has no prompt and no image to work from")
 	}
-	sIn := comfyInputs(graph, sampler)
 
-	if pid := traceComfyText(graph, sIn["positive"]); pid != "" {
-		m.PromptNodes = []string{pid}
-		m.TextKeys = comfyTextKeys(comfyInputs(graph, pid))
+	var sIn map[string]any
+	if sampler != "" {
+		sIn = comfyInputs(graph, sampler)
+		if pid := traceComfyText(graph, sIn["positive"]); pid != "" {
+			m.PromptNodes = []string{pid}
+			m.TextKeys = comfyTextKeys(comfyInputs(graph, pid))
+		} else if len(m.ImageNodes) == 0 {
+			return nil, fmt.Errorf("couldn't trace the sampler's positive conditioning to a text node — set the prompt node in the config panel")
+		} else {
+			warnings = append(warnings, "no text node reached from the sampler; this backend takes images but no prompt")
+		}
+		if nid := traceComfyText(graph, sIn["negative"]); nid != "" {
+			m.NegativeNodes = []string{nid}
+		} else if _, ok := sIn["negative"]; ok {
+			warnings = append(warnings, "negative conditioning didn't lead to a text node; the negative prompt won't apply")
+		}
 	} else {
-		return nil, fmt.Errorf("couldn't trace the sampler's positive conditioning to a text node — set the prompt node in the config panel")
-	}
-	if nid := traceComfyText(graph, sIn["negative"]); nid != "" {
-		m.NegativeNodes = []string{nid}
-	} else if _, ok := sIn["negative"]; ok {
-		warnings = append(warnings, "negative conditioning didn't lead to a text node; the negative prompt won't apply")
+		warnings = append(warnings, "no sampler in this graph — it processes the input image(s) directly and takes no prompt")
 	}
 
-	// 3. Seed + steps on the sampler.
+	// 4. Seed + steps on the sampler (absent on a promptless processing graph).
 	switch {
+	case sampler == "":
+		// nothing to seed — the graph is deterministic
 	case hasKey(sIn, "seed"):
 		m.SeedNodes, m.SeedKey = []string{sampler}, "seed"
 	case hasKey(sIn, "noise_seed"):
@@ -130,13 +203,14 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		m.StepsNodes = []string{sampler}
 	}
 
-	// 4. Size: the latent node the sampler draws from (EmptyLatentImage or variant).
+	// 5. Locate the latent node the sampler draws from (used for size, below).
 	latent := ""
 	if lid, ok := comfyLinkTarget(sIn["latent_image"]); ok && hasKey(comfyInputs(graph, lid), "width") {
 		latent = lid
 	} else {
 		latent = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "EmptyLatent") })
 	}
+	// 7. Size: the latent node the sampler draws from (EmptyLatentImage or variant).
 	if lin := comfyInputs(graph, latent); hasKey(lin, "width") && hasKey(lin, "height") {
 		m.WidthNodes, m.HeightNodes = []string{latent}, []string{latent}
 		if w := comfyInt(lin["width"]); w > 0 {
@@ -145,7 +219,11 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		if h := comfyInt(lin["height"]); h > 0 {
 			s.DefaultHeight = h
 		}
-	} else {
+	} else if len(m.ImageNodes) == 0 {
+		// Only a defect on a txt2img graph. An img2img graph takes its size from
+		// the source photo (the latent comes from VAEEncode, not
+		// EmptyLatentImage), so warning here told every edit backend it was
+		// broken when it was working exactly as intended.
 		warnings = append(warnings, "no EmptyLatentImage width/height found; image size is fixed to the workflow")
 	}
 
@@ -197,31 +275,63 @@ func comfyTextKeys(in map[string]any) []string {
 	return keys
 }
 
+// ComfyBuildInput is one generation request's resolved values, ready to inject
+// into a graph. A struct rather than a parameter list: with images, a mask and
+// denoise added, the positional form reached eleven arguments of mostly
+// interchangeable ints.
+type ComfyBuildInput struct {
+	Prompt   string
+	Negative string
+	Width    int
+	Height   int
+	Steps    int
+	Seed     int // already resolved — never negative
+	// Images are the uploaded source photos in CALLER order: Images[0] goes to
+	// ComfyMap.ImageNodes[0], and so on.
+	Images []ComfyUploadedImage
+	Mask   *ComfyUploadedImage
+}
+
+// ComfyUploadedImage is an input image already stored on the ComfyUI server —
+// the value a LoadImage node references.
+type ComfyUploadedImage struct {
+	Name      string // filename returned by /upload/image
+	Subfolder string // optional; joined onto Name as "subfolder/name"
+}
+
+// Ref is the value written into a LoadImage node's image input.
+func (u ComfyUploadedImage) Ref() string {
+	if s := strings.TrimSpace(u.Subfolder); s != "" {
+		return s + "/" + u.Name
+	}
+	return u.Name
+}
+
 // BuildComfyBody parses the stored workflow and injects each generation value
 // into the nodes named by the map, returning the /prompt request body. This is
 // the mapping-model counterpart to token substitution — the wiring lives in the
-// (editable) map, not baked into the graph. seed is the already-resolved value.
-func BuildComfyBody(workflow string, m ComfyNodeMap, prompt, negative string, width, height, steps, seed int) (string, error) {
+// (editable) map, not baked into the graph.
+func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string, error) {
 	graph, err := parseComfyGraph(workflow)
 	if err != nil {
 		return "", fmt.Errorf("stored workflow is invalid: %w", err)
 	}
 	setStr := func(nodes, keys []string, val string) {
 		for _, id := range nodes {
-			if in := comfyInputs(graph, id); in != nil {
+			if inputs := comfyInputs(graph, id); inputs != nil {
 				for _, k := range keys {
-					if hasKey(in, k) {
-						in[k] = val
+					if hasKey(inputs, k) {
+						inputs[k] = val
 					}
 				}
 			}
 		}
 	}
-	setNum := func(nodes []string, key string, val int) {
+	setNum := func(nodes []string, key string, val any) {
 		for _, id := range nodes {
-			if in := comfyInputs(graph, id); in != nil {
-				if hasKey(in, key) {
-					in[key] = val
+			if inputs := comfyInputs(graph, id); inputs != nil {
+				if hasKey(inputs, key) {
+					inputs[key] = val
 				}
 			}
 		}
@@ -230,23 +340,64 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, prompt, negative string, wi
 	if len(keys) == 0 {
 		keys = []string{"text"}
 	}
-	setStr(m.PromptNodes, keys, prompt)
-	setStr(m.NegativeNodes, keys, negative)
-	setNum(m.WidthNodes, "width", width)
-	setNum(m.HeightNodes, "height", height)
+	setStr(m.PromptNodes, keys, in.Prompt)
+	setStr(m.NegativeNodes, keys, in.Negative)
+	setNum(m.WidthNodes, "width", in.Width)
+	setNum(m.HeightNodes, "height", in.Height)
 	seedKey := m.SeedKey
 	if seedKey == "" {
 		seedKey = "seed"
 	}
-	setNum(m.SeedNodes, seedKey, seed)
-	if steps > 0 {
-		setNum(m.StepsNodes, "steps", steps)
+	setNum(m.SeedNodes, seedKey, in.Seed)
+	if in.Steps > 0 {
+		setNum(m.StepsNodes, "steps", in.Steps)
+	}
+
+	// Input images. Unlike every value above, a missing target here fails
+	// SILENTLY in the worst possible way: setStr no-ops on an unknown node id,
+	// the graph runs against whatever placeholder the workflow was saved with,
+	// and the caller gets a plausible image that ignored their photo entirely.
+	// So this path errors instead of skipping.
+	imageKey := m.ImageKey
+	if imageKey == "" {
+		imageKey = "image"
+	}
+	if len(in.Images) > len(m.ImageNodes) {
+		return "", fmt.Errorf("this backend takes %d input image(s), got %d", len(m.ImageNodes), len(in.Images))
+	}
+	for i, img := range in.Images {
+		if err := setComfyImage(graph, m.ImageNodes[i], imageKey, img); err != nil {
+			return "", err
+		}
+	}
+	if in.Mask != nil {
+		if len(m.MaskNodes) == 0 {
+			return "", fmt.Errorf("this backend has no mask node — remove the mask, or map one in the config panel")
+		}
+		if err := setComfyImage(graph, m.MaskNodes[0], imageKey, *in.Mask); err != nil {
+			return "", err
+		}
 	}
 	raw, err := json.Marshal(graph)
 	if err != nil {
 		return "", err
 	}
 	return `{"prompt":` + string(raw) + `}`, nil
+}
+
+// setComfyImage writes an uploaded image's reference into one node, erroring if
+// the mapped node or its input key isn't in the graph. See BuildComfyBody for
+// why this can't be a silent skip.
+func setComfyImage(graph map[string]map[string]any, node, key string, img ComfyUploadedImage) error {
+	inputs := comfyInputs(graph, node)
+	if inputs == nil {
+		return fmt.Errorf("image node %q is not in the workflow — fix the image node mapping in the config panel", node)
+	}
+	if !hasKey(inputs, key) {
+		return fmt.Errorf("image node %q has no %q input — set the image key in the config panel", node, key)
+	}
+	inputs[key] = img.Ref()
+	return nil
 }
 
 // parseComfyGraph decodes an API-format workflow into a node map, unwrapping a
@@ -295,6 +446,34 @@ func comfyInputs(graph map[string]map[string]any, id string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// sortedComfyNodes returns every node id in sorted order, so any list derived
+// from the graph is stable across runs (Go map iteration is not).
+func sortedComfyNodes(graph map[string]map[string]any) []string {
+	ids := make([]string, 0, len(graph))
+	for id := range graph {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// comfyFloat coerces a graph value to a float64; 0 if it can't.
+func comfyFloat(v any) float64 {
+	switch n := v.(type) {
+	case json.Number:
+		if f, err := n.Float64(); err == nil {
+			return f
+		}
+	case float64:
+		return n
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(n), 64); err == nil {
+			return f
+		}
+	}
+	return 0
 }
 
 // findComfyNode returns the first node id (sorted for determinism) whose class

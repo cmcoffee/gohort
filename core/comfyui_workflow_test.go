@@ -32,7 +32,9 @@ func eqStrs(a, b []string) bool {
 // buildGraph runs BuildComfyBody for a wired spec and returns the parsed graph.
 func buildGraph(t *testing.T, s RestImageSpec, prompt, neg string, w, h, steps, seed int) map[string]any {
 	t.Helper()
-	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, prompt, neg, w, h, steps, seed)
+	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
+		Prompt: prompt, Negative: neg, Width: w, Height: h, Steps: steps, Seed: seed,
+	})
 	if err != nil {
 		t.Fatalf("BuildComfyBody: %v", err)
 	}

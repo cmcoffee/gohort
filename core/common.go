@@ -1375,6 +1375,16 @@ type ToolSession struct {
 	DB                Database           // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
 	WorkspaceDir      string             // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
 	WorkspaceID       string             // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
+
+	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
+	// reads the connector table, and the grouped `image` tool's schema is
+	// rebuilt on every catalog assembly — the DynamicChatTool cheapness contract
+	// depends on this cache. Turn-scoped with the session, so a connector
+	// approved mid-conversation appears on the next turn. imageBackendsSet
+	// distinguishes "resolved to nothing" from "not yet resolved".
+	imageBackends    []ImageBackendChoice
+	imageBackendsSet bool
+
 	// ReplyAuthorizedKey, when set, is the recipient key (chat id or handle) of
 	// the conversation this run is REPLYING to — a channel inbound the agent is
 	// answering. Sending back to that same conversation is a reply, not a
@@ -2530,6 +2540,38 @@ func (s *ToolSession) NextImageAttempt(refine bool) (attempt, total int) {
 type SessionChatTool interface {
 	ChatTool
 	RunWithSession(args map[string]any, sess *ToolSession) (string, error)
+}
+
+// DynamicChatTool is an optional interface for tools whose SCHEMA — the
+// description and parameters the LLM actually sees — depends on live state:
+// what's configured, what's registered, what this caller can reach. A static
+// tool advertises everything and refuses at call time ("that provider isn't
+// configured"), burning a round the model had no way to predict; a dynamic one
+// advertises only what will actually run.
+//
+// SchemaWithSession REPLACES Desc/Params when the catalog is built with a
+// session. Desc() stays meaningful and must keep returning a stable,
+// session-independent string: it feeds the semantic tool index (tool_index.go),
+// which is global and can't be re-embedded per session, and every admin/picker
+// surface that lists tools without a caller.
+//
+// Returning NIL params means "nothing to offer under this session" — the tool
+// is dropped from the catalog entirely (see ChatToolAvailable). Never return a
+// non-nil schema with an empty action enum: an empty Enum invalidates the
+// whole tool payload for the turn, which is the failure TestNoEmptyEnumValues
+// guards against at the source level and a dynamic enum can reach at runtime.
+//
+// The returned schema MUST be deterministic for identical state. Tool schemas
+// sit at the front of the prompt, so a description or enum that reorders
+// between turns invalidates the prompt prefix cache and re-pays cold prefill
+// every turn. Sort anything derived from a map, and keep fixed orders fixed.
+//
+// Implementations must be CHEAP: this runs on every catalog build, not once
+// per call. Read config, not the database; memoize on the session if a lookup
+// is genuinely expensive.
+type DynamicChatTool interface {
+	ChatTool
+	SchemaWithSession(sess *ToolSession) (desc string, params map[string]ToolParam)
 }
 
 // NeedInteract pauses for user input.

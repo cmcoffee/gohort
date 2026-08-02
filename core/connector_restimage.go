@@ -44,6 +44,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,8 +54,11 @@ import (
 // RestImageConnectorKind is the Kind value for a spec-declared image backend.
 const RestImageConnectorKind = "rest_image"
 
-// restImageToolPrefix names the per-connector chat tool a rest_image materializes.
-const restImageToolPrefix = "generate_image_"
+// RestImageToolPrefix names the per-connector chat tool a rest_image
+// materializes. Exported so callers that curate the tool catalog can recognize
+// the family — the grouped `image` tool now covers all of them via its
+// `backend` param, so they're superseded in the picker / default pool.
+const RestImageToolPrefix = "generate_image_"
 
 // RestImageSpec is the Spec payload for a rest_image connector. Every field is
 // data — no secret lives here; Credential names a registered SecureAPI credential
@@ -107,6 +111,27 @@ type RestImageSpec struct {
 	// re-registering the tool.
 	PromptGuidance string `json:"prompt_guidance,omitempty"`
 
+	// --- image input (edit / img2img / multi-image compose) ------------------
+	//
+	// A backend that declares image input handles "change this photo" and
+	// "combine these two" rather than "draw me a dragon". Two shapes, mirroring
+	// the sync-vs-poll split above:
+	//
+	//   - UPLOAD-REF (ComfyUI): the bytes are POSTed to UploadURL first and the
+	//     returned filename is written into the graph's LoadImage node(s), named
+	//     by ComfyMap.ImageNodes.
+	//   - INLINE (A1111 img2img and most hosted APIs): the image rides in the
+	//     submit body as base64 via the {image} / {images} tokens. Token model
+	//     only — leave UploadURL empty and put {image} in SubmitBody.
+	//
+	// A spec with neither is text-only and refuses images. See
+	// SupportsImageInput.
+	UploadURL           string `json:"upload_url,omitempty"`            // where an input image is POSTed before the graph runs (ComfyUI: {base_url}/upload/image)
+	UploadFileField     string `json:"upload_file_field,omitempty"`     // multipart field name (default "image")
+	UploadNamePath      string `json:"upload_name_path,omitempty"`      // dot-path to the stored filename in the upload response (ComfyUI: "name")
+	UploadSubfolderPath string `json:"upload_subfolder_path,omitempty"` // dot-path to the subfolder, joined onto the name (ComfyUI: "subfolder")
+	MaxInputImages      int    `json:"max_input_images,omitempty"`      // cap on caller-supplied images; 0 = len(ComfyMap.ImageNodes)
+
 	// --- ComfyUI mapping model (the cohesive/editable path) ------------------
 	//
 	// When ComfyWorkflow is set, the backend runs in the MAPPING model instead of
@@ -140,6 +165,39 @@ type ComfyNodeMap struct {
 	SeedNodes     []string `json:"seed_nodes,omitempty"`     // sampler node(s), input SeedKey
 	SeedKey       string   `json:"seed_key,omitempty"`       // "seed" or "noise_seed" (default "seed")
 	OutputNode    string   `json:"output_node,omitempty"`    // SaveImage node → poll paths
+
+	// Image input. ImageNodes is ORDERED: the caller's first image goes to
+	// ImageNodes[0], the second to [1], and so on — which is what makes a
+	// two-photo compose graph put the subject and the background in the right
+	// places. Auto-detection seeds this from node-id order, which is arbitrary
+	// relative to what a user means by "the first photo", so it's editable.
+	ImageNodes []string `json:"image_nodes,omitempty"` // LoadImage node(s), input ImageKey
+	ImageKey   string   `json:"image_key,omitempty"`   // input key on those nodes (default "image")
+	MaskNodes  []string `json:"mask_nodes,omitempty"`  // LoadImageMask node(s) for inpainting
+}
+
+// SupportsImageInput reports whether this backend accepts source photos — the
+// difference between a "draw me a dragon" backend and a "change this photo" /
+// "combine these two" one. The two are disjoint in practice: an img2img graph
+// REQUIRES its LoadImage input, and a txt2img graph has nowhere to put one, so
+// this decides which action a backend is offered under rather than being a
+// configured mode.
+func (s RestImageSpec) SupportsImageInput() bool {
+	if s.ComfyWorkflow != "" {
+		return strings.TrimSpace(s.UploadURL) != "" && len(s.ComfyMap.ImageNodes) > 0
+	}
+	return strings.Contains(s.SubmitBody, "{image}") || strings.Contains(s.SubmitBody, "{images}")
+}
+
+// MaxImages is how many source images this backend accepts per call.
+func (s RestImageSpec) MaxImages() int {
+	if s.MaxInputImages > 0 {
+		return s.MaxInputImages
+	}
+	if n := len(s.ComfyMap.ImageNodes); n > 0 {
+		return n
+	}
+	return 1
 }
 
 func init() { RegisterConnectorKind(RestImageConnectorKind, restImageHandler{}) }
@@ -182,13 +240,16 @@ func (h restImageHandler) Validate(c Connector) error {
 		if s.ComfyMap.OutputNode == "" {
 			return fmt.Errorf("comfy_map.output_node is required (the SaveImage node the result is read from)")
 		}
-		if len(s.ComfyMap.PromptNodes) == 0 {
-			return fmt.Errorf("comfy_map.prompt_nodes is required (the node(s) the prompt is written into)")
+		if len(s.ComfyMap.PromptNodes) == 0 && len(s.ComfyMap.ImageNodes) == 0 {
+			// Required only for a graph that works from TEXT. A blend / upscale /
+			// composite graph has no text node anywhere and is still a valid
+			// backend; demanding one rejected working workflows at import.
+			return fmt.Errorf("comfy_map.prompt_nodes is required (the node(s) the prompt is written into), unless the workflow works from input images instead")
 		}
 		if s.PollURLTemplate == "" {
 			return fmt.Errorf("poll_url_template is required (the /view URL the image is fetched from)")
 		}
-		return nil
+		return s.validateImageInput()
 	}
 	// Exactly one result path must be declared, distinguishing sync vs poll.
 	polling := s.SubmitIDPath != "" || s.PollURL != ""
@@ -206,6 +267,65 @@ func (h restImageHandler) Validate(c Connector) error {
 		if s.ImageB64Path == "" && s.ImageURLPath == "" {
 			return fmt.Errorf("a synchronous backend needs image_b64_path (base64 in the response, e.g. A1111 \"images.0\") or image_url_path (a URL in the response); for an async backend set submit_id_path + poll_url")
 		}
+	}
+	return nil
+}
+
+// validateImageInput checks the edit wiring of a ComfyUI backend. Each of these
+// fails SILENTLY at run time otherwise — the graph executes against whatever
+// placeholder image it was saved with and returns a plausible picture that
+// ignored the caller's photo, which reads as a model failure rather than a
+// configuration one.
+func (s RestImageSpec) validateImageInput() error {
+	m := s.ComfyMap
+	if len(m.ImageNodes) == 0 && len(m.MaskNodes) == 0 {
+		if strings.TrimSpace(s.UploadURL) != "" {
+			return nil // txt2img on the ComfyUI preset — upload_url is simply unused
+		}
+		return nil
+	}
+	if strings.TrimSpace(s.UploadURL) == "" {
+		return fmt.Errorf("this workflow has image input node(s) %s but no upload_url — set it to your ComfyUI's /upload/image endpoint", strings.Join(m.ImageNodes, ", "))
+	}
+	// The upload must land on the same host as the rest of the backend: the
+	// no_auth dispatch is scoped to the submit URL's host, so a cross-host
+	// upload_url is refused at dispatch with a confusing allow-list error.
+	if err := sameImageHost(s.SubmitURL, s.UploadURL); err != nil {
+		return err
+	}
+	// Every mapped node must exist in the stored graph.
+	graph, err := parseComfyGraph(s.ComfyWorkflow)
+	if err != nil {
+		return err
+	}
+	for label, nodes := range map[string][]string{
+		"image_nodes": m.ImageNodes,
+		"mask_nodes":  m.MaskNodes,
+	} {
+		for _, id := range nodes {
+			if _, ok := graph[id]; !ok {
+				return fmt.Errorf("comfy_map.%s names node %q, which is not in the workflow", label, id)
+			}
+		}
+	}
+	if s.MaxInputImages > len(m.ImageNodes) {
+		return fmt.Errorf("max_input_images is %d but only %d image node(s) are mapped — a caller's extra images would have nowhere to go", s.MaxInputImages, len(m.ImageNodes))
+	}
+	return nil
+}
+
+// sameImageHost reports whether two of the backend's endpoints share a host.
+func sameImageHost(submitURL, otherURL string) error {
+	a, err := url.Parse(strings.TrimSpace(submitURL))
+	if err != nil {
+		return fmt.Errorf("submit_url is not a URL: %w", err)
+	}
+	b, err := url.Parse(strings.TrimSpace(otherURL))
+	if err != nil {
+		return fmt.Errorf("upload_url is not a URL: %w", err)
+	}
+	if a.Host != b.Host {
+		return fmt.Errorf("upload_url host %q must match submit_url host %q — the backend's dispatch is scoped to one host", b.Host, a.Host)
 	}
 	return nil
 }
@@ -257,7 +377,7 @@ func (h restImageHandler) Summary(c Connector) string {
 	if url == "" {
 		url = "(no url)"
 	}
-	return fmt.Sprintf("generate images via %s (%s, credential %s) → tool %s%s", url, mode, cred, restImageToolPrefix, restImageToolName(c.Name)[len(restImageToolPrefix):])
+	return fmt.Sprintf("generate images via %s (%s, credential %s) → tool %s%s", url, mode, cred, RestImageToolPrefix, restImageToolName(c.Name)[len(RestImageToolPrefix):])
 }
 
 var (
@@ -269,7 +389,7 @@ var (
 // connector name) become underscores so the tool name stays a clean snake_case
 // identifier the tool-call parser won't choke on.
 func restImageToolName(connector string) string {
-	return restImageToolPrefix + strings.ReplaceAll(strings.TrimSpace(connector), "-", "_")
+	return RestImageToolPrefix + strings.ReplaceAll(strings.TrimSpace(connector), "-", "_")
 }
 
 // --- the materialized tool ---------------------------------------------------
@@ -446,6 +566,10 @@ type restImageParams struct {
 	height   int
 	steps    int
 	seed     int
+	// Edit inputs. images is empty for a plain generate; the native pipeline
+	// never sets them (a writer-app illustration has no source photo).
+	images []inputImage
+	mask   *inputImage
 }
 
 // restImageOutcome is the raw result of a backend call: EITHER inline/fetched
@@ -482,18 +606,36 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		}
 	}
 
+	// Source photos, when the caller sent any: upload first (the graph
+	// references them by the server-side filename), then wire them in.
+	uploaded, mask, err := s.uploadInputImages(sess, p)
+	if err != nil {
+		return out, err
+	}
 	method := firstNonEmpty(s.SubmitMethod, "POST")
 	var body string
 	if s.ComfyWorkflow != "" {
 		// Mapping model: inject values into the nodes named by ComfyMap.
-		b, berr := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, prompt, p.negative, width, height, p.steps, seed)
+		b, berr := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
+			Prompt:   prompt,
+			Negative: p.negative,
+			Width:    width,
+			Height:   height,
+			Steps:    p.steps,
+			Seed:     seed,
+			Images:   uploaded,
+			Mask:     mask,
+		})
 		if berr != nil {
 			return out, berr
 		}
 		body = b
 	} else {
 		// Legacy token model: {prompt}/{negative}/{model} JSON-escaped, numerics raw.
-		body = substituteTokens(s.SubmitBody, map[string]string{
+		// {image} is the FIRST source photo as bare base64 and {images} the whole
+		// set as a JSON array — the two shapes hosted img2img APIs actually use
+		// (A1111's init_images wants the array).
+		tokens := map[string]string{
 			"prompt":   jsonInner(prompt),
 			"negative": jsonInner(p.negative),
 			"model":    jsonInner(s.DefaultModel),
@@ -501,7 +643,22 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 			"height":   strconv.Itoa(height),
 			"steps":    strconv.Itoa(p.steps),
 			"seed":     strconv.Itoa(seed),
-		})
+			"image":    "",
+			"images":   "[]",
+		}
+		if len(p.images) > 0 {
+			b64s := make([]string, 0, len(p.images))
+			for _, img := range p.images {
+				b64s = append(b64s, base64.StdEncoding.EncodeToString(img.data))
+			}
+			tokens["image"] = b64s[0]
+			arr, merr := json.Marshal(b64s)
+			if merr != nil {
+				return out, merr
+			}
+			tokens["images"] = string(arr)
+		}
+		body = substituteTokens(s.SubmitBody, tokens)
 	}
 
 	// Submit. Read via the pipe path for its higher byte cap — a base64 image
@@ -599,9 +756,15 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 // the shared no_auth credential to http (which would open http SSRF, e.g. cloud
 // metadata, for every no_auth tool).
 func (s RestImageSpec) dispatchImage(sess *ToolSession, rawURL, method, body string) (string, error) {
+	return s.dispatchImageCT(sess, rawURL, method, body, "")
+}
+
+// dispatchImageCT is dispatchImage with an explicit request Content-Type, for
+// the multipart image upload (empty keeps the JSON default).
+func (s RestImageSpec) dispatchImageCT(sess *ToolSession, rawURL, method, body, contentType string) (string, error) {
 	cred := strings.TrimSpace(s.Credential)
 	if cred != "" && cred != "no_auth" && cred != "none" {
-		return Secure().DispatchToolCallForPipe(sess, cred, rawURL, method, body)
+		return Secure().DispatchToolCallForPipeCT(sess, cred, rawURL, method, body, contentType)
 	}
 	scoped := SecureCredential{
 		Name:              "rest_image_local",
@@ -612,6 +775,12 @@ func (s RestImageSpec) dispatchImage(sess *ToolSession, rawURL, method, body str
 	args := map[string]any{"url": rawURL, "method": method, "__pipe_following": true}
 	if body != "" {
 		args["body"] = body
+	}
+	// The local/LAN path builds its args by hand and so had no content-type
+	// channel at all — which is exactly the path a local ComfyUI takes, and a
+	// multipart upload sent as application/json is rejected outright.
+	if contentType != "" {
+		args["__content_type"] = contentType
 	}
 	return Secure().dispatch(scoped, args, sess)
 }
@@ -669,17 +838,139 @@ func extractOutcome(node any, b64Path, urlPath, urlTemplate string, tmplVars map
 	return out, fmt.Errorf("no image locator configured for this backend")
 }
 
+// --- backend selection for the grouped `image` tool --------------------------
+
+// ImageBackendChoice is one selectable image-generation backend, as offered to a
+// caller by the grouped `image` tool. Collapsing the per-connector
+// generate_image_<name> tools into one `image` tool means the BACKEND becomes a
+// parameter instead of a tool name, and this is what fills that enum.
+type ImageBackendChoice struct {
+	Name     string // the value a caller passes as `backend`
+	Guidance string // this backend's prompting quirks (RestImageSpec.PromptGuidance)
+	Default  bool   // the configured default — where a caller that omits `backend` lands
+	// Edits is true when this backend takes SOURCE PHOTOS ("change this photo",
+	// "combine these two") rather than generating from text alone. The two are
+	// disjoint — an img2img graph requires its input and a txt2img graph has
+	// nowhere to put one — so this splits the backends across the generate and
+	// edit actions rather than being an extra flag on one list.
+	Edits bool
+	// MaxImages is how many source photos an editing backend accepts.
+	MaxImages int
+	// AcceptsMask is true when the workflow has a mask loader, so inpainting
+	// ("change just this part") is possible.
+	AcceptsMask bool
+	// NeedsPrompt is false for a graph with no text node — a blend or an
+	// upscale. Requiring a prompt there would force the model to invent one
+	// that goes nowhere.
+	NeedsPrompt bool
+}
+
+// ReachableImageBackends returns the image backends sess may generate through,
+// sorted by name so the advertised schema is byte-stable across turns.
+//
+// A rest_image connector is reachable when it is APPROVED (an admin enabled it),
+// MATERIALIZED (its backend closure is registered, so the spec parsed), and its
+// credential is not denied to this caller — the same per-agent deny surface that
+// gates every other dispatch (AgentRecord.DisabledCredentials). The built-in
+// providers are offered only when one of them is the CONFIGURED default: a
+// leftover Gemini key shouldn't quietly re-open a provider the admin moved off.
+//
+// This is the schema-time half of the gate and exists to keep the model from
+// naming a backend that would refuse. It is NOT the security boundary — a model
+// can pass any string, so the handler re-checks against this same list. See
+// ImageBackendReachable.
+//
+// Memoized on the session: this reads the connector table, and the schema is
+// rebuilt on every catalog assembly. Sessions are turn-scoped, so a connector
+// approved mid-conversation appears on the next turn.
+func ReachableImageBackends(sess *ToolSession) []ImageBackendChoice {
+	if sess != nil {
+		sess.mu.Lock()
+		if sess.imageBackendsSet {
+			out := sess.imageBackends
+			sess.mu.Unlock()
+			return out
+		}
+		sess.mu.Unlock()
+	}
+	out := reachableImageBackends(sess)
+	if sess != nil {
+		sess.mu.Lock()
+		sess.imageBackends, sess.imageBackendsSet = out, true
+		sess.mu.Unlock()
+	}
+	return out
+}
+
+func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
+	defaultProvider := ""
+	if ImageProviderFunc != nil {
+		defaultProvider = strings.TrimSpace(ImageProviderFunc())
+	}
+	var out []ImageBackendChoice
+	// ListConnectors already sorts by name, so the enum order is stable.
+	for _, c := range ListConnectors(RootDB) {
+		if c.Kind != RestImageConnectorKind || !c.Approved {
+			continue
+		}
+		// Registered means Materialize ran: the spec parsed and the backend
+		// closure exists. An approved-but-unmaterialized connector would
+		// advertise a name that can't dispatch.
+		if !ImageBackendRegistered(c.Name) {
+			continue
+		}
+		s, err := restImageHandler{}.parse(c)
+		if err != nil {
+			continue
+		}
+		if sess != nil && sess.DeniedCredentials[strings.TrimSpace(s.Credential)] {
+			continue
+		}
+		out = append(out, ImageBackendChoice{
+			Name:        c.Name,
+			Guidance:    strings.TrimSpace(s.PromptGuidance),
+			Default:     c.Name == defaultProvider,
+			Edits:       s.SupportsImageInput(),
+			MaxImages:   s.MaxImages(),
+			AcceptsMask: len(s.ComfyMap.MaskNodes) > 0,
+		})
+	}
+	// A built-in provider joins the list only when it IS the default.
+	switch defaultProvider {
+	case "gemini", "openai":
+		if ImageGenerationAvailable() {
+			out = append(out, ImageBackendChoice{Name: defaultProvider, Default: true})
+			sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		}
+	}
+	return out
+}
+
+// ImageBackendReachable reports whether sess may generate through the named
+// backend. This is the ENFORCEMENT half: the schema advertises a filtered enum,
+// but a model can name anything (stale context, a copied call), so the handler
+// checks here before dispatching. An empty name means "the configured default"
+// and is always allowed.
+func ImageBackendReachable(sess *ToolSession, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "default" {
+		return true
+	}
+	for _, c := range ReachableImageBackends(sess) {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // generateRestImageNative bridges a rest_image connector into the native image
 // pipeline (core/image_gen.go): resolve the connector live, map the native
 // (prompt, landscape) request onto the spec's default dimensions, run the same
 // generate core, and return the ImageGenResult shape the native providers do — a
 // local file for inline/fetched bytes, or a URL passthrough.
 func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGenResult, error) {
-	c, ok := GetConnector(RootDB, connector)
-	if !ok || !c.Approved {
-		return nil, fmt.Errorf("image backend %q is unavailable", connector)
-	}
-	s, err := restImageHandler{}.parse(c)
+	s, err := resolveImageConnector(connector)
 	if err != nil {
 		return nil, err
 	}
@@ -695,6 +986,89 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 	if err != nil {
 		return nil, err
 	}
+	return restImageResult(out, prompt)
+}
+
+// EditImageRequest is one "change this photo" / "combine these" call. Images
+// holds caller REFERENCES (a media id or a workspace path), resolved and
+// verified inside EditImageWithBackend rather than by every caller.
+type EditImageRequest struct {
+	Backend string
+	Prompt  string
+	Images  []string
+	Mask    string
+	Steps   int
+	Seed    int
+}
+
+// EditImageWithBackend runs a source photo (or several) through an editing
+// backend. This does NOT go through the ImageBackendFunc registry: that
+// signature carries only (prompt, landscape), and widening it would touch every
+// native caller — writer-app illustrations, the admin provider setting — none of
+// which have a source photo to give. Editing is a connector-level capability.
+//
+// Callers must authorize Backend first (ImageBackendReachable).
+func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenResult, error) {
+	s, err := resolveImageConnector(req.Backend)
+	if err != nil {
+		return nil, err
+	}
+	if !s.SupportsImageInput() {
+		return nil, fmt.Errorf("image backend %q generates from text only — it has no image input wired, so it can't edit a photo", req.Backend)
+	}
+	if len(req.Images) == 0 {
+		return nil, fmt.Errorf("editing needs at least one source image")
+	}
+	images, err := resolveInputImages(sess, req.Images, s.MaxImages())
+	if err != nil {
+		return nil, err
+	}
+	var mask *inputImage
+	if strings.TrimSpace(req.Mask) != "" {
+		if len(s.ComfyMap.MaskNodes) == 0 {
+			return nil, fmt.Errorf("image backend %q has no mask input — omit mask, or ask the admin to map one", req.Backend)
+		}
+		m, err := resolveInputImage(sess, req.Mask)
+		if err != nil {
+			return nil, err
+		}
+		mask = &m
+	}
+	seed := req.Seed
+	if seed == 0 {
+		seed = -1
+	}
+	// No width/height: an edit inherits its size from the source photo. That
+	// isn't enforced here — it falls out of the wiring. An img2img graph draws
+	// its latent from VAEEncode rather than EmptyLatentImage, so auto-wiring
+	// maps no width/height nodes and BuildComfyBody has nowhere to write a size
+	// even if one were passed.
+	out, err := s.generate(sess, restImageParams{
+		prompt:   req.Prompt,
+		negative: s.DefaultNegative,
+		steps:    firstPositive(req.Steps, s.DefaultSteps),
+		seed:     seed,
+		images:   images,
+		mask:     mask,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return restImageResult(out, req.Prompt)
+}
+
+// resolveImageConnector loads an approved rest_image connector's spec by name.
+func resolveImageConnector(connector string) (RestImageSpec, error) {
+	c, ok := GetConnector(RootDB, strings.TrimSpace(connector))
+	if !ok || !c.Approved {
+		return RestImageSpec{}, fmt.Errorf("image backend %q is unavailable", connector)
+	}
+	return restImageHandler{}.parse(c)
+}
+
+// restImageResult converts a backend outcome into the ImageGenResult shape the
+// native providers return — a URL passthrough, or a local file for inline bytes.
+func restImageResult(out restImageOutcome, prompt string) (*ImageGenResult, error) {
 	if out.url != "" {
 		return &ImageGenResult{URL: out.url, Prompt: prompt}, nil
 	}
@@ -707,6 +1081,13 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 		return nil, err
 	}
 	return &ImageGenResult{URL: path, Prompt: prompt}, nil
+}
+
+func firstPositive(a, b int) int {
+	if a > 0 {
+		return a
+	}
+	return b
 }
 
 // aspectRatios maps a named aspect to a width/height ratio.
@@ -818,11 +1199,18 @@ var restImagePresets = map[string]RestImageSpec{
 			`"7":{"class_type":"CLIPTextEncode","inputs":{"text":"{negative}","clip":["4",1]}},` +
 			`"8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},` +
 			`"9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}}}}`,
-		SubmitIDPath:    "prompt_id",
-		PollURL:         "{base_url}/history/{id}",
-		PollMethod:      "GET",
-		PollReadyPath:   "{id}.outputs.9.images.0.filename",
-		PollURLTemplate: "{base_url}/view?filename={filename}&subfolder={subfolder}&type={type}",
+		SubmitIDPath: "prompt_id",
+		// Input images are POSTed here first; the returned name is written into
+		// the graph's LoadImage node. Harmless on a txt2img backend (nothing
+		// uploads when the caller sends no images).
+		UploadURL:           "{base_url}/upload/image",
+		UploadFileField:     "image",
+		UploadNamePath:      "name",
+		UploadSubfolderPath: "subfolder",
+		PollURL:             "{base_url}/history/{id}",
+		PollMethod:          "GET",
+		PollReadyPath:       "{id}.outputs.9.images.0.filename",
+		PollURLTemplate:     "{base_url}/view?filename={filename}&subfolder={subfolder}&type={type}",
 		PollFields: map[string]string{
 			"filename":  "{id}.outputs.9.images.0.filename",
 			"subfolder": "{id}.outputs.9.images.0.subfolder",
@@ -867,6 +1255,7 @@ func ApplyRestImagePreset(preset string, over RestImageSpec, vars map[string]str
 	out.SubmitURL = substituteTokens(out.SubmitURL, vars)
 	out.SubmitBody = substituteTokens(out.SubmitBody, vars)
 	out.PollURL = substituteTokens(out.PollURL, vars)
+	out.UploadURL = substituteTokens(out.UploadURL, vars)
 	out.PollURLTemplate = substituteTokens(out.PollURLTemplate, vars)
 	out.PollReadyPath = substituteTokens(out.PollReadyPath, vars)
 	out.PollB64Path = substituteTokens(out.PollB64Path, vars)
@@ -908,6 +1297,11 @@ func MergeRestImageSpec(base, over RestImageSpec) RestImageSpec {
 	fill(&out.PollB64Path, base.PollB64Path)
 	fill(&out.PollURLPath, base.PollURLPath)
 	fill(&out.PollURLTemplate, base.PollURLTemplate)
+	fill(&out.UploadURL, base.UploadURL)
+	fill(&out.UploadFileField, base.UploadFileField)
+	fill(&out.UploadNamePath, base.UploadNamePath)
+	fill(&out.UploadSubfolderPath, base.UploadSubfolderPath)
+	fillI(&out.MaxInputImages, base.MaxInputImages)
 	fill(&out.DefaultNegative, base.DefaultNegative)
 	fill(&out.DefaultModel, base.DefaultModel)
 	fillI(&out.PollIntervalSecs, base.PollIntervalSecs)
