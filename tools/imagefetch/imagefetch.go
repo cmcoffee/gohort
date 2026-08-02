@@ -133,7 +133,15 @@ func (a imageActions) maxEditImages() int {
 // operation, and a tool schema that changes every turn re-pays cold prefill.
 // The ids come back in tool results and from action="help".
 func (a imageActions) imagesParamDesc() string {
-	d := "(edit) Source image(s) to change, as references — \"image#1\" for a recent image (newest first; call action=\"help\" to list them), \"media#1\" for a photo the user attached this turn, or a workspace filename. "
+	// media#N comes FIRST and the two are distinguished by WHEN, not by
+	// recency. Describing image#N as "a recent image" made it the obvious pick
+	// for "blend the two photos I just sent" — and it resolved to the last two
+	// pictures the assistant had generated, which is a confidently wrong answer
+	// rather than an error.
+	d := "(edit) Source image(s) to change, as references. " +
+		"If the user just sent photos on THIS turn, use \"media#1\", \"media#2\" — numbered in the order they arrived, so media#1 is the first one they sent. " +
+		"For a picture from EARLIER — one you generated, found, downloaded, or that arrived on a previous turn — use \"image#1\" (newest first; call action=\"help\" to list them). " +
+		"A workspace filename also works. "
 	if n := a.maxEditImages(); n > 1 {
 		d += "Up to " + strconv.Itoa(n) + ". ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
 	}

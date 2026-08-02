@@ -2431,6 +2431,18 @@ func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender strin
 		Sender: strings.TrimSpace(sender),
 	})
 	s.mu.Unlock()
+	// An arriving photo joins the image space too, so it stays editable after
+	// this turn ends. media#N is turn-scoped and vanishes; without this, "blend
+	// the two photos I sent" worked only while they were still in the live
+	// message, and a later "now make that one snowy" had nothing to point at.
+	if kind == "image" {
+		who := strings.TrimSpace(sender)
+		note := "received"
+		if who != "" {
+			note += " from " + who
+		}
+		RecordRecentImage(s, raw, note)
+	}
 	return id
 }
 

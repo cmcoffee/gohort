@@ -252,3 +252,54 @@ func TestResolveInputImagesPreservesOrderAndCap(t *testing.T) {
 		t.Fatal("more images than the backend takes must be refused, not truncated")
 	}
 }
+
+func TestInboundPhotosJoinTheSpace(t *testing.T) {
+	// "Blend the two photos I just sent" in a channel picked the last two
+	// images the assistant had GENERATED instead. media#N is turn-scoped and
+	// the space only held produced images, so the two id schemes described
+	// different pictures and the model reached for the wrong one.
+	sess := imageSpaceSession(t)
+	first := testPNG(t, 8, 8)
+	second := testPNG(t, 16, 16)
+
+	if id := sess.RegisterInboundMedia("image", first, "Alice"); id != "media#1" {
+		t.Fatalf("first media id = %q, want media#1", id)
+	}
+	if id := sess.RegisterInboundMedia("image", second, "Alice"); id != "media#2" {
+		t.Fatalf("second media id = %q, want media#2", id)
+	}
+
+	// media#N stays ARRIVAL order — media#1 is the first photo sent, which is
+	// what "the first one" means to the person who sent them.
+	b64, _, ok := sess.ResolveInboundMedia("media#1")
+	if !ok {
+		t.Fatal("media#1 must resolve")
+	}
+	got, err := decodeBase64Image(b64)
+	if err != nil || !bytes.Equal(got, first) {
+		t.Error("media#1 must be the FIRST photo sent")
+	}
+
+	// ...and both are in the space, so a later turn can still edit them.
+	all := RecentImages(sess)
+	if len(all) != 2 {
+		t.Fatalf("space holds %d, want both inbound photos", len(all))
+	}
+	if !strings.Contains(all[0].Note, "Alice") {
+		t.Errorf("note = %q, should attribute the sender", all[0].Note)
+	}
+	// Space order is newest-first, the opposite of media order — which is why
+	// the param description sends the model to media#N for this-turn photos.
+	spaceNewest, ok := ResolveRecentImage(sess, "image#1")
+	if !ok || !bytes.Equal(spaceNewest, second) {
+		t.Error("image#1 must be the most recently received photo")
+	}
+}
+
+func TestInboundVideoDoesNotJoinTheImageSpace(t *testing.T) {
+	sess := imageSpaceSession(t)
+	sess.RegisterInboundMedia("video", testPNG(t, 8, 8), "Alice")
+	if got := len(RecentImages(sess)); got != 0 {
+		t.Errorf("space holds %d, want 0 — a clip is not an editable image", got)
+	}
+}
