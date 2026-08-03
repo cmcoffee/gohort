@@ -281,7 +281,7 @@ func TestDetachedNoticeAsksForAPromiseNotAnExplanation(t *testing.T) {
 	// how the system works. Telling the user they may keep talking, or to check
 	// back, narrates machinery they never asked about, and the live indicator
 	// already shows the work is running.
-	notice := detachedNotice(TaskRun{ID: "task_1", Label: "image edit"}, 15*time.Minute)
+	notice := detachedNotice(TaskRun{ID: "task_1", Label: "image edit"}, 40*time.Second)
 	if !strings.Contains(notice, "let you know when it's done") {
 		t.Errorf("notice should model the phrasing:\n%s", notice)
 	}
@@ -291,9 +291,48 @@ func TestDetachedNoticeAsksForAPromiseNotAnExplanation(t *testing.T) {
 			t.Errorf("notice should rule out %q as prose:\n%s", banned, notice)
 		}
 	}
-	// The estimate is still there when it is worth saying.
-	if !strings.Contains(notice, "15 minutes") {
-		t.Errorf("notice should carry the estimate:\n%s", notice)
+	// A MEASURED estimate is still there when it is worth saying.
+	if !strings.Contains(notice, "40 seconds") {
+		t.Errorf("notice should carry the measured estimate:\n%s", notice)
+	}
+}
+
+func TestAnUnmeasuredTaskGetsNoTimeAtAll(t *testing.T) {
+	// The number used to be the DEADLINE — the point at which the framework
+	// gives up — so a render that finishes in forty seconds was announced as
+	// "about 15 minutes" and the user was left holding a promise nothing
+	// intended to make. With nothing measured, the model is told to say nothing
+	// rather than to guess.
+	notice := detachedNotice(TaskRun{ID: "task_1", Label: "image edit"}, 0)
+	if !strings.Contains(notice, "Put NO time on it") {
+		t.Errorf("an unmeasured task must forbid an invented estimate:\n%s", notice)
+	}
+	for _, leak := range []string{"minutes", "seconds", "hours"} {
+		if strings.Contains(notice, leak) {
+			t.Errorf("notice quotes a duration (%q) it does not have:\n%s", leak, notice)
+		}
+	}
+}
+
+func TestMeasuredDurationsUseTheMedian(t *testing.T) {
+	// One cold start that paid a full model load is not what the next call
+	// costs; a mean lets that single outlier set the number every render is
+	// described by.
+	const backend = "test_backend_median"
+	for _, d := range []time.Duration{30 * time.Second, 35 * time.Second, 40 * time.Second, 15 * time.Minute} {
+		RecordImageBackendDuration(backend, d)
+	}
+	got := TypicalImageBackendDuration(backend)
+	if got > time.Minute {
+		t.Errorf("typical = %s — one cold start dragged the estimate", got)
+	}
+	if TypicalImageBackendDuration("never_measured_backend") != 0 {
+		t.Error("an unmeasured backend must report zero, which reads as \"say nothing\"")
+	}
+	// A failed render measures the deadline, not the backend.
+	RecordImageBackendDuration(backend, 0)
+	if TypicalImageBackendDuration(backend) > time.Minute {
+		t.Error("a zero sample should be ignored, not folded in")
 	}
 }
 

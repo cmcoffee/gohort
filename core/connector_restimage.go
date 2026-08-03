@@ -647,13 +647,15 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if h <= 0 {
 		h = s.DefaultHeight
 	}
-	out, err := s.generate(sess, restImageParams{
-		prompt:   prompt,
-		negative: negative,
-		width:    w,
-		height:   h,
-		steps:    intArgOr(args["steps"], s.DefaultSteps),
-		seed:     intArgOr(args["seed"], -1),
+	out, err := timeImageRender(t.connector, func() (restImageOutcome, error) {
+		return s.generate(sess, restImageParams{
+			prompt:   prompt,
+			negative: negative,
+			width:    w,
+			height:   h,
+			steps:    intArgOr(args["steps"], s.DefaultSteps),
+			seed:     intArgOr(args["seed"], -1),
+		})
 	})
 	if err != nil {
 		return "", err
@@ -1165,13 +1167,15 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 		return nil, err
 	}
 	w, h := resolveImageDims(landscape, s.DefaultWidth, s.DefaultHeight)
-	out, err := s.generate(nil, restImageParams{
-		prompt:   prompt,
-		negative: s.DefaultNegative,
-		width:    w,
-		height:   h,
-		steps:    s.DefaultSteps,
-		seed:     -1,
+	out, err := timeImageRender(connector, func() (restImageOutcome, error) {
+		return s.generate(nil, restImageParams{
+			prompt:   prompt,
+			negative: s.DefaultNegative,
+			width:    w,
+			height:   h,
+			steps:    s.DefaultSteps,
+			seed:     -1,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -1233,13 +1237,15 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	// its latent from VAEEncode rather than EmptyLatentImage, so auto-wiring
 	// maps no width/height nodes and BuildComfyBody has nowhere to write a size
 	// even if one were passed.
-	out, err := s.generate(sess, restImageParams{
-		prompt:   req.Prompt,
-		negative: s.DefaultNegative,
-		steps:    firstPositive(req.Steps, s.DefaultSteps),
-		seed:     seed,
-		images:   images,
-		mask:     mask,
+	out, err := timeImageRender(req.Backend, func() (restImageOutcome, error) {
+		return s.generate(sess, restImageParams{
+			prompt:   req.Prompt,
+			negative: s.DefaultNegative,
+			steps:    firstPositive(req.Steps, s.DefaultSteps),
+			seed:     seed,
+			images:   images,
+			mask:     mask,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -1737,4 +1743,28 @@ func ImageBackendDeadline(sess *ToolSession, backend string) time.Duration {
 		return 0
 	}
 	return s.pollDeadline()
+}
+
+// ImageBackendTypicalDuration reports what this backend has ACTUALLY been
+// taking, resolving an unnamed backend to the caller's default the same way
+// ImageBackendDeadline does. Zero means it hasn't been measured yet — which a
+// caller must render as saying nothing about the time, not as "quick".
+//
+// The two are used for different things and must not be swapped: the deadline
+// decides whether a call can hold a turn open, this decides what the agent is
+// allowed to tell someone.
+func ImageBackendTypicalDuration(sess *ToolSession, backend string) time.Duration {
+	backend = strings.TrimSpace(backend)
+	if backend == "" {
+		for _, c := range ReachableImageBackends(sess) {
+			if c.Default {
+				backend = c.Name
+				break
+			}
+		}
+	}
+	if backend == "" {
+		return 0
+	}
+	return TypicalImageBackendDuration(backend)
 }

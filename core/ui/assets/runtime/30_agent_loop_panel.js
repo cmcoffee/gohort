@@ -4077,14 +4077,14 @@
         if (bubble) messageReplayHooks.forEach(function(fn) { try { fn(bubble, m); } catch (e) {} });
       }
     }
-    // startCortexPolling — while the cortex home thread is open, re-fetch it and
-    // render any NEW observation cards (report_from set) live, like a channel
-    // thread. ONLY observations: chat turns the user has with the cortex agent
-    // ride the SSE/replay path, so the poll never touches them (no duplication).
+    // startReportPolling — while a thread is open, re-fetch it and render any
+    // NEW report cards (report_from set) live — anything the server posts to
+    // the thread on its own. ONLY those cards — chat turns ride the
+    // SSE/replay path, so the poll never touches them (no duplication).
     // Reuses the channel poll's timer.
-    function startCortexPolling(sid) {
+    function startReportPolling(sid) {
       stopChannelPolling();
-      if (!cfg.load_url || (sid || '').indexOf('channel:') !== 0) return;
+      if (!cfg.load_url || !sid) return;
       channelPollTimer = setInterval(function() {
         if (activeSessionId !== sid) { stopChannelPolling(); return; }
         fetchJSON(substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)))).then(function(rec) {
@@ -4099,7 +4099,10 @@
             renderObservation(m);
           });
         }).catch(function() {});
-      }, 3000);
+        // Slower than the channel poll: this now runs for EVERY open thread,
+        // not just the cortex home, and a report card arriving six seconds
+        // later still arrives while the user is looking at it.
+      }, 6000);
     }
 
     function loadSessions() {
@@ -4633,15 +4636,21 @@
         // up live while watching, without a manual reload.
         if (channelTranscript) {
           startChannelPolling(sid, Array.isArray(msgs) ? msgs.length : 0);
-        } else if ((sid || '').indexOf('channel:') === 0) {
-          // Cortex home thread: seed the seen-set from what just replayed, then
-          // poll for NEW observation cards so they appear live — like a channel
-          // thread, but only the background report cards (chat turns ride SSE).
+        } else {
+          // Any other open thread: seed the seen-set from what just replayed,
+          // then poll for NEW report cards so they appear live — anything
+          // posted to the thread by the server rather than by this client.
+          // Only the cards; chat turns ride SSE, so the poll never touches them.
+          //
+          // This used to be the cortex home thread only, which left an ordinary
+          // session with no live path at all: a result posted to it while the
+          // user sat looking at the thread simply never appeared, and reopening
+          // the session was the only way to find out the work had finished.
           cortexObsSeen = {};
           if (Array.isArray(msgs)) {
             msgs.forEach(function(m) { if (m && m.report_from) cortexObsSeen[obsKey(m)] = true; });
           }
-          startCortexPolling(sid);
+          startReportPolling(sid);
         }
         // After the saved transcript renders, ask the server
         // whether this session has an in-flight run we should

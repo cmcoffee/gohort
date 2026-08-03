@@ -664,6 +664,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// Raising the agent's max_worker_rounds is the fix when this recurs.
 	hitCap := lastRound >= softCap
 	detail := fmt.Sprintf("%s · %s · fire %d", agentLabel, recurringDetail(p), p.FireCount+1)
+	// A background task shares this path but has no cadence and no fire count.
+	// The recurring subtitle read "recurring · every 0m · fire 1" on it, which
+	// announces a schedule that does not exist.
+	if isTaskWake(p.Prompt) {
+		detail = agentLabel + " · finished in the background"
+	}
 	if hitCap {
 		detail += fmt.Sprintf(" · hit round cap (%d) — may be incomplete", softCap)
 	}

@@ -63,6 +63,19 @@ type DetachableTool interface {
 	ExpectedDuration(args map[string]any, sess *ToolSession) time.Duration
 }
 
+// EstimatingTool is an optional companion to DetachableTool: what the call
+// USUALLY takes, as opposed to how long the framework is willing to wait for
+// it. Only implement it when the number is measured — the point of the split is
+// that a ceiling makes a terrible estimate, and a second guess dressed as an
+// observation is no better than the first.
+//
+// Zero means "not known", and the notice then tells the model to put no time on
+// it at all rather than invent one.
+type EstimatingTool interface {
+	ChatTool
+	TypicalDuration(args map[string]any, sess *ToolSession) time.Duration
+}
+
 // TaskRun is a detached call the framework is tracking.
 type TaskRun struct {
 	ID     string // handle the model can name to ask about or cancel it
@@ -130,15 +143,25 @@ func ShouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) (time.Dur
 // image taught the model to say "here it is"; this one must teach it to say "I
 // have started it" — and a model that gets that backwards either promises an
 // image that isn't there or silently redoes a fifteen-minute render.
-func detachedNotice(run TaskRun, expected time.Duration) string {
+func detachedNotice(run TaskRun, typical time.Duration) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "STARTED, NOT FINISHED. This work takes about %s, so it is running in the background as task %s", humanizeTaskDuration(expected), run.ID)
+	b.WriteString("STARTED, NOT FINISHED. It is running in the background as task " + run.ID)
 	if l := strings.TrimSpace(run.Label); l != "" {
 		b.WriteString(" (" + l + ")")
 	}
 	b.WriteString(".\n")
 	b.WriteString("There is NO result yet and nothing has been delivered. Do NOT describe the outcome, do NOT claim anything was sent, and do NOT call this tool again for the same request — a second call starts a second job.\n")
-	b.WriteString("Say you are doing it and that you will report back, in one line, the way a person would: \"I'll get that going and let you know when it's done.\" Mention roughly how long if it is worth knowing. Do NOT explain that you are running in the background, do NOT tell them they can keep talking to you, and do NOT invite them to check on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
+	b.WriteString("Say you are doing it and that you will report back, in one line, the way a person would: \"I'll get that going and let you know when it's done.\" ")
+	// The estimate is only ever a MEASURED one. It used to be the deadline —
+	// the point at which the framework gives up — so a render that finishes in
+	// forty seconds was announced as "about 15 minutes", and the user is then
+	// holding a promise nothing intended to make.
+	if typical > 0 {
+		fmt.Fprintf(&b, "This usually takes about %s; say so if it is worth knowing.\n", humanizeTaskDuration(typical))
+	} else {
+		b.WriteString("Put NO time on it — nothing here knows how long it will take, and a number you invent is one they will hold you to.\n")
+	}
+	b.WriteString("Do NOT explain that you are running in the background, do NOT tell them they can keep talking to you, and do NOT invite them to check on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
 	b.WriteString("The result arrives on its own as a new message when it is done; you will be told then, and that is when you deliver it. Until then answer whatever they say next as normal.")
 	return b.String()
 }

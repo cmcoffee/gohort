@@ -341,6 +341,24 @@ func (t *ImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) tim
 	return 0
 }
 
+// TypicalDuration is what this backend has actually been taking, which is a
+// different question from ExpectedDuration and has a different answer. That one
+// reports the DEADLINE — how long before the framework gives up — because
+// deciding whether a call can hold a turn open has to assume the worst. This
+// one is measured, and is the only number the agent is allowed to quote: a
+// render that finishes in forty seconds should not be announced as fifteen
+// minutes because fifteen minutes is when we would have stopped waiting.
+//
+// Zero until the backend has been measured, which the notice renders as saying
+// nothing about the time rather than guessing.
+func (t *ImageTool) TypicalDuration(args map[string]any, sess *ToolSession) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	case "generate", "edit":
+		return ImageBackendTypicalDuration(sess, strings.TrimSpace(StringArg(args, "backend")))
+	}
+	return 0
+}
+
 func (t *ImageTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("image requires a session context — use GetAgentToolsWithSession")
 }

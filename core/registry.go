@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SetupSection represents a configuration section contributed by an app.
@@ -284,7 +285,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	if sess != nil {
 		inline := handler
 		handler = func(args map[string]any) (string, error) {
-			expected, detach := ShouldDetach(ct, args, sess)
+			_, detach := ShouldDetach(ct, args, sess)
 			if !detach {
 				return inline(args)
 			}
@@ -320,7 +321,14 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 				Debug("[task] %s stayed inline: %v", ct.Name(), err)
 				return inline(args)
 			}
-			return detachedNotice(run, expected), nil
+			// What to SAY about the wait is a measured number or nothing at
+			// all — never the deadline that decided to detach in the first
+			// place. See EstimatingTool.
+			typical := time.Duration(0)
+			if et, ok := ct.(EstimatingTool); ok {
+				typical = et.TypicalDuration(args, sess)
+			}
+			return detachedNotice(run, typical), nil
 		}
 	}
 	// Framework-level attachment-success signal. Any tool that
