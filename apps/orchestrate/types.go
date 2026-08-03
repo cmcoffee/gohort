@@ -1031,6 +1031,16 @@ type ChatMessage struct {
 	// standing agents / monitors may populate it too. Display-only, like
 	// ReportFrom/ReportKind — the LLM context marker ignores it.
 	ReportDetail string `json:"report_detail,omitempty"`
+	// Attachments holds ids (not bytes — see core/chat_attachments.go) of the
+	// images this message delivered, so a reloaded thread can still show them.
+	// Live chat paints attachments off the SSE stream as they arrive and that
+	// is all it ever had: reload the page and the picture was gone, and a
+	// message posted with nobody watching — a finished background task — had no
+	// stream to paint to and was never visible at all.
+	//
+	// IDs, deliberately: the session record is loaded whole every turn and
+	// folded into prompt history, and base64 in it would be paid for on each.
+	Attachments []string `json:"attachments,omitempty"`
 	// Sender names who authored this message, for channel-room transcripts
 	// where the session is a multi-party messaging thread: the contact's
 	// display name on inbound (user) messages, the bound agent's name on its

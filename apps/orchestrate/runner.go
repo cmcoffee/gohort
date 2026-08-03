@@ -469,6 +469,16 @@ type chatTurn struct {
 	currentMsgID string
 	currentMu    sync.Mutex // guards currentMsgID (handler runs in goroutines)
 
+	// Ids of the attachments this turn delivered, kept so the persisted
+	// assistant message can point at them and a reloaded thread still shows
+	// its pictures. Accumulated at the SSE flush — the one place every
+	// delivered image passes through, across the turn's several step
+	// sessions — and drained onto the final message. They land under the
+	// final bubble rather than the mid-turn one that produced them, which a
+	// stored message has no id to distinguish anyway.
+	deliveredAtt []string
+	attMu        sync.Mutex
+
 	// lastUsage holds the most-recent assistant-turn stats payload
 	// (tokens, throughput, elapsed) captured by emitStats. handleSend
 	// reads + clears it when persisting the assistant ChatMessage so
@@ -3321,6 +3331,11 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 			"msg_id": msgID,
 			"data":   b64,
 		})
+		// The SSE event paints it now; keeping the bytes is what lets the thread
+		// paint it again after a reload. The claim above is the only place every
+		// image a turn delivers passes through, whichever of the turn's step
+		// sessions attached it.
+		t.keepDelivered(b64)
 	}
 	for _, b64 := range sess.ClaimUnflushedVideos() {
 		t.sse.Send(map[string]any{
@@ -3339,6 +3354,29 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 			"size":      f.Size,
 		})
 	}
+}
+
+// keepDelivered stores one delivered image and remembers its id for the
+// message that will carry it. Best-effort: failing here costs the picture on
+// reload, never the delivery — that already happened on the stream above.
+func (t *chatTurn) keepDelivered(b64 string) {
+	ids := keepDeliveredAttachments(t.user, []string{b64})
+	if len(ids) == 0 {
+		return
+	}
+	t.attMu.Lock()
+	t.deliveredAtt = append(t.deliveredAtt, ids...)
+	t.attMu.Unlock()
+}
+
+// takeDeliveredAttachments hands the ids to the message being persisted and
+// clears them, so a later message in the same turn can't claim them twice.
+func (t *chatTurn) takeDeliveredAttachments() []string {
+	t.attMu.Lock()
+	defer t.attMu.Unlock()
+	out := t.deliveredAtt
+	t.deliveredAtt = nil
+	return out
 }
 
 // ensureBubbleForTool returns the active orchestrator bubble id,
@@ -5032,6 +5070,11 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
 		ToolCalls: finalCalls,
+		// The live stream already painted these; carrying their ids is what
+		// makes them survive a reload. Until now an image the agent delivered
+		// existed only as an SSE event, so reopening the thread showed the text
+		// that described a picture and no picture.
+		Attachments: turn.takeDeliveredAttachments(),
 	})
 	sess.Plans = append(sess.Plans, PlanSnapshot{
 		RoundIndex: len(sess.Plans),

@@ -6600,6 +6600,30 @@
         });
       }
       registerReportReplayHook();
+
+      // Pictures a message delivered. The live stream paints an image as the
+      // SSE event arrives and that was the only record of it: reload the thread
+      // and the text describing a picture was all that came back, and a message
+      // posted while nobody was watching — a finished background task — had no
+      // stream to paint to at all. The server keeps the bytes and stores their
+      // ids on the message (see core/chat_attachments.go); this turns each id
+      // back into an image under the bubble it belongs to.
+      function registerAttachmentReplayHook() {
+        if (!window.uiRegisterMessageReplayHook) { setTimeout(registerAttachmentReplayHook, 50); return; }
+        window.uiRegisterMessageReplayHook(function(bubble, msg) {
+          if (!bubble || !msg || !msg.attachments || !msg.attachments.length) return;
+          if (bubble.getAttribute('data-orch-attached') === '1') return; // idempotent
+          bubble.setAttribute('data-orch-attached', '1');
+          msg.attachments.forEach(function(id) {
+            if (!id) return;
+            // A thread old enough to fall past the retention cap has lost its
+            // pictures; the handler 404s and the alt text is what shows. The
+            // conversation itself is unaffected, so there is nothing to report.
+            window.uiRenderMessageImage(bubble, 'api/attachment?id=' + encodeURIComponent(id), 'delivered image');
+          });
+        });
+      }
+      registerAttachmentReplayHook();
       // The per-reply ↗ Techwriter export was removed. Handing a raw
       // reply to another app produced articles nobody had named or
       // shaped; agents that should write there have techwriter tools of

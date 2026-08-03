@@ -686,6 +686,10 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			ReportKind:   cortexKindScheduled,
 			ReportDetail: detail,
 			ToolCalls:    toolTrace,
+			// This turn had no live stream to paint an attachment onto — it ran
+			// with nobody watching. Keeping the bytes is the only way the thread
+			// can ever show what it delivered.
+			Attachments: keepDeliveredAttachments(p.Username, subSess.Images),
 		})
 		sess.LastAt = time.Now()
 		if _, err := saveChatSession(udb, sess); err != nil {

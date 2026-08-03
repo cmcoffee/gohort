@@ -1430,6 +1430,20 @@
       if (typeof fn === 'function') messageReplayHooks.push(fn);
     };
 
+    // uiRenderMessageImage paints an image under a message bubble the same
+    // way a live tool-delivered one is painted — same attachment box, same
+    // sizing, same click-to-zoom. Takes ANY src (a data: URL for inline
+    // bytes, an http one for something the app serves), so a replay hook
+    // rebuilding a stored message doesn't have to reimplement the look and
+    // then drift from it.
+    window.uiRenderMessageImage = function(bubble, src, alt) {
+      if (!bubble || !src) return null;
+      var img = el('img', {src: src, class: 'ui-agent-msg-image', alt: alt || 'image'});
+      img.addEventListener('click', function() { openImageLightbox(src); });
+      agentMsgAttachmentBox(bubble).appendChild(img);
+      return img;
+    };
+
     // uiRegisterBubbleAction lets apps add buttons to the per-bubble
     // action bar (Edit/Retry/Delete on user; Retry/Copy on assistant).
     // Each registered action gets appended after the built-ins. The

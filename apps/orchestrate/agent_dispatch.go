@@ -1507,6 +1507,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// stale in-memory copy. The stored thread is only ever appended to (no
 	// concurrent run rewrites it — same-session dispatches serialize through the
 	// coalescer), so anything past the count we loaded is a mid-run mirror to graft.
+	// What this reply is sending out goes to the transport as bytes and to the
+	// stored thread as ids, so opening the conversation on the web later shows
+	// the picture the contact received rather than a reply describing one.
+	deliveredIDs := keepDeliveredAttachments(subSess.Username, subSess.Images)
 	withSessionAppend(target.ID, subSessionID, func() {
 		baseCount := len(priorSession.Messages)
 		if latest, ok := loadChatSession(runtimeDB, target.ID, subSessionID); ok && len(latest.Messages) > baseCount {
@@ -1514,7 +1518,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		}
 		priorSession.Messages = append(priorSession.Messages,
 			ChatMessage{Role: "user", Content: deliveredMessage, Created: now, Sender: run.MessageSender},
-			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender},
+			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs},
 		)
 		// Bound STORAGE the same way the Cortex home thread does (runner.go
 		// handleSend): drop leading messages already folded into the summary
