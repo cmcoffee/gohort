@@ -137,13 +137,18 @@ func TestSpaceNeedsAUserAndFailsSoft(t *testing.T) {
 }
 
 func TestUsernameCannotEscapeTheSpaceDirectory(t *testing.T) {
+	// Both path segments are attacker-shaped — a username and an agent id — and
+	// each is reduced to one safe element. The ring lives at
+	// recent/<user>/<agent>, so the check is that it stays exactly two levels
+	// under the root with no traversal in either.
 	sess := imageSpaceSession(t)
 	sess.Username = "../../etc"
+	sess.AgentID = "../../../root"
 	dir := recentImageDir(sess)
 	if strings.Contains(dir, "..") {
 		t.Errorf("directory %q escapes the image space", dir)
 	}
-	if filepath.Base(filepath.Dir(dir)) != "recent" {
+	if filepath.Base(filepath.Dir(filepath.Dir(dir))) != "recent" {
 		t.Errorf("directory %q is not under the recent/ root", dir)
 	}
 }

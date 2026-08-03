@@ -64,7 +64,19 @@ func recentImageDir(sess *ToolSession) string {
 	if user == "" {
 		return ""
 	}
-	return filepath.Join(ImageDir(), "recent", safeRecentUser(user))
+	// Per AGENT, not just per user. The refs are positional — image#1 is
+	// whatever is newest — so one shared ring across a fleet means an agent
+	// asking for "the picture you just made" can be handed one another agent
+	// made seconds earlier, and it has no way to tell. Silent, plausible, and
+	// wrong: the failure mode of an unanchored reference.
+	//
+	// The agent-less case gets its own folder rather than the parent, so no
+	// directory ever holds both a ring and other agents' rings.
+	agent := strings.TrimSpace(sess.AgentID)
+	if agent == "" {
+		agent = "_shared"
+	}
+	return filepath.Join(ImageDir(), "recent", safeRecentUser(user), safeRecentUser(agent))
 }
 
 // safeRecentUser reduces a username to something safe as a single path element,
