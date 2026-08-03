@@ -136,6 +136,15 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				if s.LastTool != "" {
 					status += " · " + s.LastTool
 				}
+				// A run with no rounds and no tools has nothing that changes —
+				// a detached task is one call waiting on a backend, so it never
+				// reports progress and sat in the ribbon as a motionless "task"
+				// for the whole fifteen minutes of a render. Elapsed is the only
+				// honest motion it has, and without it the surface meant to say
+				// "this is still going" said nothing of the kind.
+				if s.Round == 0 && s.LastTool == "" {
+					status += " · " + shortElapsed(time.Since(s.StartedAt))
+				}
 				label := s.Label
 				if label == "" {
 					label = name
