@@ -3378,11 +3378,11 @@ func (t *chatTurn) recoverClaimedDelivery(reply string) {
 	t.attMu.Lock()
 	already := len(t.deliveredAtt)
 	t.attMu.Unlock()
-	if already > 0 || !replyClaimsAttachment(reply) {
+	if already > 0 {
 		return
 	}
 	sess := t.newToolSession()
-	staged := recoverStagedDeliverable(sess, reply)
+	staged := recoverStagedDeliverable(sess, reply, turnProducedDeliverable(t.persistedToolCalls()))
 	if staged == "" {
 		return
 	}

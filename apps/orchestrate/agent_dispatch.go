@@ -1576,7 +1576,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			appendSessionDiag(runtimeDB, target.ID, subSessionID, "attach-marker-unresolved",
 				fmt.Sprintf("The reply asked to send %v, but no such file was in the workspace — most often because an earlier attach already delivered it with cleanup=true. Nothing was attached; the framework recovered the most recent staged file where it could.", missing))
 		}
-		if staged := recoverStagedDeliverable(subSess, cleanReply); staged != "" {
+		if staged := recoverStagedDeliverable(subSess, cleanReply, turnProducedDeliverable(persistedToolCallsFromTranscript(transcript))); staged != "" {
 			if b64 := resolveWorkspaceImages(subSess, []string{staged}); len(b64) > 0 {
 				Log("[orchestrate.dispatch] reply claimed a delivery but attached nothing — backstop attaching staged %q", staged)
 				if isVideoAttachment(staged) {

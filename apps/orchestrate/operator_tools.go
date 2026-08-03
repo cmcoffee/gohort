@@ -100,17 +100,8 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 // what it intended — not a random or rejected workspace file (that's why this is
 // safe even for find_image, whose result could be wrong: a wrong image the model
 // noticed wouldn't get a "here it is").
-func recoverStagedDeliverable(sess *ToolSession, reply string) string {
-	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
-		return ""
-	}
-	// A delivery MARKER is a stronger claim than any sentence — the model wrote
-	// the framework's own "send this file" instruction. When it names a file
-	// that no longer resolves (attached earlier with cleanup=true, or a
-	// filename it invented), the marker resolves to nothing, and a reply that
-	// was ONLY the marker strips to an empty string: the contact gets "I
-	// wasn't able to put together a response" for a picture that exists.
-	if !replyClaimsAttachment(reply) && !operatorAttachMarkerRe.MatchString(reply) {
+func recoverStagedDeliverable(sess *ToolSession, reply string, produced bool) string {
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" || !deliveryIntended(reply, produced) {
 		return ""
 	}
 	entries, err := os.ReadDir(sess.WorkspaceDir)
@@ -140,27 +131,82 @@ func recoverStagedDeliverable(sess *ToolSession, reply string) string {
 	return newest
 }
 
+// deliveryIntended decides whether a turn MEANT to send the file it staged.
+//
+// Three signals, any of which is enough, and one veto that beats all of them:
+//
+//   - The turn ran a tool whose whole job is to produce a deliverable. This is
+//     the reliable one, and reading prose was never a good substitute for it:
+//     "There you go. Shazz's got a captive audience now 🚗" is a caption, and a
+//     caption names what is IN the picture rather than the word "picture", so
+//     every rule keyed on delivery nouns missed exactly the replies that most
+//     obviously accompany an image.
+//   - A delivery MARKER — the framework's own send instruction, written by the
+//     model. Stronger than any sentence.
+//   - Prose that claims a delivery in so many words.
+//
+// The veto is a reply that says the thing FAILED. It comes first because a
+// refusal mentions the subject as much as a delivery does, and recovering a
+// staged file on the back of one hands the user the very thing the model just
+// rejected.
+func deliveryIntended(reply string, produced bool) bool {
+	if replyDisclaimsDelivery(reply) {
+		return false
+	}
+	return produced || operatorAttachMarkerRe.MatchString(reply) || replyClaimsAttachment(reply)
+}
+
+// replyDisclaimsDelivery reports whether the reply says the work did not come
+// off — the one signal that outranks every claim that it did.
+func replyDisclaimsDelivery(reply string) bool {
+	r := strings.ToLower(reply)
+	for _, no := range []string{
+		"couldn't", "could not", "wasn't able", "was not able", "unable to",
+		"didn't find", "did not find", "no luck", "doesn't match", "does not match",
+		"nothing that", "not what you", "failed to", "went wrong",
+	} {
+		if strings.Contains(r, no) {
+			return true
+		}
+	}
+	return false
+}
+
+// deliverableProducers are the tools that exist to PRODUCE something for the
+// user. A turn that ran one and attached nothing is the case this whole
+// backstop is for.
+//
+// Inspection tools are deliberately absent: a screenshot taken to read a page,
+// or a view_image used to check a file, produces an image the user never asked
+// to receive.
+var deliverableProducers = map[string]bool{
+	"image": true, "find_image": true, "generate_image": true, "fetch_image": true,
+	"video": true, "download_video": true,
+}
+
+// turnProducedDeliverable reports whether any call this turn was to a producer.
+func turnProducedDeliverable(calls []PersistedToolCall) bool {
+	for _, c := range calls {
+		if deliverableProducers[c.Name] {
+			return true
+		}
+	}
+	return false
+}
+
 // replyClaimsAttachment reports whether the reply asserts it delivered an
 // image/file — the signal that the model THINKS it attached something. Requires
 // a delivery cue AND an attachment noun so the backstop stays scoped to phantom
 // deliveries instead of firing on any staged file or any casual "here's".
 func replyClaimsAttachment(reply string) bool {
 	r := strings.ToLower(reply)
-	// A reply that says the thing FAILED is not a delivery claim, however it
-	// phrases the rest. Checked first, because "I couldn't find a picture of
-	// that" contains both a noun and, on a broad enough cue list, a cue.
-	for _, no := range []string{
-		"couldn't", "could not", "wasn't able", "was not able", "unable to",
-		"didn't find", "did not find", "no luck", "doesn't match", "does not match",
-		"nothing that", "not what you", "failed to",
-	} {
-		if strings.Contains(r, no) {
-			return false
-		}
+	if replyDisclaimsDelivery(reply) {
+		return false
 	}
 	hasCue := false
 	for _, cue := range []string{
 		"here's ", "here are ", "here is ", "here you go", "attached", "i've attached",
+		"there you go", "there's ", "there is ", "there are ", "there ya go",
 		"sending you", "sent you", "take a look", "check out", "sharing ",
 		// A model announcing what it MADE is claiming delivery just as much as
 		// one saying "here you go" — and these are the phrasings that actually
