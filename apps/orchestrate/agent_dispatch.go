@@ -532,6 +532,14 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed)
 	ctx = withParentRun(ctx, liveRun.ID)
+	// Hand the turn's context to the session. Two things depend on it and both
+	// were silently off: a tool can only DETACH when it can find the run that
+	// owns it, which it reads off this context (the log said "image stayed
+	// inline: no owning agent to deliver as" on every image call this path
+	// made, so a fifteen-minute render held the turn open instead of running in
+	// the background), and cancellation only reaches a tool that is watching
+	// the turn's context rather than a background one.
+	subSess.Ctx = ctx
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
 	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
@@ -1116,6 +1124,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed)
 	ctx = withParentRun(ctx, liveRun.ID)
+	// Hand the turn's context to the session. Two things depend on it and both
+	// were silently off: a tool can only DETACH when it can find the run that
+	// owns it, which it reads off this context (the log said "image stayed
+	// inline: no owning agent to deliver as" on every image call this path
+	// made, so a fifteen-minute render held the turn open instead of running in
+	// the background), and cancellation only reaches a tool that is watching
+	// the turn's context rather than a background one.
+	subSess.Ctx = ctx
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
 	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
