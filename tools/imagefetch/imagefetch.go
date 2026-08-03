@@ -501,6 +501,21 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	var bestMeta SerperImageResult
 	bestScore := -1
 	usable := 0
+	// scored counts candidates the vision screen actually RATED. A screen that
+	// returns no number is not the same as one that rates everything zero, and
+	// conflating them is how "a picture of <a named person>" became "could not
+	// download any usable image": asking a vision model to confirm a specific
+	// person's identity is the question it most often declines, so it answers
+	// with prose and no trailing rating, parseTrailingScore returns -1 for every
+	// candidate, and a search that fetched six perfectly good photographs
+	// reports a download failure.
+	scored := 0
+	// fallback is the candidate to use when the screen abstains entirely —
+	// preferring one whose page text matched, since that is the only signal
+	// left at that point.
+	var fallbackData []byte
+	var fallbackMeta SerperImageResult
+	fallbackTextMatch := false
 	for _, r := range results {
 		if usable >= maxFindCandidates {
 			break
@@ -522,6 +537,9 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			continue
 		}
 		usable++
+		if fallbackData == nil || (textMatch && !fallbackTextMatch) {
+			fallbackData, fallbackMeta, fallbackTextMatch = data, r, textMatch
+		}
 		// No vision configured → can't screen the pixels; take the first
 		// text-matching result (or the first usable one at all).
 		if sess.LLM == nil {
@@ -531,6 +549,9 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			continue
 		}
 		score := scoreImageMatch(sess, data, query)
+		if score >= 0 {
+			scored++
+		}
 		Log("[imagefetch/find_image] query=%q candidate %d (title %q) text=%v vision=%d/100", query, usable, r.Title, textMatch, score)
 		if textMatch && score >= imageMatchThreshold {
 			return saveAndReturn(data, r) // confident match — stop here
@@ -569,10 +590,44 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		Log("[imagefetch/find_image] query=%q no text+vision match; using best vision match %d/100", query, bestScore)
 		return saveAndReturn(bestData, bestMeta)
 	}
-	if bestScore < 0 {
+	switch findOutcome(usable, scored, bestScore) {
+	case findNoImages:
 		return "", fmt.Errorf("could not download any usable image for %q (sources may be blocking the fetch)", query)
+	case findScreenAbstained:
+		// Images arrived; the screen just never rated any of them. A screen that
+		// will not answer is, for this purpose, the same as not having one — so
+		// fall back to the no-vision behaviour (first text-matching candidate)
+		// rather than throwing away results it declined to judge.
+		Log("[imagefetch/find_image] query=%q vision screen returned no rating for any of %d candidate(s) — delivering the best text match unscreened", query, usable)
+		return saveAndReturn(fallbackData, fallbackMeta)
 	}
 	return "", fmt.Errorf("found image(s) for %q but none clearly depict it (best visual match %d/100) — the search may have surfaced lookalikes or unrelated results; refine the query, or use fetch_image with a specific image URL", query, bestScore)
+}
+
+// findResolution is how a search that produced no confident match ends.
+type findResolution int
+
+const (
+	findNoImages        findResolution = iota // nothing downloadable — the sources blocked us
+	findScreenAbstained                       // images arrived, the vision screen rated none of them
+	findAllRejected                           // the screen rated them and they genuinely do not match
+)
+
+// findOutcome separates three failures that used to be two. The middle one is
+// the one that mattered: a vision screen asked to confirm a NAMED PERSON often
+// declines to answer at all, which left every candidate unscored and reported
+// as though nothing had downloaded — sending the caller to debug a network
+// problem that never happened.
+func findOutcome(usable, scored, bestScore int) findResolution {
+	switch {
+	case usable == 0:
+		return findNoImages
+	case scored == 0:
+		return findScreenAbstained
+	default:
+		_ = bestScore
+		return findAllRejected
+	}
 }
 
 // --- GenerateImageTool ---

@@ -1470,7 +1470,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// A terminal-rule pre_input block refused this request outright; the loop
 	// delivers the decline without calling a model.
 	loopCfg.PreEmptedReply = gDecline
-	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
+	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
 	// A superseded/cancelled turn is CANCELED, not FAILED.
@@ -1490,6 +1490,25 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// runner's HitRoundCap fallback.
 	if cleanReply == "" && resp.HitRoundCap {
 		cleanReply = "I ran out of working rounds before I could finish this and didn't have a partial answer to show. Try narrowing the request, or ask me to continue."
+	}
+	// Empty on a CLEAN finish is the other shape, and the one that used to
+	// vanish: the loop ended without error, without exhausting its rounds, and
+	// with nothing to say. Downstream that becomes a channel's "I wasn't able to
+	// put together a response", which reads as a comprehension failure and sends
+	// the user off rephrasing a request that was understood perfectly well —
+	// while the actual cause (a round that called tools and never spoke) leaves
+	// no trace anywhere. Say what ran.
+	if cleanReply == "" && !resp.HitRoundCap {
+		trace := persistedToolCallsFromTranscript(transcript)
+		detail := "The agent finished without producing any reply text"
+		if n := len(trace); n > 0 {
+			detail += fmt.Sprintf(" after %d tool call(s), the last being %s", n, trace[n-1].Name)
+		} else {
+			detail += " and called no tools"
+		}
+		detail += ". The caller substituted a fallback message. A turn that ends on a tool call without a closing sentence is the usual cause."
+		Log("[orchestrate.RunAgentSyncContinuing] EMPTY REPLY owner=%s agent=%s sub=%s tools=%d", agentOwner, target.ID, subSessionID, len(trace))
+		appendSessionDiag(runtimeDB, target.ID, subSessionID, "empty-reply", detail)
 	}
 	// Persist the new exchange for the next continuation.
 	now := time.Now()

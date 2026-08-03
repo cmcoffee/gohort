@@ -355,7 +355,17 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
 		}
 		if text != replyText {
-			Log("[channel] empty agent reply for owner=%s agent=%s — sending fallback", in.Owner, in.AgentID)
+			// Name WHICH emptiness this was. The two have different causes and
+			// different fixes, and the fallback text — which asks the contact to
+			// rephrase — is misleading about both: the request was understood,
+			// the agent just said nothing back.
+			cause := "the agent produced no reply text at all"
+			if strings.TrimSpace(res.Text) != "" {
+				cause = "the agent's whole reply was framework markup (a meta tag or an attachment marker) and nothing survived stripping for delivery"
+			}
+			Log("[channel] empty agent reply for owner=%s agent=%s — %s; sending fallback", in.Owner, in.AgentID, cause)
+			appendSessionDiag(UserDB(app.DB, in.Owner), in.AgentID, sessionID, "channel-empty-reply",
+				"A message on this channel got the generic \"I wasn't able to put together a response\" reply because "+cause+". The contact was asked to rephrase, which is not the actual problem.")
 		}
 		replyText = text
 		// Cortex feed (received → cortex): mirror this inbound into the bound
