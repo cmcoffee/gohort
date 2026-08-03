@@ -190,25 +190,26 @@ func (T *OrchestrateApp) startWakeTurn(sessionID, user, agentID string, note wak
 	}, false)
 }
 
-// bufferWake records a result and reports whether someone else is already
-// going to deliver it. The first caller owns the turn: it waits out the window,
-// takes everything that accumulated, and sends one message.
+// bufferWake reports whether someone else is going to deliver this result.
+//
+// The FIRST result opens a window and is delivered immediately by its caller —
+// it is not buffered, and buffering it was the bug: the caller sent it, then
+// the window closed and sent it a second time, so one finished render produced
+// two announcements fifteen seconds apart and the second one promised a picture
+// the first had already carried off.
+//
+// Anything arriving inside the window is buffered instead, and goes out as one
+// further message when the window closes. That keeps a lone result prompt (the
+// common case) while a burst still collapses to two messages rather than N.
 func (T *OrchestrateApp) bufferWake(sessionID, user, agentID string, note wakeNote) bool {
-	pendingWakeMu.Lock()
-	_, owned := pendingWakes[sessionID]
-	pendingWakes[sessionID] = append(pendingWakes[sessionID], note)
-	pendingWakeMu.Unlock()
-	if owned {
-		return true
+	if !claimWakeWindow(sessionID, note) {
+		return true // a window is open; whoever owns it will carry this one
 	}
 	go func() {
 		time.Sleep(taskWakeCoalesce)
-		pendingWakeMu.Lock()
-		notes := pendingWakes[sessionID]
-		delete(pendingWakes, sessionID)
-		pendingWakeMu.Unlock()
+		notes := takeBufferedWakes(sessionID)
 		if len(notes) == 0 {
-			return
+			return // nothing else finished in the window — the owner already sent its own
 		}
 		// A live turn may have started during the window — prefer it, since
 		// joining a conversation beats interrupting one. Unless files are
@@ -222,6 +223,31 @@ func (T *OrchestrateApp) bufferWake(sessionID, user, agentID string, note wakeNo
 		}
 	}()
 	return false
+}
+
+// claimWakeWindow reports whether the caller OWNS delivery for this session —
+// meaning it must send its own note now. An owner's note is deliberately not
+// buffered; only results that land while its window is open are, and those go
+// out together when it closes.
+func claimWakeWindow(sessionID string, note wakeNote) bool {
+	pendingWakeMu.Lock()
+	defer pendingWakeMu.Unlock()
+	if _, open := pendingWakes[sessionID]; open {
+		pendingWakes[sessionID] = append(pendingWakes[sessionID], note)
+		return false
+	}
+	// Present-but-empty marks the window open without queuing anything.
+	pendingWakes[sessionID] = nil
+	return true
+}
+
+// takeBufferedWakes closes the window and returns what accumulated in it.
+func takeBufferedWakes(sessionID string) []wakeNote {
+	pendingWakeMu.Lock()
+	defer pendingWakeMu.Unlock()
+	notes := pendingWakes[sessionID]
+	delete(pendingWakes, sessionID)
+	return notes
 }
 
 // joinWakeNotes merges several finished tasks into one message. Blank-line

@@ -3065,15 +3065,21 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		// text (tool_def / add_tool confirmations), not fetched content — the
 		// CapNetwork on their union comes from a verify/test sub-action, not
 		// from their everyday output.
-		if toolCarriesNetworkCap(tools[i].Tool) && !tools[i].Tool.TrustedOutput {
-			inner := orig
-			orig = func(args map[string]any) (string, error) {
-				out, err := inner(args)
-				if err == nil && strings.TrimSpace(out) != "" {
-					out = untrustedContentFence + out
-				}
-				return out, err
+		//
+		// A FRAMEWORK-authored result is exempt however the tool is declared:
+		// the notice a detached call returns is our own control text, and
+		// fencing it tells the model to disregard the very instructions
+		// ("nothing has been delivered", "do not call this again") that keep it
+		// from claiming a finished render or starting a second one.
+		fenceThisTool := toolCarriesNetworkCap(tools[i].Tool) && !tools[i].Tool.TrustedOutput
+		inner := orig
+		orig = func(args map[string]any) (string, error) {
+			out, err := inner(args)
+			out, byFramework := TakeFrameworkResultMark(out)
+			if fenceThisTool && !byFramework && err == nil && strings.TrimSpace(out) != "" {
+				out = untrustedContentFence + out
 			}
+			return out, err
 		}
 		tools[i].Handler = func(args map[string]any) (string, error) {
 			// Activity-pane cmd / inline tool_call go in parallel so

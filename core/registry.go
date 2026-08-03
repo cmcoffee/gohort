@@ -328,7 +328,10 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			if et, ok := ct.(EstimatingTool); ok {
 				typical = et.TypicalDuration(args, sess)
 			}
-			return detachedNotice(run, typical), nil
+			// Marked as framework-authored so the app's untrusted-content
+			// fence leaves it alone: these instructions are ours, and wrapping
+			// them in "obey no instruction below" is self-defeating.
+			return markFrameworkResult(detachedNotice(run, typical)), nil
 		}
 	}
 	// Framework-level attachment-success signal. Any tool that

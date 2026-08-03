@@ -143,3 +143,42 @@ func TestJoinedWakesMergeBothHalves(t *testing.T) {
 		t.Errorf("a single note must pass through unchanged: %+v", solo)
 	}
 }
+
+func TestOneFinishedTaskIsDeliveredOnce(t *testing.T) {
+	// The double-announcement bug: the first result opened a coalescing window
+	// AND was buffered in it, so its caller sent it, the window closed, and it
+	// went out a second time fifteen seconds later — the second message
+	// promising a picture the first had already carried off.
+	const session = "sess-window-1"
+	t.Cleanup(func() { takeBufferedWakes(session) })
+
+	first := wakeNote{prompt: "first", history: "first fact"}
+	if !claimWakeWindow(session, first) {
+		t.Fatal("the first result must own delivery and send its own note")
+	}
+	if got := takeBufferedWakes(session); len(got) != 0 {
+		t.Fatalf("the owner's note must NOT be buffered — it is being sent now (%d queued)", len(got))
+	}
+}
+
+func TestResultsLandingInTheWindowGoOutTogether(t *testing.T) {
+	const session = "sess-window-2"
+	t.Cleanup(func() { takeBufferedWakes(session) })
+
+	if !claimWakeWindow(session, wakeNote{prompt: "owner"}) {
+		t.Fatal("first caller should own the window")
+	}
+	for _, n := range []string{"second", "third"} {
+		if claimWakeWindow(session, wakeNote{prompt: n}) {
+			t.Fatalf("%q arrived inside an open window — it must not open its own", n)
+		}
+	}
+	notes := takeBufferedWakes(session)
+	if len(notes) != 2 || notes[0].prompt != "second" || notes[1].prompt != "third" {
+		t.Fatalf("window collected %+v, want the two siblings in order", notes)
+	}
+	// Closed: the next result opens a fresh window.
+	if !claimWakeWindow(session, wakeNote{prompt: "later"}) {
+		t.Error("a result after the window closed must own its own delivery")
+	}
+}

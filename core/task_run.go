@@ -135,6 +135,35 @@ func ShouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) (time.Dur
 	return expected, expected >= taskDetachThreshold()
 }
 
+// frameworkResultMark tags a tool result the FRAMEWORK wrote rather than one the
+// tool returned — today, the notice a detached call hands back in place of its
+// result. It is stripped before the model ever sees it (safeInvoke, and the
+// app's own wrapper), so it exists only for the length of one return.
+//
+// It buys one thing: a result carrying it is not wrapped in the untrusted-
+// content fence. That fence tells the model to treat everything below it as
+// data and to obey no instruction inside it — correct for a fetched page, and
+// exactly wrong for the framework's own "do NOT claim this finished, do NOT
+// call this tool again". Fencing our own control text teaches the model to
+// discount the instructions we most need followed.
+//
+// Randomized per process, because the alternative — recognizing the notice by
+// its opening words — is forgeable: a fetched page that begins with the right
+// sentence would slip its payload past the fence.
+var frameworkResultMark = "\x00gohort-framework:" + UUIDv4() + "\x00"
+
+func markFrameworkResult(s string) string { return frameworkResultMark + s }
+
+// TakeFrameworkResultMark strips the mark and reports whether it was there.
+// Callers that fence untrusted tool output check this first: a marked result is
+// the framework speaking, not the outside world.
+func TakeFrameworkResultMark(s string) (string, bool) {
+	if strings.HasPrefix(s, frameworkResultMark) {
+		return strings.TrimPrefix(s, frameworkResultMark), true
+	}
+	return s, false
+}
+
 // detachedNotice is what the model gets back INSTEAD of the result. It has to
 // do two jobs the ordinary result never had to: stop it claiming the work is
 // finished, and stop it re-running the call because nothing came back.

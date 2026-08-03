@@ -40,7 +40,12 @@ func safeInvoke(name string, handler ToolHandlerFunc, args map[string]any) (outp
 			err = fmt.Errorf("tool panicked: %v", r)
 		}
 	}()
-	return handler(args)
+	output, err = handler(args)
+	// Strip the framework mark unconditionally: whether or not an app wrapper
+	// read it, it must never reach the model. This is the one place every tool
+	// call passes through.
+	output, _ = TakeFrameworkResultMark(output)
+	return output, err
 }
 
 // ErrToolDenied is returned when the user denies a tool call.
