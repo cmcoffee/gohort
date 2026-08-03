@@ -135,7 +135,13 @@ func TestMetaAndColonIdsSurviveTheRoundTrip(t *testing.T) {
 	if _, err := ApplyComfyWorkflow(&s, qwenEditGraph(t), ""); err != nil {
 		t.Fatalf("ApplyComfyWorkflow: %v", err)
 	}
-	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{Prompt: "x"})
+	// An edit graph gets its source photo: a text-only render against one is
+	// refused now, because it would draw against the placeholder filename the
+	// workflow was exported with.
+	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
+		Prompt: "x",
+		Images: []ComfyUploadedImage{{Name: "src.png"}},
+	})
 	if err != nil {
 		t.Fatalf("BuildComfyBody: %v", err)
 	}

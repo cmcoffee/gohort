@@ -436,6 +436,20 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	if len(in.Images) > len(m.ImageNodes) {
 		return "", fmt.Errorf("this backend takes %d input image(s), got %d", len(m.ImageNodes), len(in.Images))
 	}
+	// The same silent failure from the other direction, and the one that
+	// actually shipped: a workflow with image inputs, asked for a text-only
+	// render. Nothing writes those nodes, so the graph runs against the
+	// filenames it was SAVED with — whatever photo happened to be in ComfyUI's
+	// input folder when the workflow was exported — and returns a composite of
+	// the prompt and a picture from some earlier session. It looks like a bad
+	// render rather than a wiring error, so it publishes.
+	//
+	// Observed: a blog header rendered through an image-BLEND backend, coming
+	// back as the article's subject composited with a leftover source photo,
+	// once a day, for as long as that backend was the configured provider.
+	if len(m.ImageNodes) > 0 && len(in.Images) == 0 {
+		return "", fmt.Errorf("this backend composes SOURCE PHOTOS (%d image input%s) and was asked for a text-only render — it would draw against whatever placeholder its workflow was saved with. Use a text-to-image backend for this, or supply the source image(s)", len(m.ImageNodes), map[bool]string{true: "s", false: ""}[len(m.ImageNodes) != 1])
+	}
 	for i, img := range in.Images {
 		if err := setComfyImage(graph, m.ImageNodes[i], imageKey, img); err != nil {
 			return "", err
