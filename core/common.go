@@ -1597,6 +1597,15 @@ type ToolSession struct {
 	// so files a tool writes for a phantom conversation land in a stable spot.
 	RoutingTarget string
 
+	// Detached marks a session built for work that OUTLIVES the turn
+	// that started it (see ForDetachedTask). It changes one thing for
+	// a tool that produces a deliverable: there is no model round
+	// after this call, so nothing downstream will be told to attach
+	// what it made. A tool that would normally hand back "call
+	// workspace(attach) with this path" must attach it ITSELF here,
+	// or the file it just produced is never delivered to anyone.
+	Detached bool
+
 	// Files holds generic file attachments the LLM produced via
 	// attach_file. Distinct from Images/Videos — those have inline
 	// rendering paths in the chat UI and bridge protocol; Files is

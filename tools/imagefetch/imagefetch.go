@@ -4,6 +4,7 @@ package imagefetch
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -830,6 +831,20 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		return "", fmt.Errorf("save image: %w", err)
 	}
 	Log("[imagefetch] %s → %s (%d bytes)", note, name, len(data))
+
+	// A detached render has no model round after it: the turn that asked for the
+	// picture ended while it was still rendering, so nobody is left to be told
+	// "now call workspace(attach)". Attach it here, or the file is produced,
+	// stored, announced as done — and never actually sent. Delivery of a
+	// detached call's attachments is the framework's job from here on.
+	if sess != nil && sess.Detached {
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it — that would send it twice. Just say what it is.", len(data))
+		if ref := RecordRecentImage(sess, data, note); ref != "" {
+			msg += fmt.Sprintf(" %s is its lasting handle if you need to edit it or send it again later.", ref)
+		}
+		return msg, nil
+	}
 
 	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery — call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it — rare.)", name, len(data), name)
 	// Spell out that the workspace copy is one-shot. Saying "do not delete it"

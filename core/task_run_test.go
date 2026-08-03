@@ -35,7 +35,7 @@ func withTaskRunner(t *testing.T) *[]string {
 	t.Helper()
 	saved := TaskRunnerFunc
 	var started []string
-	TaskRunnerFunc = func(_ *ToolSession, label string, fn func(context.Context) (string, error)) (TaskRun, error) {
+	TaskRunnerFunc = func(_ *ToolSession, label string, fn func(context.Context) (TaskProduct, error)) (TaskRun, error) {
 		started = append(started, label)
 		go fn(context.Background())
 		return TaskRun{ID: "task_1", Label: label}, nil
@@ -117,7 +117,7 @@ func TestFailureToDetachFallsBackToRunningInline(t *testing.T) {
 	// If the host can't start a task — no chat session to deliver into, say —
 	// a slow answer beats no answer. The user never asked for this machinery.
 	saved := TaskRunnerFunc
-	TaskRunnerFunc = func(*ToolSession, string, func(context.Context) (string, error)) (TaskRun, error) {
+	TaskRunnerFunc = func(*ToolSession, string, func(context.Context) (TaskProduct, error)) (TaskRun, error) {
 		return TaskRun{}, errNoTaskHost
 	}
 	t.Cleanup(func() { TaskRunnerFunc = saved })
@@ -180,7 +180,7 @@ func TestDetachedWorkSurvivesTheTurnEnding(t *testing.T) {
 	saved := TaskRunnerFunc
 	taskCtx, cancelTask := context.WithCancel(context.Background())
 	defer cancelTask()
-	TaskRunnerFunc = func(_ *ToolSession, _ string, fn func(context.Context) (string, error)) (TaskRun, error) {
+	TaskRunnerFunc = func(_ *ToolSession, _ string, fn func(context.Context) (TaskProduct, error)) (TaskRun, error) {
 		go fn(taskCtx)
 		return TaskRun{ID: "task_1"}, nil
 	}
@@ -294,5 +294,83 @@ func TestDetachedNoticeAsksForAPromiseNotAnExplanation(t *testing.T) {
 	// The estimate is still there when it is worth saying.
 	if !strings.Contains(notice, "15 minutes") {
 		t.Errorf("notice should carry the estimate:\n%s", notice)
+	}
+}
+
+// attachingTool stands in for any tool that produces a deliverable: it attaches
+// to whatever session it was handed, the way the image tool attaches a finished
+// render.
+type attachingTool struct {
+	dur time.Duration
+	got chan *ToolSession
+}
+
+func (a *attachingTool) Name() string                 { return "attaching_tool" }
+func (a *attachingTool) Desc() string                 { return "d" }
+func (a *attachingTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
+func (a *attachingTool) Run(map[string]any) (string, error) {
+	return "", nil
+}
+func (a *attachingTool) RunWithSession(_ map[string]any, sess *ToolSession) (string, error) {
+	sess.AppendImage("PICTURE")
+	if a.got != nil {
+		a.got <- sess
+	}
+	return "rendered", nil
+}
+func (a *attachingTool) ExpectedDuration(map[string]any, *ToolSession) time.Duration { return a.dur }
+
+func TestDetachedCallHandsBackWhatItAttached(t *testing.T) {
+	// The failure this pins: a detached render finished, the picture went into
+	// the detached session's Images — which nothing else holds — and the wake
+	// carried only text. The user was told it was done and got no picture.
+	//
+	// A detached session's accumulators start empty (they must: sharing the
+	// turn's would race a reply already sent), so the ONLY way the bytes reach
+	// delivery is by travelling out with the result.
+	products := make(chan TaskProduct, 1)
+	saved := TaskRunnerFunc
+	TaskRunnerFunc = func(_ *ToolSession, _ string, fn func(context.Context) (TaskProduct, error)) (TaskRun, error) {
+		go func() {
+			p, _ := fn(context.Background())
+			products <- p
+		}()
+		return TaskRun{ID: "task_1"}, nil
+	}
+	t.Cleanup(func() { TaskRunnerFunc = saved })
+
+	turnSess := &ToolSession{Username: "alice"}
+	tool := &attachingTool{dur: taskDetachThreshold() + time.Hour}
+	def := ChatToolToAgentToolDefWithSession(tool, turnSess)
+	if _, err := def.Handler(map[string]any{}); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	select {
+	case p := <-products:
+		if p.Text != "rendered" {
+			t.Errorf("text = %q, want the tool's own result", p.Text)
+		}
+		if len(p.Images) != 1 || p.Images[0] != "PICTURE" {
+			t.Fatalf("the detached call's attachment was dropped: %#v", p.Images)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("detached work never ran")
+	}
+	// And nothing leaked into the turn's own session — that reply went out long
+	// before this finished.
+	if len(turnSess.Images) != 0 {
+		t.Errorf("detached work must not append to the turn's session: %#v", turnSess.Images)
+	}
+}
+
+func TestDetachedSessionIsMarkedDetached(t *testing.T) {
+	// The flag a tool reads to know nobody downstream will attach for it.
+	d := (&ToolSession{Username: "alice"}).ForDetachedTask(context.Background())
+	if !d.Detached {
+		t.Error("a session built for work that outlives the turn must be marked Detached")
+	}
+	if (&ToolSession{}).Detached {
+		t.Error("an ordinary turn session must not be marked Detached")
 	}
 }

@@ -357,12 +357,17 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		"[Time context: it is now %s (= %s). Timestamps from tools/APIs are usually UTC — convert each to the LOCAL zone before deciding what happened \"today\"; the day boundary is LOCAL midnight. When counting per-day items, list each id with its local date ONCE, then count that list — do not re-count.]",
 		nowLocal.Format("Mon 2006-01-02 15:04 MST"),
 		time.Now().UTC().Format("2006-01-02 15:04 UTC"))
-	msgs = append(msgs, Message{
-		Role: "user",
-		Content: fmt.Sprintf(
-			"[SCHEDULED UPDATE — fire %d, %s] %s\n\n%s\n%s",
-			p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective, timeCtx),
-	})
+	// A background task's result is not a scheduled fire and must not be dressed
+	// as one: the fire framing announces a cadence that doesn't exist and the
+	// directive tells the agent to go do work, when the work is already done and
+	// the only job left is to hand it over.
+	fireContent := fmt.Sprintf(
+		"[SCHEDULED UPDATE — fire %d, %s] %s\n\n%s\n%s",
+		p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective, timeCtx)
+	if isTaskWake(p.Prompt) {
+		fireContent = p.Prompt + "\n\n" + timeCtx
+	}
+	msgs = append(msgs, Message{Role: "user", Content: fireContent})
 
 	// Assemble the SAME toolkit a live turn / standing-agent fire gets, so a
 	// recurring task can actually DO its job: call its authored api / toolbox /
@@ -391,6 +396,19 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	if ws, werr := EnsureWorkspaceDir(p.Username); werr == nil {
 		subSess.WorkspaceDir = ws
+	}
+	// A background task's result arrives through this same fire path, and what
+	// it produced is staged against the session rather than described in the
+	// prompt. Fold it in BEFORE the loop: from here the files are ordinary
+	// outbound attachments on this turn, so whichever way the agent answers —
+	// send_message on a channel, the reply on any other surface — collects them
+	// the way it collects anything else it made. Gated on the wake marker so an
+	// ordinary recurring fire never picks up a delivery meant for another turn.
+	carriedAttachments := 0
+	if isTaskWake(p.Prompt) {
+		if carriedAttachments = claimTaskAttachments(p.SessionID, subSess); carriedAttachments > 0 {
+			Log("[orchestrate/scheduled] session=%s carrying %d staged attachment(s) from a finished background task", p.SessionID, carriedAttachments)
+		}
 	}
 	defer DeleteSessionTempTools(udb, schedSessID)
 	// Clone AllowedTools; force-add the always-on delivery + utility tools the
@@ -545,6 +563,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		toolTrace = persistedToolCallsFromTranscript(transcript)
 	}
 	steps := runStepsFromToolCalls(toolTrace)
+	// A wake that carried files but ended without sending anything means the
+	// picture went nowhere — the exact silent failure this staging exists to
+	// end, so say so where someone reading the log will see it rather than
+	// letting a "done!" with no attachment look like a success. A messaging
+	// surface collects them through the send; a plain web thread has no stored
+	// attachment channel, so this is expected there and still worth recording.
+	if carriedAttachments > 0 && !toolCallsInclude(toolTrace, "send_message") {
+		Log("[orchestrate/scheduled] WARN session=%s wake carried %d attachment(s) but the turn sent no message — they were not delivered",
+			p.SessionID, carriedAttachments)
+	}
 	record := func(status RunStatus, summary, raw, errStr string) {
 		RecordRun(RootDB, RunRecord{
 			Owner:   p.Username,
@@ -607,7 +635,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// anyway. NOTE: a recurring task that legitimately produces pure text with no
 	// tools would also be skipped — not a shape these action-oriented fires use;
 	// add an opt-out flag if that ever becomes real.
-	if len(toolTrace) == 0 {
+	//
+	// NOT for a background-task wake. There the model has nothing left to do but
+	// say what came back — answering in one line with no tool call is the
+	// CORRECT shape, and suppressing it threw away the result the user was
+	// waiting for and left the conversation looking like the task never
+	// finished.
+	if len(toolTrace) == 0 && !isTaskWake(p.Prompt) {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", agentLabel, p.SessionID, p.FireCount+1)
 		record(RunOK, "(no tool activity — preamble only, nothing posted)", reply, "")
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-suppressed",

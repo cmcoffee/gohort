@@ -70,10 +70,25 @@ type TaskRun struct {
 	Detach time.Duration
 }
 
+// TaskProduct is everything a detached call produced: the text the model reads,
+// and the attachments the framework has to deliver on its behalf.
+//
+// The attachments are the whole reason this is a struct and not a string. An
+// inline tool call leaves its picture in the turn's session and the reply it
+// rides out on collects it; a detached call has no such reply — the turn that
+// started it ended minutes ago. Whatever it attached has to travel WITH the
+// result to the wake, or it is produced, stored, announced, and never sent.
+type TaskProduct struct {
+	Text   string
+	Images []string // base64, in the order the tool attached them
+	Videos []string
+	Files  []FileAttachment
+}
+
 // TaskRunnerFunc starts fn in the background and returns a handle. The host
 // owns the lifecycle: registering the run so it appears in the live surface
 // under the turn that spawned it, wiring cancellation, and delivering the
-// result into the conversation when fn returns.
+// result — text AND attachments — into the conversation when fn returns.
 //
 // A function VARIABLE because the run registry and the conversation live in the
 // app layer, which imports core rather than the other way round. Same seam as
@@ -83,7 +98,7 @@ type TaskRun struct {
 // behaviour before this existed, so a host that doesn't wire it is no worse off.
 // fn receives the TASK's context, not the turn's. Everything the detached call
 // touches must hang off that instead — see ForDetachedTask.
-var TaskRunnerFunc func(sess *ToolSession, label string, fn func(ctx context.Context) (string, error)) (TaskRun, error)
+var TaskRunnerFunc func(sess *ToolSession, label string, fn func(ctx context.Context) (TaskProduct, error)) (TaskRun, error)
 
 // taskDetachThreshold is the duration past which a call is detached.
 func taskDetachThreshold() time.Duration { return TuneDuration("tune_task_detach_threshold") }
@@ -198,7 +213,8 @@ func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &ToolSession{
-		Ctx: ctx,
+		Ctx:      ctx,
+		Detached: true,
 
 		// Identity + storage.
 		Username:      s.Username,

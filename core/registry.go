@@ -288,16 +288,31 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			if !detach {
 				return inline(args)
 			}
-			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func(taskCtx context.Context) (string, error) {
+			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func(taskCtx context.Context) (TaskProduct, error) {
 				// Re-resolve the handler against a session built for work that
 				// outlives the turn. Reusing the turn's session here is what
 				// killed the call the moment the turn ended: its context is the
 				// turn's, and the dispatch and poll loop both honour it.
 				detached := sess.ForDetachedTask(taskCtx)
+				var (
+					out  string
+					rerr error
+				)
 				if sct, ok := ct.(SessionChatTool); ok {
-					return sct.RunWithSession(args, detached)
+					out, rerr = sct.RunWithSession(args, detached)
+				} else {
+					out, rerr = ct.Run(args)
 				}
-				return ct.Run(args)
+				// Take whatever the call attached along with its text. The
+				// detached session's accumulators are the ONLY record of it —
+				// nothing else holds this session, and the turn that could have
+				// collected them ended before the work started.
+				return TaskProduct{
+					Text:   out,
+					Images: detached.ClaimUnflushedImages(),
+					Videos: detached.ClaimUnflushedVideos(),
+					Files:  detached.ClaimUnflushedFiles(),
+				}, rerr
 			})
 			if err != nil {
 				// Could not detach — run it inline rather than refuse. A slow
