@@ -101,25 +101,45 @@ func (T *OrchestrateApp) installTaskRunner() {
 // the model's hands instead — "the file is at this path, attach it" — is what
 // produced a finished render, an announcement that it was done, and no picture.
 func (T *OrchestrateApp) deliverTaskResult(sessionID, user, agentID, label string, out TaskProduct, taskErr error) {
-	var b strings.Builder
-	b.WriteString(taskWakeMarker + " The work you started earlier is done: " + label + ".\n")
-	if taskErr != nil {
-		b.WriteString("It FAILED: " + taskErr.Error() + "\n")
-		b.WriteString("Tell the user it failed and what went wrong. Do not silently retry it.")
-	} else {
-		b.WriteString(strings.TrimSpace(out.Text) + "\n")
-		if n := stageTaskAttachments(sessionID, out); n > 0 {
-			fmt.Fprintf(&b, "The %d file(s) it produced are ATTACHED to the message you are about to send — they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
-		}
-		b.WriteString("Deliver this to the user now, and say what it was for — several messages may have passed since they asked, so name the request rather than assuming they are still looking at it.")
-	}
+	// What came back, and what to do about it, kept apart. The first half is
+	// FACT and is worth keeping in the thread: it names the handle for a
+	// finished picture, the id of a produced file — the thing the user's next
+	// message ("make it brighter") has to refer to. The second half is an
+	// instruction for one turn only, and an instruction left lying in history
+	// is one the model can read again three turns later and obey a second time.
+	note := buildWakeNote(sessionID, label, out, taskErr)
 	// Give a live turn a moment to take it as a note before starting one of our
 	// own: landing mid-answer reads better than a second message arriving on
 	// top of one already streaming.
 	time.Sleep(taskWakeGrace)
-	if err := T.wakeSessionWithNote(sessionID, user, agentID, b.String()); err != nil {
+	if err := T.wakeSessionWithNote(sessionID, user, agentID, note); err != nil {
 		Warn("[task] could not deliver result into session %s: %v", sessionID, err)
 	}
+}
+
+// buildWakeNote writes both halves of a finished task's result and stages
+// whatever it attached against the session.
+func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wakeNote {
+	var fact strings.Builder
+	fact.WriteString(taskWakeMarker + " The work you started earlier is done: " + label + ".\n")
+	act := "Deliver this to the user now, and say what it was for — several messages may have passed since they asked, so name the request rather than assuming they are still looking at it."
+	if taskErr != nil {
+		fact.WriteString("It FAILED: " + taskErr.Error() + "\n")
+		act = "Tell the user it failed and what went wrong. Do not silently retry it."
+	} else {
+		fact.WriteString(strings.TrimSpace(out.Text) + "\n")
+		if n := stageTaskAttachments(sessionID, out); n > 0 {
+			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send — they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
+		}
+	}
+	return wakeNote{prompt: fact.String() + act, history: strings.TrimSpace(fact.String())}
+}
+
+// wakeNote is one finished task's result in its two forms: what the delivering
+// turn is asked to do, and what the thread keeps afterwards.
+type wakeNote struct {
+	prompt  string // reaches the model as this turn's message
+	history string // persisted (hidden) so later turns can still name the result
 }
 
 // pendingWakes buffers results for a session that has no live turn, so several
@@ -134,7 +154,7 @@ func (T *OrchestrateApp) deliverTaskResult(sessionID, user, agentID, label strin
 // alternative is N competing turns.
 var (
 	pendingWakeMu sync.Mutex
-	pendingWakes  = map[string][]string{}
+	pendingWakes  = map[string][]wakeNote{}
 )
 
 // wakeSessionWithNote delivers text into a chat session. A live turn takes it
@@ -146,36 +166,37 @@ var (
 // its session before this result existed — joining it would deliver the text
 // and strand the picture, which is the exact failure this staging exists to
 // end. It gets its own turn, where the fold is deterministic.
-func (T *OrchestrateApp) wakeSessionWithNote(sessionID, user, agentID, text string) error {
+func (T *OrchestrateApp) wakeSessionWithNote(sessionID, user, agentID string, note wakeNote) error {
 	if q := lookupInjectionQueue(sessionID); q != nil && q.Owner == user && !hasStagedAttachments(sessionID) {
-		q.Push(text)
+		q.Push(note.prompt)
 		return nil
 	}
-	if T.bufferWake(sessionID, user, agentID, text) {
+	if T.bufferWake(sessionID, user, agentID, note) {
 		return nil // an earlier completion owns the turn and will carry this one
 	}
-	return T.startWakeTurn(sessionID, user, agentID, text)
+	return T.startWakeTurn(sessionID, user, agentID, note)
 }
 
 // startWakeTurn opens a fresh turn carrying a finished task's result.
-func (T *OrchestrateApp) startWakeTurn(sessionID, user, agentID, text string) error {
+func (T *OrchestrateApp) startWakeTurn(sessionID, user, agentID string, note wakeNote) error {
 	return fireOrchestrateUpdate(context.Background(), orchUpdatePayload{
-		SessionID: sessionID,
-		AgentID:   agentID,
-		Username:  user,
-		Prompt:    text,
-		Name:      "background task",
-		Surface:   "session",
+		SessionID:   sessionID,
+		AgentID:     agentID,
+		Username:    user,
+		Prompt:      note.prompt,
+		HistoryNote: note.history,
+		Name:        "background task",
+		Surface:     "session",
 	}, false)
 }
 
 // bufferWake records a result and reports whether someone else is already
 // going to deliver it. The first caller owns the turn: it waits out the window,
 // takes everything that accumulated, and sends one message.
-func (T *OrchestrateApp) bufferWake(sessionID, user, agentID, text string) bool {
+func (T *OrchestrateApp) bufferWake(sessionID, user, agentID string, note wakeNote) bool {
 	pendingWakeMu.Lock()
 	_, owned := pendingWakes[sessionID]
-	pendingWakes[sessionID] = append(pendingWakes[sessionID], text)
+	pendingWakes[sessionID] = append(pendingWakes[sessionID], note)
 	pendingWakeMu.Unlock()
 	if owned {
 		return true
@@ -193,7 +214,7 @@ func (T *OrchestrateApp) bufferWake(sessionID, user, agentID, text string) bool 
 		// joining a conversation beats interrupting one. Unless files are
 		// staged: see wakeSessionWithNote.
 		if q := lookupInjectionQueue(sessionID); q != nil && q.Owner == user && !hasStagedAttachments(sessionID) {
-			q.Push(joinWakeNotes(notes))
+			q.Push(joinWakeNotes(notes).prompt)
 			return
 		}
 		if err := T.startWakeTurn(sessionID, user, agentID, joinWakeNotes(notes)); err != nil {
@@ -206,12 +227,23 @@ func (T *OrchestrateApp) bufferWake(sessionID, user, agentID, text string) bool 
 // joinWakeNotes merges several finished tasks into one message. Blank-line
 // joined and never numbered — the same rule the channel coalescer follows,
 // because numbering invents an ordering the user did not ask about and the
-// model then explains.
-func joinWakeNotes(notes []string) string {
+// model then explains. Both halves merge: one turn to deliver them, one record
+// naming everything that came back.
+func joinWakeNotes(notes []wakeNote) wakeNote {
 	if len(notes) == 1 {
 		return notes[0]
 	}
-	return strings.Join(notes, "\n\n")
+	var prompts, history []string
+	for _, n := range notes {
+		prompts = append(prompts, n.prompt)
+		if strings.TrimSpace(n.history) != "" {
+			history = append(history, n.history)
+		}
+	}
+	return wakeNote{
+		prompt:  strings.Join(prompts, "\n\n"),
+		history: strings.Join(history, "\n\n"),
+	}
 }
 
 // --- Staged attachments -----------------------------------------------------

@@ -4,6 +4,8 @@
 package orchestrate
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -78,5 +80,66 @@ func TestNothingStagedStagesNothing(t *testing.T) {
 	}
 	if hasStagedAttachments(session) {
 		t.Error("a text-only result must leave the wake free to join a live turn")
+	}
+}
+
+func TestAWakeKeepsTheFactAndNotTheInstruction(t *testing.T) {
+	// The thread has to keep what came back — the handle the user's next
+	// message ("make it brighter") refers to. It must NOT keep "deliver this
+	// now": an instruction left in history is one the model can read three
+	// turns later and obey a second time.
+	note := buildWakeNote("sess-note-1", "image edit: a cat", TaskProduct{
+		Text: "The finished picture IS ATTACHED to this result. image#1 is its lasting handle.",
+	}, nil)
+
+	if !strings.Contains(note.history, "image#1") {
+		t.Errorf("the handle naming the result must survive into history:\n%s", note.history)
+	}
+	if !strings.Contains(note.history, "image edit: a cat") {
+		t.Errorf("history must say WHICH request this answers:\n%s", note.history)
+	}
+	if strings.Contains(note.history, "Deliver this to the user now") {
+		t.Errorf("a one-turn instruction must not be persisted:\n%s", note.history)
+	}
+	// The delivering turn still gets told what to do.
+	if !strings.Contains(note.prompt, "Deliver this to the user now") {
+		t.Errorf("the prompt must carry the instruction:\n%s", note.prompt)
+	}
+	if !isTaskWake(note.prompt) || !isTaskWake(note.history) {
+		t.Error("both halves must be recognizable as a task wake")
+	}
+}
+
+func TestAFailedTaskSaysSoWithoutRetryingItself(t *testing.T) {
+	note := buildWakeNote("sess-note-2", "image edit", TaskProduct{}, errTestTaskFailed)
+	if !strings.Contains(note.prompt, errTestTaskFailed.Error()) {
+		t.Errorf("the failure reason must reach the model:\n%s", note.prompt)
+	}
+	if !strings.Contains(note.prompt, "Do not silently retry") {
+		t.Errorf("a failed render must not be quietly re-run:\n%s", note.prompt)
+	}
+}
+
+var errTestTaskFailed = errors.New("the backend never returned an image")
+
+func TestJoinedWakesMergeBothHalves(t *testing.T) {
+	got := joinWakeNotes([]wakeNote{
+		{prompt: "first prompt", history: "first fact"},
+		{prompt: "second prompt", history: "second fact"},
+	})
+	for _, want := range []string{"first prompt", "second prompt"} {
+		if !strings.Contains(got.prompt, want) {
+			t.Errorf("merged prompt missing %q: %s", want, got.prompt)
+		}
+	}
+	for _, want := range []string{"first fact", "second fact"} {
+		if !strings.Contains(got.history, want) {
+			t.Errorf("merged history missing %q: %s", want, got.history)
+		}
+	}
+	// One result stays exactly itself — no numbering, no restructuring.
+	solo := joinWakeNotes([]wakeNote{{prompt: "only", history: "fact"}})
+	if solo.prompt != "only" || solo.history != "fact" {
+		t.Errorf("a single note must pass through unchanged: %+v", solo)
 	}
 }

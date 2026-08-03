@@ -77,6 +77,14 @@ type orchUpdatePayload struct {
 	Prompt    string `json:"prompt"`
 	Name      string `json:"name,omitempty"` // short task label; empty = derive from Prompt's first line
 
+	// HistoryNote is what the thread KEEPS of this fire's prompt, when the
+	// prompt itself shouldn't be kept. A background task's wake carries both a
+	// fact (what came back, and the handle naming it) and an instruction for
+	// this turn only; persisting the instruction leaves the model able to read
+	// it again later and act on it a second time. Empty = keep nothing, which
+	// is what an ordinary recurring fire wants.
+	HistoryNote string `json:"history_note,omitempty"`
+
 	IntervalSeconds int    `json:"interval_seconds"`
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`
@@ -678,6 +686,24 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// Background (Surface): the fire ran (tools executed, recorded to the run
 	// ledger below) but posts no reply card to any thread — no agent visibility.
 	if recordFire {
+		// A task wake's note is the only record of WHAT came back — the handle
+		// for a finished picture, the id of a produced file. It reached this
+		// turn's model as a prompt and was then thrown away, so the next thing
+		// the user said ran against a history where the agent announced a
+		// result that nothing identifies. Asked for one more change to it, the
+		// model has no handle to name, invents one, and the edit fails.
+		//
+		// Hidden: the LLM reads it, the transcript doesn't render it. The user
+		// already saw the reply it produced; showing them the machinery that
+		// prompted it would be showing the same news twice.
+		if note := strings.TrimSpace(p.HistoryNote); note != "" {
+			sess.Messages = append(sess.Messages, ChatMessage{
+				Role:    "user",
+				Content: note,
+				Created: time.Now(),
+				Hidden:  true,
+			})
+		}
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role:         "assistant",
 			Content:      reply,
