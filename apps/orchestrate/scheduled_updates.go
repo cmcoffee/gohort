@@ -728,6 +728,10 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 		}
 	}
+	// A background result whose conversation lives on a messaging channel has to
+	// be SENT there — appending it to the stored session is what the recurring
+	// path wants and leaves the person who asked with nothing.
+	deliverWakeToChannel(p, subSess, reply, toolTrace)
 	status, summary := RunOK, standingSummary(reply)
 	if hitCap {
 		status = RunAttention

@@ -401,3 +401,82 @@ const taskWakeGrace = 2 * time.Second
 // starting a turn. Longer than the grace period: two renders kicked off in the
 // same breath finish minutes apart, not seconds.
 const taskWakeCoalesce = 15 * time.Second
+
+// --- Delivering a wake into the conversation it came from ----------------
+//
+// The scheduled-fire path this wake rides APPENDS to a stored session and
+// stops. That is right for a recurring task posting into a web thread, and
+// wrong for a background result whose conversation lives on a phone: the turn
+// did everything correctly — attached the finished picture, wrote its line —
+// and then the reply sat in the session record while the contact who asked for
+// it got nothing.
+//
+// Observed end to end: the edit finished at 22:31:56, the wake turn attached
+// 1.27 MB of PNG at 22:32:00, posted 103 characters at 22:32:01, and the
+// outbox never saw any of it.
+
+// channelTargetForWake resolves the conversation a wake should be delivered to,
+// or ok=false when the session isn't a channel thread (a plain web session
+// needs no send — the user is looking at it).
+func channelTargetForWake(owner, agentID, sessionID string) (chatID, handle string, ok bool) {
+	addr := ""
+	switch {
+	case strings.HasPrefix(sessionID, "chan:"):
+		// Per-contact thread: the address is in the id.
+		addr = strings.TrimPrefix(sessionID, "chan:")
+	case sessionID == cortexSessionID(agentID):
+		// The cortex home IS the channel thread for a one-channel agent — that
+		// collapse is exactly what effectiveChannelSession does. With more than
+		// one bound channel there is no single right recipient, and guessing
+		// would send a private result to the wrong conversation.
+		var bound []Channel
+		for _, ch := range ListChannelsForAgent(RootDB, owner, agentID) {
+			if strings.TrimSpace(ch.Service) != "" {
+				bound = append(bound, ch)
+			}
+		}
+		if len(bound) != 1 {
+			return "", "", false
+		}
+		addr = bound[0].Address
+	default:
+		return "", "", false
+	}
+	if strings.TrimSpace(addr) == "" {
+		return "", "", false
+	}
+	// The address may be a chat id or a bare handle; the transport knows which.
+	if link, has := ActiveMessagingLink(); has {
+		if sum, found := link.ResolveRecipient(owner, addr); found {
+			return sum.ChatID, sum.Handle, true
+		}
+	}
+	return addr, "", true
+}
+
+// deliverWakeToChannel sends a finished task's result out over the conversation
+// that asked for it. No-op for a web session, and no-op when the turn already
+// sent something itself — a model that called send_message has delivered, and a
+// second copy is worse than none.
+func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply string, toolTrace []PersistedToolCall) {
+	if !isTaskWake(p.Prompt) || toolCallsInclude(toolTrace, "send_message") {
+		return
+	}
+	chatID, handle, ok := channelTargetForWake(p.Username, p.AgentID, p.SessionID)
+	if !ok {
+		return
+	}
+	text := strings.TrimSpace(StripMetaTags(reply))
+	imgs, vids := collectMessageMedia(subSess, reply)
+	if text == "" && len(imgs) == 0 {
+		return
+	}
+	if len(vids) > 0 {
+		Log("[task] wake for session %s carried %d video(s); this path delivers text and images only", p.SessionID, len(vids))
+	}
+	if _, err := operatorDeliverMessage(p.Username, p.AgentID, chatID, handle, text, imgs); err != nil {
+		Warn("[task] could not deliver the finished result to the conversation (%s): %v", chFirst(chatID, handle), err)
+		return
+	}
+	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s))", chFirst(chatID, handle), len(text), len(imgs))
+}
