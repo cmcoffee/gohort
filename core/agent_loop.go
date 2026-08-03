@@ -4048,8 +4048,24 @@ func StripToolCallMarkup(s string) string {
 // Used by the agent loop to detect "model wrote a tool call as
 // narrative text" and inject a corrective re-prompt instead of
 // silently terminating with the call un-executed.
+// bracketedCallDirectiveRe matches a tool call written as a BRACKETED
+// DIRECTIVE — "[CALL_FUNCTION] fetch_image: find a photo of …" and its
+// siblings. A shape worth naming separately because of how it got out: the
+// prose scan is gated off for a long body that finished cleanly (a real answer
+// must not be re-read as a tool call), and this arrived inside 700 characters
+// of narration. Nothing extracted it, nothing corrected it, and the whole
+// monologue — invented progress, second thoughts, "OK found a good one" — went
+// to a contact verbatim.
+//
+// Treated as MARKUP rather than prose, because that is what it is: no sentence
+// a person writes contains "[CALL_FUNCTION]". Length can't make it an answer.
+var bracketedCallDirectiveRe = regexp.MustCompile(`(?i)\[(?:CALL_FUNCTION|FUNCTION_CALL|TOOL_CALL|CALL_TOOL|INVOKE)\]\s*:?\s*([a-zA-Z_][a-zA-Z0-9_]*)`)
+
 func containsFakeToolCodeBlock(s string) bool {
 	if strings.Contains(s, "<tool_code>") {
+		return true
+	}
+	if bracketedCallDirectiveRe.MatchString(s) {
 		return true
 	}
 	if strings.Contains(s, "```tool_code") {
@@ -4140,6 +4156,10 @@ func containsFakeJSONToolBlock(s string) bool {
 // message can reference it ("You appeared to invoke 'tool_def'").
 // Returns "" when no name can be extracted.
 func extractFakeToolCodeName(s string) string {
+	// [CALL_FUNCTION] name: … form
+	if m := bracketedCallDirectiveRe.FindStringSubmatch(s); m != nil {
+		return m[1]
+	}
 	// ::name( form
 	if idx := strings.Index(s, "::"); idx >= 0 {
 		rest := s[idx+2:]
@@ -4183,6 +4203,22 @@ func extractFakeToolCodeName(s string) string {
 // content so the user-visible message doesn't show the fake
 // invocation alongside the narrative that introduced it.
 func stripFakeToolCodeBlocks(s string) string {
+	// [CALL_FUNCTION] name: … — drop from the directive to the end of its line.
+	// The narration around it is left alone: the correction re-prompt replaces
+	// the whole reply anyway, and cutting more than the directive would be
+	// guessing at where the model's real sentence began.
+	for {
+		loc := bracketedCallDirectiveRe.FindStringIndex(s)
+		if loc == nil {
+			break
+		}
+		end := strings.IndexByte(s[loc[0]:], '\n')
+		if end < 0 {
+			s = s[:loc[0]]
+			break
+		}
+		s = s[:loc[0]] + s[loc[0]+end+1:]
+	}
 	// <tool_code>...</tool_code>
 	for {
 		start := strings.Index(s, "<tool_code>")
