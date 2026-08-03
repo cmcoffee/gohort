@@ -245,6 +245,35 @@ func unresolvedAttachMarkers(sess *ToolSession, text string) []string {
 	return missing
 }
 
+// phantomDeliveryRefs answers the loop's question: which files does this reply
+// claim to be sending that do not exist?
+//
+// Deliberately narrow, because every ref returned costs a correction round:
+//
+//   - Something was already attached this turn → not a phantom. The delivery
+//     happened; a marker naming a file consumed by an earlier cleanup=true
+//     attach is a duplicate reference, not a lie.
+//   - A staged file is recoverable → not a phantom. The backstop will ship it,
+//     so correcting the model would spend a round fixing something already fixed.
+//   - Otherwise, a marker resolving to nothing with nothing produced to deliver
+//     is a promise about a file that was never made.
+func phantomDeliveryRefs(sess *ToolSession, reply string) []string {
+	if sess == nil {
+		return nil
+	}
+	if len(sess.Images) > 0 || len(sess.Videos) > 0 || len(sess.Files) > 0 {
+		return nil
+	}
+	missing := unresolvedAttachMarkers(sess, reply)
+	if len(missing) == 0 {
+		return nil
+	}
+	if recoverStagedDeliverable(sess, reply, true) != "" {
+		return nil
+	}
+	return missing
+}
+
 // isDeliverableFile reports whether a workspace filename looks like something
 // meant to be SENT (image / doc / video), not a scratch or source file.
 func isDeliverableFile(name string) bool {

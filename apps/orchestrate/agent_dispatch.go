@@ -889,6 +889,12 @@ type AgentSyncResult struct {
 	// servitor's investigator continuing while plan steps remain) re-runs with the
 	// same SubSessionID while this is true.
 	HitRoundCap bool
+	// PhantomDelivery reports that the reply named a file it was sending, no
+	// such file exists, and nothing was recovered to stand in for it. The turn
+	// promised a picture it never made. Callers substituting a fallback for
+	// empty output use this to say something TRUE about why — the generic
+	// "could you rephrase it" blames the request, and the request was fine.
+	PhantomDelivery bool
 	// Silenced reports that the model DELIBERATELY chose to say nothing —
 	// stay_silent fired. Distinct from Text being empty by accident, which is a
 	// failure. Callers that substitute a fallback for empty output must not do
@@ -1471,6 +1477,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.DrainViewImages = subSess.DrainViewImages
 	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
 	loopCfg.OnStep = func(info StepInfo) { liveRun.SetProgress(info.Round, info.ToolCalls) }
+	// Catch a reply that promises a file it never made, while the loop can still
+	// do something about it. Without this the claim reaches the channel, strips
+	// to an empty reply, and the contact is asked to rephrase.
+	loopCfg.PhantomDeliveryRefs = func(reply string) []string { return phantomDeliveryRefs(subSess, reply) }
 	// Nothing on this path shows or keeps a non-final round's prose: only the
 	// final reply is persisted (one assistant ChatMessage, below), OnStep forwards
 	// the round number and tool calls but never content, and no SettleRound folds
@@ -1581,6 +1591,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// to and attach it, turning the phantom delivery into a real one. Scoped to a
 	// delivery claim (the model's own vetting signal), so it only ships what the
 	// model said it's sending. Does NOT depend on the model doing anything.
+	phantomDelivery := false
 	if len(imgs) == 0 && len(vids) == 0 {
 		// Name the markers that pointed at nothing. This is the shape the logs
 		// kept showing: a reply consisting of ONE delivery marker, the file
@@ -1588,6 +1599,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// nothing, and the whole reply stripping to empty — delivered to the
 		// contact as "I wasn't able to put together a response to that".
 		if missing := unresolvedAttachMarkers(subSess, cleanReply); len(missing) > 0 {
+			// Nothing attached, nothing recoverable, and the reply names a file
+			// that does not exist: the turn promised a picture it never made.
+			// Carried out so the caller can say something true about it instead
+			// of asking the person to rephrase a request that was fine.
+			phantomDelivery = true
 			Log("[orchestrate.dispatch] reply carried %d delivery marker(s) that resolve to nothing: %v", len(missing), missing)
 			appendSessionDiag(runtimeDB, target.ID, subSessionID, "attach-marker-unresolved",
 				fmt.Sprintf("The reply asked to send %v, but no such file was in the workspace — most often because an earlier attach already delivered it with cleanup=true. Nothing was attached; the framework recovered the most recent staged file where it could.", missing))
@@ -1605,7 +1621,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Status already finalized above (runOutcomeStatus) — reaching here is the
 	// success case, already marked Completed.
-	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, Silenced: subSess != nil && subSess.Silenced}, nil
+	if len(imgs) > 0 || len(vids) > 0 {
+		phantomDelivery = false // the backstop recovered something after all
+	}
+	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, Silenced: subSess != nil && subSess.Silenced}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

@@ -349,7 +349,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// back instead of the agent appearing to give up.
 		//
 		// UNLESS the silence was deliberate — see channelDelivery.
-		text, deliver := channelDelivery(replyText, res.Images, res.Videos, res.Silenced)
+		text, deliver := channelDelivery(replyText, res.Images, res.Videos, res.Silenced, res.PhantomDelivery)
 		if !deliver {
 			Log("[channel] agent chose silence for owner=%s agent=%s — delivering nothing", in.Owner, in.AgentID)
 			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
@@ -427,6 +427,13 @@ func audioNameForType(ct string) string {
 // and expects something back.
 const channelEmptyFallback = "I wasn't able to put together a response to that. Could you rephrase it, or give me a little more detail?"
 
+// channelPhantomFallback replaces it when we know WHY the reply was empty: the
+// agent said it was sending a file it had never made, so stripping the claim
+// left nothing. Asking the contact to rephrase is wrong here in a way that
+// matters — the request was understood and was fine, and sending someone off to
+// reword it hides a failure that had nothing to do with them.
+const channelPhantomFallback = "I got ahead of myself there — I mentioned a picture I hadn't actually made yet. Say the word and I'll get it for you properly."
+
 // channelDelivery decides what a channel actually sends for a completed run:
 // the text to deliver, and whether to deliver anything at all.
 //
@@ -441,13 +448,16 @@ const channelEmptyFallback = "I wasn't able to put together a response to that. 
 // Attachments outrank both. stay_silent paired with a produced file is the
 // tool's documented purpose (deliver the file with no caption), so silence with
 // an attachment still delivers.
-func channelDelivery(text string, images, videos []string, silenced bool) (string, bool) {
+func channelDelivery(text string, images, videos []string, silenced bool, phantom ...bool) (string, bool) {
 	hasAttachment := len(images) > 0 || len(videos) > 0
 	if strings.TrimSpace(text) != "" || hasAttachment {
 		return text, true
 	}
 	if silenced {
 		return "", false
+	}
+	if len(phantom) > 0 && phantom[0] {
+		return channelPhantomFallback, true
 	}
 	return channelEmptyFallback, true
 }

@@ -1090,6 +1090,25 @@ type AgentLoopConfig struct {
 	// its schema rejoins the catalog next round.
 	ToolFallbackResolver func(name string) (ToolHandlerFunc, bool)
 
+	// PhantomDeliveryRefs reports the files a reply CLAIMS to be sending that
+	// do not exist — a delivery promised for something never produced. The loop
+	// cannot answer this itself: what a reference resolves against (a workspace,
+	// an inbound-media registry, a recent-image ring) is the app's to know.
+	//
+	// Return only GENUINE phantoms. A reference to a file that was delivered and
+	// then cleaned up is not one — the delivery happened — and neither is one
+	// the app can still recover from a staged file. Anything returned here costs
+	// a correction round, so a false positive spends a round telling a model it
+	// was wrong when it wasn't.
+	//
+	// The failure it exists for, observed in full: a reply consisting of exactly
+	// "[ATTACH: find-dkfindcraig.jpg]", a filename with the right shape and the
+	// subject's name stuffed into it, for a picture the turn never made — it
+	// called no tools at all. The marker resolved to nothing, stripping left an
+	// empty reply, and the contact was asked to rephrase a request that was
+	// never the problem.
+	PhantomDeliveryRefs func(reply string) []string
+
 	// RoundToolFilter, when set, is called at the top of each round for
 	// every candidate tool name; returning false drops that tool from the
 	// round's catalog. Use to SUPPRESS a tool mid-turn — e.g. after it has
@@ -2632,6 +2651,32 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					promiseCorrectionsTotal++
 					continue
 				}
+			} else if refs := phantomDeliveryRefs(cfg, resp.Content); len(refs) > 0 {
+				// The reply promises a file that does not exist and the turn
+				// produced nothing to deliver. Same class as a fake tool call —
+				// an action claimed but never taken — and it gets the same
+				// remedy: strip the claim, say what was wrong, let the model
+				// either do the work or admit it can't. Left alone, this leaves
+				// the reply empty after stripping and the person on the other
+				// end gets a generic apology about their phrasing.
+				resp.Content = StripDeliveryMarkers(resp.Content)
+				history[len(history)-1] = Message{
+					Role:      "assistant",
+					Content:   resp.Content,
+					Reasoning: resp.Reasoning,
+				}
+				if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds {
+					Debug("[agent_loop] phantom delivery detected (%v), re-prompting: correction %d/%d", refs, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					emitDiag("phantom-delivery-corrected", fmt.Sprintf("The reply said it was sending %v, but no such file exists and nothing was produced this turn. The claim was removed and the model re-prompted.", refs))
+					settleRound()
+					history = append(history, Message{
+						Role: "user",
+						Content: frameworkNoticeTag + fmt.Sprintf(
+							"You said you were sending %v. No such file exists — you did not create or fetch it, so there is nothing to send and nothing was delivered. Either call the tool that actually produces it now, or tell the user plainly that you do not have it. Do NOT write a delivery marker for a file you have not made.", refs),
+					})
+					promiseCorrectionsTotal++
+					continue
+				}
 			} else if containsFakeToolCodeBlock(resp.Content) {
 				// Training-data artifact: the model writes its tool call
 				// as plain text in a <tool_code> block (Gemini format) or
@@ -3942,6 +3987,27 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		Debug("[agent_loop] dropping synthesized natural-language tool call '%s' — could not extract required args from prose", tc.Name)
 	}
 	return nil
+}
+
+// deliveryMarkerRe matches the framework's own "send this file" marker. Shared
+// by the phantom-delivery check and the stripper below so the two can never
+// disagree about what a delivery claim looks like.
+var deliveryMarkerRe = regexp.MustCompile(`\[ATTACH:\s*[^\]]*\]`)
+
+// phantomDeliveryRefs asks the app whether a reply promises files that do not
+// exist. Nil hook = no check, which is the behaviour every host had before it.
+func phantomDeliveryRefs(cfg AgentLoopConfig, content string) []string {
+	if cfg.PhantomDeliveryRefs == nil || strings.TrimSpace(content) == "" {
+		return nil
+	}
+	return cfg.PhantomDeliveryRefs(content)
+}
+
+// StripDeliveryMarkers removes [ATTACH: …] markers from a reply. Used when the
+// files they name do not exist: the marker is the claim, so removing it is what
+// stops the claim from being delivered or persisted.
+func StripDeliveryMarkers(s string) string {
+	return strings.TrimSpace(deliveryMarkerRe.ReplaceAllString(s, ""))
 }
 
 // StripToolCallMarkup removes fake tool-call markup from streamed
