@@ -190,6 +190,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	}
 	if len(m.ImageNodes) > 0 {
 		m.ImageKey = "image"
+		m.ImageNodes = orderImageNodesByConsumer(graph, m.ImageNodes)
 	}
 
 	// 3. Sampler → positive/negative conditioning → text nodes.
@@ -613,6 +614,139 @@ func hasComfyTextKey(in map[string]any) bool {
 // preset chain), and writing a plain value over that link silently severs the
 // wiring: ComfyUI then runs a graph the author never built, and the result
 // looks like a bad render rather than a broken import.
+// orderImageNodesByConsumer sorts the detected LoadImage nodes by the input
+// they FEED — image1, then image2, then image3 — rather than by node id.
+//
+// Node id order is arbitrary relative to what a person means by "the first
+// photo": ComfyUI numbers nodes by creation, so the loader wired to image2 can
+// easily carry the lower id. With two sources that is a coin flip you can spot
+// by eye; at three it is one you cannot, and getting it wrong does not error —
+// it composites in the wrong order and returns a plausible picture of the wrong
+// thing. The caller's first image goes to ImageNodes[0], so the consumer's
+// order is the only one that makes "the first is the base/subject" mean
+// anything.
+//
+// Loaders no numbered input references keep their relative id order, after the
+// ranked ones: a graph without this shape behaves exactly as it did before.
+func orderImageNodesByConsumer(graph map[string]map[string]any, nodes []string) []string {
+	if len(nodes) < 2 {
+		return nodes
+	}
+	isLoader := make(map[string]bool, len(nodes))
+	for _, id := range nodes {
+		isLoader[id] = true
+	}
+	rank := make(map[string]int, len(nodes))
+	for _, id := range sortedComfyNodes(graph) {
+		for key, val := range comfyInputs(graph, id) {
+			n, ok := numberedImageInput(key)
+			if !ok {
+				continue
+			}
+			src, ok := comfyLinkSource(val)
+			if !ok {
+				continue
+			}
+			loader, ok := loaderBehind(graph, src, isLoader, 0)
+			if !ok {
+				continue
+			}
+			// Lowest wins: a loader reaching both image1 and a later slot is
+			// still the first source.
+			if cur, seen := rank[loader]; !seen || n < cur {
+				rank[loader] = n
+			}
+		}
+	}
+	if len(rank) == 0 {
+		return nodes
+	}
+	out := append([]string(nil), nodes...)
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, oki := rank[out[i]]
+		rj, okj := rank[out[j]]
+		switch {
+		case oki && okj:
+			return ri < rj
+		case oki:
+			return true
+		default:
+			return false
+		}
+	})
+	return out
+}
+
+// loaderBehind walks back from a node to the LoadImage that ultimately feeds
+// it, through however many intermediate nodes sit between them.
+//
+// A direct wire is the exception, not the rule: a real Qwen edit graph runs
+// each source through a FluxKontextImageScale before the encoder, so an encoder
+// input names the scaler and the scaler names the loader. Ranking only on
+// direct links found nothing in exactly the workflows this ordering exists for,
+// and silently fell back to node id — the behaviour being fixed.
+//
+// Depth-bounded and single-path: it follows the first image-shaped link it
+// finds at each hop. A node that merges two sources (a real composite) has no
+// single loader behind it, and guessing which one is "first" from a merge is
+// the invention this function is meant to avoid.
+func loaderBehind(graph map[string]map[string]any, id string, isLoader map[string]bool, depth int) (string, bool) {
+	if depth > 8 || strings.TrimSpace(id) == "" {
+		return "", false
+	}
+	if isLoader[id] {
+		return id, true
+	}
+	inputs := comfyInputs(graph, id)
+	// Deterministic hop order: a node with several image inputs must resolve the
+	// same way every import.
+	keys := make([]string, 0, len(inputs))
+	for k := range inputs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !strings.HasPrefix(k, "image") && k != "pixels" && k != "samples" {
+			continue
+		}
+		src, ok := comfyLinkSource(inputs[k])
+		if !ok {
+			continue
+		}
+		if loader, found := loaderBehind(graph, src, isLoader, depth+1); found {
+			return loader, true
+		}
+	}
+	return "", false
+}
+
+// numberedImageInput reads the index out of an "image1" / "image2" input name.
+// Only NUMBERED names count: a plain "image" or "images" says nothing about
+// order, and reading one as first would invent an ordering the graph never
+// expressed.
+func numberedImageInput(key string) (int, bool) {
+	const prefix = "image"
+	if !strings.HasPrefix(key, prefix) || len(key) == len(prefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(key[len(prefix):])
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// comfyLinkSource returns the node id a link points at. A link is
+// ["<node id>", <slot>]; anything else is a literal value, not a wire.
+func comfyLinkSource(v any) (string, bool) {
+	arr, ok := v.([]any)
+	if !ok || len(arr) == 0 {
+		return "", false
+	}
+	id, ok := arr[0].(string)
+	return id, ok && strings.TrimSpace(id) != ""
+}
+
 func comfyIsLink(v any) bool {
 	arr, ok := v.([]any)
 	return ok && len(arr) >= 1
