@@ -137,8 +137,29 @@ func recoverStagedDeliverable(sess *ToolSession, reply string) string {
 // deliveries instead of firing on any staged file or any casual "here's".
 func replyClaimsAttachment(reply string) bool {
 	r := strings.ToLower(reply)
+	// A reply that says the thing FAILED is not a delivery claim, however it
+	// phrases the rest. Checked first, because "I couldn't find a picture of
+	// that" contains both a noun and, on a broad enough cue list, a cue.
+	for _, no := range []string{
+		"couldn't", "could not", "wasn't able", "was not able", "unable to",
+		"didn't find", "did not find", "no luck", "doesn't match", "does not match",
+		"nothing that", "not what you", "failed to",
+	} {
+		if strings.Contains(r, no) {
+			return false
+		}
+	}
 	hasCue := false
-	for _, cue := range []string{"here's ", "here are ", "here is ", "here you go", "attached", "i've attached", "sending you", "sent you", "take a look", "check out", "sharing "} {
+	for _, cue := range []string{
+		"here's ", "here are ", "here is ", "here you go", "attached", "i've attached",
+		"sending you", "sent you", "take a look", "check out", "sharing ",
+		// A model announcing what it MADE is claiming delivery just as much as
+		// one saying "here you go" — and these are the phrasings that actually
+		// come back. Without them the backstop sat out the common case: "Done —
+		// your haunted house is ready!" and no picture anywhere.
+		"i made", "i've made", "i created", "i've created", "i generated",
+		"i've generated", "made you", "is ready", "are ready", "all set",
+	} {
 		if strings.Contains(r, cue) {
 			hasCue = true
 			break

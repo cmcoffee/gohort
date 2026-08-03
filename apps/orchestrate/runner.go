@@ -3362,6 +3362,50 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 	}
 }
 
+// recoverClaimedDelivery ships a file the reply claims to have sent but that
+// nothing actually attached.
+//
+// The model produced the picture, wrote "here you go", and skipped the attach
+// call that delivers it. The file is right there in the workspace; the only
+// thing missing is the second step. So take it — and only when the reply makes
+// an explicit delivery claim, because that claim is the model's own signal that
+// this file was meant for the user rather than an intermediate it produced
+// along the way.
+//
+// No-op when the turn already delivered something: a reply that says "here it
+// is" alongside a real attachment is describing that attachment.
+func (t *chatTurn) recoverClaimedDelivery(reply string) {
+	t.attMu.Lock()
+	already := len(t.deliveredAtt)
+	t.attMu.Unlock()
+	if already > 0 || !replyClaimsAttachment(reply) {
+		return
+	}
+	sess := t.newToolSession()
+	staged := recoverStagedDeliverable(sess, reply)
+	if staged == "" {
+		return
+	}
+	b64s := resolveWorkspaceImages(sess, []string{staged})
+	if len(b64s) == 0 {
+		return
+	}
+	Log("[chat] reply claimed a delivery but attached nothing — backstop attaching staged %q", staged)
+	// Paint it under the bubble the reply just streamed into, the same way a
+	// tool-delivered image arrives.
+	kind := "image"
+	if isVideoAttachment(staged) {
+		kind = "video"
+	}
+	msgID := t.getCurrentMsgID()
+	for _, b64 := range b64s {
+		t.sse.Send(map[string]any{"kind": kind, "msg_id": msgID, "data": b64})
+		if kind == "image" {
+			t.keepDelivered(b64)
+		}
+	}
+}
+
 // keepDelivered stores one delivered image and remembers its id for the
 // message that will carry it. Best-effort: failing here costs the picture on
 // reload, never the delivery — that already happened on the stream above.
@@ -5072,6 +5116,16 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	if strings.TrimSpace(reply) == "" && len(finalCalls) > 0 {
 		reply = "_(No written reply this turn — see the tool actions above.)_"
 	}
+	// Delivery backstop: the reply SAYS it sent a picture and nothing was
+	// attached. The channel path has had this for a while; chat never did, so
+	// "here's your image" with no image was a dead end here — the file sat in
+	// the workspace, correctly produced, and the model simply never made the
+	// second call that ships it.
+	//
+	// Gated on the model's own delivery CLAIM, which is what keeps it honest:
+	// it only ever ships a file the model said it was sending, not whatever
+	// happens to be lying in the workspace.
+	turn.recoverClaimedDelivery(reply)
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
