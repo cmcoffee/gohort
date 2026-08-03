@@ -101,7 +101,16 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 // safe even for find_image, whose result could be wrong: a wrong image the model
 // noticed wouldn't get a "here it is").
 func recoverStagedDeliverable(sess *ToolSession, reply string) string {
-	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" || !replyClaimsAttachment(reply) {
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
+		return ""
+	}
+	// A delivery MARKER is a stronger claim than any sentence — the model wrote
+	// the framework's own "send this file" instruction. When it names a file
+	// that no longer resolves (attached earlier with cleanup=true, or a
+	// filename it invented), the marker resolves to nothing, and a reply that
+	// was ONLY the marker strips to an empty string: the contact gets "I
+	// wasn't able to put together a response" for a picture that exists.
+	if !replyClaimsAttachment(reply) && !operatorAttachMarkerRe.MatchString(reply) {
 		return ""
 	}
 	entries, err := os.ReadDir(sess.WorkspaceDir)
@@ -174,6 +183,20 @@ func replyClaimsAttachment(reply string) bool {
 		}
 	}
 	return false
+}
+
+// unresolvedAttachMarkers returns the marker targets in a reply that resolve to
+// nothing. Silence here was the whole problem: an unresolvable marker was
+// skipped without a word, so the only visible symptom was a generic apology
+// with no way to tell it apart from a model that said nothing at all.
+func unresolvedAttachMarkers(sess *ToolSession, text string) []string {
+	var missing []string
+	for _, m := range operatorAttachMarkerRe.FindAllStringSubmatch(text, -1) {
+		if _, _, ok := resolveAttachmentRef(sess, m[1], false); !ok {
+			missing = append(missing, m[1])
+		}
+	}
+	return missing
 }
 
 // isDeliverableFile reports whether a workspace filename looks like something
