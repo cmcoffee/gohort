@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
@@ -49,10 +50,15 @@ func init() {
 
 // RiskCategory names the KIND of risk a command carries, so the operator can
 // gate the categories that matter — changing database data, deleting files,
-// making outbound calls, or stopping/reconfiguring the host — while benign
-// work (a report redirected to a file, read-only probes) runs freely. This
-// replaced a blunt destructive/safe split that interrupted on every ">"
-// redirection yet never noticed a "psql -c DELETE" or a "curl" at all.
+// making outbound calls, or stopping/reconfiguring the host — while read-only
+// probing runs freely. This replaced a blunt destructive/safe split that
+// interrupted on every ">" redirection yet never noticed a "psql -c DELETE" or
+// a "curl" at all.
+//
+// Writes are judged by WHERE they land rather than waved through wholesale: a
+// redirect into the run's scratch directory is free, a redirect onto a real
+// file is an overwrite and gates like any other delete. See
+// classify_command_scoped.
 type RiskCategory string
 
 const (
@@ -178,7 +184,22 @@ func shell_segments(cmd string) []string {
 // parse_cmd extracts the effective command name and arguments from a segment,
 // stripping leading wrapper commands (sudo, nohup, env, etc.).
 func parse_cmd(seg string) (name string, args []string) {
-	fields := strings.Fields(seg)
+	return parse_cmd_fields(strings.Fields(seg))
+}
+
+// parse_cmd_fields is parse_cmd over pre-split fields, so callers that already
+// tokenized (shell_tokens) don't re-split and lose quote handling.
+func parse_cmd_fields(fields []string) (name string, args []string) {
+	if i := cmd_index(fields); i >= 0 {
+		return cmd_base(fields[i]), fields[i+1:]
+	}
+	return "", nil
+}
+
+// cmd_index returns the position of the effective command in fields, skipping
+// leading wrapper commands (sudo, nohup, env, timeout, …). Returns -1 when the
+// segment holds no command.
+func cmd_index(fields []string) int {
 	wrappers := map[string]bool{
 		"sudo": true, "nice": true, "nohup": true, "env": true, "command": true,
 	}
@@ -201,23 +222,254 @@ func parse_cmd(seg string) (name string, args []string) {
 		}
 	}
 	if i >= len(fields) {
-		return "", nil
+		return -1
 	}
-	return cmd_base(fields[i]), fields[i+1:]
+	return i
 }
 
-// classify_command returns the risk CATEGORY of cmd (RiskNone for read-only or
-// benign writes) plus a short human reason. It inspects each sub-command of a
-// pipeline/compound line, so "cat x | psql -c 'DELETE ...'" is caught. The
-// first risky segment wins. A plain file redirection is deliberately NOT a
-// category — writing a report to a file is routine, not worth interrupting.
+// write_sinks are redirect targets that discard output or route it back to the
+// caller's own streams rather than landing on a real file. Writing to one is
+// never a file modification, so they are exempt from the redirect gate.
+var write_sinks = map[string]bool{
+	"/dev/null": true, "/dev/stdout": true, "/dev/stderr": true,
+	"/dev/tty": true, "/dev/fd/1": true, "/dev/fd/2": true,
+}
+
+// shell_tokens splits a single command segment into words and redirect
+// operators, respecting single/double quotes so a '>' inside a quoted string is
+// text rather than a redirect. Surrounding quotes are stripped from words.
+//
+// Redirect operators come back as their own tokens with any file-descriptor
+// prefix attached: "2>", ">>", "&>", and the fd-duplication forms "2>&" / ">&"
+// (which are followed by a descriptor number, not a path).
+func shell_tokens(seg string) []string {
+	var out []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	var quote byte
+	for i := 0; i < len(seg); i++ {
+		c := seg[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			} else {
+				cur.WriteByte(c)
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case ' ', '\t':
+			flush()
+		case '<':
+			// Input redirection — the target is READ, not written. Emitted so
+			// the argument scanners stop at it, then ignored.
+			flush()
+			out = append(out, "<")
+		case '>':
+			// A bare fd number or '&' immediately before '>' belongs to the
+			// operator ("2>", "&>"), not to the preceding word.
+			prefix := ""
+			if s := cur.String(); s == "&" || isAllDigits(s) {
+				prefix = s
+				cur.Reset()
+			}
+			flush()
+			op := prefix + ">"
+			if i+1 < len(seg) && seg[i+1] == '>' {
+				op += ">"
+				i++
+			}
+			if i+1 < len(seg) && seg[i+1] == '&' {
+				op += "&" // fd duplication: 2>&1, >&2
+				i++
+			}
+			out = append(out, op)
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return out
+}
+
+// isAllDigits reports whether s is a non-empty run of ASCII digits — used to
+// recognize the file-descriptor prefix in "2>".
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// is_redirect reports whether tok is a redirect operator produced by
+// shell_tokens, and whether it appends rather than truncates.
+func is_redirect(tok string) (ok bool, appends bool) {
+	if !strings.Contains(tok, ">") {
+		return false, false
+	}
+	return true, strings.Contains(tok, ">>")
+}
+
+// redirect_target is one file a command writes to.
+type redirect_target struct {
+	path    string
+	appends bool // ">>" rather than ">"
+}
+
+// redirect_targets returns every file path a segment WRITES to: shell
+// redirections (>, >>, 2>, &>) and the file arguments of tee. Descriptor
+// duplications (2>&1, >&2) write to an existing stream, not a file, so their
+// operand is skipped.
+func redirect_targets(seg string) []redirect_target {
+	tokens := shell_tokens(seg)
+	var out []redirect_target
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		if ok, appends := is_redirect(tok); ok {
+			if strings.HasSuffix(tok, "&") {
+				i++ // fd duplication — operand is a descriptor number
+				continue
+			}
+			if i+1 < len(tokens) {
+				out = append(out, redirect_target{path: tokens[i+1], appends: appends})
+				i++
+			}
+			continue
+		}
+		// tee writes each of its non-flag operands.
+		if cmd_base(tok) == "tee" {
+			appends := false
+			for j := i + 1; j < len(tokens); j++ {
+				arg := tokens[j]
+				if ok, _ := is_redirect(arg); ok || arg == "<" {
+					break
+				}
+				if strings.HasPrefix(arg, "-") {
+					if arg == "-a" || arg == "--append" {
+						appends = true
+					}
+					continue
+				}
+				out = append(out, redirect_target{path: arg, appends: appends})
+			}
+		}
+	}
+	return out
+}
+
+// under_scratch reports whether p resolves inside the run's scratch directory.
+// Cleaning the path first means "<scratch>/../../etc/passwd" is correctly seen
+// as OUTSIDE. An empty scratch matches nothing.
+func under_scratch(p, scratch string) bool {
+	if scratch == "" || p == "" {
+		return false
+	}
+	c := path.Clean(p)
+	s := path.Clean(scratch)
+	return c == s || strings.HasPrefix(c, s+"/")
+}
+
+// delete_paths returns the filesystem operands of a delete-family command, so
+// a removal confined to the scratch directory can be exempted. Flags are
+// skipped; dd's target is its "of=" argument.
+func delete_paths(name string, tokens []string) []string {
+	start := cmd_index(tokens)
+	if start < 0 {
+		return nil
+	}
+	var out []string
+	for i := start + 1; i < len(tokens); i++ {
+		arg := tokens[i]
+		if ok, _ := is_redirect(arg); ok || arg == "<" {
+			break
+		}
+		if name == "dd" {
+			if strings.HasPrefix(arg, "of=") {
+				out = append(out, strings.TrimPrefix(arg, "of="))
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		// "truncate -s 0 FILE" — the size operand is not a path.
+		if name == "truncate" && i > 0 && tokens[i-1] == "-s" {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+// all_under_scratch reports whether paths is non-empty and every entry lives
+// inside scratch. An empty list means we could not identify a target, which is
+// never treated as safe.
+func all_under_scratch(paths []string, scratch string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !under_scratch(p, scratch) {
+			return false
+		}
+	}
+	return true
+}
+
+// classify_command returns the risk CATEGORY of cmd with no scratch directory
+// in play — every write outside a /dev sink is gated. Callers that own a run
+// scratch directory should use classify_command_scoped.
 func classify_command(cmd string) (RiskCategory, string) {
+	return classify_command_scoped(cmd, "")
+}
+
+// classify_command_scoped returns the risk CATEGORY of cmd (RiskNone for
+// read-only or benign work) plus a short human reason. It inspects each
+// sub-command of a pipeline/compound line, so "cat x | psql -c 'DELETE ...'"
+// is caught. The first risky segment wins.
+//
+// scratch is the run's private scratch directory (see scratch_dir). Everything
+// the agent does inside it — writing temp scripts, redirecting output, removing
+// what it created — is ungated, because that is the sanctioned place to work
+// and gating the cleanup is what leaves artifacts behind on the host. Outside
+// it, a redirect or tee that lands on a real file is an overwrite and gates the
+// same as an explicit delete: piping into a live config is the way a "read-only"
+// investigation quietly modifies a system.
+func classify_command_scoped(cmd, scratch string) (RiskCategory, string) {
 	for _, seg := range shell_segments(cmd) {
+		// Writes land wherever the redirect points regardless of how benign the
+		// command itself is, so check targets before the command name.
+		for _, t := range redirect_targets(seg) {
+			if write_sinks[path.Clean(t.path)] || under_scratch(t.path, scratch) {
+				continue
+			}
+			verb := "overwrites"
+			if t.appends {
+				verb = "appends to"
+			}
+			return RiskFileDelete, fmt.Sprintf("redirect %s a file outside the scratch directory: %s", verb, t.path)
+		}
 		name, args := parse_cmd(seg)
 		if name == "" {
 			continue
 		}
 		if file_delete_cmds[name] {
+			// Cleaning up its own scratch files is routine and must not prompt.
+			if all_under_scratch(delete_paths(name, shell_tokens(seg)), scratch) {
+				continue
+			}
 			return RiskFileDelete, "deletes or overwrites files: " + name
 		}
 		if sys_control_cmds[name] {
@@ -1059,6 +1311,18 @@ func (T *Servitor) Main() error {
 	Log("Connected. Starting appliance reconnaissance (max %d rounds).", T.input.max_rounds)
 
 	mainCtx := AppContext()
+
+	// Private scratch directory for this run, same contract as the web sessions:
+	// free to write in, removed on exit, created/removed through the raw exec so
+	// the risk gate can't refuse the cleanup.
+	scratch := scratch_dir("cli-" + T.input.host)
+	if err := scratch_setup(mainCtx, T.exec_command_ctx, scratch); err != nil {
+		Warn("Scratch directory unavailable — writes will need approval: %s", err)
+		scratch = ""
+	} else {
+		defer scratch_teardown(T.exec_command_ctx, scratch)
+	}
+
 	run_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "run_command",
@@ -1073,7 +1337,7 @@ func (T *Servitor) Main() error {
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
 			}
-			cat, reason := classify_command(cmd)
+			cat, reason := classify_command_scoped(cmd, scratch)
 			if cat != RiskNone && !T.cmd_allowed(cat) {
 				if !T.confirm_cmd(cmd, reason, true) {
 					return "", fmt.Errorf("command denied by user")
@@ -1096,7 +1360,7 @@ func (T *Servitor) Main() error {
 	}
 
 	resp, _, err := T.RunAgentLoop(mainCtx, messages, AgentLoopConfig{
-		SystemPrompt: T.SystemPrompt(),
+		SystemPrompt: T.SystemPrompt() + "\n\n" + scratch_guidance(scratch),
 		Tools:        []AgentToolDef{run_tool},
 		MaxRounds:    T.input.max_rounds,
 		RouteKey:     "app.servitor",

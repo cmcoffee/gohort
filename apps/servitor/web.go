@@ -130,6 +130,18 @@ type Appliance struct {
 	// It owns no store/creds of its own; each member is resolved and run in its
 	// own owner's context. See docs/servitor-workspace-mvp.md.
 	Members []string `json:"members,omitempty"` // member appliance IDs
+	// MemberRoles maps a member ID to a short operator-written role ("scheduler
+	// + primary DB", "app worker"). Members of a real cluster are rarely
+	// interchangeable — a function often lives on exactly one node — and the
+	// coordinator has no way to know that from the outside. Without it, a
+	// question about a single-node function either fans out to every member and
+	// wastes the drills, or picks wrong and reports a confident "not found".
+	//
+	// A role states what a node is SUPPOSED to be, which is why it beats the
+	// capability summary derived from each member's map: when a service is down
+	// or the map is stale, the derived view stops mentioning it and the role
+	// still routes the question to the right box.
+	MemberRoles map[string]string `json:"member_roles,omitempty"`
 	// Collections are knowledge-collection IDs linked to this appliance so the
 	// investigator can draw on curated external knowledge (runbooks, vendor docs,
 	// a guide) when answering — via the search_knowledge tool — alongside what it
@@ -150,6 +162,35 @@ type Appliance struct {
 	Profile       string     `json:"profile"`        // full system profile / CLI map markdown
 	LogMap        []LogEntry `json:"log_map"`        // structured list of discovered log files
 	Scanned       string     `json:"scanned"`        // RFC3339 timestamp of last map run
+}
+
+// pruneMemberRoles drops role entries for members that are no longer selected
+// and trims the rest, so unchecking a member cannot leave a stale role behind to
+// resurface if it is re-added later. Returns nil when nothing survives, keeping
+// the field omitempty in the stored record.
+func pruneMemberRoles(roles map[string]string, members []string) map[string]string {
+	if len(roles) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(members))
+	for _, id := range members {
+		keep[id] = true
+	}
+	out := make(map[string]string, len(roles))
+	for id, role := range roles {
+		role = strings.TrimSpace(role)
+		if role == "" || !keep[id] {
+			continue
+		}
+		if len(role) > 120 {
+			role = role[:120]
+		}
+		out[id] = role
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // dedupeStrings trims, drops empties, and removes duplicates while preserving
@@ -557,6 +598,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "select at least one member appliance", http.StatusBadRequest)
 				return
 			}
+			req.MemberRoles = pruneMemberRoles(req.MemberRoles, req.Members)
 		default:
 			req.Type = "ssh"
 			if req.Name == "" || req.Host == "" {
@@ -989,6 +1031,12 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
+		return
+	}
+	if appliance.Type == "workspace" {
+		// A workspace owns no system to map — its knowledge IS its members'.
+		// Refreshing it means refreshing them, individually.
+		http.Error(w, "a workspace has nothing of its own to map — refresh its member appliances instead", http.StatusBadRequest)
 		return
 	}
 
@@ -1479,9 +1527,15 @@ func writePersona(b *strings.Builder, appliance Appliance) {
 	b.WriteString("\n\n")
 }
 
-// probeWorkerProtocol is injected into investigator-dispatched probes.
-// It is stricter than mapExecutionProtocol: one attempt per search path, then stop.
-// The investigator decides whether a different angle is worth a new probe.
+// probeWorkerProtocol is injected into CHAT probes. It is stricter than
+// mapExecutionProtocol: one attempt per search path, then stop. A chat probe
+// answers a question the user is waiting on, and the investigator is right there
+// to decide whether a different angle is worth a new probe — so persistence
+// inside the worker buys latency without buying coverage.
+//
+// The two protocols are alternatives, never concatenated: they give opposite
+// instructions on every failure branch (stop immediately vs. try an alternative;
+// one attempt vs. two approaches). buildProbeWorkerPrompt picks exactly one.
 const probeWorkerProtocol = `## Execution Protocol
 
 Treat every command like an expect script: know what you're looking for, run it, read the output, act on what you see.
@@ -1514,8 +1568,17 @@ LEAD = the single most actionable next pointer the investigator should pursue. W
 FACTS_SAVED = exact count of store_fact calls made.
 `
 
-// mapExecutionProtocol is injected into both map prompt branches. It gives the worker
-// explicit expect-like execution mechanics so it adapts on failure instead of stopping.
+// mapExecutionProtocol is injected into MAP workers — the reconnaissance pass
+// that builds a system's profile. It gives the worker explicit expect-like
+// execution mechanics so it adapts on failure instead of stopping: retry once
+// with sudo, self-correct a failing script up to 3 times, confirm absence with
+// two genuinely different approaches before accepting it.
+//
+// Mapping is the case where that persistence pays. Nobody is waiting on a single
+// probe's latency, and a gap in the profile is a gap every future session
+// inherits — so a worker that gives up on the first empty result makes the map
+// permanently poorer. Chat probes use probeWorkerProtocol instead; see the note
+// there on why the two are never concatenated.
 const mapExecutionProtocol = `## Execution Protocol
 
 Treat every command like an expect script: know what you're looking for, run it, read the output, branch on what you see.
@@ -1560,7 +1623,7 @@ FACTS_SAVED = exact count of store_fact calls made.
 
 PTY sessions (run_pty): plan the full interaction before calling. Include all needed input lines (exit/\q/\c as the last line). Use timeout_sec=30 for slow operations. If an unexpected prompt appears, note the exact text and call run_pty again with the correct response.
 
-Temporary file cleanup: any scripts, temp files, or working files you create during this session (e.g. /tmp/check.sh, /tmp/probe.py) must be deleted with rm before you finish. Do not leave artifacts on the system.`
+Temporary files: create them ONLY inside the scratch directory named in your prompt. It is removed for you when the session ends, so no manual cleanup is needed — and writing anywhere else stops for operator approval.`
 
 // buildSynthesisSystemPrompt is the system prompt for the profile synthesis pass.
 // The synthesis agent has no SSH access — it only reads accumulated facts and summaries.
@@ -1720,9 +1783,18 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 
 // buildProbeWorkerPrompt is the system prompt for a focused worker dispatched by the investigator.
 // The worker executes a specific task with a limited command budget and reports findings clearly.
-func buildProbeWorkerPrompt(appliance Appliance) string {
+//
+// mapping selects the execution protocol. A MAP worker is building the profile
+// every future session inherits, so it persists through failures
+// (mapExecutionProtocol); a CHAT worker answers one question with the
+// investigator standing by, so it stops on the first dead end and lets the
+// investigator choose the next angle (probeWorkerProtocol). The two are
+// alternatives — the retry rules below swap with the protocol, because telling a
+// worker both "stop after one attempt" and "try two approaches" instructs it in
+// nothing.
+func buildProbeWorkerPrompt(appliance Appliance, scratch string, mapping bool) string {
 	if appliance.Type == "repo" {
-		return buildRepoProbeWorkerPrompt(appliance)
+		return buildRepoProbeWorkerPrompt(appliance) // repo workers never touch a filesystem
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -1738,15 +1810,24 @@ func buildProbeWorkerPrompt(appliance Appliance) string {
 	b.WriteString("- Call `record_technique` when you find a working auth method or non-obvious command\n")
 	b.WriteString("- Call `note_lesson` when you hit a dead end future workers should avoid\n")
 	b.WriteString("- Do NOT explore beyond the task — the investigator directs all follow-up\n")
-	b.WriteString("- If a path is blocked (permission denied, not found) after one attempt, report it and stop\n\n")
+	if mapping {
+		b.WriteString("- If a path is blocked (permission denied, not found), work the recovery steps in the Execution Protocol below before accepting it as absent\n\n")
+	} else {
+		b.WriteString("- If a path is blocked (permission denied, not found) after one attempt, report it and stop\n\n")
+	}
 	b.WriteString("## Acronyms\n\n")
 	b.WriteString("Do NOT expand acronyms. Internal/organizational acronyms have org-specific meanings that rarely match what your training data suggests. Treat acronyms as opaque labels — quote them character-for-character from the source. Only state an acronym's expansion if you actually saw it spelled out in a comment, README, log message, or explicit documentation on this system. Writing 'GMS (Game Management System)' when you only saw 'GMS' in a path is fabrication. The investigator will probe specifically if an expansion matters.\n\n")
+	b.WriteString(scratch_guidance(scratch))
 	b.WriteString("## Report Format\n\n")
 	b.WriteString("After your commands, write a clear findings report:\n")
 	b.WriteString("1. **Found**: exact values, output snippets, what the investigation revealed\n")
 	b.WriteString("2. **Saved**: which facts and techniques were recorded\n")
 	b.WriteString("3. **Blocked**: any access failures with the exact error message\n\n")
-	b.WriteString(probeWorkerProtocol)
+	if mapping {
+		b.WriteString(mapExecutionProtocol)
+	} else {
+		b.WriteString(probeWorkerProtocol)
+	}
 	return b.String()
 }
 
@@ -1988,7 +2069,7 @@ func buildConsolidationPrompt(appliance Appliance) string {
 }
 
 // buildMapAppSystemPrompt returns the system prompt for a CLI application mapping session.
-func buildMapAppSystemPrompt(appliance Appliance, command string) string {
+func buildMapAppSystemPrompt(appliance Appliance, command string, scratch string) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("You are a CLI exploration agent connected to %s (%s).\n\n", appliance.Name, appliance.Host))
 	b.WriteString(fmt.Sprintf("Your task: systematically enumerate all capabilities of the `%s` command and produce a structured reference document.\n\n", command))
@@ -2012,7 +2093,8 @@ func buildMapAppSystemPrompt(appliance Appliance, command string) string {
 	b.WriteString("- **Description**: what this tool does (from help text)\n")
 	b.WriteString("- **Global Flags**: flags that apply to all subcommands\n")
 	b.WriteString("- **Subcommands**: for each subcommand — description, flags, required args, and any nested subcommands indented below\n\n")
-	b.WriteString("This document will be saved as the CLI reference for this appliance and injected into future sessions automatically.\n")
+	b.WriteString("This document will be saved as the CLI reference for this appliance and injected into future sessions automatically.\n\n")
+	b.WriteString(scratch_guidance(scratch))
 	writeInstructions(&b, appliance)
 	return b.String()
 }
@@ -2052,7 +2134,12 @@ func withHeartbeat(ctx context.Context, id, label string, fn func()) {
 // ownerUser routes the profile write to the appliance owner's store (shared appliances
 // keep one profile regardless of who mapped); only used when saveProfile is set.
 func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, command string, confirm chan bool, udb Database, saveProfile bool) {
+	scratch := ""
+	var scratchCleanup func()
 	defer func() {
+		if scratchCleanup != nil {
+			scratchCleanup()
+		}
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
 		sessionAppliances.Delete(id)
@@ -2090,6 +2177,62 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 			return a.exec_command_ctx(ctx, cmd)
 		}
 		emit(id, probeEvent{Kind: "status", Text: "Connected."})
+	}
+
+	// Same contract as runSession: a private place to write, removed on exit,
+	// created and torn down through the raw exec so the gate below cannot refuse
+	// its own cleanup. Mapping a CLI tool legitimately stages scratch files.
+	{
+		rawExec := func(c context.Context, cmd string) (string, error) {
+			if appliance.Type == "command" {
+				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
+			}
+			return a.exec_command_ctx(c, cmd)
+		}
+		dir := scratch_dir(id)
+		if err := scratch_setup(ctx, rawExec, dir); err != nil {
+			emit(id, probeEvent{Kind: "status", Text: "Scratch directory unavailable — writes will need approval: " + err.Error()})
+		} else {
+			scratch = dir
+			scratchCleanup = func() { scratch_teardown(rawExec, dir) }
+		}
+	}
+
+	// gateCommand is the risk gate for this session. Mapping a CLI tool means
+	// running that tool with arguments the model chose, so it needs the same
+	// classification, allowances and confirmation prompt that a probe command
+	// gets — it previously had none at all.
+	gateCommand := func(cmd string) error {
+		cat, reason := classify_command_scoped(cmd, scratch)
+		if cat == RiskNone {
+			return nil
+		}
+		if udb != nil {
+			var alwaysOK bool
+			if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
+				return nil
+			}
+			if loadAllowedCategories(udb)[cat] {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + "): " + cmd})
+				return nil
+			}
+		}
+		pendingCmds.Store(id, cmd)
+		defer pendingCmds.Delete(id)
+		emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
+		select {
+		case allowed := <-confirm:
+			if !allowed {
+				emit(id, probeEvent{Kind: "status", Text: "Command denied."})
+				return fmt.Errorf("command denied by user")
+			}
+			return nil
+		case <-time.After(5 * time.Minute):
+			return fmt.Errorf("confirmation timed out")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	termPrompt := terminalPrompt(appliance)
@@ -2156,6 +2299,9 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				return fmt.Sprintf("Note: %s has been called %d times this session. Recommending checking other vectors first before continuing — a different tool or angle may move faster than more variants of %s. If %s really is the right tool here, try narrowing the scope (smaller path, more specific pattern) and continue.", key, count-1, key, key), nil
 			}
 			emit(id, probeEvent{Kind: "cmd", Text: cmd})
+			if err := gateCommand(cmd); err != nil {
+				return "", err
+			}
 			result, err := execFn(cmd)
 			if stripANSI(result) != "" {
 				emit(id, probeEvent{Kind: "output", Text: result})
@@ -2204,7 +2350,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		resp, _, err = a.RunAgentLoop(ctx,
 			[]Message{{Role: "user", Content: taskMsg}},
 			AgentLoopConfig{
-				SystemPrompt:    buildMapAppSystemPrompt(appliance, command),
+				SystemPrompt:    buildMapAppSystemPrompt(appliance, command, scratch),
 				Tools:           []AgentToolDef{run_tool, note_lesson_tool},
 				MaxRounds:       60,
 				RouteKey:        "app.servitor",
@@ -2280,7 +2426,15 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 // ownerUser == userID, so behavior is unchanged. Scoped memory is keyed by the
 // appliance ID (global), so it's shared with no extra plumbing.
 func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
+	// scratch is this run's private write location on the target (see scratch.go).
+	// Set once the transport is up; cleared if the directory can't be created, so
+	// the classifier falls back to gating every write.
+	scratch := ""
+	var scratchCleanup func()
 	defer func() {
+		if scratchCleanup != nil {
+			scratchCleanup()
+		}
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
 		ReleaseInjectionQueue(id)
@@ -2301,13 +2455,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	a.AppCore = T.AppCore
 
 	if appliance.Type == "workspace" {
-		// Slice 1: the record + member picker exist, but the cross-appliance
-		// coordinator (scout-then-drill) is not built yet. Fail clearly instead
-		// of falling through to the SSH path and dialing an empty host.
-		// See docs/servitor-workspace-mvp.md.
-		probeSessions.AppendEvent(id, probeEvent{Kind: "error",
-			Text: fmt.Sprintf("Workspace %q has %d member(s), but cross-appliance investigation isn't available yet. For now, open a member appliance directly.", appliance.Name, len(appliance.Members))}, true)
-		probeSessions.ScheduleCleanup(id)
+		// A workspace has no host, clone or credentials of its own — the
+		// coordinator fans the question out to its members, each of which
+		// re-enters this function in its own owner's context. See workspace.go.
+		T.runWorkspaceSession(ctx, id, userID, appliance, messages, udb)
 		return
 	}
 	if appliance.Type == "command" {
@@ -2407,6 +2558,76 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		return a.exec_command_ctx(ctx, cmd)
 	}
 
+	// Give this run a private scratch directory on the target. Repo appliances
+	// have no filesystem to write to, so they get none — their workers only read
+	// the ingested store. Setup and teardown deliberately use the RAW exec path:
+	// routing them through the gated tool would let the risk gate refuse the very
+	// cleanup that keeps the host clean.
+	if appliance.Type != "repo" {
+		rawExec := func(c context.Context, cmd string) (string, error) {
+			if appliance.Type == "command" {
+				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
+			}
+			return a.exec_command_ctx(c, cmd)
+		}
+		dir := scratch_dir(id)
+		if err := scratch_setup(ctx, rawExec, dir); err != nil {
+			// Non-fatal: the run proceeds with no sanctioned write location, which
+			// only means writes gate as they otherwise would. Surfaced rather than
+			// swallowed so an unexpected flurry of approval prompts is explicable.
+			emit(id, probeEvent{Kind: "status", Text: "Scratch directory unavailable — writes will need approval: " + err.Error()})
+		} else {
+			scratch = dir
+			scratchCleanup = func() { scratch_teardown(rawExec, dir) }
+		}
+	}
+
+	// gateCommand applies the risk gate to one command line: classify it against
+	// this run's scratch directory, honor the operator's per-command and
+	// per-category allowances, and block on a confirmation prompt when it is
+	// still risky. Returns an error when the command must not run.
+	//
+	// Every path that executes on the target goes through here. run_pty used to
+	// skip the gate entirely, which made it a way around every rule run_command
+	// enforces — including with its `input` lines, which are commands typed into
+	// an interactive session and are gated individually below.
+	gateCommand := func(cmd string) error {
+		cat, reason := classify_command_scoped(cmd, scratch)
+		if cat == RiskNone {
+			return nil
+		}
+		if udb != nil {
+			// Per-command always-allow (operator trusts this exact command).
+			var alwaysOK bool
+			if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
+				return nil
+			}
+			// Per-category allowance (operator trusts this whole class of command
+			// — the web analog of the CLI --allow flag, set via the Permissions
+			// modal).
+			if loadAllowedCategories(udb)[cat] {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + "): " + cmd})
+				return nil
+			}
+		}
+		pendingCmds.Store(id, cmd)
+		defer pendingCmds.Delete(id)
+		emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
+		select {
+		case allowed := <-confirm:
+			if !allowed {
+				emit(id, probeEvent{Kind: "status", Text: "Command denied."})
+				return fmt.Errorf("command denied by user")
+			}
+			return nil
+		case <-time.After(5 * time.Minute):
+			return fmt.Errorf("confirmation timed out")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
 	// sessionFailures collects commands that exited nonzero during this session.
 	// Emitted as a summary before the final reply so the user can see what the agent
 	// tried and couldn't complete.
@@ -2493,38 +2714,8 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				}
 				bin := cmdBinary(cmd)
 				emit(id, probeEvent{Kind: "cmd", Text: cmd})
-				cat, reason := classify_command(cmd)
-				needsConfirm := cat != RiskNone
-				if needsConfirm && udb != nil {
-					// Per-command always-allow (operator trusts this exact command).
-					var alwaysOK bool
-					if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
-						emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
-						needsConfirm = false
-					}
-					// Per-category allowance (operator trusts this whole class of
-					// command — the web analog of the CLI --allow flag, set via the
-					// Permissions modal).
-					if needsConfirm && loadAllowedCategories(udb)[cat] {
-						emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + "): " + cmd})
-						needsConfirm = false
-					}
-				}
-				if needsConfirm {
-					pendingCmds.Store(id, cmd)
-					emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
-					select {
-					case allowed := <-confirm:
-						if !allowed {
-							emit(id, probeEvent{Kind: "status", Text: "Command denied."})
-							return "", fmt.Errorf("command denied by user")
-						}
-					case <-time.After(5 * time.Minute):
-						return "", fmt.Errorf("confirmation timed out")
-					case <-ctx.Done():
-						return "", ctx.Err()
-					}
-					pendingCmds.Delete(id)
+				if err := gateCommand(cmd); err != nil {
+					return "", err
 				}
 				result, err := sshExec(cmd)
 				if stripANSI(result) != "" {
@@ -2708,6 +2899,22 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				}
 
 				emit(id, probeEvent{Kind: "cmd", Text: "pty: " + cmd})
+				if err := gateCommand(cmd); err != nil {
+					return "", err
+				}
+				// The input lines are commands typed into the interactive session
+				// the command above opened — `run_pty("bash", input: "rm -rf …")`
+				// is a shell command by another route, so each line is gated too.
+				// A password line classifies as benign and passes without ever
+				// being shown in a confirmation prompt.
+				for _, line := range strings.Split(inputText, "\n") {
+					if strings.TrimSpace(line) == "" {
+						continue
+					}
+					if err := gateCommand(line); err != nil {
+						return "", err
+					}
+				}
 
 				sess, err := a.conn.NewSession()
 				if err != nil {
@@ -3622,7 +3829,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 						workerResp, _, workerErr = a.RunAgentLoop(ctx,
 							[]Message{{Role: "user", Content: msg.String()}},
 							AgentLoopConfig{
-								SystemPrompt:    buildProbeWorkerPrompt(appliance),
+								// mapping=true: this is the reconnaissance pass, so the
+								// worker persists through failures rather than handing
+								// the first dead end back to the investigator.
+								SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, true),
 								Tools:           withFreshRunTool(workerTools),
 								MaxRounds:       12,
 								RouteKey:        "app.servitor",
@@ -4072,7 +4282,9 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					workerResp, _, err = a.RunAgentLoop(ctx,
 						[]Message{{Role: "user", Content: msg.String()}},
 						AgentLoopConfig{
-							SystemPrompt:    buildProbeWorkerPrompt(appliance),
+							// mapping=false: a chat probe stops at the first dead end and
+							// lets the investigator pick the next angle.
+							SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, false),
 							Tools:           withFreshRunTool(workerTools),
 							MaxRounds:       15,
 							RouteKey:        "app.servitor",

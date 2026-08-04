@@ -1,9 +1,52 @@
 # Servitor Workspaces — cross-appliance investigation (MVP)
 
-Status: design. Captures the direction of a "master" appliance that queries
-several existing appliances — repos *and* SSH boxes — at once, so the decisions
-are settled before code. Builds directly on the per-appliance machinery
-(ingest, docs, scoped graph, refresh/staleness) already in `apps/servitor/`.
+Status: **slices 1–3 built** (v0.5.823). A "master" appliance that queries
+several existing appliances — repos *and* SSH boxes — at once. Builds directly
+on the per-appliance machinery (ingest, docs, scoped graph, refresh/staleness)
+already in `apps/servitor/`.
+
+What shipped, and where it differs from the design below:
+
+- `workspace.go` — member resolution, the scout, and the cross-node divergence
+  report. `workspace_lead.go` — the coordinator's prompt and tools.
+  `workspace_session.go` — the turn runner, entered from `runSession`.
+- **Cluster fan-out was promoted out of "deferred v2."** Scout-then-drill picks
+  the *relevant* member, which is the wrong shape for a set of machines that
+  should agree: there, you want one identical question put to all of them and
+  the answers compared. `investigate_cluster` runs the members in parallel
+  (bounded by `tune_servitor_workspace_parallel`) and appends a report of the
+  concrete values — paths, ports, IPs, versions — that did not appear in every
+  member's answer. Framed as leads to verify, not conclusions: a value missing
+  from a report means that worker didn't mention it.
+- **Drills are read-only.** A member investigation dispatched by the coordinator
+  auto-denies every gated command, because there is no coherent way to ask an
+  operator to approve commands on three hosts at once. Work that changes
+  something is done by opening that member directly.
+- **The risk gate learned about writes.** Investigations legitimately need
+  somewhere to stage scripts and spool output, and the gate used to block the
+  *cleanup* (`rm /tmp/probe.sh`) while waving through the write — so a
+  "read-only" run left more behind than a normal one. Every run now gets a
+  scratch directory (`scratch.go`); writes and deletes inside it are ungated,
+  redirects onto real files outside it are classified as overwrites, and
+  teardown happens through the raw exec path so the gate cannot refuse it.
+- Drill breadth is capped by `tune_servitor_workspace_drill_cap` (default 6),
+  and skipped members are named in the tool result rather than dropped.
+- **Members are assumed heterogeneous.** The first cut treated a cluster as
+  interchangeable peers, which is wrong twice over: a function often lives on
+  exactly one node, and every role difference then reads as drift. So the record
+  carries `MemberRoles` (member ID → short operator role), the scout derives a
+  capability line from each member's own `services`/`apps`/`overview` doc, and
+  **both render for every member on every question** — a roster filtered by
+  question-match makes single-node functions invisible. Role outranks the derived
+  line because it states what a node is *for*, which still routes correctly when
+  a service is stopped or the map is stale. `investigate_cluster` takes
+  `expect_match` (default false) so drift analysis runs only for declared peers.
+- Knowledge-doc ages, including `STALE, re-verify`, now reach the lead through
+  the roster. Without them a two-month-old map produces a fluent, well-attributed
+  description of how the system *used* to work.
+
+Still open from slice 4: scout ranking quality, workspace-level memory, and the
+persistent cross-domain graph.
 
 ## The idea
 

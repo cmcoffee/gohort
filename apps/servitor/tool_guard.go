@@ -68,6 +68,24 @@ var servitorOrchestratorToolAllowList = map[string]bool{
 	"report_gaps":           true, // local: session plan state
 }
 
+// servitorWorkspaceToolAllowList is the set for the WORKSPACE coordinator — the
+// cross-appliance lead. It reaches nothing itself: every tool here either
+// dispatches an investigation into a member (which runs under that member's own
+// worker, already bound by servitorWorkerToolAllowList) or reads a local store.
+// Same posture as the others: nothing may reach a third party.
+var servitorWorkspaceToolAllowList = map[string]bool{
+	"investigate_member":    true, // delegate to one member's own investigator (internal)
+	"investigate_cluster":   true, // same, fanned out across members (internal)
+	"search_code":           true, // local: substring search over a member's encrypted repo store
+	"search_knowledge":      true, // local: vector search over the workspace's linked collections
+	"set_plan":              true, // local: session plan state
+	"mark_step_in_progress": true, // local: session plan state
+	"record_step_findings":  true, // local: session plan state
+	"mark_step_blocked":     true, // local: session plan state
+	"revise_plan":           true, // local: session plan state
+	"report_gaps":           true, // local: session plan state
+}
+
 // assertOnlyAllowedTools panics if any tool in tools has a name not
 // present in allowed. Invoked at servitor request setup so a future
 // "let's just add fetch_url here" can't sneak past code review without

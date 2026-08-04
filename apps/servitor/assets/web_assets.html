@@ -778,6 +778,7 @@
       // appliances (repos and/or SSH boxes) together. The member list is fetched
       // lazily the first time the Workspace tab is opened.
       var wsSelected = (rec.members || []).slice();
+      var wsRoles = Object.assign({}, rec.member_roles || {});
       var wsMembersBox = el('div', {}, ['Loading appliances…']);
       var wsLoaded = false;
       function loadWorkspaceMembers() {
@@ -798,17 +799,33 @@
               return;
             }
             list.forEach(function(a) {
+              // Role box: shown only while the member is selected. It tells the
+              // coordinator where a function LIVES — cluster nodes are rarely
+              // interchangeable, and without it a question about a single-node
+              // service gets asked of every node or of the wrong one.
+              var role = el('input', {
+                type: 'text',
+                placeholder: 'role — e.g. scheduler + primary DB',
+                value: wsRoles[a.id] || '',
+                style: 'flex:1; min-width:12rem; font-size:0.85em; padding:0.15rem 0.4rem;'});
+              role.oninput = function() { wsRoles[a.id] = role.value; };
+              function syncRole() { role.style.display = wsSelected.indexOf(a.id) >= 0 ? '' : 'none'; }
+
               var cb = el('input', {type: 'checkbox'});
               cb.checked = wsSelected.indexOf(a.id) >= 0;
               cb.onchange = function() {
                 var i = wsSelected.indexOf(a.id);
                 if (cb.checked && i < 0) wsSelected.push(a.id);
                 else if (!cb.checked && i >= 0) wsSelected.splice(i, 1);
+                syncRole();
               };
               var typeTag = a.type === 'repo' ? 'repo' : (a.type === 'command' ? 'cmd' : 'ssh');
-              wsMembersBox.appendChild(el('label', {
-                style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0;'},
-                [cb, el('span', {style:'opacity:0.6; font-size:0.85em; min-width:2.6em;'}, [typeTag]), (a.name || a.id)]));
+              syncRole();
+              wsMembersBox.appendChild(el('div', {
+                style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0; flex-wrap:wrap;'},
+                [el('label', {style: 'display:flex; align-items:center; gap:0.5rem; min-width:14rem;'},
+                  [cb, el('span', {style:'opacity:0.6; font-size:0.85em; min-width:2.6em;'}, [typeTag]), (a.name || a.id)]),
+                 role]));
             });
           })
           .catch(function() {
@@ -820,6 +837,8 @@
         el('label', {}, ['Member Appliances *']), wsMembersBox,
         el('div', {class: 'ui-form-hint'},
           ['Pick the repos and SSH boxes this workspace investigates together. A question fans out to the relevant members and the answers are combined — e.g. trace a log line seen on a box back to the repo that emits it.']),
+        el('div', {class: 'ui-form-hint'},
+          ['Give each member a short role when they are not interchangeable — "scheduler + primary DB" vs "app worker". The coordinator routes on it, so a question about a service that lives on one node goes to that node instead of being asked of all of them. Leave blank for true peers.']),
       ]);
 
       function setType(t) {
@@ -914,6 +933,7 @@
             persona_prompt: personaPromptIn.value,
             shared:         sharedIn.checked,
             members:        wsSelected.slice(),
+            member_roles:   wsRoles,
             collections:    kbSelected.slice(),
           };
           // Name is optional for repos — the server derives owner/repo from the URL.
@@ -1253,10 +1273,13 @@
     // Map App lets you pick WHICH CLI command to enumerate, so it only makes sense
     // on SSH hosts (many commands). A command-type appliance IS a single command —
     // the only mappable thing — so it doesn't need it; repos have no commands.
-    // Refresh Repo re-clones (repo-type only). Everything else stays visible.
+    // Refresh Repo re-clones (repo-type only). A workspace owns no system of its
+    // own, so it has nothing to map OR refresh — you refresh its members.
+    // Everything else stays visible.
     function applyToolbarForType() {
       var t = currentApplianceType();
       setActionVisible('Map App', t === 'ssh');
+      setActionVisible('Refresh', t !== 'workspace');
       // One "Refresh" action; its label follows the appliance type. Repo
       // refresh also pulls new code server-side (see handleMap); ssh/command
       // just re-map / re-test. data-action-label stays "Refresh" for targeting.
