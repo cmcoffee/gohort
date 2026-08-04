@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,68 @@ func TestDetachedCallStillRunsAndReturnsANotice(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("notice missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// preflightTool is slow enough to detach and can be told its arguments are bad.
+type preflightTool struct {
+	slowTool
+	bad error
+}
+
+func (p *preflightTool) Preflight(map[string]any, *ToolSession) error { return p.bad }
+
+func TestABadArgumentIsReportedBeforeTheCallDetaches(t *testing.T) {
+	// An agent named two source photos by ids that resolved to nothing. The
+	// references weren't looked at until the background job ran, so the tool
+	// answered "started, will report back", the agent told the user the blend
+	// was running, and the real error surfaced a minute later with no turn left
+	// to correct it in — at which point the agent explained the failure by
+	// inventing a cause.
+	//
+	// Anything checkable from the arguments is checked while the model can
+	// still act on it.
+	started := withTaskRunner(t)
+	ran := make(chan struct{})
+	tool := &preflightTool{
+		slowTool: slowTool{dur: taskDetachThreshold() + time.Hour, ran: ran, result: "rendered"},
+		bad:      errors.New("media#1 doesn't exist — use image#1 or the filename"),
+	}
+
+	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
+	out, err := def.Handler(map[string]any{"action": "edit"})
+	if err == nil {
+		t.Fatalf("a call that cannot succeed must fail now, not later; got %q", out)
+	}
+	if !strings.Contains(err.Error(), "image#1") {
+		t.Errorf("the tool's own error must reach the model intact: %v", err)
+	}
+	if strings.Contains(out, "STARTED") {
+		t.Errorf("a doomed call must not be announced as running:\n%s", out)
+	}
+	if len(*started) != 0 {
+		t.Errorf("runner started %d task(s) for a call that could not work", len(*started))
+	}
+	select {
+	case <-ran:
+		t.Error("the work must not have started")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestAGoodCallStillDetachesAfterPreflight(t *testing.T) {
+	started := withTaskRunner(t)
+	tool := &preflightTool{slowTool: slowTool{dur: taskDetachThreshold() + time.Hour, result: "rendered"}}
+	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
+	out, err := def.Handler(map[string]any{"action": "edit"})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if !strings.Contains(out, "STARTED, NOT FINISHED") {
+		t.Errorf("a clean preflight must not block the detach:\n%s", out)
+	}
+	if len(*started) != 1 {
+		t.Errorf("runner saw %d tasks, want 1", len(*started))
 	}
 }
 

@@ -258,3 +258,43 @@ func TestMissingEditCapabilityIsStated(t *testing.T) {
 		t.Errorf("the unavailable-editing note must not appear when an editor exists:\n%s", withEdit.desc)
 	}
 }
+
+func TestASavedImageIsNamedByItsFilenameNotJustItsPosition(t *testing.T) {
+	// Two searches in one turn, and both results said "kept as image#1" —
+	// because each one WAS image#1 when it was saved. The first had silently
+	// become image#2, nothing said so, and the agent, holding two identical
+	// handles for two different pictures, invented a third scheme and passed
+	// ids that resolved to nothing.
+	//
+	// The filename is the handle that keeps meaning one picture.
+	hint := editHandleHint("find-abc123.jpg", "image#1")
+	if !strings.Contains(hint, "find-abc123.jpg") {
+		t.Errorf("the durable handle must be the filename:\n%s", hint)
+	}
+	if !strings.Contains(hint, "positional") {
+		t.Errorf("the hint must say image#N moves:\n%s", hint)
+	}
+	// It has to come BEFORE the ring ref, or the model reads to the first
+	// handle offered and stops.
+	if strings.Index(hint, "find-abc123.jpg") > strings.Index(hint, "image#1") {
+		t.Errorf("the filename should lead, not follow the positional ref:\n%s", hint)
+	}
+}
+
+func TestMediaRefIsScopedToWhatTheUserAttached(t *testing.T) {
+	// An agent found two pictures in one turn and passed them as media#1 and
+	// media#2, which named nothing — the description split the forms by THIS
+	// TURN vs EARLIER, and finding them had happened this turn. Origin, not
+	// timing, is what separates the two id spaces.
+	d := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 2, NeedsPrompt: true})).params["images"].Description
+	if !strings.Contains(d, "ONLY for a photo the USER ATTACHED") {
+		t.Errorf("media#N must be scoped to user-attached photos:\n%s", d)
+	}
+	if !strings.Contains(d, "Nothing you produced yourself is ever a media#N") {
+		t.Errorf("the description must rule out produced media explicitly:\n%s", d)
+	}
+	// And the positional form has to admit it moves.
+	if !strings.Contains(d, "SHIFT") {
+		t.Errorf("image#N must say the numbers shift:\n%s", d)
+	}
+}

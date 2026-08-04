@@ -3010,6 +3010,10 @@
         case 'session':
           activeSessionId = ev.id || '';
           if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, activeSessionId);
+          // The server just told us which thread this is. Watch it — a
+          // background task started by this very turn will post its result
+          // here, and nothing else on the client is looking.
+          ensureReportPolling(activeSessionId);
           // Refresh the side rail so brand-new sessions land in the
           // list the moment the server creates them, instead of
           // waiting for the next page load or session click.
@@ -3503,6 +3507,9 @@
             activeSessionId = sid;
             if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);
             subscribeEvents(sid);
+            // First send in a brand-new thread: this is where its id exists
+            // for the first time, so it is where watching has to begin.
+            ensureReportPolling(sid);
           });
         }
         // Fallback: parse this response as the SSE stream directly.
@@ -4082,6 +4089,24 @@
     // the thread on its own. ONLY those cards — chat turns ride the
     // SSE/replay path, so the poll never touches them (no duplication).
     // Reuses the channel poll's timer.
+    // ensureReportPolling — start the report poll for whatever thread is now
+    // active, from anywhere that learns a session id.
+    //
+    // Polling used to be started by openSession alone, which meant a thread
+    // the user never OPENED was never watched — and a brand-new conversation
+    // is exactly that. The client sends first and learns its session id from
+    // the response (or the 'session' event), so a fresh thread ran its whole
+    // life unpolled: work posted to it by the server arrived silently, and
+    // reloading the page was the only way to discover it had finished. That is
+    // the common case for anything long enough to run in the background, since
+    // "make me a picture" is usually the first thing said in a new thread.
+    //
+    // Channel threads keep their own poll (startChannelPolling), which watches
+    // every message rather than just server-posted cards.
+    function ensureReportPolling(sid) {
+      if (!sid || channelTranscript) return;
+      startReportPolling(sid);
+    }
     function startReportPolling(sid) {
       stopChannelPolling();
       if (!cfg.load_url || !sid) return;
@@ -4764,6 +4789,10 @@
           activeSessionId = rid;
           disableInput();
           subscribeEvents(rid);
+          // No poll here on purpose: this path attaches to a live run WITHOUT
+          // replaying the thread, so cortexObsSeen is unseeded and a poll
+          // would render every historical card into an empty pane. The
+          // session event that arrives on the stream starts it instead.
         }
       } catch (_) {}
     }
