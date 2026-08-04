@@ -336,6 +336,49 @@ func TestExpiredMediaRefPointsAtTheLastingOne(t *testing.T) {
 	}
 }
 
+func TestMediaRefForMediaThatNeverArrivedIsNotCalledExpired(t *testing.T) {
+	// The agent found two pictures in one turn, then tried to blend them as
+	// media#1 and media#2. Nothing had been attached to that message at all —
+	// media#N was simply the wrong namespace for pictures IT had downloaded.
+	// The error answered "this is a later turn, so it no longer resolves", and
+	// the agent duly told the user the image ids had expired in the queue: a
+	// confident, specific account of something that never happened.
+	sess := imageSpaceSession(t)
+	RecordRecentImage(sess, testPNG(t, 8, 8), "found: trump")
+	RecordRecentImage(sess, testPNG(t, 16, 16), "found: shazz")
+
+	_, err := resolveInputImage(sess, "media#1")
+	if err == nil {
+		t.Fatal("a media id must not resolve when no media arrived")
+	}
+	msg := err.Error()
+	for _, banned := range []string{"later turn", "expire"} {
+		if strings.Contains(msg, banned) {
+			t.Errorf("nothing expired — the error must not say %q:\n%v", banned, err)
+		}
+	}
+	// It has to name the namespace the model actually wanted, and hand over
+	// the handles that do work.
+	if !strings.Contains(msg, "image#1") || !strings.Contains(msg, "image#2") {
+		t.Errorf("the error must list the lasting handles it could have used:\n%v", err)
+	}
+}
+
+func TestOutOfRangeMediaRefReportsTheCount(t *testing.T) {
+	// One photo attached, model asks for the second. That IS an off-by-one,
+	// not a wrong namespace, and the count is what tells it so.
+	sess := imageSpaceSession(t)
+	sess.RegisterInboundMedia("image", testPNG(t, 8, 8), "Alice")
+
+	_, err := resolveInputImage(sess, "media#2")
+	if err == nil {
+		t.Fatal("an out-of-range media id must fail")
+	}
+	if !strings.Contains(err.Error(), "media#1") {
+		t.Errorf("the error must say where the ids stop:\n%v", err)
+	}
+}
+
 func TestExpiredMediaWithNothingKeptStillExplains(t *testing.T) {
 	// No space (no username, or nothing recorded) — then asking is the only
 	// option left, and the message should say so rather than name ids that
@@ -347,5 +390,50 @@ func TestExpiredMediaWithNothingKeptStillExplains(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "re-attach") {
 		t.Errorf("with nothing kept, the error should ask for the photo:\n%v", err)
+	}
+}
+
+func TestAStaleFilenameHandsBackTheManifest(t *testing.T) {
+	// The dead end that sent a turn guessing. Every other unresolvable ref in
+	// resolveInputImage offers a way forward; a workspace filename — the handle
+	// the tool description calls the most direct there is, and the one the
+	// framework itself prunes behind — said only that it wasn't there.
+	//
+	// Observed: an edit reached for a filename from an earlier turn, could not
+	// tell a pruned picture from a misremembered one, listed the workspace,
+	// found dozens of edit-<id>.png names with nothing to tell them apart, and
+	// ended the turn promising work it never did.
+	sess := imageSpaceSession(t)
+	RecordRecentImage(sess, testPNG(t, 8, 8), "edited: me wasting away in the garage")
+
+	_, err := resolveInputImage(sess, "edit-dketc9x2v8z7.png")
+	if err == nil {
+		t.Fatal("a filename that isn't there must not resolve")
+	}
+	msg := err.Error()
+	// The picture it wanted, by an id it can actually pass.
+	if !strings.Contains(msg, "image#1") || !strings.Contains(msg, "wasting away in the garage") {
+		t.Errorf("the error must hand back the manifest:\n%s", msg)
+	}
+	// And the rule that explains the disappearance, so it isn't a mystery.
+	if !strings.Contains(msg, "pruned") {
+		t.Errorf("the error must say why the filename stopped working:\n%s", msg)
+	}
+}
+
+func TestAStaleFilenameWithAnEmptySpaceSaysSo(t *testing.T) {
+	// Nothing to offer. Say the picture is gone and name the two real options,
+	// rather than implying a list that isn't there.
+	sess := imageSpaceSession(t)
+	_, err := resolveInputImage(sess, "edit-gone.png")
+	if err == nil {
+		t.Fatal("a filename that isn't there must not resolve")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "image#") {
+		t.Errorf("must not point at an empty space:\n%s", msg)
+	}
+	if !strings.Contains(msg, "gone") {
+		t.Errorf("must say the picture is gone:\n%s", msg)
 	}
 }

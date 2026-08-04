@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1631,7 +1632,173 @@ type ToolSession struct {
 	flushedVideos int
 	flushedFiles  int
 
+	// stagedFiles names the workspace files THIS turn's tool calls created,
+	// accumulated as they happen. The framework already computes this per call
+	// to tell the model what appeared; keeping it is what lets a host tell "the
+	// picture this turn made" apart from "a picture in the workspace".
+	//
+	// The workspace root is per USER, shared by every session, agent and turn,
+	// so "the newest deliverable file in it" is not the same question as "what
+	// did this turn produce" — and answering the first when you meant the
+	// second is how a reply about one thing arrives carrying a picture of
+	// another.
+	stagedFiles []string
+
+	// Detach is this TURN's background-job ledger, one slot per tool. Shared by
+	// every session a turn mints — a host that runs a turn across several
+	// sessions (one per plan step, one for the inline round) points them all at
+	// the same ledger, or the cap is per session and a three-step plan starts
+	// three jobs for one request. Nil means a private ledger is minted on first
+	// use, which is the right default for a standalone session. See
+	// ClaimDetachSlot.
+	Detach *DetachLedger
+
 	mu sync.Mutex
+}
+
+// DetachLedger rations background jobs across everything one turn does.
+//
+// The rule: ONE detached job per tool per turn. A detached call is not like an
+// inline one — it delivers its result to the user by itself, minutes later, as
+// its own message. Two of them for one request means the user gets the thing
+// twice.
+//
+// Observed: an edit detached in round 3, the model got back "STARTED, NOT
+// FINISHED", saw no picture, tried again in round 4, again in round 6, and the
+// user received three images for one request. The detach notice already said
+// "do NOT call this tool again for the same request — a second call starts a
+// second job", in those words. Prose was not enough; nothing was enforcing it.
+//
+// It is a separate object rather than a field on the session because a turn is
+// not a session. A host that mints one session per plan step would otherwise
+// hand each step its own allowance, and the cap would count the wrong thing.
+type DetachLedger struct {
+	mu    sync.Mutex
+	slots map[string]TaskRun
+}
+
+// NewDetachLedger returns a ledger for one turn. Share it across every session
+// that turn creates.
+func NewDetachLedger() *DetachLedger { return &DetachLedger{slots: map[string]TaskRun{}} }
+
+// claim takes the slot for a tool. ok is false when a job already holds it.
+func (d *DetachLedger) claim(tool string) (prior TaskRun, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.slots == nil {
+		d.slots = map[string]TaskRun{}
+	}
+	if held, taken := d.slots[tool]; taken {
+		return held, false
+	}
+	// Placeholder holds the slot for the gap between claiming it and knowing
+	// the run id, so two calls dispatched in parallel in one round can't both
+	// pass.
+	d.slots[tool] = TaskRun{}
+	return TaskRun{}, true
+}
+
+func (d *DetachLedger) record(tool string, run TaskRun) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.slots == nil {
+		d.slots = map[string]TaskRun{}
+	}
+	d.slots[tool] = run
+}
+
+// Any reports whether this turn started any background job. Read by the turn
+// judge: a promise to report back later is TRUE when one is running.
+func (d *DetachLedger) Any() bool {
+	if d == nil {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.slots) > 0
+}
+
+func (d *DetachLedger) release(tool string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.slots, tool)
+}
+
+// ClaimDetachSlot reserves this turn's background slot for one tool, atomically.
+// ok is false when a job already holds it, and prior names that job.
+//
+// Same-round siblings are refused too, and that is deliberate: three renders
+// started at once are three separate deliveries whichever round they came from,
+// and the model can ask for the next one after the first reports back. A nil
+// session keeps its old behaviour and claims nothing. See DetachLedger.
+func (s *ToolSession) ClaimDetachSlot(tool string) (prior TaskRun, ok bool) {
+	if s == nil {
+		return TaskRun{}, true
+	}
+	return s.detachLedger().claim(tool)
+}
+
+// RecordDetachSlot fills in the job that took the slot, so a later refusal can
+// name it.
+func (s *ToolSession) RecordDetachSlot(tool string, run TaskRun) {
+	if s == nil {
+		return
+	}
+	s.detachLedger().record(tool, run)
+}
+
+// ReleaseDetachSlot gives the slot back when the detach did not happen after all
+// — the run failed to start and the call went inline instead. Holding it then
+// would refuse the next call over a job that never existed.
+func (s *ToolSession) ReleaseDetachSlot(tool string) {
+	if s == nil {
+		return
+	}
+	s.detachLedger().release(tool)
+}
+
+// detachLedger returns the turn's ledger, minting a private one on first use for
+// a session nobody shared one with.
+func (s *ToolSession) detachLedger() *DetachLedger {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Detach == nil {
+		s.Detach = NewDetachLedger()
+	}
+	return s.Detach
+}
+
+// AddStagedFiles records workspace files this turn produced. Idempotent per
+// name, order-preserving.
+//
+// Exported because a host may run a turn across several ToolSessions — one per
+// step, one for the inline round — and the files a turn staged belong to the
+// TURN, not to whichever session happened to be live when a tool wrote them.
+// A host that mints sessions per step carries the list forward with this.
+func (s *ToolSession) AddStagedFiles(names []string) {
+	if s == nil || len(names) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || slices.Contains(s.stagedFiles, n) {
+			continue
+		}
+		s.stagedFiles = append(s.stagedFiles, n)
+	}
+}
+
+// StagedFiles is what this turn wrote into the workspace, oldest first. The
+// caller decides which of them is deliverable — that judgement is the app's.
+func (s *ToolSession) StagedFiles() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.stagedFiles)
 }
 
 // ClaimUnflushedImages returns the slice of images that haven't
@@ -2469,6 +2636,18 @@ func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender strin
 		RecordRecentImage(s, raw, note)
 	}
 	return id
+}
+
+// InboundMediaCount is how many attachments arrived with this turn's message.
+// Lets a failed media#N lookup say whether the id was out of range or whether
+// the namespace was wrong entirely — two mistakes that need opposite advice.
+func (s *ToolSession) InboundMediaCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.InboundMedia)
 }
 
 // ResolveInboundMedia maps a media-id reference ("media#2") to its base64 bytes

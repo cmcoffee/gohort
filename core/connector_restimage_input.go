@@ -70,6 +70,35 @@ func resolveInputImages(sess *ToolSession, refs []string, max int) ([]inputImage
 	return out, nil
 }
 
+// CheckImageInputs answers "would this edit's source references resolve, right
+// now?" without rendering anything — the preflight an image edit runs before it
+// is allowed to detach.
+//
+// It resolves rather than pattern-matches, because every way a reference goes
+// wrong is a lookup: a media id for media that never arrived, a workspace file
+// that was already consumed by an attach, bytes that turn out to be a PDF. The
+// bytes it reads are thrown away; the call re-reads them when it runs. That
+// double read costs a few megabytes of I/O and buys the model the chance to
+// correct itself in the same turn instead of a minute later in a wake.
+func CheckImageInputs(sess *ToolSession, backend string, refs []string, mask string) error {
+	if len(refs) == 0 && strings.TrimSpace(mask) == "" {
+		return nil
+	}
+	s, err := resolveImageConnector(backend)
+	if err != nil {
+		return err
+	}
+	if _, err := resolveInputImages(sess, refs, s.MaxImages()); err != nil {
+		return err
+	}
+	if m := strings.TrimSpace(mask); m != "" {
+		if _, err := resolveInputImage(sess, m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	var out inputImage
 	ref = strings.TrimSpace(ref)
@@ -99,16 +128,28 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		return verifyInputImage(strings.ReplaceAll(ref, "#", "")+".png", data)
 	}
 	if strings.HasPrefix(ref, "media#") {
-		// media#N is turn-scoped by construction: the bytes ride the message
-		// and the session is rebuilt next turn. But the same photo was copied
-		// into the image space when it arrived, so it has NOT been lost — and
-		// telling the model to ask for it again, when a durable handle is
-		// sitting right there, is how "the photo expired" ends a conversation
-		// that could have continued.
-		if m := RecentImageManifest(sess); m != "" {
-			return out, fmt.Errorf("%s is a THIS-TURN id and this is a later turn, so it no longer resolves. The picture itself is still here under a lasting id — use one of these instead of asking the user to send it again:\n%s", ref, m)
+		// Two very different failures wear the same prefix, and answering both
+		// with "it expired" taught the model to report an expiry that never
+		// happened — including for pictures it had just downloaded itself,
+		// seconds earlier, which had never been media#N to begin with.
+		//
+		// media#N names a photo the USER attached. Nothing a tool produces is
+		// ever one. So: none attached at all is a naming mistake, and the model
+		// needs to be told which namespace it wanted. Some attached but N is
+		// past the end is an off-by-one, and the count is the useful fact.
+		var lead string
+		if n := sess.InboundMediaCount(); n == 0 {
+			lead = fmt.Sprintf("%s doesn't exist. media#N only ever names a photo the USER attached to a message, and nothing was attached here. Pictures you found, downloaded or generated are NOT media#N — they are the workspace filename the tool handed back, or image#N", ref)
+		} else {
+			lead = fmt.Sprintf("%s is past the end — %d item(s) came in with this message, so the ids stop at media#%d", ref, n, n)
 		}
-		return out, fmt.Errorf("%s isn't in this turn's media — it expires with the turn, so ask the user to re-attach the photo, or pass a workspace filename", ref)
+		// Whichever mistake it was, the picture it wanted is usually sitting in
+		// the space already. Handing over the manifest is what keeps the
+		// conversation going instead of ending it with "send it to me again".
+		if m := RecentImageManifest(sess); m != "" {
+			return out, fmt.Errorf("%s. Use one of these lasting handles instead:\n%s", lead, m)
+		}
+		return out, fmt.Errorf("%s. Pass the workspace filename the tool handed you instead — or, if the user really did send a photo, ask them to re-attach it", lead)
 	}
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
 		return out, fmt.Errorf("no workspace available to read %q from", ref)
@@ -119,7 +160,27 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		return out, fmt.Errorf("no file %q in your workspace", ref)
+		// The dead end that sent a turn guessing, and the only branch in this
+		// function that had one. A URL is told to fetch first; an image#N past
+		// the end is told to call help; a media#N in the wrong namespace gets
+		// the whole manifest. A stale workspace filename — the handle the tool
+		// description calls the most direct there is, and the one likeliest to
+		// go stale, because the framework prunes the ring behind it — said only
+		// that it wasn't there.
+		//
+		// Observed: an edit reached for a filename from an earlier turn, got
+		// this, and could not tell a pruned picture from a misremembered one
+		// ("it might have been cleaned up or I'm misremembering"). It listed the
+		// workspace, found dozens of edit-<id>.png names with nothing to tell
+		// them apart, said "there are too many files", guessed, failed again,
+		// and ended the turn promising work it never did.
+		//
+		// Naming the pruning is half the fix: without it there is no rule to
+		// learn, only a filename that used to work.
+		if m := RecentImageManifest(sess); m != "" {
+			return out, fmt.Errorf("no file %q in your workspace. Produced images are kept as a small rolling set, so an older filename gets pruned while the picture itself is usually still here under an id. Do NOT go hunting through the workspace for it — pick it from this list:\n%s", ref, m)
+		}
+		return out, fmt.Errorf("no file %q in your workspace, and your recent images are empty too, so this picture is gone. Make it again or ask the user to re-send it — do NOT guess at other filenames", ref)
 	}
 	if info.Size() > maxInputImageBytes {
 		return out, fmt.Errorf("%q is %s — the limit for a source image is %s", ref, HumanSize(info.Size()), HumanSize(maxInputImageBytes))

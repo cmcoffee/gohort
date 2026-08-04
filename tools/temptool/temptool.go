@@ -1137,7 +1137,7 @@ func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
 		gt.AddAction(act.Name, &GroupedToolAction{
 			Description: act.Description,
 			Params:      act.Params,
-			Required:    act.Required,
+			Required:    liveRequired(act),
 			Caps:        []Capability{CapNetwork, CapExecute}, // api-mode + response_pipe
 			Handler: func(args map[string]any, s *ToolSession) (string, error) {
 				// Re-attach the action key so the toolbox dispatcher

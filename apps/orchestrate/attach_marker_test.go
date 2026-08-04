@@ -13,16 +13,26 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// stagedSession builds a workspace holding the named files and a session that
+// knows THIS turn created them — the state the framework records per tool call.
+func stagedSession(t *testing.T, names ...string) *ToolSession {
+	t.Helper()
+	ws := t.TempDir()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(ws, n), []byte("\x89PNG\r\n\x1a\nfake"), 0600); err != nil {
+			t.Fatalf("write %s: %v", n, err)
+		}
+	}
+	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
+	sess.AddStagedFiles(names)
+	return sess
+}
+
 func TestABareMarkerCountsAsADeliveryClaim(t *testing.T) {
 	// recoverStagedDeliverable used to require PROSE claiming a delivery, so a
 	// reply that was only a marker — the strongest possible statement of intent,
 	// since it is the framework's own send instruction — recovered nothing.
-	ws := t.TempDir()
-	staged := filepath.Join(ws, "gen-abc123.png")
-	if err := os.WriteFile(staged, []byte("\x89PNG\r\n\x1a\nfake"), 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
+	sess := stagedSession(t, "gen-abc123.png")
 
 	if got := recoverStagedDeliverable(sess, "[ATTACH: gone-forever.png]", false); got != "gen-abc123.png" {
 		t.Errorf("a bare marker must trigger recovery, got %q", got)
@@ -60,11 +70,7 @@ func TestAProducedFileIsSentWithoutReadingTheProse(t *testing.T) {
 	// not the word "picture" — so every gate keyed on delivery nouns missed
 	// exactly the replies that most obviously accompany an image. A turn that
 	// RAN a producer and attached nothing needs no prose analysis at all.
-	ws := t.TempDir()
-	if err := os.WriteFile(filepath.Join(ws, "gen-x.png"), []byte("\x89PNG\r\n\x1a\nfake"), 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
+	sess := stagedSession(t, "gen-x.png")
 	caption := "There you go. Shazz's got a captive audience now whether they want it or not. 🚗"
 
 	if got := recoverStagedDeliverable(sess, caption, false); got != "" {
@@ -79,6 +85,49 @@ func TestAProducedFileIsSentWithoutReadingTheProse(t *testing.T) {
 	// then said it went wrong must not ship the thing it rejected.
 	if got := recoverStagedDeliverable(sess, "I couldn't get that to come out right.", true); got != "" {
 		t.Errorf("a disclaimed failure must not ship, got %q", got)
+	}
+}
+
+func TestAnotherTurnsPictureIsNeverRecovered(t *testing.T) {
+	// The agent posting random photos. The workspace root is per USER — shared
+	// by every session, agent and turn — and the backstop used to ship "the
+	// newest deliverable file in it, if modified within ten minutes". So a
+	// picture made in one conversation was eligible to be attached to an
+	// unrelated reply in another a few minutes later. Nothing about the file
+	// had to have anything to do with the turn that sent it.
+	ws := t.TempDir()
+	for _, n := range []string{"find-someone-elses.jpg", "gen-old.png"} {
+		if err := os.WriteFile(filepath.Join(ws, n), []byte("\x89PNG\r\n\x1a\nfake"), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	// A turn that staged NOTHING: it ran a producer that failed, or produced
+	// nothing at all, and then wrote a reply that reads like a delivery.
+	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
+	if got := recoverStagedDeliverable(sess, "Here's the picture you asked for", true); got != "" {
+		t.Errorf("a turn that staged nothing must ship nothing, got %q", got)
+	}
+
+	// Same workspace, but now the turn really did make one. Only that file is
+	// a candidate — the neighbours stay put no matter how recent they are.
+	sess.AddStagedFiles([]string{"gen-mine.png"})
+	if err := os.WriteFile(filepath.Join(ws, "gen-mine.png"), []byte("\x89PNG\r\n\x1a\nfake"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := recoverStagedDeliverable(sess, "Here's the picture you asked for", true); got != "gen-mine.png" {
+		t.Errorf("the turn's own file must ship, got %q", got)
+	}
+}
+
+func TestAStagedFileAlreadyCleanedUpIsNotReshipped(t *testing.T) {
+	// attach(cleanup=true) removes the file it delivered. A name the turn
+	// staged but that no longer exists must not be handed on as a delivery.
+	sess := stagedSession(t, "gen-gone.png")
+	if err := os.Remove(filepath.Join(sess.WorkspaceDir, "gen-gone.png")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if got := recoverStagedDeliverable(sess, "here's your picture", true); got != "" {
+		t.Errorf("a consumed file must not be recovered, got %q", got)
 	}
 }
 

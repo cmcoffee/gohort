@@ -53,6 +53,15 @@ func init() {
 
 type ImageTool struct{}
 
+// The optional interfaces the framework asks for by assertion, pinned here so
+// a signature drift is a build error rather than a silently skipped check —
+// losing Preflight would put every bad argument back in the background.
+var (
+	_ DetachableTool = (*ImageTool)(nil)
+	_ EstimatingTool = (*ImageTool)(nil)
+	_ PreflightTool  = (*ImageTool)(nil)
+)
+
 func (t *ImageTool) Name() string         { return "image" }
 func (t *ImageTool) Caps() []Capability   { return []Capability{CapNetwork, CapRead} }
 func (t *ImageTool) IsInternetTool() bool { return true }
@@ -134,15 +143,23 @@ func (a imageActions) maxEditImages() int {
 // operation, and a tool schema that changes every turn re-pays cold prefill.
 // The ids come back in tool results and from action="help".
 func (a imageActions) imagesParamDesc() string {
-	// media#N comes FIRST and the two are distinguished by WHEN, not by
-	// recency. Describing image#N as "a recent image" made it the obvious pick
-	// for "blend the two photos I just sent" — and it resolved to the last two
-	// pictures the assistant had generated, which is a confidently wrong answer
-	// rather than an error.
+	// The three forms are split by WHO produced the picture, not by when.
+	//
+	// Both other splits have already failed in production. Describing image#N
+	// as "a recent image" made it the obvious pick for "blend the two photos I
+	// just sent", and it resolved to the last two pictures the assistant had
+	// generated — a confidently wrong answer rather than an error. Splitting on
+	// THIS TURN vs EARLIER then sent an agent that had just downloaded two
+	// photos to media#1 and media#2, which named nothing at all, because what
+	// it had done was this turn and media#N was the this-turn form.
+	//
+	// Origin is the axis that actually separates them: the user attached it, or
+	// a tool made it. And when a tool made it, the filename that tool returned
+	// is the most direct handle there is — no numbering to keep straight.
 	d := "(edit) Source image(s) to change, as references. " +
-		"If the user just sent photos on THIS turn, use \"media#1\", \"media#2\" — numbered in the order they arrived, so media#1 is the first one they sent. " +
-		"For a picture from EARLIER — one you generated, found, downloaded, or that arrived on a previous turn — use \"image#1\" (newest first; call action=\"help\" to list them). " +
-		"A workspace filename also works. "
+		"For a picture a TOOL gave you — found, downloaded or generated — use the workspace filename it returned. That names one picture and goes on naming it. " +
+		"Use \"media#1\", \"media#2\" ONLY for a photo the USER ATTACHED to their message, numbered in the order they arrived, so media#1 is the first one they sent. Nothing you produced yourself is ever a media#N. " +
+		"For a picture from earlier in the conversation whose filename is gone, \"image#1\" is the most recent one either of you produced or received (call action=\"help\" to list them; these numbers SHIFT as new pictures are saved). "
 	if n := a.maxEditImages(); n > 1 {
 		d += "Up to " + strconv.Itoa(n) + ". ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
 	}
@@ -261,9 +278,21 @@ func imageSchemaFor(a imageActions) imageSchema {
 	if len(names) == 0 {
 		return imageSchema{}
 	}
+	// `help` is advertised in the description below and was NOT in this enum, so
+	// the schema forbade the one action the description tells the model to call
+	// to find out which pictures it can reference. On a grammar-constrained
+	// backend that is not a hint being ignored, it is a value the sampler cannot
+	// emit — the documented way out of "which file was the garage image?" was
+	// unreachable, and the model went guessing at filenames instead.
+	//
+	// Appended here rather than to names(), because names() is the CAPABILITY
+	// list: its emptiness is what marks the whole tool unavailable, and help
+	// needs no backend, so a deployment with nothing wired must not start
+	// advertising an image tool that can only describe itself.
+	actions := append(append(make([]string, 0, len(names)+1), names...), "help")
 	desc := "Work with images — single entry point; pick the action matching intent. actions: "
 	params := map[string]ToolParam{
-		"action": {Type: "string", Enum: names, Description: strings.Join(names, " | ") + "."},
+		"action": {Type: "string", Enum: actions, Description: strings.Join(actions, " | ") + "."},
 	}
 	if a.find {
 		desc += "find (search the web for a picture/meme/GIF/photo by description and save the best match — use whenever the user wants a picture of something and has no URL), "
@@ -291,7 +320,10 @@ func imageSchemaFor(a imageActions) imageSchema {
 	if len(a.backendNames()) > 1 {
 		params["backend"] = ToolParam{Type: "string", Enum: a.backendNames(), Description: a.backendParamDesc()}
 	}
-	desc += "help. Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
+	// Gloss it. A bare "help." reads as boilerplate every schema carries, and
+	// what this one actually does — name the pictures that are still reachable —
+	// is the answer to the question a stalled edit is asking.
+	desc += "help (list the pictures you can still reference, by id, with what each one is). Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
 	// Omitting an action hides that the capability EXISTS, and that cuts both
 	// ways. For find, fetch is a fair substitute and silence costs nothing. For
 	// edit it is actively harmful: asked to blend two pictures with no editing
@@ -341,6 +373,37 @@ func (t *ImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) tim
 	return 0
 }
 
+// Preflight checks everything about a render EXCEPT the render: that the
+// backend can do what was asked, that a prompt is there if the graph needs one,
+// and — the one that keeps biting — that every source photo the caller named
+// actually resolves to image bytes right now.
+//
+// The failure this exists for: an agent finds two pictures, calls edit naming
+// them by ids it made up, and gets back "started, will report back" because
+// nothing had looked at the references yet. It tells the user the blend is
+// running. Forty-six seconds later the background job discovers the ids resolve
+// to nothing, and the agent has to explain a failure whose cause is no longer
+// in front of it — so it guesses, and its guess reaches the user as fact.
+//
+// Checked here, the same mistake is a plain tool error in the same round, with
+// the manifest of real handles attached, and the agent simply calls it again
+// correctly. See core.PreflightTool.
+func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
+	avail := liveImageActions(sess)
+	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	case "generate":
+		_, err := planGenerate(sess, args, avail)
+		return err
+	case "edit":
+		p, err := planEdit(sess, args, avail)
+		if err != nil {
+			return err
+		}
+		return CheckImageInputs(sess, p.backend, p.refs, p.mask)
+	}
+	return nil
+}
+
 // TypicalDuration is what this backend has actually been taking, which is a
 // different question from ExpectedDuration and has a different answer. That one
 // reports the DEADLINE — how long before the framework gives up — because
@@ -380,9 +443,6 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	case "generate":
 		return generateImage(sess, args, avail)
 	case "edit":
-		if !avail.edit {
-			return "", fmt.Errorf("the edit action is unavailable — no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
-		}
 		return editImage(sess, args, avail)
 	case "", "help":
 		help := "image actions: " + strings.Join(avail.names(), " | ") + ". Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...)."
@@ -483,8 +543,9 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		// photo of a barn, now make it snowy" only worked while the filename was
 		// still in context, and not at all on a later turn.
 		if ref := RecordRecentImage(sess, data, "found: "+truncate(query, 60)); ref != "" {
-			msg += fmt.Sprintf(" It is also kept as %s — pass that to image(action=\"edit\") to change it.", ref)
+			msg += editHandleHint(name, ref)
 		}
+		msg += showToModel(sess, data, "It is a search result, not a verified answer")
 		return msg, nil
 	}
 
@@ -497,9 +558,21 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// whose image is right. Per candidate: one page fetch, one image, one
 	// vision call — and usually just the first.
 	const maxFindCandidates = 6
+	// identityRequired: the query names a specific subject, so PROVENANCE — the
+	// page actually being about it — is the only evidence available, and a
+	// vision score cannot substitute for it no matter how high. See
+	// namedSubjectTokens.
+	//
+	// This is also the escape hatch for a deployment whose model has no image
+	// modality at all. Provenance is a TEXT check: it needs no vision, costs no
+	// vision call, and is the one guarantee that survives when the screen is
+	// absent or refuses to answer. Everything below treats vision as a bonus
+	// on top of it rather than a prerequisite.
+	identityRequired := len(namedSubjectTokens(query)) > 0
 	var bestData []byte
 	var bestMeta SerperImageResult
 	bestScore := -1
+	bestTextMatch := false
 	usable := 0
 	// scored counts candidates the vision screen actually RATED. A screen that
 	// returns no number is not the same as one that rates everything zero, and
@@ -542,8 +615,14 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		}
 		// No vision configured → can't screen the pixels; take the first
 		// text-matching result (or the first usable one at all).
+		//
+		// Except when the query names someone: then provenance is not a
+		// preference, it is the entire basis for believing this is the right
+		// subject. Without vision AND without the page mentioning them, there
+		// is no evidence at all — keep looking, and refuse below if none of the
+		// candidates ever mentions them.
 		if sess.LLM == nil {
-			if textMatch || bestScore < 0 {
+			if textMatch || (bestScore < 0 && !identityRequired) {
 				return saveAndReturn(data, r)
 			}
 			continue
@@ -557,7 +636,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			return saveAndReturn(data, r) // confident match — stop here
 		}
 		if score > bestScore {
-			bestData, bestMeta, bestScore = data, r, score
+			bestData, bestMeta, bestScore, bestTextMatch = data, r, score, textMatch
 		}
 		// Escalation: the page IS about the subject (text-matched) but the
 		// cheap image — a blocked source that fell back to Google's thumbnail,
@@ -576,7 +655,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 						return saveAndReturn(rdata, r)
 					}
 					if rscore > bestScore {
-						bestData, bestMeta, bestScore = rdata, r, rscore
+						bestData, bestMeta, bestScore, bestTextMatch = rdata, r, rscore, textMatch
 					}
 				}
 			} else {
@@ -586,9 +665,18 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	}
 	// Nothing both text- and vision-matched. Use the best vision match if it's
 	// a confident depiction; otherwise reject rather than return a wrong image.
-	if bestScore >= imageMatchThreshold {
+	//
+	// A NAMED subject never reaches here on pixels alone. This is the exit that
+	// shipped four different realtors at 95/100 for one man's name, and the one
+	// that has to say what it actually knows: that it found a picture of the
+	// right KIND of thing and has no evidence it is the right one.
+	if bestScore >= imageMatchThreshold && (!identityRequired || bestTextMatch) {
 		Log("[imagefetch/find_image] query=%q no text+vision match; using best vision match %d/100", query, bestScore)
 		return saveAndReturn(bestData, bestMeta)
+	}
+	if identityRequired && bestScore >= imageMatchThreshold && !bestTextMatch {
+		Log("[imagefetch/find_image] query=%q REFUSED: best visual match %d/100 but no source page mentions %v", query, bestScore, namedSubjectTokens(query))
+		return "", identityUnverifiableError(query, usable)
 	}
 	switch findOutcome(usable, scored, bestScore) {
 	case findNoImages:
@@ -598,10 +686,34 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		// will not answer is, for this purpose, the same as not having one — so
 		// fall back to the no-vision behaviour (first text-matching candidate)
 		// rather than throwing away results it declined to judge.
+		//
+		// Which makes provenance load-bearing here: with nothing screening the
+		// pixels, the page mentioning the subject is the ONLY evidence left,
+		// and shipping an unscreened photo of a stranger is worse than saying
+		// it wasn't found. Note the screen abstains most often on exactly these
+		// queries — asking a model to confirm a specific person is the question
+		// it declines — so this path and the identity case coincide constantly.
+		if identityRequired && !fallbackTextMatch {
+			Log("[imagefetch/find_image] query=%q REFUSED: vision screen abstained on all %d candidate(s) and none mentions %v", query, usable, namedSubjectTokens(query))
+			return "", identityUnverifiableError(query, usable)
+		}
 		Log("[imagefetch/find_image] query=%q vision screen returned no rating for any of %d candidate(s) — delivering the best text match unscreened", query, usable)
 		return saveAndReturn(fallbackData, fallbackMeta)
 	}
 	return "", fmt.Errorf("found image(s) for %q but none clearly depict it (best visual match %d/100) — the search may have surfaced lookalikes or unrelated results; refine the query, or use fetch_image with a specific image URL", query, bestScore)
+}
+
+// identityUnverifiableError is what a search for a specific person says when it
+// found photographs of the right sort and nothing tying any of them to that
+// person.
+//
+// It has to be explicit that this is not a near-miss to be retried with better
+// wording, or the model simply searches again — that is what produced six
+// searches in ninety seconds this morning, each delivering a different stranger
+// with more confidence than the last. Rewording cannot fix "no page about this
+// person carries this photo".
+func identityUnverifiableError(query string, usable int) error {
+	return fmt.Errorf("found %d photo(s) matching %q in general, but NONE from a page that mentions them by name — so there is no evidence any of these is the right person, only that they look like the sort of picture asked for. Do NOT retry with a reworded query; a face cannot be confirmed from pixels and rewording will just return a different stranger. Tell the user you couldn't find a picture of them, and ask for one (a photo, a link, a profile URL) if you need it", usable, query)
 }
 
 // findResolution is how a search that produced no confident match ends.
@@ -660,6 +772,18 @@ func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSessio
 // reason editImage is: the argument checks are worth testing without a live
 // connector behind them.
 func generateImage(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
+	backend, err := planGenerate(sess, args, avail)
+	if err != nil {
+		return "", err
+	}
+	return generateImageInto(sess, StringArg(args, "prompt"), backend)
+}
+
+// planGenerate resolves and checks the backend a generate call will use. Split
+// from generateImage for the same reason planEdit is: these errors have to
+// reach the model before the call detaches, not a minute after it. See
+// ImageTool.Preflight.
+func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
 	if !avail.generate {
 		return "", fmt.Errorf("the generate action is unavailable — no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
 	}
@@ -688,13 +812,30 @@ func generateImage(sess *ToolSession, args map[string]any, avail imageActions) (
 		}
 		return "", fmt.Errorf("image backend %q is not available to you — use one of: %s (or omit backend for the default)", backend, strings.Join(names, ", "))
 	}
-	return generateImageInto(sess, StringArg(args, "prompt"), backend)
+	return backend, nil
 }
 
-// editImage runs the edit action: resolve the backend, hand the caller's image
-// references to the connector (which verifies and uploads them), and save the
-// result the same way generation does.
-func editImage(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
+// editPlan is an edit call reduced to what will actually run: which backend,
+// with what prompt, over which source references.
+type editPlan struct {
+	backend string
+	prompt  string
+	refs    []string
+	mask    string
+}
+
+// planEdit does every check an edit can make from its arguments alone — which
+// is all of them except the render itself.
+//
+// Split out from editImage so the SAME checks can run before the call detaches
+// (see ImageTool.Preflight). A render long enough to detach is long enough that
+// "you named a backend that can't edit" would otherwise come back a minute
+// after the agent already promised the user a picture.
+func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editPlan, error) {
+	var p editPlan
+	if !avail.edit {
+		return p, fmt.Errorf("the edit action is unavailable — no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
+	}
 	prompt := strings.TrimSpace(StringArg(args, "prompt"))
 	refs := stringsArg(args, "images")
 	if len(refs) == 0 {
@@ -702,7 +843,7 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 		if m := RecentImageManifest(sess); m != "" {
 			hint = m
 		}
-		return "", fmt.Errorf("edit needs at least one source image — %s", hint)
+		return p, fmt.Errorf("edit needs at least one source image — %s", hint)
 	}
 	backend := strings.TrimSpace(StringArg(args, "backend"))
 	if backend == "" {
@@ -718,30 +859,41 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	// reachable, and the explicit check below still gates the dispatch.
 	if !isEditor(avail, backend) {
 		if len(avail.editors) == 0 {
-			return "", fmt.Errorf("no image backend here can edit photos")
+			return p, fmt.Errorf("no image backend here can edit photos")
 		}
-		return "", fmt.Errorf("image backend %q generates from text and can't edit a photo — use one of: %s, or switch to action=\"generate\"", backend, strings.Join(editorNames(avail), ", "))
+		return p, fmt.Errorf("image backend %q generates from text and can't edit a photo — use one of: %s, or switch to action=\"generate\"", backend, strings.Join(editorNames(avail), ", "))
 	}
 	// Some editing workflows have no text node at all — a blend or an upscale is
 	// pure pixel work. Demanding a prompt there makes the model invent one that
 	// goes nowhere.
 	if prompt == "" && backendNeedsPrompt(avail, backend) {
-		return "", fmt.Errorf("prompt is required for this backend — describe what should CHANGE (e.g. \"make it snowy\", \"put the subject on a beach\")")
+		return p, fmt.Errorf("prompt is required for this backend — describe what should CHANGE (e.g. \"make it snowy\", \"put the subject on a beach\")")
 	}
 	// ENFORCEMENT, same as generate: the enum is a hint, this is the boundary.
 	if !ImageBackendReachable(sess, backend) {
-		return "", fmt.Errorf("image backend %q is not available to you — use one of: %s", backend, strings.Join(editorNames(avail), ", "))
+		return p, fmt.Errorf("image backend %q is not available to you — use one of: %s", backend, strings.Join(editorNames(avail), ", "))
+	}
+	return editPlan{backend: backend, prompt: prompt, refs: refs, mask: StringArg(args, "mask")}, nil
+}
+
+// editImage runs the edit action: check the arguments, hand the caller's image
+// references to the connector (which verifies and uploads them), and save the
+// result the same way generation does.
+func editImage(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
+	p, err := planEdit(sess, args, avail)
+	if err != nil {
+		return "", err
 	}
 	result, err := EditImageWithBackend(sess, EditImageRequest{
-		Backend: backend,
-		Prompt:  prompt,
-		Images:  refs,
-		Mask:    StringArg(args, "mask"),
+		Backend: p.backend,
+		Prompt:  p.prompt,
+		Images:  p.refs,
+		Mask:    p.mask,
 	})
 	if err != nil {
-		return "", fmt.Errorf("image edit via %q failed: %w", backend, err)
+		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
 	}
-	return saveImageResult(sess, result, "edit", "edited "+strings.Join(refs, "+")+": "+truncate(prompt, 60))
+	return saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60))
 }
 
 // defaultEditBackend picks the editing backend when the caller names none: the
@@ -928,6 +1080,10 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	if ref := RecordRecentImage(sess, data, note); ref != "" {
 		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working; %s is the lasting handle for this picture. Use %s to edit it later, or to send it again. Never re-attach the workspace path after a cleanup — it is already delivered.", ref, ref)
 	}
+	// A render is a guess at the prompt, not a rendering of it: the wrong
+	// number of people, the text unreadable, the edit applied to nothing. The
+	// agent used to find that out when the user did.
+	msg += showToModel(sess, data, "This is what the backend produced, which is not always what was asked for")
 	return msg, nil
 }
 
@@ -1104,11 +1260,59 @@ func significantQueryWords(query string) []string {
 	return out
 }
 
+// namedSubjectTokens returns the PROPER-NAME words a query is about — the ones
+// no amount of looking at pixels can confirm.
+//
+// "Shazz Barbaric real estate" is two questions, not one. A vision model can
+// answer the second (is this a real-estate person? yes) and has no way to touch
+// the first, so it scores the half it can and returns a confident number for
+// the whole thing. Production, one search, five candidates: 95, 95, 95, 85, 75
+// — five different people, none of them him, every score a pass. Another run
+// returned a 19th-century cigarette card of the Sultan of Zanzibar, matched
+// through "Savage and Semi-Barbarous Chiefs", at a passing grade.
+//
+// Capitalization in the query is the signal, and it degrades the right way. A
+// real subject's page says its own name — "golden gate bridge" appears on any
+// page about the bridge — so requiring the name costs a genuine match nothing.
+// A person who is not on the page cannot be rescued by the page being about
+// real estate in general, which is exactly the substitution that was happening.
+func namedSubjectTokens(query string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(query, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		r := []rune(w)
+		if len(r) < 3 || !unicode.IsUpper(r[0]) {
+			continue
+		}
+		lower := strings.ToLower(w)
+		if imageQueryFiller[lower] {
+			continue
+		}
+		out = append(out, lower)
+	}
+	return out
+}
+
 // pageMentionsSubject reports whether a page (already lowercased) references
-// the search subject — every significant query word for short queries, a
-// ~60% majority for longer ones. An uncheckable query (no significant words)
-// passes so it never blocks the result.
+// the search subject.
+//
+// Two tiers, because they answer different questions. Proper names are
+// REQUIRED: they are what makes the request about one thing rather than a
+// category, and counting them as one token among many is how a page that never
+// says "Shazz" text-matched on "real estate ranch owner Texas" — five of eight
+// tokens, a comfortable 60%, name absent. Everything else keeps the majority
+// rule, which is right for descriptive queries where any given adjective may
+// simply not appear in the prose.
+//
+// An uncheckable query (no significant words) passes so it never blocks a
+// result.
 func pageMentionsSubject(pageLower, query string) bool {
+	for _, name := range namedSubjectTokens(query) {
+		if !strings.Contains(pageLower, name) {
+			return false
+		}
+	}
 	toks := significantQueryWords(query)
 	if len(toks) == 0 {
 		return true
@@ -1270,9 +1474,80 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 	// Downloaded images join the space as well — this is also the path a model
 	// is told to use when it tries to pass a URL straight to edit.
 	if ref := RecordRecentImage(sess, data, "downloaded: "+truncate(rawURL, 60)); ref != "" {
-		msg += fmt.Sprintf(" It is also kept as %s — pass that to image(action=\"edit\") to change it.", ref)
+		msg += editHandleHint(name, ref)
 	}
+	msg += showToModel(sess, data, "Nothing has checked what is in it")
 	return msg, nil
+}
+
+// showToModel puts the picture itself in front of the agent on its next round,
+// and tells it that it can now look.
+//
+// The gap this closes: nothing ever showed the agent the image. find handed
+// back a filename, a title and a source; generate and edit handed back a path.
+// The agent wrote "here's the photo of him" having seen a string that said
+// "Farm & Ranch" and nothing else — it could not have caught the wrong picture,
+// because it was never shown one. The only way it looked at anything was
+// calling workspace(view_image) unprompted, which nothing asked it to do.
+//
+// The bytes go through the view-image channel: injected as a synthetic user
+// message for ONE round and drained, never persisted into history, and never
+// delivered to the user. Costs one image in context on the round where it is
+// most useful and nothing after that.
+//
+// Two escape hatches, because a model that cannot see must not be asked to
+// pretend:
+//
+//   - No LLM on the session — nowhere to send it.
+//   - A DETACHED call — the turn that asked ended, and there is no next round
+//     to inject into. What it produced travels to the wake as an attachment
+//     instead, and telling a model "look at this" when nothing will arrive is
+//     an invitation to describe an image it never got.
+//
+// A model wired without an image modality is the remaining case, and it is why
+// this only ever ADDS a chance to catch a mistake. Nothing downstream is gated
+// on the agent's verdict, so a model that cannot see simply proceeds as it does
+// today. Verification that must hold with no vision at all lives in the
+// provenance check, which is text.
+func showToModel(sess *ToolSession, data []byte, caveat string) string {
+	if sess == nil || sess.LLM == nil || sess.Detached || len(data) == 0 {
+		return ""
+	}
+	sess.AppendViewImage(data)
+	// What the agent is asked to judge has to be scoped, or showing it the
+	// picture makes things worse rather than better.
+	//
+	// The first version said "check it really shows what was asked for". Asked
+	// for a specific person, the search returned his photo from his own site —
+	// name in the page title, first candidate, a clean hit. The agent looked at
+	// it, did not recognize a face it has never seen, took that as a failed
+	// check, and sent nothing. A correct result, refused, because the question
+	// it was handed was the one nobody can answer by looking.
+	//
+	// Which is the same trap the vision screen was in: identity is not visible.
+	// So the instruction names both halves — what looking settles, and what it
+	// cannot — and makes DELIVERING the default, so an unfamiliar face is never
+	// mistaken for evidence of a wrong picture.
+	return fmt.Sprintf(" LOOK AT IT: the picture is included with this result so you can see it on this round. %s."+
+		" Looking settles whether it is the right KIND of thing, whether it is blank, broken or garbled, and whether an edit did what was asked."+
+		" Looking does NOT settle WHO someone is: you do not know this person's face, so a face you don't recognize is not evidence of a wrong picture — where it came from is the evidence you have, and you should not overrule it from the pixels."+
+		" Deliver it unless you can point at something concretely wrong; if you can, say what that is rather than presenting it as a match.", caveat)
+}
+
+// editHandleHint names the handle to EDIT this picture by, and says plainly
+// that the image#N one moves.
+//
+// Both find and fetch used to end with "it is also kept as image#1", which is
+// true for exactly as long as it is the newest picture. Search for two people
+// to blend and both results say image#1 — the first quietly became image#2 the
+// moment the second arrived, and nothing said so. What the model does with two
+// identical handles for two different pictures is invent a third naming scheme
+// and pass ids that resolve to nothing.
+//
+// So the filename leads: it means this picture and no other, for as long as the
+// file is there. image#N follows, with what it actually means.
+func editHandleHint(name, ref string) string {
+	return fmt.Sprintf(" To EDIT or blend it rather than send it, pass %q as the image to image(action=\"edit\") — that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
 }
 
 // extForMime returns a file extension matching a mime type. Used to

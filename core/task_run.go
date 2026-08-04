@@ -76,6 +76,30 @@ type EstimatingTool interface {
 	TypicalDuration(args map[string]any, sess *ToolSession) time.Duration
 }
 
+// PreflightTool is an optional companion to DetachableTool: the part of the
+// call that can be checked WITHOUT doing the work. Implement it for anything
+// whose arguments can be wrong in a way the model could fix on the spot.
+//
+// Detaching moves every error the call can raise out of the turn. A bad source
+// reference, a backend that can't do what was asked, a missing prompt — all of
+// them used to come back as an immediate tool error the model corrected in its
+// next round. Detached, the same mistake instead returns "started, will report
+// back", the agent tells the user it's running, and the failure surfaces a
+// minute later in a wake with no turn left to fix it in. The model then has to
+// explain a failure it can't see the cause of, and it invents one.
+//
+// So the checkable part runs BEFORE the detach: an error here is returned to
+// the model inline, exactly as it would have been without detaching. Only work
+// that genuinely needs the time goes to the background.
+//
+// It is asked only on the detach path — an inline call raises its own errors
+// at the right moment already — so the check must be cheap and side-effect
+// free. A nil return means "nothing I can rule out from here."
+type PreflightTool interface {
+	ChatTool
+	Preflight(args map[string]any, sess *ToolSession) error
+}
+
 // TaskRun is a detached call the framework is tracking.
 type TaskRun struct {
 	ID     string // handle the model can name to ask about or cancel it
@@ -192,6 +216,34 @@ func detachedNotice(run TaskRun, typical time.Duration) string {
 	}
 	b.WriteString("Do NOT explain that you are running in the background, do NOT tell them they can keep talking to you, and do NOT invite them to check on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
 	b.WriteString("The result arrives on its own as a new message when it is done; you will be told then, and that is when you deliver it. Until then answer whatever they say next as normal.")
+	return b.String()
+}
+
+// secondDetachNotice answers a tool that tries to start a second background job
+// in a turn that already has one running.
+//
+// Returned as a RESULT, not an error, and that is load-bearing twice over. An
+// error would read as "that failed, adjust and retry" — the exact conclusion
+// that produced the second call. It would also feed the give-up-with-errors
+// guard, which counts unaddressed tool errors and pushes the model to try
+// again; the framework would be nudging the behaviour it just blocked.
+//
+// So it says the same thing the original notice said, in the one place the
+// model cannot skim past: the answer to its call.
+func secondDetachNotice(tool string, prior TaskRun) string {
+	var b strings.Builder
+	b.WriteString("NOT STARTED — you already have one of these running this turn")
+	if id := strings.TrimSpace(prior.ID); id != "" {
+		b.WriteString(" (task " + id)
+		if l := strings.TrimSpace(prior.Label); l != "" {
+			b.WriteString(", " + l)
+		}
+		b.WriteString(")")
+	}
+	b.WriteString(".\n")
+	b.WriteString("Nothing was wrong with this call. It was not run because a second background job delivers a SECOND result to the user, minutes later, as its own message — for one thing they asked for once.\n")
+	b.WriteString("The first job is still working. It has not failed, and getting no picture back is not a sign that it did — that is what running in the background means. Do NOT call " + tool + " again this turn, and do NOT go looking for another way to do the same thing.\n")
+	b.WriteString("Finish your turn now: say you are on it and will report back, in one line. The result arrives on its own when it is done, and that is when you deliver it. If they genuinely want another one after that, start it then.")
 	return b.String()
 }
 

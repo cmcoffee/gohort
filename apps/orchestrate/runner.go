@@ -321,6 +321,14 @@ type chatTurn struct {
 	udb   Database
 	user  string
 	agent AgentRecord
+	// detach is this TURN's background-job ledger, shared by every session the
+	// turn mints. It has to live here rather than on a session because a plan
+	// runs each step on its OWN session (runWorkerStep), so a per-session cap
+	// gives a three-step plan three allowances and the user three deliveries for
+	// one request. Same reasoning as stagedFiles below. Minted on first use so
+	// no construction site has to remember it.
+	detach     *DetachLedger
+	detachOnce sync.Once
 	// turnClosed records that a control tool ended this turn — today
 	// stay_silent, whose tool result promises "this turn is now closed".
 	// It closes the LOOP it fires in (agent_loop breaks server-side), but a
@@ -460,6 +468,14 @@ type chatTurn struct {
 	// runPlan / runWorkerStep writes back any switch the step performed.
 	// Empty = no managed workspace active yet → per-user root (the default).
 	activeWorkspaceID string
+
+	// stagedFiles are the workspace files THIS turn's tools created, carried
+	// across the per-step sessions the same way activeWorkspaceID is. The
+	// delivery backstop needs to know what the turn made, and a turn makes
+	// things in several sessions while the workspace root it writes into is
+	// shared with every other turn this user has.
+	stagedFiles []string
+	stagedMu    sync.Mutex
 
 	// Active orchestrator bubble id — set by runPlan's streamHandler
 	// when text begins, cleared by onStepHandler at the round
@@ -1426,6 +1442,32 @@ func (t *chatTurn) captureActiveWorkspace(sess *ToolSession) {
 	if sess != nil && sess.WorkspaceID != "" {
 		t.activeWorkspaceID = sess.WorkspaceID
 	}
+	t.captureStagedFiles(sess)
+}
+
+// captureStagedFiles folds the files a session's tools created into the turn,
+// so the delivery backstop sees everything this turn produced no matter which
+// of the turn's sessions produced it. Paired with the seeding in
+// newToolSession, which hands the accumulated list to each fresh session.
+func (t *chatTurn) captureStagedFiles(sess *ToolSession) {
+	staged := sess.StagedFiles()
+	if len(staged) == 0 {
+		return
+	}
+	t.stagedMu.Lock()
+	defer t.stagedMu.Unlock()
+	for _, n := range staged {
+		if !slices.Contains(t.stagedFiles, n) {
+			t.stagedFiles = append(t.stagedFiles, n)
+		}
+	}
+}
+
+// stagedThisTurn is what the turn has written into the workspace so far.
+func (t *chatTurn) stagedThisTurn() []string {
+	t.stagedMu.Lock()
+	defer t.stagedMu.Unlock()
+	return slices.Clone(t.stagedFiles)
 }
 
 // loadAgentTempTools hydrates sess.TempTools with the agent's custom (temp)
@@ -1792,6 +1834,22 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	}
 }
 
+// detachLedger is the turn's one background-job ledger. See chatTurn.detach.
+func (t *chatTurn) detachLedger() *DetachLedger {
+	t.detachOnce.Do(func() { t.detach = NewDetachLedger() })
+	return t.detach
+}
+
+// chatSessionID is this turn's conversation id, "" when the turn has no
+// persisted session (a wake, a one-shot). Anything keyed per-conversation —
+// the commitment ledger — simply does nothing without one.
+func (t *chatTurn) chatSessionID() string {
+	if t == nil || t.session == nil {
+		return ""
+	}
+	return t.session.ID
+}
+
 func (t *chatTurn) newToolSession() *ToolSession {
 	sess := &ToolSession{
 		LLM:      t.app.LLM,
@@ -1831,6 +1889,10 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// tool + script gohort.fetch_url) blocks a covered host whose credential
 	// is revoked, closing the bypass that the tool-kit filter alone leaves
 	// open (a plain fetch to the host instead of a credential-bound tool).
+	// One background-job allowance for the whole turn, not one per session. A
+	// plan step gets its own session; it does not get its own right to start
+	// another render.
+	sess.Detach = t.detachLedger()
 	sess.DeniedCredentials = credentialDenySet(t.agent, sess.Username)
 	// Tag with the active chat session id so SaveSessionTempTool /
 	// LoadSessionTempTools can scope tool drafts to this conversation.
@@ -2011,6 +2073,10 @@ func (t *chatTurn) newToolSession() *ToolSession {
 			Log("[orchestrate.tools] loaded %d session-draft tool(s) for session=%s (cleaned %d redundant)", n, t.session.ID, cleaned)
 		}
 	}
+	// Hand the new session what the turn has already staged, so any session
+	// this turn mints — including the one the delivery backstop runs on — can
+	// tell this turn's files apart from everything else in the shared root.
+	sess.AddStagedFiles(t.stagedThisTurn())
 	return sess
 }
 
@@ -6730,11 +6796,17 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			})
 		}
 	}
+	// What this turn has run a deliverable producer for, tracked live off the
+	// same round callback. Read by the phantom-delivery guard below, which has
+	// to answer "was this turn making a picture?" while the loop is still
+	// running — long before the transcript the after-the-fact backstop reads.
+	produced := new(deliveryWatch)
 	// Telemetry record fires at the top of the onStep callback; the
 	// telem var is declared at function entry and summarized in the
 	// deferred block above.
 	onStepHandler := func(info StepInfo) {
 		telem.record(info)
+		produced.note(info.ToolCalls)
 		// Tool-only round with no text and no lazy-bubble: nothing
 		// to finalize, nothing visible. (Tool calls in that round
 		// already created their own bubble via ensureBubbleForTool;
@@ -7056,6 +7128,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// topical/disclosure rule ("never mention salary") is caught at the door,
 	// not after the model has already narrated the answer in an interim turn.
 	llmMsgs, gDecline := t.applyInputGuardrail(llmMsgs)
+	// What the USER actually said, captured before the loop writes on it. The
+	// loop appends turn-scoped context (the image manifest) and prepends the
+	// date stamp to this same trailing message in place, and the graph extractor
+	// below runs after that — so reading it afterwards would file the
+	// framework's own scaffolding as things the user stated.
+	userSaid := LatestUserContent(llmMsgs)
 
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
@@ -7089,6 +7167,27 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.
 		DrainViewImages: sess.DrainViewImages,
+		// Hand over the recent-image ids when the user is talking about a
+		// picture. The space can't live in the tool schema (it changes on every
+		// image operation and would re-pay cold prefill), but the newest user
+		// turn is the volatile tail that never caches anyway — same place the
+		// date stamp goes, and free for the same reason.
+		TurnNotes: func(user string) string { return turnNotes(sess, t.udb, t.chatSessionID(), user) },
+		// Last look before the reply goes out: is it true about what this turn
+		// actually did? Backstops the phrase-list guards on the shapes they don't
+		// know. See turn_judge.go.
+		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		DeliveredCount: func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
+		Backgrounded:   func() bool { return sess.Detach.Any() },
+		// Catch a reply that presents a picture the turn never produced, while
+		// the loop can still do something about it. The dispatch path has had
+		// this since the phantom-delivery work; interactive chat never did, so
+		// the only protection here was recoverClaimedDelivery — a backstop that
+		// ships a staged file and has nothing to say when there is no file. A
+		// generation that failed left the caption standing on its own.
+		PhantomDeliveryRefs: func(reply string) []string {
+			return phantomDeliveryRefs(sess, reply, produced.producedKind())
+		},
 		// Drain mid-flight user injections EACH ROUND so the orchestrator
 		// incorporates them during inline work — not just at plan-step
 		// boundaries / synthesis. Without this, a note injected while the
@@ -7208,7 +7307,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// cooldown + own goroutine (never blocks the turn, self-throttles on the
 	// shared GPU); gated off by default.
 	if loopErr == nil {
-		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID), LatestUserContent(llmMsgs), t.app.WorkerChat)
+		// Close the books on what this turn said it would do. A turn that called
+		// a tool retires whatever was outstanding; one that ended on a fresh
+		// promise and did nothing records it for the next turn to answer for.
+		if resp != nil {
+			recordTurnCommitment(t.udb, t.chatSessionID(), resp.Content, len(t.persistedToolCalls()) > 0)
+		}
+		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID), userSaid, t.app.WorkerChat)
 	}
 	{
 		respLen := 0
@@ -7743,6 +7848,16 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		MaxRounds:            hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Stream:               stream,
+		// Same turn-scoped notes the orchestrator round gets. A worker step is
+		// where the work usually actually runs, so leaving them out would hand the
+		// context to the layer that plans and withhold it from the one that acts.
+		TurnNotes: func(user string) string { return turnNotes(sess, t.udb, t.chatSessionID(), user) },
+		// Last look before the reply goes out: is it true about what this turn
+		// actually did? Backstops the phrase-list guards on the shapes they don't
+		// know. See turn_judge.go.
+		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		DeliveredCount: func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
+		Backgrounded:   func() bool { return sess.Detach.Any() },
 		// Worker-step corrections breadcrumb into the same session trail as
 		// the orchestrator loop — a silent re-prompt during a plan step is
 		// still a framework decision the user should be able to see.

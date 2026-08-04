@@ -291,7 +291,7 @@ func (g *GroupedTool) Run(args map[string]any) (string, error) {
 }
 
 // RunWithSession dispatches by action. The "help" action is auto-handled.
-func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (out string, err error) {
 	action := strings.TrimSpace(StringArg(args, "action"))
 	if action == "help" {
 		return g.formatHelp(), nil
@@ -352,6 +352,21 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 			empty = append(empty, strconv.Quote(r))
 		}
 	}
+	// Every outcome from here down is reported, including the ones this argument
+	// validation rejects before the handler ever runs. A call bounced for a
+	// missing param is a call that failed — and those WERE the failure: 371 in
+	// two days, not one of which reached a handler. Counting only handler results
+	// would have seen nothing wrong at all. Placed after the action lookup on
+	// purpose: an action that does not exist is not an action that never works.
+	// See ToolOutcomeRecorder.
+	// The advisory comes back OUT of the recorder and onto the error, because the
+	// host is the only thing that knows this action has failed twenty times
+	// running and the model is the only thing that can stop calling it.
+	defer func() {
+		if advice := noteToolOutcome(sess, g.name, action, err); advice != "" && err != nil {
+			err = fmt.Errorf("%w%s", err, advice)
+		}
+	}()
 	if len(missing)+len(empty) > 0 {
 		var parts []string
 		if len(missing) > 0 {

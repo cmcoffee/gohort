@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -1090,10 +1091,32 @@ type AgentLoopConfig struct {
 	// its schema rejoins the catalog next round.
 	ToolFallbackResolver func(name string) (ToolHandlerFunc, bool)
 
-	// PhantomDeliveryRefs reports the files a reply CLAIMS to be sending that
-	// do not exist — a delivery promised for something never produced. The loop
-	// cannot answer this itself: what a reference resolves against (a workspace,
-	// an inbound-media registry, a recent-image ring) is the app's to know.
+	// DeliveredCount reports how many attachments actually go out with this
+	// reply. Evidence for the turn judge: "here's your picture" is true or false
+	// depending entirely on this number. Nil reads as zero, which is honest —
+	// a host that doesn't track deliveries has none to report.
+	DeliveredCount func() int
+
+	// Backgrounded reports whether this turn started a detached job. It makes
+	// "I'll let you know when it's done" TRUE, and that is the reply
+	// detachedNotice explicitly asks for — so the judge must never see such a
+	// turn. Nil reads as false.
+	Backgrounded func() bool
+
+	// TurnClaimJudge reads the finished turn and reports whether the reply is
+	// honest about what the turn actually did — the backstop for the shapes the
+	// phrase-list guards above do not know about. See turn_judge.go.
+	TurnClaimJudge TurnClaimJudge
+
+	// PhantomDeliveryRefs names what a reply CLAIMS to be sending that does not
+	// exist — a delivery promised for something never produced. The loop cannot
+	// answer this itself: what a reference resolves against (a workspace, an
+	// inbound-media registry, a recent-image ring) is the app's to know, and so
+	// is whether this turn ran anything that MAKES a deliverable.
+	//
+	// Each entry is quoted straight into the correction, so return whatever
+	// names the missing thing best: a filename when the reply named one, a plain
+	// noun phrase ("the image") when it didn't.
 	//
 	// Return only GENUINE phantoms. A reference to a file that was delivered and
 	// then cleaned up is not one — the delivery happened — and neither is one
@@ -1107,6 +1130,11 @@ type AgentLoopConfig struct {
 	// called no tools at all. The marker resolved to nothing, stripping left an
 	// empty reply, and the contact was asked to rephrase a request that was
 	// never the problem.
+	//
+	// Its quieter twin, which no marker rule can reach: the turn DID call the
+	// image tool, the generation failed, and the reply was a caption — "Here's
+	// you, wasting away in the garage like Craig ordered" — delivered whole, with
+	// no picture and nothing anywhere in the words to suggest one was missing.
 	PhantomDeliveryRefs func(reply string) []string
 
 	// RoundToolFilter, when set, is called at the top of each round for
@@ -1143,6 +1171,26 @@ type AgentLoopConfig struct {
 	// moment it's done with it, instead of waiting for the budget floor.
 	// Works even when ContextSize is 0. Nil = budget-only compaction.
 	RoundCompactNow func() bool
+
+	// TurnNotes supplies volatile, turn-scoped context to append to the newest
+	// user message. Called once with that message's text, before the first LLM
+	// call; return "" to add nothing.
+	//
+	// The newest user turn is the cache-safe home for anything that changes
+	// between turns — it is the volatile tail that never hits cache anyway, so
+	// appending there costs nothing, which is the same reasoning that puts the
+	// date stamp below here rather than in the system prompt. Facts that a tool
+	// SCHEMA cannot carry (schemas sit at the front of the prompt, so a changing
+	// one re-pays cold prefill every turn) can be carried here instead.
+	//
+	// The loop has no idea what a turn is about, so what is worth saying is
+	// entirely the app's call. It sees the user's message and decides.
+	//
+	// Turn-scoped means turn-scoped: the note is appended to the loop's working
+	// copy of history. Hosts persist their own user message, so it does not ride
+	// into the stored conversation — which matters when the note contains
+	// anything positional, since next turn it would be wrong.
+	TurnNotes func(userMessage string) string
 
 	// StampLocation sets the timezone of the "[Current date & time: …]"
 	// marker prefixed onto the newest user turn. Nil = the deployment/host
@@ -1523,6 +1571,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		Debug("[agent_loop] failure-streak collapse: %d repeated failure result(s) in incoming history collapsed", n)
 	}
 
+	// Turn-scoped notes from the app, appended to the newest user turn BEFORE
+	// the stamp goes on the front — so the app is handed the user's own words,
+	// not a message that opens with a timestamp it has to look past.
+	applyTurnNotes(cfg, history)
+
 	// Stamp the current date+time onto the latest user turn (the human message
 	// that opened this turn — tool-result user messages get appended below, so at
 	// this point the last message IS the human turn). This is the cache-safe home
@@ -1667,12 +1720,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 
 	var lastResp *Response
 	prevHadToolCalls := false
-	// promiseCorrectionsTotal caps how many times we'll re-prompt the
-	// model for promising action without taking it. Two attempts is
-	// enough to nudge a stuck Qwen turn; further attempts would burn
-	// rounds without progress.
-	promiseCorrectionsTotal := 0
-	const maxPromiseCorrections = 2
+	// Rations the loop's silent re-prompts. Per KIND, not one pot — see
+	// correctionBudget for why that mattered.
+	corrections := newCorrectionBudget()
 	guardrailOutputCorrections := 0 // pre_output revise passes used this turn
 	// judgedNarration records the interim prose the periodic guard has already
 	// ruled on this turn, so a model that repeats a lead-in verbatim doesn't pay
@@ -1696,6 +1746,17 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	emitDiag := func(kind, detail string) {
 		if cfg.OnDiag != nil {
 			cfg.OnDiag(kind, detail)
+		}
+	}
+
+	// noteUncorrected breadcrumbs a guard that spotted its problem and has run
+	// out of budget to do anything about it. Once per kind, and a no-op until
+	// then. Without it an exhausted guard is indistinguishable from one that
+	// never fired: the turn ships the flaw and the trail says nothing happened.
+	noteUncorrected := func(kind, detail string) {
+		if corrections.exhausted(kind) {
+			Debug("[agent_loop] %s detected again but its correction budget is spent — letting it stand", kind)
+			emitDiag(kind+"-uncorrected", detail)
 		}
 	}
 
@@ -1805,6 +1866,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// loop terminate — injecting a "fix the errors, don't summarize"
 	// nudge instead of letting the rescue path paper over the bailout.
 	cumulativeToolErrors := 0
+	lastToolError := ""         // most recent failure text, for the turn judge
+	turnToolCalls := []string{} // every tool this turn ran, in order, duplicates kept
 
 	// Repeated-failure loop-guard. Small models fixate: they re-issue the
 	// SAME tool call with the SAME args, get the SAME error, and never adapt
@@ -2633,7 +2696,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					Content:   resp.Content,
 					Reasoning: resp.Reasoning,
 				}
-				if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds {
+				noteUncorrected(correctionOrphanedXML, "The reply again wrote tool-call XML for an unknown tool; the markup was stripped but no further re-prompt was left to spend.")
+				if corrections.available(correctionOrphanedXML) && round < maxRounds {
 					hint := ""
 					if attemptedName != "" {
 						hint = fmt.Sprintf(" You attempted to call %q which is not a registered tool.", attemptedName)
@@ -2641,14 +2705,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 							hint += fmt.Sprintf(" Did you mean %q?", suggestion)
 						}
 					}
-					Debug("[agent_loop] orphaned XML tool-call detected (name=%q), re-prompting: correction %d/%d", attemptedName, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					Debug("[agent_loop] orphaned XML tool-call detected (name=%q), re-prompting: correction %d/%d", attemptedName, corrections.spend(correctionOrphanedXML), maxCorrectionsPerKind)
 					emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote tool-call XML for an unknown tool (%q); markup stripped and re-prompted for a real call.", attemptedName))
 					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
 						Content: frameworkNoticeTag + "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
 					})
-					promiseCorrectionsTotal++
 					continue
 				}
 			} else if refs := phantomDeliveryRefs(cfg, resp.Content); len(refs) > 0 {
@@ -2665,17 +2728,53 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					Content:   resp.Content,
 					Reasoning: resp.Reasoning,
 				}
-				if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds {
-					Debug("[agent_loop] phantom delivery detected (%v), re-prompting: correction %d/%d", refs, promiseCorrectionsTotal+1, maxPromiseCorrections)
-					emitDiag("phantom-delivery-corrected", fmt.Sprintf("The reply said it was sending %v, but no such file exists and nothing was produced this turn. The claim was removed and the model re-prompted.", refs))
-					settleRound()
+				if corrections.available(correctionPhantomDelivery) && round < maxRounds {
+					// Joined, not %v: a ref is a filename when the reply named
+					// one and a plain noun phrase ("the image") when it didn't,
+					// and "[the image]" reads as a placeholder the model is
+					// meant to fill in rather than the thing it just claimed.
+					named := strings.Join(refs, ", ")
+					Debug("[agent_loop] phantom delivery detected (%s), re-prompting: correction %d/%d", named, corrections.spend(correctionPhantomDelivery), maxCorrectionsPerKind)
+					emitDiag("phantom-delivery-corrected", fmt.Sprintf("The reply presented %s as delivered, but nothing was attached and nothing exists to attach. The claim was removed and the model re-prompted.", named))
+					// Retract, not settle. On a streaming surface the false
+					// claim has already been painted, and settling would leave
+					// it standing above the correction — the user reads "Here's
+					// your picture" and then, underneath, that there is no
+					// picture. Same class as a blocked guardrail draft: a
+					// statement the framework has decided must not stand.
+					// It stays in `history` either way, which is what the model
+					// needs to see to understand what it is being corrected on.
+					// Falls back to settleRound on hosts with no retract wired.
+					retractRound()
 					history = append(history, Message{
 						Role: "user",
 						Content: frameworkNoticeTag + fmt.Sprintf(
-							"You said you were sending %v. No such file exists — you did not create or fetch it, so there is nothing to send and nothing was delivered. Either call the tool that actually produces it now, or tell the user plainly that you do not have it. Do NOT write a delivery marker for a file you have not made.", refs),
+							"You wrote your reply as though you were handing over %s. Nothing was attached and nothing exists to attach — it was never created, fetched, or it failed. The user received your words and no file. Either call the tool that actually produces it now, or tell them plainly that you do not have it. Do NOT present a file you have not made, and do not write a delivery marker for one.", named),
 					})
-					promiseCorrectionsTotal++
 					continue
+				}
+				// Out of corrections, and the claim is still false. Everything
+				// above assumed the model could be talked into fixing it; twice
+				// now it has rewritten the same claim, and the old code simply
+				// let the third one through — the guard that ruled it false being
+				// the only thing that ever noticed.
+				//
+				// Delivering a promise about a file that does not exist is worse
+				// than delivering nothing, so the claim is replaced with something
+				// true. Same principle as a substituted guardrail decline: the
+				// framework writes in the agent's voice only when the alternative
+				// is letting a false statement stand.
+				if corrections.exhausted(correctionPhantomDelivery) {
+					named := strings.Join(refs, ", ")
+					Debug("[agent_loop] phantom delivery still uncorrected after %d attempts (%s) — substituting a truthful reply", maxCorrectionsPerKind, named)
+					emitDiag("phantom-delivery-uncorrected", fmt.Sprintf("The reply claimed %s again after two corrections, and no such file exists. The claim was replaced rather than delivered.", named))
+					retractRound()
+					resp.Content = UnfulfilledDeliveryReply(refs)
+					history[len(history)-1] = Message{
+						Role:      "assistant",
+						Content:   resp.Content,
+						Reasoning: resp.Reasoning,
+					}
 				}
 			} else if containsFakeToolCodeBlock(resp.Content) {
 				// Training-data artifact: the model writes its tool call
@@ -2699,19 +2798,19 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					Content:   resp.Content,
 					Reasoning: resp.Reasoning,
 				}
-				if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds {
+				noteUncorrected(correctionFakeToolCode, "The reply again wrote a tool call as a text block instead of calling it; the markup was stripped but no further re-prompt was left to spend.")
+				if corrections.available(correctionFakeToolCode) && round < maxRounds {
 					hint := ""
 					if attemptedName != "" {
 						hint = fmt.Sprintf(" You appeared to invoke %q.", attemptedName)
 					}
-					Debug("[agent_loop] fake <tool_code>/::name():: block detected (name=%q), re-prompting: correction %d/%d", attemptedName, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					Debug("[agent_loop] fake <tool_code>/::name():: block detected (name=%q), re-prompting: correction %d/%d", attemptedName, corrections.spend(correctionFakeToolCode), maxCorrectionsPerKind)
 					emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote a tool call as plain text (%q) instead of a real call; markup stripped and re-prompted.", attemptedName))
 					settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
 						Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
 					})
-					promiseCorrectionsTotal++
 					continue
 				}
 			}
@@ -2724,7 +2823,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// canonical Qwen-style failure mode where the user sees only
 		// stated intent and nothing happens. When detected, inject a
 		// corrective user message and re-loop instead of returning,
-		// up to maxPromiseCorrections times per session.
+		// up to maxCorrectionsPerKind times per turn.
 		if len(resp.ToolCalls) == 0 {
 			// Action-promise correction DISABLED for now — it false-positived
 			// on ordinary conversational replies ("I'll try to nail the house
@@ -2732,13 +2831,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// never intended. Flip to true to re-enable; the reasoning-collapse
 			// correction below is unaffected either way.
 			const actionPromiseCorrection = false
-			if actionPromiseCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn && containsActionPromise(resp.Content) {
-				Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
+			if actionPromiseCorrection && corrections.available(correctionActionPromise) && round < maxRounds && !toolFiredThisTurn && containsActionPromise(resp.Content) {
+				Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", corrections.spend(correctionActionPromise), maxCorrectionsPerKind, truncForLog(resp.Content, 80))
 				history = append(history, Message{
 					Role:    "user",
 					Content: frameworkNoticeTag + "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
 				})
-				promiseCorrectionsTotal++
 				continue
 			}
 
@@ -2753,15 +2851,17 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// announcing a follow-up call and stopping is just as broken
 			// after earlier tools succeeded. Budget-shared with the other
 			// promise corrections so it can't loop.
-			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && endsWithCallAnnouncement(resp.Content) {
-				Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
+			if endsWithCallAnnouncement(resp.Content) {
+				noteUncorrected(correctionAnnouncedCall, "The reply again ended announcing a call it never made; no further re-prompt was left to spend, so it was delivered as written.")
+			}
+			if corrections.available(correctionAnnouncedCall) && round < maxRounds && endsWithCallAnnouncement(resp.Content) {
+				Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", corrections.spend(correctionAnnouncedCall), maxCorrectionsPerKind, truncForLog(resp.Content, 80))
 				emitDiag("announced-call-corrected", "The reply ended by announcing a tool call it never made; re-prompted to actually make the call or finish the reply.")
 				settleRound() // finalize the announcement so the retry doesn't concatenate into it
 				history = append(history, Message{
 					Role:    "user",
 					Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
 				})
-				promiseCorrectionsTotal++
 				continue
 			}
 
@@ -2774,7 +2874,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// FAR narrower than the disabled actionPromiseCorrection above: it
 			// fires ONLY on an exact, token-bounded, snake_case tool NAME (those
 			// don't occur in ordinary prose), only when NO tool fired this turn,
-			// is capped by promiseCorrectionsTotal, and the nudge gives an
+			// is capped by its own correction budget, and the nudge gives an
 			// explicit "if you didn't mean to, answer directly" out. Flip the
 			// const to disable if it ever proves noisy.
 			const noArgToolMentionCorrection = true
@@ -2793,16 +2893,18 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// lossless — a skipped correction leaves the full answer standing.
 			const noArgCorrectionMaxContentLen = 600
 			contentIsPreamble := len(strings.TrimSpace(resp.Content)) <= noArgCorrectionMaxContentLen
-			if noArgToolMentionCorrection && contentIsPreamble && !cfg.DisableToolMentionCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn {
-				if name := mentionedNoArgTool(resp.Content, handlers, toolDefs); name != "" {
-					Debug("[agent_loop] no-arg tool %q named in prose without a call, re-prompting: correction %d/%d", name, promiseCorrectionsTotal+1, maxPromiseCorrections)
+			if noArgToolMentionCorrection && contentIsPreamble && !cfg.DisableToolMentionCorrection && !toolFiredThisTurn {
+				name := mentionedNoArgTool(resp.Content, handlers, toolDefs)
+				if name != "" && !(corrections.available(correctionToolMention) && round < maxRounds) {
+					noteUncorrected(correctionToolMention, "The reply again named a no-arg tool in prose without calling it; no further re-prompt was left to spend.")
+				} else if name != "" {
+					Debug("[agent_loop] no-arg tool %q named in prose without a call, re-prompting: correction %d/%d", name, corrections.spend(correctionToolMention), maxCorrectionsPerKind)
 					emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
 					settleRound() // finalize the preamble so the retry doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
 						Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (it takes no arguments, so there was nothing to run). If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name),
 					})
-					promiseCorrectionsTotal++
 					continue
 				}
 			}
@@ -2815,7 +2917,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// (>200 chars), EMPTY content (a bare stub like ""/"."/"…"
 			// after trim), and no tool calls. Inject a corrective and
 			// retry so the next round either produces text or calls a
-			// tool. Budget-gated via promiseCorrectionsTotal so it
+			// tool. Budget-gated per kind (correctionBudget) so it
 			// can't loop.
 			//
 			// The threshold is deliberately near-zero, NOT "short": a
@@ -2826,16 +2928,18 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// render once per correction (and each retry re-bills the
 			// full prompt). Only a round that showed nothing may retry.
 			trimmedContent := strings.TrimSpace(resp.Content)
-			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds &&
-				len(trimmedContent) < 3 && len(resp.Reasoning) > 200 {
-				Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(resp.Reasoning), len(trimmedContent), promiseCorrectionsTotal+1, maxPromiseCorrections)
+			collapsed := len(trimmedContent) < 3 && len(resp.Reasoning) > 200
+			if collapsed {
+				noteUncorrected(correctionCollapse, "The round again produced no visible reply and called no tool; no further re-prompt was left to spend.")
+			}
+			if collapsed && corrections.available(correctionCollapse) && round < maxRounds {
+				Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(resp.Reasoning), len(trimmedContent), corrections.spend(correctionCollapse), maxCorrectionsPerKind)
 				emitDiag("empty-round-retried", "A round produced reasoning but no visible reply and no tool call; re-prompted for concrete output.")
 				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
 				history = append(history, Message{
 					Role:    "user",
 					Content: frameworkNoticeTag + "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
 				})
-				promiseCorrectionsTotal++
 				continue
 			}
 
@@ -2847,12 +2951,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// polite "here's what I did" summary instead of fixing the
 			// underlying problem. Push back: inject a continuation
 			// nudge that names the error count and the rounds remaining,
-			// and re-loop. Budget-gated via promiseCorrectionsTotal so
+			// and re-loop. Budget-gated per kind (correctionBudget) so
 			// pathological cases can't infinitely re-prompt.
 			//
 			// Triggers:
 			//   - no tool calls THIS round
-			//   - empty content (or nearly so — <30 chars after trim)
+			//   - empty content (or nearly so — <30 chars after trim), OR a
+			//     reply that only PROMISES the work (see replyStalledOnAPromise)
 			//   - cumulative tool errors > 0
 			//   - more than 5 rounds remain (don't push at the cap;
 			//     the existing wrap-up message owns that case)
@@ -2860,30 +2965,66 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// trimmedContent reuses the variable declared in the
 			// reasoning-collapse check above — same scope, already trimmed.
 			roundsLeft := maxRounds - round
-			if promiseCorrectionsTotal < maxPromiseCorrections &&
-				roundsLeft >= 5 &&
-				cumulativeToolErrors > 0 &&
-				len(trimmedContent) < 30 {
-				Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch), re-prompting: correction %d/%d",
-					cumulativeToolErrors, roundsLeft, len(trimmedContent), promiseCorrectionsTotal+1, maxPromiseCorrections)
-				emitDiag("giveup-retried", fmt.Sprintf("The turn stopped with %d unaddressed tool error(s) and rounds to spare; re-prompted to adjust and retry rather than give up.", cumulativeToolErrors))
-				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
-				errPlural := ""
-				if cumulativeToolErrors != 1 {
-					errPlural = "s"
-				}
+			// A promise is the same give-up wearing a nicer hat, and it is the
+			// worse of the two: an empty round shows the user nothing, while
+			// "let me create this" reads as progress and ends the turn anyway.
+			// Observed: two image backends errored, and the turn closed on "Got
+			// it — let me create this. I'll blend Rory onto the picture of me
+			// wasting away in the garage." Nothing followed. The user's next
+			// message was "you forgot to attach the image."
+			promised := replyStalledOnAPromise(trimmedContent)
+			// Two ways a turn ends without doing the work, and only the first
+			// was covered. The second arrived as a transcript: "On it — let me
+			// grab some reference photos and composite them into that scene",
+			// no tool call, turn over, nothing errored — so a guard keyed on
+			// pending errors never looked. The errors were incidental to the
+			// original sighting, not the thing that made it a stall.
+			//
+			// The carve-out that makes the second safe is !toolFiredThisTurn.
+			// "I'll let you know when it's done" is the reply the detached-task
+			// notice explicitly ASKS for, and a detached call is a tool call —
+			// so a promise backed by work that actually started is left alone,
+			// and only a promise backed by nothing gets pushed.
+			stalledOnErrors := cumulativeToolErrors > 0 && (len(trimmedContent) < 30 || promised)
+			stalledOnNothing := promised && !toolFiredThisTurn
+			gaveUp := roundsLeft >= 5 && (stalledOnErrors || stalledOnNothing)
+			if gaveUp {
+				noteUncorrected(correctionGiveUp, "The turn again stopped with tool errors unaddressed and rounds to spare; no further re-prompt was left to spend.")
+			}
+			if gaveUp && corrections.available(correctionGiveUp) {
+				Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch, promised=%v), re-prompting: correction %d/%d",
+					cumulativeToolErrors, roundsLeft, len(trimmedContent), promised, corrections.spend(correctionGiveUp), maxCorrectionsPerKind)
+				// Two failures, two messages. Telling a model to "re-read the
+				// error messages" when nothing errored sends it hunting for a
+				// problem that isn't there, and it will invent one.
+				var diag, nudge string
 				roundPlural := ""
 				if roundsLeft != 1 {
 					roundPlural = "s"
 				}
-				history = append(history, Message{
-					Role: "user",
-					Content: fmt.Sprintf(
-						frameworkNoticeTag+"You stopped without producing a reply and without calling any tool, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
-						cumulativeToolErrors, errPlural, roundsLeft, roundPlural,
-					),
-				})
-				promiseCorrectionsTotal++
+				if stalledOnErrors {
+					errPlural := ""
+					if cumulativeToolErrors != 1 {
+						errPlural = "s"
+					}
+					stopped := "stopped without producing a reply and without calling any tool"
+					diag = fmt.Sprintf("The turn stopped with %d unaddressed tool error(s) and rounds to spare; re-prompted to adjust and retry rather than give up.", cumulativeToolErrors)
+					if promised && len(trimmedContent) >= 30 {
+						stopped = "ended your turn by saying you were ABOUT to do the work, and then called no tool"
+						diag = fmt.Sprintf("The reply promised work it never did — it announced the next step, called no tool, and left %d tool error(s) unaddressed with rounds to spare. Re-prompted to actually do it.", cumulativeToolErrors)
+					}
+					nudge = fmt.Sprintf(
+						frameworkNoticeTag+"You %s, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. Saying what you are about to do is not doing it — the user sees the sentence and nothing else, and nothing runs after your turn ends. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
+						stopped, cumulativeToolErrors, errPlural, roundsLeft, roundPlural)
+				} else {
+					diag = "The reply said the work was about to happen and then ended the turn without calling a single tool. Re-prompted to do it now or say plainly what is stopping it."
+					nudge = fmt.Sprintf(
+						frameworkNoticeTag+"You ended your turn saying you were about to do something, and then called no tool at all — so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. You have %d round%s remaining. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't.",
+						roundsLeft, roundPlural)
+				}
+				emitDiag("giveup-retried", diag)
+				settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
+				history = append(history, Message{Role: "user", Content: nudge})
 				continue
 			}
 
@@ -2901,6 +3042,62 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round — continuing instead of finishing", len(injected))
 					history = append(history, injected...)
 					continue
+				}
+			}
+
+			// A turn that called NOTHING leaves no trail but its own words, and
+			// without them a failure cannot be diagnosed at all. Observed: "Wiwee,
+			// try again" answered in 66 characters with zero tool calls — the
+			// framework recorded the length and nothing else, so whether the reply
+			// was an honest refusal or a fresh empty promise was unknowable after
+			// the fact. Every OTHER shape of turn is reconstructable from its tool
+			// calls; this one is not.
+			//
+			// Logged for the whole turn, not the round, so it fires once on the
+			// reply that actually goes out. Masked sessions get lengths only —
+			// MaskDebugOutput exists because some sessions carry credentials and
+			// private files, and a diagnostic is not worth leaking them.
+			if len(turnToolCalls) == 0 {
+				Debug("%s", noToolDiagLine(round, LatestUserContent(messages), resp.Content, cfg.MaskDebugOutput))
+			}
+
+			// Turn judge: the reply is about to go out, so this is the last moment
+			// anything can ask whether it is TRUE about what the turn did. Runs
+			// after the phrase-list guards above have had their say and only when
+			// the evidence warrants a model call — see turn_judge.go for the
+			// pre-filter and why it is deliberately looser than the guards.
+			//
+			// Placed before the guardrail gate on purpose: a reply that claims work
+			// it never did should be fixed before a warden spends a call judging
+			// its content, and the correction below re-prompts anyway.
+			if verdict, convicted := judgeTurnClaim(cfg, TurnClaimEvidence{
+				Request:       LatestUserContent(messages),
+				Reply:         resp.Content,
+				ToolCalls:     turnToolCalls,
+				ToolErrors:    cumulativeToolErrors,
+				LastToolError: lastToolError,
+				Delivered:     cfg.deliveredCount(),
+				Backgrounded:  cfg.backgrounded(),
+			}); convicted {
+				if corrections.available(correctionUnkeptClaim) && round < maxRounds {
+					Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q) — %s; re-prompting: correction %d/%d",
+						truncForLog(verdict.Claim, 80), verdict.Why, corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
+					emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. Re-prompted to do it or say so.", truncForLog(verdict.Claim, 120), verdict.Why))
+					// Retract rather than settle: the claim is false and, on a
+					// streaming surface, already painted. Same call as the phantom
+					// guard makes about the same class of statement.
+					retractRound()
+					history[len(history)-1] = Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning}
+					history = append(history, Message{
+						Role: "user",
+						Content: frameworkNoticeTag + fmt.Sprintf(
+							"Your reply says: %q. That did not happen — %s. The user reads your words and gets nothing else; nothing runs after your turn ends. Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. Do not apologize, do not restate the claim, and do not promise it for later.",
+							verdict.Claim, verdict.Why),
+					})
+					continue
+				}
+				if corrections.exhausted(correctionUnkeptClaim) {
+					emitDiag("unkept-claim-uncorrected", fmt.Sprintf("The reply still says %q after correction, and it did not happen: %s. Delivered as written.", truncForLog(verdict.Claim, 120), verdict.Why))
 				}
 			}
 
@@ -3733,6 +3930,15 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			})
 		}
 		cumulativeToolErrors += toolErrors
+		// Evidence for the turn judge: what ran, and what the last failure said.
+		// Duplicates are kept on purpose — three image calls are three attempts,
+		// and a judge that sees one of them is reading a different turn.
+		for _, w := range work {
+			turnToolCalls = append(turnToolCalls, w.tc.Name)
+			if w.index < len(results) && results[w.index].IsError {
+				lastToolError = results[w.index].Content
+			}
+		}
 
 		// stay_silent closes the turn. The "do not call any more tools"
 		// instruction in the tool result is unreliable — Qwen 3 in
@@ -3994,6 +4200,114 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 // disagree about what a delivery claim looks like.
 var deliveryMarkerRe = regexp.MustCompile(`\[ATTACH:\s*[^\]]*\]`)
 
+// Correction kinds. One allowance each — a phantom delivery and an orphaned
+// tool-call tag are unrelated failures, and spending one must not disarm the
+// other. Named constants so a typo can't silently mint a fresh allowance.
+const (
+	correctionOrphanedXML     = "orphaned-xml"
+	correctionPhantomDelivery = "phantom-delivery"
+	correctionFakeToolCode    = "fake-tool-code"
+	correctionActionPromise   = "action-promise"
+	correctionAnnouncedCall   = "announced-call"
+	correctionToolMention     = "tool-mention"
+	correctionCollapse        = "reasoning-collapse"
+	correctionGiveUp          = "giveup-with-errors"
+	correctionUnkeptClaim     = "unkept-claim"
+)
+
+const (
+	// maxCorrectionsPerKind is how many times ONE problem gets re-prompted.
+	// Two is enough to nudge a stuck turn; a third attempt on the same fault is
+	// a model that isn't going to move.
+	maxCorrectionsPerKind = 2
+	// maxCorrectionsPerTurn is the ceiling across every kind together, so a
+	// turn going wrong in many ways at once still terminates. Set above
+	// 2×kinds deliberately: the point is to stop a spiral, not to ration
+	// guards against each other.
+	maxCorrectionsPerTurn = 6
+)
+
+// correctionBudget rations the loop's silent re-prompts.
+//
+// It used to be a single counter shared by every guard, and that had two
+// distinct failures. Two corrections of UNRELATED kinds disarmed every other
+// guard for the rest of the turn — an orphaned tool tag early on meant a false
+// delivery claim later went uncorrected, though nothing about the first says
+// anything about the second. And a guard that spent the budget on the SAME
+// problem twice simply stopped firing, so the content it had judged wrong
+// shipped, with the exhausted guard being the only thing that ever noticed.
+//
+// Observed: the phantom-delivery guard fired 1/2 and then 2/2 on one invented
+// filename, the model rewrote the same claim both times, and the third one went
+// out to the user — a claim the framework had already ruled false, twice.
+type correctionBudget struct {
+	spentByKind map[string]int
+	spentTotal  int
+	noted       map[string]bool // kinds that have already breadcrumbed their exhaustion
+}
+
+func newCorrectionBudget() *correctionBudget {
+	return &correctionBudget{spentByKind: map[string]int{}, noted: map[string]bool{}}
+}
+
+// available reports whether one more correction of this kind may be spent.
+func (b *correctionBudget) available(kind string) bool {
+	return b.spentByKind[kind] < maxCorrectionsPerKind && b.spentTotal < maxCorrectionsPerTurn
+}
+
+// spend takes one and returns which attempt it was, for the log line.
+func (b *correctionBudget) spend(kind string) int {
+	b.spentByKind[kind]++
+	b.spentTotal++
+	return b.spentByKind[kind]
+}
+
+// exhausted reports whether this kind is out AND has not said so yet, so the
+// caller breadcrumbs once rather than on every round after. A guard that goes
+// quiet without a word is the silent drop this codebase keeps paying for.
+func (b *correctionBudget) exhausted(kind string) bool {
+	if b.available(kind) || b.noted[kind] {
+		return false
+	}
+	b.noted[kind] = true
+	return true
+}
+
+// applyTurnNotes appends the app's turn-scoped context to the newest user
+// message, in place. See AgentLoopConfig.TurnNotes.
+//
+// Only ever the TRAILING message, and only when it is the human turn: mid-loop
+// the tail is a tool result, and reference material buried inside one reads as
+// output from something the model just ran. Earlier user turns are settled
+// context that the prompt cache already covers — writing into one moves the
+// cache boundary backwards for nothing.
+func applyTurnNotes(cfg AgentLoopConfig, history []Message) {
+	n := len(history)
+	if cfg.TurnNotes == nil || n == 0 || history[n-1].Role != "user" {
+		return
+	}
+	note := strings.TrimSpace(cfg.TurnNotes(history[n-1].Content))
+	if note == "" {
+		return
+	}
+	Debug("[agent_loop] turn note appended to the user turn (%d chars)", len(note))
+	history[n-1].Content += "\n\n" + note
+}
+
+// deliveredCount / backgrounded are the nil-safe reads of the turn-evidence
+// hooks. Absent means "nothing delivered, nothing started", which is the only
+// safe reading: it makes a delivery claim MORE suspect, never less.
+func (c AgentLoopConfig) deliveredCount() int {
+	if c.DeliveredCount == nil {
+		return 0
+	}
+	return c.DeliveredCount()
+}
+
+func (c AgentLoopConfig) backgrounded() bool {
+	return c.Backgrounded != nil && c.Backgrounded()
+}
+
 // phantomDeliveryRefs asks the app whether a reply promises files that do not
 // exist. Nil hook = no check, which is the behaviour every host had before it.
 func phantomDeliveryRefs(cfg AgentLoopConfig, content string) []string {
@@ -4001,6 +4315,25 @@ func phantomDeliveryRefs(cfg AgentLoopConfig, content string) []string {
 		return nil
 	}
 	return cfg.PhantomDeliveryRefs(content)
+}
+
+// UnfulfilledDeliveryReply is what goes out when a reply insists on handing over
+// something that does not exist and will not stop after being corrected.
+//
+// Written in the agent's own voice, short, and with no machinery in it: the
+// person on the other end asked for a picture and did not get one, which is the
+// whole of what they need to know. It deliberately does NOT apologize for their
+// request or ask them to rephrase — the request was fine, and blaming it is the
+// failure this whole line of work started from.
+//
+// Exported because a host may want to recognize or replace it; the default is
+// the framework's, and any reply is better than a false one.
+func UnfulfilledDeliveryReply(refs []string) string {
+	what := "it"
+	if named := strings.Join(refs, ", "); named != "" {
+		what = named
+	}
+	return fmt.Sprintf("I said I was sending %s, and I was wrong — it was never made, so there's nothing to send. Say the word and I'll have another go at it.", what)
 }
 
 // StripDeliveryMarkers removes [ATTACH: …] markers from a reply. Used when the
@@ -4476,6 +4809,65 @@ func endsWithCallAnnouncement(content string) bool {
 	return firstPersonIntentRe.MatchString(lower)
 }
 
+// replyStalledOnAPromiseMaxLen is the lead-in cutoff: past it, a reply is an
+// ANSWER that happens to contain "I'll", not a turn that stalled on a promise.
+// Same 600 the no-arg-mention guard and the runner's narration cutoff use.
+const replyStalledOnAPromiseMaxLen = 600
+
+// replyStalledOnAPromise reports whether a reply commits the agent to work it
+// then never does — "let me create this", "I'll blend Rory onto the picture" —
+// and stops.
+//
+// This is endsWithCallAnnouncement's shape with the colon requirement dropped,
+// and dropping it is the whole point: the colon is a typographic accident, not
+// the failure. "Here's the update_agent call to implement these changes:" and
+// "Got it, let me create this. I'll blend Rory onto the picture. 🏚️👔" are the
+// same turn ending the same way, and only the first one was catchable.
+//
+// Without the colon this is far too loose to act on alone — that looseness is
+// what got the standalone actionPromiseCorrection disabled, and it stays
+// disabled. Its ONLY caller conjoins it with unaddressed tool errors, no tool
+// call this round, rounds to spare, and a correction budget. Under those, a
+// sentence about what happens next is never a finished turn.
+//
+// Two carve-outs, both inherited from endsWithCallAnnouncement:
+//   - a directive to the USER ends a turn legitimately, however it is
+//     punctuated — asking is finished, promising is not.
+//   - length. A long reply containing "I'll" is an answer; this is for the
+//     lead-in that was supposed to be followed by a tool call.
+func replyStalledOnAPromise(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" || len(trimmed) > replyStalledOnAPromiseMaxLen {
+		return false
+	}
+	lower := strings.ToLower(strings.ReplaceAll(trimmed, "’", "'"))
+	if userDirectiveRe.MatchString(lower) {
+		return false
+	}
+	return futureCommitmentRe.MatchString(lower)
+}
+
+// ReplyPromisesWork reports whether a reply commits the agent to work it has
+// not done — the exported form of the loop's own stall predicate, for a host
+// that wants to decide something about the turn AFTER it ends.
+//
+// The loop can only correct a promise while the turn is still running. What it
+// cannot do is remember: the next turn arrives as a fresh call, so a user
+// holding the agent to something it said a minute ago ("are you really?") gets
+// answered by a model with no idea it promised anything. See the commitment
+// ledger in the orchestrate app.
+func ReplyPromisesWork(reply string) bool { return replyStalledOnAPromise(reply) }
+
+// futureCommitmentRe matches the agent committing itself to work that has NOT
+// happened yet.
+//
+// Split out from firstPersonIntentRe, which also matches "here's" / "here is".
+// Presenting something is a finished turn; promising something is not, and the
+// difference only stopped mattering while this was conjoined with pending tool
+// errors. Standing alone it decides whether an ordinary reply gets re-prompted,
+// and "Here's the answer: 42." is an answer.
+var futureCommitmentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to|going to|now i|next i|on it)\b`)
+
 // callWordRe word-bounds the announcement keywords so "basically:" /
 // "technically:" (which CONTAIN "call") can't false-fire the guard.
 var callWordRe = regexp.MustCompile(`\b(?:call|calls|calling|tool|tools|toolbox)\b`)
@@ -4739,12 +5131,35 @@ func bigramOverlap(a, b string) int {
 
 // truncForLog shortens s to n chars for log preview, replacing newlines
 // so the line stays one row.
+// noToolDiagLine renders the zero-tool-turn diagnostic. Split out from the loop
+// so the masking rule can be tested: a session that carries credentials must
+// yield a length and nothing else, and that is not a property to leave to the
+// next person editing a format string.
+func noToolDiagLine(round int, asked, reply string, masked bool) string {
+	reply = strings.TrimSpace(reply)
+	if masked {
+		return fmt.Sprintf("[agent_loop] NOTOOL-DIAG round %d: no tool ran this turn; asked=[masked: %d chars] reply=[masked: %d chars]",
+			round, len(strings.TrimSpace(asked)), len(reply))
+	}
+	return fmt.Sprintf("[agent_loop] NOTOOL-DIAG round %d: no tool ran this turn; asked=%q reply=%q",
+		round, truncForLog(asked, 200), truncForLog(reply, 1000))
+}
+
 func truncForLog(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// Cut on a RUNE boundary. Slicing bytes splits any multi-byte character
+	// straddling the limit and writes invalid UTF-8 into the log — which used to
+	// be theoretical, when this only ever truncated tool names and short
+	// snippets, and stopped being when it started carrying reply text. The
+	// replies that prompted it end in "🏚️👔".
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // hasRequired reports whether tc.Args contains every key listed in the

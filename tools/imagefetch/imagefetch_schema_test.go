@@ -25,10 +25,12 @@ func TestActionsNarrowToWhatIsConfigured(t *testing.T) {
 		set  imageActions
 		want []string
 	}{
-		{"all configured", imageActions{find: true, fetch: true, generate: true}, []string{"find", "fetch", "generate"}},
-		{"no search provider", imageActions{fetch: true, generate: true}, []string{"fetch", "generate"}},
-		{"no image gen", imageActions{find: true, fetch: true}, []string{"find", "fetch"}},
-		{"fetch only", imageActions{fetch: true}, []string{"fetch"}},
+		// `help` rides along on every non-empty set: it needs no backend, and
+		// it is how the model finds out which pictures it can still reference.
+		{"all configured", imageActions{find: true, fetch: true, generate: true}, []string{"find", "fetch", "generate", "help"}},
+		{"no search provider", imageActions{fetch: true, generate: true}, []string{"fetch", "generate", "help"}},
+		{"no image gen", imageActions{find: true, fetch: true}, []string{"find", "fetch", "help"}},
+		{"fetch only", imageActions{fetch: true}, []string{"fetch", "help"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -105,8 +107,8 @@ func TestStaticSchemaKeepsFullShape(t *testing.T) {
 	// pickers, which must see every action regardless of local config.
 	tool := &ImageTool{}
 	enum := tool.Params()["action"].Enum
-	if !slices.Equal(enum, []string{"find", "fetch", "generate"}) {
-		t.Errorf("static action enum = %v, want all three", enum)
+	if !slices.Equal(enum, []string{"find", "fetch", "generate", "help"}) {
+		t.Errorf("static action enum = %v, want all three plus help", enum)
 	}
 	if tool.Desc() == "" {
 		t.Error("static description must not be empty — the tool index embeds it")
@@ -143,3 +145,36 @@ func isDynamic(v any) bool {
 }
 
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+
+func TestEveryActionTheDescriptionAdvertisesIsCallable(t *testing.T) {
+	// The invariant that broke. The description had said "help." since it was
+	// written, the enum never listed it, and on a grammar-constrained backend an
+	// enum is not advice — the sampler cannot emit a value that isn't in it. So
+	// the documented way to ask "which pictures can I still reference?" was
+	// unreachable, and a turn that needed it went guessing at filenames instead.
+	//
+	// Checked as a rule rather than for `help` alone: prose and enum drifting
+	// apart is the failure, and it can drift on any action.
+	for _, set := range []imageActions{
+		{find: true, fetch: true, generate: true, edit: true},
+		{fetch: true},
+		{generate: true, edit: true},
+	} {
+		s := schemaFor(set)
+		enum := s.params["action"].Enum
+		for _, name := range []string{"find", "fetch", "generate", "edit", "help"} {
+			// "name (" is how each action introduces itself in the prose.
+			if containsStr(s.desc, name+" (") && !slices.Contains(enum, name) {
+				t.Errorf("description advertises %q but the enum omits it (enum=%v)", name, enum)
+			}
+		}
+	}
+}
+
+func TestHelpNeverResurrectsAnUnavailableTool(t *testing.T) {
+	// help needs no backend, so appending it to the enum must not turn a
+	// deployment with nothing wired into a tool that can only describe itself.
+	if s := schemaFor(imageActions{}); s.params != nil {
+		t.Errorf("params = %v, want nil — help alone is not a working image tool", s.params)
+	}
+}

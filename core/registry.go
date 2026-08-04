@@ -289,6 +289,26 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			if !detach {
 				return inline(args)
 			}
+			// Everything the tool can rule out from the arguments alone is
+			// ruled out HERE, while the model still has a round to fix it in.
+			// Past this point an error becomes a wake the agent has to
+			// apologize for rather than a correction it can act on. See
+			// PreflightTool.
+			if pt, ok := ct.(PreflightTool); ok {
+				if err := pt.Preflight(args, sess); err != nil {
+					Debug("[task] %s failed preflight, not detaching: %v", ct.Name(), err)
+					return "", err
+				}
+			}
+			// One background job per tool per turn. Claimed AFTER preflight, so
+			// a call rejected on its arguments costs nothing: it never started a
+			// job, and the model still has the round to fix it. See
+			// ToolSession.ClaimDetachSlot for what this is stopping.
+			prior, free := sess.ClaimDetachSlot(ct.Name())
+			if !free {
+				Debug("[task] %s refused a second detach this turn; task %q is already running", ct.Name(), prior.ID)
+				return markFrameworkResult(secondDetachNotice(ct.Name(), prior)), nil
+			}
 			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func(taskCtx context.Context) (TaskProduct, error) {
 				// Re-resolve the handler against a session built for work that
 				// outlives the turn. Reusing the turn's session here is what
@@ -318,9 +338,13 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			if err != nil {
 				// Could not detach — run it inline rather than refuse. A slow
 				// answer beats no answer, and the caller never asked for this.
+				// Give the slot back first: no job exists to hold it, and
+				// keeping it would refuse the next call over nothing.
+				sess.ReleaseDetachSlot(ct.Name())
 				Debug("[task] %s stayed inline: %v", ct.Name(), err)
 				return inline(args)
 			}
+			sess.RecordDetachSlot(ct.Name(), run) // so a later refusal can name it
 			// What to SAY about the wait is a measured number or nothing at
 			// all — never the deadline that decided to detach in the first
 			// place. See EstimatingTool.
@@ -403,6 +427,12 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			// LLM gets a clear "no new files appeared in your
 			// workspace" signal instead of chasing phantom paths.
 			if newFiles := diffWorkspaceFiles(sess, wsBefore); len(newFiles) > 0 {
+				// Keep the list, not just the sentence. The workspace root is
+				// shared across every session and agent this user has, so
+				// "what is newest in there" answers a different question from
+				// "what did this turn make" — and a delivery backstop that
+				// asks the first one ships another conversation's picture.
+				sess.AddStagedFiles(newFiles)
 				var notice strings.Builder
 				notice.WriteString("\n\n[WORKSPACE FILES CREATED]\n")
 				for _, f := range newFiles {

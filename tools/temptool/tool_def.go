@@ -698,8 +698,9 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			return "", fmt.Errorf("actions[%d] (%q): params: %w", i, actName, err)
 		}
 		actRequired := stringSliceArg(m["required"])
-		// Distinguish "required omitted" (default all params required) from
-		// an EXPLICIT empty array (make ALL params optional). Both yield
+		// Distinguish "required omitted" (fall back to what the framework can
+		// PROVE is required — see defaultRequiredParams) from an EXPLICIT empty
+		// array (nothing required at all). Both yield
 		// len==0 after stringSliceArg, so check presence: a non-nil value
 		// under "required" means the author specified it — honor even [].
 		// Without this, `required: []` silently became "all required", which
@@ -707,9 +708,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		// trying to make feed's limit/sort optional).
 		raw, present := m["required"]
 		if !present || raw == nil {
-			for k := range actParams {
-				actRequired = append(actRequired, k)
-			}
+			actRequired = defaultRequiredParams(urlTpl, actParams)
 		} else {
 			for _, r := range actRequired {
 				if _, ok := actParams[r]; !ok {
@@ -736,7 +735,17 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		if missing := pathPlaceholderParams(urlTpl, actRequired); len(missing) > 0 {
 			return "", fmt.Errorf("action %q: "+pathPlaceholderMsg, actName, missing, missing[0], missing[0])
 		}
-		if unsent := unsentWriteParams(method, urlTpl, bodyTpl, actRequired); len(unsent) > 0 {
+		// Scaffold from every non-URL param, not just the required ones: since
+		// required now means "the URL can't be built without it", the body's
+		// contents are precisely the params that are NOT required. See
+		// writeBodyParams. The MISMATCH error below still keys on required — an
+		// optional field the author left out of their own body_template is their
+		// call to make, not a mistake to reject.
+		scaffoldFrom := actRequired
+		if bodyTpl == "" {
+			scaffoldFrom = writeBodyParams(urlTpl, actParams)
+		}
+		if unsent := unsentWriteParams(method, urlTpl, bodyTpl, scaffoldFrom); len(unsent) > 0 {
 			if bodyTpl != "" {
 				return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE — this %s action's body_template doesn't reference them, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add them to the body_template, e.g. {\"content\": {content}}", i, actName, unsent, method)
 			}
@@ -809,6 +818,90 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 // a JSON body. Auto-generated when a POST/PUT/PATCH action declares required
 // params but no body_template, so the fields reach the API instead of the author
 // looping. Empty in → "" (nothing to carry).
+// defaultRequiredParams answers "which of these params can this action not run
+// without?" for an author who didn't say.
+//
+// The old answer was ALL of them, and it is the single largest source of tool
+// errors in production: 371 in two days on one toolbox, ~360 of them a model
+// bounced for omitting "cursor", "limit" or "sort" on a feed read. A cursor is
+// the handle for the NEXT page — on a first call it cannot exist — so requiring
+// it makes the action uncallable by construction, and the model has no way to
+// learn that except by failing. It failed 260 times on one action.
+//
+// The new answer is the set the framework can PROVE: a param that fills a
+// {placeholder} in the URL path. Without it there is no URL to request, so it
+// is required whatever the endpoint thinks. Everything else is a query value or
+// a body field that only the endpoint can rule on, and guessing on the author's
+// behalf is what produced the loop. An author who knows better still says so
+// explicitly, and an explicit list is still honoured exactly as written.
+//
+// Only DECLARED params count: a placeholder naming something else (a value
+// spliced in from elsewhere) was never the caller's to supply.
+func defaultRequiredParams(urlTpl string, params map[string]ToolParam) []string {
+	var out []string
+	for _, name := range pathPlaceholderParams(urlTpl, nil) {
+		if _, declared := params[name]; declared {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// liveRequired is defaultRequiredParams applied to a toolbox action ALREADY IN
+// STORAGE, at the moment it is registered.
+//
+// Authoring-time defaults only help tools authored from now on. The tools doing
+// the damage are the ones already saved: every toolbox written before this
+// carries required == all-its-params, because that was the default, and it
+// keeps bouncing every call that omits a page cursor. Repairing here rather
+// than migrating the records means nothing rewrites a user's tool behind their
+// back, a restart is all it takes, and an author who later says what they mean
+// still wins.
+//
+// Scoped to that exact fingerprint — required naming EVERY declared param, with
+// something in there that the URL path does not need. An explicit list, a
+// partial list, and a list that is all path placeholders anyway are all left
+// alone, so this only touches definitions that could not have been deliberate:
+// an author who wants a cursor mandatory can still say so, and gets it.
+func liveRequired(act TempToolAction) []string {
+	if len(act.Required) == 0 || len(act.Required) != len(act.Params) {
+		return act.Required // explicit, partial, or nothing to do
+	}
+	for _, r := range act.Required {
+		if _, ok := act.Params[r]; !ok {
+			return act.Required // doesn't match the shape the old default produced
+		}
+	}
+	repaired := defaultRequiredParams(act.URLTemplate, act.Params)
+	if len(repaired) == len(act.Required) {
+		return act.Required // every param really is a path placeholder
+	}
+	Debug("[temptool] action %q: required %v was every declared param — narrowed to the %d the URL actually needs (%v); the rest are now optional",
+		act.Name, act.Required, len(repaired), repaired)
+	return repaired
+}
+
+// writeBodyParams returns the params a write action has to carry in its BODY:
+// every declared param that the URL template doesn't already spell. Sorted, so
+// a scaffolded template is byte-identical between runs.
+//
+// Keyed on all params rather than the required ones, because "required" now
+// means "the URL can't be built without it" — which is the exact complement of
+// what belongs in a body. Scaffolding from required would produce a body
+// holding the path ids and leave the content behind. Optional fields drop out
+// cleanly when the caller omits them (see substituteJSON), so carrying them all
+// costs nothing.
+func writeBodyParams(urlTpl string, params map[string]ToolParam) []string {
+	out := make([]string, 0, len(params))
+	for name := range params {
+		if !strings.Contains(urlTpl, "{"+name+"}") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func scaffoldBodyTemplate(params []string) string {
 	if len(params) == 0 {
 		return ""

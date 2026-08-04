@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -91,42 +92,48 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 
 // recoverStagedDeliverable is the phantom-delivery BACKSTOP: when a reply CLAIMS
 // it delivered an image/file ("here are the pics") but nothing was actually
-// attached, it returns the newest deliverable file staged in the session
-// workspace this turn — the file the model produced and then forgot to attach.
-// Returns "" when the reply makes no delivery claim, the workspace holds no
-// recent deliverable, or the newest one is stale (never re-ship an old
-// artifact). The delivery CLAIM is the gate on purpose: the model only says
-// "here it is" for a file it MEANS to send, so recovering the staged file ships
-// what it intended — not a random or rejected workspace file (that's why this is
-// safe even for find_image, whose result could be wrong: a wrong image the model
-// noticed wouldn't get a "here it is").
+// attached, it returns the deliverable file THIS TURN staged — the file the
+// model produced and then forgot to attach. Returns "" when the reply makes no
+// delivery claim, or when the turn staged nothing deliverable.
+//
+// The delivery CLAIM is one gate: the model only says "here it is" for a file
+// it MEANS to send, so recovering ships what it intended rather than something
+// it produced and rejected.
+//
+// The candidate SET is the other, and it is the one that took a second attempt
+// to get right. This used to scan the workspace directory for the newest
+// deliverable file modified in the last ten minutes. But the workspace root is
+// per USER — every session, every agent and every turn share it — so that scan
+// answers "what is newest in this user's workspace", not "what did this turn
+// make". Ask for a picture in one thread, then say anything picture-shaped in
+// another within ten minutes, and the backstop attaches the first thread's
+// photo to the second thread's reply. The symptom is an agent posting a random
+// image nobody asked it for, which is worse than the missing attachment this
+// exists to prevent: a silence is a bug, but a stranger's photo is a leak.
+//
+// So the candidates are exactly the files the turn's own tool calls created —
+// the framework records them per call (ToolSession.StagedFiles) rather than
+// inferring them from a clock. Staged nothing, recover nothing.
 func recoverStagedDeliverable(sess *ToolSession, reply string, produced bool) string {
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" || !deliveryIntended(reply, produced) {
 		return ""
 	}
-	entries, err := os.ReadDir(sess.WorkspaceDir)
-	if err != nil {
-		return ""
-	}
 	var newest string
 	var newestMod time.Time
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), "_") || !isDeliverableFile(e.Name()) {
+	for _, name := range sess.StagedFiles() {
+		if strings.HasPrefix(name, "_") || !isDeliverableFile(name) {
 			continue
 		}
-		info, ierr := e.Info()
-		if ierr != nil {
+		// Still has to be there: an attach with cleanup=true removes the file
+		// it delivered, and re-shipping a name that no longer resolves is how
+		// a successful delivery turns into an error on the way out.
+		info, err := os.Stat(filepath.Join(sess.WorkspaceDir, name))
+		if err != nil || info.IsDir() {
 			continue
 		}
 		if newest == "" || info.ModTime().After(newestMod) {
-			newest, newestMod = e.Name(), info.ModTime()
+			newest, newestMod = name, info.ModTime()
 		}
-	}
-	// Only recover a file staged THIS turn — guard against re-shipping an
-	// artifact left in the workspace by a prior turn. Generous window for a slow
-	// find/generate + vision chain.
-	if newest == "" || time.Since(newestMod) > 10*time.Minute {
-		return ""
 	}
 	return newest
 }
@@ -173,21 +180,66 @@ func replyDisclaimsDelivery(reply string) bool {
 }
 
 // deliverableProducers are the tools that exist to PRODUCE something for the
-// user. A turn that ran one and attached nothing is the case this whole
-// backstop is for.
+// user, mapped to the KIND of thing each one makes. A turn that ran one and
+// attached nothing is the case this whole backstop is for; the kind is how the
+// framework names what went missing when there is no filename to name.
 //
 // Inspection tools are deliberately absent: a screenshot taken to read a page,
 // or a view_image used to check a file, produces an image the user never asked
 // to receive.
-var deliverableProducers = map[string]bool{
-	"image": true, "find_image": true, "generate_image": true, "fetch_image": true,
-	"video": true, "download_video": true,
+var deliverableProducers = map[string]string{
+	"image": "image", "find_image": "image", "generate_image": "image", "fetch_image": "image",
+	"video": "video", "download_video": "video",
+}
+
+// turnDeliverableKind reports what this turn set out to make ("image"/"video"),
+// or "" when no producer ran.
+func turnDeliverableKind(calls []PersistedToolCall) string {
+	for _, c := range calls {
+		if kind := deliverableProducers[c.Name]; kind != "" {
+			return kind
+		}
+	}
+	return ""
 }
 
 // turnProducedDeliverable reports whether any call this turn was to a producer.
 func turnProducedDeliverable(calls []PersistedToolCall) bool {
-	for _, c := range calls {
-		if deliverableProducers[c.Name] {
+	return turnDeliverableKind(calls) != ""
+}
+
+// deliveryCues are the phrasings a model uses to PRESENT something it believes
+// it has just handed over.
+var deliveryCues = []string{
+	"here's ", "here are ", "here is ", "here you go", "attached", "i've attached",
+	"there you go", "there's ", "there is ", "there are ", "there ya go",
+	"sending you", "sent you", "take a look", "check out", "sharing ",
+	// A model announcing what it MADE is claiming delivery just as much as
+	// one saying "here you go" — and these are the phrasings that actually
+	// come back. Without them the backstop sat out the common case: "Done —
+	// your haunted house is ready!" and no picture anywhere.
+	"i made", "i've made", "i created", "i've created", "i generated",
+	"i've generated", "made you", "is ready", "are ready", "all set",
+}
+
+// replyPresentsDelivery reports whether the reply is WRITTEN as a hand-over —
+// the cue half of a delivery claim, with no attachment noun required.
+//
+// On its own this is far too loose to act on: "Here's what I think" is a cue
+// and delivers nothing, which is why replyClaimsAttachment also demands a noun.
+// It is split out for the one case where the evidence comes from somewhere
+// better than the prose — a turn that actually RAN an image tool. There, the
+// noun rule is the thing that misses, because a caption names what is IN the
+// picture and never the picture: "Here's you, wasting away in the garage like
+// Craig ordered" is a delivery claim with no delivery noun in it anywhere. See
+// deliveryIntended, which documents the same blind spot.
+func replyPresentsDelivery(reply string) bool {
+	if replyDisclaimsDelivery(reply) {
+		return false
+	}
+	r := strings.ToLower(reply)
+	for _, cue := range deliveryCues {
+		if strings.Contains(r, cue) {
 			return true
 		}
 	}
@@ -199,36 +251,108 @@ func turnProducedDeliverable(calls []PersistedToolCall) bool {
 // a delivery cue AND an attachment noun so the backstop stays scoped to phantom
 // deliveries instead of firing on any staged file or any casual "here's".
 func replyClaimsAttachment(reply string) bool {
+	if !replyPresentsDelivery(reply) {
+		return false
+	}
 	r := strings.ToLower(reply)
-	if replyDisclaimsDelivery(reply) {
-		return false
-	}
-	hasCue := false
-	for _, cue := range []string{
-		"here's ", "here are ", "here is ", "here you go", "attached", "i've attached",
-		"there you go", "there's ", "there is ", "there are ", "there ya go",
-		"sending you", "sent you", "take a look", "check out", "sharing ",
-		// A model announcing what it MADE is claiming delivery just as much as
-		// one saying "here you go" — and these are the phrasings that actually
-		// come back. Without them the backstop sat out the common case: "Done —
-		// your haunted house is ready!" and no picture anywhere.
-		"i made", "i've made", "i created", "i've created", "i generated",
-		"i've generated", "made you", "is ready", "are ready", "all set",
-	} {
-		if strings.Contains(r, cue) {
-			hasCue = true
-			break
-		}
-	}
-	if !hasCue {
-		return false
-	}
 	for _, noun := range []string{"photo", "picture", " pic", "image", "shot", "meme", "gif", "screenshot", "attachment", "file", "pdf", "doc", "video", "clip"} {
 		if strings.Contains(r, noun) {
 			return true
 		}
 	}
 	return false
+}
+
+// frameworkNoteTag marks turn-scoped reference material the framework appended
+// to the user's message. Deliberately not the correction tag: nothing went
+// wrong here, this is context the model would otherwise go hunting for. Says
+// plainly that the user neither wrote it nor can see it, so the model doesn't
+// thank them for it or quote it back at them.
+const frameworkNoteTag = "[AUTOMATED FRAMEWORK NOTE — reference material, not written by the user, who cannot see it. Do not mention it or reply to it; just use it.]\n"
+
+// pictureWordRe matches a user asking about a picture. Word-bounded, because
+// "pic" inside "epic" and "gif" inside "gifted" are not requests for an image.
+//
+// Nouns AND the verbs that only make sense against an existing picture: someone
+// who says "blend these" or "photoshop him onto the hood" is pointing at images
+// as surely as someone who says "photo".
+var pictureWordRe = regexp.MustCompile(`(?i)\b(photos?|pictures?|pics?|images?|memes?|gifs?|screenshots?|selfies?|selfie|portraits?|drawings?|artwork|blend|blended|composite|photoshop|retouch)\b`)
+
+// imageSpaceNote is the proactive half of the image space: the manifest, handed
+// over on a turn that is going to want it, instead of after a failure.
+//
+// The space could never live in the tool schema — it changes on every image
+// operation and schemas sit at the front of the prompt, so publishing it there
+// re-pays cold prefill every turn. That constraint is real, but it only rules
+// out the SCHEMA. The newest user turn is the volatile tail that never hits
+// cache anyway, which is exactly why the date stamp lives there, and the
+// manifest costs nothing in the same spot.
+//
+// Two gates, and they are the same gate twice: is this turn about pictures?
+//
+//   - The user named one. A request to change an existing image has to say
+//     what to change ("add Rory to the picture of me in the garage"), so unlike
+//     a model writing a caption, the user's own words are reliable here.
+//   - The space is non-empty. It is scoped per user AND per agent and fills only
+//     when image tools run, so anything in it means this agent has been working
+//     with pictures. Empty renders "" and this returns "".
+//
+// What it prevents: the model reaching for workspace(ls), getting a directory
+// of edit-<id>.png names with nothing to tell them apart, and guessing. Its own
+// words for that were "there are too many files".
+func imageSpaceNote(sess *ToolSession, userMessage string) string {
+	if sess == nil || !pictureWordRe.MatchString(userMessage) {
+		return ""
+	}
+	m := RecentImageManifest(sess)
+	if m == "" {
+		return ""
+	}
+	// Tagged as framework context so it reads as the system speaking, not as
+	// something the user typed — the ids are the framework's, not theirs.
+	return frameworkNoteTag + m
+}
+
+// deliveryWatch remembers, across a turn's rounds, whether a tool that exists to
+// PRODUCE something for the user has run — and what kind of thing it makes.
+//
+// The phantom-delivery guard needs this DURING the loop: a false delivery claim
+// is cheap to correct on the round it is written and impossible to correct once
+// the reply has shipped. The after-the-fact backstop reads the turn's persisted
+// transcript for the same signal, but mid-loop that transcript does not exist
+// yet. Written from the loop's OnStep hook, read from the guard's closure.
+type deliveryWatch struct {
+	mu   sync.Mutex
+	kind string
+}
+
+// note records the producers in one round's tool calls. First kind wins — the
+// question is what the turn set out to make, not the last thing it touched.
+func (d *deliveryWatch) note(calls []ToolCall) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.kind != "" {
+		return
+	}
+	for _, c := range calls {
+		if kind := deliverableProducers[c.Name]; kind != "" {
+			d.kind = kind
+			return
+		}
+	}
+}
+
+// producedKind is what the turn set out to make so far, "" if nothing yet.
+func (d *deliveryWatch) producedKind() string {
+	if d == nil {
+		return ""
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.kind
 }
 
 // unresolvedAttachMarkers returns the marker targets in a reply that resolve to
@@ -245,8 +369,12 @@ func unresolvedAttachMarkers(sess *ToolSession, text string) []string {
 	return missing
 }
 
-// phantomDeliveryRefs answers the loop's question: which files does this reply
-// claim to be sending that do not exist?
+// phantomDeliveryRefs answers the loop's question: what does this reply claim to
+// be sending that does not exist? Each entry names one missing thing — a
+// filename when the reply named one, otherwise the kind of thing the turn was
+// making ("the image").
+//
+// producedKind is what the turn has run a producer FOR so far, "" if none.
 //
 // Deliberately narrow, because every ref returned costs a correction round:
 //
@@ -255,9 +383,15 @@ func unresolvedAttachMarkers(sess *ToolSession, text string) []string {
 //     attach is a duplicate reference, not a lie.
 //   - A staged file is recoverable → not a phantom. The backstop will ship it,
 //     so correcting the model would spend a round fixing something already fixed.
-//   - Otherwise, a marker resolving to nothing with nothing produced to deliver
-//     is a promise about a file that was never made.
-func phantomDeliveryRefs(sess *ToolSession, reply string) []string {
+//   - A marker resolving to nothing with nothing produced to deliver is a
+//     promise about a file that was never made.
+//   - So is a turn that RAN an image tool, has nothing to show for it, and is
+//     writing the reply as a hand-over anyway. This one needs no marker and no
+//     delivery noun, because it had neither: "Here's you, wasting away in the
+//     garage like Craig ordered" arrived with no picture, no [ATTACH:], and
+//     nothing in it that a rule about the word "picture" could catch. The tool
+//     call is the evidence — asking for a caption to describe itself is not.
+func phantomDeliveryRefs(sess *ToolSession, reply, producedKind string) []string {
 	if sess == nil {
 		return nil
 	}
@@ -266,7 +400,12 @@ func phantomDeliveryRefs(sess *ToolSession, reply string) []string {
 	}
 	missing := unresolvedAttachMarkers(sess, reply)
 	if len(missing) == 0 {
-		return nil
+		// No marker to go on. Prose alone is not enough to call a reply a lie,
+		// so this fires only when a producer ran and left nothing behind.
+		if producedKind == "" || !replyPresentsDelivery(reply) {
+			return nil
+		}
+		missing = []string{"the " + producedKind}
 	}
 	if recoverStagedDeliverable(sess, reply, true) != "" {
 		return nil

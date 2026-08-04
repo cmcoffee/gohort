@@ -671,7 +671,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
 	dispatchMsgs, gDecline := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
-	resp, _, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
+	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply:    gDecline,
@@ -682,6 +682,10 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		StampLocation:     UserLocation(runtimeUser), // stamp the turn in the acting user's zone
 		ThinkBudget:       target.ThinkBudget,        // per-agent override; 0 = inherit route/global
 		OnStep:            func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
+		TurnNotes:         func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
+		TurnClaimJudge:    T.turnClaimJudge(ctx),
+		DeliveredCount:    func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
+		Backgrounded:      func() bool { return subSess.Detach.Any() },
 		Confirm:           confirm,
 		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
 		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
@@ -708,6 +712,10 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	})
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, len(message), runErr)
+	// Close the books on what this turn said it would do. See commitment_ledger.go.
+	if runErr == nil && resp != nil {
+		recordTurnCommitment(runtimeDB, subSessID, resp.Content, len(persistedToolCallsFromTranscript(syncTranscript)) > 0)
+	}
 	// Per-sub-agent telemetry summary — same shape as the orchestrator
 	// and worker step summaries so the same greps work uniformly.
 	softCap := resolveMaxWorkerRounds(target)
@@ -1476,11 +1484,27 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Feed view_video's sampled frames to the model on the next round.
 	loopCfg.DrainViewImages = subSess.DrainViewImages
 	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
-	loopCfg.OnStep = func(info StepInfo) { liveRun.SetProgress(info.Round, info.ToolCalls) }
+	// What this turn has run a deliverable producer for, tracked live so the
+	// phantom check below can tell an unattached caption from ordinary prose.
+	produced := new(deliveryWatch)
+	loopCfg.OnStep = func(info StepInfo) {
+		produced.note(info.ToolCalls)
+		liveRun.SetProgress(info.Round, info.ToolCalls)
+	}
+	// Recent-image ids when the message is about a picture. This is the path a
+	// channel reply takes, and the one where "blend these two photos" arrives
+	// with no filenames anywhere in it. See imageSpaceNote.
+	loopCfg.TurnNotes = func(user string) string { return turnNotes(subSess, runtimeDB, subSessionID, user) }
+	// Last look before the reply reaches the channel. See turn_judge.go.
+	loopCfg.TurnClaimJudge = T.turnClaimJudge(ctx)
+	loopCfg.DeliveredCount = func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) }
+	loopCfg.Backgrounded = func() bool { return subSess.Detach.Any() }
 	// Catch a reply that promises a file it never made, while the loop can still
 	// do something about it. Without this the claim reaches the channel, strips
 	// to an empty reply, and the contact is asked to rephrase.
-	loopCfg.PhantomDeliveryRefs = func(reply string) []string { return phantomDeliveryRefs(subSess, reply) }
+	loopCfg.PhantomDeliveryRefs = func(reply string) []string {
+		return phantomDeliveryRefs(subSess, reply, produced.producedKind())
+	}
 	// Nothing on this path shows or keeps a non-final round's prose: only the
 	// final reply is persisted (one assistant ChatMessage, below), OnStep forwards
 	// the round number and tool calls but never content, and no SettleRound folds
@@ -1583,6 +1607,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// keeps a marker-delivered image from silently vanishing. Same helper the
 	// phantom messaging tools use, so channel replies reach parity with them.
 	// cleanReply still carries the marker at this point (textutil.StripMetaTags runs later).
+	// Close the books on what this turn said it would do. This is the path the
+	// observed failure took: "On it — let me grab some reference photos", no tool
+	// call, turn over — and then the next message ("are you really?") answered by
+	// a model with no idea it had promised anything.
+	recordTurnCommitment(runtimeDB, subSessionID, cleanReply, len(persistedToolCallsFromTranscript(transcript)) > 0)
 	imgs, vids := collectMessageMedia(subSess, cleanReply)
 	// Phantom-delivery backstop: the model produced a file (find/generate/fetch)
 	// but never called workspace(attach), then wrote a reply CLAIMING it sent it
