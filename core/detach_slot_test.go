@@ -182,3 +182,43 @@ func TestTheSecondCallOfATurnStartsNoSecondJob(t *testing.T) {
 		t.Errorf("runner started %d jobs, want 1 — the user asked once", len(*started))
 	}
 }
+
+func TestNeitherNoticeHandsOverTheVocabularyItBans(t *testing.T) {
+	// Observed in front of a user: "The edit from earlier is still running in
+	// the background — same request, will deliver the result as soon as it's
+	// done." detachedNotice bans exactly that as machinery nobody asked about.
+	// secondDetachNotice explained the situation with "that is what running in
+	// the background means" and then asked for a one-line reply, so the model
+	// wrote the phrase back. A notice that supplies the words it does not want
+	// repeated is the one at fault.
+	second := secondDetachNotice("image", TaskRun{ID: "task-1", Label: "editing image#1"})
+	if strings.Contains(strings.ToLower(second), "running in the background") {
+		t.Errorf("the refusal must not hand over the phrase it wants suppressed:\n%s", second)
+	}
+	// And it has to carry the ban itself — the model reads THIS notice, not the
+	// one from the round before.
+	for _, must := range []string{"machinery", "do NOT put a time on it"} {
+		if !strings.Contains(second, must) {
+			t.Errorf("the refusal must repeat the no-machinery rule (%q):\n%s", must, second)
+		}
+	}
+}
+
+func TestADetachedCallClosesTheWorkspaceRouteToo(t *testing.T) {
+	// Told only not to re-call the tool, a model goes looking by hand: observed
+	// as workspace(ls) one round after a detach, reasoning "let me check the
+	// workspace for the result from the earlier successful edit". Nothing is
+	// there, so the round buys nothing — and the older files it does find are
+	// exactly what it can mistake for this one.
+	notice := detachedNotice(TaskRun{ID: "task-1", Label: "editing image#1"}, 0)
+	if !strings.Contains(notice, "NOT in your workspace") {
+		t.Errorf("the notice must say the result is not on disk yet:\n%s", notice)
+	}
+	if !strings.Contains(notice, "do not go looking") {
+		t.Errorf("the notice must close the hunt, not just the re-call:\n%s", notice)
+	}
+	// The rule it already had stays.
+	if !strings.Contains(notice, "a second call starts a second job") {
+		t.Errorf("the original ban must survive:\n%s", notice)
+	}
+}

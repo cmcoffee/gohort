@@ -204,6 +204,13 @@ func detachedNotice(run TaskRun, typical time.Duration) string {
 	}
 	b.WriteString(".\n")
 	b.WriteString("There is NO result yet and nothing has been delivered. Do NOT describe the outcome, do NOT claim anything was sent, and do NOT call this tool again for the same request — a second call starts a second job.\n")
+	// Closing the OTHER route out. Told only not to re-call the tool, a model
+	// goes looking for the result by hand — observed: workspace(ls) one round
+	// after a detach, reasoning "let me check the workspace for the result from
+	// the earlier successful edit". Nothing is there to find, so the round is
+	// spent to learn nothing, and what it does find is older files it can then
+	// mistake for this one.
+	b.WriteString("It is NOT in your workspace and will not be until it finishes, so do not go looking for it there or anywhere else — listing files, searching, or trying a different route to the same thing all find nothing or find something older.\n")
 	b.WriteString("Say you are doing it and that you will report back, in one line, the way a person would: \"I'll get that going and let you know when it's done.\" ")
 	// The estimate is only ever a MEASURED one. It used to be the deadline —
 	// the point at which the framework gives up — so a render that finishes in
@@ -242,8 +249,16 @@ func secondDetachNotice(tool string, prior TaskRun) string {
 	}
 	b.WriteString(".\n")
 	b.WriteString("Nothing was wrong with this call. It was not run because a second background job delivers a SECOND result to the user, minutes later, as its own message — for one thing they asked for once.\n")
-	b.WriteString("The first job is still working. It has not failed, and getting no picture back is not a sign that it did — that is what running in the background means. Do NOT call " + tool + " again this turn, and do NOT go looking for another way to do the same thing.\n")
-	b.WriteString("Finish your turn now: say you are on it and will report back, in one line. The result arrives on its own when it is done, and that is when you deliver it. If they genuinely want another one after that, start it then.")
+	b.WriteString("The first job is still working. It has not failed, and getting nothing back yet is not a sign that it did. Do NOT call " + tool + " again this turn, and do NOT go looking for another way to do the same thing.\n")
+	// The wording matters, and this notice used to get it wrong in a way that
+	// showed up verbatim in front of a user. It explained the situation with the
+	// phrase "that is what running in the background means" and then asked for a
+	// one-line reply — so the model wrote "The edit from earlier is still running
+	// in the background", which is precisely what detachedNotice bans as
+	// machinery nobody asked about. A notice that hands over the vocabulary it
+	// does not want repeated is the one at fault, not the model.
+	b.WriteString("Finish your turn now: say you are on it and will report back, in one line, the way a person would. Do NOT mention jobs, queues, or anything about HOW the work is being carried out, do NOT invite them to check on it, and do NOT put a time on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
+	b.WriteString("The result arrives on its own when it is done, and that is when you deliver it. If they genuinely want another one after that, start it then.")
 	return b.String()
 }
 
