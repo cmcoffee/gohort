@@ -90,6 +90,13 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 		return TurnClaimVerdict{}, false
 	}
 	if !strings.EqualFold(strings.TrimSpace(out.Verdict), "UNKEPT") {
+		// Acquittals are the only way to see the pre-filter's shape in
+		// production. A conviction announces itself; a filter that fires on
+		// every conversational turn and clears every one of them is invisible
+		// without this, and "is it running constantly or barely at all" is the
+		// question to answer while deciding whether the arms are tuned right.
+		Debug("[turn-judge] KEPT (%s; tools=%d errors=%d delivered=%d)",
+			judgeTrigger(ev), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
 		return TurnClaimVerdict{}, true // a clean acquittal, and the loop needs to know it ran
 	}
 	claim := strings.TrimSpace(out.Claim)
@@ -103,9 +110,32 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	if why == "" {
 		why = "the turn did not do it"
 	}
-	Log("[turn-judge] UNKEPT — claim=%q why=%q (tools=%d errors=%d delivered=%d)",
-		truncateObs(claim, 100), truncateObs(why, 100), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
+	Log("[turn-judge] UNKEPT (%s) — claim=%q why=%q (tools=%d errors=%d delivered=%d)",
+		judgeTrigger(ev), truncateObs(claim, 100), truncateObs(why, 100), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
 	return TurnClaimVerdict{Unkept: true, Claim: claim, Why: why}, true
+}
+
+// judgeTrigger names which arm of the pre-filter put this turn in front of the
+// judge. Counts alone don't answer the tuning question — a run of acquittals
+// all reading "no tools ran" says that arm is too broad, and the same counts
+// spread across three arms says it is working.
+//
+// Deliberately carries no reply text. The judge already sends that to a model,
+// but a Debug line lands in a file that outlives the turn, and this runs on
+// sessions that carry credentials. The shape of the turn is what is being
+// diagnosed here, not its contents.
+//
+// Order matches turnClaimWorthJudging: first arm to match wins, so these read
+// as the reason it was selected rather than as a list of everything true.
+func judgeTrigger(ev TurnClaimEvidence) string {
+	switch {
+	case len(ev.ToolCalls) == 0:
+		return "no tools ran"
+	case ev.ToolErrors > 0:
+		return "tool errors"
+	default:
+		return "produced nothing"
+	}
 }
 
 // turnClaimJudge binds the judge to one turn's context, or returns nil when the

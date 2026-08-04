@@ -128,3 +128,37 @@ func TestNoModelMeansNoJudge(t *testing.T) {
 		t.Error("an app with no LLM must not offer a judge")
 	}
 }
+
+func TestTheTriggerNamesTheArmThatFired(t *testing.T) {
+	// The tuning signal. A run of acquittals all reading "no tools ran" says
+	// that arm is too broad; the same counts spread across three says it is
+	// working. Counts alone cannot tell those apart.
+	//
+	// Order must match turnClaimWorthJudging — first arm wins — or a turn with
+	// both no tools AND errors would report the wrong reason it was selected.
+	for _, c := range []struct {
+		want string
+		ev   TurnClaimEvidence
+	}{
+		{"no tools ran", TurnClaimEvidence{}},
+		{"tool errors", TurnClaimEvidence{ToolCalls: []string{"image"}, ToolErrors: 1}},
+		{"produced nothing", TurnClaimEvidence{ToolCalls: []string{"generate_image"}}},
+	} {
+		if got := judgeTrigger(c.ev); got != c.want {
+			t.Errorf("trigger = %q, want %q for %+v", got, c.want, c.ev)
+		}
+	}
+}
+
+func TestTheTriggerCarriesNoReplyText(t *testing.T) {
+	// A Debug line outlives the turn and lands in a file, and this runs on
+	// sessions carrying credentials. The shape of the turn is what is being
+	// diagnosed, not its contents.
+	ev := TurnClaimEvidence{
+		Request: "the root password is hunter2",
+		Reply:   "I've stored hunter2 for you.",
+	}
+	if got := judgeTrigger(ev); strings.Contains(got, "hunter2") {
+		t.Errorf("the trigger must not carry turn content: %q", got)
+	}
+}
