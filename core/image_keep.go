@@ -1,0 +1,438 @@
+// Kept images: the durable half of the image space.
+//
+// The ring next door (image_space.go) is deliberately disposable — it holds the
+// last few pictures so "edit the one you just made" resolves, and prunes on
+// every write. That is the right lifetime for working material and the wrong
+// one for a reference: a brand mark, a style sample, a chart the agent will be
+// asked to match again next month. Those need a name that means the same thing
+// in six weeks, which a positional ref by construction cannot be.
+//
+// So an agent can promote a ring entry to a KEPT image under a name it chooses.
+// Kept images live in their own directory, are never pruned, and are addressed
+// as image#<name> — the same prefix as the ring, because to the model these are
+// one idea ("a picture I can point at"), and one namespace is one thing to
+// learn. Numeric names are refused precisely so the two forms can't collide.
+//
+// CAPTIONS ARE THE POINT. A kept image is captioned once, at keep time, by a
+// vision pass. Everything downstream — the manifest, and later the memory layer
+// — reads the caption, not the pixels. That keeps recall at the cost of a line
+// of text and pays for vision exactly once per image, instead of every time the
+// agent wonders what it saved. It is also what lets a kept image be referenced
+// from a text memory without teaching the memory system about images at all.
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// keptImageLimit caps how many images one agent may keep. Generous next to the
+// ring's 10 — these are chosen deliberately, one at a time — but bounded, so a
+// loop that keeps on every turn hits a wall it can report rather than a disk it
+// has filled.
+const keptImageLimit = 50
+
+// maxKeptImageBytes matches the per-file ceiling on app assets. A reference
+// image is a reference, not an archive master.
+const maxKeptImageBytes = 8 << 20 // 8 MiB
+
+// KeptImage is one durable entry.
+type KeptImage struct {
+	Name    string    // "brand_mark" — stable, chosen by the agent
+	Ref     string    // "image#brand_mark" — what to pass to any images= param
+	Note    string    // why it was kept, in the agent's words
+	Caption string    // what it looks like, from the vision pass at keep time
+	When    time.Time // when it was kept
+	// Owner is the agent whose library holds it, and Inherited marks the ones
+	// that came from an ancestor rather than this agent. The distinction is
+	// not cosmetic: an inherited image can be USED but not forgotten here, and
+	// telling the model otherwise would have it "delete" things that stay.
+	Owner     string
+	Inherited bool
+	path      string // absolute file path
+}
+
+// KeptImageRemember and KeptImageForgetMemory bridge the library into whatever
+// memory layer the host app runs. Hooks rather than a direct call because the
+// memory layer belongs to the app (core has no opinion about which one), and
+// because the RIGHT layer is the pull-only one: a kept image is reference
+// material an agent needs when a specific question raises it, not a standing
+// instruction worth prompt tokens on every turn forever. Both are best-effort
+// and nil until wired — a keep must not fail because memory was unavailable.
+var (
+	KeptImageRemember     func(sess *ToolSession, k KeptImage)
+	KeptImageForgetMemory func(sess *ToolSession, name string)
+)
+
+// KeptImageParentAgent resolves an agent's parent, for the inheritance walk
+// below. A hook because the parent relationship belongs to the app's agent
+// model, which core doesn't have. Nil (or "") means no parent, which is the
+// single-agent case and needs no wiring at all.
+var KeptImageParentAgent func(sess *ToolSession, agentID string) string
+
+// keptImageAncestry is the depth an inheritance walk will go. Fleets nest a
+// couple of levels in practice; the bound is what stops a mis-set parent from
+// walking forever, alongside the cycle guard.
+const keptImageAncestry = 4
+
+// keptImageChain is the agent ids a session may READ kept images from, nearest
+// first: its own, then its parent's, and so on. Inheritance is read-only and
+// one-directional — a sub-agent sees the reference material its parent kept
+// (a fleet sharing one brand mark is the whole motivating case) but can never
+// write to or delete from a library that isn't its own.
+func keptImageChain(sess *ToolSession) []string {
+	if sess == nil {
+		return nil
+	}
+	agent := strings.TrimSpace(sess.AgentID)
+	if agent == "" {
+		agent = "_shared"
+	}
+	chain := []string{agent}
+	if KeptImageParentAgent == nil {
+		return chain
+	}
+	seen := map[string]bool{agent: true}
+	for cur := agent; len(chain) < keptImageAncestry; {
+		parent := strings.TrimSpace(KeptImageParentAgent(sess, cur))
+		if parent == "" || seen[parent] {
+			break // no parent, or a cycle someone mis-wired
+		}
+		seen[parent] = true
+		chain = append(chain, parent)
+		cur = parent
+	}
+	return chain
+}
+
+// keptImageMeta is the on-disk sidecar, same shape of decision as the ring's:
+// next to the file, so the library survives a restart with no database.
+type keptImageMeta struct {
+	Note    string    `json:"note"`
+	Caption string    `json:"caption"`
+	Mime    string    `json:"mime"`
+	When    time.Time `json:"when"`
+}
+
+// keptImageDir is where an agent's library lives — a sibling of the ring, so
+// pruneRecentImages can never reach it. Scoped per user AND per agent for the
+// same reason the ring is: a reference one agent kept is not an answer another
+// agent should be handed.
+func keptImageDir(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	agent := strings.TrimSpace(sess.AgentID)
+	if agent == "" {
+		agent = "_shared"
+	}
+	return keptImageDirFor(sess, agent)
+}
+
+// keptImageDirFor is one named agent's library, under the SESSION's user. The
+// user never varies across the walk: inheritance crosses agents, never people.
+func keptImageDirFor(sess *ToolSession, agentID string) string {
+	if sess == nil {
+		return ""
+	}
+	user := strings.TrimSpace(sess.Username)
+	if user == "" || strings.TrimSpace(agentID) == "" {
+		return ""
+	}
+	return filepath.Join(ImageDir(), "kept", safeRecentUser(user), safeRecentUser(agentID))
+}
+
+// safeKeptName reduces a requested name to a safe single path element, or ""
+// when nothing usable survives. An all-digits name is refused rather than
+// mangled: image#3 already means "third newest", and a kept image answering to
+// it would make every positional reference ambiguous.
+func safeKeptName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + 32)
+		case r == ' ':
+			b.WriteByte('_')
+		}
+	}
+	out := strings.Trim(b.String(), "_-")
+	if out == "" {
+		return ""
+	}
+	if len(out) > 48 {
+		out = out[:48]
+	}
+	if _, err := strconv.Atoi(out); err == nil {
+		return ""
+	}
+	return out
+}
+
+// KeepImage promotes a picture out of the ring into the durable library under
+// name. ref is anything ResolveRecentImage accepts, so an agent keeps what it
+// just made without needing a filename.
+func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
+	dir := keptImageDir(sess)
+	if dir == "" {
+		return KeptImage{}, fmt.Errorf("no image library available for this session")
+	}
+	clean := safeKeptName(name)
+	if clean == "" {
+		return KeptImage{}, fmt.Errorf("name %q is not usable — use letters, digits, - or _, and not a bare number (image#3 already means the third-newest picture)", name)
+	}
+	data, ok := ResolveRecentImage(sess, ref)
+	if !ok {
+		return KeptImage{}, fmt.Errorf("no image found for %q — call action=\"help\" to list the pictures you can point at", ref)
+	}
+	if len(data) > maxKeptImageBytes {
+		return KeptImage{}, fmt.Errorf("that image is %s, over the %s limit for a kept reference", HumanSize(int64(len(data))), HumanSize(maxKeptImageBytes))
+	}
+	existing := keptImagesOf(sess, keptImageOwnAgent(sess))
+	held := false
+	for _, k := range existing {
+		if k.Name == clean {
+			held = true // a re-keep under the same name REPLACES; it doesn't count again
+			break
+		}
+	}
+	if !held && len(existing) >= keptImageLimit {
+		return KeptImage{}, fmt.Errorf("you are already keeping %d images, the limit — forget one first with action=\"forget\"", keptImageLimit)
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return KeptImage{}, fmt.Errorf("could not open the image library: %w", err)
+	}
+	base := filepath.Join(dir, clean)
+	if err := os.WriteFile(base+".png", data, 0600); err != nil {
+		return KeptImage{}, fmt.Errorf("could not save the image: %w", err)
+	}
+	// Caption once, here. Best-effort: a library entry with no caption is still
+	// a usable reference, and refusing to keep the picture because the vision
+	// model was unreachable would be the worse trade.
+	kept := KeptImage{
+		Name:    clean,
+		Ref:     RecentImageRefPrefix + clean,
+		Note:    strings.TrimSpace(note),
+		Caption: CaptionImage(sess, data),
+		When:    time.Now(),
+		path:    base + ".png",
+	}
+	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Mime: "image/png", When: kept.When})
+	if err := os.WriteFile(base+".json", meta, 0600); err != nil {
+		Debug("[image_keep] write meta: %v", err)
+	}
+	// Tell memory it exists, so a question months later can surface it without
+	// the agent having to remember to go looking. The caption does the work —
+	// what gets stored and recalled is a sentence, never the picture.
+	if KeptImageRemember != nil {
+		KeptImageRemember(sess, kept)
+	}
+	return kept, nil
+}
+
+// ForgetImage drops a kept image. Reports whether there was one to drop, so the
+// caller can tell the model "there wasn't one" instead of implying it deleted
+// something.
+func ForgetImage(sess *ToolSession, name string) (bool, error) {
+	dir := keptImageDir(sess)
+	clean := safeKeptName(name)
+	if dir == "" || clean == "" {
+		return false, nil
+	}
+	base := filepath.Join(dir, clean)
+	if _, err := os.Stat(base + ".png"); err != nil {
+		// Inherited images are readable but not this agent's to delete. Saying
+		// "nothing to forget" would be a lie the model acts on — it would
+		// report the picture gone while every future reference still resolves.
+		for _, k := range KeptImages(sess) {
+			if k.Name == clean && k.Inherited {
+				return false, fmt.Errorf("%q belongs to %s, not to you — you can use it but only its owner can forget it. To stop using it here, keep your own image under that name instead", clean, k.Owner)
+			}
+		}
+		return false, nil
+	}
+	if err := os.Remove(base + ".png"); err != nil {
+		return false, fmt.Errorf("could not forget %q: %w", clean, err)
+	}
+	_ = os.Remove(base + ".json")
+	// The memory entry outliving the image would be worse than never having
+	// written one: recall would keep offering a ref that no longer resolves.
+	if KeptImageForgetMemory != nil {
+		KeptImageForgetMemory(sess, clean)
+	}
+	return true, nil
+}
+
+// KeptImages lists the library, oldest name-sorted (stable ordering — these are
+// addressed by name, so recency carries no meaning here the way it does in the
+// ring).
+func KeptImages(sess *ToolSession) []KeptImage {
+	chain := keptImageChain(sess)
+	seen := map[string]bool{}
+	var out []KeptImage
+	for depth, agentID := range chain {
+		for _, k := range keptImagesOf(sess, agentID) {
+			if seen[k.Name] {
+				continue // a nearer library already answered this name
+			}
+			seen[k.Name] = true
+			k.Inherited = depth > 0
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// keptImagesOf reads one agent's own library, name-sorted.
+func keptImagesOf(sess *ToolSession, agentID string) []KeptImage {
+	dir := keptImageDirFor(sess, agentID)
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".png") {
+			names = append(names, strings.TrimSuffix(e.Name(), ".png"))
+		}
+	}
+	sort.Strings(names)
+	out := make([]KeptImage, 0, len(names))
+	for _, n := range names {
+		base := filepath.Join(dir, n)
+		k := KeptImage{Name: n, Ref: RecentImageRefPrefix + n, Owner: agentID, path: base + ".png"}
+		var meta keptImageMeta
+		if raw, err := os.ReadFile(base + ".json"); err == nil {
+			_ = json.Unmarshal(raw, &meta)
+		}
+		k.Note, k.Caption, k.When = meta.Note, meta.Caption, meta.When
+		out = append(out, k)
+	}
+	return out
+}
+
+// ResolveKeptImage reads the bytes behind an "image#<name>" reference. Numeric
+// suffixes are left alone — those are the ring's.
+func ResolveKeptImage(sess *ToolSession, ref string) ([]byte, bool) {
+	ref = strings.TrimSpace(ref)
+	if !strings.HasPrefix(strings.ToLower(ref), RecentImageRefPrefix) {
+		return nil, false
+	}
+	clean := safeKeptName(ref[len(RecentImageRefPrefix):])
+	if clean == "" {
+		return nil, false
+	}
+	// Nearest library wins, so an agent that kept its own "house_style" gets
+	// its own rather than its parent's.
+	for _, agentID := range keptImageChain(sess) {
+		dir := keptImageDirFor(sess, agentID)
+		if dir == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, clean+".png"))
+		if err == nil && len(data) > 0 {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+// KeptImageManifest renders the library for the model. Captions carry it — the
+// agent reads what each picture IS without any of them entering the prompt as
+// pixels. Empty when the library is, so callers append it unconditionally.
+func KeptImageManifest(sess *ToolSession) string {
+	all := KeptImages(sess)
+	if len(all) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Images you have kept (stable — these names don't shift):\n")
+	inherited := false
+	for _, k := range all {
+		desc := k.Note
+		switch {
+		case desc != "" && k.Caption != "":
+			desc += " — " + k.Caption
+		case desc == "":
+			desc = k.Caption
+		}
+		if desc == "" {
+			desc = "kept image"
+		}
+		// Mark provenance: the model can USE an inherited image but cannot
+		// forget it, and finding that out from a refusal is worse than reading
+		// it here.
+		if k.Inherited {
+			inherited = true
+			fmt.Fprintf(&b, "- %s (inherited) — %s\n", k.Ref, desc)
+			continue
+		}
+		fmt.Fprintf(&b, "- %s — %s\n", k.Ref, desc)
+	}
+	if inherited {
+		b.WriteString("Inherited ones come from the agent that owns you: usable exactly like your own, but only their owner can forget them.\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// captionImagePrompt is deliberately about APPEARANCE, not interpretation. The
+// caption is read later by an agent deciding whether this is the picture it
+// wants, so "navy circular mark, white sans-serif wordmark" is useful where
+// "the company's logo" is not — it already knows that from the name it chose.
+const captionImagePrompt = "Describe this image in one sentence, under 25 words: what is shown, and its style or colors. " +
+	"Describe only what is visible. No preamble, no markdown, no quotes."
+
+// CaptionImage runs one vision pass over the bytes and returns a short
+// description. Returns "" on any failure — no session LLM, no vision support,
+// a timeout — because every caller treats the caption as a nicety and none of
+// them should fail for want of one.
+func CaptionImage(sess *ToolSession, data []byte) string {
+	if sess == nil || sess.LLM == nil || len(data) == 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(AppContext(), 45*time.Second)
+	defer cancel()
+	resp, err := sess.LLM.Chat(ctx, []Message{{
+		Role:    "user",
+		Content: captionImagePrompt,
+		Images:  [][]byte{data},
+	}})
+	if err != nil || resp == nil {
+		Debug("[image_keep] caption: %v", err)
+		return ""
+	}
+	out := strings.TrimSpace(resp.Content)
+	// One line, bounded. A model that ignores the word limit shouldn't be able
+	// to put a paragraph into every future manifest.
+	if i := strings.IndexAny(out, "\r\n"); i >= 0 {
+		out = strings.TrimSpace(out[:i])
+	}
+	if len(out) > 200 {
+		out = strings.TrimSpace(out[:200]) + "…"
+	}
+	return out
+}
+
+// keptImageOwnAgent is the agent id whose library this session WRITES to —
+// always its own, never an ancestor's. Inheritance is read-only.
+func keptImageOwnAgent(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	if a := strings.TrimSpace(sess.AgentID); a != "" {
+		return a
+	}
+	return "_shared"
+}

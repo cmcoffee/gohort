@@ -168,7 +168,11 @@ func ResolveRecentImage(sess *ToolSession, ref string) ([]byte, bool) {
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(ref[len(RecentImageRefPrefix):]))
 	if err != nil || n < 1 {
-		return nil, false
+		// Not a position — it may name a KEPT image (image#brand_mark). One
+		// prefix covers both on purpose: to the model they're one idea, and
+		// every caller that already resolves image#N gains the durable form
+		// here rather than having to learn a second reference type.
+		return ResolveKeptImage(sess, ref)
 	}
 	all := RecentImages(sess)
 	if n > len(all) {

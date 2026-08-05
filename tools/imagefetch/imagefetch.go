@@ -163,6 +163,7 @@ func (a imageActions) imagesParamDesc() string {
 	if n := a.maxEditImages(); n > 1 {
 		d += "Up to " + strconv.Itoa(n) + ". ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
 	}
+	d += "A picture you kept under a name is \"image#<that name>\" and stays valid indefinitely. "
 	return d + "A web URL is NOT accepted — fetch it first, then pass the saved filename."
 }
 
@@ -289,7 +290,10 @@ func imageSchemaFor(a imageActions) imageSchema {
 	// list: its emptiness is what marks the whole tool unavailable, and help
 	// needs no backend, so a deployment with nothing wired must not start
 	// advertising an image tool that can only describe itself.
-	actions := append(append(make([]string, 0, len(names)+1), names...), "help")
+	// keep/forget join help outside names(): like help they need no backend
+	// (the image space is framework-side), so they must not make an
+	// otherwise-unconfigured deployment look like it has an image tool.
+	actions := append(append(make([]string, 0, len(names)+3), names...), "help", "keep", "forget")
 	desc := "Work with images — single entry point; pick the action matching intent. actions: "
 	params := map[string]ToolParam{
 		"action": {Type: "string", Enum: actions, Description: strings.Join(actions, " | ") + "."},
@@ -320,10 +324,16 @@ func imageSchemaFor(a imageActions) imageSchema {
 	if len(a.backendNames()) > 1 {
 		params["backend"] = ToolParam{Type: "string", Enum: a.backendNames(), Description: a.backendParamDesc()}
 	}
+	params["name"] = ToolParam{Type: "string", Description: "(keep/forget) Short stable name for a reference image you want to still have later — \"brand_mark\", \"house_style\". Letters, digits, - and _; not a bare number. Reuse the same name to replace what it points at."}
+	params["ref"] = ToolParam{Type: "string", Description: "(keep) Which picture to keep, as an image id. Defaults to image#1, the most recent one — so keeping what you just made needs only a name."}
+	params["note"] = ToolParam{Type: "string", Description: "(keep) Optional: why you are keeping it, in one line. Stored with the image and recalled with it later, so write what a future you would need to decide whether this is the right picture."}
 	// Gloss it. A bare "help." reads as boilerplate every schema carries, and
 	// what this one actually does — name the pictures that are still reachable —
 	// is the answer to the question a stalled edit is asking.
-	desc += "help (list the pictures you can still reference, by id, with what each one is). Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
+	desc += "help (list the pictures you can still reference, by id, with what each one is), "
+	desc += "keep (save a picture under a NAME so it survives — recent ids shift as new pictures arrive and eventually drop, a kept one answers to image#<name> indefinitely; use it for a reference you expect to want again: a logo, a style sample, a chart to match), "
+	desc += "forget (drop a kept image by name). "
+	desc += "Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
 	// Omitting an action hides that the capability EXISTS, and that cuts both
 	// ways. For find, fetch is a fair substitute and silence costs nothing. For
 	// edit it is actively harmful: asked to blend two pictures with no editing
@@ -444,9 +454,40 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		return generateImage(sess, args, avail)
 	case "edit":
 		return editImage(sess, args, avail)
+	case "keep":
+		name := StringArg(args, "name")
+		ref := strings.TrimSpace(StringArg(args, "ref"))
+		if ref == "" {
+			ref = RecentImageRefPrefix + "1" // "keep what I just made" is the common case
+		}
+		kept, err := KeepImage(sess, ref, name, StringArg(args, "note"))
+		if err != nil {
+			return "", err
+		}
+		out := fmt.Sprintf("Kept as %s. That name keeps working from now on — pass it anywhere an image id goes, in this conversation or a later one.", kept.Ref)
+		if kept.Caption != "" {
+			out += "\nWhat it shows: " + kept.Caption
+		}
+		// Say it is recallable. Otherwise the model has no way to know it can
+		// find this again later without having kept a note of the name itself.
+		out += "\nAlso saved to your memory, so a later question about this picture can find it without you remembering the name."
+		return out + "\nNOT delivered — keeping only files it away. To send it, attach it as you would any image.", nil
+	case "forget":
+		name := StringArg(args, "name")
+		gone, err := ForgetImage(sess, name)
+		if err != nil {
+			return "", err
+		}
+		if !gone {
+			return fmt.Sprintf("Nothing kept under %q — nothing was deleted. Call action=\"help\" to see what you have kept.", name), nil
+		}
+		return fmt.Sprintf("Forgot %q. Its id no longer resolves.", name), nil
 	case "", "help":
 		help := "image actions: " + strings.Join(avail.names(), " | ") + ". Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...)."
 		if m := RecentImageManifest(sess); m != "" {
+			help += "\n\n" + m
+		}
+		if m := KeptImageManifest(sess); m != "" {
 			help += "\n\n" + m
 		}
 		return help, nil

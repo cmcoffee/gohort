@@ -25,12 +25,15 @@ func TestActionsNarrowToWhatIsConfigured(t *testing.T) {
 		set  imageActions
 		want []string
 	}{
-		// `help` rides along on every non-empty set: it needs no backend, and
-		// it is how the model finds out which pictures it can still reference.
-		{"all configured", imageActions{find: true, fetch: true, generate: true}, []string{"find", "fetch", "generate", "help"}},
-		{"no search provider", imageActions{fetch: true, generate: true}, []string{"fetch", "generate", "help"}},
-		{"no image gen", imageActions{find: true, fetch: true}, []string{"find", "fetch", "help"}},
-		{"fetch only", imageActions{fetch: true}, []string{"fetch", "help"}},
+		// `help`, `keep` and `forget` ride along on every non-empty set: all
+		// three are framework-side (the image space), so no backend config can
+		// take them away. help is how the model finds out which pictures it can
+		// still reference; keep/forget are how it decides which ones outlive
+		// the ring.
+		{"all configured", imageActions{find: true, fetch: true, generate: true}, []string{"find", "fetch", "generate", "help", "keep", "forget"}},
+		{"no search provider", imageActions{fetch: true, generate: true}, []string{"fetch", "generate", "help", "keep", "forget"}},
+		{"no image gen", imageActions{find: true, fetch: true}, []string{"find", "fetch", "help", "keep", "forget"}},
+		{"fetch only", imageActions{fetch: true}, []string{"fetch", "help", "keep", "forget"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -107,8 +110,8 @@ func TestStaticSchemaKeepsFullShape(t *testing.T) {
 	// pickers, which must see every action regardless of local config.
 	tool := &ImageTool{}
 	enum := tool.Params()["action"].Enum
-	if !slices.Equal(enum, []string{"find", "fetch", "generate", "help"}) {
-		t.Errorf("static action enum = %v, want all three plus help", enum)
+	if !slices.Equal(enum, []string{"find", "fetch", "generate", "help", "keep", "forget"}) {
+		t.Errorf("static action enum = %v, want all three backend actions plus the three framework-side ones", enum)
 	}
 	if tool.Desc() == "" {
 		t.Error("static description must not be empty — the tool index embeds it")
