@@ -160,13 +160,13 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 	// to the idle / no-route checks instead of returning RouteInject
 	// for a record nobody's actually serving — which would ack every
 	// future user message forever.
-	if active := mostRecentActive(hostSessionID); active != nil {
+	if active := MostRecentActiveSubSession(hostSessionID); active != nil {
 		// An autonomous task that's mid-turn (briefly active) owns its
 		// own loop — route to it, never inject-then-relay to the host.
 		if active.Kind == SubSessionKindAutonomous {
 			return active, RouteGoal
 		}
-		if subSessionIsLive(active.SubSessionID) {
+		if SubSessionIsLive(active.SubSessionID) {
 			return active, RouteInject
 		}
 		Log("[sub-session] active sub=%s declared dead by liveness checks — retiring as orphan", active.SubSessionID)
@@ -208,33 +208,6 @@ func ResolvePromotion(hostSessionID string) *SubSession {
 	return nil
 }
 
-// mostRecentActive returns the most-recently-started active
-// sub-session for a host, or nil if none. Picks the latest start
-// time so a host with concurrent active dispatches (parallel async
-// fan-out) routes the next user message to the one most likely
-// relevant — the one the user just kicked off.
-func mostRecentActive(hostSessionID string) *SubSession {
-	if RootDB == nil {
-		return nil
-	}
-	subSessionMu.Lock()
-	defer subSessionMu.Unlock()
-	var best *SubSession
-	for _, k := range RootDB.Keys(SubSessionsTable) {
-		var s SubSession
-		if !RootDB.Get(SubSessionsTable, k, &s) {
-			continue
-		}
-		if s.HostSessionID != hostSessionID || s.Status != SubSessionActive {
-			continue
-		}
-		if best == nil || s.Started.After(best.Started) {
-			scopy := s
-			best = &scopy
-		}
-	}
-	return best
-}
 
 // shouldRetire reports whether an idle SubSession has aged out of
 // the promotion pool. Either the stickiness window has elapsed since

@@ -1,13 +1,34 @@
 package core
 
 import (
+	"net/http"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/appassets"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/extrasessions"
 	"github.com/cmcoffee/gohort/core/factcheck"
 	"github.com/cmcoffee/gohort/core/geo"
+	"github.com/cmcoffee/gohort/core/injection"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/gohort/core/migrate"
+	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/notes"
+	"github.com/cmcoffee/gohort/core/ollama"
+	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/gohort/core/provenance"
+	"github.com/cmcoffee/gohort/core/pushsub"
+	"github.com/cmcoffee/gohort/core/sections"
+	"github.com/cmcoffee/gohort/core/sources"
+	"github.com/cmcoffee/gohort/core/sse"
+	"github.com/cmcoffee/gohort/core/subsession"
 	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/gohort/core/tlsconf"
+	"github.com/cmcoffee/gohort/core/toolgroups"
+	"github.com/cmcoffee/gohort/core/toolrules"
 )
 
 // core.go — the seam that assembles the core namespace from gohort's extracted
@@ -95,6 +116,58 @@ var (
 	StripLeadingHeading         = textutil.StripLeadingHeading
 )
 
+// Markdown/HTML rendering, URL harvesting, XML field extraction, and the
+// browser-routing heuristics — all pure text work, all stdlib-only.
+
+type (
+	ExtractSpec  = textutil.ExtractSpec
+	ExtractWhere = textutil.ExtractWhere
+	ExtractMatch = textutil.ExtractMatch
+)
+
+const ThinResultMinChars = textutil.ThinResultMinChars
+
+var (
+	// Link/citation patterns shared by anything that parses model output.
+	BareURLPattern   = textutil.BareURLPattern
+	MDLinkPattern    = textutil.MDLinkPattern
+	TaggedSrcPattern = textutil.TaggedSrcPattern
+	CiteRefPattern   = textutil.CiteRefPattern
+	DomainPattern    = textutil.DomainPattern
+
+	// Markdown ⇄ HTML.
+	HTMLEscape            = textutil.HTMLEscape
+	HTMLUnescape          = textutil.HTMLUnescape
+	InlineMarkdownToHTML  = textutil.InlineMarkdownToHTML
+	MarkdownToHTML        = textutil.MarkdownToHTML
+	HTMLToMarkdown        = textutil.HTMLToMarkdown
+	MarkdownToConfluence  = textutil.MarkdownToConfluence
+	HeadingAnchor         = textutil.HeadingAnchor
+	NormalizeHeadingLinks = textutil.NormalizeHeadingLinks
+
+	// URL + section harvesting from a body of text.
+	ExtractURLs         = textutil.ExtractURLs
+	ExtractDomains      = textutil.ExtractDomains
+	CountURLs           = textutil.CountURLs
+	SplitSourcesSection = textutil.SplitSourcesSection
+	StripSourcesSection = textutil.StripSourcesSection
+	StripSection        = textutil.StripSection
+	StripUncitedSources = textutil.StripUncitedSources
+	StripInternalLabels = textutil.StripInternalLabels
+
+	// XML field extraction (CalDAV/WebDAV responses and friends).
+	ParseExtractSpec = textutil.ParseExtractSpec
+	ExtractXML       = textutil.ExtractXML
+
+	// When a plain fetch won't do and the browser has to drive.
+	IsJSHeavyDomain          = textutil.IsJSHeavyDomain
+	ShouldAutoBrowseURL      = textutil.ShouldAutoBrowseURL
+	ShouldBrowserRetryResult = textutil.ShouldBrowserRetryResult
+
+	// Same-origin path handed to a network tool → the hint that names it.
+	SameOriginURLHint = textutil.SameOriginURLHint
+)
+
 // --- factcheck ---------------------------------------------------------------
 
 type (
@@ -128,6 +201,410 @@ var (
 var (
 	ReverseGeocode = geo.ReverseGeocode
 	SetGeocodeDir  = geo.SetGeocodeDir
+)
+
+// --- docs (writer-app document plumbing: rules, templates, doc targets) ------
+
+type (
+	DocItem                   = docs.DocItem
+	DocumentTarget            = docs.DocumentTarget
+	ReferencingDocumentTarget = docs.ReferencingDocumentTarget
+)
+
+var (
+	// Per-user standing rules for a writer app, namespaced per app.
+	DocRulesTable   = docs.DocRulesTable
+	LoadDocRules    = docs.LoadDocRules
+	FormatDocRules  = docs.FormatDocRules
+	DocRulesSection = docs.DocRulesSection
+	HandleDocRules  = docs.HandleDocRules
+
+	// Assist prompt + the fence that keeps a draft out of the model's prose.
+	DocFence             = docs.DocFence
+	BuildDocAssistPrompt = docs.BuildDocAssistPrompt
+	MarkdownDocTemplates = docs.MarkdownDocTemplates
+
+	// Document targets — where an app can push a finished section.
+	RegisterDocumentTarget   = docs.RegisterDocumentTarget
+	DocumentTargetKinds      = docs.DocumentTargetKinds
+	ListDocuments            = docs.ListDocuments
+	ListDocumentsReferencing = docs.ListDocumentsReferencing
+	AppendToDocument         = docs.AppendToDocument
+	HasDocumentTarget        = docs.HasDocumentTarget
+)
+
+// --- messaging (seams the transport registers so apps needn't import it) -----
+
+type (
+	MessagingChatSummary = messaging.MessagingChatSummary
+	MessagingChatMessage = messaging.MessagingChatMessage
+	MessagingLink        = messaging.MessagingLink
+	ChannelThreadInfo    = messaging.ChannelThreadInfo
+	ChannelLine          = messaging.ChannelLine
+	ChannelMember        = messaging.ChannelMember
+	ChannelThreads       = messaging.ChannelThreads
+)
+
+var (
+	RegisterMessagingLink  = messaging.RegisterMessagingLink
+	ActiveMessagingLink    = messaging.ActiveMessagingLink
+	RegisterChannelThreads = messaging.RegisterChannelThreads
+	ActiveChannelThreads   = messaging.ActiveChannelThreads
+)
+
+// Channel records — an agent's bindings onto a messaging service.
+
+type (
+	Channel                   = messaging.Channel
+	BridgeService             = messaging.BridgeService
+	ChannelInbound            = messaging.ChannelInbound
+	ChannelReply              = messaging.ChannelReply
+	ChannelAgentRunnerFunc    = messaging.ChannelAgentRunnerFunc
+	ChannelGatekeeperFunc     = messaging.ChannelGatekeeperFunc
+	ChannelSilentRecorderFunc = messaging.ChannelSilentRecorderFunc
+	ChannelOverflowFunc       = messaging.ChannelOverflowFunc
+)
+
+const (
+	DefaultDMGatekeeperRule = messaging.DefaultDMGatekeeperRule
+	DirectionInbound        = messaging.DirectionInbound
+	DirectionOutbound       = messaging.DirectionOutbound
+	DirectionBidirectional  = messaging.DirectionBidirectional
+)
+
+var (
+	ServiceDisplayName    = messaging.ServiceDisplayName
+	ServiceRendersMarkdown = messaging.ServiceRendersMarkdown
+	LooksLikeHandle       = messaging.LooksLikeHandle
+	ChannelDirection      = messaging.ChannelDirection
+	NewChannelID          = messaging.NewChannelID
+	SaveChannel           = messaging.SaveChannel
+	GetChannel            = messaging.GetChannel
+	ListChannels          = messaging.ListChannels
+	ListChannelsForAgent  = messaging.ListChannelsForAgent
+	ChannelAllowsSender   = messaging.ChannelAllowsSender
+	DeleteChannel         = messaging.DeleteChannel
+	ChannelSessionKey     = messaging.ChannelSessionKey
+	ChannelForInbound     = messaging.ChannelForInbound
+
+	RegisterChannelAgentRunner    = messaging.RegisterChannelAgentRunner
+	ChannelAgentRunnerReady       = messaging.ChannelAgentRunnerReady
+	RunChannelAgent               = messaging.RunChannelAgent
+	RegisterChannelGatekeeper     = messaging.RegisterChannelGatekeeper
+	ChannelGatekeeperAllow        = messaging.ChannelGatekeeperAllow
+	RegisterChannelSilentRecorder = messaging.RegisterChannelSilentRecorder
+	RecordChannelSilent           = messaging.RecordChannelSilent
+	RegisterChannelOverflow       = messaging.RegisterChannelOverflow
+	OverflowChannelReply          = messaging.OverflowChannelReply
+)
+
+// --- sections (admin/account page surfaces an app contributes) ---------------
+
+type (
+	AdminSectionEntry   = sections.AdminSectionEntry
+	AccountSectionEntry = sections.AccountSectionEntry
+)
+
+var (
+	RegisterAdminSection   = sections.RegisterAdminSection
+	AdminSectionEntries    = sections.AdminSectionEntries
+	RegisterAccountSection = sections.RegisterAccountSection
+	AccountSectionEntries  = sections.AccountSectionEntries
+)
+
+// --- toolrules (what a tool may be named, and how much prose it may cost) ----
+
+var (
+	RegisterReservedToolName = toolrules.RegisterReservedToolName
+	IsReservedToolName       = toolrules.IsReservedToolName
+	CheckDescriptionBudget   = toolrules.CheckDescriptionBudget
+	CheckAuthoredToolText    = toolrules.CheckAuthoredToolText
+)
+
+// --- netgate (inbound request trust + outbound network capability) -----------
+
+type NetworkConnector = netgate.NetworkConnector
+
+var (
+	IsAdminAllowed        = netgate.IsAdminAllowed
+	IsLoopbackRequest     = netgate.IsLoopbackRequest
+	IsGenuineLocalRequest = netgate.IsGenuineLocalRequest
+	// Exported on the way out: core's auth + webapp call it 8 times.
+	ClientIP = netgate.ClientIP
+
+	NewNetworkConnector         = netgate.NewNetworkConnector
+	WithNetworkConnector        = netgate.WithNetworkConnector
+	NetworkConnectorFromContext = netgate.NetworkConnectorFromContext
+	NetworkAllowedFromContext   = netgate.NetworkAllowedFromContext
+)
+
+// netgate.LoadAdminAllowedIPsFunc is deliberately NOT re-exported: it is a
+// mutable func var, and a var alias would copy it — the assignment in
+// gohort.go must land on the leaf's own var to be seen by IsAdminAllowed.
+
+// --- appassets (per-app static files an app can reference) -------------------
+
+const (
+	MaxAppAssetBytes = appassets.MaxAppAssetBytes
+	MaxAppAssets     = appassets.MaxAppAssets
+)
+
+var (
+	SetAppAssetsDir     = appassets.SetAppAssetsDir
+	AppAssetsDir        = appassets.AppAssetsDir
+	AppAssetContentType = appassets.AppAssetContentType
+	ValidAppAssetName   = appassets.ValidAppAssetName
+	SaveAppAsset        = appassets.SaveAppAsset
+	ReadAppAsset        = appassets.ReadAppAsset
+	ListAppAssets       = appassets.ListAppAssets
+	DeleteAppAsset      = appassets.DeleteAppAsset
+	DeleteAppAssets     = appassets.DeleteAppAssets
+)
+
+// --- sse (server-sent-events response writer) --------------------------------
+
+type SSEWriter = sse.SSEWriter
+
+var NewSSEWriter = sse.NewSSEWriter
+
+// --- notes (per-namespace operating notes an agent may rewrite) --------------
+
+type OperatingNotes = notes.OperatingNotes
+
+const (
+	OperatingNotesTable = notes.OperatingNotesTable
+	OperatingNotesCap   = notes.OperatingNotesCap
+)
+
+var (
+	LoadOperatingNotes        = notes.LoadOperatingNotes
+	SaveOperatingNotes        = notes.SaveOperatingNotes
+	ResolveOperatingNotes     = notes.ResolveOperatingNotes
+	RenderOperatingNotesBlock = notes.RenderOperatingNotesBlock
+)
+
+// --- prompts (registered prompt blocks + deployment-level overrides) ---------
+
+type PromptBlock = prompts.PromptBlock
+
+var (
+	RegisterPromptBlock  = prompts.RegisterPromptBlock
+	AllPromptBlocks      = prompts.AllPromptBlocks
+	SetPromptOverrideDB  = prompts.SetPromptOverrideDB
+	PromptOverride       = prompts.PromptOverride
+	SetPromptOverride    = prompts.SetPromptOverride
+	ClearPromptOverride  = prompts.ClearPromptOverride
+	EffectivePromptText  = prompts.EffectivePromptText
+)
+
+// --- costledger (metered per-source external spend) --------------------------
+
+type (
+	CostLedgerRow     = costledger.CostLedgerRow
+	CostSourceSummary = costledger.CostSourceSummary
+)
+
+var (
+	SetCostLedgerDB    = costledger.SetCostLedgerDB
+	RecordExternalCost = costledger.RecordExternalCost
+	CostExternalDaily  = costledger.CostExternalDaily
+	CostBySource       = costledger.CostBySource
+)
+
+// --- pushsub (web-push subscription lifecycle) -------------------------------
+
+type PushSubHandler = pushsub.PushSubHandler
+
+var (
+	RegisterPushSubHandler  = pushsub.RegisterPushSubHandler
+	EnsurePushSubscription  = pushsub.EnsurePushSubscription
+	RemovePushSubscription  = pushsub.RemovePushSubscription
+)
+
+// --- migrate (one-shot data migrations with a done-marker) -------------------
+
+type (
+	MigrationMarker = migrate.MigrationMarker
+	MigrationRunner = migrate.MigrationRunner
+)
+
+const MigrationsTable = migrate.MigrationsTable
+
+var (
+	NewMigrationRunner   = migrate.NewMigrationRunner
+	ListMigrationMarkers = migrate.ListMigrationMarkers
+)
+
+// --- tlsconf (self-signed cert generation + TLS listener) --------------------
+
+var (
+	TLSEnabled           = tlsconf.TLSEnabled
+	TLSSelfSignedEnabled = tlsconf.SelfSigned
+	ListenAndServeTLS = tlsconf.ListenAndServeTLS
+)
+
+// --- ollama (local-model slot schedulers: ollama + llama.cpp) ---------------
+
+type (
+	OllamaScheduler  = ollama.OllamaScheduler
+	OllamaSchedStats = ollama.OllamaSchedStats
+)
+
+var (
+	ErrOllamaSchedulerDisabled = ollama.ErrOllamaSchedulerDisabled
+	StartOllamaScheduler       = ollama.StartOllamaScheduler
+	AcquireOllamaSlot          = ollama.AcquireOllamaSlot
+	ReleaseOllamaSlot          = ollama.ReleaseOllamaSlot
+	OllamaSchedulerStats       = ollama.OllamaSchedulerStats
+	StartLlamacppScheduler     = ollama.StartLlamacppScheduler
+	AcquireLlamacppSlot        = ollama.AcquireLlamacppSlot
+	ReleaseLlamacppSlot        = ollama.ReleaseLlamacppSlot
+)
+
+// --- injection (queued notes pushed into a running turn) --------------------
+
+type (
+	InjectionNote  = injection.InjectionNote
+	InjectionQueue = injection.InjectionQueue
+)
+
+const MaxInjectionQueueDepth = injection.MaxInjectionQueueDepth
+
+var (
+	RegisterInjectionQueue           = injection.RegisterInjectionQueue
+	LookupInjectionQueue             = injection.LookupInjectionQueue
+	ReleaseInjectionQueue            = injection.ReleaseInjectionQueue
+	SubSessionInjectionQueueKey      = injection.SubSessionInjectionQueueKey
+	RegisterSubSessionInjectionQueue = injection.RegisterSubSessionInjectionQueue
+	LookupSubSessionInjectionQueue   = injection.LookupSubSessionInjectionQueue
+	ReleaseSubSessionInjectionQueue  = injection.ReleaseSubSessionInjectionQueue
+)
+
+// --- provenance (where a memory came from, and how stale it is) -------------
+
+type (
+	MemSource        = provenance.MemSource
+	Volatility       = provenance.Volatility
+	RetireReason     = provenance.RetireReason
+	MemoryProvenance = provenance.MemoryProvenance
+	Staleness        = provenance.Staleness
+)
+
+const (
+	TunableRecencyWeight     = provenance.TunableRecencyWeight
+	TunableStaleSlowDays     = provenance.TunableStaleSlowDays
+	TunableStaleVolatileDays = provenance.TunableStaleVolatileDays
+
+	// Where a memory came from.
+	MemSourceUnknown    = provenance.MemSourceUnknown
+	MemSourceUserStated = provenance.MemSourceUserStated
+	MemSourceObserved   = provenance.MemSourceObserved
+	MemSourceRetrieved  = provenance.MemSourceRetrieved
+	MemSourceInferred   = provenance.MemSourceInferred
+	MemSourceImported   = provenance.MemSourceImported
+
+	// How fast it goes out of date.
+	VolStable   = provenance.VolStable
+	VolSlow     = provenance.VolSlow
+	VolVolatile = provenance.VolVolatile
+
+	// Why it was retired.
+	RetireLive       = provenance.RetireLive
+	RetireMerged     = provenance.RetireMerged
+	RetireSuperseded = provenance.RetireSuperseded
+	RetireEvicted    = provenance.RetireEvicted
+
+	// How stale it reads right now.
+	Fresh = provenance.Fresh
+	Aging = provenance.Aging
+	Stale = provenance.Stale
+)
+
+var (
+	RetireReasonLabel = provenance.RetireReasonLabel
+	RecencyWeight     = provenance.RecencyWeight
+	SourceTrust       = provenance.SourceTrust
+)
+
+// --- subsession (a delegated turn's lifecycle record) -----------------------
+
+type (
+	SubSessionStatus          = subsession.SubSessionStatus
+	SubSessionMode            = subsession.SubSessionMode
+	SubSessionKind            = subsession.SubSessionKind
+	SubSession                = subsession.SubSession
+	SubSessionLivenessChecker = subsession.SubSessionLivenessChecker
+)
+
+const (
+	SubSessionsTable = subsession.SubSessionsTable
+
+	SubSessionActive  = subsession.SubSessionActive
+	SubSessionIdle    = subsession.SubSessionIdle
+	SubSessionRetired = subsession.SubSessionRetired
+
+	SubSessionModeSync  = subsession.SubSessionModeSync
+	SubSessionModeAsync = subsession.SubSessionModeAsync
+
+	SubSessionKindNormal     = subsession.SubSessionKindNormal
+	SubSessionKindAutonomous = subsession.SubSessionKindAutonomous
+)
+
+var (
+	MintSubSession                    = subsession.MintSubSession
+	MarkSubSessionIdle                = subsession.MarkSubSessionIdle
+	MarkSubSessionActive              = subsession.MarkSubSessionActive
+	RetireSubSession                  = subsession.RetireSubSession
+	GetSubSession                     = subsession.GetSubSession
+	IdleSubSessionsFor                = subsession.IdleSubSessionsFor
+	ActiveSubSessionsFor              = subsession.ActiveSubSessionsFor
+	RegisterSubSessionLivenessChecker = subsession.RegisterSubSessionLivenessChecker
+	RetireOrphanedActiveSubSessions   = subsession.RetireOrphanedActiveSubSessions
+	MostRecentActiveSubSession        = subsession.MostRecentActiveSubSession
+	SubSessionIsLive                  = subsession.SubSessionIsLive
+)
+
+// --- toolgroups (admin-curated groupings of tools) --------------------------
+
+type ToolGroup = toolgroups.ToolGroup
+
+var (
+	LoadToolGroups       = toolgroups.LoadToolGroups
+	LoadToolGroup        = toolgroups.LoadToolGroup
+	SaveToolGroup        = toolgroups.SaveToolGroup
+	DeleteToolGroup      = toolgroups.DeleteToolGroup
+	ToolGroupForMember   = toolgroups.ToolGroupForMember
+	MemberSet            = toolgroups.MemberSet
+	IsBuiltinToolGroupID  = toolgroups.IsBuiltinToolGroupID
+	DedupeAndCleanMembers = toolgroups.DedupeAndCleanMembers
+)
+
+// --- sources (citation records + which sources are worth citing) ------------
+
+type (
+	SourceRef      = sources.SourceRef
+	NumberedSource = sources.NumberedSource
+	SourceRegistry = sources.SourceRegistry
+)
+
+var (
+	RewriteCitations = sources.RewriteCitations
+	NormalizeURL     = sources.NormalizeURL
+	ParseSourceIndex = sources.ParseSourceIndex
+	IsWeakSource     = sources.IsWeakSource
+)
+
+// --- extrasessions (rail entries another app contributes to an agent) -------
+
+type (
+	ExtraSessionItem    = extrasessions.ExtraSessionItem
+	ExtraSessionsSource = extrasessions.ExtraSessionsSource
+)
+
+var (
+	RegisterExtraSessionsSource = extrasessions.RegisterExtraSessionsSource
+	LookupExtraSessionsSource   = extrasessions.LookupExtraSessionsSource
+	CollectExtraSessions        = extrasessions.CollectExtraSessions
 )
 
 // --- wiring: inject core-side implementations into the leaves ----------------
@@ -165,4 +642,56 @@ func init() {
 
 	// deps: the sandbox workspaces root (the managed python-deps dir is a sibling).
 	deps.WorkspacesDir = WorkspacesDir
+
+	// prompts: keep the override table name single-sourced from tables.go.
+	prompts.OverrideTable = WebTable
+
+	// pushsub + migrate: the root store, resolved late — RootDB is nil until
+	// the database opens, and both leaves already treat a nil store as "not
+	// ready" exactly as they did when they read RootDB directly.
+	pushsub.DB = func() pushsub.Store {
+		if RootDB == nil {
+			return nil
+		}
+		return RootDB
+	}
+	migrate.DB = func() migrate.Store {
+		if RootDB == nil {
+			return nil
+		}
+		return RootDB
+	}
+
+	// docs: request authentication. The leaf works in its own Store terms, so
+	// the wire adapts rather than assigns — Go function types are invariant,
+	// and core's RequireUser is written against Database.
+	docs.RequireUser = func(w http.ResponseWriter, r *http.Request, base docs.Store) (string, docs.Store, bool) {
+		db, _ := base.(Database)
+		user, udb, ok := RequireUser(w, r, db)
+		if udb == nil {
+			return user, nil, ok
+		}
+		return user, udb, ok
+	}
+	// subsession: the root store, resolved late (see pushsub above).
+	subsession.DB = func() subsession.Store {
+		if RootDB == nil {
+			return nil
+		}
+		return RootDB
+	}
+
+	// injection + toolgroups: framework-shaped IDs.
+	injection.NewID = UUIDv4
+	toolgroups.NewID = UUIDv4
+
+	// sources: the classifier stays with the search pipeline whose domain
+	// tables it shares; the sources leaf reads it through these.
+	sources.ClassifySourceFunc = ClassifySource
+	sources.CleanSourceTitleFunc = CleanSourceTitle
+	sources.IsNonArticleURLFunc = IsNonArticleURL
+
+	// provenance: recency/staleness weights come from the tunables registry.
+	provenance.TuneFloatFunc = TuneFloat
+	provenance.TuneIntFunc = TuneInt
 }

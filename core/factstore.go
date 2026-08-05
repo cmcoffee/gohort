@@ -707,7 +707,7 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 		if res.Reason == FactStored {
 			m := res.Fact
 			for _, s := range srcs {
-				if sourceTrust(s.Source) > sourceTrust(m.Source) {
+				if SourceTrust(s.Source) > SourceTrust(m.Source) {
 					m.Source = s.Source
 				}
 				if !s.AsOf.IsZero() && (m.AsOf.IsZero() || s.AsOf.Before(m.AsOf)) {

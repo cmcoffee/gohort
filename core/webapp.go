@@ -1100,7 +1100,7 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		if raw := r.URL.RawQuery; raw != "" {
 			fullPath = path + "?" + raw
 		}
-		ip := clientIP(r)
+		ip := ClientIP(r)
 		ip_str := "-"
 		if ip != nil {
 			ip_str = ip.String()

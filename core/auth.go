@@ -1173,9 +1173,9 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		}
 
 		// Allow genuine local requests -- internal inter-app HTTP calls loop
-		// back over localhost. Keys on the real TCP peer, NOT clientIP: an
+		// back over localhost. Keys on the real TCP peer, NOT ClientIP: an
 		// external client could otherwise send "X-Forwarded-For: 127.0.0.1" and
-		// bypass auth entirely (clientIP trusts that header).
+		// bypass auth entirely (ClientIP trusts that header).
 		if IsGenuineLocalRequest(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -1298,7 +1298,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 			r.ParseForm()
 			username := strings.TrimSpace(r.FormValue("username"))
 			password := r.FormValue("password")
-			ip := clientIP(r).String()
+			ip := ClientIP(r).String()
 
 			// Check lockout before attempting auth.
 			if isLockedOut(ip) {
@@ -1336,7 +1336,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 				Secure:   TLSEnabled(),
 				MaxAge:   sessionMaxAge(),
 			})
-			Log("[auth] user %q logged in from %s", username, clientIP(r))
+			Log("[auth] user %q logged in from %s", username, ClientIP(r))
 			http.Redirect(w, r, "/", http.StatusFound)
 
 		default:
@@ -1435,7 +1435,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 			user.Pending = true
 			db.Set(AuthTable, "user:"+email, user)
 
-			Log("[auth] new signup (pending): %q from %s", email, clientIP(r))
+			Log("[auth] new signup (pending): %q from %s", email, ClientIP(r))
 
 			// Notify admins of the new signup.
 			NotifyAdmin("["+ServiceName()+"] New signup pending approval",
@@ -1576,7 +1576,7 @@ func ForgotHandler(db Database) http.HandlerFunc {
 					SendNotification(email,
 						"["+ServiceName()+"] Password Reset",
 						fmt.Sprintf("A password reset was requested for your account on %s.\n\nReset your password:\n\n%s\n\nThis link expires in 1 hour. If you did not request this, ignore this email.\n", DashboardURL(), link))
-					Log("[auth] password reset requested for %q from %s", email, clientIP(r))
+					Log("[auth] password reset requested for %q from %s", email, ClientIP(r))
 				}
 			}
 			serveForgotPage(w, "If an account exists with that email, a reset link has been sent.", true)
@@ -1636,7 +1636,7 @@ func ResetHandler(db Database) http.HandlerFunc {
 			}
 			// Preserve every field (admin, apps, preferences) — set only the hash.
 			AuthAdminSetPassword(db, username, password)
-			Log("[auth] password reset completed for %q from %s", username, clientIP(r))
+			Log("[auth] password reset completed for %q from %s", username, ClientIP(r))
 			serveLoginPage(w, "Password has been reset. You can now log in.")
 
 		default:

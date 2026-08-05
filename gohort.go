@@ -11,6 +11,8 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/tlsconf"
 
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -323,19 +325,19 @@ func main() {
 			MaxConcurrentTasks = saved_max
 		}
 		if *tls_cert != "" {
-			TLSCert = *tls_cert
+			tlsconf.TLSCert = *tls_cert
 		} else {
-			TLSCert = saved_cert
+			tlsconf.TLSCert = saved_cert
 		}
 		if *tls_key != "" {
-			TLSKey = *tls_key
+			tlsconf.TLSKey = *tls_key
 		} else {
-			TLSKey = saved_key
+			tlsconf.TLSKey = saved_key
 		}
 		if *tls_self {
-			TLSSelfSigned = true
+			tlsconf.TLSSelfSigned = true
 		} else {
-			TLSSelfSigned = saved_self_signed
+			tlsconf.TLSSelfSigned = saved_self_signed
 		}
 
 		// Wire auth database.
@@ -405,8 +407,10 @@ func main() {
 		}
 
 		// Wire admin IP allowlist. Sourced from gohort.ini with a
-		// one-time fallback to the legacy DB-backed value.
-		LoadAdminAllowedIPsFunc = func() string {
+		// one-time fallback to the legacy DB-backed value. Set on the
+		// netgate leaf directly — a mutable func var can't be re-exported
+		// through core.go (the alias would copy it, not share it).
+		netgate.LoadAdminAllowedIPsFunc = func() string {
 			return loadWebString("admin_allowed_ips", "")
 		}
 

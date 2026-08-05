@@ -533,7 +533,7 @@ func LinkGraphEdgeP(db Database, namespace, from, rel, to, note string, replace 
 		if edge.Note == "" {
 			edge.Note = prior.Note
 		}
-		if sourceTrust(prior.Source) > sourceTrust(edge.Source) {
+		if SourceTrust(prior.Source) > SourceTrust(edge.Source) {
 			edge.Source = prior.Source
 		}
 	}

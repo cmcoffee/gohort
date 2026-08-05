@@ -85,7 +85,7 @@ func SaveAppGroup(db Database, g AppGroup) (AppGroup, error) {
 	if g.Name == "" {
 		return g, fmt.Errorf("app groups: name is required")
 	}
-	g.Apps = dedupeAndCleanMembers(g.Apps)
+	g.Apps = DedupeAndCleanMembers(g.Apps)
 	now := time.Now()
 	if g.ID == "" {
 		g.ID = UUIDv4()

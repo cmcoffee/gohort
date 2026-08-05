@@ -4616,7 +4616,7 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
 	status := map[string]interface{}{
 		"tls_enabled":     TLSEnabled(),
-		"tls_self_signed": TLSSelfSigned,
+		"tls_self_signed": TLSSelfSignedEnabled(),
 		"auth_enabled":    AuthHasUsers(a.db),
 		"user_count":      len(AuthListUsers(a.db)),
 		"active_sessions": len(AllLiveSessions()),
