@@ -35,6 +35,10 @@ func (T *OrchestrateApp) resolveAgent(w http.ResponseWriter, r *http.Request, ud
 			AgentID string `json:"agent_id"`
 		}
 		raw, err := readAndRestoreBody(r)
+		if err == ErrBodyTooLarge {
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return AgentRecord{}, false
+		}
 		if err == nil && len(raw) > 0 {
 			_ = json.Unmarshal(raw, &head)
 			id = strings.TrimSpace(head.AgentID)
@@ -518,6 +522,12 @@ func (T *OrchestrateApp) handleConfirmRouter(w http.ResponseWriter, r *http.Requ
 	T.resolveToolConfirm(w, r)
 }
 
+// ErrBodyTooLarge means the request exceeded what the peek will buffer. It is
+// returned INSTEAD of a truncated body: the whole point of this helper is that
+// the real handler decodes what it restores, so handing back a short read is
+// handing back corrupt JSON.
+var ErrBodyTooLarge = Error("request body too large")
+
 // readAndRestoreBody slurps r.Body into memory and replaces r.Body
 // with a fresh reader over the same bytes so the downstream handler
 // can read it normally. Used by resolveAgent to peek the JSON body
@@ -527,11 +537,20 @@ func (T *OrchestrateApp) handleConfirmRouter(w http.ResponseWriter, r *http.Requ
 // plus a few flags); anything larger is suspect and shouldn't be
 // silently buffered.
 func readAndRestoreBody(r *http.Request) ([]byte, error) {
-	const max = 1 << 20
-	buf, err := io.ReadAll(io.LimitReader(r.Body, max))
+	// The cap has to clear the largest LEGITIMATE body, because this restores
+	// what it read. At 1 MiB it did not: a chat send carries its attachments
+	// base64-encoded, which is about 1.37x the file, so any real photo cut the
+	// JSON mid-string and the handler decoded a truncated request — the
+	// attachment simply was not in it. Read one byte past the cap so a body AT
+	// the limit is still served, and refuse rather than truncate beyond it.
+	const max = 64 << 20
+	buf, err := io.ReadAll(io.LimitReader(r.Body, max+1))
 	_ = r.Body.Close()
 	if err != nil {
 		return nil, err
+	}
+	if len(buf) > max {
+		return nil, ErrBodyTooLarge
 	}
 	r.Body = io.NopCloser(bytes.NewReader(buf))
 	return buf, nil
