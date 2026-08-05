@@ -541,3 +541,36 @@ func (f *countingCaptionLLM) Chat(ctx context.Context, msgs []Message, opts ...C
 	f.calls++
 	return &Response{Content: f.reply}, nil
 }
+
+// An arriving attachment must NOT be described on record. The turn is about to
+// hand that same image to the model, so a background vision call for it is a
+// second look at one picture — and on a backend that schedules one call at a
+// time it is ahead of the user's own request. This is the "attach a photo and
+// ask what it is" hang.
+func TestInboundAttachmentIsNotDescribedOnRecord(t *testing.T) {
+	sess := imageSpaceSession(t)
+	captionInline(t)
+	llm := &countingCaptionLLM{reply: "A photo\n\nSomething."}
+	sess.LLM = llm
+	if id := sess.RegisterInboundMedia("image", testPNG(t, 8, 8), "alice"); id == "" {
+		t.Fatal("attachment was not recorded at all")
+	}
+	if llm.calls != 0 {
+		t.Fatalf("an arriving attachment made %d vision calls — it must not compete with the turn that is about to look at it", llm.calls)
+	}
+	// It IS in the ring, so a later turn can still point at it.
+	if len(RecentImages(sess)) != 1 {
+		t.Error("the attachment should still join the image space")
+	}
+}
+
+// The pass runs off the request path with nothing above it, so a panic must not
+// reach the process.
+func TestCaptionPanicDoesNotEscape(t *testing.T) {
+	done := make(chan struct{})
+	captionRunner(func() {
+		defer close(done)
+		panic("boom")
+	})
+	<-done // if the recover were missing, the test binary would already be gone
+}

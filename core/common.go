@@ -2633,7 +2633,13 @@ func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender strin
 		if who != "" {
 			note += " from " + who
 		}
-		RecordRecentImage(s, raw, note)
+		// Recorded WITHOUT a description. The model is about to be handed this
+		// very image as part of the turn, so describing it here would be a
+		// second vision call for the same picture — racing the user's own
+		// request for the one slot a local backend has, which is how "attach a
+		// photo and ask what it is" turns into a wait. It gets described if it
+		// is ever kept, where nothing is competing with it.
+		recordRecentImage(s, raw, note, false)
 	}
 	return id
 }

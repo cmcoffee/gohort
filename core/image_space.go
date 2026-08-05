@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -120,6 +121,14 @@ func safeRecentUser(user string) string {
 // unwritable directory) and the caller carries on without it — the space is a
 // convenience, never a dependency.
 func RecordRecentImage(sess *ToolSession, data []byte, note string) string {
+	return recordRecentImage(sess, data, note, CaptionOnRecord)
+}
+
+// recordRecentImage is the implementation. describe=false is for an image the
+// TURN is already looking at — see the inbound-attachment call site — where a
+// second, concurrent vision call for the same picture buys nothing and costs
+// the user's own request its LLM slot.
+func recordRecentImage(sess *ToolSession, data []byte, note string, describe bool) string {
 	dir := recentImageDir(sess)
 	if dir == "" || len(data) == 0 {
 		return ""
@@ -150,7 +159,7 @@ func RecordRecentImage(sess *ToolSession, data []byte, note string) string {
 	// operation would otherwise wait seconds for a description nothing has
 	// asked for yet. The entry is complete and usable the moment the file
 	// lands; the caption catches up.
-	if CaptionOnRecord {
+	if describe {
 		captionRunner(func() { captionRecentImage(filepath.Join(dir, base), sess, data) })
 	}
 	return RecentImageRefPrefix + "1"
@@ -163,13 +172,40 @@ var CaptionOnRecord = true
 
 // captionRunner decides where the vision pass runs. A var so tests can make it
 // synchronous — an async caption is otherwise racing every assertion about it.
-var captionRunner = func(f func()) { go f() }
+//
+// The recover is not defensive padding: this goroutine has no caller and no
+// request handler above it, so a panic anywhere under it — a driver, an image
+// codec, a nil LLM behind a non-nil interface — takes down the whole server
+// instead of one description.
+var captionRunner = func(f func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Debug("[image_space] caption panicked: %v", r)
+			}
+		}()
+		f()
+	}()
+}
+
+// captionMu serializes the pass. A fan-out that produces six images at once
+// would otherwise put six vision calls in flight against a backend that
+// schedules one at a time, and every one of them is ahead of whatever the user
+// asks next.
+var captionMu sync.Mutex
 
 // captionRecentImage describes one ring entry and merges the result into its
 // sidecar. Re-reads the sidecar rather than holding the earlier value, because
 // the entry may have been pruned or rewritten while the vision call was out —
 // and writes nothing if the image is gone.
 func captionRecentImage(base string, sess *ToolSession, data []byte) {
+	captionMu.Lock()
+	defer captionMu.Unlock()
+	// Re-check after the wait: the entry may have been pruned while this call
+	// was queued behind another description.
+	if _, err := os.Stat(base + ".png"); err != nil {
+		return
+	}
 	caption, description := CaptionImage(sess, data)
 	if caption == "" && description == "" {
 		return
