@@ -222,3 +222,27 @@ func TestADetachedCallClosesTheWorkspaceRouteToo(t *testing.T) {
 		t.Errorf("the original ban must survive:\n%s", notice)
 	}
 }
+
+func TestWaitingOnABackgroundJobEndsTheTurn(t *testing.T) {
+	// keep_going is "give me another round, I'm about to act". While a detached
+	// job is outstanding there is nothing to act ON — the result arrives in its
+	// own message, minutes later — so the turn is already finished and every
+	// extra round is dead time.
+	//
+	// The existing spin guard cannot reach this shape. It counts CONSECUTIVE
+	// keep_going-only rounds and resets on any tool call, and a model waiting on
+	// a render fills the gaps: keep_going, keep_going, ls, ls, keep_going,
+	// keep_going, keep_going. Seven rounds to arrive where round one already was.
+	backgrounded := AgentLoopConfig{Backgrounded: func() bool { return true }}
+	if !backgrounded.backgrounded() {
+		t.Fatal("precondition: a job is outstanding")
+	}
+	// And with nothing running, keep_going keeps its ordinary meaning — the
+	// streak guard owns that case and must not be short-circuited.
+	if (AgentLoopConfig{}).backgrounded() {
+		t.Error("no job outstanding must not read as one")
+	}
+	if (AgentLoopConfig{Backgrounded: func() bool { return false }}).backgrounded() {
+		t.Error("a host reporting no job must not read as one")
+	}
+}

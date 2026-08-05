@@ -201,6 +201,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					CancelURL:            "api/cancel",
 					ConfirmURL:           "api/confirm",
 					InjectURL:            "api/inject",
+					// Lets an actionable card (credential setup, a config-change
+					// approval) record that it was answered. Without it those
+					// cards settle in the DOM only and replay with live buttons
+					// on every reload, asking again for a decision already made.
+					BlockResolveURL: "api/sessions/{id}/blocks/{block_id}/resolve?agent_id={agent_id}",
 					// Enables the run-resume probe in the chat panel:
 					// on session-load the runtime asks
 					// api/runs/active?session_id=… and, if there's an
@@ -295,7 +300,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// (Deny / Allow once / Always allow); standing-policy rows
 						// render with a segmented Always allow · Needs approval ·
 						// Blocked control + Remove. _pending vs _managed picks which.
-						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Pinned: true, BadgeField: "_pending", Layout: "cards",
+						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
 							StateField: "_policy",
 							StateOptions: []ui.OrchestratorStateOption{
 								{Label: "Always allow", Value: "allow", URL: "api/console/permissions/policy"},

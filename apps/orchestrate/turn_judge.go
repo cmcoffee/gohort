@@ -45,7 +45,20 @@ Answer KEPT for everything else, including:
 
 When in doubt, answer KEPT. A wrong UNKEPT makes the assistant retract a reply that was fine, which is worse than letting one slip.
 
-Reply with JSON only: {"verdict":"KEPT"|"UNKEPT","claim":"<the exact sentence from the reply that is untrue, copied verbatim, empty if KEPT>","why":"<one short line naming what actually happened instead, empty if KEPT>"}`
+You also answer a SECOND, independent question: does the reply explain the PLUMBING to someone who did not ask about it? That means the internal mechanics of how the assistant's own work is carried out:
+- a task or job id ("task a79c771f5f35a9f6ef0489d0")
+- that something is running in the background, queued, or being processed asynchronously
+- inviting them to check back, wait, or telling them they can keep talking meanwhile
+- a duration the assistant made up rather than one it was given
+
+That is NOT machinery, and you must leave it alone, when:
+- The user ASKED. If they asked what is running, whether something finished, or how long it takes, answering is the job.
+- The assistant is describing WORK, not mechanics: "I found two photos", "I searched the web", "the edit failed because the backend needs two source images". Telling someone what you did and what went wrong is what they want.
+- It simply says it is doing something and will report back. "I'll get that going and let you know when it's done" is correct and must never be flagged.
+
+Machinery is about the FRAMEWORK, not about the task. When in doubt, leave it alone.
+
+Reply with JSON only: {"verdict":"KEPT"|"UNKEPT","claim":"<the exact sentence from the reply that is untrue, copied verbatim, empty if KEPT>","why":"<one short line naming what actually happened instead, empty if KEPT>","machinery":"<the exact sentence explaining plumbing, copied verbatim, empty if there is none>"}`
 
 // judgeTurnClaims is the TurnClaimJudge implementation. ok=false on any doubt
 // about the JUDGEMENT ITSELF — a model error, an unparseable answer, a verdict
@@ -67,7 +80,16 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	if ev.LastToolError != "" {
 		fmt.Fprintf(&b, "MOST RECENT TOOL ERROR: %s\n", truncateObs(oneLineError(ev.LastToolError, 300), 300))
 	}
-	fmt.Fprintf(&b, "FILES BEING DELIVERED WITH THIS REPLY: %d\n\n", ev.Delivered)
+	fmt.Fprintf(&b, "FILES BEING DELIVERED WITH THIS REPLY: %d\n", ev.Delivered)
+	// The claim arm suppresses itself on this fact rather than on a Go branch,
+	// which is what leaves the machinery arm free to look at these turns — and
+	// a detach is exactly where plumbing leaks, because the model has just been
+	// handed a task id and a paragraph about how the work is being run.
+	if ev.Backgrounded {
+		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: yes — so a promise to deliver the result later IS TRUE, and must be answered KEPT.\n\n")
+	} else {
+		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: no.\n\n")
+	}
 	fmt.Fprintf(&b, "THE REPLY:\n%s\n", truncateObs(strings.TrimSpace(ev.Reply), 2000))
 
 	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: b.String()}},
@@ -78,9 +100,10 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 		return TurnClaimVerdict{}, false
 	}
 	var out struct {
-		Verdict string `json:"verdict"`
-		Claim   string `json:"claim"`
-		Why     string `json:"why"`
+		Verdict   string `json:"verdict"`
+		Claim     string `json:"claim"`
+		Why       string `json:"why"`
+		Machinery string `json:"machinery"`
 	}
 	if derr := DecodeJSON(resp.Content, &out); derr != nil {
 		// No text fallback, unlike the gatekeeper. There a scan for "YES" is a
@@ -89,15 +112,17 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 		Debug("[turn-judge] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
 		return TurnClaimVerdict{}, false
 	}
+	machinery := strings.TrimSpace(out.Machinery)
 	if !strings.EqualFold(strings.TrimSpace(out.Verdict), "UNKEPT") {
-		// Acquittals are the only way to see the pre-filter's shape in
-		// production. A conviction announces itself; a filter that fires on
-		// every conversational turn and clears every one of them is invisible
-		// without this, and "is it running constantly or barely at all" is the
-		// question to answer while deciding whether the arms are tuned right.
+		// Machinery without an UNKEPT verdict is the common case: a true reply
+		// that says too much. Reported on its own.
+		if machinery != "" {
+			Log("[turn-judge] MACHINERY (%s) — %q", judgeTrigger(ev), truncateObs(machinery, 120))
+			return TurnClaimVerdict{Machinery: machinery}, true
+		}
 		Debug("[turn-judge] KEPT (%s; tools=%d errors=%d delivered=%d)",
 			judgeTrigger(ev), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
-		return TurnClaimVerdict{}, true // a clean acquittal, and the loop needs to know it ran
+		return TurnClaimVerdict{}, true
 	}
 	claim := strings.TrimSpace(out.Claim)
 	if claim == "" {
@@ -112,7 +137,10 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	}
 	Log("[turn-judge] UNKEPT (%s) — claim=%q why=%q (tools=%d errors=%d delivered=%d)",
 		judgeTrigger(ev), truncateObs(claim, 100), truncateObs(why, 100), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
-	return TurnClaimVerdict{Unkept: true, Claim: claim, Why: why}, true
+	// Machinery carried through even though the loop acts on the claim first:
+	// the rewrite it asks for drops the plumbing anyway, and a verdict that
+	// silently loses half its findings is one nobody can debug.
+	return TurnClaimVerdict{Unkept: true, Claim: claim, Why: why, Machinery: machinery}, true
 }
 
 // judgeTrigger names which arm of the pre-filter put this turn in front of the
@@ -129,6 +157,8 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 // as the reason it was selected rather than as a list of everything true.
 func judgeTrigger(ev TurnClaimEvidence) string {
 	switch {
+	case ev.Backgrounded:
+		return "background job started"
 	case len(ev.ToolCalls) == 0:
 		return "no tools ran"
 	case ev.ToolErrors > 0:

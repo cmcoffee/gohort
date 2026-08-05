@@ -67,6 +67,15 @@ type TurnClaimVerdict struct {
 	Claim string
 	// Why is one line naming what actually happened instead.
 	Why string
+	// Machinery quotes a sentence that explains the framework's own plumbing to
+	// someone who did not ask about it — a task id, that work is running in the
+	// background, an invitation to check back or wait. Empty when clean.
+	//
+	// Independent of Unkept, and it has to be: the replies that leak plumbing
+	// are usually perfectly TRUE. "The image edit task is still running in the
+	// background (task a79c771f5f35a9f6ef0489d0)" was an accurate account of
+	// the situation and still nothing the person asked to hear.
+	Machinery string
 }
 
 // TurnClaimJudge reads a finished turn and reports whether its reply is true
@@ -95,10 +104,18 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	if strings.TrimSpace(ev.Reply) == "" {
 		return false
 	}
-	// A started background job makes a promise true. Judging here would flag
-	// the exact reply detachedNotice instructs the model to write.
+	// A started background job used to skip the judge outright, on the grounds
+	// that "I'll report back" is TRUE and convicting it would flag the exact
+	// reply detachedNotice asks for. That reasoning holds for the CLAIM, and
+	// it made the judge blind to the other thing these turns do: a detach is
+	// where plumbing leaks, because the model has just been handed a task id
+	// and told a great deal about how the work is being run.
+	//
+	// So it is judged, and the evidence carries the fact that a job started —
+	// the claim arm suppresses itself on that fact rather than on this branch,
+	// which leaves the machinery arm free to look.
 	if ev.Backgrounded {
-		return false
+		return true
 	}
 	// Said something, did nothing. The largest class by far, and the one the
 	// guards keep half-missing: "Wiwee, try again" answered in 66 characters
@@ -140,7 +157,7 @@ func judgeTurnClaim(cfg AgentLoopConfig, ev TurnClaimEvidence) (TurnClaimVerdict
 		return TurnClaimVerdict{}, false
 	}
 	v, ok := cfg.TurnClaimJudge(ev)
-	if !ok || !v.Unkept {
+	if !ok || (!v.Unkept && strings.TrimSpace(v.Machinery) == "") {
 		return TurnClaimVerdict{}, false
 	}
 	return v, true

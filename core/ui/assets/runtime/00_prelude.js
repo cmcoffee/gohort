@@ -276,6 +276,13 @@
   window.uiRegisterClientAction = function(name, fn) {
     if (typeof fn === 'function') window.UIClientActions[name] = fn;
   };
+  // uiResolveBlock — settle an actionable persisted card durably (see
+  // AgentLoopPanel.BlockResolveURL). Stubbed here for the same reason the
+  // registries are: a renderer may call it on a surface that has no agent
+  // panel to override it, and a card whose answer went through must not
+  // blow up on the way to recording that it did. The panel replaces this
+  // with the real implementation when it mounts.
+  window.uiResolveBlock = function() {};
 
   // uiConfirm / uiAlert / uiPrompt — always-async dialog wrappers. Use
   // these instead of native confirm() / alert() / prompt() anywhere in

@@ -162,3 +162,65 @@ func TestTheTriggerCarriesNoReplyText(t *testing.T) {
 		t.Errorf("the trigger must not carry turn content: %q", got)
 	}
 }
+
+func TestTheJudgeIsToldWhetherAJobStarted(t *testing.T) {
+	// The claim arm suppresses itself on this FACT rather than on a Go branch,
+	// which is what leaves the machinery arm free to look at backgrounded turns.
+	// Without it the judge would convict "I'll let you know when it's done" —
+	// the exact reply detachedNotice asks the model to write.
+	app, stub := judgeWith(t, `{"verdict":"KEPT"}`)
+	app.judgeTurnClaims(context.Background(), TurnClaimEvidence{
+		Reply: "I'll get that going and let you know when it's done.", Backgrounded: true,
+	})
+	if !strings.Contains(stub.lastMsg, "BACKGROUND JOB WAS STARTED BY THIS TURN: yes") {
+		t.Errorf("the judge must be told a job started:\n%s", stub.lastMsg)
+	}
+	if !strings.Contains(stub.lastMsg, "IS TRUE") {
+		t.Errorf("and what that fact means for the claim:\n%s", stub.lastMsg)
+	}
+
+	app, stub = judgeWith(t, `{"verdict":"KEPT"}`)
+	app.judgeTurnClaims(context.Background(), TurnClaimEvidence{Reply: "Tokyo is raining."})
+	if !strings.Contains(stub.lastMsg, "BACKGROUND JOB WAS STARTED BY THIS TURN: no") {
+		t.Errorf("and told plainly when one did not:\n%s", stub.lastMsg)
+	}
+}
+
+func TestMachineryStandsAloneFromTheClaim(t *testing.T) {
+	backgrounded := TurnClaimEvidence{
+		Reply:        "The image edit task is still running in the background (task a79c771f5f35a9f6ef0489d0).",
+		ToolCalls:    []string{"image"},
+		Backgrounded: true,
+	}
+
+	// True reply, plumbing leaked: convicted on machinery, NOT on the claim.
+	// Getting this backwards would tell the model a true sentence "did not
+	// happen", which is both wrong and unfixable from its side.
+	app, _ := judgeWith(t, `{"verdict":"KEPT","claim":"","why":"","machinery":"The image edit task is still running in the background (task a79c771f5f35a9f6ef0489d0)."}`)
+	v, ok := app.judgeTurnClaims(context.Background(), backgrounded)
+	if !ok || v.Unkept {
+		t.Fatalf("a true reply that leaks plumbing is not a false claim: %+v ok=%v", v, ok)
+	}
+	if !strings.Contains(v.Machinery, "a79c771f") {
+		t.Errorf("the quote must survive verbatim for the rewrite: %q", v.Machinery)
+	}
+
+	// Clean on both arms: nothing to act on.
+	app, _ = judgeWith(t, `{"verdict":"KEPT","claim":"","why":"","machinery":""}`)
+	v, ok = app.judgeTurnClaims(context.Background(), backgrounded)
+	if !ok {
+		t.Error("a clean turn is still an answer")
+	}
+	if v.Unkept || v.Machinery != "" {
+		t.Errorf("nothing should be flagged: %+v", v)
+	}
+
+	// Both at once: the claim wins the loop's attention, but the machinery
+	// finding must survive rather than vanish — a verdict that silently loses
+	// half its findings is one nobody can debug.
+	app, _ = judgeWith(t, `{"verdict":"UNKEPT","claim":"Here you go.","why":"nothing attached","machinery":"running in the background"}`)
+	v, _ = app.judgeTurnClaims(context.Background(), backgrounded)
+	if !v.Unkept || v.Machinery == "" {
+		t.Errorf("both findings must survive: %+v", v)
+	}
+}

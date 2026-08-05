@@ -99,7 +99,7 @@
     var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
     // Channel/fleet "Manage ▾" control — built in the rail block (where the nav
     // machinery is in scope), shown in the topbar actions for fleet agents.
-    var manageControl = null, manageBtn = null, manageDot = null, pinnedEl = null;
+    var manageControl = null, manageBtn = null, manageDot = null, pinnedEl = null, navTopbarEl = null;
     // Only one top-bar dropdown (Manage ▾ / the grouped toolbar menus) is open
     // at a time. openTopbarMenu holds the close-fn of whatever is currently
     // open; opening another closes it first. Each menu registers its own
@@ -449,6 +449,13 @@
         orchBtns.forEach(function(b, i) {
           var on = (i === idx);
           var navItem = (cfg.orchestrator_nav || [])[i] || {};
+          if (navItem.topbar) {
+            // Selection reads as an outline; the fill is the pending tint, set
+            // by refreshChannelBadges. Two signals, two channels.
+            b.style.outline = on ? '2px solid var(--accent, #4a9eff)' : '';
+            b.style.outlineOffset = on ? '-2px' : '';
+            return;
+          }
           if (navItem.pinned) {
             // Pinned rail rows show "selected" as the accent border (matching
             // Master Control); background is left to refreshChannelBadges (its
@@ -527,6 +534,15 @@
       // view currently shows a nonzero count — the at-a-glance "you have pending
       // items" signal the old rail-box badges gave, now that the per-view badges
       // live inside a closed dropdown.
+      // Selection on a topbar control is an OUTLINE, and it has to come off
+      // when the user goes somewhere else — opening a session, switching
+      // agents. Nothing else clears it: the session-open reset below predates
+      // this control and only knows about border-based rows.
+      function clearTopbarNavSelection() {
+        (cfg.orchestrator_nav || []).forEach(function(item, i) {
+          if (item.topbar && orchBtns[i]) orchBtns[i].style.outline = '';
+        });
+      }
       function updateManageDot() {
         if (!manageDot) return;
         // Pinned items live in the rail, not the Manage menu — exclude them so
@@ -538,10 +554,14 @@
         });
         manageDot.style.display = any ? '' : 'none';
       }
-      function refreshChannelBadges() {
+      // onlyAllAgents: the current agent isn't opted into the alt nav, so only
+      // the always-on pinned rows are on screen — don't fetch counts for the
+      // Manage views that aren't rendered.
+      function refreshChannelBadges(onlyAllAgents) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
           if (!item.source || !badge) return;
+          if (onlyAllAgents && !((item.pinned || item.topbar) && item.all_agents)) return;
           fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
               // BadgeField counts only matching rows (e.g. _pending on a page
@@ -556,6 +576,10 @@
               if (item.pinned && orchBtns[i]) {
                 orchBtns[i].style.background = n ? 'rgba(88,166,255,0.18)' : 'rgba(88,166,255,0.06)';
               }
+              // No background tint for a topbar control: the count pill already
+              // says the queue is non-empty, and a persistent fill is
+              // indistinguishable from "selected" — which is what the outline
+              // means here.
               updateManageDot();
             })
             .catch(function() {});
@@ -577,11 +601,41 @@
       // An alt-nav agent with no such items (e.g. a published dashboard agent that
       // carries the Cortex hero thread but no management surface) shows no empty
       // Manage button — applyOrchMode gates manageControl on this.
-      var hasManageMenu = (cfg.orchestrator_nav || []).some(function(it){ return !it.pinned; });
+      var hasManageMenu = (cfg.orchestrator_nav || []).some(function(it){ return !it.pinned && !it.topbar; });
+      // Pinned rows flagged all_agents render for every agent, not just the
+      // alt-nav ones — their queue belongs to the USER, so gating it on which
+      // agent is selected would hide pending work (and strand it completely
+      // when the user has no alt-nav agent at all).
+      var hasAllAgentPinned = (cfg.orchestrator_nav || []).some(function(it){ return (it.pinned || it.topbar) && it.all_agents; });
+      // Topbar-placed items: a queue whose data spans agents doesn't belong in
+      // the agent's own rail. Compact button + count pill, right-aligned in the
+      // action row (see the append below).
+      navTopbarEl = el('div', {style: 'display:none;align-items:stretch;gap:0.3rem;flex:0 0 auto;height:100%'});
       (cfg.orchestrator_nav || []).forEach(function(item, i) {
         var badge = null;
         var b;
-        if (item.pinned) {
+        if (item.topbar) {
+          var tAccent = '#58a6ff';
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.15rem;text-align:center;padding:0.02rem 0.4rem;border-radius:999px;font-size:0.68rem;font-weight:700;background:' + tAccent + ';color:#fff'}, ['']);
+          b = el('button', {type: 'button', class: 'ui-row-btn', title: item.subtitle || item.label,
+            // Border stated inline rather than left to .ui-row-btn: this
+            // control sits in its own table cell, outside .ui-agent-actions,
+            // so none of the layout's button rules reach it and it rendered
+            // with no visible edge at rest.
+            style: 'display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:0.15rem;' +
+              'height:100%;padding:0.3rem 0.7rem;border:1px solid var(--border, rgba(127,127,127,0.35));' +
+              'border-radius:6px;background:transparent',
+            onclick: function() { selectOrchNav(i); }}, [
+              // Glyph and count share the top line so the count reads as the
+              // queue's depth; the label sits under it like a toolbar tile.
+              el('div', {style: 'display:flex;align-items:center;gap:0.3rem'}, [
+                el('span', {style: 'color:' + tAccent + ';font-size:1.05rem'}, [item.icon || '🛡']),
+                badge,
+              ]),
+              el('span', {style: 'font-size:0.72rem;opacity:0.85;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]),
+            ]);
+          navTopbarEl.appendChild(b);
+        } else if (item.pinned) {
           // Modernized pinned row (Permissions etc.) — mirrors the Cortex marked
           // row: a colored glyph + bold title (+ optional subtitle) + count pill,
           // rounded with a faint always-on accent tint that strengthens when the
@@ -658,12 +712,29 @@
         // Fleet agents get the "Manage ▾" control in the topbar; the rail is
         // threads only. Non-fleet agents hide it (and any open overlay/menu).
         if (manageControl) manageControl.style.display = (isOrch && hasManageMenu) ? '' : 'none';
-        if (pinnedEl) pinnedEl.style.display = isOrch ? '' : 'none';
+        if (pinnedEl) pinnedEl.style.display = (isOrch || hasAllAgentPinned) ? '' : 'none';
+        // Off the alt nav, only the all_agents entries survive — in the pinned
+        // strip and in the topbar alike.
+        var anyTopbar = false;
+        (cfg.orchestrator_nav || []).forEach(function(item, i) {
+          if (!orchBtns[i]) return;
+          var on = isOrch || item.all_agents;
+          if (item.topbar) {
+            orchBtns[i].style.display = on ? 'inline-flex' : 'none';
+            if (on) anyTopbar = true;
+            return;
+          }
+          if (!item.pinned) return;
+          orchBtns[i].style.display = on ? 'flex' : 'none';
+        });
+        if (navTopbarEl) navTopbarEl.style.display = anyTopbar ? 'flex' : 'none';
+        if (!isOrch && (hasAllAgentPinned || anyTopbar)) refreshChannelBadges(true);
         // Hide the Channel hero immediately for non-fleet agents; loadSessions
         // re-shows + fills it for fleet agents from the home thread.
         if (!isOrch && primaryEl) primaryEl.style.display = 'none';
         closeManageMenu();
         if (!isOrch && orchView) orchView.style.display = 'none';
+        clearTopbarNavSelection();
         if (isOrch) {
           refreshChannelBadges();
           // Land on the surface this agent was LAST on: its cortex (standing
@@ -722,6 +793,14 @@
     // .ui-agent is a flex column: topbar (status + actions) above a
     // grid row that holds the side rail and the main column.
     var topbar = el('div', {class: 'ui-agent-topbar'});
+    // topSpan holds the two stacked rows (status, actions) on the left and any
+    // full-height topbar control on the right. Without it a control appended
+    // into the action row can only ever be one row tall; a user-scoped queue
+    // reads better spanning both, where it is plainly not part of either row.
+    var topRows = el('div', {style: 'display:flex;flex-direction:column;flex:1;min-width:0'});
+    var topSpan = el('div', {style: 'display:flex;align-items:stretch;gap:0.4rem'});
+    topSpan.appendChild(topRows);
+    topbar.appendChild(topSpan);
     var gridRow = el('div', {class: 'ui-agent-grid'});
 
     var main = el('div', {class: 'ui-agent-main'});
@@ -802,7 +881,7 @@
     applyActivityCollapse();
 
     var statusBar = el('div', {class: 'ui-agent-status', style: 'display:none'});
-    topbar.appendChild(statusBar);
+    topRows.appendChild(statusBar);
 
     // ListPosition: "top" — chat-app layout. Sessions rail stays
     // permanently visible on the left; the chat-pane gets its own
@@ -1151,7 +1230,11 @@
       actionsBar.style.display = '';
       actionsBar.appendChild(manageControl);
     }
-    topbar.appendChild(actionsBar);
+    // Topbar nav controls hang off the SPAN, not the action row, so they run
+    // the full height of both rows and sit at the far right — visibly a
+    // different kind of thing from the app's own per-agent actions.
+    if (navTopbarEl) topSpan.appendChild(navTopbarEl);
+    topRows.appendChild(actionsBar);
     // statusPill removed — the in-chat thinking spinner (rendered
     // by showThinking, floating above the active assistant bubble)
     // already signals "agent working." A second top-bar indicator
@@ -1732,6 +1815,16 @@
         row2Td.appendChild(modesRow);
         row2Tr.appendChild(row2Td);
         bundleTbody.appendChild(row2Tr);
+      }
+      // A topbar control that must span BOTH rows: in this layout the two
+      // rows are table rows, so a rowspan cell is the honest way to do it —
+      // and, more importantly, this layout DROPS the topbar element entirely
+      // (see the assembly below), so a control parented there vanishes. It
+      // relocates here by appendChild; nothing to detach first.
+      if (navTopbarEl) {
+        var navTd = el('td', {rowspan: '2', style: 'vertical-align:middle;text-align:right;width:1%;padding-left:0.4rem'});
+        navTd.appendChild(navTopbarEl);
+        row1Tr.appendChild(navTd);
       }
       bundleTable.appendChild(bundleTbody);
       topBundle.appendChild(bundleTable);
@@ -2849,6 +2942,29 @@
       scrollConvo(true);
     }
 
+    // settleConfirmCard reflects the decision on the card instead of leaving
+    // greyed-out buttons that read as "nothing happened." The button row is
+    // replaced with a one-line stamp (✓ Allowed / ✓ Always / ✕ Denied) and
+    // the card gets a value class so CSS can tint it. The label is passed in
+    // so app-defined wording (Allow / Always allow / Deny) carries through.
+    //
+    // Two callers, and the second is why this isn't inline in submitConfirm:
+    // the click, and a `confirm_resolved` frame from the server. A run's
+    // frames are buffered for reconnect, so a reload mid-run replays the
+    // escalation card — and without the server's own record of the answer it
+    // would come back armed, asking again about a call already allowed.
+    function settleConfirmCard(id, value, label) {
+      var card = document.getElementById('confirm-' + id);
+      if (!card || card.classList.contains('ui-agent-confirm-resolved')) return;
+      card.classList.add('ui-agent-confirm-resolved', 'is-' + (value || 'done'));
+      card.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+      var deny = value === 'deny' || value === 'no' || value === 'reject';
+      var stamp = el('div', {class: 'ui-agent-confirm-status'},
+        [(deny ? '✕ ' : '✓ ') + (label || value || 'Done')]);
+      var row = card.querySelector('.ui-agent-confirm-btns');
+      if (row) { row.replaceWith(stamp); } else { card.appendChild(stamp); }
+    }
+
     function submitConfirm(id, action, card, btn) {
       if (!cfg.confirm_url) return;
       var value = (action && action.value) || '';
@@ -2862,19 +2978,7 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id, value: value}),
       }).then(function() {
-        // Reflect the decision on the card instead of leaving greyed-
-        // out buttons that read as "nothing happened." The button row
-        // is replaced with a one-line resolution stamp (✓ Allowed /
-        // ✓ Always / ✕ Denied) and the card gets a value class so CSS
-        // can tint it. Label comes from the action so app-defined
-        // wording (Allow / Always allow / Deny) carries through.
-        card.classList.add('ui-agent-confirm-resolved', 'is-' + (value || 'done'));
-        var deny = value === 'deny' || value === 'no' || value === 'reject';
-        var label = (action && action.label) || value || 'Done';
-        var stamp = el('div', {class: 'ui-agent-confirm-status'},
-          [(deny ? '✕ ' : '✓ ') + label]);
-        var row = card.querySelector('.ui-agent-confirm-btns');
-        if (row) { row.replaceWith(stamp); } else { card.appendChild(stamp); }
+        settleConfirmCard(id, value, (action && action.label) || value);
       }).catch(function(err) {
         // Failed to record — re-enable so the operator can retry.
         card.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
@@ -2882,6 +2986,37 @@
         showToast('Confirm failed: ' + (err && err.message || err));
       });
     }
+
+    // uiResolveBlock — settle an ACTIONABLE persisted card durably.
+    //
+    // A card that asks the user something has two lifetimes: the DOM one,
+    // which ends at the click, and the stored one, which doesn't. Settling
+    // only in the DOM means the next session load replays the same card with
+    // its buttons live — an answered request that reads as still pending, and
+    // a second click that re-fires an already-applied change. So a renderer
+    // that just got its answer calls this, and the note it would have shown
+    // rides back as the block's `resolved` field on every later load.
+    //
+    // Fire-and-forget by design: the card's real work already succeeded at its
+    // own endpoint, and a failed stamp costs a stale card, not a wrong one —
+    // so it must never surface an error over a decision that went through.
+    // No-op when the app didn't configure BlockResolveURL.
+    window.uiResolveBlock = function(blockId, note, sessionId) {
+      var sid = sessionId || activeSessionId;
+      if (!cfg.block_resolve_url || !blockId || !sid) return;
+      var url = substituteExtras(cfg.block_resolve_url
+        .replace('{id}', encodeURIComponent(sid))
+        .replace('{block_id}', encodeURIComponent(blockId)));
+      fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({note: String(note == null ? '' : note)}),
+      }).catch(function(err) {
+        if (window.console && console.warn) {
+          console.warn('[ui] could not record block resolution:', blockId, err);
+        }
+      });
+    };
 
     // App-registered block renderer dispatcher — same shape as
     // PipelinePanel uses. Apps register via window.uiRegisterBlockRenderer.
@@ -3162,6 +3297,13 @@
           break;
         case 'confirm':
           addConfirm(ev);
+          break;
+        // The server's own record that an escalation was answered. Emitted
+        // by whoever was parked on it, so it rides in the run's frame
+        // buffer alongside the question — which is what lets a reconnect
+        // replay the card settled instead of arming it again.
+        case 'confirm_resolved':
+          settleConfirmCard(ev.id, ev.value, ev.label);
           break;
         case 'block':
           addBlock(ev);
@@ -4432,6 +4574,15 @@
       if (typeof orchBtns !== 'undefined' && orchBtns && orchBtns.length) {
         orchBtns.forEach(function(b, i) {
           var navItem = (cfg.orchestrator_nav || [])[i] || {};
+          // Topbar controls FIRST, before the border reset below: their
+          // resting 1px border is their button chrome, not a selection mark,
+          // and blanking it here left them invisible until clicked (selection
+          // is an outline, a different property, which is why only the clicked
+          // state showed).
+          if (navItem.topbar) {
+            b.style.outline = '';
+            return;
+          }
           b.style.border = '1px solid transparent'; // clear any "selected" accent border
           // Pinned rows (Permissions) keep their PERSISTENT faint tint — that's
           // their always-on marker, not a selection state — so clear only the
@@ -4822,6 +4973,13 @@
         // Insert topbar as the first child of main so it lands above
         // the conversation log + input area.
         main.insertBefore(topbar, main.firstChild);
+      } else if (navTopbarEl && !navTopbarEl.closest('.ui-agent-top-bundle')) {
+        // The topbar is being dropped and no bundle adopted the control (no
+        // side rail, so that block never ran). Park it at the top of main
+        // rather than letting it fall out of the DOM — a queue the user can't
+        // see is the bug this whole control exists to fix.
+        var navSolo = el('div', {style: 'display:flex;justify-content:flex-end;padding:0.35rem 0.5rem'}, [navTopbarEl]);
+        main.insertBefore(navSolo, main.firstChild);
       }
     } else {
       wrap.appendChild(topbar);

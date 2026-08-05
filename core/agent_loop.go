@@ -3079,7 +3079,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				Delivered:     cfg.deliveredCount(),
 				Backgrounded:  cfg.backgrounded(),
 			}); convicted {
-				if corrections.available(correctionUnkeptClaim) && round < maxRounds {
+				// Two independent findings share one verdict, so each branch checks
+				// its own. A machinery-only conviction reaching the claim branch
+				// would tell the model its reply "did not happen" about a sentence
+				// that was true.
+				if verdict.Unkept && corrections.available(correctionUnkeptClaim) && round < maxRounds {
 					Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q) — %s; re-prompting: correction %d/%d",
 						truncForLog(verdict.Claim, 80), verdict.Why, corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
 					emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. Re-prompted to do it or say so.", truncForLog(verdict.Claim, 120), verdict.Why))
@@ -3096,8 +3100,32 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					})
 					continue
 				}
-				if corrections.exhausted(correctionUnkeptClaim) {
+				if verdict.Unkept && corrections.exhausted(correctionUnkeptClaim) {
 					emitDiag("unkept-claim-uncorrected", fmt.Sprintf("The reply still says %q after correction, and it did not happen: %s. Delivered as written.", truncForLog(verdict.Claim, 120), verdict.Why))
+				}
+				// Machinery is a separate finding with a separate budget, because it
+				// is a separate failure: the reply is usually TRUE and merely says
+				// things nobody asked to hear. A rewrite fixes it, where a false
+				// claim needs the work done or admitted — so it must not spend the
+				// allowance the serious one might need in the same turn.
+				if leak := strings.TrimSpace(verdict.Machinery); leak != "" && !verdict.Unkept {
+					if corrections.available(correctionMachinery) && round < maxRounds {
+						Debug("[agent_loop] turn judge: reply explains machinery (%q); re-prompting: correction %d/%d",
+							truncForLog(leak, 80), corrections.spend(correctionMachinery), maxCorrectionsPerKind)
+						emitDiag("machinery-corrected", fmt.Sprintf("The reply explained how the work is being run (%q), which nobody asked about. Re-prompted for the same message without it.", truncForLog(leak, 120)))
+						retractRound()
+						history[len(history)-1] = Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning}
+						history = append(history, Message{
+							Role: "user",
+							Content: frameworkNoticeTag + fmt.Sprintf(
+								"Your reply says: %q. That is plumbing — how the work is being carried out — and they did not ask about it. Nothing else is wrong with the reply. Send the SAME message with that part removed: what you are doing for them, in one line, the way a person would. No ids, no mention of how or where anything runs, no invitation to check back, no time estimate you were not given.",
+								leak),
+						})
+						continue
+					}
+					if corrections.exhausted(correctionMachinery) {
+						emitDiag("machinery-uncorrected", fmt.Sprintf("The reply still explains how the work is run (%q) after correction. Delivered as written.", truncForLog(leak, 120)))
+					}
 				}
 			}
 
@@ -3903,6 +3931,23 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				break
 			}
 		}
+		if keepGoingOnly && cfg.backgrounded() {
+			// Nothing to keep going TO. A detached job delivers on its own, in its
+			// own message, minutes from now — so a turn whose only remaining move
+			// is "give me another round" has already done everything it can, and
+			// every further round is dead time the user spends watching a spinner.
+			//
+			// Ended immediately rather than counted, because the streak guard below
+			// cannot reach this shape: it resets on ANY tool call, and a model
+			// waiting on a render fills the gaps with workspace(ls). Observed as
+			// keep_going, keep_going, ls, ls, keep_going, keep_going, keep_going —
+			// seven rounds and twenty seconds to arrive exactly where round one
+			// already was.
+			Debug("[agent_loop] keep_going while a background job is outstanding — nothing to continue to, finalizing")
+			emitDiag("keep-going-while-detached", "The turn asked for another round while a background job was still running. There is nothing to wait for in-turn — the result arrives on its own — so the turn was finalized instead of spinning.")
+			forceFinal = true
+			break
+		}
 		if keepGoingOnly {
 			keepGoingStreak++
 			if keepGoingStreak >= keepGoingSpinLimit {
@@ -4213,6 +4258,7 @@ const (
 	correctionCollapse        = "reasoning-collapse"
 	correctionGiveUp          = "giveup-with-errors"
 	correctionUnkeptClaim     = "unkept-claim"
+	correctionMachinery       = "machinery-leak"
 )
 
 const (

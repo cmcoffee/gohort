@@ -933,6 +933,22 @@ type UIBlock struct {
 	// Live SSE emissions mirror the same keys under "data" so a replayed
 	// block and a live block present identically to the renderer.
 	Data map[string]string `json:"data,omitempty"`
+	// Resolved settles an ACTIONABLE card durably. A card that asks the
+	// user for a decision (set up this credential, approve this config
+	// change) used to settle only in the DOM: the click's effect landed
+	// on the credential store, the persisted block never changed, and
+	// every reload replayed the same card with live buttons — an
+	// answered request that reads as still pending forever, and a second
+	// click that re-fires an already-applied change.
+	//
+	// So the answer writes back here, and the note is what the card says
+	// on replay in place of its buttons ("Applied — …", "Dismissed …").
+	// Non-empty means answered; renderers must render settled and offer
+	// no controls. Display-only blocks (html_artifact, link_hint) never
+	// set it. Written by handleSessionBlockResolve, and derived at load
+	// for cards whose subject can also be settled out of band (see
+	// settleResolvedBlocks).
+	Resolved string `json:"resolved,omitempty"`
 }
 
 // BuildPlanState is the persisted plan-card state for Builder's

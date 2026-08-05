@@ -49,11 +49,6 @@ func TestTheJudgeStaysOutOfTheWayOtherwise(t *testing.T) {
 		ev   TurnClaimEvidence
 	}{
 		{"nothing was said", TurnClaimEvidence{Reply: "   ", ToolCalls: nil}},
-		{"a promise backed by a started job", TurnClaimEvidence{
-			// The reply detachedNotice explicitly ASKS the model to write.
-			// Judging it would convict the framework's own instruction.
-			Reply: "I'll get that going and let you know when it's done.", Backgrounded: true,
-		}},
 		{"work ran, worked, and shipped", TurnClaimEvidence{
 			Reply: "Here's the render.", ToolCalls: []string{"image"}, Delivered: 1,
 		}},
@@ -64,6 +59,43 @@ func TestTheJudgeStaysOutOfTheWayOtherwise(t *testing.T) {
 		if turnClaimWorthJudging(c.ev) {
 			t.Errorf("%s: must not cost a model call", c.name)
 		}
+	}
+}
+
+func TestABackgroundedTurnIsJudgedForPlumbingNotForClaims(t *testing.T) {
+	// This arm used to skip outright, because "I'll report back" is TRUE and
+	// convicting it would flag the exact reply detachedNotice asks for. That
+	// reasoning held for the claim and made the judge blind to the other thing
+	// these turns do: a detach is where plumbing leaks, because the model has
+	// just been handed a task id and a paragraph about how the work is run.
+	//
+	// Observed, delivered to a user: "The image edit task is still running in
+	// the background (task a79c771f5f35a9f6ef0489d0)."
+	ev := TurnClaimEvidence{
+		Reply:        "The image edit task is still running in the background (task a79c771f5f35a9f6ef0489d0).",
+		ToolCalls:    []string{"image"},
+		Backgrounded: true,
+	}
+	if !turnClaimWorthJudging(ev) {
+		t.Fatal("a backgrounded turn must be looked at — it is where plumbing leaks")
+	}
+	// Machinery alone convicts, with no claim attached.
+	cfg := AgentLoopConfig{TurnClaimJudge: func(TurnClaimEvidence) (TurnClaimVerdict, bool) {
+		return TurnClaimVerdict{Machinery: "still running in the background"}, true
+	}}
+	v, convicted := judgeTurnClaim(cfg, ev)
+	if !convicted {
+		t.Fatal("a machinery finding must stand on its own")
+	}
+	if v.Unkept {
+		t.Error("machinery is not a false claim — the reply was true")
+	}
+	// And a clean backgrounded turn still walks.
+	cfg.TurnClaimJudge = func(TurnClaimEvidence) (TurnClaimVerdict, bool) {
+		return TurnClaimVerdict{}, true
+	}
+	if _, convicted := judgeTurnClaim(cfg, ev); convicted {
+		t.Error("a clean reply must not be convicted by either arm")
 	}
 }
 

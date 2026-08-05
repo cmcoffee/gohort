@@ -1328,8 +1328,14 @@ type BarChart struct {
 	YPrefix   string `json:"y_prefix,omitempty"`   // e.g. "$"
 	YDecimals int    `json:"y_decimals,omitempty"` // default 2
 	HeightPx  int    `json:"height_px,omitempty"`  // default 200
-	EmptyText string `json:"empty_text,omitempty"`
-	XFormat   string `json:"x_format,omitempty"` // "date" formats YYYY-MM-DD as "Mon DD"
+	// MaxWidthPx caps how wide the plot grows inside its section.
+	// A bar chart in a full-width section on a wide screen otherwise
+	// stretches to thousands of pixels, which reads as distorted
+	// rather than informative. Default 900; set 0 for the default,
+	// or a large number to opt out of the cap.
+	MaxWidthPx int    `json:"max_width_px,omitempty"`
+	EmptyText  string `json:"empty_text,omitempty"`
+	XFormat    string `json:"x_format,omitempty"` // "date" formats YYYY-MM-DD as "Mon DD"
 	// Breakdown adds detail rows to the hover tooltip beyond the
 	// headline X/Y. Each pair shows "Label: value" formatted per its
 	// Format ("thousands", "reltime", "bytes", "duration", or plain).
@@ -1961,8 +1967,16 @@ func (c PipelinePanel) MarshalJSON() ([]byte, error) {
 // Operator confirmation: when the server emits a confirm event,
 // the runtime renders a card in the activity pane with the
 // supplied prompt and a button per action. Clicking a button
-// POSTs to ConfirmURL with `{id, value}` and the runtime clears
-// the card.
+// POSTs to ConfirmURL with `{id, value}` and the runtime stamps
+// the card with the outcome.
+//
+// That stamp is DOM-deep, so a server that buffers a run's frames
+// for reconnect should also emit `{kind:"confirm_resolved", id,
+// value, label}` once the escalation is answered — otherwise a
+// reload replays the question without the answer and the card
+// comes back armed, asking again about a call already allowed.
+// The runtime settles the matching card and ignores the frame if
+// the card is already settled, so emitting it is always safe.
 // ScheduleCreator is one "+ New …" button in the Scheduler modal: a label and
 // the name of a client action (window.uiRegisterClientAction) the app registers
 // to run the create flow. Kept generic so core/ui offers a create affordance
@@ -2099,6 +2113,21 @@ type AgentLoopPanel struct {
 	// action's value field. Required when the server emits
 	// `kind: "confirm"` events.
 	ConfirmURL string `json:"confirm_url,omitempty"`
+	// BlockResolveURL settles an ACTIONABLE persisted block durably.
+	// A `kind:"block"` card that asks the user for a decision has two
+	// lifetimes: the DOM one, which ends at the click, and the stored
+	// one, which does not — so without this the answered card replays
+	// on every session load with its buttons live again. Renderers of
+	// such cards call window.uiResolveBlock(id, note) once the answer
+	// lands; the note is what the card shows in place of its controls
+	// on replay, and the server echoes it back as the block's
+	// `resolved` field. Template — {id} is the session id (as in every
+	// other URL here), {block_id} is the block, and extra-input
+	// placeholders substitute the same way the session URLs' do:
+	//   "api/sessions/{id}/blocks/{block_id}/resolve?agent_id={agent_id}"
+	// Empty = cards settle in the DOM only (the previous behavior).
+	// Display-only blocks (artifacts, link cards) never call it.
+	BlockResolveURL string `json:"block_resolve_url,omitempty"`
 	// EventsURL — optional SSE reconnect endpoint. When set, the
 	// runtime can reattach to an in-flight session after a page
 	// reload (deep-link or refresh). Server returns the same
@@ -2264,6 +2293,20 @@ type OrchestratorNavItem struct {
 	// Permissions) that's time-sensitive enough to deserve a fixed, glanceable
 	// home rather than being buried in a menu. Always visible for fleet agents.
 	Pinned bool `json:"pinned,omitempty"`
+	// Topbar renders this item as a control in the topbar action row instead of
+	// a rail row or a Manage-menu entry — right-aligned, with its count badge.
+	// The rail belongs to the selected agent (its threads, its channels), so an
+	// item whose data spans agents reads as that agent's when it sits there.
+	// Pair with AllAgents for a queue that belongs to the USER. Overrides
+	// Pinned when both are set.
+	Topbar bool `json:"topbar,omitempty"`
+	// AllAgents renders this item for EVERY agent, not only the ones the host
+	// app opted into the alt nav. Use it when the item's DATA is user-scoped
+	// rather than agent-scoped — an approvals queue that any agent can add to,
+	// say. Gating such a queue on the alt-nav opt-in hides work the user still
+	// has to act on, and can strand it entirely when no agent qualifies.
+	// Only meaningful with Pinned; the "Manage ▾" dropdown stays alt-nav only.
+	AllAgents bool `json:"all_agents,omitempty"`
 	// BadgeField names a hidden row field; the count badge then reflects only
 	// rows where that field is truthy (e.g. "_pending" counts just the pending
 	// approvals on a page that also lists granted ones). Empty = count all rows.

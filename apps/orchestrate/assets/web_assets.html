@@ -1186,10 +1186,19 @@
       actions.appendChild(deny);
       wrap.appendChild(actions);
       if (!name || !changes.length) { approve.disabled = true; }
-      function settle(text) {
+      // settle(text, record): record=true stamps the answer on the stored
+      // block so a reload shows this note instead of the buttons. Already-
+      // answered cards replay with d.resolved set and settle WITHOUT
+      // re-recording — re-POSTing what the server just told us is noise.
+      function settle(text, record) {
         wrap.classList.add('connected');
         if (actions.parentNode) actions.remove();
         note.textContent = text;
+        if (record) window.uiResolveBlock(d.id, text);
+      }
+      if (d.resolved) {
+        settle(String(d.resolved), false);
+        return {wrap: wrap, body: null};
       }
       approve.addEventListener('click', function() {
         approve.disabled = true; deny.disabled = true;
@@ -1198,13 +1207,13 @@
         fetch('api/console/credential-update/apply', {
           method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
         })
-          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle('Applied — the credential was updated (secret preserved).'); })
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle('Applied — the credential was updated (secret preserved).', true); })
           .catch(function(err) {
             approve.disabled = false; deny.disabled = false;
             window.uiAlert('Could not apply the update: ' + String(err && err.message || err));
           });
       });
-      deny.addEventListener('click', function() { settle('Dismissed — no changes made.'); });
+      deny.addEventListener('click', function() { settle('Dismissed — no changes made.', true); });
       return {wrap: wrap, body: null};
     });
 
@@ -1233,6 +1242,17 @@
       wrap.appendChild(msg);
       var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Set up']);
       wrap.appendChild(btn);
+      // Already settled — either the secret was saved from this card, or the
+      // credential went live somewhere else (Admin > APIs, My API credentials)
+      // and the server derived the stamp at load. Either way the card's whole
+      // ask is answered; showing "needs its secret" again would be a lie.
+      if (d.resolved) {
+        wrap.classList.add('connected');
+        sub.textContent = String(d.resolved);
+        btn.textContent = 'Configured';
+        btn.disabled = true;
+        return {wrap: wrap, body: null};
+      }
       // User-owned draft (data.owned): it lives in the user's OWN API
       // credentials, so they finish it themselves — no admin, no inline secret
       // modal. Point them to their surface and stop here.
@@ -1243,11 +1263,14 @@
         btn.addEventListener('click', function() { window.location.href = '/gateways'; });
         return {wrap: wrap, body: null};
       }
+      // Stamps the stored block too, so the card stays settled across
+      // reloads instead of asking for a secret that has already been saved.
       function markDone(text) {
         wrap.classList.add('connected');
         btn.textContent = 'Configured';
         btn.disabled = true;
         sub.textContent = text;
+        window.uiResolveBlock(d.id, text);
       }
       btn.addEventListener('click', function() {
         fetch('/admin/api/secure-api?name=' + encodeURIComponent(name))

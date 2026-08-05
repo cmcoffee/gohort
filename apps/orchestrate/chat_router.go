@@ -277,6 +277,23 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		T.handleSendToBuilder(w, r, agent, sid)
 		return
 	}
+	// Detect /api/sessions/{sid}/blocks/{block_id}/resolve — settle an
+	// actionable card durably, so an answered request stops replaying as
+	// pending on every session load.
+	if idx := strings.Index(sid, "/blocks/"); idx >= 0 {
+		actualSid := sid[:idx]
+		rest := strings.TrimSuffix(sid[idx+len("/blocks/"):], "/resolve")
+		if actualSid == "" || strings.Contains(actualSid, "/") || rest == "" || strings.Contains(rest, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		T.handleSessionBlockResolve(w, r, udb, user, agent.ID, actualSid, rest)
+		return
+	}
 	// Detect /api/sessions/{sid}/tools[/{name}] — visibility +
 	// admin-driven promotion of session-scoped temp tools out of the
 	// per-session draft pool into either the agent's bundled tools
@@ -357,6 +374,13 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// rather than only as a count on the Permissions tile. Computed per load
 		// and NOT persisted — resolving one anywhere drops it from the next load,
 		// with no stale card to sweep.
+		// An actionable card the user already answered must not come back
+		// asking again. Cards answered IN the chat carry a stored Resolved
+		// stamp; cards whose subject was settled elsewhere (the admin typed
+		// the secret in Admin > APIs) get theirs derived here, on the copy
+		// being served — the stored record is left alone so a re-drafted
+		// credential gets a live card again.
+		s.UIBlocks = settleResolvedBlocks(s.UIBlocks, user)
 		s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s)

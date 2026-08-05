@@ -130,6 +130,7 @@ func (t *chatTurn) escalateToolConfirm(toolName, cred, argsPreview string) bool 
 		if !v {
 			t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (credential %q).", toolName, cred))
 		}
+		t.sendConfirmResolved(id, v)
 		return v
 	case <-time.After(toolConfirmTimeout):
 		Log("[orchestrate.confirm] approval for %s (credential %q) timed out after %s — denied", toolName, cred, toolConfirmTimeout)
@@ -141,8 +142,39 @@ func (t *chatTurn) escalateToolConfirm(toolName, cred, argsPreview string) bool 
 		t.turnDiag("tool-denied", fmt.Sprintf("Approval for %s (credential %q) timed out after %s — the call was denied. Re-ask to retry; the approval card must be answered within the window.", toolName, cred, toolConfirmTimeout))
 		t.sse.Send(map[string]any{"kind": "status_note",
 			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s — the call was denied.", toolName, toolConfirmTimeout)})
+		t.sendConfirmResolvedLabel(id, "deny", "Timed out")
 		return false
 	}
+}
+
+// sendConfirmResolved records the answer IN THE EVENT STREAM, which is the
+// only place a replay can learn it.
+//
+// The card's own settling is DOM-deep: the browser stamps ✓/✕ and moves on.
+// But the frames of a live run are buffered for reconnect, and the resolving
+// POST lands on a different request that never touches that buffer — so a
+// reload mid-run replayed the escalation card with its buttons armed again,
+// over a call the user had already allowed. Clicking it a second time then
+// answered an id nothing was waiting on. Emitting the outcome as its own
+// frame keeps the buffer a truthful record of the turn: whoever replays it
+// sees the question AND the answer.
+func (t *chatTurn) sendConfirmResolved(id string, allowed bool) {
+	label := "Denied"
+	value := "deny"
+	if allowed {
+		label, value = "Allowed", "allow"
+	}
+	t.sendConfirmResolvedLabel(id, value, label)
+}
+
+// sendConfirmResolvedLabel is sendConfirmResolved with the stamp spelled out —
+// for outcomes the user didn't choose (a timeout denies without a click, and
+// saying "Denied" for it would misattribute the decision).
+func (t *chatTurn) sendConfirmResolvedLabel(id, value, label string) {
+	if t == nil || t.sse == nil || id == "" {
+		return
+	}
+	t.sse.Send(map[string]any{"kind": "confirm_resolved", "id": id, "value": value, "label": label})
 }
 
 // resolveToolConfirm is the /api/confirm POST body's landing: the
