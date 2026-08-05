@@ -477,16 +477,25 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "report_build_gaps",
-			Description: "BEFORE your final reply, call this to surface every gap in the build: blocked or still-pending steps, AND any tool you authored that does not currently stand verified (never tested, failed its test, or edited since it last passed). Returns a structured summary you MUST address in the reply — either explain the gap to the user, or fix it (verify the tool, or call revise_build_plan within the revision cap) and re-call this. Marking a step done is your OWN claim and does not make its tool verified; only a passing test does. When every step is done and every authored tool is verified, this reports no gaps and you may write the reply. Takes no arguments.",
+			Description: "BEFORE your final reply, call this to surface every gap in the build: blocked or still-pending steps, AND any tool you authored that does not currently stand verified (never tested, failed its test, or edited since it last passed). Returns a structured summary you MUST address in the reply — either explain the gap to the user, or fix it (verify the tool, or call revise_build_plan within the revision cap) and re-call this. Marking a step done is your OWN claim and does not make its tool verified; only a passing test does. When every step is done and every authored tool is verified, this reports no gaps and you may write the reply. Works with NO build plan too — on a repair it grades just the tools you touched, so call it before claiming a fix worked. Takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 			Caps:        []Capability{CapRead},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			if t.session == nil || t.session.BuildPlan == nil {
-				return "", errors.New("report_build_gaps: no active build plan — call present_build_plan first")
+			if t.session == nil {
+				return "", errors.New("report_build_gaps: no session")
 			}
+			// A REPAIR has no build plan — nobody presents a plan to fix one
+			// broken tool — and refusing here removed the check exactly where it
+			// mattered most: an agent that edited a tool twice, watched its test
+			// fail twice, then wrote a confident "this can't be fixed" summary.
+			// The plan half simply has nothing to say without a plan; the
+			// verification-ledger half is about tools this session touched and
+			// stands on its own.
 			plan := t.session.BuildPlan
-			plan.GapsReported = true
+			if plan != nil {
+				plan.GapsReported = true
+			}
 			type gapEntry struct {
 				Step   int    `json:"step"`
 				Title  string `json:"title"`
@@ -502,7 +511,11 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 				Unverified []unverifiedEntry `json:"unverified,omitempty"`
 			}
 			rep := gapReport{}
-			for _, s := range plan.Steps {
+			var steps []BuildPlanStep
+			if plan != nil {
+				steps = plan.Steps
+			}
+			for _, s := range steps {
 				switch s.Status {
 				case "blocked":
 					rep.Blocked = append(rep.Blocked, gapEntry{Step: s.Number, Title: s.Title, Reason: s.BlockedReason})
@@ -521,8 +534,13 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 					rep.Unverified = append(rep.Unverified, unverifiedEntry{Tool: u.Tool, Reason: u.Reason})
 				}
 			}
-			emitBuildPlanBlock(t.sse, plan)
+			if plan != nil {
+				emitBuildPlanBlock(t.sse, plan)
+			}
 			if len(rep.Blocked) == 0 && len(rep.Skipped) == 0 && len(rep.Unverified) == 0 {
+				if plan == nil {
+					return "No build plan is active (a repair, not a build) and every tool you touched this session stands verified — no gaps to report. You may write the final reply.", nil
+				}
 				return "All steps completed and every authored tool verified — no gaps to report. You may write the final reply.", nil
 			}
 			data, err := json.Marshal(rep)

@@ -1388,7 +1388,17 @@ class _Gohort:
                 pass
         if "error" in resp:
             raise HookError(resp["error"])
-        return resp.get("result")
+        if "result" not in resp:
+            # A response carrying neither key used to return None, and None then
+            # failed somewhere else entirely — json.loads(None) raises a
+            # TypeError about NoneType with nothing pointing back here. Fail at
+            # the call instead, naming the method.
+            raise HookError(
+                method + ": the host returned no result and no error. This is a "
+                "framework fault, not a problem with your script — report it "
+                "rather than working around it."
+            )
+        return resp["result"]
 
     def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30, save_to=None):
         """HTTP request via gohort. Returns dict {status, headers, body}.

@@ -1984,6 +1984,30 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		pass("every required param is substituted into command_template")
 	}
 
+	// B2. Does the script call a hook the tool never declared?
+	//
+	// The hook methods are capability-gated at dispatch: an undeclared one
+	// comes back "method %q not granted", which surfaces inside the script as
+	// whatever that failure does to the code after it. An agent repairing a
+	// tool swapped fetch_url for browse_page and left hook_capabilities alone;
+	// the run died downstream and it concluded the SITE was blocking it. This
+	// is a static, deterministic check — the same class as the syntax check —
+	// so it fails rather than notes.
+	if body := tt.ScriptBody; strings.TrimSpace(body) != "" {
+		for _, hc := range []struct{ call, capability string }{
+			{"fetch_url", "fetch"},
+			{"browse_page", "browse_page"},
+			{"fetch_via", "fetch_via"},
+			{"secret", "secret"},
+		} {
+			if !scriptCallsHook(body, hc.call) || hookCapabilityDeclared(tt.HookCapabilities, hc.capability) {
+				continue
+			}
+			fail("script_body calls %s() but hook_capabilities does not include %q — that call is refused at dispatch (\"method not granted\"), and the script fails on whatever it does with the result. Add %q to hook_capabilities.",
+				hc.call, hc.capability, hc.capability)
+		}
+	}
+
 	// C. The real run.
 	ran := false
 	switch {
@@ -3371,4 +3395,47 @@ func pruneRequired(required, params any) any {
 		}
 	}
 	return kept
+}
+
+
+// scriptCallsHook reports whether a script body invokes one of the gohort hook
+// helpers. Matches the forms that actually appear — a call, a qualified call,
+// or membership in an import list (where the name may be first, middle, or
+// last, so substring matching on "import <name>" misses two of the three).
+// Scoped to syntactic positions rather than any mention, because this check
+// FAILS a verification and a comment shouldn't be able to do that.
+func scriptCallsHook(body, name string) bool {
+	if strings.Contains(body, name+"(") || strings.Contains(body, "gohort."+name) {
+		return true
+	}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "from ") && !strings.HasPrefix(line, "import ") {
+			continue
+		}
+		i := strings.Index(line, "import ")
+		if i < 0 {
+			continue
+		}
+		for _, part := range strings.Split(line[i+len("import "):], ",") {
+			// "x as y" imports under an alias; the import still grants the call.
+			if f := strings.Fields(strings.TrimSpace(part)); len(f) > 0 && f[0] == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hookCapabilityDeclared matches the server's own gate: a bare capability, or
+// any qualified form of it ("fetch_via:openweather", "secret:apikey").
+func hookCapabilityDeclared(caps []string, want string) bool {
+	prefix := want + ":"
+	for _, c := range caps {
+		c = strings.TrimSpace(c)
+		if c == want || strings.HasPrefix(c, prefix) {
+			return true
+		}
+	}
+	return false
 }
