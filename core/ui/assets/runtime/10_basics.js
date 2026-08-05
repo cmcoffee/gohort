@@ -3305,6 +3305,14 @@
     var height = cfg.height_px || 200;
     var decimals = cfg.y_decimals != null ? cfg.y_decimals : 2;
     var prefix = cfg.y_prefix || '';
+    // Cap the plot width. In a full-width section on a wide screen the
+    // chart would otherwise run the whole screen: bars turn into slabs
+    // and the axis text scales with them. Capped and left-aligned, it
+    // stays a chart. Redrawn on resize so the geometry matches the
+    // pixels it actually occupies (see drawnW below).
+    var maxW = cfg.max_width_px || 900;
+    wrap.style.maxWidth = maxW + 'px';
+    var drawnW = 0;
 
     function fmtX(v) {
       if (cfg.x_format === 'date' && v) {
@@ -3319,8 +3327,7 @@
     }
     function fmtY(n) { return prefix + Number(n).toFixed(decimals); }
 
-    fetchJSON(cfg.source).then(function(d) {
-      var data = Array.isArray(d) ? d : (d && d.data) || [];
+    function draw(data) {
       wrap.innerHTML = '';
       // Position the wrap relatively so the tooltip can absolute-pos against it.
       wrap.style.position = 'relative';
@@ -3337,10 +3344,14 @@
       tip.style.display = 'none';
       wrap.appendChild(tip);
 
-      // Build SVG. Use viewBox with explicit aspect so the chart
-      // scales fluidly with the section width.
+      // Build SVG. The viewBox tracks the box the chart actually
+      // occupies (capped at maxW) so user units are ~1 CSS pixel: the
+      // bars fill the width without the non-uniform scale that would
+      // otherwise smear the axis labels sideways.
       var svgNS = 'http://www.w3.org/2000/svg';
-      var W = 600, H = height, P = 20; // padding
+      var W = Math.max(320, Math.min(maxW, wrap.clientWidth || maxW));
+      var H = height, P = 20; // padding
+      drawnW = W;
       var bw = (W - P*2) / data.length;
       var svg = document.createElementNS(svgNS, 'svg');
       svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
@@ -3455,6 +3466,21 @@
       wrap.appendChild(el('div', {class: 'ui-chart-summary'}, [
         'Total over ' + data.length + ' periods: ' + fmtY(total),
       ]));
+    }
+
+    fetchJSON(cfg.source).then(function(d) {
+      var data = Array.isArray(d) ? d : (d && d.data) || [];
+      draw(data);
+      // Redraw when the available width changes — a window resize, or the
+      // first time a chart that loaded inside a hidden tab is shown (it
+      // measures 0 there and falls back to the cap).
+      if (window.ResizeObserver) {
+        new ResizeObserver(function() {
+          var w = Math.max(320, Math.min(maxW, wrap.clientWidth || maxW));
+          if (Math.abs(w - drawnW) < 8) return;
+          draw(data);
+        }).observe(wrap);
+      }
     }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
     return wrap;
   };

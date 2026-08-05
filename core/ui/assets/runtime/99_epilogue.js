@@ -438,6 +438,11 @@
       if (collapsed) inner.style.display = 'none';
       section.appendChild(inner);
       if (inGrid && s.wide) section.classList.add('ui-section-wide');
+      // Cap the CARD, not just its contents. A wide section spans every
+      // grid column; on a large display that can be more width than the
+      // body has anything to say. Capped, the card keeps its own edge and
+      // stays left-aligned in the slot.
+      if (s.max_width) section.style.maxWidth = s.max_width;
       host.appendChild(section);
     });
 

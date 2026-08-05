@@ -188,6 +188,7 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 			NoChrome:  s.NoChrome,
 			Collapsed: s.Collapsed,
 			Wide:      s.Wide,
+			MaxWidth:  s.MaxWidth,
 			Group:     s.Group,
 		})
 	}
@@ -303,6 +304,11 @@ type Section struct {
 	// Grid mode. Use for tables, charts, and wide Stacks that shouldn't be
 	// squeezed into one grid column. No effect when Page.Grid is false.
 	Wide bool
+	// MaxWidth caps the card itself (any CSS length, e.g. "900px"). Use
+	// with Wide for a body that needs more than one grid column but reads
+	// as stretched at full screen width — a chart, a short table. The
+	// card stays left-aligned in its slot. Empty = no cap.
+	MaxWidth string
 	// Group names the category this section belongs to when the Page is in
 	// Tabbed mode; sections sharing a Group appear under the same top tab,
 	// tabs ordered by first appearance. Empty = "General". No effect when
@@ -350,6 +356,7 @@ type sectionConfig struct {
 	NoChrome  bool            `json:"no_chrome,omitempty"`
 	Collapsed bool            `json:"collapsed,omitempty"`
 	Wide      bool            `json:"wide,omitempty"`
+	MaxWidth  string          `json:"max_width,omitempty"`
 	Group     string          `json:"group,omitempty"`
 }
 

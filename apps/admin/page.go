@@ -2446,6 +2446,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities — Outward & Spending": true,
 	}
+	// Wide sections that still shouldn't run the width of a large monitor.
+	// The cost chart needs more than one grid column, but past ~900px the
+	// bars stop being a chart and become wallpaper.
+	sectionMaxWidth := map[string]string{
+		"Cost History (Last 30 Days)": "900px",
+	}
 	// Generated tunable sections — one FormPanel per registered category, built
 	// from core's tunable registry so a newly-registered knob appears here with
 	// no admin edit. Pre-grouped under the "Tuning" tab; the loop below skips
@@ -2466,6 +2472,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		}
 		if wideSections[t] {
 			page.Sections[i].Wide = true
+		}
+		if w, ok := sectionMaxWidth[t]; ok {
+			page.Sections[i].MaxWidth = w
 		}
 	}
 	// Tab order (and clustering of each group's sections) — a stable sort
