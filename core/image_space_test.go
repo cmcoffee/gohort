@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"context"
 )
 
 // testPNG is a real, decodable image — verifyInputImage rejects anything that
@@ -436,4 +437,107 @@ func TestAStaleFilenameWithAnEmptySpaceSaysSo(t *testing.T) {
 	if !strings.Contains(msg, "gone") {
 		t.Errorf("must say the picture is gone:\n%s", msg)
 	}
+}
+
+// --- describe on record ------------------------------------------------------
+
+// captionInline makes the record-time vision pass synchronous for the duration
+// of a test. Async by design in production — it must never be on the caller's
+// path — which is exactly what makes it race an assertion.
+func captionInline(t *testing.T) {
+	t.Helper()
+	saved := captionRunner
+	captionRunner = func(f func()) { f() }
+	t.Cleanup(func() { captionRunner = saved })
+}
+
+func TestRecordDescribesTheImage(t *testing.T) {
+	sess := imageSpaceSession(t)
+	captionInline(t)
+	sess.LLM = &fakeCaptionLLM{reply: "Six navy bars on a light grid\n\nA bar chart with six navy bars, light grid lines, y-axis in dollars."}
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated: revenue chart")
+
+	all := RecentImages(sess)
+	if len(all) != 1 {
+		t.Fatalf("ring holds %d, want 1", len(all))
+	}
+	if all[0].Caption != "Six navy bars on a light grid" {
+		t.Errorf("caption = %q — the ring should know what the picture looks like, not just why it exists", all[0].Caption)
+	}
+	// The manifest is the answer to "which one did you mean", so it must carry
+	// BOTH: why it exists, and what it looks like.
+	m := RecentImageManifest(sess)
+	if !strings.Contains(m, "generated: revenue chart") || !strings.Contains(m, "Six navy bars") {
+		t.Errorf("manifest lost a half:\n%s", m)
+	}
+}
+
+// The point of describing on record: keeping is then a promotion, not a second
+// look at the same picture.
+func TestKeepReusesTheRingDescription(t *testing.T) {
+	sess := imageSpaceSession(t)
+	captionInline(t)
+	llm := &countingCaptionLLM{reply: "A logo\n\nA navy circle with a white wordmark."}
+	sess.LLM = llm
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated")
+	if llm.calls != 1 {
+		t.Fatalf("record made %d vision calls, want 1", llm.calls)
+	}
+	kept, err := KeepImage(sess, "image#1", "brand_mark", "")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	if llm.calls != 1 {
+		t.Errorf("keep paid for the image a second time (%d calls) — it should promote what the ring already had", llm.calls)
+	}
+	if kept.Caption != "A logo" || !strings.Contains(kept.Description, "white wordmark") {
+		t.Errorf("promotion lost the description: %+v", kept)
+	}
+}
+
+// An entry the ring never described (pass off, or still in flight) must still
+// get one when it is kept — that is where a description matters most.
+func TestKeepDescribesWhenTheRingDidNot(t *testing.T) {
+	sess := imageSpaceSession(t)
+	saved := CaptionOnRecord
+	CaptionOnRecord = false
+	t.Cleanup(func() { CaptionOnRecord = saved })
+
+	llm := &countingCaptionLLM{reply: "A chart\n\nSix navy bars."}
+	sess.LLM = llm
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated")
+	if llm.calls != 0 {
+		t.Fatalf("record described the image with the pass off")
+	}
+	kept, err := KeepImage(sess, "image#1", "chart", "")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	if llm.calls != 1 || kept.Caption != "A chart" {
+		t.Errorf("keep should have described it: calls=%d caption=%q", llm.calls, kept.Caption)
+	}
+}
+
+// A pruned entry must not have its sidecar resurrected by a caption that was
+// still in flight when the prune happened.
+func TestCaptionSkipsAPrunedEntry(t *testing.T) {
+	sess := imageSpaceSession(t)
+	captionInline(t)
+	sess.LLM = &fakeCaptionLLM{reply: "Gone\n\nAlready pruned."}
+	captionRecentImage(filepath.Join(recentImageDir(sess), "1700000000-deadbeef"), sess, testPNG(t, 8, 8))
+	if _, err := os.Stat(filepath.Join(recentImageDir(sess), "1700000000-deadbeef.json")); err == nil {
+		t.Error("wrote a sidecar for an image that isn't there")
+	}
+}
+
+// countingCaptionLLM answers like fakeCaptionLLM and counts the calls.
+type countingCaptionLLM struct {
+	LLM
+	reply string
+	calls int
+}
+
+func (f *countingCaptionLLM) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+	f.calls++
+	return &Response{Content: f.reply}, nil
 }

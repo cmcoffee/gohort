@@ -224,7 +224,14 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 	// Caption once, here. Best-effort: a library entry with no caption is still
 	// a usable reference, and refusing to keep the picture because the vision
 	// model was unreachable would be the worse trade.
-	caption, description := CaptionImage(sess, data)
+	// Promotion, not a fresh look: the ring described this picture when it
+	// arrived, so keeping it should cost nothing. Only an entry that was never
+	// described — captioning off, the pass still in flight, or a kept image
+	// being re-kept under a new name — pays for a vision call here.
+	caption, description := ringDescription(sess, ref)
+	if caption == "" && description == "" {
+		caption, description = CaptionImage(sess, data)
+	}
 	kept := KeptImage{
 		Name:        clean,
 		Ref:         RecentImageRefPrefix + clean,
@@ -245,6 +252,24 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		KeptImageRemember(sess, kept)
 	}
 	return kept, nil
+}
+
+// ringDescription returns what the ring already knows about a ref, or empty
+// when it knows nothing (or the ref names a kept image rather than a position).
+func ringDescription(sess *ToolSession, ref string) (caption, description string) {
+	ref = strings.TrimSpace(ref)
+	if !strings.HasPrefix(strings.ToLower(ref), RecentImageRefPrefix) {
+		return "", ""
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(ref[len(RecentImageRefPrefix):]))
+	if err != nil || n < 1 {
+		return "", ""
+	}
+	all := RecentImages(sess)
+	if n > len(all) {
+		return "", ""
+	}
+	return all[n-1].Caption, all[n-1].Description
 }
 
 // ForgetImage drops a kept image. Reports whether there was one to drop, so the

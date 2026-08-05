@@ -41,9 +41,15 @@ const RecentImageRefPrefix = "image#"
 // RecentImage is one entry in the space.
 type RecentImage struct {
 	Ref  string    // "image#1" — position, newest first; NOT stable across writes
-	Note string    // what it is ("generated: a cat on a bike", "edited image#2")
+	Note string    // why it exists ("generated: a cat on a bike", "edited image#2")
 	When time.Time // when it entered the space
-	path string    // absolute file path
+	// Caption is what the picture LOOKS like, from the vision pass at record
+	// time; Description is the long form, carried so a later keep promotes it
+	// instead of paying for the image a second time. Both may be empty — the
+	// pass is best-effort and may not have finished, or may not have run.
+	Caption     string
+	Description string
+	path        string // absolute file path
 }
 
 // recentImageMeta is the on-disk sidecar. Kept next to the image so the space
@@ -51,6 +57,11 @@ type RecentImage struct {
 type recentImageMeta struct {
 	Note string `json:"note"`
 	Mime string `json:"mime"`
+	// Caption and Description are filled in AFTER the write, by the vision
+	// pass below. Both may be empty: the pass is best-effort and the entry is
+	// useful without it.
+	Caption     string `json:"caption,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // recentImageDir is where a user's ring lives. Empty when there's no session or
@@ -130,7 +141,52 @@ func RecordRecentImage(sess *ToolSession, data []byte, note string) string {
 		Debug("[image_space] write meta: %v", err)
 	}
 	pruneRecentImages(dir)
+	// Describe it, in the background. On record rather than only on keep, so
+	// the ring's own listing can say what each picture IS rather than only the
+	// note it was saved under — "image#3 — six navy bars on a light grid" is
+	// the answer to "which one did you mean", and the note alone is not.
+	//
+	// Never on the caller's path: this is a vision call, and every image
+	// operation would otherwise wait seconds for a description nothing has
+	// asked for yet. The entry is complete and usable the moment the file
+	// lands; the caption catches up.
+	if CaptionOnRecord {
+		captionRunner(func() { captionRecentImage(filepath.Join(dir, base), sess, data) })
+	}
 	return RecentImageRefPrefix + "1"
+}
+
+// CaptionOnRecord gates the describe-on-record pass. On by default; an operator
+// paying per vision call on a deployment that never searches its images can
+// turn it off and still get captions on keep, where they matter most.
+var CaptionOnRecord = true
+
+// captionRunner decides where the vision pass runs. A var so tests can make it
+// synchronous — an async caption is otherwise racing every assertion about it.
+var captionRunner = func(f func()) { go f() }
+
+// captionRecentImage describes one ring entry and merges the result into its
+// sidecar. Re-reads the sidecar rather than holding the earlier value, because
+// the entry may have been pruned or rewritten while the vision call was out —
+// and writes nothing if the image is gone.
+func captionRecentImage(base string, sess *ToolSession, data []byte) {
+	caption, description := CaptionImage(sess, data)
+	if caption == "" && description == "" {
+		return
+	}
+	if _, err := os.Stat(base + ".png"); err != nil {
+		return // pruned while we were describing it
+	}
+	var meta recentImageMeta
+	if raw, err := os.ReadFile(base + ".json"); err == nil {
+		_ = json.Unmarshal(raw, &meta)
+	}
+	meta.Caption, meta.Description = caption, description
+	if out, err := json.Marshal(meta); err == nil {
+		if err := os.WriteFile(base+".json", out, 0600); err != nil {
+			Debug("[image_space] caption write: %v", err)
+		}
+	}
 }
 
 // RecentImages lists the space newest-first. Refs are POSITIONAL — image#1 is
@@ -152,7 +208,7 @@ func RecentImages(sess *ToolSession) []RecentImage {
 		if raw, err := os.ReadFile(strings.TrimSuffix(abs, ".png") + ".json"); err == nil {
 			_ = json.Unmarshal(raw, &meta)
 		}
-		r.Note = meta.Note
+		r.Note, r.Caption, r.Description = meta.Note, meta.Caption, meta.Description
 		out = append(out, r)
 	}
 	return out
@@ -229,11 +285,17 @@ func RecentImageManifest(sess *ToolSession) string {
 	var b strings.Builder
 	b.WriteString("Recent images you can reference by id (newest first):\n")
 	for _, r := range all {
-		note := r.Note
-		if note == "" {
-			note = "image"
+		desc := r.Note
+		switch {
+		case desc != "" && r.Caption != "":
+			desc += " — " + r.Caption
+		case desc == "":
+			desc = r.Caption
 		}
-		fmt.Fprintf(&b, "- %s — %s\n", r.Ref, note)
+		if desc == "" {
+			desc = "image"
+		}
+		fmt.Fprintf(&b, "- %s — %s\n", r.Ref, desc)
 	}
 	b.WriteString("Pass one of these ids to image(action=\"edit\", images=[...]) to change it. They are kept automatically; you never need to delete them.")
 	return b.String()
