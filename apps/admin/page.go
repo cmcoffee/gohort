@@ -2336,7 +2336,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Source:     "api/maintenance",
 					LabelField: "Label",
 					DescField:  "Desc",
-					PostTo:     "api/maintenance?key={Label}",
+					PostTo:     "api/maintenance?key={Key}",
 					Method:     "POST",
 					ButtonText: "Run",
 					EmptyText:  "No maintenance functions registered.",
