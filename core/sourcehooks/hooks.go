@@ -1,18 +1,20 @@
 // What the source-hook engine needs from the hub, and nothing more.
 //
 // The engine itself is self-contained — fetch a source, cache it, index it,
-// search it — but four facts about the deployment live in core: the mail
-// identity two polite-pool APIs require, the app version for a User-Agent,
-// the table its network config sits in, and the maintenance registry a purge
-// action hangs off. All four arrive as hooks with defaults, so the package
-// builds and behaves standalone.
+// search it — but three facts about the deployment live in core: the mail
+// identity two polite-pool APIs require, the app version for a User-Agent, and
+// the table its network config sits in. All three arrive as hooks with
+// defaults, so the package builds and behaves standalone.
+//
+// The cache-purge MAINTENANCE ACTION is registered by core, not from here.
+// A leaf initializes BEFORE the package that imports it, so a hook assigned in
+// core's init is still nil during this package's — and registering through one
+// meant the action silently vanished from the admin surface. Anything that has
+// to happen at init time belongs on the side that owns the registry.
 
 package sourcehooks
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 type Store interface {
 	Get(table, key string, output interface{}) bool
@@ -30,9 +32,6 @@ var (
 	ContactEmail func() string
 	// AppVersion rides in the User-Agent EDGAR requires.
 	AppVersion func() string
-	// RegisterMaintenance publishes the cache-purge action on the admin
-	// maintenance surface.
-	RegisterMaintenance func(key, label, desc string, fn func(ctx context.Context) int)
 	// NetworkConfigTable is where network config is stored. Defaulted so the
 	// leaf works unwired; core assigns its own const over it so the table name
 	// has one source of truth.
@@ -51,13 +50,6 @@ func appVersion() string {
 		return "dev"
 	}
 	return AppVersion()
-}
-
-func registerMaintenance(key, label, desc string, fn func(ctx context.Context) int) {
-	if RegisterMaintenance == nil {
-		return
-	}
-	RegisterMaintenance(key, label, desc, fn)
 }
 
 // authKey mirrors the hub's authorization key format. Copied rather than

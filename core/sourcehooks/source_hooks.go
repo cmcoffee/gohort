@@ -1,7 +1,6 @@
 package sourcehooks
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -894,15 +893,6 @@ func StartHookCacheSweeper() {
 // Expose the sweep as an admin-triggered maintenance action too, so an
 // operator can reclaim space on demand without waiting for the daily pass.
 func init() {
-	registerMaintenance(
-		"sweep_expired_caches",
-		"Sweep expired caches",
-		"Remove expired entries from the source-hook result cache and the "+
-			"authoritative-domain cache (past their 30-day / 7-day TTLs). Lazy "+
-			"delete-on-read already reclaims entries that get re-queried after "+
-			"expiry; this reclaims the long tail that is never queried again.",
-		func(ctx context.Context) int { return SweepHookCache() },
-	)
 }
 
 // authDomainBucket is the kvlite bucket for cached authoritative-domain

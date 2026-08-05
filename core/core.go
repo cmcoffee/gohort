@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -798,8 +799,20 @@ func init() {
 	// sourcehooks: the deployment facts the engine can't carry with it.
 	sourcehooks.ContactEmail = func() string { return LoadMailConfig().From }
 	sourcehooks.AppVersion = func() string { return AppVersion }
-	sourcehooks.RegisterMaintenance = RegisterMaintenanceFunc
 	sourcehooks.NetworkConfigTable = NetworkTable
+	// Registered HERE rather than from the leaf: a leaf's init runs before
+	// this one, so a hook-based registration lands while the hook is still nil
+	// and the action never appears. core owns the registry, so core makes the
+	// call — same rule as the tunables above.
+	RegisterMaintenanceFunc(
+		"sweep_expired_caches",
+		"Sweep expired caches",
+		"Remove expired entries from the source-hook result cache and the "+
+			"authoritative-domain cache (past their 30-day / 7-day TTLs). Lazy "+
+			"delete-on-read already reclaims entries that get re-queried after "+
+			"expiry; this reclaims the long tail that is never queried again.",
+		func(ctx context.Context) int { return sourcehooks.SweepHookCache() },
+	)
 
 	// promotion: reads two tunables; the registry (and so the admin surface
 	// and the defaults) stays here, which is why core makes the calls.
