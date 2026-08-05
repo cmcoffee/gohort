@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // DESIGN NOTE — no temporal decay in this store. An earlier version decayed
@@ -1145,7 +1147,7 @@ func keywordTerms(query string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, f := range fields {
-		if len(f) < 3 || hookCacheStopwords[f] || seen[f] {
+		if len(f) < 3 || sourcehooks.Stopwords[f] || seen[f] {
 			continue
 		}
 		seen[f] = true

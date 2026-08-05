@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/appassets"
+	"github.com/cmcoffee/gohort/core/appgroups"
 	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/docs"
@@ -12,16 +13,19 @@ import (
 	"github.com/cmcoffee/gohort/core/factcheck"
 	"github.com/cmcoffee/gohort/core/geo"
 	"github.com/cmcoffee/gohort/core/injection"
+	"github.com/cmcoffee/gohort/core/looptune"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/messaging"
 	"github.com/cmcoffee/gohort/core/migrate"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/notes"
 	"github.com/cmcoffee/gohort/core/ollama"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/provenance"
 	"github.com/cmcoffee/gohort/core/pushsub"
 	"github.com/cmcoffee/gohort/core/sections"
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/gohort/core/sources"
 	"github.com/cmcoffee/gohort/core/sse"
 	"github.com/cmcoffee/gohort/core/subsession"
@@ -607,6 +611,105 @@ var (
 	CollectExtraSessions        = extrasessions.CollectExtraSessions
 )
 
+// --- appgroups (named bundles of apps a user can be granted at once) --------
+
+type AppGroup = appgroups.AppGroup
+
+var (
+	LoadAppGroups   = appgroups.LoadAppGroups
+	LoadAppGroup    = appgroups.LoadAppGroup
+	SaveAppGroup    = appgroups.SaveAppGroup
+	DeleteAppGroup  = appgroups.DeleteAppGroup
+	ExpandAppGroups = appgroups.ExpandAppGroups
+)
+
+// --- looptune (agent-loop round/spend limits) -------------------------------
+
+type AgentLoopTuning = looptune.AgentLoopTuning
+
+var (
+	SetAgentLoopTuning       = looptune.SetAgentLoopTuning
+	GetAgentLoopTuning       = looptune.GetAgentLoopTuning
+	LoadAgentLoopTuningFromDB = looptune.LoadAgentLoopTuningFromDB
+	SaveAgentLoopTuningToDB  = looptune.SaveAgentLoopTuningToDB
+	InitAgentLoopTuning      = looptune.InitAgentLoopTuning
+)
+
+// --- promotion (which sub-session the next user turn should join) -----------
+
+type (
+	RouteAction      = promotion.RouteAction
+	PromotionRequest = promotion.PromotionRequest
+)
+
+var (
+	StripPromotionEscape    = promotion.StripPromotionEscape
+	PromotionWindow         = promotion.PromotionWindow
+	PromotionTurnCap        = promotion.PromotionTurnCap
+	ResolveDispatchRoute    = promotion.ResolveDispatchRoute
+	ResolvePromotion        = promotion.ResolvePromotion
+	CreatePromotionRequest  = promotion.CreatePromotionRequest
+	ListPromotionRequests   = promotion.ListPromotionRequests
+	GetPromotionRequest     = promotion.GetPromotionRequest
+	SetPromotionRequestState = promotion.SetPromotionRequestState
+	PendingPromotion        = promotion.PendingPromotion
+	PromotionRequestKey     = promotion.RequestKey
+)
+
+const (
+	PromotionPendingState  = promotion.PromotionPendingState
+	PromotionApprovedState = promotion.PromotionApprovedState
+	PromotionDeniedState   = promotion.PromotionDeniedState
+
+	RouteNone    = promotion.RouteNone
+	RoutePromote = promotion.RoutePromote
+	RouteInject  = promotion.RouteInject
+	RouteGoal    = promotion.RouteGoal
+)
+
+// --- sourcehooks (per-domain fetch/index/search engine + its cache) ---------
+
+type (
+	SourceHook         = sourcehooks.SourceHook
+	SourceHookAuth     = sourcehooks.SourceHookAuth
+	SourceHookType     = sourcehooks.SourceHookType
+	SourceHookTemplate = sourcehooks.SourceHookTemplate
+)
+
+const (
+	HookAuthNone   = sourcehooks.HookAuthNone
+	HookAuthAPIKey = sourcehooks.HookAuthAPIKey
+	HookAuthBearer = sourcehooks.HookAuthBearer
+
+	HookTypeAPI     = sourcehooks.HookTypeAPI
+	HookTypeRAG     = sourcehooks.HookTypeRAG
+	HookTypePaywall = sourcehooks.HookTypePaywall
+)
+
+var (
+	LoadSourceHooks       = sourcehooks.LoadSourceHooks
+	SaveSourceHook        = sourcehooks.SaveSourceHook
+	DeleteSourceHook      = sourcehooks.DeleteSourceHook
+	RegisteredSourceHooks = sourcehooks.RegisteredSourceHooks
+	ActiveSourceHooks     = sourcehooks.ActiveSourceHooks
+	HookForDomain         = sourcehooks.HookForDomain
+	HooksForTopic         = sourcehooks.HooksForTopic
+	SourceHookTemplates   = sourcehooks.SourceHookTemplates
+	QuerySourceHook       = sourcehooks.QuerySourceHook
+	ApplyPaywallAuth      = sourcehooks.ApplyPaywallAuth
+	ApplyHTTPTimeouts     = sourcehooks.ApplyHTTPTimeouts
+	NewBoundedHTTPClient  = sourcehooks.NewBoundedHTTPClient
+	SetHookCacheDB        = sourcehooks.SetHookCacheDB
+	StartHookCacheSweeper = sourcehooks.StartHookCacheSweeper
+	SweepHookCache        = sourcehooks.SweepHookCache
+	StoreAuthDomainCache  = sourcehooks.StoreAuthDomainCache
+	LookupAuthDomainCache = sourcehooks.LookupAuthDomainCache
+
+	// Accessors, not the vars: ApplyHTTPTimeouts rewrites those at runtime.
+	HTTPRequestTimeout = sourcehooks.RequestTimeout
+	HTTPConnectTimeout = sourcehooks.ConnectTimeout
+)
+
 // --- wiring: inject core-side implementations into the leaves ----------------
 
 func init() {
@@ -681,7 +784,8 @@ func init() {
 		return RootDB
 	}
 
-	// injection + toolgroups: framework-shaped IDs.
+	// appgroups + injection + toolgroups: framework-shaped IDs.
+	appgroups.NewID = UUIDv4
 	injection.NewID = UUIDv4
 	toolgroups.NewID = UUIDv4
 
@@ -690,6 +794,19 @@ func init() {
 	sources.ClassifySourceFunc = ClassifySource
 	sources.CleanSourceTitleFunc = CleanSourceTitle
 	sources.IsNonArticleURLFunc = IsNonArticleURL
+
+	// sourcehooks: the deployment facts the engine can't carry with it.
+	sourcehooks.ContactEmail = func() string { return LoadMailConfig().From }
+	sourcehooks.AppVersion = func() string { return AppVersion }
+	sourcehooks.RegisterMaintenance = RegisterMaintenanceFunc
+	sourcehooks.NetworkConfigTable = NetworkTable
+
+	// promotion: reads two tunables; the registry (and so the admin surface
+	// and the defaults) stays here, which is why core makes the calls.
+	promotion.TuneDurationFunc = TuneDuration
+	promotion.TuneIntFunc = TuneInt
+	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Timeouts", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply before the next turn falls through to the host LLM.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_promotion_turn_cap", Category: "Limits", Label: "Sub-session turn cap", Help: "Maximum number of follow-up turns a single promoted sub-session will serve.", Kind: KindInt, Default: 8, Min: 1, Max: 50})
 
 	// provenance: recency/staleness weights come from the tunables registry.
 	provenance.TuneFloatFunc = TuneFloat

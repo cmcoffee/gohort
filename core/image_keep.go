@@ -48,7 +48,12 @@ type KeptImage struct {
 	Name    string    // "brand_mark" — stable, chosen by the agent
 	Ref     string    // "image#brand_mark" — what to pass to any images= param
 	Note    string    // why it was kept, in the agent's words
-	Caption string    // what it looks like, from the vision pass at keep time
+	Caption string // one line, for listings — enough to tell saved images apart
+	// Description is the detailed one, and it is what memory stores. A label
+	// identifies a picture; only this lets an agent WORK from it — write a
+	// generation prompt in the same style, brief a designer — without spending
+	// vision tokens re-looking every time it needs the detail.
+	Description string
 	When    time.Time // when it was kept
 	// Owner is the agent whose library holds it, and Inherited marks the ones
 	// that came from an ancestor rather than this agent. The distinction is
@@ -116,7 +121,8 @@ func keptImageChain(sess *ToolSession) []string {
 // next to the file, so the library survives a restart with no database.
 type keptImageMeta struct {
 	Note    string    `json:"note"`
-	Caption string    `json:"caption"`
+	Caption     string    `json:"caption"`
+	Description string    `json:"description,omitempty"`
 	Mime    string    `json:"mime"`
 	When    time.Time `json:"when"`
 }
@@ -218,15 +224,17 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 	// Caption once, here. Best-effort: a library entry with no caption is still
 	// a usable reference, and refusing to keep the picture because the vision
 	// model was unreachable would be the worse trade.
+	caption, description := CaptionImage(sess, data)
 	kept := KeptImage{
-		Name:    clean,
-		Ref:     RecentImageRefPrefix + clean,
-		Note:    strings.TrimSpace(note),
-		Caption: CaptionImage(sess, data),
-		When:    time.Now(),
-		path:    base + ".png",
+		Name:        clean,
+		Ref:         RecentImageRefPrefix + clean,
+		Note:        strings.TrimSpace(note),
+		Caption:     caption,
+		Description: description,
+		When:        time.Now(),
+		path:        base + ".png",
 	}
-	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Mime: "image/png", When: kept.When})
+	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Description: kept.Description, Mime: "image/png", When: kept.When})
 	if err := os.WriteFile(base+".json", meta, 0600); err != nil {
 		Debug("[image_keep] write meta: %v", err)
 	}
@@ -317,7 +325,7 @@ func keptImagesOf(sess *ToolSession, agentID string) []KeptImage {
 		if raw, err := os.ReadFile(base + ".json"); err == nil {
 			_ = json.Unmarshal(raw, &meta)
 		}
-		k.Note, k.Caption, k.When = meta.Note, meta.Caption, meta.When
+		k.Note, k.Caption, k.Description, k.When = meta.Note, meta.Caption, meta.Description, meta.When
 		out = append(out, k)
 	}
 	return out
@@ -387,20 +395,26 @@ func KeptImageManifest(sess *ToolSession) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// captionImagePrompt is deliberately about APPEARANCE, not interpretation. The
-// caption is read later by an agent deciding whether this is the picture it
-// wants, so "navy circular mark, white sans-serif wordmark" is useful where
-// "the company's logo" is not — it already knows that from the name it chose.
-const captionImagePrompt = "Describe this image in one sentence, under 25 words: what is shown, and its style or colors. " +
-	"Describe only what is visible. No preamble, no markdown, no quotes."
+// captionImagePrompt asks for BOTH tiers in one pass, because they answer
+// different questions and a second call would pay the image twice. Deliberately
+// about APPEARANCE, not interpretation: an agent reading this later already
+// knows what the picture is FOR from the name it chose, and needs to know what
+// it LOOKS like — "navy circular mark, lowercase white wordmark" is useful
+// where "the company's logo" is not.
+const captionImagePrompt = "Describe this image twice, in this exact format:\n\n" +
+	"First line: a short label, under 15 words — what it is.\n" +
+	"Then a blank line, then a detailed description of 60 to 120 words: subject, " +
+	"composition, colors, any text and its typography, and the overall style. " +
+	"Enough detail that someone who cannot see it could match the look.\n\n" +
+	"Describe only what is visible. No preamble, no markdown, no quotes, no headings."
 
 // CaptionImage runs one vision pass over the bytes and returns a short
 // description. Returns "" on any failure — no session LLM, no vision support,
 // a timeout — because every caller treats the caption as a nicety and none of
 // them should fail for want of one.
-func CaptionImage(sess *ToolSession, data []byte) string {
+func CaptionImage(sess *ToolSession, data []byte) (caption, description string) {
 	if sess == nil || sess.LLM == nil || len(data) == 0 {
-		return ""
+		return "", ""
 	}
 	ctx, cancel := context.WithTimeout(AppContext(), 45*time.Second)
 	defer cancel()
@@ -411,18 +425,26 @@ func CaptionImage(sess *ToolSession, data []byte) string {
 	}})
 	if err != nil || resp == nil {
 		Debug("[image_keep] caption: %v", err)
-		return ""
+		return "", ""
 	}
 	out := strings.TrimSpace(resp.Content)
-	// One line, bounded. A model that ignores the word limit shouldn't be able
-	// to put a paragraph into every future manifest.
+	// Label is the first line; everything after it is the detail. A model that
+	// answers with one line only still yields a usable label — the detail is
+	// the part that degrades, and an empty one is handled everywhere.
+	caption, description = out, ""
 	if i := strings.IndexAny(out, "\r\n"); i >= 0 {
-		out = strings.TrimSpace(out[:i])
+		caption = strings.TrimSpace(out[:i])
+		description = strings.TrimSpace(out[i:])
 	}
-	if len(out) > 200 {
-		out = strings.TrimSpace(out[:200]) + "…"
+	// Bounded so a model that ignores the limits can't put a paragraph into
+	// every future manifest, or a page into every memory entry.
+	if len(caption) > 200 {
+		caption = strings.TrimSpace(caption[:200]) + "…"
 	}
-	return out
+	if len(description) > 1200 {
+		description = strings.TrimSpace(description[:1200]) + "…"
+	}
+	return caption, description
 }
 
 // keptImageOwnAgent is the agent id whose library this session WRITES to —

@@ -190,7 +190,7 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 	// pending requests to land before snapshotting, so a slow-but-working
 	// source reports its real response instead of showing as unfetched.
 	// Bounded well under the outer budget (3×HTTPRequestTimeout).
-	for deadline := time.Now().Add(HTTPRequestTimeout); ; {
+	for deadline := time.Now().Add(HTTPRequestTimeout()); ; {
 		mu.Lock()
 		n := len(pending)
 		mu.Unlock()

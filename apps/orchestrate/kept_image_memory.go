@@ -51,14 +51,21 @@ func keptImageReportID(user, agentID, name string) string {
 func keptImageMemoryBody(k KeptImage) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "A reference image is saved under the name %q and is addressed as %s.\n", k.Name, k.Ref)
-	if k.Caption != "" {
+	// The detailed description, not the label: this text is read by an agent
+	// that cannot see the picture and may need to work FROM it — write a
+	// prompt in the same style, brief someone else — and a one-line label
+	// forces it back into a vision call for every such question.
+	if k.Description != "" {
+		fmt.Fprintf(&b, "It shows: %s\n", k.Description)
+	} else if k.Caption != "" {
 		fmt.Fprintf(&b, "It shows: %s\n", k.Caption)
 	}
 	if k.Note != "" {
 		fmt.Fprintf(&b, "Kept because: %s\n", k.Note)
 	}
 	fmt.Fprintf(&b, "To use it, pass %s anywhere an image reference is accepted (for example the images list of an image edit). "+
-		"This name does not expire and does not shift the way recent-image numbers do.", k.Ref)
+		"This name does not expire and does not shift the way recent-image numbers do. "+
+		"The picture itself is still stored, so if this description leaves out a detail you need, look at %s directly rather than guessing.", k.Ref, k.Ref)
 	return b.String()
 }
 

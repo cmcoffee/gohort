@@ -10,7 +10,7 @@
 // NOTE: distinct from promotion.go, which is the unrelated SUB-SESSION promotion
 // router (routing a follow-up turn to a sub-agent). Same English word, different
 // concern — this file is about publishing resources, not conversation routing.
-package core
+package promotion
 
 import (
 	"sort"
@@ -40,13 +40,16 @@ type PromotionRequest struct {
 	DecidedBy string    `json:"decided_by,omitempty"`
 }
 
-func promotionRequestKey(kind, owner, name string) string { return kind + ":" + owner + ":" + name }
+// RequestKey builds the id a promotion request is stored under. Exported
+// because the temp-tool store composes the same id to check a pending request
+// before adopting a tool.
+func RequestKey(kind, owner, name string) string { return kind + ":" + owner + ":" + name }
 
 // CreatePromotionRequest records a PENDING promotion for (kind, owner, name),
 // idempotent per that triple: a re-request (including one that follows a denial)
 // overwrites the existing row back to pending with the new note. Returns an error
 // on missing fields.
-func CreatePromotionRequest(db Database, owner, kind, name, note string) error {
+func CreatePromotionRequest(db Store, owner, kind, name, note string) error {
 	if db == nil {
 		return errString("db not initialized")
 	}
@@ -54,7 +57,7 @@ func CreatePromotionRequest(db Database, owner, kind, name, note string) error {
 	if owner == "" || kind == "" || name == "" {
 		return errString("owner, kind and name are required")
 	}
-	id := promotionRequestKey(kind, owner, name)
+	id := RequestKey(kind, owner, name)
 	db.Set(promotionRequestsTable, id, PromotionRequest{
 		ID: id, Owner: owner, Kind: kind, Name: name, Note: strings.TrimSpace(note),
 		Created: time.Now(), State: PromotionPendingState,
@@ -64,7 +67,7 @@ func CreatePromotionRequest(db Database, owner, kind, name, note string) error {
 
 // ListPromotionRequests returns every request, newest first. Pass onlyPending to
 // restrict to the actionable queue.
-func ListPromotionRequests(db Database, onlyPending bool) []PromotionRequest {
+func ListPromotionRequests(db Store, onlyPending bool) []PromotionRequest {
 	out := []PromotionRequest{}
 	if db == nil {
 		return out
@@ -83,7 +86,7 @@ func ListPromotionRequests(db Database, onlyPending bool) []PromotionRequest {
 }
 
 // GetPromotionRequest returns one request by ID.
-func GetPromotionRequest(db Database, id string) (PromotionRequest, bool) {
+func GetPromotionRequest(db Store, id string) (PromotionRequest, bool) {
 	var req PromotionRequest
 	if db == nil {
 		return req, false
@@ -95,7 +98,7 @@ func GetPromotionRequest(db Database, id string) (PromotionRequest, bool) {
 // SetPromotionRequestState records an admin decision (approved / denied) and who
 // made it. The caller performs the kind-specific side effect (Share the tool,
 // etc.) BEFORE marking approved, so a failed side effect leaves the row pending.
-func SetPromotionRequestState(db Database, id, state, decidedBy string) error {
+func SetPromotionRequestState(db Store, id, state, decidedBy string) error {
 	if db == nil {
 		return errString("db not initialized")
 	}
@@ -111,7 +114,7 @@ func SetPromotionRequestState(db Database, id, state, decidedBy string) error {
 
 // PendingPromotion reports whether (kind, owner, name) currently has a pending
 // request — the "Requested" indicator on the owner's resource list.
-func PendingPromotion(db Database, owner, kind, name string) bool {
-	req, ok := GetPromotionRequest(db, promotionRequestKey(kind, owner, name))
+func PendingPromotion(db Store, owner, kind, name string) bool {
+	req, ok := GetPromotionRequest(db, RequestKey(kind, owner, name))
 	return ok && req.State == PromotionPendingState
 }

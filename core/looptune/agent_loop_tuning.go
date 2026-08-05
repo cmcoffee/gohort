@@ -1,8 +1,10 @@
-package core
+package looptune
 
 import (
 	"fmt"
 	"sync"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // AgentLoopTuning bundles operator-tunable knobs that govern the
@@ -81,7 +83,7 @@ const (
 // record exists — the process keeps the compiled defaults, which is
 // the right behavior for a fresh install. Returns true when a record
 // was actually loaded so the caller can Debug the source.
-func LoadAgentLoopTuningFromDB(db Database) bool {
+func LoadAgentLoopTuningFromDB(db Store) bool {
 	if db == nil {
 		return false
 	}
@@ -96,7 +98,7 @@ func LoadAgentLoopTuningFromDB(db Database) bool {
 // SaveAgentLoopTuningToDB persists the given values to kvlite AND
 // installs them in the process. One call from the admin handler
 // covers both jobs, mirroring the cost-rates save shape.
-func SaveAgentLoopTuningToDB(db Database, t AgentLoopTuning) error {
+func SaveAgentLoopTuningToDB(db Store, t AgentLoopTuning) error {
 	if db == nil {
 		return fmt.Errorf("no database available")
 	}
@@ -109,10 +111,10 @@ func SaveAgentLoopTuningToDB(db Database, t AgentLoopTuning) error {
 
 // InitAgentLoopTuning is the startup wiring. Always succeeds — when
 // no record is present the in-memory defaults stand.
-func InitAgentLoopTuning(db Database) {
+func InitAgentLoopTuning(db Store) {
 	if LoadAgentLoopTuningFromDB(db) {
-		Debug("[agent_loop] tuning loaded from database (history_budget_percent=%d)", GetAgentLoopTuning().HistoryBudgetPercent)
+		nfo.Debug("[agent_loop] tuning loaded from database (history_budget_percent=%d)", GetAgentLoopTuning().HistoryBudgetPercent)
 		return
 	}
-	Debug("[agent_loop] tuning at defaults (history_budget_percent=%d)", GetAgentLoopTuning().HistoryBudgetPercent)
+	nfo.Debug("[agent_loop] tuning at defaults (history_budget_percent=%d)", GetAgentLoopTuning().HistoryBudgetPercent)
 }

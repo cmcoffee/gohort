@@ -1,9 +1,10 @@
-package core
+package sourcehooks
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+
 )
 
 // This file implements tier-2 document-level search over cached source

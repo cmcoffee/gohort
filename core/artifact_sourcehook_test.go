@@ -18,20 +18,24 @@ import (
 // hook registry for the test's duration, restoring both on cleanup.
 // SaveSourceHook writes the db AND reloads the registry, so seeding through
 // it exercises the real persistence path.
+//
+// Isolation runs through LoadSourceHooks rather than the registry's own
+// fields: the engine lives in core/sourcehooks now, and a test that reaches
+// into another package's private state to reset it would be pinning an
+// implementation detail it cannot see. Loading from an empty store empties
+// the registry, and loading from the restored one puts it back — the same
+// path production uses at startup.
 func sourceHookTestDB(t *testing.T) Database {
 	t.Helper()
 	db := &DBase{Store: kvlite.MemStore()}
 	savedRoot := RootDB
 	RootDB = db
-	sourceHookRegistry.mu.Lock()
-	savedHooks := sourceHookRegistry.hooks
-	sourceHookRegistry.hooks = nil
-	sourceHookRegistry.mu.Unlock()
+	LoadSourceHooks(db) // empty store => empty registry
 	t.Cleanup(func() {
 		RootDB = savedRoot
-		sourceHookRegistry.mu.Lock()
-		sourceHookRegistry.hooks = savedHooks
-		sourceHookRegistry.mu.Unlock()
+		if savedRoot != nil {
+			LoadSourceHooks(savedRoot)
+		}
 	})
 	return db
 }

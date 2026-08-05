@@ -504,7 +504,7 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	// request queue and the owner's "Publish requested" badge go stale on a tool
 	// that is, in fact, already shared. Un-sharing leaves the request untouched.
 	if shared {
-		reqID := promotionRequestKey("tool", username, name)
+		reqID := PromotionRequestKey("tool", username, name)
 		if req, ok := GetPromotionRequest(db, reqID); ok && req.State == PromotionPendingState {
 			_ = SetPromotionRequestState(db, reqID, PromotionApprovedState, req.DecidedBy)
 		}

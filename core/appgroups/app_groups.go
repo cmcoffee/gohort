@@ -11,7 +11,7 @@
 // apps; tool groups collapse chat TOOLS in the LLM catalog. There are no
 // framework builtins here — app groups are entirely admin-created.
 
-package core
+package appgroups
 
 import (
 	"fmt"
@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/toolgroups"
 )
 
 // appGroupsTable holds AppGroup records keyed by ID, in AuthDB() so the admin
@@ -48,7 +50,7 @@ var (
 
 // LoadAppGroups returns all groups, sorted by Name. db nil → nil (lets the
 // admin UI render before AuthDB is wired).
-func LoadAppGroups(db Database) []AppGroup {
+func LoadAppGroups(db Store) []AppGroup {
 	if db == nil {
 		return nil
 	}
@@ -64,7 +66,7 @@ func LoadAppGroups(db Database) []AppGroup {
 }
 
 // LoadAppGroup fetches one group by ID. Returns false when not found.
-func LoadAppGroup(db Database, id string) (AppGroup, bool) {
+func LoadAppGroup(db Store, id string) (AppGroup, bool) {
 	if db == nil || id == "" {
 		return AppGroup{}, false
 	}
@@ -77,7 +79,7 @@ func LoadAppGroup(db Database, id string) (AppGroup, bool) {
 
 // SaveAppGroup upserts a group, stamping timestamps + assigning an ID on new
 // records. Returns the saved record so the admin UI can echo it back.
-func SaveAppGroup(db Database, g AppGroup) (AppGroup, error) {
+func SaveAppGroup(db Store, g AppGroup) (AppGroup, error) {
 	if db == nil {
 		return g, fmt.Errorf("app groups: db not initialized")
 	}
@@ -85,10 +87,10 @@ func SaveAppGroup(db Database, g AppGroup) (AppGroup, error) {
 	if g.Name == "" {
 		return g, fmt.Errorf("app groups: name is required")
 	}
-	g.Apps = DedupeAndCleanMembers(g.Apps)
+	g.Apps = toolgroups.DedupeAndCleanMembers(g.Apps)
 	now := time.Now()
 	if g.ID == "" {
-		g.ID = UUIDv4()
+		g.ID = NewID()
 		g.Created = now
 	}
 	if g.Created.IsZero() {
@@ -103,7 +105,7 @@ func SaveAppGroup(db Database, g AppGroup) (AppGroup, error) {
 // DeleteAppGroup removes a group by ID. Users assigned to it keep the group ID
 // in their record, but it resolves to no apps once gone — harmless dangling
 // reference, cleaned up whenever the user is next edited.
-func DeleteAppGroup(db Database, id string) error {
+func DeleteAppGroup(db Store, id string) error {
 	if db == nil || id == "" {
 		return fmt.Errorf("app groups: id is required")
 	}
@@ -115,7 +117,7 @@ func DeleteAppGroup(db Database, id string) error {
 // ExpandAppGroups returns the union of app paths granted by the given group
 // IDs. Unknown IDs contribute nothing. Order is not significant (the caller
 // dedupes against the user's own app grants).
-func ExpandAppGroups(db Database, ids []string) []string {
+func ExpandAppGroups(db Store, ids []string) []string {
 	if db == nil || len(ids) == 0 {
 		return nil
 	}
@@ -141,7 +143,7 @@ func ExpandAppGroups(db Database, ids []string) []string {
 
 // hydrateAppGroupsCache populates the in-memory cache from the DB on first read
 // after an invalidation. Cheap (small table) and once per CRUD cycle.
-func hydrateAppGroupsCache(db Database) {
+func hydrateAppGroupsCache(db Store) {
 	appGroupsMu.RLock()
 	if appGroupsCache != nil {
 		appGroupsMu.RUnlock()

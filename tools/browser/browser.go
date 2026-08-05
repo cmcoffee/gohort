@@ -158,13 +158,13 @@ func (t *BrowsePageTool) launch() {
 // knob — and the previous hardcoded 30s/8s/45s line up exactly with the
 // 15s default so existing deployments don't shift behavior.
 func browsePageNavTimeout() time.Duration {
-	return 2 * HTTPRequestTimeout
+	return 2 * HTTPRequestTimeout()
 }
 func browsePageIdleWait() time.Duration {
-	return HTTPRequestTimeout / 2
+	return HTTPRequestTimeout() / 2
 }
 func browsePageTotalBudget() time.Duration {
-	return 3 * HTTPRequestTimeout
+	return 3 * HTTPRequestTimeout()
 }
 
 // fetch wraps fetchImpl in an outer-budget guard. On timeout, the

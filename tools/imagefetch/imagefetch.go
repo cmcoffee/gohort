@@ -470,7 +470,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		}
 		// Say it is recallable. Otherwise the model has no way to know it can
 		// find this again later without having kept a note of the name itself.
-		out += "\nAlso saved to your memory, so a later question about this picture can find it without you remembering the name."
+		out += "\nA detailed description went to your memory alongside it, so a later question can find this picture — and work from what it looks like — without you remembering the name or looking at it again."
 		return out + "\nNOT delivered — keeping only files it away. To send it, attach it as you would any image.", nil
 	case "forget":
 		name := StringArg(args, "name")

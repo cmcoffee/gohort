@@ -23,11 +23,14 @@
 // lookup returns. That keeps the "should this be retired?" check in
 // one place rather than scattered across every host handler.
 
-package core
+package promotion
 
 import (
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/subsession"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // StripPromotionEscape detects "/back" or "/phantom" at the start of
@@ -66,7 +69,12 @@ func StripPromotionEscape(msg string) (string, bool) {
 // typically reply within seconds-to-minutes of a sub-agent's reply,
 // and "I'll get back to it tomorrow" almost always indicates a
 // topic shift that shouldn't be pulled back into the prior context.
-func PromotionWindow() time.Duration { return TuneDuration("tune_promotion_window") }
+func PromotionWindow() time.Duration {
+	if TuneDurationFunc == nil {
+		return 5 * time.Minute
+	}
+	return TuneDurationFunc("tune_promotion_window")
+}
 
 // PromotionTurnCap is the maximum number of follow-up turns a single
 // sub-session will serve. Beyond this, the user is firmly in a
@@ -75,11 +83,11 @@ func PromotionWindow() time.Duration { return TuneDuration("tune_promotion_windo
 //
 // 8 turns is generous enough for a meaningful back-and-forth without
 // crowding out the host's primary role.
-func PromotionTurnCap() int { return TuneInt("tune_promotion_turn_cap") }
-
-func init() {
-	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Timeouts", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply before the next turn falls through to the host LLM.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_promotion_turn_cap", Category: "Limits", Label: "Sub-session turn cap", Help: "Maximum number of follow-up turns a single promoted sub-session will serve.", Kind: KindInt, Default: 8, Min: 1, Max: 50})
+func PromotionTurnCap() int {
+	if TuneIntFunc == nil {
+		return 8
+	}
+	return TuneIntFunc("tune_promotion_turn_cap")
 }
 
 // RouteAction is the tri-state result from ResolveDispatchRoute,
@@ -105,7 +113,7 @@ const (
 	// drain the note between rounds and integrate it into its work.
 	RouteInject
 
-	// RouteGoal — an AUTONOMOUS sub-session (SubSessionKindAutonomous)
+	// RouteGoal — an AUTONOMOUS sub-session (subsession.SubSessionKindAutonomous)
 	// owns this host. The incoming message belongs to the task's OWN
 	// turn loop, NOT the host persona: the host must hand it to the
 	// task's runner and return — it must NOT fall through to its main
@@ -145,7 +153,7 @@ const (
 //	case core.RouteNone:
 //	    // fall through to the host's main LLM
 //	}
-func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
+func ResolveDispatchRoute(hostSessionID string) (*subsession.SubSession, RouteAction) {
 	if hostSessionID == "" {
 		return nil, RouteNone
 	}
@@ -160,19 +168,19 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 	// to the idle / no-route checks instead of returning RouteInject
 	// for a record nobody's actually serving — which would ack every
 	// future user message forever.
-	if active := MostRecentActiveSubSession(hostSessionID); active != nil {
+	if active := subsession.MostRecentActiveSubSession(hostSessionID); active != nil {
 		// An autonomous task that's mid-turn (briefly active) owns its
 		// own loop — route to it, never inject-then-relay to the host.
-		if active.Kind == SubSessionKindAutonomous {
+		if active.Kind == subsession.SubSessionKindAutonomous {
 			return active, RouteGoal
 		}
-		if SubSessionIsLive(active.SubSessionID) {
+		if subsession.SubSessionIsLive(active.SubSessionID) {
 			return active, RouteInject
 		}
-		Log("[sub-session] active sub=%s declared dead by liveness checks — retiring as orphan", active.SubSessionID)
-		RetireSubSession(active.SubSessionID, "orphaned_no_goroutine")
+		nfo.Log("[sub-session] active sub=%s declared dead by liveness checks — retiring as orphan", active.SubSessionID)
+		subsession.RetireSubSession(active.SubSessionID, "orphaned_no_goroutine")
 	}
-	idle := IdleSubSessionsFor(hostSessionID)
+	idle := subsession.IdleSubSessionsFor(hostSessionID)
 	if len(idle) == 0 {
 		return nil, RouteNone
 	}
@@ -184,11 +192,11 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 		// the message re-drives the task's runner instead of promoting
 		// to the host persona. The task retires itself on finish/cap, or
 		// a timeout sweep retires it.
-		if s.Kind == SubSessionKindAutonomous {
+		if s.Kind == subsession.SubSessionKindAutonomous {
 			return &s, RouteGoal
 		}
 		if shouldRetire(s, now) {
-			RetireSubSession(s.SubSessionID, retireReason(s, now))
+			subsession.RetireSubSession(s.SubSessionID, retireReason(s, now))
 			continue
 		}
 		return &s, RoutePromote
@@ -200,7 +208,7 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 // returns only the idle-promotion result (nil for active or no
 // route). Use ResolveDispatchRoute when the caller wants to handle
 // the mid-flight injection case too.
-func ResolvePromotion(hostSessionID string) *SubSession {
+func ResolvePromotion(hostSessionID string) *subsession.SubSession {
 	sub, action := ResolveDispatchRoute(hostSessionID)
 	if action == RoutePromote {
 		return sub
@@ -214,7 +222,7 @@ func ResolvePromotion(hostSessionID string) *SubSession {
 // the last reply, or the follow-up turn cap was hit on a previous
 // promotion (the cap check fires AFTER an MarkSubSessionActive bumps
 // TurnCount; this re-check catches it on the next intake).
-func shouldRetire(s SubSession, now time.Time) bool {
+func shouldRetire(s subsession.SubSession, now time.Time) bool {
 	if !s.LastReplyAt.IsZero() && now.Sub(s.LastReplyAt) > PromotionWindow() {
 		return true
 	}
@@ -227,7 +235,7 @@ func shouldRetire(s SubSession, now time.Time) bool {
 // retireReason picks the audit string for an auto-retirement. Order
 // matters: window timeout is the common case, cap is the explicit
 // hand-off case.
-func retireReason(s SubSession, now time.Time) string {
+func retireReason(s subsession.SubSession, now time.Time) string {
 	if !s.LastReplyAt.IsZero() && now.Sub(s.LastReplyAt) > PromotionWindow() {
 		return "window"
 	}

@@ -1,4 +1,4 @@
-package core
+package sourcehooks
 
 import (
 	"context"
@@ -15,6 +15,9 @@ import (
 
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
+
+	"github.com/cmcoffee/gohort/core/costledger"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 var (
@@ -25,10 +28,10 @@ var (
 // ApplyHTTPTimeouts reads connect/request timeout values from the database and
 // updates the package-level vars used by all source-hook API clients. Called
 // once at startup and again after --setup saves new values.
-func ApplyHTTPTimeouts(db Database) {
+func ApplyHTTPTimeouts(db Store) {
 	var connect_sec, request_sec int
-	db.Get(NetworkTable, "connect_timeout_seconds", &connect_sec)
-	db.Get(NetworkTable, "request_timeout_seconds", &request_sec)
+	db.Get(NetworkConfigTable, "connect_timeout_seconds", &connect_sec)
+	db.Get(NetworkConfigTable, "request_timeout_seconds", &request_sec)
 	if connect_sec > 0 {
 		HTTPConnectTimeout = time.Duration(connect_sec) * time.Second
 	}
@@ -172,7 +175,7 @@ func ActiveSourceHooks() []SourceHook {
 }
 
 // LoadSourceHooks reads hooks from the database.
-func LoadSourceHooks(db Database) {
+func LoadSourceHooks(db Store) {
 	if db == nil {
 		return
 	}
@@ -194,11 +197,11 @@ func LoadSourceHooks(db Database) {
 		}
 	}
 	keys := db.Keys(sourceHookTable)
-	Log("[hooks] source_hooks table has %d keys, loaded %d hooks", len(keys), len(sourceHookRegistry.hooks))
+	nfo.Log("[hooks] source_hooks table has %d keys, loaded %d hooks", len(keys), len(sourceHookRegistry.hooks))
 }
 
 // SaveSourceHook stores a hook in the database.
-func SaveSourceHook(db Database, hook SourceHook) {
+func SaveSourceHook(db Store, hook SourceHook) {
 	if db == nil {
 		return
 	}
@@ -215,7 +218,7 @@ func SaveSourceHook(db Database, hook SourceHook) {
 }
 
 // DeleteSourceHook removes a hook from the database.
-func DeleteSourceHook(db Database, name string) {
+func DeleteSourceHook(db Store, name string) {
 	if db == nil {
 		return
 	}
@@ -461,9 +464,9 @@ func queryOpenAlex(hook SourceHook, query string) (string, error) {
 		endpoint = "https://api.openalex.org/works?per_page=10"
 	}
 	// OpenAlex requests a mailto parameter for polite pool access.
-	mailCfg := LoadMailConfig()
-	if mailCfg.From != "" && !strings.Contains(endpoint, "mailto=") {
-		endpoint += "&mailto=" + url.QueryEscape(mailCfg.From)
+	mailFrom := contactEmail()
+	if mailFrom != "" && !strings.Contains(endpoint, "mailto=") {
+		endpoint += "&mailto=" + url.QueryEscape(mailFrom)
 	}
 
 	parsed, err := url.Parse(endpoint)
@@ -587,16 +590,18 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 	// keyword-style query EDGAR can handle.
 	sanitized := sanitizeEDGARQuery(query)
 	if sanitized != query {
-		Debug("[source-hooks] EDGAR sanitized query: %q -> %q", query, sanitized)
+		nfo.Debug("[source-hooks] EDGAR sanitized query: %q -> %q", query, sanitized)
 	}
 	if sanitized == "" {
 		return "", nil
 	}
 
 	// SEC EDGAR requires a contact email in the User-Agent per their guidelines.
-	contactEmail := "contact@example.com"
-	if cfg := LoadMailConfig(); cfg.From != "" {
-		contactEmail = cfg.From
+	// Local name differs from the hook accessor above it — the deployment's
+	// address when set, the placeholder EDGAR tolerates when not.
+	contact := "contact@example.com"
+	if from := contactEmail(); from != "" {
+		contact = from
 	}
 	client := &apiclient.APIClient{
 		Server:         "efts.sec.gov",
@@ -604,7 +609,7 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 		VerifySSL:      true,
 		ConnectTimeout: HTTPConnectTimeout,
 		RequestTimeout: HTTPRequestTimeout,
-		AgentString:    fmt.Sprintf("Gohort/%s (%s)", AppVersion, contactEmail),
+		AgentString:    fmt.Sprintf("Gohort/%s (%s)", appVersion(), contact),
 	}
 
 	search_path := fmt.Sprintf("/LATEST/search-index?q=%s&dateRange=custom&startdt=2024-01-01&enddt=2026-12-31&forms=10-K,10-Q,8-K&from=0&size=10",
@@ -700,7 +705,7 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 // + normalized query. Skips the API call entirely on cache hit.
 // Main package wires this up via SetHookCacheDB after database init.
 var (
-	hookCacheDB       Database
+	hookCacheDB       Store
 	hookCacheMu       sync.RWMutex
 	hookCacheTTL      = 30 * 24 * time.Hour // 30 days for non-empty results
 	hookCacheEmptyTTL = 7 * 24 * time.Hour  // 7 days for empty results (negative cache)
@@ -711,7 +716,9 @@ var (
 // cache key. Stripping filler words like "and", "or", "the", "a" lets
 // queries that differ only by common connectives collide in the cache.
 // Stopwords from boolean-style CourtListener queries also get stripped.
-var hookCacheStopwords = map[string]bool{
+// Stopwords is exported because the vector store strips the same words when
+// it builds its own keys — one list, so two callers cannot drift apart.
+var Stopwords = map[string]bool{
 	"and": true, "or": true, "not": true,
 	"the": true, "a": true, "an": true,
 	"of": true, "in": true, "on": true, "at": true,
@@ -722,7 +729,7 @@ var hookCacheStopwords = map[string]bool{
 
 // SetHookCacheDB wires the persistent cache backing store. Call once during
 // startup after the database is open. Passing nil disables caching.
-func SetHookCacheDB(db Database) {
+func SetHookCacheDB(db Store) {
 	hookCacheMu.Lock()
 	defer hookCacheMu.Unlock()
 	hookCacheDB = db
@@ -759,7 +766,7 @@ func hookCacheKey(hookName, query string) string {
 	var keep []string
 	seen := make(map[string]bool)
 	for _, t := range tokens {
-		if hookCacheStopwords[t] || seen[t] {
+		if Stopwords[t] || seen[t] {
 			continue
 		}
 		seen[t] = true
@@ -876,7 +883,7 @@ func StartHookCacheSweeper() {
 		go func() {
 			for {
 				if n := SweepHookCache(); n > 0 {
-					Log("[cache] swept %d expired source-hook/auth-domain cache entries", n)
+					nfo.Log("[cache] swept %d expired source-hook/auth-domain cache entries", n)
 				}
 				time.Sleep(24 * time.Hour)
 			}
@@ -887,7 +894,7 @@ func StartHookCacheSweeper() {
 // Expose the sweep as an admin-triggered maintenance action too, so an
 // operator can reclaim space on demand without waiting for the daily pass.
 func init() {
-	RegisterMaintenanceFunc(
+	registerMaintenance(
 		"sweep_expired_caches",
 		"Sweep expired caches",
 		"Remove expired entries from the source-hook result cache and the "+
@@ -967,9 +974,9 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 	// negative-cache hit.
 	if cached, ok := lookupHookCache(hook.Name, query); ok {
 		if cached == "" {
-			Debug("[source-hooks] cache HIT (empty) %s: %q", hook.Name, query)
+			nfo.Debug("[source-hooks] cache HIT (empty) %s: %q", hook.Name, query)
 		} else {
-			Debug("[source-hooks] cache HIT %s: %q (%d chars)", hook.Name, query, len(cached))
+			nfo.Debug("[source-hooks] cache HIT %s: %q (%d chars)", hook.Name, query, len(cached))
 		}
 		return cached, nil
 	}
@@ -981,7 +988,7 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 	// so the cost stays bounded regardless of total index size.
 	if docs := searchHookDocs(hook.Name, query, 10); len(docs) > 0 {
 		result := formatIndexedDocs(docs)
-		Debug("[source-hooks] FTS HIT %s: %q (%d docs)", hook.Name, query, len(docs))
+		nfo.Debug("[source-hooks] FTS HIT %s: %q (%d docs)", hook.Name, query, len(docs))
 		// Store this as a tier-1 cache entry too, so the next
 		// identical query gets served from the fast path.
 		storeHookCache(hook.Name, query, result)
@@ -989,17 +996,17 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 	}
 
 	// Tier 3: live API.
-	Debug("[source-hooks] cache MISS %s: %q — calling live API", hook.Name, query)
+	nfo.Debug("[source-hooks] cache MISS %s: %q — calling live API", hook.Name, query)
 	result, err := queryHookLive(hook, query)
 	if err != nil {
 		// Errors are NOT cached — they might be transient (rate limit,
 		// network issue). Let the next call retry.
-		Debug("[source-hooks] cache SKIP-STORE %s: %q — live error: %v", hook.Name, query, err)
+		nfo.Debug("[source-hooks] cache SKIP-STORE %s: %q — live error: %v", hook.Name, query, err)
 		return result, err
 	}
 	// Cost hook: a real (cache-miss) call to a metered hook hit the API, so
 	// price it into the per-source cost ledger. No-op when CostPerCall is 0.
-	RecordExternalCost("hook:"+hook.Name, hook.Name, hook.CostPerCall)
+	costledger.RecordExternalCost("hook:"+hook.Name, hook.Name, hook.CostPerCall)
 	// Store both empty and non-empty results. Empty results use a
 	// shorter TTL inside lookupHookCache so they get retried sooner.
 	storeHookCache(hook.Name, query, result)
@@ -1007,9 +1014,9 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 	// can find this content without hitting the API.
 	indexHookDocs(hook.Name, result)
 	if result == "" {
-		Debug("[source-hooks] cache STORE (negative) %s: %q", hook.Name, query)
+		nfo.Debug("[source-hooks] cache STORE (negative) %s: %q", hook.Name, query)
 	} else {
-		Debug("[source-hooks] cache STORE %s: %q (%d chars)", hook.Name, query, len(result))
+		nfo.Debug("[source-hooks] cache STORE %s: %q (%d chars)", hook.Name, query, len(result))
 	}
 	return result, err
 }
@@ -1133,7 +1140,7 @@ func ApplyPaywallAuth(req *http.Request) bool {
 	case HookAuthBearer:
 		req.Header.Set("Authorization", "Bearer "+hook.AuthKey)
 	}
-	Debug("[hooks] applied %s auth for %s", hook.Name, req.URL.Hostname())
+	nfo.Debug("[hooks] applied %s auth for %s", hook.Name, req.URL.Hostname())
 	return true
 }
 

@@ -44,7 +44,7 @@ func TestPromotionRequests(t *testing.T) {
 	}
 
 	// Approve clears pending; the pending-only list drops it, the full list keeps it.
-	id := promotionRequestKey("tool", "alice", "weather")
+	id := PromotionRequestKey("tool", "alice", "weather")
 	if err := SetPromotionRequestState(db, id, PromotionApprovedState, "admin"); err != nil {
 		t.Fatal(err)
 	}

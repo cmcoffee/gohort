@@ -6,6 +6,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -129,8 +130,8 @@ func TestCaptionImageIsBestEffort(t *testing.T) {
 	// No session LLM wired: captioning must decline quietly rather than fail
 	// the keep. A reference with no caption is still a usable reference.
 	sess := imageSpaceSession(t)
-	if c := CaptionImage(sess, testPNG(t, 8, 8)); c != "" {
-		t.Fatalf("caption without an LLM = %q, want empty", c)
+	if c, d := CaptionImage(sess, testPNG(t, 8, 8)); c != "" || d != "" {
+		t.Fatalf("caption without an LLM = (%q, %q), want both empty", c, d)
 	}
 	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
 	if _, err := KeepImage(sess, "image#1", "uncaptioned", ""); err != nil {
@@ -260,4 +261,54 @@ func TestInheritanceWalkSurvivesACycle(t *testing.T) {
 	if _, ok := ResolveRecentImage(a, "image#loop_safe"); !ok {
 		t.Fatal("resolution broke on a cyclic parent chain")
 	}
+}
+
+// The two tiers answer different questions, so they're parsed apart from one
+// reply: a label for listings, and the detail memory stores. A model that
+// answers with one line only must still yield a usable label.
+func TestCaptionSplitsLabelFromDetail(t *testing.T) {
+	sess := imageSpaceSession(t)
+	sess.LLM = &fakeCaptionLLM{reply: "Navy circular logo mark\n\nA dark navy circle centered on white, with a lowercase white sans-serif wordmark across the lower third. Flat, no gradients."}
+	caption, description := CaptionImage(sess, testPNG(t, 8, 8))
+	if caption != "Navy circular logo mark" {
+		t.Errorf("caption = %q, want the first line only", caption)
+	}
+	if !strings.Contains(description, "lowercase white sans-serif") {
+		t.Errorf("description lost the detail memory needs: %q", description)
+	}
+	sess.LLM = &fakeCaptionLLM{reply: "Just one line"}
+	caption, description = CaptionImage(sess, testPNG(t, 8, 8))
+	if caption != "Just one line" || description != "" {
+		t.Errorf("one-line reply = (%q, %q), want the label and no detail", caption, description)
+	}
+}
+
+func TestKeepStoresBothTiers(t *testing.T) {
+	sess := imageSpaceSession(t)
+	sess.LLM = &fakeCaptionLLM{reply: "A bar chart\n\nSix navy bars on a light grid, y-axis labelled in dollars, no legend."}
+	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
+	if _, err := KeepImage(sess, "image#1", "chart_style", ""); err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	// Read back from disk — the sidecar has to carry both or the detail is
+	// lost on the next process.
+	all := KeptImages(sess)
+	if len(all) != 1 || all[0].Caption != "A bar chart" || !strings.Contains(all[0].Description, "navy bars") {
+		t.Fatalf("sidecar lost a tier: %+v", all)
+	}
+	// The manifest stays the SHORT one — it lists every kept image, and the
+	// detailed text belongs in memory, not in a listing.
+	if m := KeptImageManifest(sess); strings.Contains(m, "navy bars") {
+		t.Errorf("manifest carried the detailed description:\n%s", m)
+	}
+}
+
+// fakeCaptionLLM answers the vision pass with a canned reply.
+type fakeCaptionLLM struct {
+	LLM
+	reply string
+}
+
+func (f *fakeCaptionLLM) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+	return &Response{Content: f.reply}, nil
 }

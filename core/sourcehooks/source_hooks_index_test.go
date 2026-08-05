@@ -1,4 +1,4 @@
-package core
+package sourcehooks
 
 import (
 	"fmt"
@@ -9,9 +9,9 @@ import (
 // testCacheDB returns an in-memory kvlite-backed Database wired as the
 // hookCacheDB for the duration of a test. The caller should not assume
 // persistence across tests — each call returns a fresh store.
-func testCacheDB(t *testing.T) Database {
+func testCacheDB(t *testing.T) Store {
 	t.Helper()
-	db := OpenCache()
+	db := newMemStore()
 	SetHookCacheDB(db)
 	t.Cleanup(func() {
 		SetHookCacheDB(nil)
