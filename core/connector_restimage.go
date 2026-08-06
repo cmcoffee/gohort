@@ -782,6 +782,9 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 			Seed:     seed,
 			Images:   uploaded,
 			Mask:     mask,
+			// What this backend ASKS for, so a deliberate cap below the mapped
+			// node count is not read as an underfilled graph.
+			ExpectedImages: s.MaxImages(),
 		})
 		if berr != nil {
 			return out, berr

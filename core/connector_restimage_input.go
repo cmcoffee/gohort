@@ -57,7 +57,11 @@ func resolveInputImages(sess *ToolSession, refs []string, max int) ([]inputImage
 		return nil, nil
 	}
 	if max > 0 && len(refs) > max {
-		return nil, fmt.Errorf("this backend takes at most %d image(s), got %d", max, len(refs))
+		// Say what NOT to do. Given a bare limit the model retried with fewer
+		// pictures and reported the blend as done — so the user who asked for
+		// three images combined got one, and was told it had worked.
+		return nil, fmt.Errorf("this backend takes at most %d image(s) and %d were given. Do NOT retry with fewer and present it as the blend that was asked for — a composite missing pictures is not the picture requested. Tell the user this backend can combine only %d at a time",
+			max, len(refs), max)
 	}
 	out := make([]inputImage, 0, len(refs))
 	for _, raw := range refs {

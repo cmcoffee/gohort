@@ -355,6 +355,12 @@ type ComfyBuildInput struct {
 	// ComfyMap.ImageNodes[0], and so on.
 	Images []ComfyUploadedImage
 	Mask   *ComfyUploadedImage
+	// ExpectedImages is how many source photos this backend actually asks a
+	// caller for — MaxInputImages when the operator set one, otherwise the
+	// number of mapped image nodes. Supplied so the partial-fill check below
+	// does not fire on a backend deliberately capped below its node count.
+	// Zero means "as many nodes as are mapped".
+	ExpectedImages int
 }
 
 // ComfyUploadedImage is an input image already stored on the ComfyUI server —
@@ -449,6 +455,25 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	// once a day, for as long as that backend was the configured provider.
 	if len(m.ImageNodes) > 0 && len(in.Images) == 0 {
 		return "", fmt.Errorf("this backend composes SOURCE PHOTOS (%d image input%s) and was asked for a text-only render — it would draw against whatever placeholder its workflow was saved with. Use a text-to-image backend for this, or supply the source image(s)", len(m.ImageNodes), map[bool]string{true: "s", false: ""}[len(m.ImageNodes) != 1])
+	}
+	// PARTIAL fill is the same failure as none, and it shipped for the same
+	// reason: only as many nodes are written as there are images, so a graph
+	// with three inputs given one photo runs its other two against the
+	// filenames the workflow was SAVED with. The render succeeds and returns a
+	// composite of one picture the caller supplied and two from whenever the
+	// workflow was exported — which reads as "it only blended one of my
+	// images", not as a wiring error, so nothing about it looks like a bug.
+	//
+	// Erroring is the same choice made directly above for the zero case: the
+	// caller can supply the missing photos or the backend can map fewer nodes,
+	// and either beats a picture nobody can account for.
+	want := in.ExpectedImages
+	if want <= 0 || want > len(m.ImageNodes) {
+		want = len(m.ImageNodes)
+	}
+	if len(in.Images) < want {
+		return "", fmt.Errorf("this backend composes %d source photos and got %d — the unfilled input(s) would render against whatever placeholder the workflow was saved with, so this would silently blend a picture from some earlier session. Supply %d image(s), or map fewer image_nodes in the backend config",
+			want, len(in.Images), want)
 	}
 	for i, img := range in.Images {
 		if err := setComfyImage(graph, m.ImageNodes[i], imageKey, img); err != nil {

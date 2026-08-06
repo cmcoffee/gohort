@@ -170,8 +170,14 @@ func (a imageActions) imagesParamDesc() string {
 		"For a picture a TOOL gave you — found, downloaded or generated — use the workspace filename it returned. That names one picture and goes on naming it. " +
 		"Use \"media#1\", \"media#2\" ONLY for a photo the USER ATTACHED to their message, numbered in the order they arrived, so media#1 is the first one they sent. Nothing you produced yourself is ever a media#N. " +
 		"For a picture from earlier in the conversation whose filename is gone, \"image#1\" is the most recent one either of you produced or received (call action=\"help\" to list them; these numbers SHIFT as new pictures are saved). "
-	if n := a.maxEditImages(); n > 1 {
-		d += "Up to " + strconv.Itoa(n) + ". ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
+	switch n := a.maxEditImages(); {
+	case n > 1:
+		d += "Up to " + strconv.Itoa(n) + ", and this backend expects EXACTLY that many when composing: pass all " + strconv.Itoa(n) + " for a blend. ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
+	case n == 1:
+		// Stated, because the alternative is discovering it by failing: asked to
+		// combine three pictures the model picked one, blended nothing, and
+		// called it done.
+		d += "This backend changes ONE picture at a time and cannot composite several — if the user asks to combine pictures, tell them that rather than choosing one of them. "
 	}
 	d += "A picture you kept under a name is \"image#<that name>\" and stays valid indefinitely. "
 	return d + "A web URL is NOT accepted — fetch it first, then pass the saved filename."
