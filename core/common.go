@@ -1398,6 +1398,13 @@ type ToolSession struct {
 	// deliver to it WITHOUT the approval queue. Empty on web / dispatch runs, so
 	// the gate is unchanged everywhere except a live channel reply.
 	ReplyAuthorizedKey string
+	// ChannelChatID and ChannelHandle name the conversation an inbound arrived
+	// on, kept so work that OUTLIVES the turn can still be delivered back to the
+	// person who asked. ReplyAuthorizedKey collapses the two into one key for an
+	// authorization check; delivery needs them apart, since the transport treats
+	// a chat id and a bare handle differently. Empty on web and dispatch runs.
+	ChannelChatID string
+	ChannelHandle string
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
 	// an in-progress status message to the user mid-turn ("Working on it…").
 	// Each app wires it differently: chat emits an SSE status event, phantom

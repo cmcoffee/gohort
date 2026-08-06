@@ -27,6 +27,11 @@ func (T *OrchestrateApp) installTaskRunner() {
 		if sess == nil {
 			return TaskRun{}, fmt.Errorf("no session")
 		}
+		// The conversation this run is answering, read off the turn while it is
+		// still here. Recovering it later from the session id fails exactly
+		// where it matters — see orchUpdatePayload.ChannelChatID.
+		originChat := strings.TrimSpace(sess.ChannelChatID)
+		originHandle := strings.TrimSpace(sess.ChannelHandle)
 		sessionID := strings.TrimSpace(sess.ChatSessionID)
 		if sessionID == "" {
 			// Nowhere to deliver the result. Better to run inline than to
@@ -66,7 +71,7 @@ func (T *OrchestrateApp) installTaskRunner() {
 			defer func() {
 				if r := recover(); r != nil {
 					run.Complete(RunStatusFailed)
-					T.deliverTaskResult(sessionID, sess.Username, agentID, label, TaskProduct{}, fmt.Errorf("task panicked: %v", r))
+					T.deliverTaskResult(taskOrigin{sessionID, sess.Username, agentID, originChat, originHandle}, label, TaskProduct{}, fmt.Errorf("task panicked: %v", r))
 				}
 			}()
 			out, err := fn(ctx)
@@ -81,7 +86,7 @@ func (T *OrchestrateApp) installTaskRunner() {
 			} else {
 				run.Complete(RunStatusCompleted)
 			}
-			T.deliverTaskResult(sessionID, sess.Username, agentID, label, out, err)
+			T.deliverTaskResult(taskOrigin{sessionID, sess.Username, agentID, originChat, originHandle}, label, out, err)
 		}()
 
 		return TaskRun{ID: run.ID, Label: label}, nil
@@ -100,20 +105,31 @@ func (T *OrchestrateApp) installTaskRunner() {
 // the picture rides out on the same message that announces it. Putting them in
 // the model's hands instead — "the file is at this path, attach it" — is what
 // produced a finished render, an announcement that it was done, and no picture.
-func (T *OrchestrateApp) deliverTaskResult(sessionID, user, agentID, label string, out TaskProduct, taskErr error) {
+// taskOrigin is where a background task came FROM, and therefore where its
+// result has to go back to. Grouped rather than passed as five arguments,
+// because every hop between the detach and the delivery needs all of it.
+type taskOrigin struct {
+	SessionID string
+	User      string
+	AgentID   string
+	ChatID    string // the messaging conversation, when the task began on one
+	Handle    string
+}
+
+func (T *OrchestrateApp) deliverTaskResult(origin taskOrigin, label string, out TaskProduct, taskErr error) {
 	// What came back, and what to do about it, kept apart. The first half is
 	// FACT and is worth keeping in the thread: it names the handle for a
 	// finished picture, the id of a produced file — the thing the user's next
 	// message ("make it brighter") has to refer to. The second half is an
 	// instruction for one turn only, and an instruction left lying in history
 	// is one the model can read again three turns later and obey a second time.
-	note := buildWakeNote(sessionID, label, out, taskErr)
+	note := buildWakeNote(origin.SessionID, label, out, taskErr)
 	// Give a live turn a moment to take it as a note before starting one of our
 	// own: landing mid-answer reads better than a second message arriving on
 	// top of one already streaming.
 	time.Sleep(taskWakeGrace)
-	if err := T.wakeSessionWithNote(sessionID, user, agentID, note); err != nil {
-		Warn("[task] could not deliver result into session %s: %v", sessionID, err)
+	if err := T.wakeSessionWithNote(origin, note); err != nil {
+		Warn("[task] could not deliver result into session %s: %v", origin.SessionID, err)
 	}
 }
 
@@ -166,23 +182,26 @@ var (
 // its session before this result existed — joining it would deliver the text
 // and strand the picture, which is the exact failure this staging exists to
 // end. It gets its own turn, where the fold is deterministic.
-func (T *OrchestrateApp) wakeSessionWithNote(sessionID, user, agentID string, note wakeNote) error {
+func (T *OrchestrateApp) wakeSessionWithNote(origin taskOrigin, note wakeNote) error {
+	sessionID, user := origin.SessionID, origin.User
 	if q := lookupInjectionQueue(sessionID); q != nil && q.Owner == user && !hasStagedAttachments(sessionID) {
 		q.Push(note.prompt)
 		return nil
 	}
-	if T.bufferWake(sessionID, user, agentID, note) {
+	if T.bufferWake(origin, note) {
 		return nil // an earlier completion owns the turn and will carry this one
 	}
-	return T.startWakeTurn(sessionID, user, agentID, note)
+	return T.startWakeTurn(origin, note)
 }
 
 // startWakeTurn opens a fresh turn carrying a finished task's result.
-func (T *OrchestrateApp) startWakeTurn(sessionID, user, agentID string, note wakeNote) error {
+func (T *OrchestrateApp) startWakeTurn(origin taskOrigin, note wakeNote) error {
 	return fireOrchestrateUpdate(context.Background(), orchUpdatePayload{
-		SessionID:   sessionID,
-		AgentID:     agentID,
-		Username:    user,
+		SessionID:     origin.SessionID,
+		AgentID:       origin.AgentID,
+		Username:      origin.User,
+		ChannelChatID: origin.ChatID,
+		ChannelHandle: origin.Handle,
 		Prompt:      note.prompt,
 		HistoryNote: note.history,
 		Name:        "background task",
@@ -201,7 +220,8 @@ func (T *OrchestrateApp) startWakeTurn(sessionID, user, agentID string, note wak
 // Anything arriving inside the window is buffered instead, and goes out as one
 // further message when the window closes. That keeps a lone result prompt (the
 // common case) while a burst still collapses to two messages rather than N.
-func (T *OrchestrateApp) bufferWake(sessionID, user, agentID string, note wakeNote) bool {
+func (T *OrchestrateApp) bufferWake(origin taskOrigin, note wakeNote) bool {
+	sessionID, user := origin.SessionID, origin.User
 	if !claimWakeWindow(sessionID, note) {
 		return true // a window is open; whoever owns it will carry this one
 	}
@@ -218,7 +238,7 @@ func (T *OrchestrateApp) bufferWake(sessionID, user, agentID string, note wakeNo
 			q.Push(joinWakeNotes(notes).prompt)
 			return
 		}
-		if err := T.startWakeTurn(sessionID, user, agentID, joinWakeNotes(notes)); err != nil {
+		if err := T.startWakeTurn(origin, joinWakeNotes(notes)); err != nil {
 			Warn("[task] could not deliver %d result(s) into session %s: %v", len(notes), sessionID, err)
 		}
 	}()
@@ -454,6 +474,26 @@ func channelTargetForWake(owner, agentID, sessionID string) (chatID, handle stri
 	return addr, "", true
 }
 
+// wakeChannelTarget answers where a finished task's result should be SENT.
+//
+// The captured origin wins. It is the conversation the work was actually asked
+// for in, recorded while the turn that started it was still running, and it is
+// right in the cases derivation cannot reach: a whole-service channel binds
+// with an empty Address, and a cortex agent collapses every contact into one
+// home thread, so the session id names the agent rather than the person. That
+// combination — the ordinary way to put an agent on a messaging service —
+// resolved no recipient at all, and every background result it ever produced
+// went to the transcript while the person who asked heard nothing.
+//
+// Derivation stays as the fallback, for a task that detached before the origin
+// was carried and whose payload therefore has none.
+func wakeChannelTarget(p orchUpdatePayload) (chatID, handle string, ok bool) {
+	if c, h := strings.TrimSpace(p.ChannelChatID), strings.TrimSpace(p.ChannelHandle); c != "" || h != "" {
+		return c, h, true
+	}
+	return channelTargetForWake(p.Username, p.AgentID, p.SessionID)
+}
+
 // deliverWakeToChannel sends a finished task's result out over the conversation
 // that asked for it. No-op for a web session, and no-op when the turn already
 // sent something itself — a model that called send_message has delivered, and a
@@ -462,8 +502,16 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 	if !isTaskWake(p.Prompt) || toolCallsInclude(toolTrace, "send_message") {
 		return
 	}
-	chatID, handle, ok := channelTargetForWake(p.Username, p.AgentID, p.SessionID)
+	chatID, handle, ok := wakeChannelTarget(p)
 	if !ok {
+		// Say so. A silent return here is what hid this for as long as it was
+		// broken: the work finished, the thread showed it, and the only person
+		// who could tell it had not been delivered was the one waiting for it.
+		// A web session is the ordinary case and says nothing; a session that
+		// LOOKS like a channel and resolved nobody is the one worth a line.
+		if strings.HasPrefix(p.SessionID, "chan:") || p.SessionID == cortexSessionID(p.AgentID) {
+			Log("[task] finished work for session %s has no deliverable recipient — it is in the thread but was NOT sent to the conversation", p.SessionID)
+		}
 		return
 	}
 	text := strings.TrimSpace(StripMetaTags(reply))

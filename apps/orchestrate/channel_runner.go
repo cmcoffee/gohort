@@ -335,6 +335,12 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// Replying BACK to this same conversation is in-thread, not a
 			// proactive reach-out — so it skips the send approval gate.
 			ReplyAuthorizedKey: operatorRecipientKey(in.ChatID, in.Handle),
+			// The conversation itself, kept apart from the authorization key:
+			// work that outlives this turn is delivered back HERE, and the
+			// session id alone cannot say where "here" is once a whole-service
+			// binding or a cortex home has collapsed it.
+			ChannelChatID: in.ChatID,
+			ChannelHandle: in.Handle,
 			// Tell the agent which channel/transport this arrived on (LLM-only,
 			// not persisted) so it knows its reply goes straight back here and
 			// doesn't confabulate a destination or offer to "send it to" the

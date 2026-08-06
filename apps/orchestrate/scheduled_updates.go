@@ -85,6 +85,19 @@ type orchUpdatePayload struct {
 	// is what an ordinary recurring fire wants.
 	HistoryNote string `json:"history_note,omitempty"`
 
+	// ChannelChatID / ChannelHandle are the conversation a BACKGROUND TASK was
+	// started from, captured at detach time and carried to delivery.
+	//
+	// Recovering it afterwards from SessionID does not work in the case that
+	// matters most: a whole-service channel binds with an empty Address (it
+	// matches every thread on the service), and a cortex agent collapses all of
+	// them into one home thread — so the id names the agent, not the person, and
+	// there is nothing left to derive a recipient FROM. That configuration
+	// silently delivered nothing, forever. Derivation stays as the fallback for
+	// records written before this existed.
+	ChannelChatID string `json:"channel_chat_id,omitempty"`
+	ChannelHandle string `json:"channel_handle,omitempty"`
+
 	IntervalSeconds int    `json:"interval_seconds"`
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`

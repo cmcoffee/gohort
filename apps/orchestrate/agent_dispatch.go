@@ -850,6 +850,12 @@ type AgentSyncRun struct {
 	// without the approval gate — replying to whoever just messaged you is not a
 	// proactive reach-out. Empty for dispatch / web runs. See ToolSession.
 	ReplyAuthorizedKey string
+	// ChannelChatID / ChannelHandle name the conversation this run is answering,
+	// carried separately from ReplyAuthorizedKey (which fuses them into one
+	// authorization key). Delivery of work that outlives the turn needs them
+	// apart: the transport treats a chat id and a bare handle differently.
+	ChannelChatID string
+	ChannelHandle string
 	// SurfaceContext, when set, is a one-line provenance note appended to the
 	// LLM's copy of THIS user message only (NOT persisted to the transcript, so
 	// it doesn't bloat a long thread on replay). A channel inbound passes it so
@@ -1126,6 +1132,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		AgentID:            target.ID,
 		IntentText:         message,                // Tier-1 tool elevation matches against the brief
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
+		ChannelChatID:      run.ChannelChatID,      // so a background task can still reach this conversation
+		ChannelHandle:      run.ChannelHandle,
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}
 	// Inherit the delegator's workspace when there is one — the sub-agent is
