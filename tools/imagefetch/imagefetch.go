@@ -429,11 +429,24 @@ func imageSchemaFor(a imageActions) imageSchema {
 		// wrong face is not a worse rendering, it is a picture of somebody
 		// else. So the rule is not "prefer a reference", it is "work from the
 		// best picture you can obtain, and generate only what is imaginary".
+		if a.generate && a.find {
+			// Stated as the complement, because a rule that only says when to
+			// search reads as "search first, always" — and a search for "a dog
+			// on a skateboard" returns somebody's photo to imitate instead of
+			// the picture that was asked for.
+			desc += " A GENERIC subject — a dog, a mountain, a businessman, a house — has no particular thing to find a picture OF, so generate it directly and do not search first."
+		}
 		if a.generate {
 			desc += " A REAL, specific subject — a named person, someone the user knows, a particular place, product or logo — is depicted FROM A PICTURE OF IT, never from a text prompt: generation invents a likeness, which for a real person is simply somebody else's face."
 			switch {
 			case a.edit && a.find:
-				desc += " Use the best picture you have of them — one kept, or one that arrived with the request — and if you have none, find one first and work from that."
+				desc += " Use the best picture you have of them — one kept, or one that arrived with the request — and if you have none, find one first and work from that." +
+					// Without this the rule dead-ends. Told to find a reference
+					// and finding nothing, the model either stalls or quietly
+					// generates anyway — and an invented likeness delivered
+					// without comment is a picture of somebody else presented
+					// as the person who was asked for.
+					" If the search turns up nothing usable, generate it and SAY you could not find a reference, so nobody takes the likeness for the real person."
 			case a.edit:
 				desc += " Use the best picture you have of them — one kept, or one that arrived with the request — and if you have none, ask for one rather than inventing it."
 			case a.find:

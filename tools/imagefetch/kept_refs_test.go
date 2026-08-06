@@ -226,3 +226,31 @@ func TestUsingAReferenceIsTheDefaultNotAnOffer(t *testing.T) {
 		t.Error("the schema should require naming the reference that was used")
 	}
 }
+
+// Told to find a reference and finding nothing, the rule dead-ends: the model
+// stalls, or quietly generates and hands over an invented likeness as though it
+// were the person asked for.
+func TestSearchFallbackIsStated(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+	if !strings.Contains(desc, "If the search turns up nothing usable, generate it and SAY you could not find a reference") {
+		t.Error("the rule must say what to do when the search finds nothing")
+	}
+}
+
+// A rule that only says when to search reads as "search first, always" — and a
+// search for a generic subject returns somebody's photo to imitate instead of
+// the picture that was asked for.
+func TestGenericSubjectsAreGeneratedNotSearched(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+	if !strings.Contains(desc, "A GENERIC subject") || !strings.Contains(desc, "do not search first") {
+		t.Error("the complement should tell the model when NOT to search")
+	}
+	// Without a search backend there is nothing to opt out of.
+	noFind := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+	if strings.Contains(noFind, "do not search first") {
+		t.Error("with no search wired the complement points at nothing")
+	}
+}
