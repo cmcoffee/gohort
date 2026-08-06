@@ -911,6 +911,13 @@ type AgentSyncResult struct {
 	// empty output use this to say something TRUE about why — the generic
 	// "could you rephrase it" blames the request, and the request was fine.
 	PhantomDelivery bool
+	// ToolsUsed names the tools the turn actually called, in first-use order and
+	// deduped. A channel turn's whole record in the standing thread was its
+	// inbound text and its reply, so anything it DID on the owner's behalf —
+	// searched, edited a picture, messaged someone, armed a monitor — left no
+	// trace there at all. Names only: the standing thread is bounded by a
+	// rolling summary, and arguments would crowd out the awareness it exists for.
+	ToolsUsed []string
 	// Silenced reports that the model DELIBERATELY chose to say nothing —
 	// stay_silent fired. Distinct from Text being empty by accident, which is a
 	// failure. Callers that substitute a fallback for empty output must not do
@@ -1669,7 +1676,28 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if len(imgs) > 0 || len(vids) > 0 {
 		phantomDelivery = false // the backstop recovered something after all
 	}
-	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, Silenced: subSess != nil && subSess.Silenced}, nil
+	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, ToolsUsed: toolNamesFromTranscript(transcript), Silenced: subSess != nil && subSess.Silenced}, nil
+}
+
+// toolNamesFromTranscript reads the tools a run called out of the transcript
+// the loop already returns — no new plumbing, and it cannot drift from what
+// actually ran. First-use order, deduped: "searched twice then sent one
+// message" is the same awareness as "searched, sent a message", and the
+// standing thread pays for every line it keeps.
+func toolNamesFromTranscript(msgs []Message) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range msgs {
+		for _, tc := range m.ToolCalls {
+			name := strings.TrimSpace(tc.Name)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

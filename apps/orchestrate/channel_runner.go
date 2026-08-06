@@ -111,6 +111,20 @@ func channelSurfaceContext(in ChannelInbound) string {
 // e.g. "iPhone (iMessage)"), so the standing thread — and any session that
 // forks from it — records which channel a message came in on, not just who
 // sent it. Falls back to the bare sender when no channel resolves.
+// toolsUsedNote renders the tools a turn called for the standing thread.
+// Bounded: a turn that called fifteen things says so without spending fifteen
+// lines of a thread that is kept by rolling summary.
+func toolsUsedNote(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	const max = 8
+	if len(names) <= max {
+		return "↳ used: " + strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("↳ used: %s and %d more", strings.Join(names[:max], ", "), len(names)-max)
+}
+
 func channelObsFrom(in ChannelInbound) string {
 	who := chFirst(in.SenderName, in.ConversationName, "someone")
 	ch, ok := channelForChat(in.Owner, in.ChatID, in.Handle)
@@ -374,6 +388,14 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// agent has Cortex off. The agent ALSO replied in its per-contact thread
 		// (above); this is just awareness, not a second run.
 		obs := strings.TrimSpace(in.Text)
+		// What it DID, not only what it said. Without this the standing thread
+		// recorded a question and an answer while the turn might have searched
+		// the web, edited a photo, messaged a third party or armed a monitor —
+		// so a later turn reading its own thread could not see what it had
+		// already done on the owner's behalf.
+		if used := toolsUsedNote(res.ToolsUsed); used != "" {
+			obs = strings.TrimSpace(obs + "\n" + used)
+		}
 		if rt := strings.TrimSpace(replyText); rt != "" {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
