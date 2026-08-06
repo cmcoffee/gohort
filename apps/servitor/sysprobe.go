@@ -67,11 +67,61 @@ const (
 	RiskDataMutate RiskCategory = "data_mutate" // changes data in a database
 	RiskNetEgress  RiskCategory = "net_egress"  // makes an outbound call from the appliance
 	RiskSysControl RiskCategory = "sys_control" // stops services, reboots, firewall/user/kernel
+	// RiskPkgInstall installs, upgrades or removes software. Its own category
+	// rather than folded into sys_control, because it is the strongest verb on
+	// the box and deserves to be grantable on its own terms: an install pulls
+	// code from a remote index and runs it as root, which is a superset of what
+	// net_egress and sys_control were carved out to gate. Until this existed,
+	// "apt-get install -y anything" classified as RiskNone and ran unprompted.
+	RiskPkgInstall RiskCategory = "pkg_install"
 )
 
 // AllRiskCategories is every gate-able category, in display order. Used to
 // validate --allow and to render the help.
-var AllRiskCategories = []RiskCategory{RiskFileDelete, RiskDataMutate, RiskNetEgress, RiskSysControl}
+var AllRiskCategories = []RiskCategory{RiskFileDelete, RiskDataMutate, RiskNetEgress, RiskSysControl, RiskPkgInstall}
+
+// pkg_verbs maps a package manager to the sub-commands that CHANGE what is
+// installed. Verb-split on purpose: reading the package list is most of what an
+// investigation does — "dpkg -l", "apt list --installed", "pip freeze", "npm
+// ls" — and gating those would make every survey stop for permission while
+// teaching nobody anything about risk.
+//
+// Language managers are here beside the system ones: pip, npm, gem and cargo
+// install-and-execute too, and a build script from an index runs with whatever
+// the session has.
+var pkg_verbs = map[string]struct {
+	verbs []string
+}{
+	"apt":            {[]string{"install", "remove", "purge", "upgrade", "full-upgrade", "dist-upgrade", "autoremove"}},
+	"apt-get":        {[]string{"install", "remove", "purge", "upgrade", "dist-upgrade", "autoremove"}},
+	"aptitude":       {[]string{"install", "remove", "purge", "full-upgrade", "safe-upgrade"}},
+	"dpkg":           {[]string{"-i", "--install", "-r", "--remove", "-P", "--purge"}},
+	"yum":            {[]string{"install", "remove", "erase", "update", "upgrade", "downgrade", "reinstall"}},
+	"dnf":            {[]string{"install", "remove", "erase", "update", "upgrade", "downgrade", "reinstall"}},
+	"rpm":            {[]string{"-i", "--install", "-U", "--upgrade", "-e", "--erase", "-F", "--freshen"}},
+	"apk":            {[]string{"add", "del", "upgrade", "fix"}},
+	"pacman":         {[]string{"-S", "-R", "-U", "-Syu"}},
+	"zypper":         {[]string{"install", "remove", "update", "dup", "patch"}},
+	"emerge":         {[]string{"--unmerge", "-C", "world", "@world"}},
+	"snap":           {[]string{"install", "remove", "refresh", "revert"}},
+	"flatpak":        {[]string{"install", "uninstall", "update"}},
+	"brew":           {[]string{"install", "uninstall", "upgrade", "reinstall"}},
+	"pkg":            {[]string{"install", "delete", "remove", "upgrade"}},
+	"nix-env":        {[]string{"-i", "--install", "-e", "--uninstall", "-u", "--upgrade"}},
+	"pip":            {[]string{"install", "uninstall"}},
+	"pip3":           {[]string{"install", "uninstall"}},
+	"npm":            {[]string{"install", "i", "uninstall", "remove", "rm", "update", "ci"}},
+	"yarn":           {[]string{"add", "remove", "upgrade", "install"}},
+	"pnpm":           {[]string{"add", "remove", "update", "install"}},
+	"gem":            {[]string{"install", "uninstall", "update"}},
+	"cargo":          {[]string{"install", "uninstall"}},
+	"composer":       {[]string{"install", "require", "remove", "update"}},
+	"luarocks":       {[]string{"install", "remove"}},
+	"cpan":           {[]string{"-i"}},
+	"go":             {[]string{"install"}},
+	"gh":             {[]string{"extension"}},
+	"ansible-galaxy": {[]string{"install"}},
+}
 
 // file_delete_cmds remove files or destroy whole filesystems / disks.
 var file_delete_cmds = map[string]bool{
@@ -487,6 +537,18 @@ func classify_command_scoped(cmd, scratch string) (RiskCategory, string) {
 				}
 			}
 		}
+		if pv, ok := pkg_verbs[name]; ok {
+			for _, a := range args {
+				for _, v := range pv.verbs {
+					// Exact match only. A prefix test would catch "installed"
+					// in "apt list --installed", which is the read this split
+					// exists to leave alone.
+					if a == v {
+						return RiskPkgInstall, fmt.Sprintf("%s %s installs or removes software", name, a)
+					}
+				}
+			}
+		}
 		if cv, ok := control_verbs[name]; ok {
 			for _, a := range args {
 				for _, v := range cv.verbs {
@@ -577,7 +639,6 @@ func wordPresent(hay, w string) bool {
 func isIdentByte(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
 }
-
 
 type Servitor struct {
 	input struct {
