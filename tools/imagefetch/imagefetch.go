@@ -430,6 +430,18 @@ func imageSchemaFor(a imageActions) imageSchema {
 			case a.find:
 				desc += " Find a picture of the real subject rather than describing it to a generator."
 			}
+			if a.edit {
+				// All-or-nothing was the trap: holding a picture of one person
+				// and not the other, the whole scene got generated and BOTH
+				// faces came out wrong — including the one there was a photo
+				// of. Partial beats none, every time.
+				// Nobody sends a photo and then wonders whether it will be
+				// used. Offering the choice reads as not having understood the
+				// request, and asking spends a turn on a question with one
+				// answer.
+				desc += " A reference you hold is used by DEFAULT — the person who sent it assumes it will be, so do not ask whether to use their picture and do not offer generating from scratch as an alternative. Use it, then say which reference you worked from."
+				desc += " A scene with several real subjects uses every reference you have and invents only the rest: pass the pictures you hold, name in the prompt which reference is which person, and describe the ones you have no picture of. Never drop a reference because the set is incomplete — one real face beside one invented is strictly better than two invented, and a group photo counts as a reference for each person in it."
+			}
 		}
 	}
 	return imageSchema{desc: desc, params: params}

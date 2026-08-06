@@ -174,3 +174,55 @@ func TestKeptRefsForExcludesAgentMadeImages(t *testing.T) {
 		t.Fatalf("only the user's photo may be offered as a reference, got %+v", refs)
 	}
 }
+
+// Holding a picture of one person and not the other, the all-or-nothing reading
+// generates the whole scene — and the face there WAS a photo of comes out wrong
+// too. Partial references have to be stated as usable on their own.
+func TestPartialReferencesAreStillUsed(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+
+	for _, want := range []string{
+		"uses every reference you have and invents only the rest",
+		"Never drop a reference because the set is incomplete",
+		"group photo counts as a reference for each person in it",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("the mixed-subject rule should state %q", want)
+		}
+	}
+	// Passing several references is useless if the generator can't tell which
+	// is which.
+	if !strings.Contains(desc, "which reference is which person") {
+		t.Error("multiple references need to be identified in the prompt")
+	}
+}
+
+// Without an editor there is nowhere to pass references, so the rule would be
+// telling the model to do something it cannot.
+func TestPartialReferenceRuleNeedsAnEditor(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, find: true}).desc
+	if strings.Contains(desc, "uses every reference you have") {
+		t.Error("without an edit action there is nothing to pass references to")
+	}
+}
+
+// Somebody who sends a photo assumes it gets used. Offering the choice reads as
+// not having understood, and asking spends a turn on a question with one
+// answer.
+func TestUsingAReferenceIsTheDefaultNotAnOffer(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+
+	if !strings.Contains(desc, "used by DEFAULT") {
+		t.Error("the schema should state that an available reference is used by default")
+	}
+	if !strings.Contains(desc, "do not ask whether to use their picture") {
+		t.Error("the schema should forbid asking permission to use a supplied reference")
+	}
+	// And it should close the loop: say which reference was used, or the user
+	// cannot tell it happened.
+	if !strings.Contains(desc, "say which reference you worked from") {
+		t.Error("the schema should require naming the reference that was used")
+	}
+}
