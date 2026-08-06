@@ -43,6 +43,18 @@ type TemplateField struct {
 	// no upload endpoint, and nothing leaves the browser until Save.
 	Accept string `json:"accept,omitempty"` // input accept attribute, e.g. ".json,application/json"
 	Into   string `json:"into,omitempty"`   // key of the field this file's text populates
+
+	// SuggestFrom names a key in the template's values whose entry is a list of
+	// {value,label} candidates for THIS field. Unlike Options (a fixed list in
+	// the declaration), these are computed from what the admin has actually
+	// pasted, so a field naming a piece of someone's own document can offer the
+	// pieces that document contains.
+	//
+	// Suggestions, never a restriction: the input stays free text. A candidate
+	// list built by detection must not become the only thing enterable, or a
+	// graph detection reads badly becomes a backend nobody can finish wiring —
+	// which is the failure this exists to end, not to relocate.
+	SuggestFrom string `json:"suggest_from,omitempty"`
 }
 
 // ConnectorTemplate is a DECLARATION — pure data (no funcs), so it can be a Go

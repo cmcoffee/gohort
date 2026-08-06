@@ -330,6 +330,54 @@ func PrettyComfyJSON(s string) string {
 	return s
 }
 
+// ComfyNodeChoice is one node offered as a mapping candidate: the id that goes
+// in the field, and something a human can recognize it by.
+type ComfyNodeChoice struct {
+	Value string `json:"value"` // node id, e.g. "98:6"
+	Label string `json:"label"` // "98:6 — CLIP Text Encode (Positive Prompt) [CLIPTextEncode]"
+}
+
+// ComfyGraphNodes lists every node in a workflow, for a form that asks someone
+// to map roles onto it.
+//
+// Typing "98:22" into a text box requires reading the JSON to find out what
+// 98:22 IS. The graph already carries the answer: ComfyUI writes _meta.title
+// for every node, and those titles are author-written ("Switch(steps)", "Enable
+// Turbo LoRA", "Load Diffusion Model") — far better than either the id or the
+// class alone. Both are included, because a title can be left at its default.
+//
+// Sorted, so the list does not reshuffle between openings of the same form.
+func ComfyGraphNodes(apiJSON string) ([]ComfyNodeChoice, error) {
+	graph, err := parseComfyGraph(apiJSON)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ComfyNodeChoice, 0, len(graph))
+	for _, id := range sortedComfyNodes(graph) {
+		class := comfyClass(graph, id)
+		label := id
+		if title := comfyNodeTitle(graph, id); title != "" && title != class {
+			label += " — " + title
+		}
+		if class != "" {
+			label += " [" + class + "]"
+		}
+		out = append(out, ComfyNodeChoice{Value: id, Label: label})
+	}
+	return out, nil
+}
+
+// comfyNodeTitle reads the human title ComfyUI stores alongside a node. Absent
+// on a hand-written graph, so callers fall back to the class.
+func comfyNodeTitle(graph map[string]map[string]any, id string) string {
+	meta, ok := graph[id]["_meta"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	t, _ := meta["title"].(string)
+	return strings.TrimSpace(t)
+}
+
 // findComfySampler picks the node that actually DENOISES, which is not always
 // the one whose class name says KSampler.
 //

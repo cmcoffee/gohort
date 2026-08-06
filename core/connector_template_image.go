@@ -144,6 +144,24 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	return raw, warns, err
 }
 
+// comfyNodeChoicesKey is the values-map key carrying the pasted graph's nodes
+// as mapping candidates. Underscored because it is not a field: nothing renders
+// or saves it, and Configure ignores it on the way back in.
+const comfyNodeChoicesKey = "__nodes"
+
+// addComfyNodeChoices attaches the graph's nodes to a values map, when there is
+// a graph to read. Silent on a parse failure: the form is still usable with the
+// workflow box and free-text ids, and the parse error surfaces where the admin
+// acts on it (Detect / Save) rather than as a missing dropdown.
+func addComfyNodeChoices(vals map[string]any, workflow string) {
+	if strings.TrimSpace(workflow) == "" {
+		return
+	}
+	if nodes, err := ComfyGraphNodes(workflow); err == nil && len(nodes) > 0 {
+		vals[comfyNodeChoicesKey] = nodes
+	}
+}
+
 func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
 	var s RestImageSpec
 	_ = json.Unmarshal(spec, &s)
@@ -162,14 +180,37 @@ func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
 		"poll_interval_secs": s.PollIntervalSecs,
 	}
 	comfyMapToVals(s.ComfyMap, vals)
+	addComfyNodeChoices(vals, s.ComfyWorkflow)
 	return vals
 }
 
 func comfyDetect(_ ConnectorTemplate, vals map[string]any) (map[string]any, []string, error) {
 	var s RestImageSpec
-	warns, err := ApplyComfyWorkflow(&s, TemplateStr(vals, "workflow"), TemplateStr(vals, "output_node"))
+	workflow := TemplateStr(vals, "workflow")
+	warns, err := ApplyComfyWorkflow(&s, workflow, TemplateStr(vals, "output_node"))
 	if err != nil {
-		return nil, warns, err
+		// A graph auto-wiring cannot read is not a graph nobody can use.
+		//
+		// Returning the error filled NOTHING: every field stayed blank, the
+		// admin was told their workflow was wrong, and the only way forward was
+		// to read the JSON and type node ids from memory. Every ComfyUI import
+		// failure seen so far has been a DETECTION failure against a correctly
+		// wired graph — a sampler behind a selector, conditioning behind a
+		// guider — and each new model architecture will do it again, because
+		// detection encodes what architectures looked like when it was written.
+		//
+		// So detection degrades to a first guess instead of a verdict: the
+		// obvious nodes are filled in, the graph's own nodes come back as
+		// candidates, and the failure becomes a note rather than a wall. Save
+		// still validates properly — a half-mapped backend must not persist.
+		out := map[string]any{}
+		comfyValsFound(comfyPartialMap(workflow), out)
+		addComfyNodeChoices(out, workflow)
+		if len(out) == 0 {
+			return nil, warns, err // nothing to offer: the JSON itself is unreadable
+		}
+		return out, append(warns, "couldn't wire this graph automatically ("+err.Error()+
+			") — the fields below are BEST GUESSES. Check each against the workflow and pick the right node from the suggestions."), nil
 	}
 	out := map[string]any{
 		"workflow_type":  ComfyWorkflowTypeOf(s.ComfyMap),
@@ -182,15 +223,64 @@ func comfyDetect(_ ConnectorTemplate, vals map[string]any) (map[string]any, []st
 	// admin had typed there. Steps is the case that bites: a graph can drive it
 	// from a switch, or carry several nodes plausibly named "Steps", and the
 	// honest answer is "no opinion", not "".
+	comfyValsFound(s.ComfyMap, out)
+	addComfyNodeChoices(out, workflow)
+	return out, warns, nil
+}
+
+// comfyValsFound writes only the mappings that were actually FOUND. comfyMapToVals
+// writes every key, empty ones included, and the panel applies whatever Detect
+// returns — so a field auto-wiring has no opinion about would come back as ""
+// and wipe what the admin had typed there.
+func comfyValsFound(m ComfyNodeMap, out map[string]any) {
 	detected := map[string]any{}
-	comfyMapToVals(s.ComfyMap, detected)
+	comfyMapToVals(m, detected)
 	for k, v := range detected {
 		if str, ok := v.(string); ok && strings.TrimSpace(str) == "" {
 			continue
 		}
 		out[k] = v
 	}
-	return out, warns, nil
+}
+
+// comfyPartialMap is the fallback when full auto-wiring fails: the mappings that
+// can be read off a graph without understanding how it is wired.
+//
+// Deliberately shallow. It reports what a node IS (a SaveImage, a LoadImage, a
+// node holding literal text) and never what a node MEANS in this graph, because
+// the meaning is exactly what full detection failed to work out. Two text
+// encoders, and the first is offered — a guess, labelled as one, next to the
+// list to correct it from.
+func comfyPartialMap(apiJSON string) ComfyNodeMap {
+	graph, err := parseComfyGraph(apiJSON)
+	if err != nil {
+		return ComfyNodeMap{}
+	}
+	var m ComfyNodeMap
+	m.OutputNode = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "SaveImage") })
+	for _, id := range sortedComfyNodes(graph) {
+		switch class := comfyClass(graph, id); {
+		case strings.Contains(class, "LoadImageMask"):
+			m.MaskNodes = append(m.MaskNodes, id)
+		case strings.Contains(class, "LoadImage"):
+			m.ImageNodes = append(m.ImageNodes, id)
+		}
+	}
+	if len(m.ImageNodes) > 0 {
+		m.ImageKey = "image"
+	}
+	for _, id := range sortedComfyNodes(graph) {
+		if in := comfyInputs(graph, id); hasComfyTextKey(in) {
+			m.PromptNodes, m.TextKeys = []string{id}, comfyTextKeys(in)
+			break
+		}
+	}
+	if l := findComfyNode(graph, func(class string) bool { return strings.Contains(class, "EmptyLatent") }); l != "" {
+		if in := comfyInputs(graph, l); hasKey(in, "width") && hasKey(in, "height") {
+			m.WidthNodes, m.HeightNodes = []string{l}, []string{l}
+		}
+	}
+	return m
 }
 
 // comfyMapFromVals and comfyMapToVals are two halves of one round trip. Wire
@@ -246,18 +336,18 @@ func comfyuiTemplate() ConnectorTemplate {
 			{Key: "workflow_file", Label: "Load workflow from a file", Type: "file", Group: "Connection", Accept: ".json,application/json", Into: "workflow", Help: "Pick the .json ComfyUI wrote with “Save (API Format)”. It is read here in your browser and dropped into the box below for review — nothing is sent until you Save."},
 			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave blank to start from the graph the type above selects. Enable Dev Mode in ComfyUI to get the API-format export. After saving, this shows the graph actually in use."},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local LAN box; a SecureAPI credential name for a hosted/authenticated server."},
-			{Key: "prompt_nodes", Label: "Prompt node(s)", Type: "text", Group: "Node mapping", Help: "node id(s) the prompt is written into"},
-			{Key: "negative_nodes", Label: "Negative node(s)", Type: "text", Group: "Node mapping"},
+			{Key: "prompt_nodes", Label: "Prompt node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey, Help: "node id(s) the prompt is written into"},
+			{Key: "negative_nodes", Label: "Negative node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
 			{Key: "text_keys", Label: "Text input key(s)", Type: "text", Group: "Node mapping", Help: "usually \"text\"; SDXL \"text_g, text_l\""},
-			{Key: "width_nodes", Label: "Width node(s)", Type: "text", Group: "Node mapping"},
-			{Key: "height_nodes", Label: "Height node(s)", Type: "text", Group: "Node mapping"},
-			{Key: "steps_nodes", Label: "Steps node(s)", Type: "text", Group: "Node mapping"},
-			{Key: "seed_nodes", Label: "Seed node(s)", Type: "text", Group: "Node mapping"},
+			{Key: "width_nodes", Label: "Width node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
+			{Key: "height_nodes", Label: "Height node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
+			{Key: "steps_nodes", Label: "Steps node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
+			{Key: "seed_nodes", Label: "Seed node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
 			{Key: "seed_key", Label: "Seed key", Type: "text", Group: "Node mapping", Help: "\"seed\" or \"noise_seed\""},
-			{Key: "output_node", Label: "Output (SaveImage) node", Type: "text", Group: "Node mapping", Help: "the image is read from this node"},
-			{Key: "image_nodes", Label: "Input image node(s)", Type: "text", Group: "Image input", Help: "LoadImage node id(s) a source photo is written into — this is what makes the backend able to EDIT a photo rather than only generate one. ORDER MATTERS for a multi-image compose: the first id gets the caller's first image."},
+			{Key: "output_node", Label: "Output (SaveImage) node", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey, Help: "the image is read from this node"},
+			{Key: "image_nodes", Label: "Input image node(s)", Type: "text", Group: "Image input", SuggestFrom: comfyNodeChoicesKey, Help: "LoadImage node id(s) a source photo is written into — this is what makes the backend able to EDIT a photo rather than only generate one. ORDER MATTERS for a multi-image compose: the first id gets the caller's first image."},
 			{Key: "image_key", Label: "Image input key", Type: "text", Group: "Image input", Advanced: true, Help: "usually \"image\""},
-			{Key: "mask_nodes", Label: "Mask node(s)", Type: "text", Group: "Image input", Advanced: true, Help: "LoadImageMask node id(s), for inpainting a selected region"},
+			{Key: "mask_nodes", Label: "Mask node(s)", Type: "text", Group: "Image input", SuggestFrom: comfyNodeChoicesKey, Advanced: true, Help: "LoadImageMask node id(s), for inpainting a selected region"},
 			{Key: "upload_url", Label: "Upload endpoint", Type: "text", Group: "Image input", Advanced: true, Help: "where source photos are POSTed before the graph runs; defaults to <ComfyUI URL>/upload/image. Must be the same host as the ComfyUI URL."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},

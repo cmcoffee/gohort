@@ -2715,7 +2715,23 @@ const connectorFormDef = `
 window.uiTemplateForm = function(cfg, reload){
   var apiBase = (cfg.target==='tool') ? 'api/tool' : 'api/connector';
   window.uiOpenSimpleModal({ title:(cfg.create?'Add ':'Configure ')+(cfg.label||'backend'), width:'720px', mount:function(body,dlg){
-    var vals=cfg.values||{}, inputs={};
+    var vals=cfg.values||{}, inputs={}, suggestLists=[];
+    // A candidate list is computed from what the admin pasted, so it changes
+    // with the document — rebuilt on load AND after every Detect, or the
+    // options describe a workflow that is no longer in the box.
+    function fillSuggestions(source){
+      suggestLists.forEach(function(sg){
+        var rows=(source&&source[sg.from])||vals[sg.from]||[];
+        sg.el.innerHTML='';
+        rows.forEach(function(o){
+          var op=document.createElement('option');
+          op.value=(o&&o.value!=null)?o.value:o;
+          if(o&&o.label) op.label=o.label;
+          if(o&&o.label) op.textContent=o.label;
+          sg.el.appendChild(op);
+        });
+      });
+    }
     var inCss='width:100%;padding:6px;box-sizing:border-box;font-size:12px;';
     var taCss='width:100%;height:120px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;';
     function heading(t){ var h=document.createElement('div'); h.textContent=t; h.style.cssText='font-size:12px;font-weight:600;margin:12px 0 6px;opacity:0.9;'; body.appendChild(h); }
@@ -2743,6 +2759,14 @@ window.uiTemplateForm = function(cfg, reload){
         };
       }
       else { inp=document.createElement('input'); inp.type=(f.type==='number'?'number':'text'); inp.style.cssText=inCss; }
+      // Suggestions, not a restriction: the input stays typeable, so a field
+      // whose candidates were detected badly is still fillable by hand.
+      if(f.suggest_from){
+        var dlId='ui-sg-'+f.key+'-'+Math.random().toString(36).slice(2,8);
+        var dlEl=document.createElement('datalist'); dlEl.id=dlId;
+        inp.setAttribute('list',dlId); wrap.appendChild(dlEl);
+        suggestLists.push({el:dlEl,from:f.suggest_from});
+      }
       var v=(vals[f.key]!=null?vals[f.key]:(f.default!=null?f.default:''));
       if(f.type==='bool'){ inp.checked=!!v; } else { inp.value=v; }
       inputs[f.key]={el:inp,type:f.type};
@@ -2755,6 +2779,7 @@ window.uiTemplateForm = function(cfg, reload){
     var groups={}, order=[];
     (cfg.fields||[]).forEach(function(f){ if(!groups[f.group]){groups[f.group]=[];order.push(f.group);} groups[f.group].push(f); });
     order.forEach(function(g){ heading(g); groups[g].forEach(makeField); });
+    fillSuggestions(null);
     function collect(){ var out={}; Object.keys(inputs).forEach(function(k){ if(k==='__name'||inputs[k].type==='file')return; var it=inputs[k]; out[k]=(it.type==='bool'?it.el.checked:(it.type==='number'?(parseInt(it.el.value,10)||0):it.el.value)); }); return out; }
     var msg=document.createElement('div'); msg.style.cssText='font-size:12px;white-space:pre-wrap;min-height:16px;margin:6px 0;';
     var actions=document.createElement('div'); actions.style.cssText='margin-top:10px;display:flex;gap:8px;justify-content:flex-end;align-items:center;';
@@ -2763,7 +2788,7 @@ window.uiTemplateForm = function(cfg, reload){
       det.onclick=function(){ msg.textContent=''; det.disabled=true; det.textContent='Detecting…';
         fetch(apiBase+'-detect?template='+encodeURIComponent(cfg.template),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:collect()})})
           .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
-          .then(function(d){ var dv=d.values||{}; Object.keys(dv).forEach(function(k){ if(inputs[k]){ var it=inputs[k]; if(it.type==='bool')it.el.checked=!!dv[k]; else it.el.value=dv[k]; } }); det.disabled=false; det.textContent='Detect';
+          .then(function(d){ var dv=d.values||{}; Object.keys(dv).forEach(function(k){ if(inputs[k]){ var it=inputs[k]; if(it.type==='bool')it.el.checked=!!dv[k]; else it.el.value=dv[k]; } }); fillSuggestions(dv); det.disabled=false; det.textContent='Detect';
             if(d.warnings&&d.warnings.length){ msg.style.color='#f5a623'; msg.textContent='Detected with notes: '+d.warnings.join('; '); } else { msg.style.color='#3fb950'; msg.textContent='Detected.'; } })
           .catch(function(e){ det.disabled=false; det.textContent='Detect'; msg.style.color='#e5484d'; msg.textContent=(e&&e.message)||(''+e); });
       };
