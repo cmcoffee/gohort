@@ -164,3 +164,82 @@ func TestAttributionPhraseMatchesTheOrigin(t *testing.T) {
 		}
 	}
 }
+
+// --- the classifier -------------------------------------------------------
+
+func TestClassifierReadsSelfClaims(t *testing.T) {
+	for _, note := range []string{
+		"User prefers metric units",
+		"Time zone is America/Los_Angeles",
+		"works at Acme Corp",
+		"user is vegetarian",
+		"goes by Robin",
+		"wants shorter answers with no preamble",
+	} {
+		if got := classifyClaimDomain(note); got != ClaimSelf {
+			t.Errorf("%q classified %v, want self", note, got)
+		}
+	}
+}
+
+func TestClassifierReadsWorldClaims(t *testing.T) {
+	for _, note := range []string{
+		"production API needs JWT in the X-Auth header",
+		"the staging server runs Ubuntu 22.04",
+		"the cluster has three nodes",
+		"the database schema has a users table",
+		"the library version is 2.1",
+	} {
+		if got := classifyClaimDomain(note); got != ClaimWorld {
+			t.Errorf("%q classified %v, want world", note, got)
+		}
+	}
+}
+
+// The two vocabularies overlap constantly, and when they do the preference is
+// what the note asserts.
+func TestPreferenceWinsOverTheSystemItNames(t *testing.T) {
+	if got := classifyClaimDomain("prefers the API to return JSON"); got != ClaimSelf {
+		t.Errorf("a preference that names a system is still a preference, got %v", got)
+	}
+	// The same subject, asserted rather than preferred.
+	if got := classifyClaimDomain("the API returns JSON"); got != ClaimWorld {
+		t.Errorf("an assertion about the API is a world-claim, got %v", got)
+	}
+}
+
+// Unknown is a real answer: a false self grants authority nobody earned, and a
+// false world prints "not independently checked" against someone's preference.
+func TestClassifierDeclinesWhenUnsure(t *testing.T) {
+	for _, note := range []string{"Atlas", "mid-June", "follow up on Thursday"} {
+		if got := classifyClaimDomain(note); got != ClaimDomainUnknown {
+			t.Errorf("%q classified %v, want unknown", note, got)
+		}
+	}
+}
+
+// A writer that knows beats any keyword list.
+func TestDeclarationBeatsTheClassifier(t *testing.T) {
+	// The note reads as a world-claim; the caller says it is about the user.
+	if got := domainFor(FactWritePolicy{Domain: ClaimSelf}, "the server is down"); got != ClaimSelf {
+		t.Errorf("an explicit declaration must win, got %v", got)
+	}
+	if got := domainFor(FactWritePolicy{}, "the server is down"); got != ClaimWorld {
+		t.Errorf("with no declaration the classifier decides, got %v", got)
+	}
+}
+
+// End to end: a world-claim stored through the ordinary path comes back marked.
+func TestStoredWorldClaimRecallsAttributed(t *testing.T) {
+	db := memDB(t)
+	StoreMemoryFactP(db, "ns", "the staging server runs Ubuntu 22.04", FactWritePolicy{Source: MemSourceObserved})
+	StoreMemoryFactP(db, "ns", "User prefers metric units", FactWritePolicy{Source: MemSourceObserved})
+
+	block := RenderMemoryFactsBlock(ListMemoryFacts(db, "ns"))
+	if !strings.Contains(block, "Ubuntu 22.04 (recorded from conversation") {
+		t.Errorf("a stored world-claim should recall attributed, got:\n%s", block)
+	}
+	if strings.Contains(block, "metric units (recorded") {
+		t.Errorf("a preference must recall flat, got:\n%s", block)
+	}
+}

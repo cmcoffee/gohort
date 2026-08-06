@@ -54,12 +54,17 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 					Type:        "string",
 					Description: "The fact, as a concise self-contained sentence. Include enough context that the note makes sense out of context months later. Examples: \"User prefers Korean for casual chat, English for technical questions.\" / \"Current project is named Atlas; deadline mid-June.\" / \"Time zone is America/Los_Angeles.\"",
 				},
+				"domain": {
+					Type: "string",
+					Enum: []string{"self", "world"},
+					Description: "Whether the person telling you this SETTLES it. \"self\" = about them — a preference, their name, their goals, how they want you to work; they are the authority and there is nothing to check it against. \"world\" = true or false independently of who said it — a server, a library, a version, a price, how some system behaves; being told it is not the same as having checked it, and recall marks these so a passing remark is not quoted back later as established fact. When a note is both, ask what it ASSERTS: \"prefers the API to return JSON\" is a preference (self); \"the API returns JSON\" is a claim about the API (world).",
+				},
 			},
 			Required: []string{"note"},
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			return t.storeFactNote(stringArg(args, "note"))
+			return t.storeFactNote(stringArg(args, "note"), claimDomainArg(args))
 		},
 	}
 }
@@ -68,7 +73,20 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 // in-prompt) layer. storeFactToolDef routes here, and so does the unified
 // `remember` tool's pin=true branch — one place owns dedup, supersession,
 // and the relevance gate so the two surfaces can't drift.
-func (t *chatTurn) storeFactNote(note string) (string, error) {
+// claimDomainArg reads the model's declaration. Unrecognized or absent leaves
+// it unknown, which the store then classifies from the note — a wrong-looking
+// value is not worth failing a write over.
+func claimDomainArg(args map[string]any) ClaimDomain {
+	switch strings.ToLower(strings.TrimSpace(stringArg(args, "domain"))) {
+	case "self":
+		return ClaimSelf
+	case "world":
+		return ClaimWorld
+	}
+	return ClaimDomainUnknown
+}
+
+func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error) {
 	note = strings.TrimSpace(note)
 	if note == "" {
 		return "", errors.New("note is required")
@@ -85,6 +103,9 @@ func (t *chatTurn) storeFactNote(note string) (string, error) {
 		// (an LLM-recorded figure may be a stale prior). Human-entered facts get
 		// MemSourceUserStated on the admin path instead.
 		Source: MemSourceObserved,
+		// What the model just heard, declared by the only thing that was
+		// there. Unknown falls through to the store's own classifier.
+		Domain: domain,
 	})
 	switch res.Reason {
 	case FactDuplicate:

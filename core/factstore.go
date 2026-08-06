@@ -210,6 +210,61 @@ var slowFactSignals = []string{
 	"phone number", "address is", "email is",
 }
 
+// selfClaimSignals mark a note about the PERSON: their preferences, identity,
+// circumstances, intent. They are the authority on all of it, and there is
+// nothing to check it against.
+//
+// Tested BEFORE the world signals, because the two overlap constantly and the
+// preference is the point when they do: "prefers the API to return JSON" is a
+// preference that happens to name a system, not a claim about the system.
+var selfClaimSignals = []string{
+	"prefers", "prefer ", "likes ", "dislikes", "hates ", "favorite", "favourite",
+	"wants ", "would like", "asked me to", "asks that", "always wants", "never wants",
+	"name is", "goes by", "called ", "pronouns", "birthday", "anniversary",
+	"works at", "works for", "employer", "company is", "job at", "their role", "role is",
+	"lives in", "based in", "located in", "moved to", "resides",
+	"time zone", "timezone", "speaks ", "fluent in",
+	"allergic", "vegetarian", "vegan", "diet", "avoids ",
+	"user is", "user has", "user does", "i am ", "i'm ",
+}
+
+// worldClaimSignals mark a note about something that is true or false
+// independently of who mentioned it — infrastructure, software, organizations,
+// numbers. Being told one is not the same as having checked it.
+var worldClaimSignals = []string{
+	"api", "endpoint", "server", "database", " db ", "hostname", "host is", "port ",
+	"cluster", "node", "deployed", "runs on", "running on", "installed",
+	"repo", "repository", "branch", "commit", "package", "library", "framework",
+	"version", "release", "schema", "table ", "column", "index ",
+	"returns", "requires", "supports", "header", "auth", "token", "certificate",
+	"costs", "price", "quota", "limit is", "capacity",
+	"located at", "url is", "ip is", "dns",
+}
+
+// classifyClaimDomain infers whether the source's word SETTLES a note, from
+// what the note is about.
+//
+// Conservative in both directions, which is why it can return unknown: a false
+// SELF grants authority to something nobody checked, and a false WORLD prints
+// "not independently checked" against somebody's stated preference — which
+// reads as doubting them. Unknown does neither. It is the fallback anyway: the
+// writer declares the domain when it knows (store_fact does), and this covers
+// legacy rows and paths that do not.
+func classifyClaimDomain(note string) ClaimDomain {
+	n := strings.ToLower(note)
+	for _, sig := range selfClaimSignals {
+		if strings.Contains(n, sig) {
+			return ClaimSelf
+		}
+	}
+	for _, sig := range worldClaimSignals {
+		if strings.Contains(n, sig) {
+			return ClaimWorld
+		}
+	}
+	return ClaimDomainUnknown
+}
+
 // classifyVolatility infers a note's Volatility from its subject. Conservative:
 // defaults to VolStable (never flagged stale) and only escalates on a clear
 // signal — a false "stable" is just the status quo, while a false "volatile"
@@ -227,6 +282,16 @@ func classifyVolatility(note string) Volatility {
 		}
 	}
 	return VolStable
+}
+
+// domainFor takes the writer's declaration when there is one and classifies
+// otherwise. A declaration always wins: the caller heard the claim, and no
+// keyword list beats having been there.
+func domainFor(p FactWritePolicy, note string) ClaimDomain {
+	if p.Domain != ClaimDomainUnknown {
+		return p.Domain
+	}
+	return classifyClaimDomain(note)
 }
 
 // factDedupSimThreshold is the cosine cutoff above which two notes
@@ -348,7 +413,7 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		// A fresh fact is confirmed-true as of now, its volatility is inferred from
 		// its subject (category-based, deterministic), and its Source comes from the
 		// write policy (MemSourceUnknown when the caller doesn't set one).
-		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source, Domain: p.Domain},
+		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source, Domain: domainFor(p, note)},
 		Vector:           newVec,
 	}
 	if len(newVec) > 0 {
