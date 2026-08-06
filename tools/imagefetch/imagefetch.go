@@ -90,6 +90,9 @@ type imageActions struct {
 	// `backend` param is advertised only when there's more than one — asking a
 	// model to choose from a set of one is pure schema weight.
 	backends []ImageBackendChoice
+	// inboundMedia is how many photos arrived with THIS request. Drives the
+	// note above; zero on the static schema, which has no session.
+	inboundMedia int
 	// editors are the subset that take source photos. Disjoint from backends:
 	// an img2img graph requires its input, a txt2img graph has nowhere to put
 	// one, so a backend belongs to exactly one action.
@@ -110,8 +113,9 @@ func liveImageActions(sess *ToolSession) imageActions {
 		}
 	}
 	return imageActions{
-		find:  cfg.Provider == "serper" && cfg.APIKey != "",
-		fetch: true,
+		inboundMedia: sess.InboundMediaCount(),
+		find:         cfg.Provider == "serper" && cfg.APIKey != "",
+		fetch:        true,
 		// Not ImageGenerationAvailable(): that only asks whether a provider is
 		// SET, and the provider can be an editing backend. reachableImageBackends
 		// already folds a configured built-in into this list, so counting
@@ -308,10 +312,24 @@ func imageSchemaFor(a imageActions) imageSchema {
 	}
 	if a.generate {
 		desc += "generate (create a NEW image from a text prompt — DALL·E / Stable Diffusion / whatever's wired; generation makes things up, so NOT for real-world reference), "
-		params["prompt"] = ToolParam{Type: "string", Description: "(generate) Detailed description of the image to create."}
+	}
+	// One `prompt`, described for every action that reads it. It used to be
+	// added only for generate and labelled "(generate)", so on an edit the
+	// model treated it as another action's field and left it out — and a blend
+	// with no instructions is the backend's guess at what you wanted, not
+	// yours. Say what it means for each.
+	if a.generate || a.edit {
+		switch {
+		case a.generate && a.edit:
+			params["prompt"] = ToolParam{Type: "string", Description: "(generate) What to create. (edit) What should CHANGE, or HOW the sources should combine — \"make it snowy\", \"put the subject on a beach\", \"one creature with the bear's body and the pig's snout\". Give one on an edit or blend unless you truly want the backend's default treatment: without it the backend decides how to combine them, and the result is its guess rather than the request."}
+		case a.generate:
+			params["prompt"] = ToolParam{Type: "string", Description: "(generate) Detailed description of the image to create."}
+		default:
+			params["prompt"] = ToolParam{Type: "string", Description: "(edit) What should CHANGE about the source photo(s), or HOW they should combine — \"make it snowy\", \"one creature with the bear's body and the pig's snout\". Give one unless you truly want the backend's default treatment: without it the backend decides, and the result is its guess rather than the request."}
+		}
 	}
 	if a.edit {
-		desc += "edit (change an EXISTING photo, or combine several — retouch, restyle, replace a background, composite; needs source image(s), not a blank canvas), "
+		desc += "edit (change an EXISTING photo, or combine several — retouch, restyle, replace a background, composite; needs source image(s), not a blank canvas, and normally a `prompt` saying what should change or how they should combine), "
 		params["images"] = ToolParam{
 			Type:        "array",
 			Items:       &ToolParam{Type: "string"},
@@ -344,6 +362,18 @@ func imageSchemaFor(a imageActions) imageSchema {
 	if a.generate && !a.edit {
 		desc += " NOTE: this deployment can only CREATE images from text — nothing here can modify, blend, or combine existing pictures. If the user asks you to edit, blend, composite, or change a photo, tell them image editing is not configured. Do NOT write a prompt describing the combination and generate a new image instead: that is a different picture, not their photo, and presenting it as the edit is worse than saying it can't be done."
 	}
+	// A photo arrived with THIS request. Said here, in the schema the model
+	// reads before it picks an action, because the media manifest lands further
+	// down with the message and by then the action is often already chosen.
+	// Costs a schema change only on turns that carry an image — which are
+	// already paying cold prefill for the image itself.
+	if a.edit && a.inboundMedia > 0 {
+		desc += fmt.Sprintf(" NOTE: %d picture(s) arrived with this request, addressable as media#1", a.inboundMedia)
+		if a.inboundMedia > 1 {
+			desc += fmt.Sprintf("-media#%d", a.inboundMedia)
+		}
+		desc += ". If the request concerns them, it is an EDIT — pass those ids in images. Do not generate a replacement."
+	}
 	// The decision rule only helps when there's a decision to make.
 	if len(names) > 1 {
 		desc += " Decision:"
@@ -353,11 +383,19 @@ func imageSchemaFor(a imageActions) imageSchema {
 		if a.fetch {
 			desc += " Gave an image URL → fetch."
 		}
-		if a.generate {
-			desc += " Wants something drawn / created / imagined → generate."
-		}
+		// Edit is tested FIRST. Read in the other order, "make x sit in y" trips
+		// "wants something drawn / created" before anything mentions that a
+		// photo is involved — and the model produces a different picture that
+		// ignores theirs, which is the single most reported failure of this
+		// tool.
 		if a.edit {
-			desc += " Points at an EXISTING picture (\"this photo\", \"the one you just made\", \"combine these\") → edit."
+			desc += " A picture already exists and the ask is about THAT picture (\"this photo\", \"the one you just made\", \"combine these\", \"make x sit in y\", \"put x in it\", \"add x\", \"make it night\") → edit, passing its id in images."
+		}
+		if a.generate {
+			desc += " Wants something drawn / created / imagined FROM NOTHING, with no existing picture involved → generate."
+		}
+		if a.edit && a.generate {
+			desc += " When a photo came with the request, generate is almost never right: it draws a NEW scene and the user's picture takes no part in it."
 		}
 	}
 	return imageSchema{desc: desc, params: params}

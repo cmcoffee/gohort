@@ -944,14 +944,15 @@ func buildInboundMediaManifest(sender string, imageCount int) string {
 	}
 	who := strings.TrimSpace(sender)
 	var b strings.Builder
-	b.WriteString("\n[media on this turn. Each item below is shown to you directly as multimodal content you can see now; do NOT call any tool to fetch, download, or find it. Refer to a specific item by its id.]")
+	b.WriteString("\n[media on this turn. Each item below is shown to you directly as multimodal content you can see now; no tool is needed to FETCH, download, or find it. Refer to a specific item by its id.]")
 	for i := 1; i <= imageCount; i++ {
 		fmt.Fprintf(&b, "\n  media#%d: image", i)
 		if who != "" {
 			b.WriteString(" from " + who)
 		}
 	}
-	b.WriteString("\n  Everyone in THIS conversation already received these, so do NOT send one back here; re-attaching a photo that was just posted only echoes it to the same group. Reference a media#N only to FORWARD it to a DIFFERENT recipient, by passing attachments:[\"media#N\"] to a messaging tool. Refer to an item by its id in your text; do NOT retype or invent a filename for it, the id is its only handle.")
+	b.WriteString("\n  To CHANGE one of these pictures, pass its id to the image tool: image(action=\"edit\", images=[\"media#1\"], prompt=\"...\"). That is how \"put the cat in this photo\", \"make it night\", or \"blend these two\" is done. Do NOT generate a new picture from a text prompt when you were asked to change one you were sent: generating invents a different scene, and what came back was supposed to be THEIR photo.")
+	b.WriteString("\n  Everyone in THIS conversation already received these, so do NOT send one back UNCHANGED; re-attaching a photo that was just posted only echoes it to the same group. An EDITED version is a new picture and is fine to send here. Reference a media#N to forward it to a DIFFERENT recipient, by passing attachments:[\"media#N\"] to a messaging tool. Refer to an item by its id in your text; do NOT retype or invent a filename for it, the id is its only handle.")
 	return b.String()
 }
 
