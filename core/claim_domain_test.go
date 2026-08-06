@@ -243,3 +243,50 @@ func TestStoredWorldClaimRecallsAttributed(t *testing.T) {
 		t.Errorf("a preference must recall flat, got:\n%s", block)
 	}
 }
+
+// --- what a marker MEANS --------------------------------------------------
+
+// A marker with no rule is decoration: the model reads "not independently
+// checked", has nothing to do about it, and asserts the claim anyway.
+func TestMarkedBlockCarriesTheGroundingRule(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		told("the cluster has three nodes", ClaimWorld, time.Time{}),
+	})
+	for _, want := range []string{
+		"is a LEAD, not an established fact",
+		"check it before relying on it",
+		"say where it came from rather than asserting it",
+		"repetition is the same claim, not new evidence",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("a marked block should carry %q, got:\n%s", want, block)
+		}
+	}
+}
+
+// It costs tokens on every turn, so it appears only when something is marked.
+func TestUnmarkedBlockStaysQuiet(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		told("prefers snake_case", ClaimSelf, time.Time{}),
+		{Note: "release notes list v2.1", MemoryProvenance: MemoryProvenance{Source: MemSourceRetrieved, Domain: ClaimWorld}},
+	})
+	if strings.Contains(block, "is a LEAD") {
+		t.Errorf("nothing is marked; the rule should not appear:\n%s", block)
+	}
+}
+
+// One marked note among many is enough — the rule explains the marker, not the
+// block.
+func TestOneMarkedNoteAmongManyTriggersTheRule(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		told("prefers snake_case", ClaimSelf, time.Time{}),
+		told("the API returns ISO dates", ClaimWorld, time.Time{}),
+		told("goes by Robin", ClaimSelf, time.Time{}),
+	})
+	if !strings.Contains(block, "is a LEAD") {
+		t.Errorf("a single marked note should bring the rule with it:\n%s", block)
+	}
+	if strings.Count(block, "is a LEAD") != 1 {
+		t.Error("the rule should appear once, not per marked note")
+	}
+}

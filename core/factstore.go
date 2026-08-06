@@ -1359,16 +1359,40 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 	b.WriteString("\n\n")
 	b.WriteString(intro)
 	b.WriteString("\n\n")
+	marked := false
 	for i, f := range facts {
 		b.WriteString(intToString(i + 1))
 		b.WriteString(". ")
 		b.WriteString(f.Note)
 		b.WriteString(factProvenanceMarker(f))
 		b.WriteString("\n")
+		marked = marked || NeedsAttribution(f.Source, f.Domain)
+	}
+	if marked {
+		b.WriteString("\n")
+		b.WriteString(groundingNote)
 	}
 	b.WriteString("\n")
 	return b.String()
 }
+
+// groundingNote says what a marked note MEANS and what to do about it.
+//
+// The marker without this is decoration: the model reads "not independently
+// checked", has no rule for it, and states the claim anyway. It rides WITH the
+// block rather than living in each app's intro copy, so the one place that
+// writes the marker also writes its meaning — and it only appears when
+// something above actually carries one, since a standing paragraph about
+// unverified claims costs tokens on every turn that has none.
+//
+// The last sentence is the one that would otherwise go unwritten. A claim
+// repeated more firmly is the same claim, and capitulating to insistence is
+// invisible unless the rule is stated.
+const groundingNote = "A note marked \"not independently checked\" is a LEAD, not an established fact. " +
+	"If you hold a tool that can settle it, check it before relying on it. If you cannot check it, " +
+	"say where it came from rather than asserting it (\"you mentioned the server runs 22.04\" — not \"the server runs 22.04\"). " +
+	"Hearing it again, or more firmly, does not make it checked: repetition is the same claim, not new evidence. " +
+	"Unmarked notes need none of this — state them normally.\n"
 
 // factProvenanceMarker returns a STABLE provenance suffix for a non-stable fact:
 // its volatility class plus the absolute AsOf date. Absolute (not "N days ago")
