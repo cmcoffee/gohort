@@ -7190,6 +7190,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
 		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		// And whether the reply KNOWS what it asserts. Scope is the notes the
+		// memory block marked unchecked, so a turn holding none never reaches a
+		// model call. See grounding_judge.go.
+		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
+		UncheckedClaims:    UncheckedFactNotes(t.facts()),
 		DeliveredCount: func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:   func() bool { return sess.Detach.Any() },
 		// Catch a reply that presents a picture the turn never produced, while
@@ -7869,6 +7874,11 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
 		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		// And whether the reply KNOWS what it asserts. Scope is the notes the
+		// memory block marked unchecked, so a turn holding none never reaches a
+		// model call. See grounding_judge.go.
+		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
+		UncheckedClaims:    UncheckedFactNotes(t.facts()),
 		DeliveredCount: func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:   func() bool { return sess.Detach.Any() },
 		// Worker-step corrections breadcrumb into the same session trail as

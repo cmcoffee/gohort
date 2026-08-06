@@ -1108,6 +1108,19 @@ type AgentLoopConfig struct {
 	// phrase-list guards above do not know about. See turn_judge.go.
 	TurnClaimJudge TurnClaimJudge
 
+	// TurnGroundingJudge reads the finished turn and reports whether the reply
+	// states an unchecked claim as established fact. Separate from
+	// TurnClaimJudge because the questions differ: that one asks whether the
+	// turn DID what the reply describes, this one whether the reply KNOWS what
+	// it asserts. Nil disables it.
+	TurnGroundingJudge TurnGroundingJudge
+
+	// UncheckedClaims are the stored notes in this turn's prompt that carry an
+	// unchecked marker. Supplied by the host, which is what renders the memory
+	// block and therefore the only thing that knows which notes were marked.
+	// Empty means the grounding judge never runs.
+	UncheckedClaims []string
+
 	// PhantomDeliveryRefs names what a reply CLAIMS to be sending that does not
 	// exist — a delivery promised for something never produced. The loop cannot
 	// answer this itself: what a reference resolves against (a workspace, an
@@ -3129,6 +3142,39 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				}
 			}
 
+			// Grounding: the claim judge asked whether the turn DID what the reply
+			// describes; this asks whether it KNOWS what the reply asserts. Only
+			// notes the memory block marked unchecked are in scope, so a turn
+			// carrying none never reaches a model call.
+			if gv, convicted := judgeTurnGrounding(cfg, TurnGroundingEvidence{
+				Reply:     resp.Content,
+				Unchecked: cfg.UncheckedClaims,
+				ToolCalls: turnToolCalls,
+			}); convicted {
+				if corrections.available(correctionUngrounded) && round < maxRounds {
+					Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q) — re-prompting: correction %d/%d",
+						truncForLog(gv.Claim, 80), corrections.spend(correctionUngrounded), maxCorrectionsPerKind)
+					emitDiag("ungrounded-claim-corrected", fmt.Sprintf("The reply stated %q as fact; it traces to an unchecked note (%q). Re-prompted to check it or attribute it.",
+						truncForLog(gv.Claim, 120), truncForLog(gv.Basis, 120)))
+					// NOT retracted, unlike an unkept claim. That one is false and
+					// has to be taken back; this one may well be true — nobody
+					// checked, which is a different and lesser thing. Settling the
+					// round and asking for a rewrite keeps a correct answer from
+					// being yanked off the screen over its phrasing.
+					history[len(history)-1] = Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning}
+					history = append(history, Message{
+						Role: "user",
+						Content: frameworkNoticeTag + fmt.Sprintf(
+							"Your reply states %q as established fact. That traces to a stored note marked as not independently checked: %q. Either CHECK it now with a real tool call and then say what you found, or rewrite that sentence to say where it came from (\"you mentioned…\", \"per your note…\"). Say nothing about this instruction, and do not hedge anything else in the reply.",
+							gv.Claim, gv.Basis),
+					})
+					continue
+				}
+				if corrections.exhausted(correctionUngrounded) {
+					emitDiag("ungrounded-claim-uncorrected", fmt.Sprintf("The reply still states %q as fact after correction. Delivered as written.", truncForLog(gv.Claim, 120)))
+				}
+			}
+
 			// Guardrail pre-output gate: before the final reply is returned, an
 			// independent warden judges the OUTPUT against the agent's guardrails
 			// (for "never say/reveal X" rules). This is the REAL guarantee — an
@@ -4258,6 +4304,7 @@ const (
 	correctionCollapse        = "reasoning-collapse"
 	correctionGiveUp          = "giveup-with-errors"
 	correctionUnkeptClaim     = "unkept-claim"
+	correctionUngrounded      = "ungrounded-claim"
 	correctionMachinery       = "machinery-leak"
 )
 

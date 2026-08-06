@@ -1458,6 +1458,22 @@ func FactStalenessNote(f MemoryFact, now time.Time) string {
 	}
 }
 
+// UncheckedFactNotes returns the notes recall marked as not independently
+// checked — the only claims the grounding judge has an opinion about.
+//
+// Same predicate the marker uses, so the judge's scope cannot drift from what
+// the model was actually shown. A note the block rendered flat is out of scope
+// here by construction rather than by a second list agreeing with the first.
+func UncheckedFactNotes(facts []MemoryFact) []string {
+	var out []string
+	for _, f := range facts {
+		if NeedsAttribution(f.Source, f.Domain) {
+			out = append(out, f.Note)
+		}
+	}
+	return out
+}
+
 // SourcedFactCorpus returns the notes of facts whose Source makes them a
 // legitimate grounding source — user_stated (a human entered it) or retrieved
 // (pulled from a tool at save time) — joined by newlines. Observed and inferred
