@@ -365,3 +365,70 @@ func TestRenamingYourselfDoesNotMakeYouTheOwner(t *testing.T) {
 		t.Error("the owner is not labelled as a third party")
 	}
 }
+
+// --- disagreement, not replacement ----------------------------------------
+
+// The supersession judge answers "same attribute, cannot both be current",
+// which says nothing about who can settle it. So a passing remark retired the
+// note a tool wrote after actually looking, and the store kept one answer — the
+// wrong one — with no trace anything had been overruled.
+func TestAToldClaimCannotRetireACheckedOne(t *testing.T) {
+	checked := MemoryFact{ID: "a", Note: "the server runs 24.04",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceRetrieved, Domain: ClaimWorld}}
+	told := MemoryFact{ID: "b", Note: "the server runs 22.04",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimWorld}}
+
+	replace, dispute := splitSupersedable(told, []MemoryFact{checked})
+	if len(replace) != 0 {
+		t.Errorf("a told claim must not replace a checked one, got %v", replace)
+	}
+	if len(dispute) != 1 || dispute[0].ID != "a" {
+		t.Errorf("the conflict should be recorded as a dispute, got %v", dispute)
+	}
+}
+
+// The ordinary correction still works: an observation replacing an older one,
+// a preference replacing a preference.
+func TestEqualOrBetterGroundingStillSupersedes(t *testing.T) {
+	old := MemoryFact{ID: "a", Note: "the server runs 22.04",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimWorld}}
+	checked := MemoryFact{ID: "b", Note: "the server runs 24.04",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceRetrieved, Domain: ClaimWorld}}
+	if replace, dispute := splitSupersedable(checked, []MemoryFact{old}); len(replace) != 1 || len(dispute) != 0 {
+		t.Errorf("a checked claim must replace a told one: replace=%v dispute=%v", replace, dispute)
+	}
+
+	prefOld := MemoryFact{ID: "c", Note: "prefers tabs",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimSelf}}
+	prefNew := MemoryFact{ID: "d", Note: "prefers spaces",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimSelf}}
+	if replace, dispute := splitSupersedable(prefNew, []MemoryFact{prefOld}); len(replace) != 1 || len(dispute) != 0 {
+		t.Errorf("a changed preference must still supersede: replace=%v dispute=%v", replace, dispute)
+	}
+}
+
+// Two contradictory notes with nothing saying so is worse than either alone:
+// the model picks whichever it reads first and has no idea it chose.
+func TestRecallNamesTheDisagreement(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		{ID: "a", Note: "the server runs 24.04",
+			MemoryProvenance: MemoryProvenance{Source: MemSourceRetrieved, Domain: ClaimWorld}},
+		{ID: "b", Note: "the server runs 22.04",
+			MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimWorld, Disputes: "a"}},
+	})
+	if !strings.Contains(block, "DISAGREES with note 1, which is better sourced") {
+		t.Errorf("the disagreement should point at the better-sourced note, got:\n%s", block)
+	}
+}
+
+// A dispute against something no longer rendered (retired, evicted) must not
+// point at a note number that isn't there.
+func TestDisputeAgainstAnAbsentNoteIsSilent(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		{ID: "b", Note: "the server runs 22.04",
+			MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimWorld, Disputes: "gone"}},
+	})
+	if strings.Contains(block, "DISAGREES") {
+		t.Errorf("a dangling dispute should say nothing, got:\n%s", block)
+	}
+}

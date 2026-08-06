@@ -442,9 +442,9 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 			Debug("[factstore] gate rejected non-durable note %q (ns=%s)", note, namespace)
 			return FactWriteResult{Reason: FactRejected}
 		}
-		superseded = applySupersede(db, f.ID, now, toSupersede)
+		superseded = applyJudgedSupersession(db, &f, now, toSupersede)
 	} else if p.Chat != nil && len(supersedeCandidates) > 0 {
-		superseded = applySupersede(db, f.ID, now, judgeSupersedes(p.Chat, note, supersedeCandidates))
+		superseded = applyJudgedSupersession(db, &f, now, judgeSupersedes(p.Chat, note, supersedeCandidates))
 	}
 
 	db.Set(MemoryFactsTable, factDBKey(namespace, f.ID), f)
@@ -513,6 +513,47 @@ func applySupersede(db Database, newID string, now time.Time, olds []MemoryFact)
 		out = append(out, old)
 	}
 	return out
+}
+
+// splitSupersedable separates what a new fact may REPLACE from what it merely
+// DISAGREES with.
+//
+// The supersession judge answers "same attribute, cannot both be current",
+// which is a question about meaning and says nothing about who is in a position
+// to settle it. So a passing remark retired a checked fact: somebody says the
+// server runs 22.04, and the note a tool wrote after actually looking is
+// retired as out of date. The store then holds exactly one answer, the wrong
+// one, with no trace that anything was overruled.
+//
+// A claim may replace one grounded no better than itself. Against something
+// better grounded it is a disagreement, and both survive — because which is
+// true is not a thing this code can know, and picking silently is how it gets
+// picked wrong.
+func splitSupersedable(newFact MemoryFact, judged []MemoryFact) (replace, dispute []MemoryFact) {
+	rank := ClaimAuthority(newFact.Source, newFact.Domain)
+	for _, old := range judged {
+		if ClaimAuthority(old.Source, old.Domain) > rank {
+			dispute = append(dispute, old)
+			continue
+		}
+		replace = append(replace, old)
+	}
+	return replace, dispute
+}
+
+// applyJudgedSupersession retires what the new fact may replace and records a
+// dispute against the first thing it may not. One id rather than a list: the
+// point is that recall can SAY there is a better-sourced note disagreeing, and
+// naming one is enough to send a reader to it.
+func applyJudgedSupersession(db Database, f *MemoryFact, now time.Time, judged []MemoryFact) []MemoryFact {
+	replace, dispute := splitSupersedable(*f, judged)
+	if len(dispute) > 0 {
+		f.Disputes = dispute[0].ID
+		for _, d := range dispute {
+			Log("[factstore] %q did NOT supersede better-sourced %q — both kept (ns=%s)", f.Note, d.Note, f.Namespace)
+		}
+	}
+	return applySupersede(db, f.ID, now, replace)
 }
 
 // factVector returns a fact's cached embedding, computing and lazily persisting
@@ -1369,12 +1410,24 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 	b.WriteString("\n\n")
 	b.WriteString(intro)
 	b.WriteString("\n\n")
+	// Positions of the rendered notes, so a dispute can point at one. Built
+	// first because a fact may disagree with something below it.
+	pos := make(map[string]int, len(facts))
+	for i, f := range facts {
+		pos[f.ID] = i + 1
+	}
 	marked := false
 	for i, f := range facts {
 		b.WriteString(intToString(i + 1))
 		b.WriteString(". ")
 		b.WriteString(f.Note)
 		b.WriteString(factProvenanceMarker(f))
+		// Two notes that contradict each other, with nothing saying so, is worse
+		// than either alone: the model picks whichever it reads first and has no
+		// idea it chose.
+		if n, ok := pos[f.Disputes]; ok && f.Disputes != "" {
+			fmt.Fprintf(&b, " (DISAGREES with note %d, which is better sourced — prefer that one, or check)", n)
+		}
 		b.WriteString("\n")
 		marked = marked || NeedsAttribution(f.Source, f.Domain)
 	}

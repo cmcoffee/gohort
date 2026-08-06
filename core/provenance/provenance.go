@@ -223,6 +223,12 @@ type MemoryProvenance struct {
 	// SpeakerIsOwner is derived from the HANDLE at write time, never from the
 	// name. Renaming yourself "Craig" must not make your claims the owner's.
 	SpeakerIsOwner bool `json:"spk_own,omitempty"`
+
+	// Disputes is the ID of a better-grounded fact this one contradicts and was
+	// NOT allowed to replace. Empty for everything else, which is almost
+	// everything: a note only lands here when it disagrees with something that
+	// was actually checked.
+	Disputes string `json:"disputes,omitempty"`
 	// AsOf is when the claim was last CONFIRMED true, distinct from a row's
 	// Created (first write) and Updated (any mutation). A re-verification bumps
 	// AsOf without rewriting the note. Staleness is measured from AsOf.
