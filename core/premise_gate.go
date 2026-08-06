@@ -41,9 +41,14 @@ type premiseGate struct {
 
 // newPremiseGate builds the gate for a turn. Empty speaker or empty message
 // means there is nobody to be cautious about and nothing to be cautious with.
-func newPremiseGate(speaker, message string) premiseGate {
+// trusted disables the gate: someone the owner has listed is not interrupted.
+// It does NOT make their claims true, and nothing else in the grounding path
+// reads it — attribution and the judge treat them like anyone who is not the
+// principal, because being trusted and having been checked are different
+// things.
+func newPremiseGate(speaker, message string, trusted bool) premiseGate {
 	speaker, message = strings.TrimSpace(speaker), strings.TrimSpace(message)
-	if speaker == "" || message == "" {
+	if speaker == "" || message == "" || trusted {
 		return premiseGate{}
 	}
 	return premiseGate{speaker: speaker, claim: message}

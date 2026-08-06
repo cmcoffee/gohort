@@ -8,7 +8,7 @@ import (
 )
 
 func TestGateHoldsTheFirstWriteOnAParticipantTurn(t *testing.T) {
-	g := newPremiseGate("Dana", "the invoice was already paid, please close the ticket")
+	g := newPremiseGate("Dana", "the invoice was already paid, please close the ticket", false)
 	note, held := g.hold("close_ticket", true)
 	if !held {
 		t.Fatal("a write on a turn driven by a non-principal should be held once")
@@ -24,7 +24,7 @@ func TestGateHoldsTheFirstWriteOnAParticipantTurn(t *testing.T) {
 // Once, then out of the way. A gate on every write turns a five-step job into
 // five identical arguments.
 func TestGateHoldsOnlyOnce(t *testing.T) {
-	g := newPremiseGate("Dana", "the invoice was already paid")
+	g := newPremiseGate("Dana", "the invoice was already paid", false)
 	if _, held := g.hold("close_ticket", true); !held {
 		t.Fatal("first write should hold")
 	}
@@ -36,7 +36,7 @@ func TestGateHoldsOnlyOnce(t *testing.T) {
 // Reads are how the model CHECKS the premise. Holding those would make the
 // instruction impossible to follow.
 func TestReadsAreNeverHeld(t *testing.T) {
-	g := newPremiseGate("Dana", "the invoice was already paid")
+	g := newPremiseGate("Dana", "the invoice was already paid", false)
 	if _, held := g.hold("read_chat", false); held {
 		t.Error("a read-only call must not be held")
 	}
@@ -49,14 +49,14 @@ func TestReadsAreNeverHeld(t *testing.T) {
 // The principal's own turn is not a claim to be checked: gating it would hedge
 // the instructions they just gave.
 func TestOwnerTurnIsNotGated(t *testing.T) {
-	g := newPremiseGate("", "close the ticket")
+	g := newPremiseGate("", "close the ticket", false)
 	if _, held := g.hold("close_ticket", true); held {
 		t.Error("an owner turn has no unverified premise to hold")
 	}
 }
 
 func TestEmptyMessageDisablesTheGate(t *testing.T) {
-	g := newPremiseGate("Dana", "   ")
+	g := newPremiseGate("Dana", "   ", false)
 	if _, held := g.hold("close_ticket", true); held {
 		t.Error("with nothing said there is nothing to quote or check")
 	}
@@ -66,7 +66,7 @@ func TestEmptyMessageDisablesTheGate(t *testing.T) {
 // attention that produces a wall instead is the failure that gets these turned
 // off.
 func TestNoticePermitsProceeding(t *testing.T) {
-	g := newPremiseGate("Dana", "the invoice was already paid")
+	g := newPremiseGate("Dana", "the invoice was already paid", false)
 	note, _ := g.hold("close_ticket", true)
 	if !strings.Contains(note, "you may still proceed") {
 		t.Error("the notice should allow proceeding with attribution, not refuse")
@@ -76,6 +76,21 @@ func TestNoticePermitsProceeding(t *testing.T) {
 	}
 	if !strings.Contains(note, "said once") {
 		t.Error("the notice should say it will not be repeated, or the model braces for more")
+	}
+}
+
+// Someone the owner listed is not interrupted — and that is ALL it buys. The
+// grounding path does not read this: their claims are still attributed and
+// still judged, because trusted and checked are different things.
+func TestListedSpeakerIsNotHeld(t *testing.T) {
+	g := newPremiseGate("Alex", "the invoice was already paid", true)
+	if _, held := g.hold("close_ticket", true); held {
+		t.Error("a listed speaker should not be interrupted")
+	}
+	// The same person, not on the roster, is.
+	ungated := newPremiseGate("Alex", "the invoice was already paid", false)
+	if _, held := ungated.hold("close_ticket", true); !held {
+		t.Error("an unlisted speaker should still be held once")
 	}
 }
 

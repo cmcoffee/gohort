@@ -1131,6 +1131,13 @@ type AgentLoopConfig struct {
 	// the inbound itself in the judge's scope.
 	LiveClaimSpeaker string
 
+	// LiveClaimTrusted marks the speaker as someone the host recognizes — on a
+	// roster the owner maintains, matched on something they cannot simply
+	// claim. It relaxes the premise HOLD and nothing else: their claims are
+	// still attributed and still judged, because being trusted is not the same
+	// as having been checked.
+	LiveClaimTrusted bool
+
 	// PhantomDeliveryRefs names what a reply CLAIMS to be sending that does not
 	// exist — a delivery promised for something never produced. The loop cannot
 	// answer this itself: what a reference resolves against (a workspace, an
@@ -1531,7 +1538,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	var toolDefs []Tool
 	handlers := make(map[string]ToolHandlerFunc)
 	// One hold per turn, for a turn driven by somebody who is not the principal.
-	premise := newPremiseGate(cfg.LiveClaimSpeaker, LatestUserContent(messages))
+	premise := newPremiseGate(cfg.LiveClaimSpeaker, LatestUserContent(messages), cfg.LiveClaimTrusted)
 	needsConfirm := make(map[string]bool)
 	// Which tools DO something, for the unverified-premise gate below. Caps are
 	// the framework's own annotation, not a name list, so a tool added later is
@@ -3017,7 +3024,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// worse of the two: an empty round shows the user nothing, while
 			// "let me create this" reads as progress and ends the turn anyway.
 			// Observed: two image backends errored, and the turn closed on "Got
-			// it — let me create this. I'll blend Rory onto the picture of me
+			// it — let me create this. I'll blend Alex onto the picture of me
 			// wasting away in the garage." Nothing followed. The user's next
 			// message was "you forgot to attach the image."
 			promised := replyStalledOnAPromise(trimmedContent)
@@ -4946,13 +4953,13 @@ func endsWithCallAnnouncement(content string) bool {
 const replyStalledOnAPromiseMaxLen = 600
 
 // replyStalledOnAPromise reports whether a reply commits the agent to work it
-// then never does — "let me create this", "I'll blend Rory onto the picture" —
+// then never does — "let me create this", "I'll blend Alex onto the picture" —
 // and stops.
 //
 // This is endsWithCallAnnouncement's shape with the colon requirement dropped,
 // and dropping it is the whole point: the colon is a typographic accident, not
 // the failure. "Here's the update_agent call to implement these changes:" and
-// "Got it, let me create this. I'll blend Rory onto the picture. 🏚️👔" are the
+// "Got it, let me create this. I'll blend Alex onto the picture. 🏚️👔" are the
 // same turn ending the same way, and only the first one was catchable.
 //
 // Without the colon this is far too loose to act on alone — that looseness is

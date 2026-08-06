@@ -1322,6 +1322,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
 	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
+	// The third-party doctrine goes in the SYSTEM prompt, not on every message.
+	// It names nobody, so the text is byte-identical turn after turn and caches
+	// for the life of the thread; the volatile half — which of them is writing
+	// now — is one line on the message itself.
+	if !subTurn.requesterOwnerHandle && strings.TrimSpace(subTurn.requesterHandle) != "" {
+		sysPrompt = ThirdPartyClaimDoctrine() + sysPrompt
+	}
 	if s := strings.TrimSpace(run.SystemPromptOverride); s != "" {
 		sysPrompt = s // app supplies its own complete per-run prompt (e.g. servitor's investigator)
 	}
@@ -1541,6 +1548,19 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.UncheckedClaims = UncheckedFactNotes(subFacts)
 	if !subTurn.requesterOwnerHandle && strings.TrimSpace(subTurn.requesterHandle) != "" {
 		loopCfg.LiveClaimSpeaker = chFirst(strings.TrimSpace(subTurn.requesterName), "the sender")
+		// Someone the owner listed by account or handle skips the HOLD and
+		// nothing else. Trust and verification are different things: a partner
+		// saying the invoice is paid is exactly as unverified as a stranger
+		// saying it, so their world-claims stay marked. What being listed buys
+		// is not being interrupted — and interruption with no safety gain is
+		// what gets a gate switched off.
+		//
+		// Matched the same way guardrails match, so there is ONE roster. A
+		// second list would drift from the first, and the two would disagree
+		// about who is trusted with nothing to say which is right.
+		if _, _, via := subTurn.resolveAuthorization(); via != "" {
+			loopCfg.LiveClaimTrusted = true
+		}
 	}
 	loopCfg.DeliveredCount = func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) }
 	loopCfg.Backgrounded = func() bool { return subSess.Detach.Any() }
