@@ -97,3 +97,82 @@ func TestNoImagesKeepsItsOwnDiagnosis(t *testing.T) {
 		t.Errorf("the zero case should keep its specific message, got %q", err)
 	}
 }
+
+// What a wired backend is called on re-edit. Picking "blend" and reopening the
+// form showed "edit" — the classifier tested for the ABSENCE of a prompt, so
+// any composite that also takes text (most of them, and the shape the framework
+// now asks for) was filed as an edit.
+func TestWorkflowTypeCountsPhotosNotPrompts(t *testing.T) {
+	twoWithPrompt := ComfyNodeMap{ImageNodes: []string{"1", "2"}, PromptNodes: []string{"6"}}
+	if got := ComfyWorkflowTypeOf(twoWithPrompt); got != ComfyTypeBlend {
+		t.Errorf("a two-photo composite that takes a prompt is a blend, got %q", got)
+	}
+	twoNoPrompt := ComfyNodeMap{ImageNodes: []string{"1", "2"}}
+	if got := ComfyWorkflowTypeOf(twoNoPrompt); got != ComfyTypeBlend {
+		t.Errorf("a two-photo composite with no prompt is still a blend, got %q", got)
+	}
+	oneWithPrompt := ComfyNodeMap{ImageNodes: []string{"1"}, PromptNodes: []string{"6"}}
+	if got := ComfyWorkflowTypeOf(oneWithPrompt); got != ComfyTypeEdit {
+		t.Errorf("one photo plus text is an edit, got %q", got)
+	}
+	// A promptless single-image graph (an upscale) is nearer an edit than a
+	// blend — it changes one picture.
+	if got := ComfyWorkflowTypeOf(ComfyNodeMap{ImageNodes: []string{"1"}}); got != ComfyTypeEdit {
+		t.Errorf("a single-image processing graph should read as edit, got %q", got)
+	}
+	if got := ComfyWorkflowTypeOf(ComfyNodeMap{PromptNodes: []string{"6"}}); got != ComfyTypeGenerate {
+		t.Errorf("no image input is a generate, got %q", got)
+	}
+}
+
+// The built-in starters must round-trip to the type that produced them, or the
+// form contradicts itself the first time anyone reopens it.
+func TestBuiltinStartersRoundTrip(t *testing.T) {
+	for _, c := range []struct{ kind, graph string }{
+		{ComfyTypeGenerate, ComfyStarterGraph(ComfyTypeGenerate)},
+		{ComfyTypeEdit, ComfyStarterGraph(ComfyTypeEdit)},
+		{ComfyTypeBlend, ComfyStarterGraph(ComfyTypeBlend)},
+	} {
+		var spec RestImageSpec
+		if _, err := ApplyComfyWorkflow(&spec, c.graph, ""); err != nil {
+			t.Fatalf("%s starter should wire: %v", c.kind, err)
+		}
+		if got := ComfyWorkflowTypeOf(spec.ComfyMap); got != c.kind {
+			t.Errorf("%s starter reads back as %q", c.kind, got)
+		}
+	}
+}
+
+// A cap below the mapped node count is permitted but hazardous: the unwritten
+// nodes render the placeholder the workflow was exported with. It has to say so
+// where the person configuring it will read it.
+func TestLowCapWarnsAboutPlaceholders(t *testing.T) {
+	spec := RestImageSpec{MaxInputImages: 2}
+	warns, err := ApplyComfyWorkflow(&spec, threeInputGraph, "")
+	if err != nil {
+		t.Fatalf("a low cap is permitted, not fatal: %v", err)
+	}
+	var found bool
+	for _, w := range warns {
+		if strings.Contains(w, "max_input_images is 2 but 3 image node(s) are mapped") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a placeholder warning, got %v", warns)
+	}
+}
+
+// No cap set is the ordinary case and must stay quiet.
+func TestNoCapDoesNotWarn(t *testing.T) {
+	var spec RestImageSpec
+	warns, err := ApplyComfyWorkflow(&spec, threeInputGraph, "")
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	for _, w := range warns {
+		if strings.Contains(w, "max_input_images") {
+			t.Errorf("unexpected cap warning with no cap set: %q", w)
+		}
+	}
+}

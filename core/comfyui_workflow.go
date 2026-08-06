@@ -109,11 +109,23 @@ func ComfyBlendDefaultGraph() string { return comfyBlendDefaultGraph }
 // and the map is the thing that decides which action the backend serves, so
 // it's the honest thing to show on re-edit.
 func ComfyWorkflowTypeOf(m ComfyNodeMap) string {
+	// HOW MANY PHOTOS IT TAKES, not whether it also takes text.
+	//
+	// Prompt-absence was the old test for a blend, and it misfiled every
+	// composite that accepts a prompt — which is most real ones, and which the
+	// framework now actively asks for ("say HOW they should combine"). A
+	// two-photo graph with a text node came back as "edit", so someone who
+	// picked blend, saved, and reopened the form saw their choice apparently
+	// revert, over and over, with nothing wrong but the label.
+	//
+	// Counting inputs also matches what the words mean to the person choosing:
+	// edit changes A photo, blend combines SEVERAL. A promptless single-image
+	// graph (an upscale) reads as edit under this, which is nearer the truth
+	// than calling it a blend.
 	switch {
 	case len(m.ImageNodes) == 0:
 		return ComfyTypeGenerate
-	case len(m.PromptNodes) == 0:
-		// No text anywhere: pure pixel work over the inputs.
+	case len(m.ImageNodes) >= 2:
 		return ComfyTypeBlend
 	default:
 		return ComfyTypeEdit
@@ -291,6 +303,18 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	s.SubmitBody = ""
 	s.PollReadyPath = ""
 	s.PollFields = nil
+	// A cap BELOW the mapped node count leaves nodes nobody ever writes, and an
+	// unwritten LoadImage renders the filename the workflow was exported with —
+	// usually example.png. The render succeeds and quietly contains a picture
+	// from somebody else's session, which is not a failure anyone goes looking
+	// for. Permitted (a stray loader the output branch never consumes is a real
+	// case, and every LoadImage gets mapped whether consumed or not), so it
+	// warns where the person configuring it will read it rather than failing.
+	if s.MaxInputImages > 0 && s.MaxInputImages < len(m.ImageNodes) {
+		warnings = append(warnings, fmt.Sprintf(
+			"max_input_images is %d but %d image node(s) are mapped — the other %d will render whatever placeholder the workflow was saved with. Trim image_nodes to the ones this graph actually uses, or raise the cap",
+			s.MaxInputImages, len(m.ImageNodes), len(m.ImageNodes)-s.MaxInputImages))
+	}
 	return warnings, nil
 }
 

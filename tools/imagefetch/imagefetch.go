@@ -244,7 +244,10 @@ func (a imageActions) backendParamDesc() string {
 		if c.Edits {
 			note += "edits photos (use with action=edit)"
 			if c.MaxImages > 1 {
-				note += ", takes up to " + strconv.Itoa(c.MaxImages) + " images"
+				// "up to" invited passing fewer, which a compose graph refuses:
+				// every mapped input has to be filled or it renders the
+				// placeholder its workflow was saved with.
+				note += ", composes " + strconv.Itoa(c.MaxImages) + " images and needs all " + strconv.Itoa(c.MaxImages)
 			}
 		} else {
 			note += "generates from text (use with action=generate)"

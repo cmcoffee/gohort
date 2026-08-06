@@ -222,8 +222,15 @@ func TestQwenBlendWorkflowTakesTwoImages(t *testing.T) {
 	if spec.MaxImages() != 2 {
 		t.Errorf("MaxImages = %d, want 2", spec.MaxImages())
 	}
-	if got := ComfyWorkflowTypeOf(spec.ComfyMap); got != ComfyTypeEdit {
-		t.Errorf("type = %q, want edit — it still takes a prompt", got)
+	// REVERSED from "edit". This graph takes TWO photos and a prompt, and the
+	// prompt used to decide the label — so it read as an edit, and someone who
+	// picked "blend" in the form saw their choice apparently revert every time
+	// they reopened it. The count is what the form's own wording promises
+	// ("blend = combine two photos"), and a composite that can be told HOW to
+	// combine is the shape the framework now asks for, so a prompt no longer
+	// disqualifies it.
+	if got := ComfyWorkflowTypeOf(spec.ComfyMap); got != ComfyTypeBlend {
+		t.Errorf("type = %q, want blend — two source photos is a blend, prompt or not", got)
 	}
 	// The prompt wiring must be unchanged by the addition.
 	if !eqStrs(spec.ComfyMap.PromptNodes, []string{"170:151"}) {
