@@ -31,10 +31,21 @@ import (
 	"time"
 )
 
-// recentImageLimit is how many images the space holds per user. Enough to cover
-// "the one before that" in normal conversation; small enough that the pruned
-// directory stays trivial to scan.
+// recentImageLimit is how many of the AGENT'S OWN pictures the space holds per
+// user. Enough to cover "the one before that" in normal conversation; small
+// enough that the pruned directory stays trivial to scan.
 const recentImageLimit = 10
+
+// sourceImageLimit is the separate allowance for pictures the agent was GIVEN
+// or found. Separate because one flat queue made the agent's output evict the
+// user's originals: a render is added on every generate and every edit, so a
+// handful of attempts silently pushed out the photo they were attempts AT, and
+// the agent had to ask for it again. A render costs a prompt to reproduce; the
+// only copy of somebody's selfie costs them the conversation.
+//
+// So the two are counted apart. Nothing the agent makes can ever displace
+// something it was given, whatever it renders in between.
+const sourceImageLimit = 10
 
 // RecentImageRefPrefix is the reference form the model uses: image#1 is newest.
 const RecentImageRefPrefix = "image#"
@@ -362,20 +373,59 @@ func recentImageFiles(dir string) []string {
 	return names
 }
 
-// pruneRecentImages is the garbage collection the model used to be asked to do:
-// everything past the limit goes, image and sidecar together.
+// pruneRecentImages is the garbage collection the model used to be asked to do.
+// Two queues, pruned independently: what the agent MADE against
+// recentImageLimit, what it was GIVEN or found against sourceImageLimit. Each
+// keeps its own newest and drops its own oldest, so a burst of renders expires
+// only earlier renders.
+//
+// Unknown origin counts as a source. Same direction as everywhere else in this
+// change: what is not positively recognized as the agent's own output gets the
+// treatment that loses nothing.
 func pruneRecentImages(dir string) {
-	names := recentImageFiles(dir)
-	if len(names) <= recentImageLimit {
+	var made, given []string
+	for _, name := range recentImageFiles(dir) { // newest first
+		if readRecentOrigin(dir, name).AgentMade() {
+			made = append(made, name)
+			continue
+		}
+		given = append(given, name)
+	}
+	dropRecentImages(dir, made, recentImageLimit)
+	dropRecentImages(dir, given, sourceImageLimit)
+}
+
+// dropRecentImages removes everything past a queue's allowance, image and
+// sidecar together. names must be newest-first.
+func dropRecentImages(dir string, names []string, limit int) {
+	if len(names) <= limit {
 		return
 	}
-	for _, name := range names[recentImageLimit:] {
+	for _, name := range names[limit:] {
 		abs := filepath.Join(dir, name)
 		if err := os.Remove(abs); err != nil {
 			Debug("[image_space] prune %s: %v", abs, err)
 		}
 		_ = os.Remove(strings.TrimSuffix(abs, ".png") + ".json")
 	}
+}
+
+// readRecentOrigin reads one entry's provenance, falling back to the note for
+// sidecars written before origins existed — so an old ring is partitioned the
+// same way a new one is, rather than counting entirely as sources.
+func readRecentOrigin(dir, name string) ImageOrigin {
+	var meta recentImageMeta
+	raw, err := os.ReadFile(filepath.Join(dir, strings.TrimSuffix(name, ".png")+".json"))
+	if err != nil {
+		return ImageOriginUnknown
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ImageOriginUnknown
+	}
+	if meta.Origin != ImageOriginUnknown {
+		return meta.Origin
+	}
+	return originFromNote(meta.Note)
 }
 
 // RecentImageManifest renders the space for the model — the answer to "which

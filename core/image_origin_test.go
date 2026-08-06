@@ -169,3 +169,70 @@ func TestManifestMarksAgentMadeEntries(t *testing.T) {
 		t.Errorf("manifest should mark the agent's own output, got %q", m)
 	}
 }
+
+// A burst of renders must not expire the photo they were attempts AT. This is
+// the reported failure: the user's selfie aged out behind the agent's own
+// output, and the agent asked them to send it again.
+func TestRendersCannotEvictTheUsersPictures(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "received from craig", ImageFromUser) == "" {
+		t.Fatal("recording the user's photo failed")
+	}
+	// Well past the limit, which under one flat queue would have evicted it.
+	for i := 0; i < recentImageLimit*2; i++ {
+		if RecordRecentImage(sess, testPNG(t, 4+i%4, 4+i%4), "generated: attempt", ImageFromGenerated) == "" {
+			t.Fatalf("recording render %d failed", i)
+		}
+	}
+	var survived bool
+	for _, r := range RecentImages(sess) {
+		if r.Origin == ImageFromUser {
+			survived = true
+		}
+	}
+	if !survived {
+		t.Error("the user's photo must outlive any number of the agent's own renders")
+	}
+	// And the agent's own queue is still bounded, or this just leaks.
+	made := 0
+	for _, r := range RecentImages(sess) {
+		if r.Origin.AgentMade() {
+			made++
+		}
+	}
+	if made > recentImageLimit {
+		t.Errorf("agent-made queue should stay bounded at %d, got %d", recentImageLimit, made)
+	}
+}
+
+// The user's own queue is bounded too — protection, not an unbounded store.
+func TestSourceQueueIsBounded(t *testing.T) {
+	sess := imageSpaceSession(t)
+	for i := 0; i < sourceImageLimit*2; i++ {
+		if RecordRecentImage(sess, testPNG(t, 4+i%4, 4+i%4), "received from craig", ImageFromUser) == "" {
+			t.Fatalf("recording photo %d failed", i)
+		}
+	}
+	if got := len(RecentImages(sess)); got > sourceImageLimit {
+		t.Errorf("source queue should cap at %d, got %d", sourceImageLimit, got)
+	}
+}
+
+// "Keep the picture I just sent you" has to work on the ref the model was
+// handed for it. media#N is a separate namespace the edit path accepted and
+// keep did not.
+func TestKeepAcceptsAMediaRef(t *testing.T) {
+	sess := imageSpaceSession(t)
+	sess.RegisterInboundMedia("image", testPNG(t, 8, 8), "craig")
+
+	kept, err := KeepImage(sess, "media#1", "wren", "the user's dog")
+	if err != nil {
+		t.Fatalf("keeping an attached photo should work: %v", err)
+	}
+	if kept.Origin != ImageFromUser {
+		t.Errorf("an attachment is user-origin by definition, got %q", kept.Origin)
+	}
+	if _, ok := ResolveKeptImage(sess, "image#wren"); !ok {
+		t.Error("the kept photo should resolve under its lasting name")
+	}
+}

@@ -205,7 +205,7 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 	if clean == "" {
 		return KeptImage{}, fmt.Errorf("name %q is not usable — use letters, digits, - or _, and not a bare number (image#3 already means the third-newest picture)", name)
 	}
-	data, ok := ResolveRecentImage(sess, ref)
+	data, origin, ok := keepSource(sess, ref)
 	if !ok {
 		return KeptImage{}, fmt.Errorf("no image found for %q — call action=\"help\" to list the pictures you can point at", ref)
 	}
@@ -242,7 +242,7 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		caption, description = CaptionImage(sess, data)
 	}
 	kept := KeptImage{
-		Origin:      ringOrigin(sess, ref),
+		Origin:      origin,
 		Name:        clean,
 		Ref:         RecentImageRefPrefix + clean,
 		Note:        strings.TrimSpace(note),
@@ -262,6 +262,28 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		KeptImageRemember(sess, kept)
 	}
 	return kept, nil
+}
+
+// keepSource resolves what a keep should store, and where it came from.
+//
+// image#N and image#name are the ring and the library. media#N is the photo the
+// user attached to THIS turn — a separate namespace that ResolveRecentImage
+// does not answer for, so "keep the picture I just sent you" failed on the one
+// ref the model had been handed for it. The edit path already accepted media#N;
+// keep did not, and a rule on one side of that symmetry is a bug.
+//
+// A media ref is user-origin by definition: nothing a tool produces is ever
+// one.
+func keepSource(sess *ToolSession, ref string) ([]byte, ImageOrigin, bool) {
+	if data, ok := ResolveRecentImage(sess, ref); ok {
+		return data, ringOrigin(sess, ref), true
+	}
+	if b64, kind, ok := sess.ResolveInboundMedia(ref); ok && (kind == "" || kind == "image") {
+		if data, err := decodeBase64Image(b64); err == nil && len(data) > 0 {
+			return data, ImageFromUser, true
+		}
+	}
+	return nil, ImageOriginUnknown, false
 }
 
 // ringOrigin reports where the ring entry behind a ref came from. A ref that

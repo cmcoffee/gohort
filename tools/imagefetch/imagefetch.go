@@ -378,7 +378,10 @@ func imageSchemaFor(a imageActions) imageSchema {
 		if a.inboundMedia > 1 {
 			desc += fmt.Sprintf("-media#%d", a.inboundMedia)
 		}
-		desc += ". If the request concerns them, it is an EDIT — pass those ids in images. Do not generate a replacement."
+		desc += ". If the request concerns them, it is an EDIT — pass those ids in images. Do not generate a replacement." +
+			" If one shows a subject you could be asked for again — a person, a pet, a product, a place — keep it NOW" +
+			" (action=\"keep\", ref=\"media#1\", name=\"…\"): a media id lasts only this turn and ring ids age out as new pictures arrive," +
+			" whereas a kept name works indefinitely. Asking the user to re-send a photo they already sent is the failure this avoids."
 	}
 	// The reference library, named before the action is chosen. Without this the
 	// library is reachable only by calling help, which the model has no reason
