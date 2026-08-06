@@ -1530,7 +1530,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// directly and these maps are computed once.
 	var toolDefs []Tool
 	handlers := make(map[string]ToolHandlerFunc)
+	// One hold per turn, for a turn driven by somebody who is not the principal.
+	premise := newPremiseGate(cfg.LiveClaimSpeaker, LatestUserContent(messages))
 	needsConfirm := make(map[string]bool)
+	// Which tools DO something, for the unverified-premise gate below. Caps are
+	// the framework's own annotation, not a name list, so a tool added later is
+	// covered by declaring what it is.
+	writeTools := make(map[string]bool)
 	singleFireTools := make(map[string]bool)
 	serialFireTools := make(map[string]bool)
 	rebuildToolMaps := func(active []AgentToolDef) {
@@ -1571,6 +1577,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			handlers[td.Tool.Name] = td.Handler
 			if td.NeedsConfirm {
 				needsConfirm[td.Tool.Name] = true
+			}
+			for _, c := range td.Tool.Caps {
+				if c == CapWrite || c == CapExecute {
+					writeTools[td.Tool.Name] = true
+					break
+				}
 			}
 			// Serial-fire takes precedence: a serial tool must NOT be added to
 			// the single-fire set, or the enforcement pass would drop its
@@ -2586,6 +2598,19 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					}
 					continue
 				}
+			}
+
+			// Unverified premise: this turn is answering someone who is not the
+			// principal, and the thing about to happen rests on what they said.
+			// Deflected ONCE, then allowed — see premiseGate.
+			if note, held := premise.hold(tc.Name, writeTools[tc.Name]); held {
+				Debug("[agent_loop] premise gate: held %s — turn rests on %s's unverified claim", tc.Name, cfg.LiveClaimSpeaker)
+				emitDiag("unverified-premise-held", fmt.Sprintf("Held %s: this turn acts on %s's unverified claim. Asked to check it first.", tc.Name, cfg.LiveClaimSpeaker))
+				history = append(history, Message{Role: "user", Content: frameworkNoticeTag + note})
+				if cfg.OnStep != nil {
+					cfg.OnStep(StepInfo{Round: round, ToolCalls: []ToolCall{*tc}})
+				}
+				continue
 			}
 
 			// Execute the tool.
