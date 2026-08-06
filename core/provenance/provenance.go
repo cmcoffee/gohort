@@ -60,10 +60,31 @@ const (
 )
 
 // SpeakerAuthoritative reports whether the person who stated this claim settles
-// it by having said so. True only for what someone asserts about THEMSELVES:
-// every other combination leaves the claim standing on evidence it may not have.
-func SpeakerAuthoritative(src MemSource, dom ClaimDomain) bool {
-	return src == MemSourceUserStated && dom == ClaimSelf
+// it by having said so.
+//
+// ClaimSelf means "about the person speaking", and for a while nothing checked
+// that they WERE the subject. In a group that is the whole attack: someone else
+// says "Craig likes being late", it classifies as a self-claim because of the
+// word "likes", and it lands in Craig's own memory as authoritative and
+// unmarked — a character judgment by a third party, read forever as something
+// Craig said about himself.
+//
+// So the speaker has to be the principal. A note in someone's memory asserted
+// by somebody else is not settled by their having asserted it, whatever it is
+// about. What that person genuinely settles is their own preferences, and those
+// belong to a record about THEM.
+func SpeakerAuthoritative(p MemoryProvenance) bool {
+	if !p.speakerIsPrincipal() {
+		return false
+	}
+	return p.Source == MemSourceUserStated && p.Domain == ClaimSelf
+}
+
+// speakerIsPrincipal reports whether the voice behind this claim is the person
+// whose memory it lives in. Empty speaker is the principal by construction —
+// every non-channel turn, and every one-to-one with the owner.
+func (p MemoryProvenance) speakerIsPrincipal() bool {
+	return p.SpeakerIsOwner || strings.TrimSpace(p.Speaker) == "" && strings.TrimSpace(p.SpeakerHandle) == ""
 }
 
 // NeedsAttribution reports whether recall must name where a claim came from
@@ -81,11 +102,18 @@ func SpeakerAuthoritative(src MemSource, dom ClaimDomain) bool {
 // rather than from conversation. Self-claims are exempt at any source — there
 // is nothing to check a preference against, and hedging one reads as doubting
 // the person who holds it.
-func NeedsAttribution(src MemSource, dom ClaimDomain) bool {
-	if dom != ClaimWorld {
+func NeedsAttribution(p MemoryProvenance) bool {
+	// Anything a THIRD PARTY says, whatever it is about. A self-claim from
+	// someone who is not the principal is not a self-claim at all — it is
+	// hearsay about a person, and the one thing that must never happen is for
+	// it to read as the principal's own account of themselves.
+	if !p.speakerIsPrincipal() {
+		return true
+	}
+	if p.Domain != ClaimWorld {
 		return false
 	}
-	switch src {
+	switch p.Source {
 	case MemSourceRetrieved, MemSourceImported:
 		return false
 	}
@@ -127,11 +155,17 @@ func SpeakerLabel(p MemoryProvenance) string {
 // no longer "whose row survives a merge" but "did anything actually check
 // this". Same rows, different question, so a separate ordering rather than
 // bending the one the merge path depends on.
-func ClaimAuthority(src MemSource, dom ClaimDomain) int {
-	if SpeakerAuthoritative(src, dom) {
+func ClaimAuthority(p MemoryProvenance) int {
+	if SpeakerAuthoritative(p) {
 		return 5
 	}
-	switch src {
+	// A third party's word is a lead whatever it is about, so it cannot
+	// outrank something checked — and cannot retire it. Same rule that stops a
+	// told world-claim superseding a retrieved one, applied to the person.
+	if !p.speakerIsPrincipal() {
+		return 2
+	}
+	switch src := p.Source; src {
 	case MemSourceRetrieved:
 		return 4
 	case MemSourceObserved:

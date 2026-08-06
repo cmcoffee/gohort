@@ -23,7 +23,7 @@ func told(note string, dom ClaimDomain, asOf time.Time) MemoryFact {
 
 // What someone says about themselves is settled by their saying it.
 func TestSpeakerIsAuthoritativeAboutThemselves(t *testing.T) {
-	if !SpeakerAuthoritative(MemSourceUserStated, ClaimSelf) {
+	if !SpeakerAuthoritative(MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimSelf}) {
 		t.Error("a person is the authority on their own preferences")
 	}
 	for _, c := range []struct {
@@ -35,7 +35,7 @@ func TestSpeakerIsAuthoritativeAboutThemselves(t *testing.T) {
 		{MemSourceInferred, ClaimSelf},
 		{MemSourceRetrieved, ClaimSelf},
 	} {
-		if SpeakerAuthoritative(c.src, c.dom) {
+		if SpeakerAuthoritative(MemoryProvenance{Source: c.src, Domain: c.dom}) {
 			t.Errorf("src=%v dom=%v must not settle a claim by assertion", c.src, c.dom)
 		}
 	}
@@ -44,13 +44,13 @@ func TestSpeakerIsAuthoritativeAboutThemselves(t *testing.T) {
 // Only the told world-claim needs naming. Hedging a preference reads as
 // doubting the person who holds it.
 func TestOnlyToldWorldClaimsAreAttributed(t *testing.T) {
-	if !NeedsAttribution(MemSourceUserStated, ClaimWorld) {
+	if !NeedsAttribution(MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimWorld}) {
 		t.Error("a told world-claim must say it was told")
 	}
-	if NeedsAttribution(MemSourceUserStated, ClaimSelf) {
+	if NeedsAttribution(MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimSelf}) {
 		t.Error("a preference must not be hedged")
 	}
-	if NeedsAttribution(MemSourceRetrieved, ClaimWorld) {
+	if NeedsAttribution(MemoryProvenance{Source: MemSourceRetrieved, Domain: ClaimWorld}) {
 		t.Error("a retrieved claim was checked at save time; it is not hearsay")
 	}
 }
@@ -58,11 +58,11 @@ func TestOnlyToldWorldClaimsAreAttributed(t *testing.T) {
 // Grounding asks a different question than merge, so it orders differently: a
 // told world-claim sits below anything a tool actually saw.
 func TestGroundingRanksCheckedAboveTold(t *testing.T) {
-	toldWorld := ClaimAuthority(MemSourceUserStated, ClaimWorld)
-	if got := ClaimAuthority(MemSourceRetrieved, ClaimWorld); got <= toldWorld {
+	toldWorld := ClaimAuthority(MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimWorld})
+	if got := ClaimAuthority(MemoryProvenance{Source: MemSourceRetrieved, Domain: ClaimWorld}); got <= toldWorld {
 		t.Errorf("retrieved (%d) must outrank a told world-claim (%d) for grounding", got, toldWorld)
 	}
-	if got := ClaimAuthority(MemSourceObserved, ClaimWorld); got <= toldWorld {
+	if got := ClaimAuthority(MemoryProvenance{Source: MemSourceObserved, Domain: ClaimWorld}); got <= toldWorld {
 		t.Errorf("observed (%d) must outrank a told world-claim (%d)", got, toldWorld)
 	}
 	// And the merge ordering is deliberately NOT changed — supersession still
@@ -74,7 +74,7 @@ func TestGroundingRanksCheckedAboveTold(t *testing.T) {
 
 // An unclassified legacy row must not acquire authority it was never granted.
 func TestUnknownDomainGrantsNoAuthority(t *testing.T) {
-	if SpeakerAuthoritative(MemSourceUserStated, ClaimDomainUnknown) {
+	if SpeakerAuthoritative(MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimDomainUnknown}) {
 		t.Error("unclassified is not evidence of authority")
 	}
 }
@@ -135,14 +135,14 @@ func TestAttributionAndVolatilityCompose(t *testing.T) {
 // store_fact records those as OBSERVED, so scoping attribution to user_stated
 // would have missed every one of them.
 func TestObservedWorldClaimsAreAttributedToo(t *testing.T) {
-	if !NeedsAttribution(MemSourceObserved, ClaimWorld) {
+	if !NeedsAttribution(MemoryProvenance{Source: MemSourceObserved, Domain: ClaimWorld}) {
 		t.Error("a world-claim the model recorded from conversation is not checked either")
 	}
-	if NeedsAttribution(MemSourceObserved, ClaimSelf) {
+	if NeedsAttribution(MemoryProvenance{Source: MemSourceObserved, Domain: ClaimSelf}) {
 		t.Error("a preference heard in conversation still must not be hedged")
 	}
 	// Retrieved and imported came from a source at save time.
-	if NeedsAttribution(MemSourceImported, ClaimWorld) {
+	if NeedsAttribution(MemoryProvenance{Source: MemSourceImported, Domain: ClaimWorld}) {
 		t.Error("an imported claim came from a store, not from conversation")
 	}
 }
@@ -301,11 +301,21 @@ func fromSpeaker(note, name, handle string, owner bool, dom ClaimDomain, src Mem
 
 // A preference read without a name becomes the OWNER's preference, applied to
 // everyone in the thread.
+//
+// STRENGTHENED from "(from Dana)" to full attribution. The two cases cannot be
+// told apart from the text: "prefers texts before 8pm" said by Dana about
+// herself, and "prefers to duck his round" said by someone about the OWNER,
+// are both ClaimSelf from a non-owner. Since the second must never read as the
+// owner's own account of himself, the first is attributed too.
+//
+// The cost is small and arguably not a cost: in a room, attributing a
+// preference to the person whose preference it is, is the correct behaviour.
+// What would be wrong is stating it flat, which is what this prevents.
 func TestParticipantPreferenceNamesWhoseItIs(t *testing.T) {
 	block := RenderMemoryFactsBlock([]MemoryFact{
 		fromSpeaker("prefers texts before 8pm", "Dana", "+15550001", false, ClaimSelf, MemSourceUserStated),
 	})
-	if !strings.Contains(block, "prefers texts before 8pm (from Dana)") {
+	if !strings.Contains(block, "prefers texts before 8pm (told to you by Dana") {
 		t.Errorf("a participant's preference must name them, got:\n%s", block)
 	}
 }
@@ -430,5 +440,66 @@ func TestDisputeAgainstAnAbsentNoteIsSilent(t *testing.T) {
 	})
 	if strings.Contains(block, "DISAGREES") {
 		t.Errorf("a dangling dispute should say nothing, got:\n%s", block)
+	}
+}
+
+// --- a third party's account of the principal ------------------------------
+
+// The reported behaviour: someone in a group chat works at getting the agent to
+// record unflattering things about the OWNER. "Craig likes being late"
+// classifies as a self-claim on the word "likes", and before this it came back
+// authoritative and unmarked — a third party's character judgment sitting in
+// Craig's own memory, read forever as Craig's account of himself.
+func TestAThirdPartysClaimAboutTheOwnerIsNeverAuthoritative(t *testing.T) {
+	for _, note := range []string{
+		"Craig likes being late to everything",
+		"Craig prefers to avoid paying his share",
+		"Craig is unreliable about deadlines",
+	} {
+		f := fromSpeaker(note, "Alex", "+15559999", false, classifyClaimDomain(note), MemSourceUserStated)
+		if SpeakerAuthoritative(f.MemoryProvenance) {
+			t.Errorf("%q from a third party must not be authoritative", note)
+		}
+		if !NeedsAttribution(f.MemoryProvenance) {
+			t.Errorf("%q from a third party must be attributed", note)
+		}
+		if block := RenderMemoryFactsBlock([]MemoryFact{f}); !strings.Contains(block, "told to you by Alex") {
+			t.Errorf("%q should render as Alex's account, got:\n%s", note, block)
+		}
+	}
+}
+
+// The principal keeps their own voice. Everything that is not a channel turn
+// runs with no speaker at all, and must be unchanged.
+func TestThePrincipalIsStillAuthoritativeAboutThemselves(t *testing.T) {
+	own := MemoryFact{Note: "prefers snake_case",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimSelf}}
+	if !SpeakerAuthoritative(own.MemoryProvenance) {
+		t.Error("a note with no speaker is the principal's own and settles itself")
+	}
+	if NeedsAttribution(own.MemoryProvenance) {
+		t.Error("the principal's own preference must not be hedged")
+	}
+	// And the owner texting from their own handle is the same person.
+	viaPhone := fromSpeaker("prefers snake_case", "Craig", "+15550000", true, ClaimSelf, MemSourceUserStated)
+	if !SpeakerAuthoritative(viaPhone.MemoryProvenance) {
+		t.Error("the owner on their own handle is still the principal")
+	}
+}
+
+// And it cannot push out something better sourced — the same rule that stops a
+// told world-claim retiring a retrieved one, applied to the person.
+func TestAThirdPartyCannotRetireTheOwnersOwnNote(t *testing.T) {
+	owners := MemoryFact{ID: "a", Note: "prefers to be told things straight",
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, Domain: ClaimSelf}}
+	alexs := fromSpeaker("prefers to be handled gently", "Alex", "+15559999", false, ClaimSelf, MemSourceUserStated)
+	alexs.ID = "b"
+
+	replace, dispute := splitSupersedable(alexs, []MemoryFact{owners})
+	if len(replace) != 0 {
+		t.Errorf("a third party must not retire the owner's own note, got %v", replace)
+	}
+	if len(dispute) != 1 {
+		t.Errorf("the conflict should survive as a dispute, got %v", dispute)
 	}
 }

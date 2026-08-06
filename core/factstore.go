@@ -530,9 +530,9 @@ func applySupersede(db Database, newID string, now time.Time, olds []MemoryFact)
 // true is not a thing this code can know, and picking silently is how it gets
 // picked wrong.
 func splitSupersedable(newFact MemoryFact, judged []MemoryFact) (replace, dispute []MemoryFact) {
-	rank := ClaimAuthority(newFact.Source, newFact.Domain)
+	rank := ClaimAuthority(newFact.MemoryProvenance)
 	for _, old := range judged {
-		if ClaimAuthority(old.Source, old.Domain) > rank {
+		if ClaimAuthority(old.MemoryProvenance) > rank {
 			dispute = append(dispute, old)
 			continue
 		}
@@ -1429,7 +1429,7 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 			fmt.Fprintf(&b, " (DISAGREES with note %d, which is better sourced — prefer that one, or check)", n)
 		}
 		b.WriteString("\n")
-		marked = marked || NeedsAttribution(f.Source, f.Domain)
+		marked = marked || NeedsAttribution(f.MemoryProvenance)
 	}
 	if marked {
 		b.WriteString("\n")
@@ -1473,7 +1473,7 @@ func factProvenanceMarker(f MemoryFact) string {
 // 8pm" is authoritative — from the person whose preference it is — and read
 // without a name it becomes the owner's preference, applied to everyone.
 func factSpeakerMarker(f MemoryFact) string {
-	if NeedsAttribution(f.Source, f.Domain) {
+	if NeedsAttribution(f.MemoryProvenance) {
 		return "" // factAttributionMarker says "by <who>" itself
 	}
 	if who := SpeakerLabel(f.MemoryProvenance); who != "" {
@@ -1495,7 +1495,7 @@ func factSpeakerMarker(f MemoryFact) string {
 // better source for a preference than the person holding it, and hedging it
 // reads as doubting them.
 func factAttributionMarker(f MemoryFact) string {
-	if !NeedsAttribution(f.Source, f.Domain) {
+	if !NeedsAttribution(f.MemoryProvenance) {
 		return ""
 	}
 	// The phrase has to match how it actually arrived: blaming the user for the
@@ -1552,7 +1552,7 @@ func FactStalenessNote(f MemoryFact, now time.Time) string {
 func UncheckedFactNotes(facts []MemoryFact) []string {
 	var out []string
 	for _, f := range facts {
-		if NeedsAttribution(f.Source, f.Domain) {
+		if NeedsAttribution(f.MemoryProvenance) {
 			out = append(out, f.Note)
 		}
 	}
