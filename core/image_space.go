@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -129,6 +130,37 @@ func safeRecentUser(user string) string {
 	}
 	if len(out) > 64 {
 		out = out[:64]
+	}
+	return out
+}
+
+// transientImageRefPattern finds picture handles that do NOT survive: a
+// positional ring id (image#3) and a turn-scoped inbound id (media#2). A KEPT
+// image is image#<name> — letters, not digits — and is deliberately not matched,
+// because that one lasts.
+var transientImageRefPattern = regexp.MustCompile(`(?i)\b(image|media)#\d+`)
+
+// TransientImageRefs returns the picture handles in a text that will stop
+// resolving, in order and deduplicated.
+//
+// They break for different reasons and on different clocks. image#N is a
+// POSITION in the ring, so it silently comes to mean a different picture as new
+// ones arrive; media#N belongs to one turn and is gone by the next. Written
+// into anything durable — a pinned note, a stored fact — both are wrong within
+// a few turns, and the note reads as authoritative the whole time.
+func TransientImageRefs(text string) []string {
+	found := transientImageRefPattern.FindAllString(text, -1)
+	if len(found) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(found))
+	for _, f := range found {
+		k := strings.ToLower(f)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, f)
+		}
 	}
 	return out
 }

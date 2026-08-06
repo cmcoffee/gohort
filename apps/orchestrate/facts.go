@@ -91,6 +91,23 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error
 	if note == "" {
 		return "", errors.New("note is required")
 	}
+	// A pinned note naming a handle that does not survive is wrong from the
+	// moment it is written, and goes on being read as authoritative.
+	//
+	// image#N is a POSITION in the ring: it silently comes to mean a different
+	// picture as new ones arrive. media#N belongs to one turn and is gone by
+	// the next. Neither ages out of memory on its own — facts are durable by
+	// design and leave only via the hard cap's LRU eviction — so "Reference
+	// images confirmed: … (image#9), … (media#10)" sits in every future prompt
+	// pointing at pictures that are no longer those pictures.
+	//
+	// Refused rather than rewritten, with the durable form named: keeping the
+	// picture under a NAME makes image#<name> valid indefinitely, which is what
+	// the note was reaching for.
+	if refs := TransientImageRefs(note); len(refs) > 0 {
+		return "", fmt.Errorf("not saved: %s %s a handle that will stop resolving. image#N is a POSITION in the recent list (it means a different picture as new ones arrive) and media#N lasts only the turn it arrived on, but this note is kept forever — so it would point at the wrong pictures within a few turns while still reading as fact. If these pictures matter later, keep each one under a name first (image action=\"keep\", name=…), then write the note using image#<name>, which stays valid. If the note is really about this conversation rather than something durable, don't pin it at all",
+			strings.Join(refs, ", "), map[bool]string{true: "are", false: "is"}[len(refs) > 1])
+	}
 	// Pass the agent's memory mode + worker chat so: (a) a changed fact
 	// ("moved to Austin") supersedes the stale one instead of coexisting as
 	// a contradiction, and (b) in chatbot mode the relevance gate rejects
