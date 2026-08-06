@@ -148,6 +148,11 @@ type FactWritePolicy struct {
 	// while observed/inferred/unknown are not. Zero (MemSourceUnknown) leaves
 	// the origin unrecorded.
 	Source MemSource
+	// Domain says whether the source's word settles the claim: ClaimSelf for
+	// what someone asserts about themselves (authoritative), ClaimWorld for
+	// anything checkable independently of who said it (a lead). Zero leaves it
+	// unclassified, which recall reads cautiously rather than as authority.
+	Domain ClaimDomain
 }
 
 // FactWriteReason explains what StoreMemoryFactP did with a submitted note.
@@ -343,7 +348,7 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		// A fresh fact is confirmed-true as of now, its volatility is inferred from
 		// its subject (category-based, deterministic), and its Source comes from the
 		// write policy (MemSourceUnknown when the caller doesn't set one).
-		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source},
+		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source, Domain: p.Domain},
 		Vector:           newVec,
 	}
 	if len(newVec) > 0 {
@@ -1306,6 +1311,34 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 // the model judges freshness against today's date (carried on the user turn).
 // Empty for stable facts and facts without an AsOf, so the common case is clean.
 func factProvenanceMarker(f MemoryFact) string {
+	return factAttributionMarker(f) + factVolatilityMarker(f)
+}
+
+// factAttributionMarker names where a claim came from when its truth does not
+// follow from who said it.
+//
+// A world-claim somebody told us renders identically to something the agent
+// checked, once it is a bare line in a prompt. That is where a guess becomes a
+// fact: the note is read back, restated in the agent's own words, and from then
+// on it is cited as established with nothing behind it. Attribution is the
+// cheapest place to stop that, because it travels with the row.
+//
+// Deliberately not applied to what someone says about THEMSELVES. There is no
+// better source for a preference than the person holding it, and hedging it
+// reads as doubting them.
+func factAttributionMarker(f MemoryFact) string {
+	if !NeedsAttribution(f.Source, f.Domain) {
+		return ""
+	}
+	if f.AsOf.IsZero() {
+		return " (told to you, not independently checked)"
+	}
+	return " (told to you on " + f.AsOf.Format("2006-01-02") + ", not independently checked)"
+}
+
+// factVolatilityMarker is the staleness half of the marker: how fast the claim's
+// content goes off, regardless of who made it.
+func factVolatilityMarker(f MemoryFact) string {
 	if f.AsOf.IsZero() {
 		return ""
 	}
@@ -1345,10 +1378,16 @@ func FactStalenessNote(f MemoryFact, now time.Time) string {
 func SourcedFactCorpus(facts []MemoryFact) string {
 	var b strings.Builder
 	for _, f := range facts {
-		if f.Source == MemSourceUserStated || f.Source == MemSourceRetrieved {
-			b.WriteString(f.Note)
-			b.WriteByte('\n')
+		if f.Source != MemSourceUserStated && f.Source != MemSourceRetrieved {
+			continue
 		}
+		b.WriteString(f.Note)
+		// A told world-claim stays in the corpus and stays MARKED. Dropping it
+		// would lose something the agent legitimately knows; letting it in bare
+		// would license asserting it as checked, which is the whole failure
+		// this split exists to prevent.
+		b.WriteString(factAttributionMarker(f))
+		b.WriteByte('\n')
 	}
 	return b.String()
 }

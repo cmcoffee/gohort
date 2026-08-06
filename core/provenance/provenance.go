@@ -31,6 +31,76 @@ const (
 	MemSourceImported                    // bulk-loaded from an external store
 )
 
+// ClaimDomain says whether the person who stated a claim is in a position to
+// SETTLE it. It is the axis MemSource is missing: source records who put the
+// claim into memory, domain records whether that makes it true.
+//
+// The two fuse badly under user_stated. Someone telling you their own name,
+// what they prefer, or what they want built IS the evidence — there is nothing
+// to check it against, and checking would be both impossible and insulting.
+// Someone telling you a server is up, a library has a function, or a database
+// sits on NFS has made a claim that is true or false independently of them
+// saying it, and accepting it because they said it is how a guess becomes a
+// fact the agent later cites as established.
+type ClaimDomain uint8
+
+const (
+	// ClaimDomainUnknown is a row written before the domain was recorded, or one
+	// nobody classified. Treated as the cautious case wherever the distinction
+	// decides something: unclassified is not evidence of authority.
+	ClaimDomainUnknown ClaimDomain = iota
+	// ClaimSelf is about the speaker: identity, preferences, intent, goals,
+	// their own history. They are the authority; there is no better source.
+	ClaimSelf
+	// ClaimWorld is checkable independently of who said it. A statement here is
+	// a LEAD until something confirms it, however confidently it was stated and
+	// however often it is repeated.
+	ClaimWorld
+)
+
+// SpeakerAuthoritative reports whether the person who stated this claim settles
+// it by having said so. True only for what someone asserts about THEMSELVES:
+// every other combination leaves the claim standing on evidence it may not have.
+func SpeakerAuthoritative(src MemSource, dom ClaimDomain) bool {
+	return src == MemSourceUserStated && dom == ClaimSelf
+}
+
+// NeedsAttribution reports whether recall must name where a claim came from
+// rather than stating it flat. A world-claim somebody told us is the case that
+// matters: rendered bare it is indistinguishable from something we checked, and
+// three turns later it is quoted back as established fact.
+func NeedsAttribution(src MemSource, dom ClaimDomain) bool {
+	return src == MemSourceUserStated && dom == ClaimWorld
+}
+
+// ClaimAuthority ranks claims for GROUNDING — whether one may be asserted as
+// fact. Deliberately not SourceTrust, which orders origins for merge and
+// supersession and must keep ranking a human's entry above a machine's.
+//
+// Here a told world-claim sits BELOW a retrieved one, because the question is
+// no longer "whose row survives a merge" but "did anything actually check
+// this". Same rows, different question, so a separate ordering rather than
+// bending the one the merge path depends on.
+func ClaimAuthority(src MemSource, dom ClaimDomain) int {
+	if SpeakerAuthoritative(src, dom) {
+		return 5
+	}
+	switch src {
+	case MemSourceRetrieved:
+		return 4
+	case MemSourceObserved:
+		return 3
+	case MemSourceUserStated: // a world-claim, or unclassified: told, not checked
+		return 2
+	case MemSourceImported:
+		return 2
+	case MemSourceInferred:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // sourceTrust ranks origins for "which provenance wins" decisions: a sweep
 // merging a user_stated fact with an observed one must not launder both to
 // unknown, and a machine re-link must not downgrade a hand-curated edge.
@@ -86,6 +156,10 @@ type MemoryProvenance struct {
 	// --- Origin: set once at write time ---
 	Source     MemSource  `json:"src,omitempty"`
 	Volatility Volatility `json:"vol,omitempty"`
+	// Domain says whether the source's word SETTLES the claim — see ClaimDomain.
+	// Zero (unknown) is the cautious reading everywhere it decides something,
+	// so legacy rows gain no authority they were never granted.
+	Domain ClaimDomain `json:"dom,omitempty"`
 	// AsOf is when the claim was last CONFIRMED true, distinct from a row's
 	// Created (first write) and Updated (any mutation). A re-verification bumps
 	// AsOf without rewriting the note. Staleness is measured from AsOf.

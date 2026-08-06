@@ -493,6 +493,7 @@ type (
 	RetireReason     = provenance.RetireReason
 	MemoryProvenance = provenance.MemoryProvenance
 	Staleness        = provenance.Staleness
+	ClaimDomain      = provenance.ClaimDomain
 )
 
 const (
@@ -507,6 +508,11 @@ const (
 	MemSourceRetrieved  = provenance.MemSourceRetrieved
 	MemSourceInferred   = provenance.MemSourceInferred
 	MemSourceImported   = provenance.MemSourceImported
+
+	// Whether the source's word SETTLES the claim.
+	ClaimDomainUnknown = provenance.ClaimDomainUnknown
+	ClaimSelf          = provenance.ClaimSelf
+	ClaimWorld         = provenance.ClaimWorld
 
 	// How fast it goes out of date.
 	VolStable   = provenance.VolStable
@@ -526,9 +532,12 @@ const (
 )
 
 var (
-	RetireReasonLabel = provenance.RetireReasonLabel
-	RecencyWeight     = provenance.RecencyWeight
-	SourceTrust       = provenance.SourceTrust
+	RetireReasonLabel    = provenance.RetireReasonLabel
+	RecencyWeight        = provenance.RecencyWeight
+	SourceTrust          = provenance.SourceTrust
+	SpeakerAuthoritative = provenance.SpeakerAuthoritative
+	NeedsAttribution     = provenance.NeedsAttribution
+	ClaimAuthority       = provenance.ClaimAuthority
 )
 
 // --- subsession (a delegated turn's lifecycle record) -----------------------
