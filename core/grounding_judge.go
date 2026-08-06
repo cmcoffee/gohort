@@ -109,6 +109,28 @@ var groundingStopWords = map[string]bool{
 	"user": true, "users": true,
 }
 
+// withLiveClaim adds THIS message to the unchecked list when it came from
+// someone who is not the principal.
+//
+// The stored-claim path cannot see it: nothing has classified or marked the
+// message, because it is not in memory and may never be. In a room that is
+// exactly the claim that does damage — one participant asserts something, the
+// agent adopts it inside the same turn, and repeats it to everyone else as
+// fact.
+//
+// Deliberately NOT added for the owner. They are the principal; treating their
+// message as an unverified claim would make the agent hedge instructions it was
+// given, which is a different failure and a worse one.
+func withLiveClaim(stored []string, speaker, message string) []string {
+	speaker, message = strings.TrimSpace(speaker), strings.TrimSpace(message)
+	if speaker == "" || message == "" {
+		return stored
+	}
+	out := make([]string, 0, len(stored)+1)
+	out = append(out, stored...)
+	return append(out, speaker+" asserted in this message (nothing has verified it): "+message)
+}
+
 // judgeTurnGrounding runs the app's judge when the evidence warrants it, and
 // returns a verdict only on a conviction with something to quote. A conviction
 // with no quoted claim is unusable: the correction would tell the model its

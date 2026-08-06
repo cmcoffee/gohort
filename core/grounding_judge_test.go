@@ -4,7 +4,10 @@
 // scope that admits anything teaches the model to hedge.
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func groundingEv(reply string, unchecked ...string) TurnGroundingEvidence {
 	return TurnGroundingEvidence{Reply: reply, Unchecked: unchecked}
@@ -108,5 +111,53 @@ func TestUncheckedNotesMatchWhatWasMarked(t *testing.T) {
 	got := UncheckedFactNotes(facts)
 	if len(got) != 1 || got[0] != "the cluster has three nodes" {
 		t.Errorf("scope should be exactly the marked notes, got %v", got)
+	}
+}
+
+// --- the claim asserted in THIS message -----------------------------------
+
+// The stored path cannot see it: nothing classified or marked the message,
+// because it is not in memory and may never be.
+func TestLiveClaimEntersScope(t *testing.T) {
+	got := withLiveClaim(nil, "Dana", "the invoice was already paid")
+	if len(got) != 1 {
+		t.Fatalf("a participant's message should enter scope, got %v", got)
+	}
+	if !strings.Contains(got[0], "Dana asserted in this message") || !strings.Contains(got[0], "the invoice was already paid") {
+		t.Errorf("the entry should name the speaker and carry the claim, got %q", got[0])
+	}
+}
+
+// The principal is not a claimant. Treating their message as unverified would
+// hedge the instructions they just gave — a different failure, and a worse one.
+func TestOwnerMessageIsNotALiveClaim(t *testing.T) {
+	if got := withLiveClaim(nil, "", "ship it on Friday"); len(got) != 0 {
+		t.Errorf("an owner turn has no live claimant, got %v", got)
+	}
+}
+
+func TestLiveClaimDoesNotDisturbStoredOnes(t *testing.T) {
+	stored := []string{"the cluster has three nodes"}
+	got := withLiveClaim(stored, "Dana", "the invoice was already paid")
+	if len(got) != 2 || got[0] != stored[0] {
+		t.Fatalf("stored notes must survive unchanged, got %v", got)
+	}
+	// And the input slice must not be aliased into the result — the caller
+	// reuses cfg.UncheckedClaims on every round of the loop.
+	if len(stored) != 1 {
+		t.Error("the caller's slice was mutated")
+	}
+}
+
+// End to end through the filter: a reply repeating what a participant said is
+// worth judging, where the same reply with nothing in scope is not.
+func TestLiveClaimMakesAReplyWorthJudging(t *testing.T) {
+	scope := withLiveClaim(nil, "Dana", "the invoice was already paid")
+	ev := TurnGroundingEvidence{Reply: "That invoice is already paid, so you're all set.", Unchecked: scope}
+	if !turnGroundingWorthJudging(ev) {
+		t.Error("a reply repeating a live claim should reach the judge")
+	}
+	if turnGroundingWorthJudging(TurnGroundingEvidence{Reply: ev.Reply}) {
+		t.Error("with nothing in scope the same reply must not be judged")
 	}
 }

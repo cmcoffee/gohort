@@ -1121,6 +1121,16 @@ type AgentLoopConfig struct {
 	// Empty means the grounding judge never runs.
 	UncheckedClaims []string
 
+	// LiveClaimSpeaker names the person whose message this turn is answering,
+	// when they are NOT the principal — a participant in a room, a contact on a
+	// channel. Empty for an owner turn and for every non-channel surface.
+	//
+	// It exists because the stored-claim machinery cannot reach the claim that
+	// matters most in a group: the one asserted in THIS message, which nothing
+	// has classified or marked because it is not in memory yet. Set, it puts
+	// the inbound itself in the judge's scope.
+	LiveClaimSpeaker string
+
 	// PhantomDeliveryRefs names what a reply CLAIMS to be sending that does not
 	// exist — a delivery promised for something never produced. The loop cannot
 	// answer this itself: what a reference resolves against (a workspace, an
@@ -3147,8 +3157,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// notes the memory block marked unchecked are in scope, so a turn
 			// carrying none never reaches a model call.
 			if gv, convicted := judgeTurnGrounding(cfg, TurnGroundingEvidence{
-				Reply:     resp.Content,
-				Unchecked: cfg.UncheckedClaims,
+				Reply: resp.Content,
+				// Stored notes plus, on a channel, whatever the person just
+				// said. Composed here rather than by the host so the live entry
+				// is worded the same way everywhere it is judged.
+				Unchecked: withLiveClaim(cfg.UncheckedClaims, cfg.LiveClaimSpeaker, LatestUserContent(messages)),
 				ToolCalls: turnToolCalls,
 			}); convicted {
 				if corrections.available(correctionUngrounded) && round < maxRounds {

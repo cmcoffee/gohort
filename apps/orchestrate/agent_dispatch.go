@@ -1529,6 +1529,19 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.TurnNotes = func(user string) string { return turnNotes(subSess, runtimeDB, subSessionID, user) }
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	loopCfg.TurnClaimJudge = T.turnClaimJudge(ctx)
+	// And whether it KNOWS what it asserts. On this path the live claim matters
+	// more than the stored ones: a contact says something in a room and the
+	// agent can adopt it and repeat it to everyone inside the same turn.
+	//
+	// The speaker is taken from the OWNER classification, not the display name:
+	// a non-owner's message is in scope whatever they call themselves, and the
+	// owner's never is — treating the principal's own message as an unverified
+	// claim would hedge the instructions they just gave.
+	loopCfg.TurnGroundingJudge = T.turnGroundingJudge(ctx)
+	loopCfg.UncheckedClaims = UncheckedFactNotes(subFacts)
+	if !subTurn.requesterOwnerHandle && strings.TrimSpace(subTurn.requesterHandle) != "" {
+		loopCfg.LiveClaimSpeaker = chFirst(strings.TrimSpace(subTurn.requesterName), "the sender")
+	}
 	loopCfg.DeliveredCount = func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) }
 	loopCfg.Backgrounded = func() bool { return subSess.Detach.Any() }
 	// Catch a reply that promises a file it never made, while the loop can still
