@@ -59,11 +59,11 @@ const (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{Key: TunableGraphEntityCap, Category: "Limits",
+	RegisterTunable(TunableSpec{Key: TunableGraphEntityCap, Category: "Memory",
 		Label: "Graph entity cap per agent (0 = off)",
 		Help:  "Max entities in one agent's memory graph. Past the cap, the least-recently-updated entities are evicted (edges included) so auto-extraction can't grow the graph without bound.",
 		Kind:  KindInt, Default: 500, Min: 0, Max: 10000})
-	RegisterTunable(TunableSpec{Key: TunableGraphEdgeCap, Category: "Limits",
+	RegisterTunable(TunableSpec{Key: TunableGraphEdgeCap, Category: "Memory",
 		Label: "Graph edge cap per agent (0 = off)",
 		Help:  "Max live relationships in one agent's memory graph. Past the cap, the least-recently-updated edges are evicted.",
 		Kind:  KindInt, Default: 2000, Min: 0, Max: 50000})

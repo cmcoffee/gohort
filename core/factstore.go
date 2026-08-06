@@ -102,19 +102,19 @@ const (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{Key: TunableFactSweepThreshold, Category: "Limits",
+	RegisterTunable(TunableSpec{Key: TunableFactSweepThreshold, Category: "Memory",
 		Label: "Memory sweep threshold (0 = off)",
 		Help:  "When an agent's saved-fact count reaches this, an async worker-LLM prune removes junk and collapses redundant notes so the always-in-prompt block stays lean.",
 		Kind:  KindInt, Default: 40, Min: 0, Max: 500})
-	RegisterTunable(TunableSpec{Key: TunableFactHardCap, Category: "Limits",
+	RegisterTunable(TunableSpec{Key: TunableFactHardCap, Category: "Memory",
 		Label: "Memory hard cap (0 = off)",
 		Help:  "After a sweep, evict least-recently-updated facts until the store is at or below this many. Backstop against unbounded prompt growth.",
 		Kind:  KindInt, Default: 60, Min: 0, Max: 1000})
-	RegisterTunable(TunableSpec{Key: TunableFactGate, Category: "Limits",
+	RegisterTunable(TunableSpec{Key: TunableFactGate, Category: "Memory",
 		Label: "Memory relevance gate (chatbot mode)",
 		Help:  "1 = reject ephemeral, non-durable notes at write time in chatbot-mode agents (the personal-assistant/group-chat persona). 0 = store everything the model decides to save.",
 		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
-	RegisterTunable(TunableSpec{Key: TunableFactTombstoneDays, Category: "Limits",
+	RegisterTunable(TunableSpec{Key: TunableFactTombstoneDays, Category: "Memory",
 		Label: "Memory tombstone retention (days, 0 = keep none)",
 		Help:  "How long a retired fact (superseded, evicted, or merged) stays queryable so recall can explain a hole (\"you had X; it was dropped on <date>\") before it is permanently deleted. 0 = delete retired facts immediately.",
 		Kind:  KindInt, Default: 30, Min: 0, Max: 365})
