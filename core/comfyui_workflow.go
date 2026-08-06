@@ -214,16 +214,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	// nodes that made no sense for what the user had built. So: a sampler is
 	// required only when there's no image input to work from, because a graph
 	// with neither has no way to produce anything.
-	sampler := findComfyNode(graph, func(class string) bool { return strings.Contains(class, "KSampler") })
-	if sampler == "" {
-		// Fallback: any node exposing a `positive` input behaves like a sampler.
-		for _, id := range sortedComfyNodes(graph) {
-			if _, ok := comfyInputs(graph, id)["positive"]; ok {
-				sampler = id
-				break
-			}
-		}
-	}
+	sampler := findComfySampler(graph)
 	if sampler == "" && len(m.ImageNodes) == 0 {
 		return nil, fmt.Errorf("no KSampler (or node with a positive input) found, and no LoadImage node either — this graph has no prompt and no image to work from")
 	}
@@ -231,11 +222,11 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	var sIn map[string]any
 	if sampler != "" {
 		sIn = comfyInputs(graph, sampler)
-		if pid := traceComfyText(graph, sIn["positive"]); pid != "" {
+		if pid := traceSamplerPrompt(graph, sampler, sIn); pid != "" {
 			m.PromptNodes = []string{pid}
 			m.TextKeys = comfyTextKeys(comfyInputs(graph, pid))
 		} else if len(m.ImageNodes) == 0 {
-			return nil, fmt.Errorf("couldn't trace the sampler's positive conditioning to a text node — set the prompt node in the config panel")
+			return nil, fmt.Errorf("couldn't trace the sampler's conditioning to a text node — set the prompt node in the config panel")
 		} else {
 			warnings = append(warnings, "no text node reached from the sampler; this backend takes images but no prompt")
 		}
@@ -257,7 +248,16 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	case hasKey(sIn, "noise_seed"):
 		m.SeedNodes, m.SeedKey = []string{sampler}, "noise_seed"
 	default:
-		warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
+		// The seed may live one node away. Flux drives SamplerCustomAdvanced from
+		// a RandomNoise node that holds noise_seed, so the sampler itself has no
+		// seed input at all — and left unmapped, every render reuses whatever
+		// number the workflow was exported with and the backend returns the same
+		// picture forever.
+		if nid, key := findComfySeedNode(graph, sIn); nid != "" {
+			m.SeedNodes, m.SeedKey = []string{nid}, key
+		} else {
+			warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
+		}
 	}
 	if v, ok := sIn["steps"]; ok {
 		if comfyIsLink(v) {
@@ -328,6 +328,97 @@ func PrettyComfyJSON(s string) string {
 		return buf.String()
 	}
 	return s
+}
+
+// findComfySampler picks the node that actually DENOISES, which is not always
+// the one whose class name says KSampler.
+//
+// A Flux graph carries a KSamplerSelect — a picker holding a sampler NAME and
+// nothing else: no conditioning, no latent, no seed. Matching on the substring
+// found it first and mapped it as the sampler, so the prompt trace started at a
+// node with no links to follow and the import failed with "couldn't trace the
+// sampler's conditioning" against a graph that was wired correctly.
+//
+// Structure decides it: a sampler consumes a latent, or conditioning, or a
+// guider that carries conditioning. The class name is the tiebreak, not the test.
+func findComfySampler(graph map[string]map[string]any) string {
+	var byClass string
+	for _, id := range sortedComfyNodes(graph) {
+		class := comfyClass(graph, id)
+		if strings.Contains(class, "Select") {
+			continue // a picker FOR a sampler, not a sampler
+		}
+		in := comfyInputs(graph, id)
+		if hasKey(in, "latent_image") || hasKey(in, "positive") || hasKey(in, "guider") {
+			return id
+		}
+		if byClass == "" && strings.Contains(class, "KSampler") {
+			byClass = id
+		}
+	}
+	return byClass
+}
+
+// samplerSeedInputs are the sampler inputs worth following to find a seed,
+// in a fixed order for the usual reason: a map walk would pick a different node
+// between imports.
+var samplerSeedInputs = []string{"noise", "sampler", "sigmas", "guider"}
+
+// findComfySeedNode looks one hop out from the sampler for the node that holds
+// the seed, returning it and the key it lives under. Only a LITERAL counts: a
+// linked seed is computed by the graph, and writing over it would sever the
+// wiring the author built.
+func findComfySeedNode(graph map[string]map[string]any, sIn map[string]any) (string, string) {
+	for _, in := range samplerSeedInputs {
+		tid, ok := comfyLinkTarget(sIn[in])
+		if !ok {
+			continue
+		}
+		nin := comfyInputs(graph, tid)
+		for _, key := range []string{"noise_seed", "seed"} {
+			if v, has := nin[key]; has && !comfyIsLink(v) {
+				return tid, key
+			}
+		}
+	}
+	return "", ""
+}
+
+// samplerConditioningInputs are the inputs a prompt can arrive on, in the order
+// worth trying. "positive" first, so a graph that has one behaves exactly as
+// before; "guider" and "conditioning" cover the Flux shape, where the text
+// reaches the sampler through a BasicGuider instead.
+var samplerConditioningInputs = []string{"positive", "guider", "conditioning"}
+
+// traceSamplerPrompt finds the text node feeding a sampler.
+//
+// Tries the conditioning inputs in a FIXED order, then the sampler's remaining
+// inputs sorted by name. Both orderings are deliberate: a map walk is
+// nondeterministic, and on a graph with two text chains it would map the
+// positive encoder on one import and the negative on the next.
+//
+// "negative" is skipped in the fallback for that reason — reaching it by
+// accident makes the negative prompt the backend's prompt, which is worse than
+// finding nothing at all.
+func traceSamplerPrompt(graph map[string]map[string]any, sampler string, sIn map[string]any) string {
+	for _, key := range samplerConditioningInputs {
+		if id := traceComfyText(graph, sIn[key]); id != "" {
+			return id
+		}
+	}
+	keys := make([]string, 0, len(sIn))
+	for k := range sIn {
+		if k != "negative" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if id := traceComfyText(graph, sIn[k]); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // traceComfyText resolves a sampler conditioning link (positive/negative) to the
@@ -646,8 +737,16 @@ func findComfyTextNode(graph map[string]map[string]any, start string, depth int,
 	if strings.Contains(class, "CLIPTextEncode") || hasComfyTextKey(in) {
 		return start
 	}
-	for _, v := range in {
-		if tid, ok := comfyLinkTarget(v); ok {
+	// Sorted, not a map walk: two reachable text chains would otherwise resolve
+	// differently from one import to the next, and "which encoder became the
+	// prompt" is not something anyone would think to re-check.
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if tid, ok := comfyLinkTarget(in[k]); ok {
 			if r := findComfyTextNode(graph, tid, depth-1, seen); r != "" {
 				return r
 			}
