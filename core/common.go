@@ -2652,7 +2652,7 @@ func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender strin
 		// request for the one slot a local backend has, which is how "attach a
 		// photo and ask what it is" turns into a wait. It gets described if it
 		// is ever kept, where nothing is competing with it.
-		recordRecentImage(s, raw, note, false)
+		recordRecentImage(s, raw, note, ImageFromUser, false)
 	}
 	return id
 }

@@ -54,6 +54,11 @@ type KeptImage struct {
 	// generation prompt in the same style, brief a designer — without spending
 	// vision tokens re-looking every time it needs the detail.
 	Description string
+	// Origin is where the picture came from, carried over from the ring at keep
+	// time. It decides whether this entry may be offered as a REFERENCE — the
+	// agent's own output is not evidence of what anything really looks like —
+	// and it is not derivable later, since Note below is the agent's own words.
+	Origin  ImageOrigin
 	When    time.Time // when it was kept
 	// Owner is the agent whose library holds it, and Inherited marks the ones
 	// that came from an ancestor rather than this agent. The distinction is
@@ -125,6 +130,10 @@ type keptImageMeta struct {
 	Description string    `json:"description,omitempty"`
 	Mime    string    `json:"mime"`
 	When    time.Time `json:"when"`
+	// Origin is omitempty: an entry kept before origins existed reads back
+	// unknown, and unknown is treated as reference-eligible rather than
+	// silently dropped from a library somebody deliberately built.
+	Origin ImageOrigin `json:"origin,omitempty"`
 }
 
 // keptImageDir is where an agent's library lives — a sibling of the ring, so
@@ -233,6 +242,7 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		caption, description = CaptionImage(sess, data)
 	}
 	kept := KeptImage{
+		Origin:      ringOrigin(sess, ref),
 		Name:        clean,
 		Ref:         RecentImageRefPrefix + clean,
 		Note:        strings.TrimSpace(note),
@@ -241,7 +251,7 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		When:        time.Now(),
 		path:        base + ".png",
 	}
-	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Description: kept.Description, Mime: "image/png", When: kept.When})
+	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Description: kept.Description, Mime: "image/png", When: kept.When, Origin: kept.Origin})
 	if err := os.WriteFile(base+".json", meta, 0600); err != nil {
 		Debug("[image_keep] write meta: %v", err)
 	}
@@ -252,6 +262,26 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		KeptImageRemember(sess, kept)
 	}
 	return kept, nil
+}
+
+// ringOrigin reports where the ring entry behind a ref came from. A ref that
+// names an already-KEPT image carries that entry's origin forward, so
+// re-keeping under a new name cannot launder generated output into a reference.
+func ringOrigin(sess *ToolSession, ref string) ImageOrigin {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(strings.ToLower(ref), RecentImageRefPrefix) {
+		if n, err := strconv.Atoi(strings.TrimSpace(ref[len(RecentImageRefPrefix):])); err == nil && n >= 1 {
+			if all := RecentImages(sess); n <= len(all) {
+				return all[n-1].Origin
+			}
+		}
+	}
+	for _, k := range KeptImages(sess) {
+		if strings.EqualFold(k.Ref, ref) {
+			return k.Origin
+		}
+	}
+	return ImageOriginUnknown
 }
 
 // ringDescription returns what the ring already knows about a ref, or empty
@@ -350,7 +380,7 @@ func keptImagesOf(sess *ToolSession, agentID string) []KeptImage {
 		if raw, err := os.ReadFile(base + ".json"); err == nil {
 			_ = json.Unmarshal(raw, &meta)
 		}
-		k.Note, k.Caption, k.Description, k.When = meta.Note, meta.Caption, meta.Description, meta.When
+		k.Note, k.Caption, k.Description, k.When, k.Origin = meta.Note, meta.Caption, meta.Description, meta.When, meta.Origin
 		out = append(out, k)
 	}
 	return out
@@ -407,6 +437,9 @@ func KeptImageManifest(sess *ToolSession) string {
 		// Mark provenance: the model can USE an inherited image but cannot
 		// forget it, and finding that out from a refusal is worse than reading
 		// it here.
+		if k.Origin.AgentMade() {
+			desc = "MADE BY YOU (" + string(k.Origin) + ") — not a reference for anything real: " + desc
+		}
 		if k.Inherited {
 			inherited = true
 			fmt.Fprintf(&b, "- %s (inherited) — %s\n", k.Ref, desc)

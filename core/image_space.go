@@ -50,7 +50,10 @@ type RecentImage struct {
 	// pass is best-effort and may not have finished, or may not have run.
 	Caption     string
 	Description string
-	path        string // absolute file path
+	// Origin decides whether this picture may stand as a reference. See
+	// ImageOrigin: an agent's own output is not evidence of anything.
+	Origin ImageOrigin
+	path   string // absolute file path
 }
 
 // recentImageMeta is the on-disk sidecar. Kept next to the image so the space
@@ -63,6 +66,10 @@ type recentImageMeta struct {
 	// useful without it.
 	Caption     string `json:"caption,omitempty"`
 	Description string `json:"description,omitempty"`
+	// Origin is omitempty, so a sidecar written before this existed simply has
+	// no field and reads back as unknown — where originFromNote classifies it
+	// from the note the framework wrote.
+	Origin ImageOrigin `json:"origin,omitempty"`
 }
 
 // recentImageDir is where a user's ring lives. Empty when there's no session or
@@ -115,20 +122,75 @@ func safeRecentUser(user string) string {
 	return out
 }
 
+// ImageOrigin says WHERE a picture came from, which decides whether it can
+// serve as a reference. An agent's own output is not evidence of anything: a
+// generated subject is invented, so treating it as a reference for that subject
+// compounds the invention every time it is reused, and the thing depicted
+// drifts away from the real one it was supposed to depict.
+//
+// Recorded structurally rather than parsed back out of the note, because the
+// note that reaches a KEPT image is the agent's own words about why it kept it,
+// not the framework's record of where it came from.
+type ImageOrigin string
+
+const (
+	// ImageFromUser arrived as an attachment. The strongest reference there is:
+	// somebody chose this picture and sent it.
+	ImageFromUser ImageOrigin = "user"
+	// ImageFromFound was searched for or downloaded from a URL. A photograph of
+	// a real thing, so it stands as a reference.
+	ImageFromFound ImageOrigin = "found"
+	// ImageFromGenerated was drawn from a text prompt. Invented, and therefore
+	// not a reference for anything real.
+	ImageFromGenerated ImageOrigin = "generated"
+	// ImageFromEdited is derived output. It carries some of its source, but it
+	// is what the agent produced rather than what it was given.
+	ImageFromEdited ImageOrigin = "edited"
+	// ImageOriginUnknown is an entry written before origins were recorded.
+	ImageOriginUnknown ImageOrigin = ""
+)
+
+// AgentMade reports whether the deployment POSITIVELY knows this picture is the
+// agent's own output. Unknown is deliberately not agent-made: the same
+// allowlist direction the workspace reaper uses. A missed classification here
+// leaves a stale reference in a list, which is visible and correctable; the
+// other direction silently drops a reference somebody deliberately kept, and
+// they find out when the agent stops using it and cannot say why.
+func (o ImageOrigin) AgentMade() bool {
+	return o == ImageFromGenerated || o == ImageFromEdited
+}
+
+// originFromNote classifies an entry written before Origin existed, from the
+// note the framework itself wrote. Only ring notes are framework-authored, so
+// this is never applied to a kept image's note.
+func originFromNote(note string) ImageOrigin {
+	switch n := strings.ToLower(strings.TrimSpace(note)); {
+	case strings.HasPrefix(n, "generated:"):
+		return ImageFromGenerated
+	case strings.HasPrefix(n, "edited "):
+		return ImageFromEdited
+	case strings.HasPrefix(n, "received"):
+		return ImageFromUser
+	case strings.HasPrefix(n, "found:"), strings.HasPrefix(n, "downloaded:"):
+		return ImageFromFound
+	}
+	return ImageOriginUnknown
+}
+
 // RecordRecentImage adds an image to the space and prunes it back to the limit,
 // returning the ref the caller should show the model ("image#1"). Best-effort:
 // an empty ref means the space is unavailable (no session, no username, or an
 // unwritable directory) and the caller carries on without it — the space is a
 // convenience, never a dependency.
-func RecordRecentImage(sess *ToolSession, data []byte, note string) string {
-	return recordRecentImage(sess, data, note, CaptionOnRecord)
+func RecordRecentImage(sess *ToolSession, data []byte, note string, origin ImageOrigin) string {
+	return recordRecentImage(sess, data, note, origin, CaptionOnRecord)
 }
 
 // recordRecentImage is the implementation. describe=false is for an image the
 // TURN is already looking at — see the inbound-attachment call site — where a
 // second, concurrent vision call for the same picture buys nothing and costs
 // the user's own request its LLM slot.
-func recordRecentImage(sess *ToolSession, data []byte, note string, describe bool) string {
+func recordRecentImage(sess *ToolSession, data []byte, note string, origin ImageOrigin, describe bool) string {
 	dir := recentImageDir(sess)
 	if dir == "" || len(data) == 0 {
 		return ""
@@ -145,7 +207,7 @@ func recordRecentImage(sess *ToolSession, data []byte, note string, describe boo
 		Debug("[image_space] write: %v", err)
 		return ""
 	}
-	meta, _ := json.Marshal(recentImageMeta{Note: strings.TrimSpace(note), Mime: "image/png"})
+	meta, _ := json.Marshal(recentImageMeta{Note: strings.TrimSpace(note), Mime: "image/png", Origin: origin})
 	if err := os.WriteFile(filepath.Join(dir, base+".json"), meta, 0600); err != nil {
 		Debug("[image_space] write meta: %v", err)
 	}
@@ -245,6 +307,12 @@ func RecentImages(sess *ToolSession) []RecentImage {
 			_ = json.Unmarshal(raw, &meta)
 		}
 		r.Note, r.Caption, r.Description = meta.Note, meta.Caption, meta.Description
+		// An entry written before origins existed has no field; classify it
+		// from the note the framework wrote, so a library that predates this
+		// still knows which of its pictures the agent made.
+		if r.Origin = meta.Origin; r.Origin == ImageOriginUnknown {
+			r.Origin = originFromNote(meta.Note)
+		}
 		out = append(out, r)
 	}
 	return out

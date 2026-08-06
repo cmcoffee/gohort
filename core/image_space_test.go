@@ -40,7 +40,7 @@ func imageSpaceSession(t *testing.T) *ToolSession {
 func TestRecentImageRoundTrip(t *testing.T) {
 	sess := imageSpaceSession(t)
 	data := testPNG(t, 8, 8)
-	if ref := RecordRecentImage(sess, data, "generated: a cat"); ref != "image#1" {
+	if ref := RecordRecentImage(sess, data, "generated: a cat", ImageFromGenerated); ref != "image#1" {
 		t.Fatalf("ref = %q, want image#1", ref)
 	}
 	got, ok := ResolveRecentImage(sess, "image#1")
@@ -62,8 +62,8 @@ func TestNewestIsAlwaysImageOne(t *testing.T) {
 	sess := imageSpaceSession(t)
 	first := testPNG(t, 8, 8)
 	second := testPNG(t, 16, 16)
-	RecordRecentImage(sess, first, "first")
-	RecordRecentImage(sess, second, "second")
+	RecordRecentImage(sess, first, "first", ImageFromUser)
+	RecordRecentImage(sess, second, "second", ImageFromUser)
 
 	all := RecentImages(sess)
 	if len(all) != 2 {
@@ -87,7 +87,7 @@ func TestSpaceCollectsItsOwnGarbage(t *testing.T) {
 	// cleanup=true and would forget. Pruning is the framework's job now.
 	sess := imageSpaceSession(t)
 	for i := 0; i < recentImageLimit+5; i++ {
-		RecordRecentImage(sess, testPNG(t, 8+i, 8), "img")
+		RecordRecentImage(sess, testPNG(t, 8+i, 8), "img", ImageFromUser)
 	}
 	if got := len(RecentImages(sess)); got != recentImageLimit {
 		t.Errorf("space holds %d, want it pruned to %d", got, recentImageLimit)
@@ -110,7 +110,7 @@ func TestSpaceIsPerUser(t *testing.T) {
 
 	alice := &ToolSession{Username: "alice"}
 	bob := &ToolSession{Username: "bob"}
-	RecordRecentImage(alice, testPNG(t, 8, 8), "alice's")
+	RecordRecentImage(alice, testPNG(t, 8, 8), "alice's", ImageFromUser)
 	if len(RecentImages(bob)) != 0 {
 		t.Error("another user's image must not appear in this user's space")
 	}
@@ -123,7 +123,7 @@ func TestSpaceNeedsAUserAndFailsSoft(t *testing.T) {
 	// No username means no space. That's a missing convenience, never an error
 	// — image generation still has to work.
 	anon := &ToolSession{}
-	if ref := RecordRecentImage(anon, testPNG(t, 8, 8), "x"); ref != "" {
+	if ref := RecordRecentImage(anon, testPNG(t, 8, 8), "x", ImageFromUser); ref != "" {
 		t.Errorf("ref = %q, want empty for a session with no user", ref)
 	}
 	if RecentImages(anon) != nil {
@@ -132,7 +132,7 @@ func TestSpaceNeedsAUserAndFailsSoft(t *testing.T) {
 	if RecentImageManifest(anon) != "" {
 		t.Error("an empty space renders no manifest")
 	}
-	if ref := RecordRecentImage(nil, testPNG(t, 8, 8), "x"); ref != "" {
+	if ref := RecordRecentImage(nil, testPNG(t, 8, 8), "x", ImageFromUser); ref != "" {
 		t.Errorf("ref = %q, want empty for a nil session", ref)
 	}
 }
@@ -156,8 +156,8 @@ func TestUsernameCannotEscapeTheSpaceDirectory(t *testing.T) {
 
 func TestManifestNamesEveryImage(t *testing.T) {
 	sess := imageSpaceSession(t)
-	RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a cat")
-	RecordRecentImage(sess, testPNG(t, 9, 9), "edited image#1: snowy")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a cat", ImageFromGenerated)
+	RecordRecentImage(sess, testPNG(t, 9, 9), "edited image#1: snowy", ImageFromEdited)
 
 	m := RecentImageManifest(sess)
 	for _, want := range []string{"image#1", "image#2", "generated: a cat", "edited image#1: snowy"} {
@@ -174,7 +174,7 @@ func TestManifestNamesEveryImage(t *testing.T) {
 func TestResolveInputImageAcceptsSpaceAndWorkspace(t *testing.T) {
 	sess := imageSpaceSession(t)
 	data := testPNG(t, 8, 8)
-	RecordRecentImage(sess, data, "one")
+	RecordRecentImage(sess, data, "one", ImageFromUser)
 
 	got, err := resolveInputImage(sess, "image#1")
 	if err != nil {
@@ -242,8 +242,8 @@ func TestResolveInputImagesPreservesOrderAndCap(t *testing.T) {
 	sess := imageSpaceSession(t)
 	first := testPNG(t, 8, 8)
 	second := testPNG(t, 16, 16)
-	RecordRecentImage(sess, first, "first")
-	RecordRecentImage(sess, second, "second")
+	RecordRecentImage(sess, first, "first", ImageFromUser)
+	RecordRecentImage(sess, second, "second", ImageFromUser)
 
 	// image#1 is newest (second), image#2 is first — order must be preserved as
 	// GIVEN, since it decides subject vs background in a compose.
@@ -345,8 +345,8 @@ func TestMediaRefForMediaThatNeverArrivedIsNotCalledExpired(t *testing.T) {
 	// the agent duly told the user the image ids had expired in the queue: a
 	// confident, specific account of something that never happened.
 	sess := imageSpaceSession(t)
-	RecordRecentImage(sess, testPNG(t, 8, 8), "found: trump")
-	RecordRecentImage(sess, testPNG(t, 16, 16), "found: shazz")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "found: trump", ImageFromUser)
+	RecordRecentImage(sess, testPNG(t, 16, 16), "found: shazz", ImageFromUser)
 
 	_, err := resolveInputImage(sess, "media#1")
 	if err == nil {
@@ -405,7 +405,7 @@ func TestAStaleFilenameHandsBackTheManifest(t *testing.T) {
 	// found dozens of edit-<id>.png names with nothing to tell them apart, and
 	// ended the turn promising work it never did.
 	sess := imageSpaceSession(t)
-	RecordRecentImage(sess, testPNG(t, 8, 8), "edited: me wasting away in the garage")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "edited: me wasting away in the garage", ImageFromUser)
 
 	_, err := resolveInputImage(sess, "edit-dketc9x2v8z7.png")
 	if err == nil {
@@ -455,7 +455,7 @@ func TestRecordDescribesTheImage(t *testing.T) {
 	sess := imageSpaceSession(t)
 	captionInline(t)
 	sess.LLM = &fakeCaptionLLM{reply: "Six navy bars on a light grid\n\nA bar chart with six navy bars, light grid lines, y-axis in dollars."}
-	RecordRecentImage(sess, testPNG(t, 8, 8), "generated: revenue chart")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated: revenue chart", ImageFromGenerated)
 
 	all := RecentImages(sess)
 	if len(all) != 1 {
@@ -479,7 +479,7 @@ func TestKeepReusesTheRingDescription(t *testing.T) {
 	captionInline(t)
 	llm := &countingCaptionLLM{reply: "A logo\n\nA navy circle with a white wordmark."}
 	sess.LLM = llm
-	RecordRecentImage(sess, testPNG(t, 8, 8), "generated")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated", ImageFromUser)
 	if llm.calls != 1 {
 		t.Fatalf("record made %d vision calls, want 1", llm.calls)
 	}
@@ -505,7 +505,7 @@ func TestKeepDescribesWhenTheRingDidNot(t *testing.T) {
 
 	llm := &countingCaptionLLM{reply: "A chart\n\nSix navy bars."}
 	sess.LLM = llm
-	RecordRecentImage(sess, testPNG(t, 8, 8), "generated")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "generated", ImageFromUser)
 	if llm.calls != 0 {
 		t.Fatalf("record described the image with the pass off")
 	}

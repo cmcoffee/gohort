@@ -93,6 +93,11 @@ type imageActions struct {
 	// inboundMedia is how many photos arrived with THIS request. Drives the
 	// note above; zero on the static schema, which has no session.
 	inboundMedia int
+	// kept is the reference library, named in the schema so the model knows it
+	// EXISTS. Safe to put here because kept names are stable: they change on
+	// keep/forget, not per turn and not per image operation, so unlike the
+	// recent ring they do not churn the prefix cache.
+	kept []keptRef
 	// editors are the subset that take source photos. Disjoint from backends:
 	// an img2img graph requires its input, a txt2img graph has nowhere to put
 	// one, so a backend belongs to exactly one action.
@@ -113,6 +118,7 @@ func liveImageActions(sess *ToolSession) imageActions {
 		}
 	}
 	return imageActions{
+		kept:         keptRefsFor(sess),
 		inboundMedia: sess.InboundMediaCount(),
 		find:         cfg.Provider == "serper" && cfg.APIKey != "",
 		fetch:        true,
@@ -374,6 +380,15 @@ func imageSchemaFor(a imageActions) imageSchema {
 		}
 		desc += ". If the request concerns them, it is an EDIT — pass those ids in images. Do not generate a replacement."
 	}
+	// The reference library, named before the action is chosen. Without this the
+	// library is reachable only by calling help, which the model has no reason
+	// to do — so a request naming a subject it HAS a reference for was answered
+	// by inventing a fresh one that looks like somebody else.
+	if a.edit && len(a.kept) > 0 {
+		desc += " You have reference images kept under stable ids: " + describeKeptRefs(a.kept) +
+			". If a request names a subject you hold a reference for, pass that id in images" +
+			" — generating instead invents a DIFFERENT-looking subject, which is rarely what was asked for."
+	}
 	// The decision rule only helps when there's a decision to make.
 	if len(names) > 1 {
 		desc += " Decision:"
@@ -396,6 +411,22 @@ func imageSchemaFor(a imageActions) imageSchema {
 		}
 		if a.edit && a.generate {
 			desc += " When a photo came with the request, generate is almost never right: it draws a NEW scene and the user's picture takes no part in it."
+		}
+		// Text-to-image cannot depict a REAL subject, only invent one that fits
+		// the words. For a specific person that means the wrong face — and a
+		// wrong face is not a worse rendering, it is a picture of somebody
+		// else. So the rule is not "prefer a reference", it is "work from the
+		// best picture you can obtain, and generate only what is imaginary".
+		if a.generate {
+			desc += " A REAL, specific subject — a named person, someone the user knows, a particular place, product or logo — is depicted FROM A PICTURE OF IT, never from a text prompt: generation invents a likeness, which for a real person is simply somebody else's face."
+			switch {
+			case a.edit && a.find:
+				desc += " Use the best picture you have of them — one kept, or one that arrived with the request — and if you have none, find one first and work from that."
+			case a.edit:
+				desc += " Use the best picture you have of them — one kept, or one that arrived with the request — and if you have none, ask for one rather than inventing it."
+			case a.find:
+				desc += " Find a picture of the real subject rather than describing it to a generator."
+			}
 		}
 	}
 	return imageSchema{desc: desc, params: params}
@@ -509,6 +540,12 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		// Say it is recallable. Otherwise the model has no way to know it can
 		// find this again later without having kept a note of the name itself.
 		out += "\nA detailed description went to your memory alongside it, so a later question can find this picture — and work from what it looks like — without you remembering the name or looking at it again."
+		// Say what keeping your own output does and does not buy. Silence here
+		// reads as "this is now a reference", which is the belief that had
+		// invented subjects standing in for real ones.
+		if kept.Origin.AgentMade() {
+			out += fmt.Sprintf("\nNote: you MADE this picture (%s), so it is kept but NOT treated as a reference — it is not evidence of what any real thing looks like, and it won't be offered as one. Reference images are the ones you were given or found.", kept.Origin)
+		}
 		return out + "\nNOT delivered — keeping only files it away. To send it, attach it as you would any image.", nil
 	case "forget":
 		name := StringArg(args, "name")
@@ -621,7 +658,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		// A found image belongs in the image space too. Without this, "find a
 		// photo of a barn, now make it snowy" only worked while the filename was
 		// still in context, and not at all on a later turn.
-		if ref := RecordRecentImage(sess, data, "found: "+truncate(query, 60)); ref != "" {
+		if ref := RecordRecentImage(sess, data, "found: "+truncate(query, 60), ImageFromFound); ref != "" {
 			msg += editHandleHint(name, ref)
 		}
 		msg += showToModel(sess, data, "It is a search result, not a verified answer")
@@ -972,7 +1009,7 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if err != nil {
 		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
 	}
-	return saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60))
+	return saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited)
 }
 
 // defaultEditBackend picks the editing backend when the caller names none: the
@@ -1099,7 +1136,7 @@ func generateImageInto(sess *ToolSession, prompt, backend string) (string, error
 		via = "default"
 	}
 	Log("[imagefetch/generate_image] backend=%s generating for prompt: %s", via, truncate(prompt, 80))
-	return saveImageResult(sess, result, "gen", "generated: "+truncate(prompt, 60))
+	return saveImageResult(sess, result, "gen", "generated: "+truncate(prompt, 60), ImageFromGenerated)
 }
 
 // saveImageResult lands a finished image in both places it needs to be: the
@@ -1110,7 +1147,7 @@ func generateImageInto(sess *ToolSession, prompt, backend string) (string, error
 // It keeps a bounded ring and prunes on write, so the reply no longer has to
 // push cleanup=true — the file is retained on purpose and named something the
 // model can actually refer back to.
-func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note string) (string, error) {
+func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note string, origin ImageOrigin) (string, error) {
 	var data []byte
 	var err error
 	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
@@ -1144,7 +1181,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	if sess != nil && sess.Detached {
 		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
 		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it — that would send it twice. Just say what it is.", len(data))
-		if ref := RecordRecentImage(sess, data, note); ref != "" {
+		if ref := RecordRecentImage(sess, data, note, origin); ref != "" {
 			msg += fmt.Sprintf(" %s is its lasting handle if you need to edit it or send it again later.", ref)
 		}
 		return msg, nil
@@ -1156,7 +1193,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// what it did instead was attach with cleanup and then try to attach the
 	// same path AGAIN — which errors, because the file is gone. From there it
 	// regenerated the picture and delivered the wrong one.
-	if ref := RecordRecentImage(sess, data, note); ref != "" {
+	if ref := RecordRecentImage(sess, data, note, origin); ref != "" {
 		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working; %s is the lasting handle for this picture. Use %s to edit it later, or to send it again. Never re-attach the workspace path after a cleanup — it is already delivered.", ref, ref)
 	}
 	// A render is a guess at the prompt, not a rendering of it: the wrong
@@ -1552,7 +1589,7 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 		name, ct, len(data), name)
 	// Downloaded images join the space as well — this is also the path a model
 	// is told to use when it tries to pass a URL straight to edit.
-	if ref := RecordRecentImage(sess, data, "downloaded: "+truncate(rawURL, 60)); ref != "" {
+	if ref := RecordRecentImage(sess, data, "downloaded: "+truncate(rawURL, 60), ImageFromFound); ref != "" {
 		msg += editHandleHint(name, ref)
 	}
 	msg += showToModel(sess, data, "Nothing has checked what is in it")

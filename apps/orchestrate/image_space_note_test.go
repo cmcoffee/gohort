@@ -37,7 +37,7 @@ func noteSession(t *testing.T, captions ...string) *ToolSession {
 	SetImageDir(t.TempDir())
 	sess := &ToolSession{Username: "craig", AgentID: "wiwee", WorkspaceDir: t.TempDir()}
 	for _, c := range captions {
-		if ref := RecordRecentImage(sess, notePNG(t), c); ref == "" {
+		if ref := RecordRecentImage(sess, notePNG(t), c, ImageFromUser); ref == "" {
 			t.Fatalf("image space unavailable: %q", c)
 		}
 	}

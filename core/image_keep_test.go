@@ -15,7 +15,7 @@ import (
 func TestKeepPromotesOutOfTheRing(t *testing.T) {
 	sess := imageSpaceSession(t)
 	data := testPNG(t, 8, 8)
-	RecordRecentImage(sess, data, "generated: a navy circle")
+	RecordRecentImage(sess, data, "generated: a navy circle", ImageFromGenerated)
 
 	kept, err := KeepImage(sess, "image#1", "Brand Mark", "the logo")
 	if err != nil {
@@ -34,13 +34,13 @@ func TestKeepPromotesOutOfTheRing(t *testing.T) {
 func TestKeptImageSurvivesRingEviction(t *testing.T) {
 	sess := imageSpaceSession(t)
 	original := testPNG(t, 8, 8)
-	RecordRecentImage(sess, original, "the one worth keeping")
+	RecordRecentImage(sess, original, "the one worth keeping", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "reference", ""); err != nil {
 		t.Fatalf("keep: %v", err)
 	}
 	// Push it well past the ring limit.
 	for i := 0; i < recentImageLimit+3; i++ {
-		RecordRecentImage(sess, testPNG(t, 4+i, 4+i), fmt.Sprintf("filler %d", i))
+		RecordRecentImage(sess, testPNG(t, 4+i, 4+i), fmt.Sprintf("filler %d", i), ImageFromUser)
 	}
 	if _, ok := ResolveRecentImage(sess, "image#"+fmt.Sprint(recentImageLimit+1)); ok {
 		t.Fatal("the ring should have pruned that far back")
@@ -53,7 +53,7 @@ func TestKeptImageSurvivesRingEviction(t *testing.T) {
 
 func TestKeepRefusesNumericAndEmptyNames(t *testing.T) {
 	sess := imageSpaceSession(t)
-	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "x", ImageFromUser)
 	for _, name := range []string{"3", "", "   ", "___"} {
 		if _, err := KeepImage(sess, "image#1", name, ""); err == nil {
 			t.Fatalf("name %q was accepted; a bare number collides with positional refs and an empty name names nothing", name)
@@ -64,11 +64,11 @@ func TestKeepRefusesNumericAndEmptyNames(t *testing.T) {
 func TestKeepUnderSameNameReplaces(t *testing.T) {
 	sess := imageSpaceSession(t)
 	first, second := testPNG(t, 8, 8), testPNG(t, 16, 16)
-	RecordRecentImage(sess, first, "v1")
+	RecordRecentImage(sess, first, "v1", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "mark", ""); err != nil {
 		t.Fatalf("keep v1: %v", err)
 	}
-	RecordRecentImage(sess, second, "v2")
+	RecordRecentImage(sess, second, "v2", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "mark", ""); err != nil {
 		t.Fatalf("keep v2: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestKeepUnderSameNameReplaces(t *testing.T) {
 
 func TestForgetRemovesAndReportsHonestly(t *testing.T) {
 	sess := imageSpaceSession(t)
-	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "x", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "temp", ""); err != nil {
 		t.Fatalf("keep: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestKeptLibraryIsPerAgent(t *testing.T) {
 	sess := imageSpaceSession(t)
 	wren := &ToolSession{Username: sess.Username, AgentID: "wren", WorkspaceDir: sess.WorkspaceDir}
 	other := &ToolSession{Username: sess.Username, AgentID: "other", WorkspaceDir: sess.WorkspaceDir}
-	RecordRecentImage(wren, testPNG(t, 8, 8), "wren's")
+	RecordRecentImage(wren, testPNG(t, 8, 8), "wren's", ImageFromUser)
 	if _, err := KeepImage(wren, "image#1", "shared_name", ""); err != nil {
 		t.Fatalf("keep: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestKeptLibraryIsPerAgent(t *testing.T) {
 
 func TestKeptManifestLeadsWithCaptionNotPixels(t *testing.T) {
 	sess := imageSpaceSession(t)
-	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "x", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "house_style", "match this"); err != nil {
 		t.Fatalf("keep: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestCaptionImageIsBestEffort(t *testing.T) {
 	if c, d := CaptionImage(sess, testPNG(t, 8, 8)); c != "" || d != "" {
 		t.Fatalf("caption without an LLM = (%q, %q), want both empty", c, d)
 	}
-	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "x", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "uncaptioned", ""); err != nil {
 		t.Fatalf("keep must succeed without a caption: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestSubAgentInheritsParentKeptImage(t *testing.T) {
 	child := &ToolSession{Username: sess.Username, AgentID: "child", WorkspaceDir: sess.WorkspaceDir}
 
 	logo := testPNG(t, 8, 8)
-	RecordRecentImage(parent, logo, "the mark")
+	RecordRecentImage(parent, logo, "the mark", ImageFromUser)
 	if _, err := KeepImage(parent, "image#1", "brand_mark", "use everywhere"); err != nil {
 		t.Fatalf("parent keep: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestInheritanceIsOneDirectional(t *testing.T) {
 	parent := &ToolSession{Username: sess.Username, AgentID: "parent", WorkspaceDir: sess.WorkspaceDir}
 	child := &ToolSession{Username: sess.Username, AgentID: "child", WorkspaceDir: sess.WorkspaceDir}
 
-	RecordRecentImage(child, testPNG(t, 8, 8), "child's own")
+	RecordRecentImage(child, testPNG(t, 8, 8), "child's own", ImageFromUser)
 	if _, err := KeepImage(child, "image#1", "child_only", ""); err != nil {
 		t.Fatalf("child keep: %v", err)
 	}
@@ -197,11 +197,11 @@ func TestOwnKeptImageShadowsInherited(t *testing.T) {
 	child := &ToolSession{Username: sess.Username, AgentID: "child", WorkspaceDir: sess.WorkspaceDir}
 
 	parentImg, childImg := testPNG(t, 8, 8), testPNG(t, 16, 16)
-	RecordRecentImage(parent, parentImg, "parent style")
+	RecordRecentImage(parent, parentImg, "parent style", ImageFromUser)
 	if _, err := KeepImage(parent, "image#1", "house_style", ""); err != nil {
 		t.Fatalf("parent keep: %v", err)
 	}
-	RecordRecentImage(child, childImg, "child style")
+	RecordRecentImage(child, childImg, "child style", ImageFromUser)
 	if _, err := KeepImage(child, "image#1", "house_style", ""); err != nil {
 		t.Fatalf("child keep: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestForgetRefusesAnInheritedImage(t *testing.T) {
 	parent := &ToolSession{Username: sess.Username, AgentID: "parent", WorkspaceDir: sess.WorkspaceDir}
 	child := &ToolSession{Username: sess.Username, AgentID: "child", WorkspaceDir: sess.WorkspaceDir}
 
-	RecordRecentImage(parent, testPNG(t, 8, 8), "the mark")
+	RecordRecentImage(parent, testPNG(t, 8, 8), "the mark", ImageFromUser)
 	if _, err := KeepImage(parent, "image#1", "brand_mark", ""); err != nil {
 		t.Fatalf("parent keep: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestInheritanceWalkSurvivesACycle(t *testing.T) {
 	sess := imageSpaceSession(t)
 	keptImageFleet(t, map[string]string{"a": "b", "b": "a"}) // mis-wired fleet
 	a := &ToolSession{Username: sess.Username, AgentID: "a", WorkspaceDir: sess.WorkspaceDir}
-	RecordRecentImage(a, testPNG(t, 8, 8), "x")
+	RecordRecentImage(a, testPNG(t, 8, 8), "x", ImageFromUser)
 	if _, err := KeepImage(a, "image#1", "loop_safe", ""); err != nil {
 		t.Fatalf("keep: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestCaptionSplitsLabelFromDetail(t *testing.T) {
 func TestKeepStoresBothTiers(t *testing.T) {
 	sess := imageSpaceSession(t)
 	sess.LLM = &fakeCaptionLLM{reply: "A bar chart\n\nSix navy bars on a light grid, y-axis labelled in dollars, no legend."}
-	RecordRecentImage(sess, testPNG(t, 8, 8), "x")
+	RecordRecentImage(sess, testPNG(t, 8, 8), "x", ImageFromUser)
 	if _, err := KeepImage(sess, "image#1", "chart_style", ""); err != nil {
 		t.Fatalf("keep: %v", err)
 	}

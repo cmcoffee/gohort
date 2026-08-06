@@ -19,10 +19,10 @@ func TestOneAgentsPictureIsNotAnothersImageOne(t *testing.T) {
 	wren := spaceSession(t, "alice", "agent-wren")
 	other := spaceSession(t, "alice", "agent-wiwee")
 
-	if ref := RecordRecentImage(wren, []byte("WREN-PICTURE"), "wren made this"); ref != "image#1" {
+	if ref := RecordRecentImage(wren, []byte("WREN-PICTURE"), "wren made this", ImageFromUser); ref != "image#1" {
 		t.Fatalf("record returned %q", ref)
 	}
-	if ref := RecordRecentImage(other, []byte("OTHER-PICTURE"), "wiwee made this"); ref != "image#1" {
+	if ref := RecordRecentImage(other, []byte("OTHER-PICTURE"), "wiwee made this", ImageFromUser); ref != "image#1" {
 		t.Fatalf("record returned %q", ref)
 	}
 
@@ -51,7 +51,7 @@ func TestTheSameAgentKeepsOneRingAcrossItsSurfaces(t *testing.T) {
 	made := &ToolSession{Username: "alice", AgentID: "agent-wren", ChatSessionID: "web-session"}
 	woken := &ToolSession{Username: "alice", AgentID: "agent-wren", ChatSessionID: "scheduled:chan:xyz"}
 
-	RecordRecentImage(made, []byte("THE-EDIT"), "edited")
+	RecordRecentImage(made, []byte("THE-EDIT"), "edited", ImageFromEdited)
 	got, ok := ResolveRecentImage(woken, "image#1")
 	if !ok || !bytes.Equal(got, []byte("THE-EDIT")) {
 		t.Errorf("the same agent must reach its own picture from any session, got %q ok=%v", got, ok)
@@ -62,8 +62,8 @@ func TestASessionWithNoAgentGetsItsOwnRing(t *testing.T) {
 	attachmentTestDir(t)
 	anon := &ToolSession{Username: "alice"}
 	named := spaceSession(t, "alice", "agent-wren")
-	RecordRecentImage(named, []byte("AGENT-PICTURE"), "")
-	RecordRecentImage(anon, []byte("ANON-PICTURE"), "")
+	RecordRecentImage(named, []byte("AGENT-PICTURE"), "", ImageFromUser)
+	RecordRecentImage(anon, []byte("ANON-PICTURE"), "", ImageFromUser)
 
 	got, _ := ResolveRecentImage(anon, "image#1")
 	if !bytes.Equal(got, []byte("ANON-PICTURE")) {
