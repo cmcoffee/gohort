@@ -517,9 +517,26 @@ func (T *Account) handleTokenTargets(w http.ResponseWriter, r *http.Request) {
 			feats = append(feats, feat{Key: f.Key, Label: f.Label})
 		}
 	}
+	// The MCP tools a key may be narrowed to. Built-ins are always present;
+	// app-contributed ones appear only while the admin has them exposed, so the
+	// picker can't offer a key something the server-side gate would refuse.
+	type mcpTool struct {
+		Name  string `json:"name"`
+		Label string `json:"label"`
+	}
+	tools := []mcpTool{}
+	for _, t := range MCPBuiltinTools() {
+		tools = append(tools, mcpTool{Name: t.Name, Label: t.Label})
+	}
+	for _, st := range MCPAppToolStatuses() {
+		if st.Exposed {
+			tools = append(tools, mcpTool{Name: st.Name, Label: st.Name})
+		}
+	}
 	writeJSON(w, map[string]any{
 		"features": feats,
 		"targets":  ListExternalTargets(T.DB, user),
+		"tools":    tools,
 	})
 }
 
@@ -611,7 +628,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
   if (!root) return;
   var CAT = null; // {features:[{key,label}], targets:[{value,label,group}]} — loaded once
   function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
-  function targets(){ return fetch('api/token-targets',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){ CAT=d||{features:[],targets:[]}; }).catch(function(){ CAT={features:[],targets:[]}; }); }
+  function targets(){ return fetch('api/token-targets',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){ CAT=d||{features:[],targets:[],tools:[]}; }).catch(function(){ CAT={features:[],targets:[],tools:[]}; }); }
   function load(){ return fetch('api/tokens',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render).catch(function(){ root.textContent='Failed to load.'; }); }
 
   // checkbox helper: returns {row, checked()} for one option.
@@ -624,7 +641,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     var selF = {}, selT = {};
     (selected.features||[]).forEach(function(f){ selF[f]=true; });
     (selected.targets||[]).forEach(function(t){ selT[t]=true; });
-    var boxes = { features: [], targets: [] };
+    var boxes = { features: [], targets: [], tools: [] };
     var wrap = el('div',{class:'acct-tok-scope'});
 
     // Features
@@ -651,11 +668,38 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
         wrap.appendChild(tg);
       });
     }
+    // MCP tools. A key with no explicit list is NOT narrowed (every exposed
+    // tool), which is why an untouched editor sends tools:null rather than an
+    // empty array — an empty array means "none", and the two must not be the
+    // same value on the wire.
+    var toolsTouched = false;
+    if(CAT.tools && CAT.tools.length){
+      wrap.appendChild(el('h4',{text:'MCP tools this key may call'}));
+      var selTools = selected.tools; // null/undefined = not narrowed
+      var narrowed = !!selTools;
+      var sel = {}; (selTools||[]).forEach(function(n){ sel[n]=true; });
+      var note = el('div',{class:'acct-tok-scope-note',text: narrowed ? 'Only the ticked tools.' : 'Not narrowed — this key may call every exposed tool. Tick any to restrict it.'});
+      wrap.appendChild(note);
+      var mg = el('div',{class:'acct-tok-scope-grp'});
+      CAT.tools.forEach(function(t){
+        var c = chk(t.label||t.name, t.name, narrowed ? !!sel[t.name] : true);
+        c.box.addEventListener('change', function(){ toolsTouched = true; note.textContent='Only the ticked tools.'; });
+        boxes.tools.push(c); mg.appendChild(c.row);
+      });
+      wrap.appendChild(mg);
+    }
     function collect(){
-      var f=[], t=[];
+      var f=[], t=[], m=[];
       boxes.features.forEach(function(c){ if(c.box.checked) f.push(c.box.getAttribute('data-v')); });
       boxes.targets.forEach(function(c){ if(c.box.checked) t.push(c.box.getAttribute('data-v')); });
-      return { features: f, targets: t };
+      boxes.tools.forEach(function(c){ if(c.box.checked) m.push(c.box.getAttribute('data-v')); });
+      var out = { features: f, targets: t };
+      // Only send a tools list once the user has actually touched it, or when
+      // the key already had one. Otherwise a key that was never narrowed stays
+      // un-narrowed instead of being pinned to today's tool set — which would
+      // silently deny any tool added later.
+      if(toolsTouched || selected.tools){ out.tools = m; }
+      return out;
     }
     return { node: wrap, collect: collect };
   }

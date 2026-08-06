@@ -49,6 +49,17 @@ type TokenScope struct {
 	// Targets the key may drive: "worker", "lead", "agent:<id>",
 	// "channel:<chat>". Matched against the resolved /v1 target.
 	Targets []string `json:"targets,omitempty"`
+	// Tools the key may call over MCP ("ask_agent", "list_agents", …).
+	//
+	// A POINTER, and deliberately not the deny-by-default of the two fields
+	// above. Nil means NOT NARROWED — every exposed tool — because this field
+	// arrived after keys existed: a scoped key written before it would
+	// otherwise lose every tool the moment the field shipped, which is the
+	// breakage the nil-Scope grandfather exists to prevent, one level down.
+	// Non-nil is deny-by-default like the rest, INCLUDING an empty list, so a
+	// user who unticks everything gets a key that calls nothing rather than a
+	// key that silently reverts to all.
+	Tools *[]string `json:"tools,omitempty"`
 }
 
 // AllowsFeature reports whether the key permits a feature. A nil scope is the
@@ -74,6 +85,19 @@ func (t *AccountToken) AllowsTarget(target string) bool {
 		return true // legacy: unrestricted
 	}
 	return containsFold(t.Scope.Targets, target)
+}
+
+// AllowsTool reports whether the key may call an MCP tool by name. Nil scope is
+// the legacy grandfather; a nil Tools list inside a scope means the key was
+// written before tool scoping and is not narrowed by it.
+func (t *AccountToken) AllowsTool(name string) bool {
+	if t == nil {
+		return false
+	}
+	if t.Scope == nil || t.Scope.Tools == nil {
+		return true
+	}
+	return containsFold(*t.Scope.Tools, name)
 }
 
 // IsLegacyUnscoped reports a key that predates scoping (nil Scope). Surfaced so

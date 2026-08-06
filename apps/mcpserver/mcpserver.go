@@ -24,6 +24,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -268,8 +269,40 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		}
 		Log("[mcpserver] initialize (protocol=%s)", pv)
 	case "tools/list":
-		resp.Result = map[string]any{"tools": toolDefs()}
-		Log("[mcpserver] tools/list -> %d tools", len(toolDefs()))
+		// Filtered by the calling key. A client shown a tool its own key will
+		// refuse learns the refusal by calling it, which reads as the server
+		// being broken rather than the key being narrow. Unauthenticated
+		// listing keeps the full set: initialize/list are how a client decides
+		// whether to bother authenticating at all.
+		defs := toolDefs()
+		// Say WHY the list is the size it is. "N tools" alone cannot tell a
+		// client that cached an old list from a key narrowed to fewer, and
+		// those need opposite fixes — reconnect the client, or retick the
+		// scope. Names, because the question is always about one tool.
+		scopeNote := "unauthenticated request — full list"
+		if tok := AccountTokenFromRequest(r); tok != nil {
+			before := len(defs)
+			defs = allowedToolDefs(defs, tok)
+			switch {
+			case tok.Scope == nil:
+				scopeNote = "key predates scoping — full list"
+			case tok.Scope.Tools == nil:
+				scopeNote = "key has no tool list — not narrowed, full list"
+			default:
+				scopeNote = fmt.Sprintf("key narrowed to %d tool(s): %s", len(*tok.Scope.Tools), strings.Join(*tok.Scope.Tools, ", "))
+			}
+			if len(defs) != before {
+				scopeNote += fmt.Sprintf(" — %d of %d hidden", before-len(defs), before)
+			}
+		}
+		names := make([]string, 0, len(defs))
+		for _, d := range defs {
+			if n, _ := d["name"].(string); n != "" {
+				names = append(names, n)
+			}
+		}
+		resp.Result = map[string]any{"tools": defs}
+		Log("[mcpserver] tools/list -> %d tools [%s] (%s)", len(defs), strings.Join(names, ", "), scopeNote)
 	case "tools/call":
 		// Only the ACTION needs auth. Resolve the bridge key -> owner here and
 		// return a CLEAR JSON-RPC tool error (not an opaque HTTP 401 the client
@@ -297,13 +330,13 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 			resp.Result = toolText("Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", true)
 			break
 		}
-		text, err := T.callTool(r.Context(), owner, AccountTokenFromRequest(r), req.Params)
+		text, images, err := T.callTool(r.Context(), owner, AccountTokenFromRequest(r), req.Params)
 		if err != nil {
 			Log("[mcpserver] tools/call error (owner=%s): %v", owner, err)
 			resp.Result = toolText("error: "+err.Error(), true)
 		} else {
-			Log("[mcpserver] tools/call ok (owner=%s, %d chars)", owner, len(text))
-			resp.Result = toolText(text, false)
+			Log("[mcpserver] tools/call ok (owner=%s, %d chars, %d image(s))", owner, len(text), len(images))
+			resp.Result = toolResult(text, images)
 		}
 	default:
 		Log("[mcpserver] unknown method %q", req.Method)
@@ -322,7 +355,60 @@ func toolText(s string, isErr bool) map[string]any {
 	}
 }
 
+// maxMCPImages bounds how many pictures ride back on one call. A turn that
+// produced a contact sheet should not put twenty multi-megabyte blocks through
+// a JSON-RPC response; the text says how many were held back.
+const maxMCPImages = 4
+
+// maxMCPImageBytes is the per-image ceiling, decoded. Base64 inflates by a
+// third and the whole response is one JSON document, so a very large render is
+// named in the text rather than sent.
+const maxMCPImageBytes = 8 << 20
+
+// toolResult wraps text PLUS any images the turn produced. An agent that
+// generates a picture and hands it back had nowhere to put it before: the
+// envelope was text-only, so the reply arrived describing an image that never
+// travelled. MCP content blocks are the channel; this fills them.
+func toolResult(text string, images []string) map[string]any {
+	content := []map[string]any{{"type": "text", "text": text}}
+	sent, skipped := 0, 0
+	for _, b64 := range images {
+		if sent >= maxMCPImages {
+			skipped++
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || len(raw) == 0 || len(raw) > maxMCPImageBytes {
+			skipped++
+			continue
+		}
+		content = append(content, map[string]any{
+			"type":     "image",
+			"data":     b64,
+			"mimeType": http.DetectContentType(raw),
+		})
+		sent++
+	}
+	if skipped > 0 {
+		// Say what did not come. A silent drop reads as the agent claiming an
+		// image it never sent, which is the failure this whole channel exists
+		// to avoid.
+		content[0]["text"] = fmt.Sprintf("%s\n\n[%d image(s) attached; %d not included (too large, or past the %d-image limit for one reply) — they remain in the agent's workspace and can be re-sent]",
+			text, sent, skipped, maxMCPImages)
+	}
+	return map[string]any{"content": content, "isError": false}
+}
+
 // --- the two tools -----------------------------------------------------------
+
+func init() {
+	// Published for the per-key scope picker on the account page. Registered
+	// from here because core must not know these names — it owns the registry,
+	// this package owns the tools.
+	RegisterMCPBuiltinTool("ask_agent", "Ask an agent")
+	RegisterMCPBuiltinTool("list_agents", "List agents")
+	RegisterMCPBuiltinTool("recent_results", "Recent background results")
+}
 
 func toolDefs() []map[string]any {
 	defs := []map[string]any{
@@ -336,6 +422,14 @@ func toolDefs() []map[string]any {
 					"agent":   map[string]any{"type": "string", "description": "Agent id (optional; defaults to the main agent)."},
 				},
 				"required": []string{"message"},
+			},
+		},
+		{
+			"name":        "list_agents",
+			"description": "List the gohort agents you can send messages to, with what each one is for. Call this before ask_agent when you don't already know which agent to use, or when the user names an agent you haven't seen — the `id` on each row is what ask_agent's `agent` argument takes. Only agents the account has made reachable from outside appear here.",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
 			},
 		},
 		{
@@ -371,19 +465,40 @@ func toolDefs() []map[string]any {
 	return defs
 }
 
-func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountToken, raw json.RawMessage) (string, error) {
+// allowedToolDefs keeps only the tools this key may call.
+func allowedToolDefs(defs []map[string]any, tok *AccountToken) []map[string]any {
+	out := make([]map[string]any, 0, len(defs))
+	for _, d := range defs {
+		name, _ := d["name"].(string)
+		if tok.AllowsTool(name) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountToken, raw json.RawMessage) (string, []string, error) {
 	var p struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", fmt.Errorf("bad params: %w", err)
+		return "", nil, fmt.Errorf("bad params: %w", err)
+	}
+	// Enforced here as well as in the listing, because a client can call a name
+	// it learned somewhere else — a filtered list is a courtesy, not a gate.
+	if !token.AllowsTool(p.Name) {
+		return "", nil, fmt.Errorf("this key may not call %q — enable it on the key under Account → API keys → Configure access", p.Name)
 	}
 	switch p.Name {
 	case "ask_agent":
 		return T.askAgent(ctx, owner, token, p.Arguments)
+	case "list_agents":
+		text, err := T.listAgents(owner, token)
+		return text, nil, err
 	case "recent_results":
-		return T.recentResults(owner, p.Arguments)
+		text, err := T.recentResults(owner, p.Arguments)
+		return text, nil, err
 	default:
 		// App-contributed tools registered via core.RegisterMCPTool. They run
 		// scoped to the bridge-key owner, like the built-ins above — but only when
@@ -391,25 +506,75 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 		// filter, since a client could call a name it learned elsewhere).
 		if spec, ok := LookupMCPTool(p.Name); ok {
 			if !MCPAppToolExposed(p.Name) {
-				return "", fmt.Errorf("tool %q is not exposed over MCP — enable it in Admin → MCP Tools", p.Name)
+				return "", nil, fmt.Errorf("tool %q is not exposed over MCP — enable it in Admin → MCP Tools", p.Name)
 			}
-			return spec.Handler(ctx, owner, p.Arguments)
+			text, err := spec.Handler(ctx, owner, p.Arguments)
+			return text, nil, err
 		}
-		return "", fmt.Errorf("unknown tool %q", p.Name)
+		// Name what IS here. An agent's own tools (image, web_search, …) are not
+		// MCP tools — they belong to the agent and are reached by ASKING it — so
+		// a bare "unknown tool" leaves a caller guessing whether it typed the
+		// name wrong or the server is broken.
+		var have []string
+		for _, d := range toolDefs() {
+			if n, _ := d["name"].(string); n != "" {
+				have = append(have, n)
+			}
+		}
+		return "", nil, fmt.Errorf("unknown tool %q — this server exposes: %s. An agent's own tools (image, web_search, …) are not callable here; ask the agent to use them via ask_agent", p.Name, strings.Join(have, ", "))
 	}
 }
 
-func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountToken, args map[string]any) (string, error) {
+// listAgents answers "which agent should I ask?" — the question ask_agent's
+// schema poses and, until now, gave no way to answer. The set is the one the
+// resolver would accept for this caller, so everything listed is dispatchable
+// and everything dispatchable is listed.
+func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error) {
+	if ListExternalReachableAgentsFn == nil {
+		return "", fmt.Errorf("agent listing not available (orchestrate not loaded)")
+	}
+	var granted func(string) bool
+	if token != nil {
+		granted = token.ExplicitTarget
+	}
+	agents := ListExternalReachableAgentsFn(T.DB, owner, granted)
+	if len(agents) == 0 {
+		// Say which switch turns this on. An empty list otherwise reads as "you
+		// have no agents", which is almost never what happened.
+		return "No agents are reachable over MCP. Open the agent's editor in gohort → Access & visibility → turn on \"Reachable over MCP\", then reconnect this connector so it re-reads the list. Only your own agents appear here; an app's built-in agents (Servitor, Guides, …) are reached by app name, not listed.", nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d agent(s) you can ask:\n", len(agents))
+	for _, a := range agents {
+		// id FIRST on every row: it is the value ask_agent takes, and a list
+		// whose items cannot be passed back to the tool that needs them sends
+		// the caller guessing at names.
+		fmt.Fprintf(&b, "\n- id: %s\n  name: %s\n", a.ID, a.Name)
+		if d := strings.TrimSpace(a.Description); d != "" {
+			fmt.Fprintf(&b, "  what it does: %s\n", d)
+		}
+		// Say when one is a sub-agent. It is dispatchable — its owner ticked
+		// the toggle — but a caller should know it normally works through its
+		// parent, so asking the parent may be the better route.
+		if a.ParentID != "" {
+			fmt.Fprintf(&b, "  note: sub-agent of %s — usually reached by asking that agent instead\n", a.ParentID)
+		}
+	}
+	b.WriteString("\nPass one of these ids as ask_agent's `agent` argument. Omitting it uses the account's main agent.")
+	return b.String(), nil
+}
+
+func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountToken, args map[string]any) (string, []string, error) {
 	msg, _ := args["message"].(string)
 	if strings.TrimSpace(msg) == "" {
-		return "", fmt.Errorf("message is required")
+		return "", nil, fmt.Errorf("message is required")
 	}
 	agent, _ := args["agent"].(string)
 	if strings.TrimSpace(agent) == "" {
 		agent = defaultAgent
 	}
 	if !ChannelAgentRunnerReady() {
-		return "", fmt.Errorf("agent runner not ready (orchestrate not loaded)")
+		return "", nil, fmt.Errorf("agent runner not ready (orchestrate not loaded)")
 	}
 	// Only reachable agents can be dispatched, so a bridge key can't reach every
 	// agent. Fails closed. Resolution goes name-or-id → canonical ID so the
@@ -427,18 +592,18 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 		}
 		id, ok := ResolveExternalAgentFn(T.DB, owner, agent, granted)
 		if !ok {
-			return "", fmt.Errorf("agent %q is not reachable over MCP — for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
+			return "", nil, fmt.Errorf("agent %q is not reachable over MCP — for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
 		}
 		agent = id
 	} else if !MCPAgentExposed(owner, agent) {
-		return "", fmt.Errorf("agent %q is not reachable over MCP — turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
+		return "", nil, fmt.Errorf("agent %q is not reachable over MCP — turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
 	}
 	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, …)
 	// needs the app enabled for this user (admin) AND on this key (user scope).
 	// No-op for ordinary agents; nil token (session/bridge-key auth) skips the
 	// key tier, same as the endpoint-level mcp gate.
 	if ok, msg := KeyAllowsAppAgent(T.DB, owner, token, agent); !ok {
-		return "", fmt.Errorf("%s", msg)
+		return "", nil, fmt.Errorf("%s", msg)
 	}
 	// Synchronous: blocks until the agent finishes, returns its reply. Exactly
 	// the MCP tools/call contract. SenderName attributes the turn to the
@@ -451,9 +616,15 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 		Text:       msg,
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return reply.Text, nil
+	// Videos have no content type every client renders, so they are named
+	// rather than sent — better than a block the other side drops silently.
+	text := reply.Text
+	if n := len(reply.Videos); n > 0 {
+		text += fmt.Sprintf("\n\n[%d video(s) produced; this connector carries images only. Ask the agent to deliver them over a messaging channel, or open the thread in gohort.]", n)
+	}
+	return text, reply.Images, nil
 }
 
 func (T *MCPServer) recentResults(owner string, args map[string]any) (string, error) {

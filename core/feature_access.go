@@ -163,6 +163,39 @@ var ListExternalTargetsFn func(db Database, user string) []ExternalTarget
 // agent that isn't otherwise exposed.
 var ResolveExternalAgentFn func(db Database, owner, key string, granted func(canonical string) bool) (string, bool)
 
+// ExternalAgentInfo is one agent an external client may drive, in the form that
+// client needs to choose between them: the id it must pass back, the name a
+// person recognizes, and what the agent is FOR.
+type ExternalAgentInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// ParentID names the agent that owns this one, when it is a sub-agent.
+	// Marked rather than hidden: the resolver dispatches to any exposed agent,
+	// so omitting sub-agents would make the list narrower than what a call
+	// accepts — and would silently override an owner who ticked the toggle.
+	ParentID string `json:"parent_id,omitempty"`
+}
+
+// ListExternalReachableAgentsFn lists the agents an external key-authenticated
+// caller may dispatch to.
+//
+// The db argument is IGNORED by the registered implementation, which binds the
+// store agents actually live in. It stays in the signature because a caller
+// legitimately holds its own store and nothing at the call site would tell it
+// that store is the wrong one here — passing it and having it ignored is safer
+// than an API that looks like it needs one. It exists so a client can DISCOVER what to pass to
+// ask_agent — the schema asks for an agent id and, without this, nothing tells
+// the caller which ids exist, so it guesses or takes the default.
+//
+// It must return exactly what ResolveExternalAgentFn would ACCEPT for the same
+// caller — no more, and no less. More would enumerate agents the owner kept off
+// this surface, turning a convenience into a disclosure; less would show a
+// caller a set it cannot act on, which is the unanchored-list problem the other
+// way round. The granted callback is the same key-level consent the resolver
+// takes. Nil ⇒ orchestrate not loaded; the caller has nothing to list.
+var ListExternalReachableAgentsFn func(db Database, owner string, granted func(canonical string) bool) []ExternalAgentInfo
+
 // ListExternalTargets returns the targets a user may grant to one of their keys:
 // the raw tiers plus every exposed agent/channel they own or one is shared to
 // them. The candidate set for the scope picker; enforcement matches against the

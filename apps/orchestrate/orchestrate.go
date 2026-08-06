@@ -380,8 +380,16 @@ func (T *OrchestrateApp) Routes() {
 	// Canonical external resolution for the MCP server: name-or-id → agent ID,
 	// only when reachable. mcpserver needs the ID (not the caller's raw string)
 	// so its per-app KEY gate can identify app agents.
-	ResolveExternalAgentFn = func(db Database, owner, key string, granted func(canonical string) bool) (string, bool) {
-		return ResolveExternalAgentGranted(db, owner, key, granted)
+	T.registerExternalAgentHooks()
+	if prevList := ListExternalReachableAgentsFn; prevList != nil {
+		ListExternalReachableAgentsFn = func(_ Database, owner string, granted func(string) bool) []ExternalAgentInfo {
+			return prevList(T.DB, owner, granted)
+		}
+	}
+	if prevTargets := ListExternalTargetsFn; prevTargets != nil {
+		ListExternalTargetsFn = func(_ Database, user string) []ExternalTarget {
+			return prevTargets(T.DB, user)
+		}
 	}
 
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
@@ -581,4 +589,38 @@ func (T *OrchestrateApp) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	T.handleChatPage(w, r)
+}
+
+// registerExternalAgentHooks binds the cross-app agent hooks to THIS app's
+// store. Extracted so it can be exercised directly: the failure it fixes is
+// invisible from inside orchestrate — every one of these reads correctly when
+// the caller happens to be orchestrate itself, and returns an empty world when
+// it is anyone else.
+func (T *OrchestrateApp) registerExternalAgentHooks() {
+	// These three are called by OTHER apps — the MCP server, the account page —
+	// each of which passes ITS OWN store, because that is the store it has.
+	// Agents live in orchestrate's per-user store, so every one of them was
+	// reading an empty bucket: pass 1 of listAgents found nothing, only in-code
+	// seeds and app agents survived, and a user's own agent was invisible and
+	// unreachable no matter what its "Reachable over MCP" toggle said. The
+	// comment on the agent gate above says exactly this; these three predate it
+	// and never got the treatment.
+	//
+	// Rebound here, where T.DB is the right store, and the passed db is ignored
+	// rather than removed from the signature: callers hold it legitimately for
+	// their own data, and nothing about the call site tells them it is wrong
+	// for this one.
+	ResolveExternalAgentFn = func(_ Database, owner, key string, granted func(canonical string) bool) (string, bool) {
+		return ResolveExternalAgentGranted(T.DB, owner, key, granted)
+	}
+	if prevList := ListExternalReachableAgentsFn; prevList != nil {
+		ListExternalReachableAgentsFn = func(_ Database, owner string, granted func(string) bool) []ExternalAgentInfo {
+			return prevList(T.DB, owner, granted)
+		}
+	}
+	if prevTargets := ListExternalTargetsFn; prevTargets != nil {
+		ListExternalTargetsFn = func(_ Database, user string) []ExternalTarget {
+			return prevTargets(T.DB, user)
+		}
+	}
 }

@@ -13,6 +13,8 @@
 package orchestrate
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -219,6 +221,47 @@ func (T *OrchestrateApp) ExternalChannels(owner string) []ExternalChannelTarget 
 }
 
 func init() {
+	// What an external client may DISCOVER, kept identical to what it may
+	// dispatch. Mirrors ResolveExternalAgentGranted's rules exactly: the
+	// MCPExposed toggle, an app's feature grant, or this key's explicit grant.
+	// A list wider than the resolver would disclose agents the owner kept off
+	// the surface; a narrower one would show a set the caller cannot act on.
+	ListExternalReachableAgentsFn = func(db Database, owner string, granted func(string) bool) []ExternalAgentInfo {
+		if db == nil || strings.TrimSpace(owner) == "" {
+			return nil
+		}
+		udb := UserDB(db, owner)
+		var out []ExternalAgentInfo
+		var skipped []string
+		all := listAgents(udb, owner)
+		for _, a := range all {
+			if !externallyReachable(a, owner) && (granted == nil || !granted("agent:"+a.ID)) {
+				// Name what was passed over and why. "My agent is not in the
+				// list" is otherwise unanswerable without a code read: the
+				// agent may be absent from the pool entirely, or present with
+				// the toggle off, and those need different fixes.
+				skipped = append(skipped, fmt.Sprintf("%s(%s: not MCP-exposed)", a.Name, a.ID))
+				continue
+			}
+			// Sub-agents are MARKED, not hidden. The first version filtered
+			// them out on the reasoning that a child is reached through its
+			// parent — but the resolver accepts any exposed agent, so filtering
+			// here made the list narrower than what ask_agent would dispatch
+			// to, and an agent whose owner had deliberately ticked "Reachable
+			// over MCP" simply never appeared. The toggle IS the consent; a
+			// rule that overrides it silently is the wrong rule. Naming the
+			// parent tells a caller what it is without deciding for them.
+			info := ExternalAgentInfo{ID: a.ID, Name: a.Name, Description: a.Description}
+			if parent := strings.TrimSpace(a.OwnedBy); parent != "" {
+				info.ParentID = parent
+			}
+			out = append(out, info)
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		Log("[list_agents] owner=%s pool=%d listed=%d skipped=[%s]", owner, len(all), len(out), strings.Join(skipped, ", "))
+		return out
+	}
+
 	// Populate the account page's grantable-targets picker without account
 	// importing orchestrate. Sources a user's OWN exposed agents plus agents
 	// SHARED to them (AllowedUsers) that are exposed, plus their channels. Tiers

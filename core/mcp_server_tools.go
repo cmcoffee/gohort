@@ -149,3 +149,38 @@ func MCPAgentExposed(owner, agentID string) bool {
 	}
 	return fn(owner, agentID)
 }
+
+// MCPBuiltinTool is one of the server's own tools — the ones that exist
+// regardless of which apps are loaded.
+type MCPBuiltinTool struct {
+	Name  string
+	Label string
+}
+
+// mcpBuiltinTools is the registry the MCP server fills at init. It lives here
+// rather than in the server package so the ACCOUNT page can offer these in a
+// key's scope picker without importing the server — the same reason the app
+// tool registry is here.
+var (
+	mcpBuiltinsMu sync.RWMutex
+	mcpBuiltins   []MCPBuiltinTool
+)
+
+// RegisterMCPBuiltinTool publishes a server built-in for the scope picker.
+func RegisterMCPBuiltinTool(name, label string) {
+	mcpBuiltinsMu.Lock()
+	defer mcpBuiltinsMu.Unlock()
+	for _, t := range mcpBuiltins {
+		if t.Name == name {
+			return
+		}
+	}
+	mcpBuiltins = append(mcpBuiltins, MCPBuiltinTool{Name: name, Label: label})
+}
+
+// MCPBuiltinTools lists the server's own tools, in registration order.
+func MCPBuiltinTools() []MCPBuiltinTool {
+	mcpBuiltinsMu.RLock()
+	defer mcpBuiltinsMu.RUnlock()
+	return append([]MCPBuiltinTool(nil), mcpBuiltins...)
+}
