@@ -537,6 +537,7 @@ var (
 	SourceTrust          = provenance.SourceTrust
 	SpeakerAuthoritative = provenance.SpeakerAuthoritative
 	NeedsAttribution     = provenance.NeedsAttribution
+	AttributionPhrase    = provenance.AttributionPhrase
 	ClaimAuthority       = provenance.ClaimAuthority
 )
 

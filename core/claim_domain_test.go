@@ -130,3 +130,37 @@ func TestAttributionAndVolatilityCompose(t *testing.T) {
 		t.Errorf("both markers should render, got:\n%s", got)
 	}
 }
+
+// The path that actually launders is the model writing down what it heard:
+// store_fact records those as OBSERVED, so scoping attribution to user_stated
+// would have missed every one of them.
+func TestObservedWorldClaimsAreAttributedToo(t *testing.T) {
+	if !NeedsAttribution(MemSourceObserved, ClaimWorld) {
+		t.Error("a world-claim the model recorded from conversation is not checked either")
+	}
+	if NeedsAttribution(MemSourceObserved, ClaimSelf) {
+		t.Error("a preference heard in conversation still must not be hedged")
+	}
+	// Retrieved and imported came from a source at save time.
+	if NeedsAttribution(MemSourceImported, ClaimWorld) {
+		t.Error("an imported claim came from a store, not from conversation")
+	}
+}
+
+// The marker must say how the claim actually arrived — blaming the user for the
+// model's own inference is its own wrong record.
+func TestAttributionPhraseMatchesTheOrigin(t *testing.T) {
+	cases := map[MemSource]string{
+		MemSourceUserStated: "told to you",
+		MemSourceInferred:   "your own inference",
+		MemSourceObserved:   "recorded from conversation",
+	}
+	for src, want := range cases {
+		f := MemoryFact{Note: "the cluster has three nodes",
+			MemoryProvenance: MemoryProvenance{Source: src, Domain: ClaimWorld}}
+		got := RenderMemoryFactsBlock([]MemoryFact{f})
+		if !strings.Contains(got, "("+want+", not independently checked)") {
+			t.Errorf("source %v should render %q, got:\n%s", src, want, got)
+		}
+	}
+}

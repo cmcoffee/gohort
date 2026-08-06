@@ -1330,10 +1330,13 @@ func factAttributionMarker(f MemoryFact) string {
 	if !NeedsAttribution(f.Source, f.Domain) {
 		return ""
 	}
+	// The phrase has to match how it actually arrived: blaming the user for the
+	// model's own inference is its own kind of wrong record.
+	how := AttributionPhrase(f.Source)
 	if f.AsOf.IsZero() {
-		return " (told to you, not independently checked)"
+		return " (" + how + ", not independently checked)"
 	}
-	return " (told to you on " + f.AsOf.Format("2006-01-02") + ", not independently checked)"
+	return " (" + how + " on " + f.AsOf.Format("2006-01-02") + ", not independently checked)"
 }
 
 // factVolatilityMarker is the staleness half of the marker: how fast the claim's

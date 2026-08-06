@@ -66,11 +66,42 @@ func SpeakerAuthoritative(src MemSource, dom ClaimDomain) bool {
 }
 
 // NeedsAttribution reports whether recall must name where a claim came from
-// rather than stating it flat. A world-claim somebody told us is the case that
-// matters: rendered bare it is indistinguishable from something we checked, and
-// three turns later it is quoted back as established fact.
+// rather than stating it flat. Rendered bare, a world-claim nothing checked is
+// indistinguishable from one that was verified — and three turns later it is
+// quoted back as established fact.
+//
+// The test is the CLAIM, not the speaker. It was tempting to scope this to
+// user_stated, but the path that actually launders is the model writing down
+// what it just heard: store_fact records those as OBSERVED, so a remark about a
+// production database becomes a flat line in every future prompt with nothing
+// marking it as hearsay.
+//
+// Retrieved and imported are exempt: both came from a source at save time
+// rather than from conversation. Self-claims are exempt at any source — there
+// is nothing to check a preference against, and hedging one reads as doubting
+// the person who holds it.
 func NeedsAttribution(src MemSource, dom ClaimDomain) bool {
-	return src == MemSourceUserStated && dom == ClaimWorld
+	if dom != ClaimWorld {
+		return false
+	}
+	switch src {
+	case MemSourceRetrieved, MemSourceImported:
+		return false
+	}
+	return true
+}
+
+// AttributionPhrase renders HOW a claim reached memory, so the marker says
+// something true rather than blaming the user for the model's own inference.
+func AttributionPhrase(src MemSource) string {
+	switch src {
+	case MemSourceUserStated:
+		return "told to you"
+	case MemSourceInferred:
+		return "your own inference"
+	default:
+		return "recorded from conversation"
+	}
 }
 
 // ClaimAuthority ranks claims for GROUNDING — whether one may be asserted as
