@@ -1376,6 +1376,11 @@ type ToolSession struct {
 	DB                Database           // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
 	WorkspaceDir      string             // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
 	WorkspaceID       string             // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
+	// WorkspaceFallback is a second root READS may fall back to when a path
+	// isn't in WorkspaceDir — the user's own root, when the turn is running in
+	// a per-agent directory. Writes never use it: an agent writes into its own
+	// workspace or the separation means nothing. Empty = no fallback.
+	WorkspaceFallback string
 
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is
@@ -1867,7 +1872,15 @@ func (s *ToolSession) Context() context.Context {
 // (when set) so context-based helpers like RunSandboxedShellWithEnv
 // see the same gate. Returns ctx unchanged when no connector is set.
 func (s *ToolSession) ContextWithNetworkConnector(ctx context.Context) context.Context {
-	if s == nil || s.Network == nil {
+	if s == nil {
+		return ctx
+	}
+	// The workspace rides along with the connector. Both are per-turn facts a
+	// delegated run has to inherit, and this is the one place that knows the
+	// CURRENT one — a turn that called workspace(create) mid-flight has
+	// already moved, and a dir captured when the turn started would be stale.
+	ctx = WithWorkspaceDir(ctx, s.WorkspaceDir)
+	if s.Network == nil {
 		return ctx
 	}
 	return WithNetworkConnector(ctx, s.Network)

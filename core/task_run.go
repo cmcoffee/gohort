@@ -342,6 +342,13 @@ func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
 		DB:            s.DB,
 		WorkspaceDir:  s.WorkspaceDir,
 		WorkspaceID:   s.WorkspaceID,
+		// The read fallback travels too. Without it a detached call resolves
+		// paths against its agent's directory ALONE, so a file at the user's
+		// own root — reachable from every inline turn — is missing only when
+		// the work runs in the background. "Works inline, fails detached" is
+		// the worst shape a bug can take here: the inline path is the one
+		// anybody tests.
+		WorkspaceFallback: s.WorkspaceFallback,
 
 		// Authority. Network in particular: a detached call must stay inside
 		// the same egress gate as the turn that spawned it, and the connector

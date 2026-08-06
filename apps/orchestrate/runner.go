@@ -1951,9 +1951,22 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		}
 	}
 	if sess.WorkspaceDir == "" {
-		if ws, err := EnsureWorkspaceDir(t.user); err == nil {
+		// The turn runs in ITS AGENT's directory, not the shared user root.
+		// One agent could otherwise list a file another produced, attach it,
+		// and report it as its own work — the same unanchored-reference
+		// failure the image ring is scoped per agent to avoid.
+		if ws, err := EnsureAgentWorkspaceDir(t.user, t.agent.ID); err == nil {
+			sess.WorkspaceDir = ws
+		} else if ws, err := EnsureWorkspaceDir(t.user); err == nil {
 			sess.WorkspaceDir = ws
 		}
+	}
+	// Reads fall back to the user's own root, so files a person put there (or
+	// that predate per-agent directories) stay reachable from every agent.
+	// Writes never do — see ResolveWorkspaceRead. Skipped when the turn is
+	// already running at the root, or in a managed workspace the caller chose.
+	if root, err := EnsureWorkspaceDir(t.user); err == nil && root != sess.WorkspaceDir {
+		sess.WorkspaceFallback = root
 	}
 	if sess.DB == nil || sess.Username == "" {
 		return sess

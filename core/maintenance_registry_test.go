@@ -15,6 +15,9 @@ func TestShippedMaintenanceActionsAreRegistered(t *testing.T) {
 	want := map[string]bool{
 		"sweep_expired_caches":         false,
 		"survey_workspace_bound_tools": false,
+		"survey_workspace_usage":       false,
+		"survey_reapable_artifacts":    false,
+		"reap_workspace_artifacts":     false,
 	}
 	for _, m := range ListMaintenanceFuncs() {
 		if _, ok := want[m.Key]; ok {

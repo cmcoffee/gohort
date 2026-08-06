@@ -76,6 +76,12 @@ func EnsureWorkspaceDir(userID string) (string, error) {
 	if strings.ContainsAny(userID, `/\`) || strings.Contains(userID, "..") || userID == "." {
 		return "", fmt.Errorf("invalid userID: %q", userID)
 	}
+	// Reserved: per-agent workspaces live at <workspaces>/.agents/<user>/<agent>,
+	// as SIBLINGS of the user roots. A user root by that name would contain them
+	// all, and a fallback read from it would reach into every agent's directory.
+	if userID == AgentWorkspacesDirName {
+		return "", fmt.Errorf("userID %q is reserved", userID)
+	}
 	dir := filepath.Join(base, userID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create workspace: %w", err)

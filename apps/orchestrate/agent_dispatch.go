@@ -504,8 +504,16 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		// fetch_url too, so enforce the same deny-set here.
 		DeniedCredentials: credentialDenySet(target, runtimeUser),
 	}
-	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
+	// Inherit the delegator's workspace when there is one — the sub-agent is
+	// producing something its parent will read — and otherwise run in this
+	// agent's own directory rather than the shared user root.
+	if inherited := InheritedWorkspaceDir(ctx); inherited != "" {
+		subSess.WorkspaceDir = inherited
+	} else if ws, werr := EnsureAgentWorkspaceDir(runtimeUser, subSess.AgentID); werr == nil {
 		subSess.WorkspaceDir = ws
+	}
+	if root, rerr := EnsureWorkspaceDir(runtimeUser); rerr == nil && root != subSess.WorkspaceDir {
+		subSess.WorkspaceFallback = root
 	}
 	// A Builder run dispatched ON SOMEONE'S BEHALF — the async twin of a live
 	// Fleet dispatch — must stamp its creations OwnedBy the requester, or an
@@ -1112,8 +1120,16 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}
-	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
+	// Inherit the delegator's workspace when there is one — the sub-agent is
+	// producing something its parent will read — and otherwise run in this
+	// agent's own directory rather than the shared user root.
+	if inherited := InheritedWorkspaceDir(ctx); inherited != "" {
+		subSess.WorkspaceDir = inherited
+	} else if ws, werr := EnsureAgentWorkspaceDir(runtimeUser, subSess.AgentID); werr == nil {
 		subSess.WorkspaceDir = ws
+	}
+	if root, rerr := EnsureWorkspaceDir(runtimeUser); rerr == nil && root != subSess.WorkspaceDir {
+		subSess.WorkspaceFallback = root
 	}
 	// Mid-turn status (channel path): the agent's send_status / progress
 	// pings land here so the transport can deliver them before the final

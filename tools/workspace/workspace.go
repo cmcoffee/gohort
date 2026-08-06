@@ -637,15 +637,18 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if sess == nil {
 		return "", fmt.Errorf("attach requires a session")
 	}
-	ws, err := EnsureSessionWorkspace(sess)
-	if err != nil {
+	// Ensures the session HAS a workspace (auto-minting one when it doesn't);
+	// the path itself resolves through ResolveWorkspaceRead below.
+	if _, err := EnsureSessionWorkspace(sess); err != nil {
 		return "", fmt.Errorf("session workspace unavailable: %w", err)
 	}
 	relPath = strings.TrimSpace(relPath)
 	if relPath == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := ResolveWorkspacePath(ws, relPath)
+	// Read path: the agent's own workspace first, then the user's root. A file
+	// a person put there stays deliverable from any of their agents.
+	abs, err := ResolveWorkspaceRead(sess, relPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
@@ -711,15 +714,14 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 	if sess == nil {
 		return "", fmt.Errorf("view_image requires a session")
 	}
-	ws, err := EnsureSessionWorkspace(sess)
-	if err != nil {
+	if _, err := EnsureSessionWorkspace(sess); err != nil {
 		return "", fmt.Errorf("session workspace unavailable: %w", err)
 	}
 	rel := strings.TrimSpace(StringArg(args, "path"))
 	if rel == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := ResolveWorkspacePath(ws, rel)
+	abs, err := ResolveWorkspaceRead(sess, rel)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
