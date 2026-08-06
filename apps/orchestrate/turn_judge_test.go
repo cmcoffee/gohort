@@ -40,7 +40,7 @@ func judgeWith(t *testing.T, reply string) (*OrchestrateApp, *judgeStubLLM) {
 }
 
 var garageTurn = TurnClaimEvidence{
-	Request:       "Wiwee, add Rory to that picture of you in the garage",
+	Request:       "Wiwee, add Alex to that picture of you in the garage",
 	Reply:         "Here's you, wasting away in the garage like Craig ordered.",
 	ToolCalls:     []string{"image", "generate_image"},
 	ToolErrors:    2,
@@ -55,7 +55,7 @@ func TestTheJudgeIsGivenTheWholeTurn(t *testing.T) {
 	// Without every one of these the judge is guessing at the same thing the
 	// phrase lists guess at.
 	for _, want := range []string{
-		"add Rory to that picture", // what was asked
+		"add Alex to that picture", // what was asked
 		"image, generate_image",    // what ran, in order, duplicates kept
 		"FAILED: 2",                // that it failed
 		"text-only render",         // and how, so a truthful report is recognizable

@@ -1228,7 +1228,7 @@ const preInputContextWindow = 6
 // the last message ALONE is trivially bypassed — a bare follow-up ("Why?",
 // "go on", "and?") implicates nothing on its own, so the warden clears it and
 // the model, which DOES have the context, answers the very thing that was just
-// declined (the observed "How much does Rory make?" → decline → "Why?" → leak).
+// declined (the observed "How much does Alex make?" → decline → "Why?" → leak).
 // With the window the warden sees the follow-up inherits the prior topic.
 func buildPreInputCandidate(msgs []Message, lastIdx int) string {
 	var ctxLines []string

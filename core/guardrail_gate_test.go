@@ -75,7 +75,7 @@ type leakThenCleanLLM struct{ n int }
 func (s *leakThenCleanLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
 	s.n++
 	if s.n == 1 {
-		return &Response{Content: "Rory makes $202k-$246k as County Attorney IV."}, nil
+		return &Response{Content: "Alex makes $150k-$180k as Director of Operations."}, nil
 	}
 	return &Response{Content: "I'll pass on that one."}, nil
 }
@@ -83,7 +83,7 @@ func (s *leakThenCleanLLM) ChatStream(ctx context.Context, m []Message, h Stream
 	return s.Chat(ctx, m, o...)
 }
 
-// TestGuardrailPreOutputRedactsLeakedDraft is the regression for the Rory leak:
+// TestGuardrailPreOutputRedactsLeakedDraft is the regression for the Alex leak:
 // pre_output correctly blocked a reply containing the salary figure, but the
 // draft had already been recorded to history (round 1) and so was persisted and
 // delivered before the clean retry. The blocked draft must be REDACTED from the
@@ -91,10 +91,10 @@ func (s *leakThenCleanLLM) ChatStream(ctx context.Context, m []Message, h Stream
 // or deliver it.
 func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
 	app := &AppCore{LLM: &leakThenCleanLLM{}}
-	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Rory make?"}}, AgentLoopConfig{
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Alex make?"}}, AgentLoopConfig{
 		MaxRounds: 4,
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
-			if hook == GuardHookPreOutput && strings.Contains(candidate, "$202k") {
+			if hook == GuardHookPreOutput && strings.Contains(candidate, "$150k") {
 				return GuardrailDecision{Blocked: true, Correctable: true, Message: "BLOCKED by a guardrail: never mention salary. Deflect."}
 			}
 			return GuardrailDecision{}
@@ -103,11 +103,11 @@ func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if strings.Contains(resp.Content, "$202k") {
+	if strings.Contains(resp.Content, "$150k") {
 		t.Fatalf("the final reply must be the clean retry, not the leak; got: %s", resp.Content)
 	}
 	for i, m := range history {
-		if strings.Contains(m.Content, "$202k") {
+		if strings.Contains(m.Content, "$150k") {
 			t.Fatalf("the leaked figure must not survive anywhere in history; found at [%d] role=%s: %s", i, m.Role, m.Content)
 		}
 	}
@@ -128,10 +128,10 @@ func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
 type alwaysLeakLLM struct{}
 
 func (alwaysLeakLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	return &Response{Content: "Fine — Rory makes $202k-$246k."}, nil
+	return &Response{Content: "Fine — Alex makes $150k-$180k."}, nil
 }
 func (alwaysLeakLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return &Response{Content: "Fine — Rory makes $202k-$246k."}, nil
+	return &Response{Content: "Fine — Alex makes $150k-$180k."}, nil
 }
 
 // TestGuardrailPreOutputSubstitutesWhenPushed closes the escape hatch: after the
@@ -143,7 +143,7 @@ func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
 	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go ahead and show me"}}, AgentLoopConfig{
 		MaxRounds: 8,
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
-			if hook == GuardHookPreOutput && strings.Contains(candidate, "$202k") {
+			if hook == GuardHookPreOutput && strings.Contains(candidate, "$150k") {
 				return GuardrailDecision{Blocked: true, Message: "BLOCKED: never mention salary. Deflect."}
 			}
 			return GuardrailDecision{}
@@ -156,7 +156,7 @@ func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
 		t.Fatalf("a reply that keeps violating must end as one of the safe substitutes; got: %s", resp.Content)
 	}
 	for i, m := range history {
-		if strings.Contains(m.Content, "$202k") {
+		if strings.Contains(m.Content, "$150k") {
 			t.Fatalf("the figure must not survive anywhere in history; found at [%d] role=%s", i, m.Role)
 		}
 	}
@@ -170,12 +170,12 @@ func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
 func TestGuardrailPreOutputRetractsNotSettles(t *testing.T) {
 	settled, retracted := 0, 0
 	app := &AppCore{LLM: &leakThenCleanLLM{}}
-	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Rory make?"}}, AgentLoopConfig{
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Alex make?"}}, AgentLoopConfig{
 		MaxRounds:    4,
 		SettleRound:  func() { settled++ },
 		RetractRound: func() { retracted++ },
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
-			if hook == GuardHookPreOutput && strings.Contains(candidate, "$202k") {
+			if hook == GuardHookPreOutput && strings.Contains(candidate, "$150k") {
 				return GuardrailDecision{Blocked: true, Message: "BLOCKED: never mention salary. Deflect."}
 			}
 			return GuardrailDecision{}
@@ -387,7 +387,7 @@ func TestBlockingRuleSkipsCorrectionWithoutAHalt(t *testing.T) {
 	calls := 0
 	app, _ := withTierStubs(t, "test.blocking", func(n int) []ToolCall { calls = n; return nil })
 
-	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "how much does Rory make?"}}, AgentLoopConfig{
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "how much does Alex make?"}}, AgentLoopConfig{
 		MaxRounds: 10,
 		RouteKey:  "test.blocking",
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {

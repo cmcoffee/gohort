@@ -45,9 +45,9 @@ func noteSession(t *testing.T, captions ...string) *ToolSession {
 }
 
 func TestTheManifestArrivesWhenTheUserNamesAPicture(t *testing.T) {
-	sess := noteSession(t, "received: Rory portrait", "edited: me wasting away in the garage")
+	sess := noteSession(t, "received: Alex portrait", "edited: me wasting away in the garage")
 
-	note := imageSpaceNote(sess, "Add Rory to the picture of me wasting away in the garage")
+	note := imageSpaceNote(sess, "Add Alex to the picture of me wasting away in the garage")
 	if note == "" {
 		t.Fatal("a request naming a picture must get the manifest")
 	}
@@ -69,7 +69,7 @@ func TestThePictureTriggerIsTheUsersOwnWords(t *testing.T) {
 	// A request to change an existing image has to say what to change, so
 	// unlike a model writing a caption, the user's words are reliable here.
 	for _, ask := range []string{
-		"Add Rory to the picture of me in the garage",
+		"Add Alex to the picture of me in the garage",
 		"Blend these so the guy in the second photo is on the hood",
 		"can you photoshop him out",
 		"send me that meme again",

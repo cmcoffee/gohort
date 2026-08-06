@@ -133,7 +133,7 @@ func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
-	in := []Message{{Role: "user", Content: "How much does Rory make?"}}
+	in := []Message{{Role: "user", Content: "How much does Alex make?"}}
 	out, decline := turn.applyInputGuardrail(in)
 	if decline != "" {
 		t.Fatalf("a correctable rule steers, it does not refuse outright; got decline %q", decline)
@@ -164,14 +164,14 @@ func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 		t.Fatal("directive must not model rule-citing decline language")
 	}
 	// The original request is preserved after the directive.
-	if out[len(out)-1].Content != "How much does Rory make?" {
+	if out[len(out)-1].Content != "How much does Alex make?" {
 		t.Fatal("the user's request must survive intact after the directive")
 	}
 }
 
 // TestPreInputJudgesFollowUpWithContext pins the bypass fix: a bare "Why?"
 // after a declined salary question must be judged WITH the prior turns, so the
-// warden's candidate carries the earlier "How much does Rory make?" — otherwise
+// warden's candidate carries the earlier "How much does Alex make?" — otherwise
 // the one-word follow-up slips the guard and the model answers what it just
 // declined.
 func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
@@ -180,7 +180,7 @@ func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
 	convo := []Message{
-		{Role: "user", Content: "How much does Rory make?"},
+		{Role: "user", Content: "How much does Alex make?"},
 		{Role: "assistant", Content: "I'll pass on that one."},
 		{Role: "user", Content: "Why?"},
 	}
@@ -193,7 +193,7 @@ func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 		t.Fatalf("the directive must sit immediately before the request; got %+v", out)
 	}
 	// The warden must have SEEN the prior salary question, not just "Why?".
-	if !strings.Contains(stub.lastMsg, "How much does Rory make?") {
+	if !strings.Contains(stub.lastMsg, "How much does Alex make?") {
 		t.Fatalf("pre_input candidate must carry the conversation window; warden saw: %s", stub.lastMsg)
 	}
 	if !strings.Contains(stub.lastMsg, "Why?") {
@@ -236,7 +236,7 @@ func TestPreInputFailsOpen(t *testing.T) {
 	turn := guardTurn(t, errWardenLLM{}, AgentRecord{
 		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
-	in := []Message{{Role: "user", Content: "How much does Rory make?"}}
+	in := []Message{{Role: "user", Content: "How much does Alex make?"}}
 	if out, decline := turn.applyInputGuardrail(in); len(out) != len(in) || decline != "" {
 		t.Fatal("a warden error at pre_input must fail OPEN (pass through), not block")
 	}

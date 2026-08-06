@@ -146,7 +146,7 @@ func TestUnmarkedRuleBlocks(t *testing.T) {
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_output"},
 	})
-	dec := turn.guardrailCheckHook()(guardHookPreOutput, "Rory makes $202,000.")
+	dec := turn.guardrailCheckHook()(guardHookPreOutput, "Alex makes $202,000.")
 	if !dec.Blocked {
 		t.Fatal("a violation must block")
 	}

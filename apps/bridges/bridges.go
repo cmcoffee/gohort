@@ -266,7 +266,7 @@ func upsertMember(members []ConvMember, handle, name string) []ConvMember {
 	}
 	for i := range members {
 		// Case-insensitive match, symmetric with resolveSender's fold lookup —
-		// otherwise "Rory" arriving for a stored "rory" appends a DUPLICATE member
+		// otherwise "Alex" arriving for a stored "alex" appends a DUPLICATE member
 		// instead of updating the existing one.
 		if strings.EqualFold(members[i].Handle, handle) || containsFold(members[i].Aliases, handle) {
 			// Fill the name only when we don't have one yet — first real name
@@ -741,7 +741,7 @@ func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
 		for _, m := range c.Members {
 			// Case-insensitive match, symmetric with the recipient side
 			// (ResolveRecipient/chatIDForHandle use containsFold/EqualFold): an
-			// alias stored "rory" arriving as "Rory" must attribute to the same
+			// alias stored "alex" arriving as "Alex" must attribute to the same
 			// member, not fall through to the raw handle.
 			if (strings.EqualFold(m.Handle, handle) || containsFold(m.Aliases, handle)) && m.Name != "" {
 				return m.Name

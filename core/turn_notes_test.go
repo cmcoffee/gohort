@@ -15,7 +15,7 @@ func TestATurnNoteLandsOnTheNewestUserMessage(t *testing.T) {
 	history := []Message{
 		{Role: "user", Content: "older question"},
 		{Role: "assistant", Content: "older answer"},
-		{Role: "user", Content: "add Rory to the garage picture"},
+		{Role: "user", Content: "add Alex to the garage picture"},
 	}
 	cfg := AgentLoopConfig{TurnNotes: func(user string) string {
 		// The app is handed the user's OWN words — not a message that opens
@@ -31,7 +31,7 @@ func TestATurnNoteLandsOnTheNewestUserMessage(t *testing.T) {
 	if !strings.Contains(history[2].Content, "image#1 — the garage") {
 		t.Errorf("note missing from the newest user turn: %q", history[2].Content)
 	}
-	if !strings.Contains(history[2].Content, "add Rory to the garage picture") {
+	if !strings.Contains(history[2].Content, "add Alex to the garage picture") {
 		t.Errorf("the user's own words must survive: %q", history[2].Content)
 	}
 	// Earlier turns are settled context and part of the cached prefix. Writing

@@ -54,7 +54,7 @@ func TestReapNeverEntersSubdirectories(t *testing.T) {
 	writeAged(t, filepath.Join(dir, "casefile", "video-evidence.mp4"), 8192, old)
 	writeAged(t, filepath.Join(dir, ".attachments", "gen-spill.png"), 2048, old)
 
-	if got := scanReapable(dir, "rory", "", 14*24*time.Hour); len(got) != 0 {
+	if got := scanReapable(dir, "alex", "", 14*24*time.Hour); len(got) != 0 {
 		t.Fatalf("selected %d file(s) from subdirectories: %+v", len(got), got)
 	}
 }

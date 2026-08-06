@@ -1,6 +1,6 @@
 // A turn that ends by saying it is ABOUT to do the work. Observed with two
 // image backends erroring and four rounds still on the clock: "Got it — let me
-// create this. I'll blend Rory onto the picture of me wasting away in the
+// create this. I'll blend Alex onto the picture of me wasting away in the
 // garage. 🏚️👔" — and then nothing. The next message from the user was "you
 // forgot to attach the image."
 //
@@ -16,7 +16,7 @@ import (
 
 func TestAPromiseToActIsNotAFinishedTurn(t *testing.T) {
 	for _, stall := range []string{
-		"Got it — let me create this. I'll blend Rory onto the picture of me wasting away in the garage. 🏚️👔",
+		"Got it — let me create this. I'll blend Alex onto the picture of me wasting away in the garage. 🏚️👔",
 		"Let me create this.",
 		"I'll grab a fresh copy and try that again.",
 		"Now I'm going to run that with the source photos instead.",

@@ -157,7 +157,7 @@ func TestTheSecondCallOfATurnStartsNoSecondJob(t *testing.T) {
 	sess := &ToolSession{Username: "craig"}
 	def := ChatToolToAgentToolDefWithSession(tool, sess)
 
-	first, err := def.Handler(map[string]any{"prompt": "blend Rory onto the garage photo"})
+	first, err := def.Handler(map[string]any{"prompt": "blend Alex onto the garage photo"})
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestTheSecondCallOfATurnStartsNoSecondJob(t *testing.T) {
 	// The model saw no picture and tried a different phrasing — the exact shape
 	// from the log, where the args differed every time, so anything keyed on
 	// duplicate ARGUMENTS would have waved all of these through.
-	second, err := def.Handler(map[string]any{"prompt": "put Rory on the hood instead"})
+	second, err := def.Handler(map[string]any{"prompt": "put Alex on the hood instead"})
 	if err != nil {
 		// Deliberately not an error: an error reads as "adjust and retry", and
 		// it would feed the give-up-with-errors guard, which pushes exactly the

@@ -857,7 +857,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// substring (e.g. the awaited person's name). The baseline was already
 	// advanced above, so an unrelated change (another participant, the agent's
 	// own outbound) is absorbed silently and the NEXT change is still watched —
-	// exactly the "wake only on Rory's reply, not on every group message" case.
+	// exactly the "wake only on Alex's reply, not on every group message" case.
 	if strings.TrimSpace(cur.MatchNew) != "" && !addedLinesContain(prior, body, cur.MatchNew) {
 		Debug("[event] watch %s/%s: change detected but no new line matched %q — baseline advanced, no wake", m.Owner, m.Name, cur.MatchNew)
 		SaveEventMonitor(db, cur)

@@ -10,7 +10,7 @@
 //   - "Here's you, wasting away in the garage like Craig ordered." Slipped the
 //     noun rule, because a caption names what is IN the picture and never the
 //     picture.
-//   - "Got it — let me create this. I'll blend Rory onto the picture." Slipped
+//   - "Got it — let me create this. I'll blend Alex onto the picture." Slipped
 //     the phrase list, because "create" and "blend" weren't on it.
 //   - "Here's the update_agent call to implement these changes" without the
 //     colon. Given up on deliberately: indistinguishable in form from "Here's
