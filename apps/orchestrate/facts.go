@@ -106,6 +106,13 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error
 		// What the model just heard, declared by the only thing that was
 		// there. Unknown falls through to the store's own classifier.
 		Domain: domain,
+		// WHO said it. Empty on a one-to-one with the owner, which leaves the
+		// note reading exactly as it did before. In a room it is the difference
+		// between "Dana prefers texts before 8pm" and a preference the agent
+		// applies to everyone in the thread.
+		Speaker:        strings.TrimSpace(t.requesterName),
+		SpeakerHandle:  strings.TrimSpace(t.requesterHandle),
+		SpeakerIsOwner: t.requesterOwnerHandle,
 	})
 	switch res.Reason {
 	case FactDuplicate:

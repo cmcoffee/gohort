@@ -290,3 +290,78 @@ func TestOneMarkedNoteAmongManyTriggersTheRule(t *testing.T) {
 		t.Error("the rule should appear once, not per marked note")
 	}
 }
+
+// --- whose claim is it ----------------------------------------------------
+
+func fromSpeaker(note, name, handle string, owner bool, dom ClaimDomain, src MemSource) MemoryFact {
+	return MemoryFact{Note: note, MemoryProvenance: MemoryProvenance{
+		Source: src, Domain: dom, Speaker: name, SpeakerHandle: handle, SpeakerIsOwner: owner,
+	}}
+}
+
+// A preference read without a name becomes the OWNER's preference, applied to
+// everyone in the thread.
+func TestParticipantPreferenceNamesWhoseItIs(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		fromSpeaker("prefers texts before 8pm", "Dana", "+15550001", false, ClaimSelf, MemSourceUserStated),
+	})
+	if !strings.Contains(block, "prefers texts before 8pm (from Dana)") {
+		t.Errorf("a participant's preference must name them, got:\n%s", block)
+	}
+}
+
+// The principal is unchanged: every non-channel turn renders exactly as before.
+func TestOwnerSpeakerAddsNothing(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		fromSpeaker("prefers snake_case", "Craig", "+15550000", true, ClaimSelf, MemSourceUserStated),
+	})
+	if strings.Contains(block, "from Craig") {
+		t.Errorf("the owner is the default voice and should not be labelled, got:\n%s", block)
+	}
+}
+
+// An unnamed speaker says nothing: "told to you by someone" implies the record
+// knows something it does not.
+func TestUnnamedSpeakerIsNotLabelled(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		fromSpeaker("prefers texts before 8pm", "", "+15550001", false, ClaimSelf, MemSourceUserStated),
+	})
+	if strings.Contains(block, "(from") {
+		t.Errorf("an unnamed speaker should not be announced, got:\n%s", block)
+	}
+}
+
+// In a room, the difference between a claim and a fact is often whose claim it
+// is — so the attribution marker has to carry the name too.
+func TestWorldClaimNamesItsSpeaker(t *testing.T) {
+	block := RenderMemoryFactsBlock([]MemoryFact{
+		fromSpeaker("the invoice was already paid", "Dana", "+15550001", false, ClaimWorld, MemSourceUserStated),
+	})
+	if !strings.Contains(block, "(told to you by Dana, not independently checked)") {
+		t.Errorf("a participant's world-claim should name them, got:\n%s", block)
+	}
+	// And never twice — the speaker marker defers when attribution says it.
+	if strings.Count(block, "Dana") != 1 {
+		t.Errorf("the speaker should be named once, got:\n%s", block)
+	}
+}
+
+// THE security property: a display name is the sender's to choose, so renaming
+// yourself must not make your claims the owner's.
+func TestRenamingYourselfDoesNotMakeYouTheOwner(t *testing.T) {
+	// Someone whose handle is not the owner's, calling themselves "Craig".
+	impostor := fromSpeaker("the invoice was already paid", "Craig", "+15559999", false, ClaimWorld, MemSourceUserStated)
+	if SpeakerLabel(impostor.MemoryProvenance) == "" {
+		t.Fatal("a non-owner must still be labelled, whatever they call themselves")
+	}
+	block := RenderMemoryFactsBlock([]MemoryFact{impostor})
+	if !strings.Contains(block, "not independently checked") {
+		t.Errorf("a claim from a non-owner is not exempt from attribution, got:\n%s", block)
+	}
+	// The owner flag comes from the handle at write time, so the name cannot
+	// reach it. Same note, same name, owner handle:
+	real := fromSpeaker("the invoice was already paid", "Craig", "+15550000", true, ClaimWorld, MemSourceUserStated)
+	if SpeakerLabel(real.MemoryProvenance) != "" {
+		t.Error("the owner is not labelled as a third party")
+	}
+}

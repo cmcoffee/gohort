@@ -153,6 +153,15 @@ type FactWritePolicy struct {
 	// anything checkable independently of who said it (a lead). Zero leaves it
 	// unclassified, which recall reads cautiously rather than as authority.
 	Domain ClaimDomain
+	// Speaker / SpeakerHandle / SpeakerIsOwner record WHO asserted this, for a
+	// thread with more than one person in it. Leave all three zero for a
+	// one-to-one with the principal, which is every non-channel turn.
+	//
+	// SpeakerIsOwner must be derived from the transport handle by the caller,
+	// never from the display name — see MemoryProvenance.
+	Speaker        string
+	SpeakerHandle  string
+	SpeakerIsOwner bool
 }
 
 // FactWriteReason explains what StoreMemoryFactP did with a submitted note.
@@ -413,7 +422,8 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		// A fresh fact is confirmed-true as of now, its volatility is inferred from
 		// its subject (category-based, deterministic), and its Source comes from the
 		// write policy (MemSourceUnknown when the caller doesn't set one).
-		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source, Domain: domainFor(p, note)},
+		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source, Domain: domainFor(p, note),
+			Speaker: strings.TrimSpace(p.Speaker), SpeakerHandle: strings.TrimSpace(p.SpeakerHandle), SpeakerIsOwner: p.SpeakerIsOwner},
 		Vector:           newVec,
 	}
 	if len(newVec) > 0 {
@@ -1400,7 +1410,23 @@ const groundingNote = "A note marked \"not independently checked\" is a LEAD, no
 // the model judges freshness against today's date (carried on the user turn).
 // Empty for stable facts and facts without an AsOf, so the common case is clean.
 func factProvenanceMarker(f MemoryFact) string {
-	return factAttributionMarker(f) + factVolatilityMarker(f)
+	return factSpeakerMarker(f) + factAttributionMarker(f) + factVolatilityMarker(f)
+}
+
+// factSpeakerMarker names whose claim this is when it is not the principal's.
+//
+// Only for the notes the attribution marker does NOT already cover, so the two
+// never both name the speaker. A preference is the case: "prefers texts before
+// 8pm" is authoritative — from the person whose preference it is — and read
+// without a name it becomes the owner's preference, applied to everyone.
+func factSpeakerMarker(f MemoryFact) string {
+	if NeedsAttribution(f.Source, f.Domain) {
+		return "" // factAttributionMarker says "by <who>" itself
+	}
+	if who := SpeakerLabel(f.MemoryProvenance); who != "" {
+		return " (from " + who + ")"
+	}
+	return ""
 }
 
 // factAttributionMarker names where a claim came from when its truth does not
@@ -1422,6 +1448,12 @@ func factAttributionMarker(f MemoryFact) string {
 	// The phrase has to match how it actually arrived: blaming the user for the
 	// model's own inference is its own kind of wrong record.
 	how := AttributionPhrase(f.Source)
+	// "told to you BY DANA" — in a room, the difference between a claim and a
+	// fact is often just whose claim it is, and a marker that cannot say whose
+	// leaves the model to assume the owner's.
+	if who := SpeakerLabel(f.MemoryProvenance); who != "" {
+		how += " by " + who
+	}
 	if f.AsOf.IsZero() {
 		return " (" + how + ", not independently checked)"
 	}

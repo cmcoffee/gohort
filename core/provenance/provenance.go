@@ -14,6 +14,7 @@ package provenance
 
 import (
 	"math"
+	"strings"
 	"time"
 )
 
@@ -95,13 +96,27 @@ func NeedsAttribution(src MemSource, dom ClaimDomain) bool {
 // something true rather than blaming the user for the model's own inference.
 func AttributionPhrase(src MemSource) string {
 	switch src {
-	case MemSourceUserStated:
-		return "told to you"
 	case MemSourceInferred:
 		return "your own inference"
+	case MemSourceUserStated:
+		return "told to you"
 	default:
 		return "recorded from conversation"
 	}
+}
+
+// SpeakerLabel names who said something, for prose. Empty for the principal and
+// for anyone unnamed — "told to you by someone" is worse than "told to you",
+// since it implies the record knows something it does not.
+//
+// Reads the display NAME, which is the sender's to choose. That is the right
+// trade for prose and the wrong one for authority, which is why nothing here
+// decides anything: SpeakerIsOwner is settled from the handle at write time.
+func SpeakerLabel(p MemoryProvenance) string {
+	if p.SpeakerIsOwner {
+		return ""
+	}
+	return strings.TrimSpace(p.Speaker)
 }
 
 // ClaimAuthority ranks claims for GROUNDING — whether one may be asserted as
@@ -191,6 +206,23 @@ type MemoryProvenance struct {
 	// Zero (unknown) is the cautious reading everywhere it decides something,
 	// so legacy rows gain no authority they were never granted.
 	Domain ClaimDomain `json:"dom,omitempty"`
+
+	// --- Speaker: WHO said it, when that is not simply "the user" ---
+	//
+	// A room has several people in it, and "the user prefers X" is a lie about
+	// most of them. Empty Speaker means the principal — a one-to-one with the
+	// owner, which is every non-channel turn — and leaves recall unchanged.
+	//
+	// The two fields are NOT interchangeable and must not be collapsed.
+	// Speaker is a display name the sender chose for themselves, kept because
+	// it is what a human reads. SpeakerHandle is the transport's attribution,
+	// which the sender cannot set. Anything that grants authority reads the
+	// handle; anything that renders prose reads the name.
+	Speaker       string `json:"spk,omitempty"`
+	SpeakerHandle string `json:"spk_h,omitempty"`
+	// SpeakerIsOwner is derived from the HANDLE at write time, never from the
+	// name. Renaming yourself "Craig" must not make your claims the owner's.
+	SpeakerIsOwner bool `json:"spk_own,omitempty"`
 	// AsOf is when the claim was last CONFIRMED true, distinct from a row's
 	// Created (first write) and Updated (any mutation). A re-verification bumps
 	// AsOf without rewriting the note. Staleness is measured from AsOf.

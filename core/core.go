@@ -538,6 +538,7 @@ var (
 	SpeakerAuthoritative = provenance.SpeakerAuthoritative
 	NeedsAttribution     = provenance.NeedsAttribution
 	AttributionPhrase    = provenance.AttributionPhrase
+	SpeakerLabel         = provenance.SpeakerLabel
 	ClaimAuthority       = provenance.ClaimAuthority
 )
 
