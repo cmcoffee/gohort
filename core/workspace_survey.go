@@ -258,17 +258,35 @@ func init() {
 			"framework would rewrite anyway. These roots have no reaper; this measures "+
 			"what one would find. Deletes nothing.",
 		func(ctx context.Context) int {
+			// Say what was SEARCHED before saying what was found. A zero has
+			// three quite different causes — no workspaces root configured, no
+			// users enumerated, or genuinely empty directories — and a bare
+			// "0" cannot be told apart from a survey that never looked.
+			root := WorkspacesDir()
+			users := len(AuthListUsers(RootDB))
+			Log("[workspace-usage] scanning %q across %d user(s)", root, users)
+			if root == "" {
+				Log("[workspace-usage] no workspaces root configured — nothing to scan")
+				return 0
+			}
+			if users == 0 {
+				Log("[workspace-usage] no users enumerated — the survey walks per-user roots, so it found nothing to look at")
+				return 0
+			}
 			list := SurveyWorkspaces(RootDB)
 			if len(list) == 0 {
-				Log("[workspace-usage] no workspace files found")
+				Log("[workspace-usage] %d user(s), no files in any workspace", users)
 				return 0
 			}
 			Log("[workspace-usage]\n%s", FormatWorkspaceSurvey(list))
-			var mb int64
+			// FILES, not megabytes. The count is the only part visible without
+			// opening the log, and a sub-megabyte total rounding to 0 reads
+			// exactly like a survey that found nothing.
+			files := 0
 			for _, u := range list {
-				mb += u.Bytes
+				files += u.Files
 			}
-			return int(mb / (1024 * 1024)) // MiB, so the admin count means something
+			return files
 		},
 	)
 }

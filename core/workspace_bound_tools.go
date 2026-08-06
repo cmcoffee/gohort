@@ -164,6 +164,15 @@ func init() {
 			"would break if a run were given a different workspace. Reports names, "+
 			"owners and templates to the log; changes nothing.",
 		func(ctx context.Context) int {
+			// Same reason as the usage survey: a zero here decided that
+			// per-agent workspaces were a clean switch, so it had better be a
+			// zero that means "looked and found none".
+			users := AuthListUsers(RootDB)
+			tools := 0
+			for _, u := range users {
+				tools += len(LoadPersistentTempTools(UserDB(RootDB, strings.TrimSpace(u.Username)), strings.TrimSpace(u.Username)))
+			}
+			Log("[workspace-bound] scanning %d tool(s) across %d user(s)", tools, len(users))
 			list := WorkspaceBoundTools(RootDB)
 			if len(list) == 0 {
 				Log("[workspace-bound] no tools depend on their authoring directory")
