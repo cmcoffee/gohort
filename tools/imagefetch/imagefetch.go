@@ -651,7 +651,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		if kept.Origin.AgentMade() {
 			out += fmt.Sprintf("\nNote: you MADE this picture (%s), so it is kept but NOT treated as a reference — it is not evidence of what any real thing looks like, and it won't be offered as one. Reference images are the ones you were given or found.", kept.Origin)
 		}
-		return out + "\nNOT delivered — keeping only files it away. To send it, attach it as you would any image.", nil
+		return out + fmt.Sprintf("\nNOT delivered — keeping only files it away. To send it, call workspace(action=\"attach\", path=%q); the kept copy stays where it is. Do NOT re-render it to make it sendable — that produces a different picture.", kept.Ref), nil
 	case "forget":
 		name := StringArg(args, "name")
 		gone, err := ForgetImage(sess, name)

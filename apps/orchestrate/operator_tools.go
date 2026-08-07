@@ -488,6 +488,18 @@ func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64
 			return b, k, true
 		}
 	}
+	// A kept image id. Renderable all along — ResolveRecentImage falls through
+	// to the library — but never deliverable, so "work from this picture"
+	// succeeded and "send me this picture" had no route at all.
+	//
+	// KEPT ONLY, never a ring position, and not gated on allowInbound. A kept
+	// entry is something the agent deliberately filed; the ring also holds the
+	// photo the user just sent, and resolving image#1 here would reopen the
+	// echo the inbound guard closed — the same picture posted straight back to
+	// the room it arrived in.
+	if data, found := ResolveKeptImage(sess, ref); found && len(data) > 0 {
+		return base64.StdEncoding.EncodeToString(data), "image", true
+	}
 	imgs := resolveWorkspaceImages(sess, []string{ref})
 	if len(imgs) == 0 {
 		// Not a workspace file or inbound media — try a remote http(s) image/video

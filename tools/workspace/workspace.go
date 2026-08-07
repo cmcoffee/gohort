@@ -646,6 +646,20 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if relPath == "" {
 		return "", fmt.Errorf("path is required")
 	}
+	// A kept image id, not a file. The library lives outside the workspace by
+	// design, so every attempt to attach one stat'd a path that was never going
+	// to exist — and a kept picture could be RENDERED FROM but never SENT.
+	//
+	// That asymmetry cost a real session: asked for three reference photos the
+	// agent read them straight off its own manifest, failed to attach each one,
+	// invented a plausible storage URL and 404'd on it, and finally offered to
+	// GENERATE fresh versions "so they become deliverable" — which would have
+	// handed over three different faces as the references for three real people.
+	// The one thing the whole provenance model exists to prevent, proposed as a
+	// workaround for a missing verb.
+	if data, ok := ResolveKeptImage(sess, relPath); ok && len(data) > 0 {
+		return attachBytes(sess, data, keptDisplayName(relPath, displayName)), nil
+	}
 	// Read path: the agent's own workspace first, then the user's root. A file
 	// a person put there stays deliverable from any of their agents.
 	abs, err := ResolveWorkspaceRead(sess, relPath)
@@ -698,6 +712,49 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	}
 	return fmt.Sprintf("Attached %q (%s, %s) via %s channel.%s",
 		displayName, mime, humanSize(info.Size()), channel, suffix), nil
+}
+
+// attachBytes delivers already-resolved bytes on the channel their type calls
+// for. Split out of AttachWorkspaceFile so a kept image takes exactly the same
+// route to the user as a file does — a second delivery path is how one of them
+// ends up quietly not supporting video, or not reporting its size.
+func attachBytes(sess *ToolSession, data []byte, displayName string) string {
+	mime := http.DetectContentType(data)
+	channel := "file"
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+		channel = "image"
+	case strings.HasPrefix(mime, "audio/"), strings.HasPrefix(mime, "video/"):
+		sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
+		channel = "audio/video"
+	default:
+		sess.AppendFile(FileAttachment{
+			Name: displayName, MimeType: mime,
+			Data: base64.StdEncoding.EncodeToString(data), Size: len(data),
+		})
+	}
+	// No cleanup clause: a kept image is deliberately durable, and sending a
+	// copy must never consume the library entry.
+	return fmt.Sprintf("Attached %q (%s, %s) via %s channel. The kept image is unchanged and still available under that id.",
+		displayName, mime, humanSize(int64(len(data))), channel)
+}
+
+// keptDisplayName gives an attached kept image a filename a person can read.
+// The id itself ("image#craig_ref") carries a character no filesystem wants and
+// means nothing to whoever receives it.
+func keptDisplayName(ref, displayName string) string {
+	if n := strings.TrimSpace(displayName); n != "" {
+		return n
+	}
+	name := ref
+	if i := strings.Index(ref, "#"); i >= 0 {
+		name = ref[i+1:]
+	}
+	if name = strings.TrimSpace(name); name == "" {
+		name = "image"
+	}
+	return name + ".png"
 }
 
 func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
