@@ -116,3 +116,52 @@ func ResolveKeepSubject(sess *ToolSession, of string, isPerson bool) ImageSubjec
 	}
 	return s
 }
+
+// SubjectForRef reports who the picture behind one reference is of.
+//
+// Only KEPT images carry a subject — a ring entry is positional and a media id
+// is turn-scoped, and neither has anywhere to record one. So this answers for
+// the library and returns the zero subject for everything else, which callers
+// must read as "nobody said", never as "nobody".
+func SubjectForRef(sess *ToolSession, ref string) ImageSubject {
+	name := strings.TrimSpace(ref)
+	if sess == nil || name == "" {
+		return ImageSubject{}
+	}
+	name = strings.TrimPrefix(strings.ToLower(name), RecentImageRefPrefix)
+	for _, k := range KeptImages(sess) {
+		if strings.EqualFold(k.Name, name) {
+			return k.Subject
+		}
+	}
+	return ImageSubject{}
+}
+
+// SubjectsForRefs is SubjectForRef across a call's whole image list, index for
+// index — so position N of the result describes position N of the refs, and a
+// reference with no subject leaves a zero entry rather than shifting the rest.
+// Callers turn that index into "the first image", so the alignment is the whole
+// contract.
+func SubjectsForRefs(sess *ToolSession, refs []string) []ImageSubject {
+	out := make([]ImageSubject, len(refs))
+	for i, r := range refs {
+		out[i] = SubjectForRef(sess, r)
+	}
+	return out
+}
+
+// PeopleWithPictures lists every person the library holds a usable likeness of.
+//
+// Agent-made entries are excluded: a face this agent generated is not evidence
+// of what anyone looks like, so offering it as the picture to pass would launder
+// an invention into a reference — the same rule the manifest and the schema
+// list already apply, applied here so a runtime check cannot undo it.
+func PeopleWithPictures(sess *ToolSession) []KeptImage {
+	var out []KeptImage
+	for _, k := range KeptImages(sess) {
+		if k.Subject.Person && k.Subject.Named() && !k.Origin.AgentMade() {
+			out = append(out, k)
+		}
+	}
+	return out
+}

@@ -1000,6 +1000,17 @@ func generateImage(sess *ToolSession, args map[string]any, avail imageActions) (
 	return generateImageInto(sess, StringArg(args, "prompt"), backend)
 }
 
+// checkGeneratePrompt is the subject check for a render with NO source images.
+//
+// The strongest case of the two: asked for a picture of somebody whose likeness
+// is sitting in the library, a text-only generate cannot produce them and will
+// produce a confident stranger instead. There is nothing to rewrite here — no
+// attached picture to point a name at — so the whole check is the refusal, and
+// the fix it names turns the call into an edit.
+func checkGeneratePrompt(sess *ToolSession, args map[string]any) error {
+	return refuseUnpassedPeople(sess, strings.TrimSpace(StringArg(args, "prompt")), nil)
+}
+
 // planGenerate resolves and checks the backend a generate call will use. Split
 // from generateImage for the same reason planEdit is: these errors have to
 // reach the model before the call detaches, not a minute after it. See
@@ -1007,6 +1018,9 @@ func generateImage(sess *ToolSession, args map[string]any, avail imageActions) (
 func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
 	if !avail.generate {
 		return "", fmt.Errorf("the generate action is unavailable — no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
+	}
+	if err := checkGeneratePrompt(sess, args); err != nil {
+		return "", err
 	}
 	backend := strings.TrimSpace(StringArg(args, "backend"))
 	// Resolve an omitted backend to a GENERATOR rather than letting it fall
@@ -1043,6 +1057,11 @@ type editPlan struct {
 	prompt  string
 	refs    []string
 	mask    string
+	// note is what the pre-dispatch subject check rewrote, in words for the
+	// model. Carried on the plan rather than returned separately so Preflight
+	// and the real call run identical checks — a check that only one of them
+	// performs is one the detached path skips.
+	note string
 }
 
 // planEdit does every check an edit can make from its arguments alone — which
@@ -1066,6 +1085,17 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		}
 		return p, fmt.Errorf("edit needs at least one source image — %s", hint)
 	}
+	// Before anything is dispatched: take attached people's NAMES out of the
+	// prompt, and refuse outright if it names somebody whose picture we have
+	// and did not pass. Here rather than after the render because a render that
+	// invented the wrong face has already cost the time and is already
+	// deliverable — a note under it is something a model can read and ship
+	// anyway. See prompt_scrub.go.
+	scrubbed, note, err := checkPromptSubjects(sess, prompt, refs)
+	if err != nil {
+		return p, err
+	}
+	prompt = scrubbed
 	backend := strings.TrimSpace(StringArg(args, "backend"))
 	if backend == "" {
 		// Routed by how many pictures were passed — see defaultEditBackend.
@@ -1114,7 +1144,7 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 	if !ImageBackendReachable(sess, backend) {
 		return p, fmt.Errorf("image backend %q is not available to you — use one of: %s", backend, strings.Join(editorNames(avail), ", "))
 	}
-	return editPlan{backend: backend, prompt: prompt, refs: refs, mask: StringArg(args, "mask")}, nil
+	return editPlan{backend: backend, prompt: prompt, refs: refs, mask: StringArg(args, "mask"), note: note}, nil
 }
 
 // editImage runs the edit action: check the arguments, hand the caller's image
@@ -1138,7 +1168,7 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if serr != nil {
 		return out, serr
 	}
-	return out + fidelityCheck(sess, p.refs), nil
+	return out + p.note + fidelityCheck(sess, p.refs), nil
 }
 
 // fidelityCheck shows the SOURCE alongside the result so the model can answer
