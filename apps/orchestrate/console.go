@@ -179,6 +179,11 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/relink", gw(T.handleConsoleAgentRelink))
 	// Shared relink picker source: the owner's agents as {value:id,label:name}.
 	T.HandleFunc("/api/console/agent-options", g(T.handleConsoleAgentOptions))
+	// The owner's view of an agent's picture library — the first surface that
+	// shows what is in it rather than describing it in the agent's own words.
+	T.HandleFunc("/api/agent-images", g(T.handleAgentImages))
+	T.HandleFunc("/api/agent-images/raw", g(T.handleAgentImageRaw))
+	T.HandleFunc("/api/agent-images/action", gw(T.handleAgentImageAction))
 	// Fleet-wide guardrail review — read-only, so no gw() write wrapper.
 	T.HandleFunc("/api/console/guardrail-blocks", g(T.handleConsoleGuardrails))
 	T.HandleFunc("/api/console/monitors", g(T.handleConsoleMonitors))

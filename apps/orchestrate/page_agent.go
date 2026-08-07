@@ -469,6 +469,47 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		})
 	}
 
+	// The picture library — the FIRST surface that shows the owner what is in it
+	// rather than describing it in the agent's own words. That gap is not
+	// theoretical: asked for three people's reference photos, an agent handed
+	// back three of its own renders and called them real, and there was nowhere
+	// to look and catch it. The thumbnail is the point; the rest is context for
+	// deciding whether to keep the row.
+	if id != "" {
+		sections = append(sections, ui.Section{
+			Title:    "Picture library",
+			Subtitle: "Every picture this agent has kept for reuse. Look at them: a name, a caption and an origin can all be confidently wrong together, and only the picture settles it. \"Unrecorded\" origin means nobody captured where it came from — it may be something the agent made, so don't trust it as a likeness until you've looked. Forget what shouldn't be here; label anyone the agent hasn't identified, so a request naming them finds the right face.",
+			Body: ui.Table{
+				Source:    "../api/agent-images?id=" + id,
+				RowKey:    "name",
+				EmptyText: "This agent hasn't kept any pictures yet.",
+				Columns: []ui.Col{
+					{Field: "thumb", Label: "", Type: "image"},
+					{Field: "subject", Label: "Of", Flex: 2},
+					{Field: "origin", Label: "Origin", Flex: 2, Mute: true},
+					{Field: "ref", Label: "Id", Flex: 2, Mute: true},
+					{Field: "shows", Label: "Notes", Flex: 4, Mute: true},
+					{Field: "kept", Label: "Kept", Flex: 1, Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					{
+						Type: "button", Label: "Label", Method: "client",
+						PostTo: "agent_image_label", HideIf: "inherited",
+					},
+					{
+						Type: "button", Label: "Forget", Variant: "danger",
+						// Inherited entries belong to the parent agent and are
+						// refused server-side; hiding the button says so before
+						// the click rather than after it.
+						HideIf:  "inherited",
+						PostTo:  "../api/agent-images/action?id=" + id + "&action=forget&name={name}",
+						Confirm: "Forget this picture? The agent will no longer be able to use it, and this can't be undone.",
+					},
+				},
+			},
+		})
+	}
+
 	// Share with users — peer-sharing (namespacing phase 5). Existing, non-seed,
 	// top-level agents only: a seed is framework-owned and a sub-agent is a
 	// component of its parent, neither is independently shareable. The recipient
@@ -537,6 +578,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	lockHead := ""
 	if id != "" {
 		lockHead = agentLockIconHTML(id, agentLocked)
+		// The relabel prompt for the picture library. App-specific behavior, so
+		// it rides in through a client action rather than into core/ui.
+		lockHead += imageLibraryHeadHTML(id)
 	}
 	page := ui.Page{
 		Title:     title,

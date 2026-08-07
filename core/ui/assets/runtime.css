@@ -232,6 +232,15 @@ select:-webkit-autofill {
   text-transform: uppercase; letter-spacing: 0.04em;
   flex-shrink: 0;
 }
+/* Thumbnail cell (Col.Type "image"). Fixed square so rows stay even whatever
+   the source aspect ratio is, and object-fit: cover so a portrait photo is
+   cropped rather than letterboxed into something unreadable at this size. */
+.ui-table-thumb { flex: 0 0 auto; display: flex; align-items: center; }
+.ui-table-thumb img {
+  height: 48px; width: 48px; object-fit: cover;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-2);
+}
 .ui-live-item.running .ui-live-state { background: rgba(63, 185, 80, 0.18); color: var(--success); }
 .ui-live-item.queued .ui-live-state  { background: rgba(227, 179, 65, 0.18); color: var(--warning); }
 /* Wins over .running above — a background row IS running, it just did not wait

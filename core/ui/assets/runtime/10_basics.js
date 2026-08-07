@@ -152,6 +152,23 @@
             cellsWrap.appendChild(renderDotCell(col, v));
             return;
           }
+          if (col.type === 'image') {
+            // A thumbnail cell: the field holds a URL, the cell shows the
+            // picture. Generic on purpose — any table whose rows HAVE a visual
+            // is easier to scan by looking than by reading a filename, and a
+            // library of pictures listed as text is one nobody audits.
+            //
+            // Relative or absolute http(s) only, the same rule the link cell
+            // applies: a cell that will load any string is a cell that will
+            // fetch whatever a record happens to contain.
+            var ic = el('div', {class: 'ui-table-cell ui-table-thumb'});
+            if (col.flex) ic.style.flex = col.flex;
+            if (v && /^(\/|https?:\/\/)/.test(String(v))) {
+              ic.appendChild(el('img', {src: String(v), alt: col.label || 'image', loading: 'lazy'}));
+            }
+            cellsWrap.appendChild(ic);
+            return;
+          }
           if (col.type === 'pills') {
             // An ARRAY field rendered as inert chips — a member list you can
             // scan, not toggles (the scope-pill renderer owns interactive
