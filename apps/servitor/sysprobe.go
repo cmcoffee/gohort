@@ -1188,7 +1188,21 @@ func (T *Servitor) exec_command(cmd string) (string, error) {
 // goroutine indefinitely — the LLM never sees a result, the heartbeat keeps
 // firing, and the session looks stuck.
 func (T *Servitor) exec_command_ctx(ctx context.Context, cmd string) (string, error) {
-	session, err := T.conn.NewSession()
+	return execOverSSH(ctx, T.conn, cmd)
+}
+
+// execOverSSH is the body of exec_command_ctx, taking the connection as an
+// argument so a caller that is not a probe session can use it.
+//
+// Extracted rather than re-spelled. The hung-command handling below is the
+// answer to a real production hang — an unbounded receive once wedged a probe
+// forever, with the agent loop never getting its result — and a near-miss of
+// that logic would reintroduce it silently. One implementation, two callers.
+func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, error) {
+	if conn == nil {
+		return "", fmt.Errorf("no SSH connection")
+	}
+	session, err := conn.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("new SSH session: %w", err)
 	}
