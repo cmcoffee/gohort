@@ -81,7 +81,7 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if rest == "new" {
-		T.renderAgentEditor(w, r, udb, "")
+		T.renderAgentEditor(w, r, user, udb, "")
 		return
 	}
 	// The guided create flow — the "New agent" button's default
@@ -91,7 +91,7 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 		T.renderAgentWizard(w, r, user)
 		return
 	}
-	T.renderAgentEditor(w, r, udb, rest)
+	T.renderAgentEditor(w, r, user, udb, rest)
 }
 
 // renderAgentEditor shows the agent editor. When id is empty the form
@@ -104,7 +104,7 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 // or explorer mode, so the editor hides those sections to keep the
 // surface clean and prevent accidental misconfiguration. enforceSubAgentPosture
 // at loadAgent is the runtime safety net even if the UI ever leaks.
-func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Request, udb Database, id string) {
+func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
 	source := ""
 	title := "New agent"
 	subAgent := false
@@ -285,7 +285,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Off (default) summarizes older messages into a running summary; on drops them to the context-depth tail instead. Both stay bounded — this just chooses summarize-old vs forget-old."},
 
 			ui.FormField{Type: "header", Label: "Cortex & capability", Collapsed: true,
-				Help: "Standing behaviors and capability GRANTS: whether the agent keeps a Cortex thread, plus the two toolsets it may hold — conductor (scheduling, monitors, delegate) and authoring (build agents, tools, apps). These add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it."},
+				Help: "Standing behaviors and capability GRANTS: whether the agent keeps a Cortex thread, plus the two toolsets it may hold — conductor (scheduling, monitors, delegate) and authoring (build agents, tools, apps). These add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it." + appGrantHelp(user, id)},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
 				Help: "Gives the agent a persistent Cortex thread (its mind — the 🧠 row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Reached only from Agents. When published to the dashboard, granted users don't see the Cortex thread — they get ordinary chat sessions, each seeded read-only from the agent's standing awareness so it shows up already aware (publishing + granting access is the consent to share that). Publishable as long as the delegation & management tools (below) are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Conductor tools (scheduling, monitors, delegate)",
@@ -670,6 +670,54 @@ func dispatchModeOptions(first string) []ui.SelectOption {
 // toggle there showed "off" on an agent that had the full authoring catalog,
 // which is how one debugging session concluded authoring was disabled when
 // it was not. A control that cannot affect anything is worse than no control.
+// appGrantFields renders one read-only row per app that can grant this agent
+// access to something it owns.
+//
+// Here because this is where someone asks what an agent may do — the editor
+// already lists cortex, conductor and authoring as capability grants, and
+// "which of my machines can it reach" is the same question. It was previously
+// answerable only from the granting app's own page, which meant knowing to look
+// there first.
+//
+// EVERY app appears, including those granting nothing. A row reading "none" is
+// what tells an owner the capability exists and this agent does not hold it;
+// hiding empties would make an app invisible until it mattered.
+//
+// Read-only, and never rendered for an unsaved agent: a grant is keyed by agent
+// id, and an agent with no id yet cannot hold one.
+func appGrantHelp(user, agentID string) string {
+	summaries := AgentGrantSummaries(user, agentID)
+	if strings.TrimSpace(agentID) == "" || len(summaries) == 0 {
+		// No apps grant anything here, or the agent has no id yet — a grant is
+		// keyed by agent id, so an unsaved one cannot hold any.
+		return ""
+	}
+	// Appended to this section's HELP rather than added as its own field: a
+	// "header" field starts a new page section (splitAgentFormSections), so a
+	// row here would have cut the capability section in two and stranded the
+	// toggles below it. The text belongs beside the other capability grants,
+	// not in a section of its own.
+	var b strings.Builder
+	b.WriteString("\n\nGRANTED BY OTHER APPS — read-only here; the framework knows WHICH app granted what, and only the app knows what its permission means, so the detail stays where it can be edited honestly.\n")
+	for _, s := range summaries {
+		fmt.Fprintf(&b, "%s: %s", s.Label, s.Text)
+		var detail []string
+		for _, g := range s.Grants {
+			if g.Detail != "" {
+				detail = append(detail, g.Label+" — "+g.Detail)
+			}
+		}
+		if len(detail) > 0 {
+			fmt.Fprintf(&b, " (%s)", strings.Join(detail, "; "))
+		}
+		if s.ManageURL != "" {
+			fmt.Fprintf(&b, " · manage at %s", s.ManageURL)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func authorCapabilityField(agentID string) ui.FormField {
 	if isBuilderAgent(agentID) {
 		return ui.FormField{

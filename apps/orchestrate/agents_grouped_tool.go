@@ -910,6 +910,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// handed "post the summary to the team thread" has to hand its text back up
 	// to be relayed, and the parent's own channel is invisible to it. Same slice
 	// the sub-turn carries for cycle detection; it can only narrow down a chain.
+	tools = append(tools, AgentProvidedTools(subSess, t.user, target.ID)...)
 	if chTools := channelChatTools(subSess, t.user, target.ID, inheritedChannelChain(target, subTurn.dispatchChain)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}

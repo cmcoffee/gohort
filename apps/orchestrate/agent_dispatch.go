@@ -613,6 +613,10 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if chTools := channelChatTools(subSess, agentOwner, target.ID, inheritedChannelChain(target, via)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}
+	// App-contributed tools, for bindings the runtime does not own — see
+	// core/agent_tool_providers.go. Empty for an agent no app has bound
+	// anything to, which is most of them.
+	tools = append(tools, AgentProvidedTools(subSess, agentOwner, target.ID)...)
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
 	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
 	// its parent's non-consequential catalog (read_phantom_chat etc.) at runtime
@@ -1238,6 +1242,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if chTools := channelChatTools(subSess, agentOwner, target.ID, inheritedChannelChain(target, run.DispatchedBy)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}
+	tools = append(tools, AgentProvidedTools(subSess, agentOwner, target.ID)...)
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
 	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
 	// its parent's non-consequential catalog (read_phantom_chat etc.) at runtime

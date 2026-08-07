@@ -5795,6 +5795,12 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 		extraTools = append(extraTools, t.agentsGroupedToolDef(!isBuilderAgent(t.agent.ID)))
 	}
 	extraTools = append(extraTools, t.buildAttachedPipelineToolDefs()...)
+	// App-contributed tools for this agent (core/agent_tool_providers.go). The
+	// pool USER is the agent's owner, not the acting runtime identity, for the
+	// same reason the custom-tool pool below uses it: a channel run acts as a
+	// synthetic per-chat user, and asking an app about that identity would find
+	// nothing bound to it.
+	extraTools = append(extraTools, AgentProvidedTools(sess, poolUser, t.agent.ID)...)
 	// Custom (temp) tools — hydrate the session from the owner's pool + the
 	// agent-scoped kit, then split direct/lazy. Without the hydrate the session
 	// is empty (the ts3_client_status-over-a-channel bug).
