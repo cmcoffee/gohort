@@ -17,15 +17,23 @@ func grantStore(t *testing.T) Database {
 	return &DBase{Store: kvlite.MemStore()}
 }
 
-func TestMostSpecificGrantWinsAndReplaces(t *testing.T) {
+// REWRITTEN when the wildcard went away. This used to have three scopes —
+// agent+appliance, agent-anywhere, user default — and prove the middle one
+// caught machines the specific grant did not name.
+//
+// A wildcard reads as a convenience and behaves as a standing decision about
+// machines that do not exist yet: every appliance added later was covered by a
+// choice made before anyone had seen it, and a list of grants can be reviewed
+// where an "everything" cannot. So a grant names one agent and one machine, and
+// what remains to prove is that it REPLACES the user default rather than adding
+// to it — otherwise an agent could never be given less than its owner has.
+func TestGrantReplacesTheUserDefault(t *testing.T) {
 	udb := grantStore(t)
-	// The user default allows two categories everywhere.
+	// The user default allows two categories at their own console.
 	saveAllowedCategories(udb, map[string]bool{
 		string(AllRiskCategories[0]): true,
 		string(AllRiskCategories[1]): true,
 	})
-	// This agent, anywhere: only the first.
-	SaveCommandGrant(udb, "wren", anyAppliance, []string{string(AllRiskCategories[0])})
 	// This agent on THIS box: only the second.
 	SaveCommandGrant(udb, "wren", "lab-box", []string{string(AllRiskCategories[1])})
 
@@ -34,22 +42,32 @@ func TestMostSpecificGrantWinsAndReplaces(t *testing.T) {
 		t.Fatalf("scope = %q, want the agent+appliance record", scope)
 	}
 	if set[AllRiskCategories[0]] {
-		t.Error("a narrower grant must REPLACE the broader one, not add to it — an agent could never be given less otherwise")
+		t.Error("a grant must REPLACE the user default, not add to it")
 	}
 	if !set[AllRiskCategories[1]] {
-		t.Error("the specific grant's own category is missing")
+		t.Error("the grant's own category is missing")
 	}
 
-	// Another appliance falls back to the agent-wide grant, not the user default.
-	set, scope = ResolveCommandGrant(udb, "wren", "prod-box")
-	if scope != ScopeAgentAny || !set[AllRiskCategories[0]] || set[AllRiskCategories[1]] {
-		t.Errorf("agent-wide fallback wrong: scope=%q set=%v", scope, set)
+	// A machine this agent was never granted gets NOTHING from the grant it
+	// holds elsewhere — that pairing was never considered.
+	if _, ok := loadCommandGrant(udb, "wren", "prod-box"); ok {
+		t.Error("a grant must not reach a machine it does not name")
 	}
 
-	// An agent with no grants at all gets the user default, exactly as before.
+	// An agent with no grants at all falls back to the user default, which is
+	// what keeps the console working exactly as it did.
 	set, scope = ResolveCommandGrant(udb, "other", "lab-box")
 	if scope != ScopeUserDefault || !set[AllRiskCategories[0]] || !set[AllRiskCategories[1]] {
 		t.Errorf("unknown agent should inherit the user default: scope=%q set=%v", scope, set)
+	}
+}
+
+// A grant with no machine names nothing and must not be stored.
+func TestGrantWithoutAMachineIsRefused(t *testing.T) {
+	udb := grantStore(t)
+	SaveCommandGrant(udb, "wren", "", []string{string(AllRiskCategories[0])})
+	if len(ListCommandGrants(udb)) != 0 {
+		t.Error("a grant naming no machine must not persist")
 	}
 }
 
@@ -98,7 +116,7 @@ func TestListGrantsIsStableAndScoped(t *testing.T) {
 	udb := grantStore(t)
 	SaveCommandGrant(udb, "b-agent", "box", nil)
 	SaveCommandGrant(udb, "a-agent", "box", nil)
-	SaveCommandGrant(udb, "a-agent", anyAppliance, nil)
+	SaveCommandGrant(udb, "a-agent", "any-box", nil)
 	got := ListCommandGrants(udb)
 	if len(got) != 3 {
 		t.Fatalf("listed %d grant(s), want 3", len(got))

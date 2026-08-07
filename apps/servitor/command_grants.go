@@ -35,8 +35,17 @@ import (
 // nothing has to be migrated.
 const commandGrantsTable = "ssh_command_grants"
 
-// anyAppliance is the wildcard for an agent-wide grant.
-const anyAppliance = "*"
+// NO WILDCARD. A grant names one agent and one machine, and there is no value
+// meaning "all of them".
+//
+// A wildcard reads as a convenience and behaves as a standing decision about
+// machines that do not exist yet: every appliance added afterwards is covered
+// by a choice made before anyone had seen it. That is the opposite of what this
+// permission is for, and it cannot be reviewed — a list of grants can be read,
+// an "everything" cannot.
+//
+// The cost is a row per pairing, which is the honest amount of work for a
+// decision that is genuinely per pairing.
 
 // CommandGrant is one scope's auto-run set. Categories are stored as strings so
 // an unrecognized name in an old record is dropped on read rather than
@@ -52,9 +61,6 @@ type CommandGrant struct {
 func commandGrantKey(agentID, applianceID string) string {
 	a := strings.ToLower(strings.TrimSpace(agentID))
 	p := strings.ToLower(strings.TrimSpace(applianceID))
-	if p == "" {
-		p = anyAppliance
-	}
 	return "agent:" + a + "|appliance:" + p
 }
 
@@ -65,7 +71,6 @@ type GrantScope string
 
 const (
 	ScopeAgentAppliance GrantScope = "agent+appliance"
-	ScopeAgentAny       GrantScope = "agent (any appliance)"
 	ScopeUserDefault    GrantScope = "user default"
 )
 
@@ -80,9 +85,6 @@ func ResolveCommandGrant(udb Database, agentID, applianceID string) (map[RiskCat
 	if agentID = strings.TrimSpace(agentID); agentID != "" {
 		if g, ok := loadCommandGrant(udb, agentID, applianceID); ok {
 			return categorySet(g.Categories), ScopeAgentAppliance
-		}
-		if g, ok := loadCommandGrant(udb, agentID, anyAppliance); ok {
-			return categorySet(g.Categories), ScopeAgentAny
 		}
 	}
 	return loadAllowedCategories(udb), ScopeUserDefault
@@ -110,10 +112,7 @@ func SaveCommandGrant(udb Database, agentID, applianceID string, categories []st
 		ApplianceID: strings.TrimSpace(applianceID),
 		Categories:  cleanCategories(categories),
 	}
-	if g.ApplianceID == "" {
-		g.ApplianceID = anyAppliance
-	}
-	if udb != nil && g.AgentID != "" {
+	if udb != nil && g.AgentID != "" && g.ApplianceID != "" {
 		udb.Set(commandGrantsTable, commandGrantKey(g.AgentID, g.ApplianceID), g)
 	}
 	return g
@@ -148,6 +147,18 @@ func ListCommandGrants(udb Database) []CommandGrant {
 		return out[i].ApplianceID < out[j].ApplianceID
 	})
 	return out
+}
+
+// autoRunAllowed answers the one question the exec path asks: may this command's
+// risk category run without stopping to ask, for this agent on this appliance?
+//
+// Returns the reason as well, because "why did that run without asking me" is
+// the question anyone reads the log for, and a bare yes cannot answer it. The
+// scope names WHICH record decided — the agent on this box, the agent
+// anywhere, or the user's own default.
+func autoRunAllowed(udb Database, agentID, applianceID string, cat RiskCategory) (bool, GrantScope) {
+	set, scope := ResolveCommandGrant(udb, agentID, applianceID)
+	return set[cat], scope
 }
 
 // cleanCategories keeps only names that are real risk categories today.

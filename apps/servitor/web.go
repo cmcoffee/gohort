@@ -434,6 +434,11 @@ func (T *Servitor) WebDesc() string {
 }
 
 func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
+	// The running instance, so the agent tool provider can reach the worker
+	// model the mint step needs. Here rather than in init(): init() has no
+	// instance, and a provider registered with a nil one would degrade to "no
+	// model available" on every request forever.
+	RegisterServitorInstance(T)
 	// Bucket migration: if the "servitor" bucket is empty, fall back to the
 	// previous bucket name ("sysprobe"), and then to the even older "ssh_probe".
 	// Bucket() on a substore navigates to the sibling via the underlying store.
@@ -464,11 +469,15 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
 	sub.HandleFunc("/api/chat/v2/confirm", T.handleChatConfirm)
 	sub.HandleFunc("/api/profile", T.handleProfile)
-	sub.HandleFunc("/manage", T.handleManagePage)
-	sub.HandleFunc("/manage/", T.handleManagePage)
 	sub.HandleFunc("/api/appliances", T.handleAppliances)
 	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
 	sub.HandleFunc("/api/appliance/", T.handleAppliance)
+	// Capability proposals: the list the owner reviews, and the decision on one.
+	sub.HandleFunc("/api/appliance-tools", T.handleApplianceTools)
+	sub.HandleFunc("/api/appliance-tool", T.handleApplianceTool)
+	// Which agents may work with which machines — the first link in the chain.
+	sub.HandleFunc("/api/command-grants", T.handleCommandGrants)
+	sub.HandleFunc("/api/access-agents", T.handleAccessAgents)
 	sub.HandleFunc("/api/chat", T.handleChat)
 	// Persisted chat sessions back the left rail (see sessions.go).
 	sub.HandleFunc("/api/sessions", T.handleServitorSessionList)
@@ -569,6 +578,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+
 		if req.Type == "" {
 			req.Type = "ssh"
 		}
@@ -2213,10 +2223,27 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
 				return nil
 			}
-			if loadAllowedCategories(udb)[cat] {
-				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + "): " + cmd})
+			// Resolved per (agent, appliance): this agent on this box, else this
+			// agent anywhere, else the operator's own auto-run settings. A human
+			// at the console has no acting agent and lands on the last of those,
+			// so the console behaves exactly as it did before grants existed.
+			//
+			// The scope is named in the status line because "why did that run
+			// without asking me" is the question anyone reads this for, and a
+			// bare "auto-allowed" cannot answer it.
+			if ok, scope := autoRunAllowed(udb, ActingAgent(ctx), appliance.ID, cat); ok {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + " via " + string(scope) + "): " + cmd})
 				return nil
 			}
+		}
+		// An acting agent has nobody watching this stream, so parking the
+		// command here would block for five minutes and time out. Refuse now,
+		// legibly — see agent_confirm.go for why this is a refusal rather than
+		// a queued approval.
+		if acting := ActingAgent(ctx); acting != "" {
+			emit(id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
+			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, appliance.ID, cat)
+			return agentCommandRefusal(cmd, cat, reason, applianceLabel(appliance.Name, appliance.ID))
 		}
 		pendingCmds.Store(id, cmd)
 		defer pendingCmds.Delete(id)
@@ -2605,11 +2632,27 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			}
 			// Per-category allowance (operator trusts this whole class of command
 			// — the web analog of the CLI --allow flag, set via the Permissions
-			// modal).
-			if loadAllowedCategories(udb)[cat] {
-				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + "): " + cmd})
+			// modal). Resolved per (agent, appliance): this agent on this box, else this
+			// agent anywhere, else the operator's own auto-run settings. A human
+			// at the console has no acting agent and lands on the last of those,
+			// so the console behaves exactly as it did before grants existed.
+			//
+			// The scope is named in the status line because "why did that run
+			// without asking me" is the question anyone reads this for, and a
+			// bare "auto-allowed" cannot answer it.
+			if ok, scope := autoRunAllowed(udb, ActingAgent(ctx), appliance.ID, cat); ok {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + " via " + string(scope) + "): " + cmd})
 				return nil
 			}
+		}
+		// An acting agent has nobody watching this stream, so parking the
+		// command here would block for five minutes and time out. Refuse now,
+		// legibly — see agent_confirm.go for why this is a refusal rather than
+		// a queued approval.
+		if acting := ActingAgent(ctx); acting != "" {
+			emit(id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
+			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, appliance.ID, cat)
+			return agentCommandRefusal(cmd, cat, reason, applianceLabel(appliance.Name, appliance.ID))
 		}
 		pendingCmds.Store(id, cmd)
 		defer pendingCmds.Delete(id)
