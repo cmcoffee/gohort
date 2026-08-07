@@ -30,10 +30,10 @@ func TestActionsNarrowToWhatIsConfigured(t *testing.T) {
 		// take them away. help is how the model finds out which pictures it can
 		// still reference; keep/forget are how it decides which ones outlive
 		// the ring.
-		{"all configured", imageActions{find: true, fetch: true, generate: true}, []string{"find", "fetch", "generate", "help", "keep", "forget"}},
-		{"no search provider", imageActions{fetch: true, generate: true}, []string{"fetch", "generate", "help", "keep", "forget"}},
-		{"no image gen", imageActions{find: true, fetch: true}, []string{"find", "fetch", "help", "keep", "forget"}},
-		{"fetch only", imageActions{fetch: true}, []string{"fetch", "help", "keep", "forget"}},
+		{"all configured", imageActions{find: true, fetch: true, generate: true}, []string{"find", "fetch", "generate", "help", "keep", "label", "forget"}},
+		{"no search provider", imageActions{fetch: true, generate: true}, []string{"fetch", "generate", "help", "keep", "label", "forget"}},
+		{"no image gen", imageActions{find: true, fetch: true}, []string{"find", "fetch", "help", "keep", "label", "forget"}},
+		{"fetch only", imageActions{fetch: true}, []string{"fetch", "help", "keep", "label", "forget"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestStaticSchemaKeepsFullShape(t *testing.T) {
 	// pickers, which must see every action regardless of local config.
 	tool := &ImageTool{}
 	enum := tool.Params()["action"].Enum
-	if !slices.Equal(enum, []string{"find", "fetch", "generate", "help", "keep", "forget"}) {
+	if !slices.Equal(enum, []string{"find", "fetch", "generate", "help", "keep", "label", "forget"}) {
 		t.Errorf("static action enum = %v, want all three backend actions plus the three framework-side ones", enum)
 	}
 	if tool.Desc() == "" {

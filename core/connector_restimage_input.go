@@ -119,6 +119,21 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		return verifyInputImage(strings.ReplaceAll(ref, "#", "")+".png", data)
 	}
 	if strings.HasPrefix(strings.ToLower(ref), RecentImageRefPrefix) {
+		// Two different lists wear the same prefix, and saying "recent images"
+		// for both sent a model that had mistyped a KEPT name off to look at
+		// ring positions — twice, before it thought to call help.
+		//
+		// A numeric suffix is a ring position; anything else is a name from the
+		// library. Say which one is missing, and for a name say what IS there,
+		// since the answer is short and the alternative is another round trip.
+		if suffix := strings.TrimSpace(ref[len(RecentImageRefPrefix):]); !isAllDigits(suffix) {
+			if names := keptImageNames(sess); len(names) > 0 {
+				return out, fmt.Errorf("you have no kept image called %q. What you have kept: %s. "+
+					"These are exact names, not filenames — no extension, and they do not shift", suffix, strings.Join(names, ", "))
+			}
+			return out, fmt.Errorf("you have no kept image called %q, and nothing is kept under any name yet. "+
+				"image#<name> only works after action=\"keep\"; for a picture from this conversation use image#1 (most recent) or a media id", suffix)
+		}
 		return out, fmt.Errorf("%s isn't in the recent images — call image(action=\"help\") to see what's there", ref)
 	}
 	if b64, kind, ok := sess.ResolveInboundMedia(ref); ok {

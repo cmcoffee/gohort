@@ -338,7 +338,7 @@ func imageSchemaFor(a imageActions) imageSchema {
 	// keep/forget join help outside names(): like help they need no backend
 	// (the image space is framework-side), so they must not make an
 	// otherwise-unconfigured deployment look like it has an image tool.
-	actions := append(append(make([]string, 0, len(names)+3), names...), "help", "keep", "forget")
+	actions := append(append(make([]string, 0, len(names)+4), names...), "help", "keep", "label", "forget")
 	desc := "Work with images — single entry point; pick the action matching intent. actions: "
 	params := map[string]ToolParam{
 		"action": {Type: "string", Enum: actions, Description: strings.Join(actions, " | ") + "."},
@@ -403,16 +403,17 @@ func imageSchemaFor(a imageActions) imageSchema {
 	if len(a.backendNames()) > 1 {
 		params["backend"] = ToolParam{Type: "string", Enum: a.backendNames(), Description: a.backendParamDesc()}
 	}
-	params["name"] = ToolParam{Type: "string", Description: "(keep/forget) Short stable name for a reference image you want to still have later — \"brand_mark\", \"house_style\". Letters, digits, - and _; not a bare number. Reuse the same name to replace what it points at."}
+	params["name"] = ToolParam{Type: "string", Description: "(keep/label/forget) Short stable name for a reference image you want to still have later — \"brand_mark\", \"house_style\". Letters, digits, - and _; not a bare number. Reuse the same name to replace what it points at."}
 	params["ref"] = ToolParam{Type: "string", Description: "(keep) Which picture to keep, as an image id. Defaults to image#1, the most recent one — so keeping what you just made needs only a name."}
 	params["note"] = ToolParam{Type: "string", Description: "(keep) Optional: why you are keeping it, in one line. Stored with the image and recalled with it later, so write what a future you would need to decide whether this is the right picture."}
-	params["of"] = ToolParam{Type: "string", Description: "(keep) Who or what the picture is OF — \"Rory\", \"my dog Bess\", \"the office\". Set this whenever the picture shows a specific subject: it is what lets a later request that NAMES that subject find this picture instead of guessing between filenames. For a person, use the name they go by in this conversation, spelled the way you have seen it."}
-	params["is_person"] = ToolParam{Type: "boolean", Description: "(keep) True when \"of\" is a person. A picture of a person is what you must work from when asked to depict them, so these are listed separately and are the only ones offered as a likeness."}
+	params["of"] = ToolParam{Type: "string", Description: "(keep/label) Who or what the picture is OF — \"Rory\", \"my dog Bess\", \"the office\". Set this whenever the picture shows a specific subject: it is what lets a later request that NAMES that subject find this picture instead of guessing between filenames. For a person, use the name they go by in this conversation, spelled the way you have seen it."}
+	params["is_person"] = ToolParam{Type: "boolean", Description: "(keep/label) True when \"of\" is a person. A picture of a person is what you must work from when asked to depict them, so these are listed separately and are the only ones offered as a likeness."}
 	// Gloss it. A bare "help." reads as boilerplate every schema carries, and
 	// what this one actually does — name the pictures that are still reachable —
 	// is the answer to the question a stalled edit is asking.
 	desc += "help (list the pictures you can still reference, by id, with what each one is), "
 	desc += "keep (save a picture under a NAME so it survives — recent ids shift as new pictures arrive and eventually drop, a kept one answers to image#<name> indefinitely; use it for a reference you expect to want again: a person's face, a logo, a style sample, a chart to match. Say who or what it shows with \"of\", and is_person=true for a person, so a later request that names them finds it), "
+	desc += "label (say who or what an ALREADY-kept image shows, without re-keeping it — use this the moment you notice a kept picture whose subject nobody recorded; an unlabelled picture of a person is one you will end up describing in words instead of passing), "
 	desc += "forget (drop a kept image by name). "
 	desc += "Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
 	// Omitting an action hides that the capability EXISTS, and that cuts both
@@ -652,6 +653,34 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 			out += fmt.Sprintf("\nNote: you MADE this picture (%s), so it is kept but NOT treated as a reference — it is not evidence of what any real thing looks like, and it won't be offered as one. Reference images are the ones you were given or found.", kept.Origin)
 		}
 		return out + fmt.Sprintf("\nNOT delivered — keeping only files it away. To send it, call workspace(action=\"attach\", path=%q); the kept copy stays where it is. Do NOT re-render it to make it sendable — that produces a different picture.", kept.Ref), nil
+	case "label":
+		name := StringArg(args, "name")
+		of := strings.TrimSpace(StringArg(args, "of"))
+		if of == "" {
+			return "", fmt.Errorf("label needs \"of\" — who or what the picture shows. To clear a label instead, keep the image again under the same name")
+		}
+		kept, conflict, err := LabelKeptImage(sess, name, ResolveKeepSubject(sess, of, BoolArg(args, "is_person")))
+		if err != nil {
+			return "", err
+		}
+		out := fmt.Sprintf("%s is now filed as a picture of %s.", kept.Ref, SubjectLabel(kept.Subject))
+		if kept.Subject.Person {
+			if strings.TrimSpace(kept.Subject.Handle) != "" {
+				out += " Matched to the person you are talking to, so a request naming them resolves to this picture."
+			} else {
+				out += " Matched by name only — nobody with that name has messaged in, so this is a label rather than a confirmed identification."
+			}
+		}
+		if conflict != "" {
+			// Reported, not resolved. Labelling supplies no replacement, and
+			// deleting a real photograph as a side effect of adding a word to
+			// a different one is not something to do quietly.
+			out += fmt.Sprintf(" NOTE: %s is also filed as that subject. Nothing was deleted — decide which one is right and forget the other, or a request naming them has two answers.", conflict)
+		}
+		if kept.Origin == ImageOriginUnknown {
+			out += " Its origin is still unrecorded — labelling says WHO it shows, not where it came from, so do not start calling it a photograph on the strength of this."
+		}
+		return out, nil
 	case "forget":
 		name := StringArg(args, "name")
 		gone, err := ForgetImage(sess, name)

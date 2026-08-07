@@ -682,3 +682,107 @@ func keptImageOwnAgent(sess *ToolSession) string {
 	}
 	return "_shared"
 }
+
+// keptImageNames lists what is actually kept, for an error that would otherwise
+// send the model off to call help just to learn it mistyped a name.
+func keptImageNames(sess *ToolSession) []string {
+	all := KeptImages(sess)
+	out := make([]string, 0, len(all))
+	for _, k := range all {
+		out = append(out, k.Ref)
+	}
+	return out
+}
+
+// isAllDigits separates a ring POSITION (image#3) from a library NAME
+// (image#craig_ref). safeKeptName refuses an all-numeric name for exactly this
+// reason, so the two forms can never collide.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// LabelKeptImage attaches a subject to a picture that is already kept.
+//
+// Without this the only way to say who a picture is of was to keep it again,
+// which needs the original photo in hand — so a library built before subjects
+// existed could never gain them, and every check that reads a subject stayed
+// switched off on exactly the libraries that most needed it. A model naming
+// three people in a render prompt is not caught by a scrub that has no subjects
+// to match, and that is not a rare edge: it is every entry kept before this
+// shipped.
+//
+// It does NOT touch the pixels, the origin, or the caption. Relabelling says
+// who the picture shows; it cannot make an unrecorded origin into a known one,
+// and an entry the agent made stays marked as made.
+//
+// A conflict — another entry already holding this subject — is REPORTED, never
+// resolved. Keeping a new picture of somebody replaces the old one because a
+// replacement was supplied; labelling supplies nothing, and deleting a real
+// photograph as a side effect of adding a word to a different one is not
+// something to do quietly.
+func LabelKeptImage(sess *ToolSession, name string, subject ImageSubject) (KeptImage, string, error) {
+	dir := keptImageDir(sess)
+	clean := safeKeptName(name)
+	if dir == "" || clean == "" {
+		return KeptImage{}, "", fmt.Errorf("name %q is not a kept image name", name)
+	}
+	base := filepath.Join(dir, clean)
+	if _, err := os.Stat(base + ".png"); err != nil {
+		// Same distinction ForgetImage draws, for the same reason: an inherited
+		// entry is readable and not yours to change, and "no such image" would
+		// have the model report a label it never applied.
+		for _, k := range KeptImages(sess) {
+			if k.Name == clean && k.Inherited {
+				return KeptImage{}, "", fmt.Errorf("%q belongs to %s, not to you — you can use it but only its owner can label it. Keep your own copy under a different name if you need it labelled here", clean, k.Owner)
+			}
+		}
+		if names := keptImageNames(sess); len(names) > 0 {
+			return KeptImage{}, "", fmt.Errorf("nothing is kept under %q. What you have kept: %s", clean, strings.Join(names, ", "))
+		}
+		return KeptImage{}, "", fmt.Errorf("nothing is kept under %q, and nothing is kept under any name yet", clean)
+	}
+	var meta keptImageMeta
+	if raw, err := os.ReadFile(base + ".json"); err == nil {
+		_ = json.Unmarshal(raw, &meta)
+	}
+	meta.Subject = subject
+	if meta.Mime == "" {
+		meta.Mime = "image/png"
+	}
+	out, err := json.Marshal(meta)
+	if err != nil {
+		return KeptImage{}, "", fmt.Errorf("could not record that label: %w", err)
+	}
+	if err := os.WriteFile(base+".json", out, 0600); err != nil {
+		return KeptImage{}, "", fmt.Errorf("could not save the label: %w", err)
+	}
+	kept := KeptImage{
+		Name: clean, Ref: RecentImageRefPrefix + clean, Note: meta.Note,
+		Caption: meta.Caption, Description: meta.Description, Origin: meta.Origin,
+		When: meta.When, Subject: subject, path: base + ".png",
+	}
+	// Recall stores the subject in its sentence, so an entry relabelled here
+	// has to be re-remembered or a search for the person keeps missing it. The
+	// report id is derived from the name, so this replaces rather than doubles.
+	if KeptImageRemember != nil {
+		KeptImageRemember(sess, kept)
+	}
+	var conflict string
+	if subject.Named() {
+		for _, k := range KeptImages(sess) {
+			if k.Name != clean && !k.Inherited && SameSubject(k.Subject, subject) {
+				conflict = k.Ref
+				break
+			}
+		}
+	}
+	return kept, conflict, nil
+}

@@ -250,3 +250,99 @@ func TestARecordedOriginCarriesNoCaveat(t *testing.T) {
 		t.Errorf("a known-origin entry must not be caveated:\n%s", m)
 	}
 }
+
+// Labelling exists because a library built before subjects could never gain
+// them: the only way to say who a picture showed was to keep it again, which
+// needs the original photo in hand. Every check that reads a subject was
+// therefore switched off on exactly the libraries that most needed it.
+func TestLabellingAnAlreadyKeptImage(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	// Kept the old way — no subject, the state every legacy entry is in.
+	if _, err := RecordKeep(t, sess, "rory_bartle_ref", ImageSubject{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(PeopleWithPictures(sess)) != 0 {
+		t.Fatal("an unlabelled entry is not a person yet")
+	}
+
+	kept, conflict, err := LabelKeptImage(sess, "rory_bartle_ref", ResolveKeepSubject(sess, "Rory", true))
+	if err != nil {
+		t.Fatalf("labelling failed: %v", err)
+	}
+	if conflict != "" {
+		t.Errorf("nothing else holds that subject, got conflict %q", conflict)
+	}
+	// The handle comes from the speaker, exactly as it does at keep time.
+	if kept.Subject.Handle != "+15550199" {
+		t.Errorf("label should anchor to the speaker, got %q", kept.Subject.Handle)
+	}
+	// It survives a reload — the sidecar was rewritten, not just the struct.
+	if n := len(PeopleWithPictures(sess)); n != 1 {
+		t.Errorf("the labelled entry should now be a person, got %d", n)
+	}
+	if !strings.Contains(KeptImageManifest(sess), "People you have a picture of") {
+		t.Error("the people section should now exist")
+	}
+}
+
+// A conflict is REPORTED, not resolved. Keeping a new picture of somebody
+// replaces the old one because a replacement was supplied; labelling supplies
+// nothing, and deleting a real photograph as a side effect of adding a word to
+// a different one is not recoverable.
+func TestLabellingReportsAConflictWithoutDeleting(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	for _, n := range []string{"rory_a", "rory_b"} {
+		if _, err := RecordKeep(t, sess, n, ImageSubject{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rory := ResolveKeepSubject(sess, "Rory", true)
+	if _, _, err := LabelKeptImage(sess, "rory_a", rory); err != nil {
+		t.Fatal(err)
+	}
+	_, conflict, err := LabelKeptImage(sess, "rory_b", rory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conflict != "image#rory_a" {
+		t.Errorf("the other holder should be named, got %q", conflict)
+	}
+	if n := len(KeptImages(sess)); n != 2 {
+		t.Errorf("labelling must not delete anything, got %d images", n)
+	}
+}
+
+// Labelling says WHO, never WHERE FROM. An unrecorded origin stays unrecorded —
+// otherwise adding a name would quietly promote a render to a photograph.
+func TestLabellingCannotLaunderAnOrigin(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	ref := RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a man", ImageFromGenerated)
+	if _, err := KeepImageOf(sess, ref, "fake", "", ImageSubject{}); err != nil {
+		t.Fatal(err)
+	}
+	kept, _, err := LabelKeptImage(sess, "fake", ResolveKeepSubject(sess, "Rory", true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.Origin.AgentMade() {
+		t.Errorf("a labelled render is still a render, got origin %q", kept.Origin)
+	}
+	if !strings.Contains(KeptImageManifest(sess), "MADE BY YOU") {
+		t.Error("the manifest must still mark it as made")
+	}
+}
+
+func TestLabellingSomethingUnkeptNamesWhatIsKept(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	if _, err := RecordKeep(t, sess, "rory_bartle_ref", ImageSubject{}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := LabelKeptImage(sess, "craig_amsterdam_ref", ImageSubject{Person: true, Name: "Craig"})
+	if err == nil {
+		t.Fatal("labelling a name nobody kept must fail")
+	}
+	// And the error lists what IS there, so a mistyped name costs no round trip.
+	if !strings.Contains(err.Error(), "rory_bartle_ref") {
+		t.Errorf("the error should name what is kept: %v", err)
+	}
+}
