@@ -210,6 +210,17 @@
           liveMenu.appendChild(row);
         });
       }
+      // liveTitle says the counts in words. Built as a list so the sentence
+      // stays true when a category is empty — "2 running" rather than
+      // "2 running and 0 in the background", which reads like a report on
+      // something that is not happening.
+      function liveTitle(fg, bg, queued) {
+        var parts = [];
+        if (fg) parts.push(fg + (fg === 1 ? ' session' : ' sessions') + ' you started');
+        if (bg) parts.push(bg + ' running in the background');
+        if (queued) parts.push(queued + ' queued');
+        return parts.length ? parts.join(', ') : 'Active sessions across all apps';
+      }
       function refreshLive() {
         fetch('/api/live').then(function(r){ return r.json(); }).then(function(items) {
           items = (items || []).filter(function(it){ return !it.spawned; });
@@ -221,28 +232,30 @@
             return;
           }
           liveBtn.style.visibility = 'visible';
-          // Class encodes the state so CSS can paint the dot color. Three
-          // states, in the order that decides which one wins:
+          // Class encodes the state so CSS can paint the dot. Four, because
+          // the two kinds of activity are INDEPENDENT and both are worth
+          // seeing:
           //
-          //   running     green   something YOU started is going
-          //   background  indigo  only work that started on its own
-          //   queued      amber   nothing has started yet
+          //   running     green          only work you started
+          //   background  indigo         only work that started on its own
+          //   split       half and half  both at once
+          //   queued      amber          nothing has started yet
           //
-          // Foreground wins over background deliberately. If your own turn is
-          // running you are waiting on it, and repainting the pill because a
-          // scheduled job also happens to be going would hide the thing you
-          // are actually watching behind the thing you are not.
+          // A precedence rule was the first shape and it was wrong: with
+          // foreground winning, a scheduled job firing while you had any
+          // thread open was invisible — which is precisely the case the
+          // background color was added for. A split dot answers both
+          // questions at once instead of ranking them.
           var running = items.filter(function(it){ return !it.queued; });
-          var anyForeground = running.some(function(it){ return !it.background; });
-          var anyBackground = running.length > 0 && !anyForeground;
-          liveBtn.classList.toggle('running', anyForeground);
-          liveBtn.classList.toggle('background', anyBackground);
+          var fg = running.filter(function(it){ return !it.background; }).length;
+          var bg = running.length - fg;
+          liveBtn.classList.toggle('running', fg > 0 && bg === 0);
+          liveBtn.classList.toggle('background', bg > 0 && fg === 0);
+          liveBtn.classList.toggle('split', fg > 0 && bg > 0);
           liveBtn.classList.toggle('queued', running.length === 0);
-          // The tooltip carries what the color cannot: a dot is not readable
-          // to everyone, and "3 running in the background" is.
-          liveBtn.title = anyBackground
-            ? running.length + ' running in the background — nothing you started'
-            : 'Active sessions across all apps';
+          // The tooltip carries what no color can: a dot is not readable to
+          // everyone, and half a dot is less readable than a whole one.
+          liveBtn.title = liveTitle(fg, bg, items.length - running.length);
           if (liveMenu.style.display !== 'none') renderLiveMenu();
         }).catch(function(){});
       }

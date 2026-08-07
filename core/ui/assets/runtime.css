@@ -177,6 +177,8 @@ select:-webkit-autofill {
  * before, so the surface meant to tell you the machine had acted unprompted
  * looked exactly like your own turn running.
  *
+ * A fourth class, .split, paints both at once when both are going — see below.
+ *
  * Indigo is the house accent, but it is pinned here rather than taken from
  * var(--accent): the accent is theme-dependent and one shipped theme sets it
  * to amber, which is what "queued" already means — so on that theme two of the
@@ -191,6 +193,16 @@ select:-webkit-autofill {
 .ui-live-pill.running .ui-live-dot { background: var(--success); }
 .ui-live-pill.queued .ui-live-dot { background: var(--warning); }
 .ui-live-pill.background .ui-live-dot { background: var(--ui-live-background, #6366f1); }
+/* Both at once: half green, half indigo, with a hard stop rather than a blend
+   so it reads as two states and not as a third color. The two kinds of
+   activity are independent — a scheduled job firing while you have a thread
+   open is exactly the case worth seeing — so the dot answers both questions
+   instead of ranking them. */
+.ui-live-pill.split .ui-live-dot {
+  background: linear-gradient(90deg,
+    var(--success) 0 50%,
+    var(--ui-live-background, #6366f1) 50% 100%);
+}
 .ui-live-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
   min-width: 320px; max-width: 480px;
