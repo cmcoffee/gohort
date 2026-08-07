@@ -23,6 +23,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -292,13 +293,37 @@ func bwrapArgvWithEnv(workspaceDir, shellCmd string, extraEnv map[string]string,
 	// command string directly (because "sh" and "-c" had been
 	// silently clobbered by the setenv tokens).
 	tail := append([]string{}, args[sepIdx:]...)
-	out := make([]string, 0, sepIdx+len(extraEnv)*3+len(tail))
+	out := make([]string, 0, sepIdx+len(extraEnv)*3+len(tail)+3)
 	out = append(out, args[:sepIdx]...)
+	// The hook socket no longer lives in the workspace — a per-agent
+	// workspace path is long enough to blow the 107-byte unix socket
+	// limit, so it binds under a short host dir instead (see
+	// hookSocketPath). Which means the sandbox can no longer reach it
+	// for free off the workspace mount, and it needs its own bind.
+	//
+	// The FILE, not its directory: a sandboxed script gets its own
+	// socket and cannot list anyone else's. Same path inside as out, so
+	// GOHORT_HOOK_PATH is correct on both sides with no translation.
+	if p := extraEnv["GOHORT_HOOK_PATH"]; p != "" && !withinDir(p, workspaceDir) {
+		out = append(out, "--bind", p, p)
+	}
 	for k, v := range extraEnv {
 		out = append(out, "--setenv", k, v)
 	}
 	out = append(out, tail...)
 	return out
+}
+
+// withinDir reports whether path sits under dir, so a socket that IS in
+// the workspace is not bind-mounted twice — bwrap would reject the
+// second mount over an existing one, taking down every hook-using tool
+// on deployments where the old path still fits.
+func withinDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {

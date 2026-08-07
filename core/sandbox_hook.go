@@ -108,7 +108,10 @@ func NewSandboxHook(workspaceDir string, capabilities []string, sess *ToolSessio
 	if err != nil {
 		return nil, fmt.Errorf("hook token: %w", err)
 	}
-	path := filepath.Join(workspaceDir, ".gohort_hook_"+token+".sock")
+	path, err := hookSocketPath(workspaceDir, token)
+	if err != nil {
+		return nil, err
+	}
 	// Pre-cleanup any stale file at this path. With a fresh random
 	// token the collision is astronomically unlikely, but a leftover
 	// from a hard-killed prior process would otherwise wedge net.Listen.
@@ -133,6 +136,62 @@ func NewSandboxHook(workspaceDir string, capabilities []string, sess *ToolSessio
 	go h.acceptLoop()
 	Debug("[hook] listening at %s caps=%v", path, capabilities)
 	return h, nil
+}
+
+// maxUnixSocketPath is the usable length of sun_path on Linux: the
+// struct field is 108 bytes and one is the terminator. Bind returns a
+// bare EINVAL — "invalid argument" — when a path exceeds it, which
+// names neither the limit nor the path as the problem and sent an
+// operator looking at permissions and filesystems instead.
+const maxUnixSocketPath = 107
+
+// hookSocketDirName is the host directory hook sockets bind under. Kept
+// SHORT and deliberately outside the workspace.
+const hookSocketDirName = "gohort-hk"
+
+// hookSocketPath picks where this hook's socket lives.
+//
+// It used to be <workspace>/.gohort_hook_<token>.sock, because the
+// workspace is bind-mounted into the sandbox at its own path and a
+// socket inside it is therefore reachable from both sides for free.
+// That works until the workspace path gets long. A per-agent workspace
+// is <root>/.agents/<email>/<uuid>/ — 92 characters on a plain install
+// — and the socket name is another 34, which is 126 against a hard
+// limit of 107. Shortening the NAME cannot fix it: the prefix alone
+// leaves 15 characters, and ".gohort_hook_.sock" is 18 with no token
+// at all. The location had to move.
+//
+// So: a short host dir, and the single socket FILE bind-mounted into
+// the sandbox at that same short path (see bwrapArgvWithEnv). Both ends
+// stay well inside the limit no matter how deep the workspace is.
+//
+// A side benefit worth stating, because it would otherwise look like a
+// regression: the socket is no longer sitting in the workspace where
+// the model's own script can list it. Only the one file is mounted, so
+// a sandboxed script sees its own socket and cannot enumerate anyone
+// else's.
+//
+// Falls back to the old in-workspace path if the short dir cannot be
+// created, and fails with an explanation rather than an EINVAL if
+// neither fits.
+func hookSocketPath(workspaceDir, token string) (string, error) {
+	name := token + ".sock"
+	dir := filepath.Join(os.TempDir(), hookSocketDirName)
+	if err := os.MkdirAll(dir, 0700); err == nil {
+		if p := filepath.Join(dir, name); len(p) <= maxUnixSocketPath {
+			return p, nil
+		}
+	}
+	// TMPDIR itself is unusable or absurdly deep. The workspace is the
+	// only other place both sides can reach, so try it and say plainly
+	// what is wrong if it does not fit either.
+	p := filepath.Join(workspaceDir, ".gohort_hook_"+name)
+	if len(p) > maxUnixSocketPath {
+		return "", fmt.Errorf("no usable socket path: %q is %d bytes and a unix socket cannot exceed %d. "+
+			"The short path under %s could not be created either — check that the temp dir is writable",
+			p, len(p), maxUnixSocketPath, os.TempDir())
+	}
+	return p, nil
 }
 
 // Close tears down the listener, removes the socket file, and waits
