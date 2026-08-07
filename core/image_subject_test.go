@@ -346,3 +346,56 @@ func TestLabellingSomethingUnkeptNamesWhatIsKept(t *testing.T) {
 		t.Errorf("the error should name what is kept: %v", err)
 	}
 }
+
+// Two rows for one person is the failure subjects were added to end, arriving
+// through the one door the strict identity rule leaves open: the owner labels a
+// picture by name, then the person themselves messages in and the agent keeps a
+// handle-anchored one. Neither replaces the other, and "the picture of Rory"
+// has two answers again.
+func TestCollisionsCatchWhatSupersessionCannot(t *testing.T) {
+	byName := KeptImage{Name: "rory_a", Ref: "image#rory_a", Subject: ImageSubject{Person: true, Name: "Rory"}}
+	byHandle := KeptImage{Name: "rory_b", Ref: "image#rory_b", Subject: ImageSubject{Person: true, Name: "Rory", Handle: "+15550199"}}
+	other := KeptImage{Name: "leo", Ref: "image#leo", Subject: ImageSubject{Person: true, Name: "Leo"}}
+	logo := KeptImage{Name: "mark", Ref: "image#mark", Subject: ImageSubject{Name: "the logo"}}
+
+	// The strict rule says no — correctly, since it governs deletion.
+	if SameSubject(byName.Subject, byHandle.Subject) {
+		t.Error("supersession must not reach across a handle boundary")
+	}
+	// The warning says yes, because a person reading the page sees one person.
+	if !SameDisplayedPerson(byName.Subject, byHandle.Subject) {
+		t.Error("a label and an identification for one name are one person to a reader")
+	}
+
+	got := SubjectCollisions([]KeptImage{byName, byHandle, other, logo})
+	if len(got["rory_a"]) != 1 || got["rory_a"][0] != "image#rory_b" {
+		t.Errorf("each side should name the other, got %v", got)
+	}
+	if len(got["rory_b"]) != 1 || got["rory_b"][0] != "image#rory_a" {
+		t.Errorf("the warning has to be on BOTH rows, got %v", got)
+	}
+	// A person with one picture, and a thing with a name, are not collisions.
+	if len(got["leo"]) != 0 || len(got["mark"]) != 0 {
+		t.Errorf("nothing else should be flagged, got %v", got)
+	}
+}
+
+func TestTwoHandlesAreTwoPeopleHoweverTheySpellIt(t *testing.T) {
+	// The impersonation case, checked on the WARNING path too. Flagging these
+	// as duplicates would invite the owner to delete a real person's picture
+	// because somebody else adopted their display name.
+	craig := ImageSubject{Person: true, Name: "Craig", Handle: "+15550100"}
+	impostor := ImageSubject{Person: true, Name: "Craig", Handle: "+15550199"}
+	if SameDisplayedPerson(craig, impostor) {
+		t.Error("two attributed handles are two people, warning or not")
+	}
+	// A thing is never a person collision, however its name reads.
+	if SameDisplayedPerson(ImageSubject{Name: "Rory"}, ImageSubject{Person: true, Name: "Rory"}) {
+		t.Error("an unlabelled-as-person subject is not a person")
+	}
+	// And an unnamed subject collides with nothing — otherwise every
+	// unlabelled picture would flag every other one.
+	if SameDisplayedPerson(ImageSubject{Person: true}, ImageSubject{Person: true}) {
+		t.Error("two unnamed subjects are not a known duplicate")
+	}
+}

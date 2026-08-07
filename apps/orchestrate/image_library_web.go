@@ -53,6 +53,14 @@ type imageLibraryRow struct {
 	// of display text.
 	Name      string `json:"name"`
 	Inherited bool   `json:"inherited"`
+	// Duplicate names the other rows showing this same person, empty for the
+	// rows — nearly all of them — that show nobody twice. Two pictures of one
+	// person is not an error the framework can resolve: it cannot know which is
+	// right, and deleting either is unrecoverable. It can only make sure the
+	// owner sees it, since the symptom otherwise is an agent quietly picking
+	// one and the wrong face arriving weeks later.
+	Duplicate string `json:"duplicate"`
+	HasDupe   bool   `json:"has_dupe"`
 }
 
 // handleAgentImages lists one agent's kept library.
@@ -68,8 +76,13 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 	}
 	sess := &ToolSession{Username: user, AgentID: agentID}
 	all := KeptImages(sess)
+	dupes := SubjectCollisions(all)
 	rows := make([]imageLibraryRow, 0, len(all))
 	for _, k := range all {
+		dupe := ""
+		if others := dupes[k.Name]; len(others) > 0 {
+			dupe = "same person as " + strings.Join(others, ", ")
+		}
 		rows = append(rows, imageLibraryRow{
 			Thumb:     "api/agent-images/raw?id=" + urlQ(agentID) + "&name=" + urlQ(k.Name),
 			Ref:       k.Ref,
@@ -79,6 +92,8 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 			Shows:     libraryShows(k),
 			Kept:      libraryWhen(k.When),
 			Inherited: k.Inherited,
+			Duplicate: dupe,
+			HasDupe:   dupe != "",
 		})
 	}
 	writeJSON(w, rows)

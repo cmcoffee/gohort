@@ -478,7 +478,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" {
 		sections = append(sections, ui.Section{
 			Title:    "Picture library",
-			Subtitle: "Every picture this agent has kept for reuse. Look at them: a name, a caption and an origin can all be confidently wrong together, and only the picture settles it. \"Unrecorded\" origin means nobody captured where it came from — it may be something the agent made, so don't trust it as a likeness until you've looked. Forget what shouldn't be here; label anyone the agent hasn't identified, so a request naming them finds the right face.",
+			Subtitle: "Every picture this agent has kept for reuse. Look at them: a name, a caption and an origin can all be confidently wrong together, and only the picture settles it. \"Unrecorded\" origin means nobody captured where it came from — it may be something the agent made, so don't trust it as a likeness until you've looked. Forget what shouldn't be here; label anyone the agent hasn't identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you won't know which, so forget whichever is wrong.",
 			Body: ui.Table{
 				Source:    "../api/agent-images?id=" + id,
 				RowKey:    "name",
@@ -490,6 +490,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 					{Field: "ref", Label: "Id", Flex: 2, Mute: true},
 					{Field: "shows", Label: "Notes", Flex: 4, Mute: true},
 					{Field: "kept", Label: "Kept", Flex: 1, Mute: true},
+					// Not muted, unlike its neighbours: this column is empty on
+					// nearly every row, and the few times it is not are the
+					// only times this page has something urgent to say.
+					{Field: "duplicate", Label: "", Flex: 2},
 				},
 				RowActions: []ui.RowAction{
 					{

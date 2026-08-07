@@ -165,3 +165,57 @@ func PeopleWithPictures(sess *ToolSession) []KeptImage {
 	}
 	return out
 }
+
+// SameDisplayedPerson reports whether two subjects would read to a PERSON as
+// the same person.
+//
+// Deliberately looser than SameSubject, and deliberately not a replacement for
+// it. SameSubject decides whether one entry REPLACES another, so it has to be
+// strict: it is the impersonation guard, and a name match that reached across a
+// handle boundary would let somebody retire the owner's picture of a third
+// party by messaging in under the right display name.
+//
+// This decides only whether to WARN, which is a question with no destructive
+// answer. So it catches the case the strict rule cannot: a name-only entry the
+// owner labelled and a handle-anchored one the agent kept later are two rows
+// for one person, and "the picture of Rory" is ambiguous again — the exact
+// problem subjects were added to end.
+func SameDisplayedPerson(a, b ImageSubject) bool {
+	if !a.Person || !b.Person || !a.Named() || !b.Named() {
+		return false
+	}
+	if ha, hb := strings.TrimSpace(a.Handle), strings.TrimSpace(b.Handle); ha != "" && hb != "" {
+		// Both attributed: the handle is the answer, and two different handles
+		// are two different people whatever they call themselves.
+		return strings.EqualFold(ha, hb)
+	}
+	// At least one is a label rather than an identification, so the name is all
+	// there is to go on — which is precisely why this is a warning and not a
+	// merge.
+	na, nb := strings.TrimSpace(a.Name), strings.TrimSpace(b.Name)
+	return na != "" && strings.EqualFold(na, nb)
+}
+
+// SubjectCollisions maps each image's name to the refs of other images showing
+// the same person, so a listing can say which row it is duplicating rather than
+// only that it duplicates something.
+//
+// Quadratic, over a library capped at 50. Kept obvious rather than indexed:
+// SameDisplayedPerson is not an equivalence relation (a name-only "Rory" can
+// match two entries with different handles, which do not match each other), so
+// grouping by a computed key would quietly give a different — and wrong —
+// answer.
+func SubjectCollisions(all []KeptImage) map[string][]string {
+	out := map[string][]string{}
+	for i, a := range all {
+		for j, b := range all {
+			if i == j {
+				continue
+			}
+			if SameDisplayedPerson(a.Subject, b.Subject) {
+				out[a.Name] = append(out[a.Name], b.Ref)
+			}
+		}
+	}
+	return out
+}
