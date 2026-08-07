@@ -147,8 +147,8 @@ func TestNoteReplyIgnoresEmptyChat(t *testing.T) {
 // budget filled two half-buckets instead of one full one.
 func TestGuardsSurviveTheTransportSplit(t *testing.T) {
 	LoopGuardReset()
-	const native = "iMessage;-;+16504401019"
-	const sms = "SMS;-;+16504401019"
+	const native = "iMessage;-;+16505550142"
+	const sms = "SMS;-;+16505550142"
 
 	noteOutbound(native, "", "[Gohort] On my way.")
 	if !isOwnEcho(sms, "", "[Gohort] On my way.", true) {
@@ -175,7 +175,7 @@ func TestGuardsSurviveTheTransportSplit(t *testing.T) {
 
 // TestIdentityNormalization — the same person written differently is one bucket.
 func TestIdentityNormalization(t *testing.T) {
-	if loopIdentity("any;-;+16504401019", "") != loopIdentity("", "+1 (650) 440-1019") {
+	if loopIdentity("any;-;+16505550142", "") != loopIdentity("", "+1 (650) 555-0142") {
 		t.Error("a formatted handle and a chat-id handle are the same person")
 	}
 	if loopIdentity("", "Craig@Example.com") != loopIdentity("", "craig@example.com") {
@@ -183,7 +183,7 @@ func TestIdentityNormalization(t *testing.T) {
 	}
 	// A group keeps its own identity — chatHandle returns "" for one, so it must
 	// not collapse onto a member.
-	if loopIdentity("chat;+;group-abc", "") == loopIdentity("", "+16504401019") {
+	if loopIdentity("chat;+;group-abc", "") == loopIdentity("", "+16505550142") {
 		t.Error("a group must never collapse onto a member's identity")
 	}
 }
@@ -222,7 +222,7 @@ func TestSelfThreadBudgetIsStrict(t *testing.T) {
 	LoopGuardReset()
 	tripped := false
 	for i := 0; i < selfThreadBudgetFor() && !tripped; i++ {
-		tripped = noteReply("iMessage;-;+16504401019", "", true)
+		tripped = noteReply("iMessage;-;+16505550142", "", true)
 	}
 	if !tripped {
 		t.Errorf("a self thread should cut at %d replies", selfThreadBudgetFor())
@@ -262,7 +262,7 @@ func TestGroupIdentityIsTheGroupNotTheSpeaker(t *testing.T) {
 // a group keyed on the speaker, the cooldown cut unrelated group conversations.
 func TestTrippedThreadDoesNotCutGroups(t *testing.T) {
 	LoopGuardReset()
-	const owner = "+16504401019"
+	const owner = "+16505550142"
 	const group = "iMessage;+;chat9876543210"
 
 	// Blow the strict budget on the owner's own thread.
@@ -287,7 +287,7 @@ func TestGroupKeepsTheGenerousBudget(t *testing.T) {
 	LoopGuardReset()
 	const group = "iMessage;+;chat9876543210"
 	for i := 0; i < selfThreadBudgetFor()+2; i++ {
-		if noteReply(group, "+16504401019", false) {
+		if noteReply(group, "+16505550142", false) {
 			t.Fatalf("a group must not cut at %d replies", i+1)
 		}
 	}
