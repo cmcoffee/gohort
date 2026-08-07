@@ -405,8 +405,13 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// credential gets a live card again.
 		s.UIBlocks = settleResolvedBlocks(s.UIBlocks, user)
 		s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
+		// Only the tail is rendered. Blocks and plans are session-level and
+		// ride along whole — they are not indexed by message, so trimming
+		// messages cannot orphan one.
+		var off int
+		s.Messages, off = tailMessages(s.Messages, resolveTailLimit(r.URL.Query().Get("limit")))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(servedSession{ChatSession: s, MessageOffset: 0})
+		_ = json.NewEncoder(w).Encode(servedSession{ChatSession: s, MessageOffset: off})
 	case http.MethodDelete:
 		// Tear down any persistent shells the session opened
 		// (psql/redis-cli/ssh/etc.) so the bwrap processes don't

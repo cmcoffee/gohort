@@ -2319,8 +2319,25 @@
     // server storage → next send sees [old user, old reply, new user]
     // and the LLM answers both.
     function userBubbleIndex(target) {
+      // Prefer the index the SERVER gave this message. It is the true storage
+      // position: it counts hidden messages, which are never rendered, and it
+      // includes the offset of a tail load, which the DOM has no way to know.
+      //
+      // This is a truncate point. Counting rendered bubbles under a tail would
+      // return a position within the window — so "delete from here down" would
+      // cut from that position in the WHOLE thread instead, taking hundreds of
+      // earlier messages with it. Silent, and not recoverable.
+      for (var mid in msgEls) {
+        var e = msgEls[mid];
+        if (e && e.bubble === target && typeof e.storageIndex === 'number') {
+          return e.storageIndex;
+        }
+      }
+      // No stored index: a bubble created this session, with no reload since.
+      // Counting is right relative to what is on screen, so what is missing
+      // from the front has to be added back.
       var all = convoLog.querySelectorAll('.ui-agent-msg');
-      var idx = 0;
+      var idx = loadedMsgOffset;
       for (var i = 0; i < all.length; i++) {
         var b = all[i];
         // Match server-persisted bubbles only: role must be user or
@@ -4156,18 +4173,37 @@
     // startChannelPolling — while a channel thread is open, re-fetch its session
     // every few seconds and append any messages beyond what's on screen, so new
     // inbound + the agent's responses show up live without a manual reload.
-    function startChannelPolling(sid, initialCount) {
+    // channelPollCount is an ABSOLUTE storage index — how far into the thread
+    // this pane has rendered — not a count of what is on screen.
+    //
+    // It used to be the length of the delivered array, which was the same
+    // number while every load was a full one. Against a tail it is not: the
+    // window slides, so its length stays put as messages arrive, and comparing
+    // lengths would decide nothing new had ever happened. A watched channel
+    // would sit silent forever, which is the one thing this poll exists to
+    // prevent.
+    function startChannelPolling(sid, initialEnd) {
       stopChannelPolling();
       if (!cfg.load_url || (sid || '').indexOf('chan:') !== 0) return;
-      channelPollCount = initialCount || 0;
+      channelPollCount = initialEnd || 0;
       channelPollTimer = setInterval(function() {
         if (activeSessionId !== sid) { stopChannelPolling(); return; }
         fetchJSON(substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)))).then(function(rec) {
           if (activeSessionId !== sid) return;
           var msgs = rec && rec[msgsF];
-          if (!Array.isArray(msgs) || msgs.length <= channelPollCount) return;
-          for (var i = channelPollCount; i < msgs.length; i++) appendChannelMessage(msgs[i]);
-          channelPollCount = msgs.length;
+          if (!Array.isArray(msgs)) return;
+          var off = (typeof rec.message_offset === 'number') ? rec.message_offset : 0;
+          var end = off + msgs.length;
+          if (end <= channelPollCount) return;
+          // Start from whichever is later: where we left off, or the oldest
+          // message this response actually carries. The second case means the
+          // pane was away long enough for the tail to move past it — there is
+          // a gap, and inventing indices to fill it would render the wrong
+          // messages. Skipping to what we have is the honest recovery.
+          for (var i = Math.max(channelPollCount, off); i < end; i++) {
+            appendChannelMessage(msgs[i - off]);
+          }
+          channelPollCount = end;
         }).catch(function() {});
       }, 3000);
     }
@@ -4560,7 +4596,36 @@
       }
     }
 
-    function openSession(sid) {
+    // How many messages to ask the server for. -1 = don't ask, let the server
+    // apply its own default — which is every open except one the user pressed
+    // "Load earlier" on. Reset per session, because a thread you scrolled back
+    // through should not make the NEXT thread slow to open.
+    var sessionLoadLimit = -1;
+
+    // How many messages the currently-open thread was trimmed from the front,
+    // at module scope because the truncate path needs it long after the load
+    // that computed it has returned.
+    var loadedMsgOffset = 0;
+
+    // loadEarlierMessages re-opens the current thread asking for more.
+    //
+    // A re-render rather than a DOM prepend: the replay path is a hundred lines
+    // of bubble / tool-chip / block hydration, and a second insert-above
+    // version of it would drift from this one the first time either changed.
+    //
+    // Doubling what is already accounted for guarantees progress — the ask
+    // always exceeds loaded + skipped — so a few presses reach the top of even
+    // a very long thread. When it overshoots the real total the server serves
+    // the lot, the offset comes back 0, and the button takes itself away.
+    function loadEarlierMessages(loadedCount, offset) {
+      sessionLoadLimit = (loadedCount + offset) * 2;
+      openSession(activeSessionId, true);
+    }
+
+    // keepLimit is set by loadEarlierMessages so the re-open does not reset the
+    // ask it was made for.
+    function openSession(sid, keepLimit) {
+      if (!keepLimit) sessionLoadLimit = 0;
       // Channel agents no longer force every open onto the home thread — they
       // have a channel thread AND ordinary sessions. The Channel row opens the
       // home thread explicitly (via altPinnedSession); a normal session row /
@@ -4693,6 +4758,9 @@
       activeRunId = '';
       runSeqReceived = 0;
       msgEls = {}; activityEls = {}; blockEls = {};
+      // Cleared with the rest of the per-thread state. A stale offset carried
+      // into the next thread would misplace its truncate point.
+      loadedMsgOffset = 0;
       convoLog.innerHTML = '';
       activityLog.innerHTML = '';
       if (!sid) {
@@ -4722,6 +4790,12 @@
           'source=' + encodeURIComponent(src.source) +
           '&chat_id=' + encodeURIComponent(src.chat_id || '');
       }
+      // Only sent when the user asked for more. Absent, the server applies its
+      // own default, so an app that never wires this button still gets the tail
+      // without knowing the parameter exists.
+      if (sessionLoadLimit >= 0) {
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'limit=' + sessionLoadLimit;
+      }
       fetchJSON(url).then(function(rec) {
         setHeaderTitle(rec && rec[ttlF]);
         // Channel rooms render as a who-said-what transcript: the session is
@@ -4744,6 +4818,24 @@
         // whatever slice arrived. Adding the offset here means a tail load can
         // never make the ✕ delete somebody else's message.
         var msgOffset = (rec && typeof rec.message_offset === 'number') ? rec.message_offset : 0;
+        loadedMsgOffset = msgOffset;
+        // A nonzero offset means there is thread above what arrived. Say so
+        // where the top of it is, rather than letting a months-old channel
+        // appear to begin mid-sentence.
+        if (msgOffset > 0) {
+          var loaded = Array.isArray(msgs) ? msgs.length : 0;
+          convoLog.appendChild(el('div', {class: 'ui-agent-earlier'}, [
+            el('button', {
+              type: 'button', class: 'ui-agent-earlier-btn',
+              onclick: function() {
+                this.disabled = true;
+                this.textContent = 'Loading…';
+                loadEarlierMessages(loaded, msgOffset);
+              },
+            }, ['Load earlier messages']),
+            el('span', {class: 'ui-agent-earlier-note'}, [msgOffset + ' earlier']),
+          ]));
+        }
         if (Array.isArray(msgs)) {
           msgs.forEach(function(m, idx) {
             var i = idx + msgOffset;
@@ -4814,12 +4906,22 @@
           keyOrder.forEach(function(k) { addBlock(byKey[k]); });
         }
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);
+        // A re-open for "Load earlier" lands on the oldest message just
+        // fetched. Snapping back to the bottom would undo the press: the whole
+        // point was to get away from there, and the button would look broken
+        // for putting you back where you started.
+        if (keepLimit) {
+          convoStickToBottom = false;
+          convoLog.scrollTop = 0;
+        }
         loadSessions();
         // Channel threads are append-only and fed server-side (from the
         // messaging surface) — poll so new inbound + the agent's replies show
         // up live while watching, without a manual reload.
         if (channelTranscript) {
-          startChannelPolling(sid, Array.isArray(msgs) ? msgs.length : 0);
+          // Seeded with the absolute end of what replayed — offset included,
+          // since a tail load's array starts partway into the thread.
+          startChannelPolling(sid, msgOffset + (Array.isArray(msgs) ? msgs.length : 0));
         } else {
           // Any other open thread: seed the seen-set from what just replayed,
           // then poll for NEW report cards so they appear live — anything

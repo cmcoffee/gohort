@@ -3475,6 +3475,21 @@ select:-webkit-autofill {
   color: var(--text-mute); font-style: italic; text-align: center;
   padding: 1.5rem 0;
 }
+/* Top-of-thread marker when only the tail was loaded. Quiet on purpose:
+ * it is the edge of the transcript, not a message, and it sits directly
+ * above real content that should stay the thing being read. */
+.ui-agent-earlier {
+  display: flex; align-items: center; justify-content: center;
+  gap: 0.5rem; padding: 0.75rem 0 1rem;
+}
+.ui-agent-earlier-btn {
+  background: var(--bg-1); color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+}
+.ui-agent-earlier-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.ui-agent-earlier-btn:disabled { cursor: default; opacity: 0.6; }
+.ui-agent-earlier-note { color: var(--text-mute); font-size: 0.8rem; }
 /* Mid-turn status from send_status, rendered as a real message bubble
  * (same .ui-agent-msg-body card chrome as a normal reply) so it reads
  * like the agent talking. Left-aligned like the assistant; tinted with
