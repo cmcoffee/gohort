@@ -380,11 +380,13 @@ func imageSchemaFor(a imageActions) imageSchema {
 		// backend's guess rather than the request.
 		d := "What you want. With no images: a detailed description of the picture to create."
 		if a.edit {
-			d += " With images: what should CHANGE about them, or HOW they should combine — \"make it snowy\", \"put the subject on a beach\", \"one creature with the bear's body and the pig's snout\". Give one whenever you pass images, unless you genuinely want the backend's default treatment." +
-				" Describe the CHANGE only. Do not describe who or what is already in the pictures you passed, and do not put a person's NAME in the prompt." +
-				" The picture is the description — it is why you passed it — and words describing a face compete with it: the backend renders the words, so \"Rory, a man with a short beard, on a beach\" produces a stranger with a beard standing next to nothing you supplied," +
-				" where \"on a beach at sunset\" keeps the actual person. A name means nothing to the renderer at best, and at worst pulls in whoever it thinks that name looks like." +
-				" If you must refer to someone, do it by position — \"the person in the first image\"."
+			d += " With images: what should CHANGE about them, or HOW they should combine. Give one whenever you pass images, unless you genuinely want the backend's default treatment." +
+				" POINT AT THE PICTURES, DO NOT REDESCRIBE THEM. Name the part you mean and which image it comes from — \"the face from the first picture on the body in the second\", \"the background of the second, everything else from the first\", \"make it snowy\"." +
+				" That is the instruction, and a combine that does not say which part comes from where is the backend's guess." +
+				" What must NOT go in is who the subject IS or what they LOOK like: no names, no \"a man with a short beard\", no borrowing the wording of a caption." +
+				" The picture already carries all of that — it is why you passed it — and appearance words compete with it. The renderer draws the words, so \"Rory, a man with a short beard, on a beach\" yields a stranger with a beard next to nothing you supplied," +
+				" where \"on a beach at sunset\" keeps the real person. A name is worse than useless: it means nothing to the renderer at best, and at worst pulls in whoever it thinks that name looks like." +
+				" So refer to people and things by WHERE THEY ARE — \"the person in the first image\", \"the animal on the left\" — never by name and never by description."
 		}
 		params["prompt"] = ToolParam{Type: "string", Description: d}
 	}
