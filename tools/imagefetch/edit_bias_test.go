@@ -15,34 +15,40 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// editRuleComesFirst: whichever rule the model reads first is the one that
-// claims an ambiguous request.
-func TestEditRuleComesBeforeGenerateRule(t *testing.T) {
+// OBSOLETE AS WRITTEN, and kept as the record of why.
+//
+// These two used to assert an ORDERING between an edit rule and a generate
+// rule, and the phrasings that had to appear in the edit one — scaffolding
+// built to stop the model choosing generate when a photo was involved. The
+// choice is gone: there is one render action, and the only question is whether
+// `images` is passed. So what is pinned now is that the decision block names
+// that question, in the words people actually use.
+func TestDecisionPointsAtTheImagesParameter(t *testing.T) {
 	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true,
 		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
-	edit, gen := strings.Index(desc, "→ edit"), strings.Index(desc, "→ generate")
-	if edit < 0 || gen < 0 {
-		t.Fatalf("both decision rules should be present, got %q", desc)
-	}
-	if edit > gen {
-		t.Errorf("the edit rule must be read before the generate rule; edit at %d, generate at %d", edit, gen)
-	}
-}
 
-// The phrasings that actually failed in the field belong in the rule, so the
-// match is on the user's words rather than on the model's inference from them.
-func TestEditRuleNamesTheReportedPhrasings(t *testing.T) {
-	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true,
-		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
-	for _, want := range []string{"make x sit in y", "put x in it", "combine these"} {
+	if strings.Contains(desc, "→ edit") {
+		t.Error("edit is no longer an action to route to; the rule should point at the images parameter")
+	}
+	if !strings.Contains(desc, "generate WITH those pictures in images") {
+		t.Errorf("the decision should say to pass the pictures, got %q", desc)
+	}
+	// The phrasings that actually failed in the field still have to be named —
+	// that part of the old test was right and survives the merge.
+	for _, want := range []string{"make x sit in y", "combine these", "this photo"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("decision rule should name the reported phrasing %q", want)
 		}
 	}
-	// And generate has to give the case up explicitly, or it keeps winning on
-	// the strength of "make".
-	if !strings.Contains(desc, "FROM NOTHING") {
-		t.Error("the generate rule should exclude requests about an existing picture")
+}
+
+// With no editing backend there is nothing to pass images to, so the clause
+// must not appear and promise something the deployment cannot do.
+func TestNoImagesClauseWithoutAnEditor(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true,
+		backends: []ImageBackendChoice{{Name: "gen"}}}).desc
+	if strings.Contains(desc, "in images") {
+		t.Errorf("a generate-only deployment must not mention images, got %q", desc)
 	}
 }
 

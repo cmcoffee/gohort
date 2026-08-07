@@ -22,20 +22,32 @@ func editActions(editors ...ImageBackendChoice) imageActions {
 	}
 }
 
-func TestEditActionAppearsOnlyWithAnEditingBackend(t *testing.T) {
+// REWRITTEN for the merge. "edit" is no longer an action anyone chooses — it is
+// what generate DOES when you pass images — so the thing gated on having an
+// image-input backend is the images PARAMETER, not an action.
+//
+// The old assertion (edit present in the enum) tested the mechanism that caused
+// the failure this merge removes: with two actions to pick between, "make x sit
+// in y" reads as creation and generate won every time.
+func TestImagesParamAppearsOnlyWithAnEditingBackend(t *testing.T) {
 	none := imageSchemaFor(genActions(ImageBackendChoice{Name: "comfy_txt", Default: true}))
-	if slices.Contains(none.params["action"].Enum, "edit") {
-		t.Error("edit must not be offered with no image-input backend wired")
-	}
 	if _, ok := none.params["images"]; ok {
-		t.Error("the images param must not appear without an edit action")
+		t.Error("the images param must not appear with no image-input backend wired")
+	}
+	if slices.Contains(none.params["action"].Enum, "edit") {
+		t.Error("edit must never be advertised as an action")
 	}
 	with := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true}))
-	if !slices.Contains(with.params["action"].Enum, "edit") {
-		t.Errorf("edit missing from enum %v", with.params["action"].Enum)
-	}
 	if p, ok := with.params["images"]; !ok || p.Type != "array" {
 		t.Errorf("images param = %+v, want an array", p)
+	}
+	if slices.Contains(with.params["action"].Enum, "edit") {
+		t.Errorf("edit must not be offered even where it is supported: %v", with.params["action"].Enum)
+	}
+	// The single entry point is offered instead, so an edit-only backend is
+	// reachable at all.
+	if !slices.Contains(with.params["action"].Enum, "generate") {
+		t.Errorf("generate must be offered as the one render action: %v", with.params["action"].Enum)
 	}
 }
 
@@ -64,8 +76,12 @@ func TestMultiImageBackendAdvertisesOrderAndCount(t *testing.T) {
 	}
 	two := imageSchemaFor(editActions(ImageBackendChoice{Name: "blend", Edits: true, MaxImages: 2}))
 	d := two.params["images"].Description
-	if !strings.Contains(d, "Up to 2") {
-		t.Errorf("images description should state the cap:\n%s", d)
+	// "Up to 2" became "composes 2 pictures at a time" with count routing: the
+	// number is not a CAP the model works under, it is what this deployment
+	// serves and what selects the backend. A cap invited passing fewer, which a
+	// compose graph cannot do — every mapped input must be filled.
+	if !strings.Contains(d, "composes 2 pictures at a time") {
+		t.Errorf("images description should state the servable count:\n%s", d)
 	}
 	if !strings.Contains(d, "ORDER MATTERS") {
 		t.Errorf("a multi-image backend must explain ordering:\n%s", d)
@@ -105,7 +121,10 @@ func TestGeneratorBackendRefusesTheEditAction(t *testing.T) {
 	if err == nil {
 		t.Fatal("a text-only backend must not accept an edit")
 	}
-	if !strings.Contains(err.Error(), "can't edit") {
+	// Worded without action names since the merge: the mismatch is between
+	// what the BACKEND can do and what was asked of it, not between two
+	// actions the caller might have picked.
+	if !strings.Contains(err.Error(), "cannot work from a source picture") {
 		t.Errorf("error should explain the mismatch: %v", err)
 	}
 }
@@ -201,7 +220,7 @@ func TestGenerateNeverLandsOnAnEditor(t *testing.T) {
 	if err == nil {
 		t.Fatal("generate on an editing backend must be refused")
 	}
-	if !strings.Contains(err.Error(), "can't generate from text alone") {
+	if !strings.Contains(err.Error(), "can't create from text alone") {
 		t.Errorf("error should explain the mismatch: %v", err)
 	}
 
@@ -215,10 +234,18 @@ func TestGenerateNeverLandsOnAnEditor(t *testing.T) {
 	}
 }
 
-func TestGenerateIsUnofferedWhenOnlyEditorsExist(t *testing.T) {
-	// A provider setting pointing at an editing connector used to make
-	// ImageGenerationAvailable() true, so generate was advertised with nothing
-	// behind it that could serve it.
+// REVERSED by the merge, and the concern re-homed.
+//
+// The worry was real: a provider pointing at an editing connector advertised
+// generate with nothing behind it that could serve a text-only render. The old
+// answer was to withhold the action — which, now that generate is the ONLY
+// render action, would leave an edit-only deployment with no way to make a
+// picture at all.
+//
+// So the action is offered and the LIMIT is stated instead: images required,
+// text-alone impossible. The model learns it from the schema rather than from a
+// failure.
+func TestEditOnlyDeploymentStatesThatImagesAreRequired(t *testing.T) {
 	only := imageActions{
 		fetch:   true,
 		edit:    true,
@@ -226,11 +253,14 @@ func TestGenerateIsUnofferedWhenOnlyEditorsExist(t *testing.T) {
 	}
 	only.generate = len(only.backends) > 0
 	s := imageSchemaFor(only)
-	if slices.Contains(s.params["action"].Enum, "generate") {
-		t.Errorf("generate must not be offered with no generator wired: %v", s.params["action"].Enum)
+	if !slices.Contains(s.params["action"].Enum, "generate") {
+		t.Errorf("generate is the only render action and must be offered: %v", s.params["action"].Enum)
 	}
-	if !slices.Contains(s.params["action"].Enum, "edit") {
-		t.Error("edit must still be offered")
+	if !strings.Contains(s.desc, "cannot create from a text prompt alone") {
+		t.Errorf("an edit-only deployment must say so in the schema, got: %s", s.desc)
+	}
+	if !strings.Contains(s.desc, "`images` is required") {
+		t.Errorf("the requirement should be explicit, got: %s", s.desc)
 	}
 }
 

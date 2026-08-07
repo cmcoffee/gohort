@@ -49,10 +49,15 @@ type KeptImage struct {
 	Ref     string    // "image#brand_mark" — what to pass to any images= param
 	Note    string    // why it was kept, in the agent's words
 	Caption string // one line, for listings — enough to tell saved images apart
-	// Description is the detailed one, and it is what memory stores. A label
-	// identifies a picture; only this lets an agent WORK from it — write a
-	// generation prompt in the same style, brief a designer — without spending
-	// vision tokens re-looking every time it needs the detail.
+	// Description is the detailed one, and it is what memory stores — so that a
+	// question months later can FIND this picture in a text-only vector space.
+	//
+	// It is not a stand-in for the picture. Rendering from these words produces
+	// something that matches the description rather than the thing described,
+	// which for a face or a logo is simply a different face or logo. It earns
+	// its place by answering "which picture did they mean" and by sparing a
+	// vision call for questions ABOUT the image; when the picture is what is
+	// needed, the reference is passed instead.
 	Description string
 	// Origin is where the picture came from, carried over from the ring at keep
 	// time. It decides whether this entry may be offered as a REFERENCE — the

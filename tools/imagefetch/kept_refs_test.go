@@ -254,3 +254,114 @@ func TestGenericSubjectsAreGeneratedNotSearched(t *testing.T) {
 		t.Error("with no search wired the complement points at nothing")
 	}
 }
+
+// With an edit model the reference is conditioning, not a starting latent — so
+// identity survives unless the PROMPT competes with it. Describing a face you
+// also passed a picture of hands the backend two sources for one subject.
+func TestPromptMustNotRedescribeAPassedSubject(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+
+	if !strings.Contains(desc, "Do NOT describe the appearance of someone you passed a picture of") {
+		t.Error("the schema should forbid re-describing a subject that has a reference")
+	}
+	// And say what to write instead — a prohibition with no alternative gets
+	// ignored under pressure to fill the prompt.
+	if !strings.Contains(desc, "say what they are doing, wearing or where they are") {
+		t.Error("the rule should name what the prompt SHOULD carry")
+	}
+	// The complement stays: subjects with no picture still need describing.
+	if !strings.Contains(desc, "describe ONLY the ones you have no picture of") {
+		t.Error("subjects without a reference must still be described")
+	}
+}
+
+// A compose workflow IS its input count — two LoadImage nodes is a different
+// graph from three — so the backend is chosen from how many pictures were
+// passed rather than by the model knowing someone's ComfyUI wiring.
+func TestEditorIsRoutedByImageCount(t *testing.T) {
+	two := ImageBackendChoice{Name: "blend2", Edits: true, MaxImages: 2}
+	three := ImageBackendChoice{Name: "blend3", Edits: true, MaxImages: 3}
+	one := ImageBackendChoice{Name: "retouch", Edits: true, MaxImages: 1, Default: true}
+	a := imageActions{edit: true, editors: []ImageBackendChoice{one, two, three}}
+
+	for n, want := range map[int]string{1: "retouch", 2: "blend2", 3: "blend3"} {
+		if got := defaultEditBackend(a, n); got != want {
+			t.Errorf("%d picture(s) should route to %q, got %q", n, want, got)
+		}
+	}
+	// A count nobody serves falls back to the configured default, which then
+	// produces a specific error rather than a nil backend.
+	if got := defaultEditBackend(a, 7); got != "retouch" {
+		t.Errorf("an unservable count should fall back to the default, got %q", got)
+	}
+}
+
+// Two connectors with the same count must resolve the same way every time.
+func TestDefaultBreaksTiesBetweenEqualCounts(t *testing.T) {
+	a := imageActions{edit: true, editors: []ImageBackendChoice{
+		{Name: "first_listed", Edits: true, MaxImages: 2},
+		{Name: "the_default", Edits: true, MaxImages: 2, Default: true},
+	}}
+	for i := 0; i < 5; i++ {
+		if got := defaultEditBackend(a, 2); got != "the_default" {
+			t.Fatalf("the configured default should win among equals, got %q", got)
+		}
+	}
+}
+
+// The schema advertises the counts this deployment can serve, so the model
+// supplies a number that exists.
+func TestSchemaNamesTheServableCounts(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true,
+		editors: []ImageBackendChoice{
+			{Name: "blend2", Edits: true, MaxImages: 2},
+			{Name: "blend3", Edits: true, MaxImages: 3, Default: true},
+		}}).params["images"].Description
+	if !strings.Contains(desc, "composes 2 or 3 pictures at a time") {
+		t.Errorf("the schema should name the servable counts, got %q", desc)
+	}
+	if !strings.Contains(desc, "chosen automatically") {
+		t.Error("the schema should say the model does not pick the backend")
+	}
+}
+
+// Too many and too few are opposite problems and need opposite advice. One
+// sentence for both told a caller holding a spare picture to go and find
+// another one.
+func TestCountMismatchAdviceMatchesTheDirection(t *testing.T) {
+	avail := imageActions{fetch: true, edit: true, editors: []ImageBackendChoice{
+		{Name: "blend2", Edits: true, MaxImages: 2, Default: true},
+	}}
+	sess := &ToolSession{Username: "alice", WorkspaceDir: t.TempDir()}
+	refs := func(n int) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = "x.png"
+		}
+		return out
+	}
+
+	_, err := planEdit(sess, map[string]any{"images": refs(3), "prompt": "combine"}, avail)
+	if err == nil {
+		t.Fatal("three pictures into a two-picture backend must be refused")
+	}
+	if !strings.Contains(err.Error(), "Choose the 2 that matter") {
+		t.Errorf("too many should say to drop one, got %v", err)
+	}
+	if strings.Contains(err.Error(), "missing") {
+		t.Errorf("too many must not ask for MORE pictures, got %v", err)
+	}
+
+	_, err = planEdit(sess, map[string]any{"images": refs(1), "prompt": "combine"}, avail)
+	if err == nil {
+		t.Fatal("one picture into a two-picture backend must be refused")
+	}
+	if !strings.Contains(err.Error(), "ask the person for the missing") {
+		t.Errorf("too few should ask for the missing one, got %v", err)
+	}
+	// And it must read as a sentence rather than a template.
+	if !strings.Contains(err.Error(), "1 picture,") || strings.Contains(err.Error(), "picture(s)") {
+		t.Errorf("the count should pluralize properly, got %v", err)
+	}
+}

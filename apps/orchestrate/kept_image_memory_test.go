@@ -80,3 +80,49 @@ func TestRememberedTextSurvivesAMissingCaption(t *testing.T) {
 		t.Errorf("ref missing:\n%s", body)
 	}
 }
+
+// A description is not the picture.
+//
+// The reported behaviour: the agent recalls a kept image and writes a
+// generation prompt from the stored description instead of passing the
+// reference — so it renders something matching the WORDS rather than working
+// from the picture. Recall handed it a vivid paragraph while the actual
+// reference needed a tool parameter, and the earlier wording endorsed the
+// substitution outright.
+func TestMemoryBodyForbidsRenderingFromTheDescription(t *testing.T) {
+	body := keptImageMemoryBody(KeptImage{
+		Name: "wren", Ref: "image#wren",
+		Description: "A brown terrier sitting on a grey sofa, late afternoon light from the left.",
+		Note:        "the user's dog",
+	})
+
+	// The description still has to be there — it is how the entry is FOUND in a
+	// text-only vector space.
+	if !strings.Contains(body, "brown terrier") {
+		t.Error("the description must stay: it is what makes the entry retrievable")
+	}
+	// But it must be labelled as an index entry, not as material to render from.
+	if !strings.Contains(body, "NOT how you reproduce the picture") {
+		t.Errorf("the body must say the description is not for rendering, got:\n%s", body)
+	}
+	// And say what goes wrong, since "don't" without a reason loses to
+	// convenience every time.
+	if !strings.Contains(body, "a different face") {
+		t.Errorf("the body should name the consequence, got:\n%s", body)
+	}
+	// Passing the reference must read as the cheap default, not the fallback.
+	if !strings.Contains(body, "passing image#wren costs nothing") {
+		t.Errorf("the body should make passing the ref the obvious move, got:\n%s", body)
+	}
+	if !strings.Contains(body, "pass image#wren in the images list") {
+		t.Errorf("the body should name exactly where the ref goes, got:\n%s", body)
+	}
+}
+
+// With no description at all the entry still has to point at the picture.
+func TestMemoryBodyWithoutADescriptionStillPointsAtTheRef(t *testing.T) {
+	body := keptImageMemoryBody(KeptImage{Name: "mark", Ref: "image#mark", Note: "our logo"})
+	if !strings.Contains(body, "pass image#mark in the images list") {
+		t.Errorf("an entry with no description must still say how to use it, got:\n%s", body)
+	}
+}

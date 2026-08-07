@@ -166,13 +166,17 @@ func (a imageActions) imagesParamDesc() string {
 	// Origin is the axis that actually separates them: the user attached it, or
 	// a tool made it. And when a tool made it, the filename that tool returned
 	// is the most direct handle there is — no numbering to keep straight.
-	d := "(edit) Source image(s) to change, as references. " +
+	d := "Pictures to work FROM — the thing that turns a render into a change of YOUR picture rather than an invention. " +
 		"For a picture a TOOL gave you — found, downloaded or generated — use the workspace filename it returned. That names one picture and goes on naming it. " +
 		"Use \"media#1\", \"media#2\" ONLY for a photo the USER ATTACHED to their message, numbered in the order they arrived, so media#1 is the first one they sent. Nothing you produced yourself is ever a media#N. " +
 		"For a picture from earlier in the conversation whose filename is gone, \"image#1\" is the most recent one either of you produced or received (call action=\"help\" to list them; these numbers SHIFT as new pictures are saved). "
 	switch n := a.maxEditImages(); {
 	case n > 1:
-		d += "Up to " + strconv.Itoa(n) + ", and this backend expects EXACTLY that many when composing: pass all " + strconv.Itoa(n) + " for a blend. ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
+		// Counts, not a cap. Each compose workflow IS its input count, and the
+		// right one is selected from how many you pass — so the model supplies
+		// what the request needs and never has to know which connector holds
+		// how many inputs.
+		d += "This deployment composes " + joinCounts(editorImageCounts(a)) + " pictures at a time and the right backend is chosen automatically from how many you pass — supply exactly what the request needs, all of them in one call. ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
 	case n == 1:
 		// Stated, because the alternative is discovering it by failing: asked to
 		// combine three pictures the model picked one, blended nothing, and
@@ -197,10 +201,28 @@ func (a imageActions) anyEditorTakesMask() bool {
 // together, in ReachableImageBackends' sorted order. One `backend` param covers
 // both actions: the model holds one concept ("which backend"), and picking one
 // that can't do the requested action is caught at run with an explanation.
+// selectableBackends is what a caller may NAME. Generators always: choosing
+// between two of them is a real choice about style or model, and nothing else
+// can make it.
+//
+// Editors only when routing cannot decide for itself. A compose backend is
+// selected by how many pictures are passed (defaultEditBackend), so listing one
+// per count re-offers a choice that was deliberately removed — and invites the
+// mistake of naming the three-picture backend for a two-picture job. Where two
+// editors share a count, routing genuinely cannot tell them apart and the
+// caller has to.
 func (a imageActions) selectableBackends() []ImageBackendChoice {
 	out := make([]ImageBackendChoice, 0, len(a.backends)+len(a.editors))
 	out = append(out, a.backends...)
-	out = append(out, a.editors...)
+	perCount := map[int]int{}
+	for _, e := range a.editors {
+		perCount[e.MaxImages]++
+	}
+	for _, e := range a.editors {
+		if perCount[e.MaxImages] > 1 {
+			out = append(out, e)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
@@ -242,7 +264,7 @@ func (a imageActions) backendParamDesc() string {
 	for _, c := range a.selectableBackends() {
 		note := c.Name + ": "
 		if c.Edits {
-			note += "edits photos (use with action=edit)"
+			note += "works from pictures you pass in images"
 			if c.MaxImages > 1 {
 				// "up to" invited passing fewer, which a compose graph refuses:
 				// every mapped input has to be filled or it renders the
@@ -270,7 +292,11 @@ func (a imageActions) names() []string {
 	for _, c := range []struct {
 		name string
 		on   bool
-	}{{"find", a.find}, {"fetch", a.fetch}, {"generate", a.generate}, {"edit", a.edit}} {
+		// No "edit". It is still ACCEPTED — older prompts and stored tools send
+		// it — but it is not offered, because offering it recreates the choice
+		// this merge removed. A backend that can only edit still advertises
+		// generate: passing images is what makes it an edit.
+	}{{"find", a.find}, {"fetch", a.fetch}, {"generate", a.generate || a.edit}} {
 		if c.on {
 			out = append(out, c.name)
 		}
@@ -325,8 +351,23 @@ func imageSchemaFor(a imageActions) imageSchema {
 		desc += "fetch (download a specific image URL you already have), "
 		params["url"] = ToolParam{Type: "string", Description: "(fetch) Direct URL of the image to download (must resolve to an image file: jpg, png, gif, webp, etc.)."}
 	}
-	if a.generate {
-		desc += "generate (create a NEW image from a text prompt — DALL·E / Stable Diffusion / whatever's wired; generation makes things up, so NOT for real-world reference), "
+	if a.generate || a.edit {
+		// One action, and what it DOES depends on whether sources are given.
+		// Written as a single sentence on purpose: describing two behaviours as
+		// two actions is what made the model choose between them, and choose
+		// wrong, for as long as there were two.
+		switch {
+		case a.generate && a.edit:
+			desc += "generate (make a picture — from a text prompt alone, or FROM PICTURES YOU PASS in `images`: change one, combine several, restyle, replace a background. Passing images is what makes it work from them rather than inventing; a request about a picture that already exists should always pass it), "
+		case a.edit:
+			// Editors only. Saying "from a text prompt alone" here would be a
+			// lie about this deployment, and the model would discover it by
+			// failing — the old two-action shape at least made the limit
+			// visible by omitting generate, and the merge must not lose that.
+			desc += "generate (make a picture FROM PICTURES YOU PASS in `images` — change one, combine several, restyle, replace a background. This deployment cannot create from a text prompt alone: `images` is required, and a request with nothing to work from cannot be served), "
+		default:
+			desc += "generate (create a NEW image from a text prompt), "
+		}
 	}
 	// One `prompt`, described for every action that reads it. It used to be
 	// added only for generate and labelled "(generate)", so on an edit the
@@ -334,24 +375,23 @@ func imageSchemaFor(a imageActions) imageSchema {
 	// with no instructions is the backend's guess at what you wanted, not
 	// yours. Say what it means for each.
 	if a.generate || a.edit {
-		switch {
-		case a.generate && a.edit:
-			params["prompt"] = ToolParam{Type: "string", Description: "(generate) What to create. (edit) What should CHANGE, or HOW the sources should combine — \"make it snowy\", \"put the subject on a beach\", \"one creature with the bear's body and the pig's snout\". Give one on an edit or blend unless you truly want the backend's default treatment: without it the backend decides how to combine them, and the result is its guess rather than the request."}
-		case a.generate:
-			params["prompt"] = ToolParam{Type: "string", Description: "(generate) Detailed description of the image to create."}
-		default:
-			params["prompt"] = ToolParam{Type: "string", Description: "(edit) What should CHANGE about the source photo(s), or HOW they should combine — \"make it snowy\", \"one creature with the bear's body and the pig's snout\". Give one unless you truly want the backend's default treatment: without it the backend decides, and the result is its guess rather than the request."}
+		// One prompt, described once. It used to be labelled "(generate)" and
+		// so was skipped on edits, and a blend with no instructions is the
+		// backend's guess rather than the request.
+		d := "What you want. With no images: a detailed description of the picture to create."
+		if a.edit {
+			d += " With images: what should CHANGE about them, or HOW they should combine — \"make it snowy\", \"put the subject on a beach\", \"one creature with the bear's body and the pig's snout\". Give one whenever you pass images, unless you genuinely want the backend's default treatment."
 		}
+		params["prompt"] = ToolParam{Type: "string", Description: d}
 	}
 	if a.edit {
-		desc += "edit (change an EXISTING photo, or combine several — retouch, restyle, replace a background, composite; needs source image(s), not a blank canvas, and normally a `prompt` saying what should change or how they should combine), "
 		params["images"] = ToolParam{
 			Type:        "array",
 			Items:       &ToolParam{Type: "string"},
 			Description: a.imagesParamDesc(),
 		}
 		if a.anyEditorTakesMask() {
-			params["mask"] = ToolParam{Type: "string", Description: "(edit) Optional black-and-white mask image (same reference forms as images) marking WHICH PART to change. White = repaint, black = keep. Use for \"change just the sky\"."}
+			params["mask"] = ToolParam{Type: "string", Description: "Optional black-and-white mask image (same reference forms as images) marking WHICH PART to change. White = repaint, black = keep. Use for \"change just the sky\"."}
 		}
 	}
 	if len(a.backendNames()) > 1 {
@@ -387,7 +427,7 @@ func imageSchemaFor(a imageActions) imageSchema {
 		if a.inboundMedia > 1 {
 			desc += fmt.Sprintf("-media#%d", a.inboundMedia)
 		}
-		desc += ". If the request concerns them, it is an EDIT — pass those ids in images. Do not generate a replacement." +
+		desc += ". If the request concerns them, PASS THOSE IDS IN images — that is what makes the result their picture changed rather than a new one that ignores it." +
 			" If one shows a subject you could be asked for again — a person, a pet, a product, a place — keep it NOW" +
 			" (action=\"keep\", ref=\"media#1\", name=\"…\"): a media id lasts only this turn and ring ids age out as new pictures arrive," +
 			" whereas a kept name works indefinitely. Asking the user to re-send a photo they already sent is the failure this avoids."
@@ -410,19 +450,15 @@ func imageSchemaFor(a imageActions) imageSchema {
 		if a.fetch {
 			desc += " Gave an image URL → fetch."
 		}
-		// Edit is tested FIRST. Read in the other order, "make x sit in y" trips
-		// "wants something drawn / created" before anything mentions that a
-		// photo is involved — and the model produces a different picture that
-		// ignores theirs, which is the single most reported failure of this
-		// tool.
+		// Three clauses used to live here, arguing the model out of picking
+		// generate over edit: an ordering rule, a phrasings list, and a
+		// "generate is almost never right" warning. All of it was compensating
+		// for a choice that no longer exists — there is one render action, and
+		// the question is only whether to pass `images`.
+		//
+		// What remains is that question, stated once.
 		if a.edit {
-			desc += " A picture already exists and the ask is about THAT picture (\"this photo\", \"the one you just made\", \"combine these\", \"make x sit in y\", \"put x in it\", \"add x\", \"make it night\") → edit, passing its id in images."
-		}
-		if a.generate {
-			desc += " Wants something drawn / created / imagined FROM NOTHING, with no existing picture involved → generate."
-		}
-		if a.edit && a.generate {
-			desc += " When a photo came with the request, generate is almost never right: it draws a NEW scene and the user's picture takes no part in it."
+			desc += " Wants a picture and one already exists that the request is ABOUT (\"this photo\", \"the one you just made\", \"combine these\", \"make x sit in y\") → generate WITH those pictures in images."
 		}
 		// Text-to-image cannot depict a REAL subject, only invent one that fits
 		// the words. For a specific person that means the wrong face — and a
@@ -462,7 +498,11 @@ func imageSchemaFor(a imageActions) imageSchema {
 				// request, and asking spends a turn on a question with one
 				// answer.
 				desc += " A reference you hold is used by DEFAULT — the person who sent it assumes it will be, so do not ask whether to use their picture and do not offer generating from scratch as an alternative. Use it, then say which reference you worked from."
-				desc += " A scene with several real subjects uses every reference you have and invents only the rest: pass the pictures you hold, name in the prompt which reference is which person, and describe the ones you have no picture of. Never drop a reference because the set is incomplete — one real face beside one invented is strictly better than two invented, and a group photo counts as a reference for each person in it."
+				desc += " A scene with several real subjects uses every reference you have and invents only the rest: pass the pictures you hold, name in the prompt which reference is which person, and describe ONLY the ones you have no picture of. Never drop a reference because the set is incomplete — one real face beside one invented is strictly better than two invented, and a group photo counts as a reference for each person in it."
+				// Describing a subject you also passed a picture of gives the
+				// backend two sources for one face and invites it to draw from
+				// the words. Say what they DO, not what they look like.
+				desc += " Do NOT describe the appearance of someone you passed a picture of — say what they are doing, wearing or where they are, and let the picture carry the likeness. Words about a face compete with the reference rather than reinforcing it."
 			}
 		}
 	}
@@ -507,10 +547,13 @@ func (t *ImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) tim
 func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
 	avail := liveImageActions(sess)
 	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
-	case "generate":
-		_, err := planGenerate(sess, args, avail)
-		return err
-	case "edit":
+	case "generate", "edit":
+		// One path, chosen by whether sources were passed rather than by which
+		// word the model picked. See routeRender.
+		if !hasImageSources(args) {
+			_, err := planGenerate(sess, args, avail)
+			return err
+		}
 		p, err := planEdit(sess, args, avail)
 		if err != nil {
 			return err
@@ -556,10 +599,8 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		return (&FindImageTool{}).RunWithSession(args, sess)
 	case "fetch":
 		return (&FetchImageTool{}).RunWithSession(args, sess)
-	case "generate":
-		return generateImage(sess, args, avail)
-	case "edit":
-		return editImage(sess, args, avail)
+	case "generate", "edit":
+		return routeRender(sess, args, avail)
 	case "keep":
 		name := StringArg(args, "name")
 		ref := strings.TrimSpace(StringArg(args, "ref"))
@@ -953,7 +994,7 @@ func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (s
 	// reason: reachability is the broadest failure, so running it first
 	// reports every mistake as a permissions problem.
 	if backend != "" && !isGenerator(avail, backend) {
-		return "", fmt.Errorf("image backend %q edits existing photos and can't generate from text alone — use one of: %s, or switch to action=\"edit\" and pass images", backend, strings.Join(generatorNames(avail), ", "))
+		return "", fmt.Errorf("image backend %q works from source pictures and can't create from text alone — use one of: %s, or pass the pictures to work from in images", backend, strings.Join(generatorNames(avail), ", "))
 	}
 	// ENFORCEMENT. The filtered enum is a hint to the model; nothing stops
 	// it naming a backend that isn't in it, so reachability is re-checked
@@ -1000,7 +1041,8 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 	}
 	backend := strings.TrimSpace(StringArg(args, "backend"))
 	if backend == "" {
-		backend = defaultEditBackend(avail)
+		// Routed by how many pictures were passed — see defaultEditBackend.
+		backend = defaultEditBackend(avail, len(refs))
 	}
 	// Argument checks BEFORE the reachability check, so a wrong argument is
 	// named as one. Reachability is the broadest failure — run it first and
@@ -1014,7 +1056,26 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		if len(avail.editors) == 0 {
 			return p, fmt.Errorf("no image backend here can edit photos")
 		}
-		return p, fmt.Errorf("image backend %q generates from text and can't edit a photo — use one of: %s, or switch to action=\"generate\"", backend, strings.Join(editorNames(avail), ", "))
+		return p, fmt.Errorf("image backend %q creates from text and cannot work from a source picture — use one of: %s, or drop images to render from the prompt alone", backend, strings.Join(editorNames(avail), ", "))
+	}
+	// Count mismatch, named in terms of what this deployment can do. Checked
+	// here rather than left to the backend so the answer arrives before an
+	// upload and names the alternatives: "wrong number of images" sends the
+	// model guessing, "this can combine 2, you passed 3" does not.
+	if n := backendImageCount(avail, backend); n > 0 && len(refs) != n {
+		counts := editorImageCounts(avail)
+		strs := make([]string, 0, len(counts))
+		for _, c := range counts {
+			strs = append(strs, strconv.Itoa(c))
+		}
+		// Too MANY and too FEW need opposite advice, and one sentence for both
+		// told a caller with a spare picture to go and find another one.
+		fix := "Choose the %d that matter and pass those, or do it in more than one call."
+		if len(refs) < n {
+			fix = "Supply %d, or ask the person for the missing one(s) before trying again."
+		}
+		return p, fmt.Errorf("you passed %s, and this deployment composes %s at a time — %q takes exactly %d. "+fix,
+			pluralPictures(len(refs)), joinCounts(editorImageCounts(avail)), backend, n, n)
 	}
 	// Some editing workflows have no text node at all — a blend or an upscale is
 	// pure pixel work. Demanding a prompt there makes the model invent one that
@@ -1046,13 +1107,116 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if err != nil {
 		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
 	}
-	return saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited)
+	out, serr := saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited)
+	if serr != nil {
+		return out, serr
+	}
+	return out + fidelityCheck(sess, p.refs), nil
+}
+
+// fidelityCheck shows the SOURCE alongside the result so the model can answer
+// the one question about a render that looking can actually settle.
+//
+// showToModel already puts the output in front of it, and correctly refuses to
+// let it judge WHO someone is: handed a found photo of a stranger, an agent
+// that does not recognize the face has learned nothing, and treating that as a
+// failure threw away correct results. Identity is not visible.
+//
+// RESEMBLANCE IS. With the source in hand the question stops being "is this
+// the right person", which needs knowledge nobody has, and becomes "did the
+// person survive the render" — two pictures, side by side, answerable from
+// pixels alone. That is the failure an edit model actually has: the reference
+// was passed, the backend used it, and the face still came out somebody else's.
+//
+// Only the FIRST reference, and only when there is a model to look with. The
+// first is the base/subject by the ordering this tool already documents, so it
+// is the one carrying the identity; showing all three would triple the cost of
+// every edit to answer a question about one of them.
+func fidelityCheck(sess *ToolSession, refs []string) string {
+	if sess == nil || sess.LLM == nil || sess.Detached || len(refs) == 0 {
+		return ""
+	}
+	src, ok := ResolveRecentImage(sess, refs[0])
+	if !ok || len(src) == 0 {
+		// A workspace filename or a media id: resolvable elsewhere, not here.
+		// No source to compare against means no check — silence rather than a
+		// question the model cannot answer.
+		return ""
+	}
+	sess.AppendViewImage(src)
+	return fmt.Sprintf(" COMPARE: the source you passed (%s) is included above the result. "+
+		"This is the one identity question looking CAN settle — not who the person is, but whether the person in the result is the SAME ONE as in the source. "+
+		"If a face, animal or product came out visibly different, say so and try once more with the likeness named as the thing to preserve; "+
+		"if it survived, deliver it and do not raise this again.", refs[0])
+}
+
+// hasImageSources reports whether the caller supplied anything to work FROM.
+// This is the whole routing decision, and it is a fact about the arguments
+// rather than a judgement about the request.
+func hasImageSources(args map[string]any) bool {
+	return len(stringsArg(args, "images")) > 0
+}
+
+// routeRender is the single render entry point.
+//
+// There used to be two actions, and choosing between them was the most
+// persistent failure this tool had: "make x sit in y" reads as creation, so
+// generate won the word-match and the photo the person had just sent took no
+// part in the result. Three separate layers of prompt wording were added to
+// argue the model out of that, which is the shape of a fix that is fighting its
+// own API.
+//
+// So the choice is gone. The model asks for a picture; whether it hands over
+// sources is a PARAMETER, and the framework routes on that. A parameter is a
+// much easier thing for a model to get right than an action, because it is
+// filling in what it has rather than predicting which door to walk through.
+//
+// "edit" still arrives — from older prompts, stored tools, habit — and lands
+// here too. It is not an error, it is the same request.
+func routeRender(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
+	if hasImageSources(args) {
+		return editImage(sess, args, avail)
+	}
+	return generateImage(sess, args, avail)
 }
 
 // defaultEditBackend picks the editing backend when the caller names none: the
 // configured default if it can edit, else the first editor. With one editor
 // wired — the common case — the `backend` param isn't even advertised.
-func defaultEditBackend(a imageActions) string {
+// defaultEditBackend picks the editing backend for a call carrying n source
+// pictures.
+//
+// ROUTED BY COUNT, because a compose graph IS its input count: two LoadImage
+// nodes is a different workflow from three, and since a graph must be filled
+// completely (see the partial-fill guard), a two-image backend simply cannot
+// serve a three-image request. Making the model choose meant it had to know
+// which connector had how many inputs — a fact about someone's ComfyUI wiring
+// that no prompt should be teaching it.
+//
+// Exact match first, then the configured default, then the first editor. The
+// last two are how a single-editor deployment keeps working without anyone
+// declaring counts, and how a mismatch still lands somewhere that can produce
+// a specific error rather than a silent nil.
+func defaultEditBackend(a imageActions, n int) string {
+	if n > 0 {
+		// Default wins among equals, so two connectors with the same count
+		// resolve the same way every time rather than by slice order.
+		var match string
+		for _, e := range a.editors {
+			if e.MaxImages != n {
+				continue
+			}
+			if e.Default {
+				return e.Name
+			}
+			if match == "" {
+				match = e.Name
+			}
+		}
+		if match != "" {
+			return match
+		}
+	}
 	for _, e := range a.editors {
 		if e.Default {
 			return e.Name
@@ -1062,6 +1226,64 @@ func defaultEditBackend(a imageActions) string {
 		return a.editors[0].Name
 	}
 	return ""
+}
+
+// pluralPictures renders a count as something a sentence can contain. "1
+// picture(s)" reads as a template nobody finished.
+func pluralPictures(n int) string {
+	if n == 1 {
+		return "1 picture"
+	}
+	return strconv.Itoa(n) + " pictures"
+}
+
+// backendImageCount is how many source pictures one named editor takes, or 0
+// when it is unknown or unconstrained.
+func backendImageCount(a imageActions, name string) int {
+	for _, e := range a.editors {
+		if strings.EqualFold(e.Name, name) {
+			return e.MaxImages
+		}
+	}
+	return 0
+}
+
+// joinCounts renders a count list as a sentence. "1 or 2 or 3" reads as a
+// machine talking.
+func joinCounts(n []int) string {
+	strs := make([]string, 0, len(n))
+	for _, c := range n {
+		strs = append(strs, strconv.Itoa(c))
+	}
+	switch len(strs) {
+	case 0:
+		return ""
+	case 1:
+		return strs[0]
+	case 2:
+		return strs[0] + " or " + strs[1]
+	}
+	return strings.Join(strs[:len(strs)-1], ", ") + " or " + strs[len(strs)-1]
+}
+
+// editorImageCounts lists the source-picture counts this deployment can
+// actually serve, ascending and deduplicated. Used to say "this can combine 2;
+// you passed 3" rather than "wrong number of images".
+func editorImageCounts(a imageActions) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, e := range a.editors {
+		n := e.MaxImages
+		if n <= 0 {
+			n = 1
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 // defaultGenerateBackend picks the backend a generate lands on when the caller
@@ -1700,7 +1922,7 @@ func showToModel(sess *ToolSession, data []byte, caveat string) string {
 // So the filename leads: it means this picture and no other, for as long as the
 // file is there. image#N follows, with what it actually means.
 func editHandleHint(name, ref string) string {
-	return fmt.Sprintf(" To EDIT or blend it rather than send it, pass %q as the image to image(action=\"edit\") — that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
+	return fmt.Sprintf(" To change or blend it rather than send it, pass %q in images on your next image call — that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
 }
 
 // extForMime returns a file extension matching a mime type. Used to

@@ -51,10 +51,17 @@ func keptImageReportID(user, agentID, name string) string {
 func keptImageMemoryBody(k KeptImage) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "A reference image is saved under the name %q and is addressed as %s.\n", k.Name, k.Ref)
-	// The detailed description, not the label: this text is read by an agent
-	// that cannot see the picture and may need to work FROM it — write a
-	// prompt in the same style, brief someone else — and a one-line label
-	// forces it back into a vision call for every such question.
+	// The description is here so the entry can be FOUND — a vector store
+	// matches on text, and "the dog on the sofa" has to hit something. It is
+	// not here to be rendered from.
+	//
+	// That distinction was missing and the description quietly became a
+	// substitute for the picture: recall put a vivid paragraph in context while
+	// the actual reference needed a tool parameter, so the model wrote a prompt
+	// from the prose and generated a NEW picture that merely matched the words.
+	// The earlier wording invited exactly that ("work FROM it — write a prompt
+	// in the same style"), which is the same mistake as treating a caption of a
+	// person as a picture of them.
 	if k.Description != "" {
 		fmt.Fprintf(&b, "It shows: %s\n", k.Description)
 	} else if k.Caption != "" {
@@ -63,9 +70,10 @@ func keptImageMemoryBody(k KeptImage) string {
 	if k.Note != "" {
 		fmt.Fprintf(&b, "Kept because: %s\n", k.Note)
 	}
-	fmt.Fprintf(&b, "To use it, pass %s anywhere an image reference is accepted (for example the images list of an image edit). "+
-		"This name does not expire and does not shift the way recent-image numbers do. "+
-		"The picture itself is still stored, so if this description leaves out a detail you need, look at %s directly rather than guessing.", k.Ref, k.Ref)
+	fmt.Fprintf(&b, "To USE it, pass %s in the images list of an image call. That description is how you find this entry, NOT how you reproduce the picture: "+
+		"writing a prompt from those words renders something that merely matches the description, which for a person is a different face and for a logo is a different logo. "+
+		"The picture itself is still stored and passing %s costs nothing, so pass it rather than describing it. "+
+		"This name does not expire and does not shift the way recent-image numbers do.", k.Ref, k.Ref)
 	return b.String()
 }
 

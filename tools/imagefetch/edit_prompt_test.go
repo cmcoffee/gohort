@@ -18,13 +18,17 @@ func TestPromptIsOfferedForEditNotJustGenerate(t *testing.T) {
 		set  imageActions
 		want []string // substrings the prompt description must carry
 	}{
-		{"edit only", imageActions{fetch: true, edit: true,
-			editors: []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"(edit)", "combine"}},
-		{"generate only", imageActions{fetch: true, generate: true,
-			backends: []ImageBackendChoice{{Name: "gen"}}}, []string{"(generate)"}},
+		// The action labels are gone with the merge — there is one action now,
+		// and what it does depends on whether images are passed. The test's
+		// point survives intact and gets sharper: the prompt must describe BOTH
+		// situations, or a blend runs with no instructions again.
+		{"images accepted", imageActions{fetch: true, edit: true,
+			editors: []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"With images", "combine"}},
+		{"text only", imageActions{fetch: true, generate: true,
+			backends: []ImageBackendChoice{{Name: "gen"}}}, []string{"With no images"}},
 		{"both", imageActions{fetch: true, generate: true, edit: true,
 			backends: []ImageBackendChoice{{Name: "gen"}},
-			editors:  []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"(generate)", "(edit)", "combine"}},
+			editors:  []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"With no images", "With images", "combine"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
