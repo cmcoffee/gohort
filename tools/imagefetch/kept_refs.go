@@ -69,7 +69,25 @@ func keptRefsFor(sess *ToolSession) []keptRef {
 // keptLabel prefers the agent's own words for WHY it kept the picture, since
 // that is what a later request is most likely to echo. The caption — written by
 // a vision pass, describing what is in frame — backs it up.
+//
+// A SUBJECT BEATS BOTH. "Rory" is the token a request naming Rory contains; the
+// note ("sent me a selfie") and the caption ("man with a beard outdoors") are
+// what the agent thought at the time, and neither matches on the word that
+// actually arrives. This list exists to be matched against, so it leads with
+// the thing most likely to be matched.
 func keptLabel(k KeptImage) string {
+	if subject := SubjectLabel(k.Subject); subject != "" {
+		if k.Subject.Person {
+			return truncateLabel(collapseSpace(subject), maxKeptLabelChars)
+		}
+		// A thing keeps its description alongside the subject: "the office" is
+		// less self-explanatory than a person's name and the caption earns its
+		// place next to it.
+		if extra := collapseSpace(strings.TrimSpace(k.Caption)); extra != "" {
+			return truncateLabel(subject+" — "+extra, maxKeptLabelChars)
+		}
+		return truncateLabel(collapseSpace(subject), maxKeptLabelChars)
+	}
 	label := strings.TrimSpace(k.Note)
 	if label == "" {
 		label = strings.TrimSpace(k.Caption)

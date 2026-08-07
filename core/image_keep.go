@@ -45,9 +45,9 @@ const maxKeptImageBytes = 8 << 20 // 8 MiB
 
 // KeptImage is one durable entry.
 type KeptImage struct {
-	Name    string    // "brand_mark" — stable, chosen by the agent
-	Ref     string    // "image#brand_mark" — what to pass to any images= param
-	Note    string    // why it was kept, in the agent's words
+	Name    string // "brand_mark" — stable, chosen by the agent
+	Ref     string // "image#brand_mark" — what to pass to any images= param
+	Note    string // why it was kept, in the agent's words
 	Caption string // one line, for listings — enough to tell saved images apart
 	// Description is the detailed one, and it is what memory stores — so that a
 	// question months later can FIND this picture in a text-only vector space.
@@ -63,15 +63,19 @@ type KeptImage struct {
 	// time. It decides whether this entry may be offered as a REFERENCE — the
 	// agent's own output is not evidence of what anything really looks like —
 	// and it is not derivable later, since Note below is the agent's own words.
-	Origin  ImageOrigin
-	When    time.Time // when it was kept
+	Origin ImageOrigin
+	When   time.Time // when it was kept
 	// Owner is the agent whose library holds it, and Inherited marks the ones
 	// that came from an ancestor rather than this agent. The distinction is
 	// not cosmetic: an inherited image can be USED but not forgotten here, and
 	// telling the model otherwise would have it "delete" things that stay.
 	Owner     string
 	Inherited bool
-	path      string // absolute file path
+	// Subject is who or what the picture is OF, when the agent said. A person
+	// subject is what makes "use the picture of Rory" resolvable instead of a
+	// guess across filenames. See image_subject.go.
+	Subject ImageSubject
+	path    string // absolute file path
 }
 
 // KeptImageRemember and KeptImageForgetMemory bridge the library into whatever
@@ -130,15 +134,19 @@ func keptImageChain(sess *ToolSession) []string {
 // keptImageMeta is the on-disk sidecar, same shape of decision as the ring's:
 // next to the file, so the library survives a restart with no database.
 type keptImageMeta struct {
-	Note    string    `json:"note"`
+	Note        string    `json:"note"`
 	Caption     string    `json:"caption"`
 	Description string    `json:"description,omitempty"`
-	Mime    string    `json:"mime"`
-	When    time.Time `json:"when"`
+	Mime        string    `json:"mime"`
+	When        time.Time `json:"when"`
 	// Origin is omitempty: an entry kept before origins existed reads back
 	// unknown, and unknown is treated as reference-eligible rather than
 	// silently dropped from a library somebody deliberately built.
 	Origin ImageOrigin `json:"origin,omitempty"`
+	// Subject is who or what it depicts. omitempty so a library built before
+	// subjects existed reads back unsubjected rather than as a picture of
+	// nobody, which the people section would then have to filter out.
+	Subject ImageSubject `json:"subject,omitempty"`
 }
 
 // keptImageDir is where an agent's library lives — a sibling of the ring, so
@@ -202,6 +210,19 @@ func safeKeptName(name string) string {
 // name. ref is anything ResolveRecentImage accepts, so an agent keeps what it
 // just made without needing a filename.
 func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
+	return KeepImageOf(sess, ref, name, note, ImageSubject{})
+}
+
+// KeepImageOf is KeepImage with a subject attached — who or what the picture is
+// of. See image_subject.go for why the subject exists and why its identity is
+// the handle rather than the name.
+//
+// ONE CURRENT PICTURE PER SUBJECT. Keeping a new one for a subject already held
+// forgets the old entry, even under a different name. The alternative — letting
+// three pictures of the same person accumulate — recreates the exact problem
+// the subject was added to solve, one level down: asked for "the picture of
+// Rory" the agent would again be choosing between filenames it wrote itself.
+func KeepImageOf(sess *ToolSession, ref, name, note string, subject ImageSubject) (KeptImage, error) {
 	dir := keptImageDir(sess)
 	if dir == "" {
 		return KeptImage{}, fmt.Errorf("no image library available for this session")
@@ -219,10 +240,18 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 	}
 	existing := keptImagesOf(sess, keptImageOwnAgent(sess))
 	held := false
+	var superseded []string
 	for _, k := range existing {
 		if k.Name == clean {
 			held = true // a re-keep under the same name REPLACES; it doesn't count again
-			break
+			continue
+		}
+		// A different name holding the same subject is the OLD picture of that
+		// person. Collected now, deleted only once the new one is safely
+		// written — losing the only headshot to a failed write would be the
+		// worst possible outcome of an operation whose point is to have one.
+		if subject.Named() && SameSubject(k.Subject, subject) {
+			superseded = append(superseded, k.Name)
 		}
 	}
 	if !held && len(existing) >= keptImageLimit {
@@ -247,6 +276,7 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		caption, description = CaptionImage(sess, data)
 	}
 	kept := KeptImage{
+		Subject:     subject,
 		Origin:      origin,
 		Name:        clean,
 		Ref:         RecentImageRefPrefix + clean,
@@ -256,7 +286,7 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 		When:        time.Now(),
 		path:        base + ".png",
 	}
-	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Description: kept.Description, Mime: "image/png", When: kept.When, Origin: kept.Origin})
+	meta, _ := json.Marshal(keptImageMeta{Note: kept.Note, Caption: kept.Caption, Description: kept.Description, Mime: "image/png", When: kept.When, Origin: kept.Origin, Subject: kept.Subject})
 	if err := os.WriteFile(base+".json", meta, 0600); err != nil {
 		Debug("[image_keep] write meta: %v", err)
 	}
@@ -265,6 +295,16 @@ func KeepImage(sess *ToolSession, ref, name, note string) (KeptImage, error) {
 	// what gets stored and recalled is a sentence, never the picture.
 	if KeptImageRemember != nil {
 		KeptImageRemember(sess, kept)
+	}
+	// Now that the replacement exists, retire what it replaced. Best-effort:
+	// a stale second picture of the same person is untidy, but failing the keep
+	// over it would throw away the new one for no gain.
+	for _, old := range superseded {
+		if _, err := ForgetImage(sess, old); err != nil {
+			Debug("[image_keep] superseding %q: %v", old, err)
+			continue
+		}
+		Log("[image_keep] %q replaces %q as the picture of %s", clean, old, SubjectLabel(subject))
 	}
 	return kept, nil
 }
@@ -408,6 +448,7 @@ func keptImagesOf(sess *ToolSession, agentID string) []KeptImage {
 			_ = json.Unmarshal(raw, &meta)
 		}
 		k.Note, k.Caption, k.Description, k.When, k.Origin = meta.Note, meta.Caption, meta.Description, meta.When, meta.Origin
+		k.Subject = meta.Subject
 		out = append(out, k)
 	}
 	return out
@@ -447,37 +488,106 @@ func KeptImageManifest(sess *ToolSession) string {
 	if len(all) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("Images you have kept (stable — these names don't shift):\n")
-	inherited := false
+	// People first, and under their own heading. A picture of a person answers
+	// a different question from a logo — "what does this person look like",
+	// which is the question a request naming somebody actually asks — and
+	// mixing the two into one alphabetical list is what left the agent
+	// choosing a reference by filename.
+	var people, things []KeptImage
 	for _, k := range all {
-		desc := k.Note
-		switch {
-		case desc != "" && k.Caption != "":
-			desc += " — " + k.Caption
-		case desc == "":
-			desc = k.Caption
-		}
-		if desc == "" {
-			desc = "kept image"
-		}
-		// Mark provenance: the model can USE an inherited image but cannot
-		// forget it, and finding that out from a refusal is worse than reading
-		// it here.
-		if k.Origin.AgentMade() {
-			desc = "MADE BY YOU (" + string(k.Origin) + ") — not a reference for anything real: " + desc
-		}
-		if k.Inherited {
-			inherited = true
-			fmt.Fprintf(&b, "- %s (inherited) — %s\n", k.Ref, desc)
+		if k.Subject.Person && k.Subject.Named() {
+			people = append(people, k)
 			continue
 		}
-		fmt.Fprintf(&b, "- %s — %s\n", k.Ref, desc)
+		things = append(things, k)
+	}
+	var b strings.Builder
+	inherited := false
+	if len(people) > 0 {
+		b.WriteString("People you have a picture of — when a request names one of them, pass their id as a reference so you are working from their actual face, not a description of it:\n")
+		for _, k := range people {
+			if k.Inherited {
+				inherited = true
+			}
+			fmt.Fprintf(&b, "- %s — %s\n", k.Ref, personLine(k))
+		}
+		b.WriteString("If a request names somebody who is NOT listed here, you do not know what they look like. Say so, or find a picture. Never render a face from a description and present it as them.\n")
+		if len(things) > 0 {
+			b.WriteString("\n")
+		}
+	}
+	if len(things) > 0 {
+		b.WriteString("Other images you have kept (stable — these names don't shift):\n")
+		for _, k := range things {
+			if k.Inherited {
+				inherited = true
+			}
+			fmt.Fprintf(&b, "- %s — %s\n", k.Ref, keptLine(k))
+		}
 	}
 	if inherited {
-		b.WriteString("Inherited ones come from the agent that owns you: usable exactly like your own, but only their owner can forget them.\n")
+		b.WriteString("Ones marked (inherited) come from the agent that owns you: usable exactly like your own, but only their owner can forget them.\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// personLine renders one person's entry: who it is, whether they are here, and
+// what they look like.
+func personLine(k KeptImage) string {
+	var parts []string
+	label := SubjectLabel(k.Subject)
+	switch {
+	case k.Subject.Owner:
+		parts = append(parts, label+" (the person you work for)")
+	case strings.TrimSpace(k.Subject.Handle) != "":
+		// The handle is shown because it is the identity — it is how the agent
+		// can tell this entry belongs to the person currently talking, rather
+		// than to somebody else who goes by the same name.
+		parts = append(parts, label+" ("+strings.TrimSpace(k.Subject.Handle)+")")
+	default:
+		// Said plainly: an entry with no handle was never matched to anyone who
+		// messaged in, so it is a label the agent wrote, not an identification.
+		parts = append(parts, label+" (name only — never matched to a handle)")
+	}
+	if k.Inherited {
+		parts = append(parts, "inherited")
+	}
+	if d := describeKept(k); d != "" {
+		parts = append(parts, d)
+	}
+	return strings.Join(parts, " — ")
+}
+
+// keptLine renders a non-person entry the way it always read.
+func keptLine(k KeptImage) string {
+	out := describeKept(k)
+	if out == "" {
+		out = "kept image"
+	}
+	if k.Inherited {
+		return "(inherited) " + out
+	}
+	return out
+}
+
+// describeKept joins the agent's own reason for keeping a picture with what the
+// picture looks like. Either may be missing; both missing is possible and the
+// callers each have their own word for it.
+func describeKept(k KeptImage) string {
+	desc := k.Note
+	switch {
+	case desc != "" && k.Caption != "":
+		desc += " — " + k.Caption
+	case desc == "":
+		desc = k.Caption
+	}
+	// Provenance still overrides everything: the agent's own output is not
+	// evidence of what anyone really looks like, and that matters MORE for a
+	// person than for a logo, not less.
+	if k.Origin.AgentMade() {
+		return "MADE BY YOU (" + string(k.Origin) + ") — not a reference for anything real: " + desc
+	}
+	return desc
 }
 
 // captionImagePrompt asks for BOTH tiers in one pass, because they answer

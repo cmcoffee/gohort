@@ -1320,6 +1320,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(agentOwner, h) {
 			subTurn.requesterOwnerHandle = true
 		}
+		// The same three facts on the SESSION, for tools rather than guardrails.
+		// The kept-image library needs them to anchor "a picture of Rory" to the
+		// person who actually sent it, and it must anchor on the handle for the
+		// reason spelled out right above: a display name is the sender's to
+		// choose, so keying a face library on one lets anybody take over
+		// anybody's entry by renaming themselves.
+		subSess.SpeakerName = run.MessageSender
+		subSess.SpeakerHandle = h
+		subSess.SpeakerIsOwner = subTurn.requesterOwnerHandle
 	}
 	tools = append(tools, extraTools...)
 	// Caller-injected per-instance tools (e.g. an app's appliance-bound closures

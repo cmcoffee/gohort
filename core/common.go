@@ -1405,6 +1405,22 @@ type ToolSession struct {
 	// a chat id and a bare handle differently. Empty on web and dispatch runs.
 	ChannelChatID string
 	ChannelHandle string
+	// SpeakerName and SpeakerHandle are WHO this turn is answering — the
+	// display name they chose, and the transport's own attribution of them.
+	// Kept apart on purpose, and never collapsed: the name is what the agent
+	// calls them in prose, the handle is the only one of the two that means
+	// anything about identity. Anything deciding who somebody IS reads the
+	// handle; anything writing a sentence reads the name.
+	//
+	// SpeakerIsOwner is the framework's answer, derived from the handle by the
+	// layer that holds the owner's, so a tool never has to compare handles
+	// itself and cannot be talked into a wrong answer by a chosen name.
+	//
+	// All three are empty on web and dispatch runs, where the person on the
+	// other end is the account holder and there is nobody to tell apart.
+	SpeakerName    string
+	SpeakerHandle  string
+	SpeakerIsOwner bool
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
 	// an in-progress status message to the user mid-turn ("Working on it…").
 	// Each app wires it differently: chat emits an SSE status event, phantom

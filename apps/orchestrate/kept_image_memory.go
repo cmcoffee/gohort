@@ -51,6 +51,17 @@ func keptImageReportID(user, agentID, name string) string {
 func keptImageMemoryBody(k KeptImage) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "A reference image is saved under the name %q and is addressed as %s.\n", k.Name, k.Ref)
+	// The subject goes in FIRST and in plain words, because it is what a later
+	// question will be phrased around. A vector store asked "what does Rory look
+	// like" has to hit something, and "a reference image named rory_2" is not a
+	// sentence that contains the question.
+	if subject := SubjectLabel(k.Subject); subject != "" {
+		if k.Subject.Person {
+			fmt.Fprintf(&b, "It is a picture of %s — this is what %s looks like, and it is the picture to use when a request names them.\n", subject, subject)
+		} else {
+			fmt.Fprintf(&b, "It is a picture of %s.\n", subject)
+		}
+	}
 	// The description is here so the entry can be FOUND — a vector store
 	// matches on text, and "the dog on the sofa" has to hit something. It is
 	// not here to be rendered from.

@@ -400,11 +400,13 @@ func imageSchemaFor(a imageActions) imageSchema {
 	params["name"] = ToolParam{Type: "string", Description: "(keep/forget) Short stable name for a reference image you want to still have later — \"brand_mark\", \"house_style\". Letters, digits, - and _; not a bare number. Reuse the same name to replace what it points at."}
 	params["ref"] = ToolParam{Type: "string", Description: "(keep) Which picture to keep, as an image id. Defaults to image#1, the most recent one — so keeping what you just made needs only a name."}
 	params["note"] = ToolParam{Type: "string", Description: "(keep) Optional: why you are keeping it, in one line. Stored with the image and recalled with it later, so write what a future you would need to decide whether this is the right picture."}
+	params["of"] = ToolParam{Type: "string", Description: "(keep) Who or what the picture is OF — \"Rory\", \"my dog Bess\", \"the office\". Set this whenever the picture shows a specific subject: it is what lets a later request that NAMES that subject find this picture instead of guessing between filenames. For a person, use the name they go by in this conversation, spelled the way you have seen it."}
+	params["is_person"] = ToolParam{Type: "boolean", Description: "(keep) True when \"of\" is a person. A picture of a person is what you must work from when asked to depict them, so these are listed separately and are the only ones offered as a likeness."}
 	// Gloss it. A bare "help." reads as boilerplate every schema carries, and
 	// what this one actually does — name the pictures that are still reachable —
 	// is the answer to the question a stalled edit is asking.
 	desc += "help (list the pictures you can still reference, by id, with what each one is), "
-	desc += "keep (save a picture under a NAME so it survives — recent ids shift as new pictures arrive and eventually drop, a kept one answers to image#<name> indefinitely; use it for a reference you expect to want again: a logo, a style sample, a chart to match), "
+	desc += "keep (save a picture under a NAME so it survives — recent ids shift as new pictures arrive and eventually drop, a kept one answers to image#<name> indefinitely; use it for a reference you expect to want again: a person's face, a logo, a style sample, a chart to match. Say who or what it shows with \"of\", and is_person=true for a person, so a later request that names them finds it), "
 	desc += "forget (drop a kept image by name). "
 	desc += "Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=...) to ship the file."
 	// Omitting an action hides that the capability EXISTS, and that cuts both
@@ -429,8 +431,10 @@ func imageSchemaFor(a imageActions) imageSchema {
 		}
 		desc += ". If the request concerns them, PASS THOSE IDS IN images — that is what makes the result their picture changed rather than a new one that ignores it." +
 			" If one shows a subject you could be asked for again — a person, a pet, a product, a place — keep it NOW" +
-			" (action=\"keep\", ref=\"media#1\", name=\"…\"): a media id lasts only this turn and ring ids age out as new pictures arrive," +
-			" whereas a kept name works indefinitely. Asking the user to re-send a photo they already sent is the failure this avoids."
+			" (action=\"keep\", ref=\"media#1\", name=\"…\", of=\"who or what it shows\", and is_person=true for a person):" +
+			" a media id lasts only this turn and ring ids age out as new pictures arrive, whereas a kept name works indefinitely." +
+			" Set \"of\" — a kept picture with no subject is one you will later have to identify by guessing at its filename," +
+			" and a face you cannot identify is one you will invent instead. Asking the user to re-send a photo they already sent is the other failure this avoids."
 	}
 	// The reference library, named before the action is chosen. Without this the
 	// library is reachable only by calling help, which the model has no reason
@@ -607,7 +611,8 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		if ref == "" {
 			ref = RecentImageRefPrefix + "1" // "keep what I just made" is the common case
 		}
-		kept, err := KeepImage(sess, ref, name, StringArg(args, "note"))
+		subject := ResolveKeepSubject(sess, StringArg(args, "of"), BoolArg(args, "is_person"))
+		kept, err := KeepImageOf(sess, ref, name, StringArg(args, "note"), subject)
 		if err != nil {
 			return "", err
 		}
@@ -617,6 +622,22 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		}
 		// Say it is recallable. Otherwise the model has no way to know it can
 		// find this again later without having kept a note of the name itself.
+		if kept.Subject.Named() {
+			if kept.Subject.Person {
+				out += "\nFiled as the picture of " + SubjectLabel(kept.Subject) + "."
+				if strings.TrimSpace(kept.Subject.Handle) != "" {
+					// Say the identification is anchored. The distinction is
+					// the whole point of the field: matched to a handle it is
+					// an identification, unmatched it is a label.
+					out += " Matched to the person you are talking to, so a request naming them resolves to this picture."
+				} else {
+					out += " Matched by name only — nobody with that name has messaged in, so this is a label rather than a confirmed identification."
+				}
+				out += " This is now THE picture of them; keeping another one for the same person replaces it."
+			} else {
+				out += "\nFiled as a picture of " + SubjectLabel(kept.Subject) + "."
+			}
+		}
 		out += "\nA detailed description went to your memory alongside it, so a later question can find this picture — and work from what it looks like — without you remembering the name or looking at it again."
 		// Say what keeping your own output does and does not buy. Silence here
 		// reads as "this is now a reference", which is the belief that had
