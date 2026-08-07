@@ -1698,11 +1698,19 @@ type LiveEntry struct {
 	Label   string `json:"topic"` // "topic" for backwards compat with JS
 	Queued  bool   `json:"queued,omitempty"`
 	Spawned bool   `json:"spawned,omitempty"` // spawned by a parent app
-	Status  string `json:"status,omitempty"`  // last status message
-	App     string `json:"app,omitempty"`     // which app owns this session
-	Path    string `json:"path,omitempty"`    // web path prefix
-	URL     string `json:"url,omitempty"`     // full reconnect URL (if set, used instead of path+id)
-	Order   int    `json:"order,omitempty"`   // display order for the live ribbon (lower = earlier); ties break by App name
+	// Background marks work that started WITHOUT the viewer: a scheduled fire,
+	// an inbound message, a standing agent waking on its own. The live pill
+	// paints it differently, because "your turn is running" needs no
+	// announcement and "something acted while you were reading" does.
+	//
+	// Providers set it; nothing here infers it. An app knows whether it was
+	// asked, and the framework does not.
+	Background bool   `json:"background,omitempty"`
+	Status     string `json:"status,omitempty"` // last status message
+	App        string `json:"app,omitempty"`    // which app owns this session
+	Path       string `json:"path,omitempty"`   // web path prefix
+	URL        string `json:"url,omitempty"`    // full reconnect URL (if set, used instead of path+id)
+	Order      int    `json:"order,omitempty"`  // display order for the live ribbon (lower = earlier); ties break by App name
 	// Href is the resolved destination for "take me back to this work",
 	// filled in by /api/live rather than by providers: it collapses URL
 	// and Path+ID to one link AND applies the viewer's app access, so

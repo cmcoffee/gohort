@@ -194,8 +194,19 @@
             href: liveHref(it),
           });
           row.appendChild(el('span', {class: 'ui-live-app'}, [it.app || '?']));
-          row.appendChild(el('span', {class: 'ui-live-state'}, [it.queued ? 'Queued' : 'Running']));
+          // Background work says so here rather than reading "Running" like
+          // anything else — the state column is the one place a person looks
+          // to find out what kind of thing this is.
+          var state = it.queued ? 'Queued' : (it.background ? 'Background' : 'Running');
+          row.appendChild(el('span', {class: 'ui-live-state' + (it.background && !it.queued ? ' background' : '')}, [state]));
           row.appendChild(el('span', {class: 'ui-live-label'}, [it.topic || it.label || 'Untitled']));
+          // The provider has been sending a status all along ("scheduled ·
+          // round 2 · web_search") and this menu never rendered it, so the one
+          // field that said what the work was DOING was fetched every ten
+          // seconds and dropped. Optional: not every provider sets one.
+          if (it.status) {
+            row.appendChild(el('span', {class: 'ui-live-status'}, [it.status]));
+          }
           liveMenu.appendChild(row);
         });
       }
@@ -210,11 +221,28 @@
             return;
           }
           liveBtn.style.visibility = 'visible';
-          // Class encodes the state so CSS can paint the dot color —
-          // green if anything is running, amber if all are queued.
-          var anyRunning = items.some(function(it){ return !it.queued; });
-          liveBtn.classList.toggle('running', anyRunning);
-          liveBtn.classList.toggle('queued',  !anyRunning);
+          // Class encodes the state so CSS can paint the dot color. Three
+          // states, in the order that decides which one wins:
+          //
+          //   running     green   something YOU started is going
+          //   background  indigo  only work that started on its own
+          //   queued      amber   nothing has started yet
+          //
+          // Foreground wins over background deliberately. If your own turn is
+          // running you are waiting on it, and repainting the pill because a
+          // scheduled job also happens to be going would hide the thing you
+          // are actually watching behind the thing you are not.
+          var running = items.filter(function(it){ return !it.queued; });
+          var anyForeground = running.some(function(it){ return !it.background; });
+          var anyBackground = running.length > 0 && !anyForeground;
+          liveBtn.classList.toggle('running', anyForeground);
+          liveBtn.classList.toggle('background', anyBackground);
+          liveBtn.classList.toggle('queued', running.length === 0);
+          // The tooltip carries what the color cannot: a dot is not readable
+          // to everyone, and "3 running in the background" is.
+          liveBtn.title = anyBackground
+            ? running.length + ' running in the background — nothing you started'
+            : 'Active sessions across all apps';
           if (liveMenu.style.display !== 'none') renderLiveMenu();
         }).catch(function(){});
       }

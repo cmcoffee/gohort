@@ -9,6 +9,8 @@ package monitor
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -67,8 +69,17 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 	// under the turn that called them) with recently-finished runs lingering.
 	// Absolute path: the endpoint lives under the orchestrate app's mux, and it
 	// self-gates (admin), so a non-admin viewer just sees an empty table.
+	// ?run=<id> arrives from the live pill: somebody clicked a background task
+	// to see what it is doing. The page narrows to that run and the sub-agents
+	// it started, rather than sending them to a table of the whole deployment
+	// and leaving them to find the row again.
+	focus := strings.TrimSpace(r.URL.Query().Get("run"))
+	agentSource := "/orchestrate/api/console/activity"
+	if focus != "" {
+		agentSource += "?run=" + url.QueryEscape(focus)
+	}
 	agents := ui.Table{
-		Source:        "/orchestrate/api/console/activity",
+		Source:        agentSource,
 		RowKey:        "_id",
 		AutoRefreshMS: 3000,
 		EmptyText:     "No agent activity right now.",
@@ -98,24 +109,37 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 			{Field: "status", Label: "Status", Flex: 2, Mute: true},
 		},
 	}
+	title, backURL := "Monitor", "/"
+	agentsTitle := "Agents — live & recent"
+	agentsSubtitle := "Every agent turn: chat, scheduled, standing, channel, dispatch, and the OpenAI endpoint. Sub-agents nest (↳) under the turn that called them; recently finished runs linger briefly."
+	sections := []ui.Section{
+		{Title: agentsTitle, Subtitle: agentsSubtitle, Body: agents},
+		{
+			Title:    "Everything running now",
+			Subtitle: "The instantaneous snapshot behind the live pill — apps and pipelines alongside active agents.",
+			Body:     live,
+		},
+	}
+	if focus != "" {
+		// A focused view drops the global feed. Someone who followed a link to
+		// one task is asking about that task; a second table of everything
+		// happening on the deployment is the thing they just navigated away
+		// from, and it would be the larger of the two.
+		title, backURL = "Task", "/monitor"
+		agents.EmptyText = "That task has finished — it is no longer running, and finished runs are kept only briefly."
+		sections = []ui.Section{{
+			Title:    "This task",
+			Subtitle: "The run you followed, and any sub-agents it started. Refreshes every 3 seconds; it disappears shortly after it finishes.",
+			Body:     agents,
+		}}
+	}
 	page := ui.Page{
-		Title:     "Monitor",
+		Title:     title,
 		ShowTitle: true,
-		BackURL:   "/",
+		BackURL:   backURL,
 		MaxWidth:  "1100px",
 		Nav:       HubNav("/monitor"),
-		Sections: []ui.Section{
-			{
-				Title:    "Agents — live & recent",
-				Subtitle: "Every agent turn: chat, scheduled, standing, channel, dispatch, and the OpenAI endpoint. Sub-agents nest (↳) under the turn that called them; recently finished runs linger briefly.",
-				Body:     agents,
-			},
-			{
-				Title:    "Everything running now",
-				Subtitle: "The instantaneous snapshot behind the live pill — apps and pipelines alongside active agents.",
-				Body:     live,
-			},
-		},
+		Sections:  sections,
 	}
 	page.ServeHTTP(w, r)
 }

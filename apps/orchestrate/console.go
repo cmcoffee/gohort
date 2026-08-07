@@ -124,7 +124,12 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 		RegisterLiveProvider(func() []LiveEntry {
 			var out []LiveEntry
 			// ActiveSnapshots is tree-ordered (parent→child) with Depth set.
-			for i, s := range T.runsRegistry().ActiveSnapshots() {
+			snaps := T.runsRegistry().ActiveSnapshots()
+			// Decided once for the whole set, at each run's ROOT — a sub-agent
+			// inside a chat turn is work you are waiting on, not work that
+			// started itself, however deep it nests.
+			background := markBackground(snaps)
+			for i, s := range snaps {
 				name := s.AgentName
 				if name == "" {
 					name = s.AgentID
@@ -151,6 +156,12 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				}
 				out = append(out, LiveEntry{
 					ID: s.ID, Label: runIndentPrefix(s.Depth) + label, App: name, Status: status,
+					Background: background[s.ID],
+					// Where to go to actually WATCH it. A background run has no
+					// session to reopen — a scheduled fire is not a thread you
+					// were in — so the destination is its own row on the
+					// monitor rather than a page that does not exist.
+					URL: "/monitor?run=" + url.QueryEscape(s.ID),
 					Order: 100 + i, // after in-view app tasks (default 0), preserving tree order
 					// The label is truncateObs(the user's message) —
 					// /api/live masks it for every viewer but this owner.
@@ -1892,7 +1903,13 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 	}
 	rows := []consoleActivityRow{}
 	now := time.Now()
-	for _, s := range T.runsRegistry().Activity(user) {
+	// ?run=<id> narrows to one run and everything it started — the destination
+	// the live pill points a background entry at. An id that matches nothing
+	// returns nothing rather than falling back to the whole list, so a stale
+	// link says "that work is over" instead of quietly showing the deployment.
+	snaps := descendantsOf(T.runsRegistry().Activity(user), strings.TrimSpace(r.URL.Query().Get("run")))
+	background := markBackground(snaps)
+	for _, s := range snaps {
 		name := s.AgentName
 		if name == "" {
 			name = s.AgentID
@@ -1913,11 +1930,17 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 				activity += fmt.Sprintf(" (%d rounds)", s.Round)
 			}
 		}
+		surface := s.Kind
+		if background[s.ID] && s.Status == RunStatusRunning {
+			// Said on the row, not just in a color: this table is also read by
+			// people who arrived from a link rather than from the pill.
+			surface += " · background"
+		}
 		rows = append(rows, consoleActivityRow{
 			Agent:    runIndentPrefix(s.Depth) + name,
 			Activity: activity,
 			Brief:    s.Label,
-			Surface:  s.Kind,
+			Surface:  surface,
 			ID:       s.ID,
 			Running:  s.Status == RunStatusRunning,
 		})

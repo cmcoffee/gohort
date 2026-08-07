@@ -169,9 +169,28 @@ select:-webkit-autofill {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-mute);
 }
-/* State color on the dot only — no glow, no pulse (that was the loud part). */
+/* State color on the dot only — no glow, no pulse (that was the loud part).
+ *
+ * Three states, and the third is the point: green says work YOU started is
+ * going, indigo says the only thing going started on its own (a scheduled
+ * fire, an inbound message, a standing agent waking up). They were both green
+ * before, so the surface meant to tell you the machine had acted unprompted
+ * looked exactly like your own turn running.
+ *
+ * Indigo is the house accent, but it is pinned here rather than taken from
+ * var(--accent): the accent is theme-dependent and one shipped theme sets it
+ * to amber, which is what "queued" already means — so on that theme two of the
+ * three states would have been the same color. A signal whose whole job is to
+ * be distinguishable cannot borrow a value that changes underneath it.
+ * --ui-live-background exists so a theme can still override it deliberately.
+ *
+ * Indigo also sits far enough from both green and amber to survive the common
+ * color deficiencies, which green-vs-amber (already shipped) does not. The
+ * state word in the menu and the pill's tooltip carry the same fact in text,
+ * since a dot alone is not readable to everyone. */
 .ui-live-pill.running .ui-live-dot { background: var(--success); }
 .ui-live-pill.queued .ui-live-dot { background: var(--warning); }
+.ui-live-pill.background .ui-live-dot { background: var(--ui-live-background, #6366f1); }
 .ui-live-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
   min-width: 320px; max-width: 480px;
@@ -203,6 +222,19 @@ select:-webkit-autofill {
 }
 .ui-live-item.running .ui-live-state { background: rgba(63, 185, 80, 0.18); color: var(--success); }
 .ui-live-item.queued .ui-live-state  { background: rgba(227, 179, 65, 0.18); color: var(--warning); }
+/* Wins over .running above — a background row IS running, it just did not wait
+   to be asked, and that is the more useful of the two things to say. */
+.ui-live-item .ui-live-state.background {
+  background: rgba(99, 102, 241, 0.18); color: var(--ui-live-background, #6366f1);
+}
+/* What the work is DOING — "scheduled · round 2 · web_search". Right-aligned
+   and muted: it is the detail you read after deciding the row is the one you
+   care about, so it must not compete with the label for the first glance. */
+.ui-live-status {
+  font-size: 0.7rem; color: var(--text-mute);
+  flex-shrink: 0; margin-left: auto; padding-left: 0.5rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%;
+}
 .ui-live-label {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
