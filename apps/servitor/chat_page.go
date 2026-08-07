@@ -171,6 +171,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "servitor_new_appliance"},
 						{Label: "Edit", Title: "Edit the active appliance",
 							Method: "client", URL: "servitor_edit_appliance"},
+						{Label: "Access", Title: "Which agents may use this appliance, and the commands they have asked to run on it",
+							Method: "client", URL: "servitor_appliance_access"},
 						{Label: "Profile", Title: "View the system profile",
 							Method: "client", URL: "servitor_open_profile"},
 						{Label: "Rules", Title: "Edit the assistant's rules for this appliance",

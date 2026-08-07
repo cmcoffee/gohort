@@ -138,6 +138,22 @@
 .ui-servitor-app-tabs {
   display: flex; gap: 0.4rem; margin: 0.5rem 0;
 }
+/* Access modal. The command is the widest thing in a row and never muted:
+   approving without reading it is the failure this surface exists to stop. */
+.ui-servitor-access-row {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.25rem 0;
+}
+.ui-servitor-access-cap {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  margin: 0.5rem 0; padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.ui-servitor-access-cmd {
+  display: block; white-space: pre-wrap; word-break: break-all;
+  font-size: 0.85em; padding: 0.35rem 0.5rem;
+  background: var(--bg-subtle); border-radius: 4px;
+}
 .ui-servitor-app-section {
   display: flex; flex-direction: column; gap: 0.3rem;
   margin: 0.5rem 0;
@@ -975,6 +991,143 @@
         m.footer(delBtn, cancelBtn, saveBtn);
       }
     }
+
+    // Access — who may use THIS appliance, and what they have asked to run on
+    // it. Both halves live here because they are the same decision at two
+    // moments: connecting an agent lets it ASK, approving a capability lets it
+    // RUN that one command. Neither implies the other.
+    function openAccessModal(applianceID, applianceName) {
+      var body = el('div', {});
+      var agentsBox = el('div', {}, ['Loading agents…']);
+      var capsBox = el('div', {}, ['Loading requests…']);
+
+      body.appendChild(el('div', {class: 'ui-form-label'}, ['Agents that may use ' + applianceName]));
+      body.appendChild(el('div', {class: 'ui-form-help'},
+        ['Adding an agent lets it ASK for commands on this system. It grants no commands by itself — each one it proposes appears below for your approval.']));
+      body.appendChild(agentsBox);
+      body.appendChild(el('div', {class: 'ui-form-label', style: 'margin-top:16px'}, ['Requested commands']));
+      body.appendChild(el('div', {class: 'ui-form-help'},
+        ['Read the command before approving. An approved command runs whenever the agent decides to use it, without asking again.']));
+      body.appendChild(capsBox);
+
+      var m = openModal('Access — ' + applianceName, body);
+      m.footer(el('button', {class: 'ui-row-btn', onclick: function(){ m.close(); }}, ['Done']));
+
+      // Only agents that HAVE access are listed, with a + to add one.
+      //
+      // A checkbox per agent was the first shape and it scales backwards: a
+      // fleet of a dozen renders eleven unticked boxes to say one thing, and
+      // the answer to "who can use this box" has to be read by scanning for
+      // ticks. Listing what is granted says it directly, and the list stays
+      // short because access is meant to be.
+      function renderAgents() {
+        Promise.all([
+          fetch('api/access-agents').then(function(r){ return r.json(); }),
+          fetch('api/command-grants').then(function(r){ return r.json(); })
+        ]).then(function(res) {
+          var agents = res[0] || [], grants = res[1] || [];
+          // One grant, one machine. There is no wildcard to reconcile — a
+          // pairing nobody looked at is not one anybody approved.
+          var here = {};
+          grants.forEach(function(g) {
+            if (g.appliance_id === applianceID) here[g.agent_id] = true;
+          });
+          agentsBox.innerHTML = '';
+          if (!agents.length) {
+            agentsBox.appendChild(el('div', {class: 'ui-form-help'}, ['You have no agents yet.']));
+            return;
+          }
+          var connected = agents.filter(function(a){ return here[a.value]; });
+          var available = agents.filter(function(a){ return !here[a.value]; });
+
+          if (!connected.length) {
+            agentsBox.appendChild(el('div', {class: 'ui-form-help'}, ['No agent has access to this system yet.']));
+          }
+          connected.forEach(function(a) {
+            var kids = [el('span', {}, [a.label]),
+              el('button', {class: 'ui-row-btn danger', style: 'margin-left:auto',
+                onclick: async function() {
+                  if (!(await window.uiConfirm('Remove ' + a.label + "'s access to this system? " +
+                    'Commands already approved for it here stop working.'))) return;
+                  fetch('api/command-grants?agent_id=' + encodeURIComponent(a.value) +
+                    '&appliance_id=' + encodeURIComponent(applianceID), {method: 'DELETE'})
+                    .then(function(){ renderAgents(); renderCaps(); });
+                }}, ['Remove'])];
+            agentsBox.appendChild(el('div', {class: 'ui-servitor-access-row'}, kids));
+          });
+
+          if (!available.length) {
+            if (connected.length) {
+              agentsBox.appendChild(el('div', {class: 'ui-form-help'}, ['Every agent already has access.']));
+            }
+            return;
+          }
+          var addBtn = el('button', {class: 'ui-row-btn'}, ['+ Add agent']);
+          addBtn.onclick = function() {
+            var sel = el('select', {class: 'ui-form-input'},
+              available.map(function(a){ return el('option', {value: a.value}, [a.label]); }));
+            var ok = el('button', {class: 'ui-wb-action-btn', onclick: function() {
+              fetch('api/command-grants', {method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({agent_id: sel.value, appliance_id: applianceID})})
+                .then(function(){ renderAgents(); renderCaps(); })
+                .catch(function(err){ window.uiAlert('Could not add: ' + (err && err.message || err)); });
+            }}, ['Add']);
+            var cancel = el('button', {class: 'ui-row-btn', onclick: function(){ renderAgents(); }}, ['Cancel']);
+            picker.innerHTML = '';
+            picker.appendChild(el('div', {class: 'ui-servitor-access-row'}, [sel, ok, cancel]));
+          };
+          var picker = el('div', {});
+          agentsBox.appendChild(addBtn);
+          agentsBox.appendChild(picker);
+        });
+      }
+
+      function renderCaps() {
+        fetch('api/appliance-tools').then(function(r){ return r.json(); }).then(function(rows) {
+          var mine = (rows || []).filter(function(t){ return t.appliance_id === applianceID; });
+          capsBox.innerHTML = '';
+          if (!mine.length) {
+            capsBox.appendChild(el('div', {class: 'ui-form-help'},
+              ['Nothing requested yet. A connected agent asks when it needs to do something here and has no command for it.']));
+            return;
+          }
+          mine.forEach(function(t) {
+            var head = el('div', {}, [el('strong', {}, [t.name]),
+              el('span', {class: 'ui-form-help'}, [' — ' + (t.approved ? 'approved' : 'pending') + (t.risk ? ' · ' + t.risk : '')])]);
+            // The command itself, never behind a disclosure: approving without
+            // reading it is the failure this whole surface exists to prevent.
+            var cmd = el('code', {class: 'ui-servitor-access-cmd'}, [t.command]);
+            var act = el('button', {class: t.approved ? 'ui-row-btn' : 'ui-wb-action-btn',
+              onclick: async function() {
+                if (!t.approved && !(await window.uiConfirm(
+                  'Approve "' + t.name + '"?\n\nIt runs:\n' + t.command +
+                  '\n\nThe agent will be able to run this whenever it decides to, without asking again.'))) return;
+                fetch('api/appliance-tool?appliance=' + encodeURIComponent(t.appliance_id) +
+                  '&name=' + encodeURIComponent(t.name) + '&approved=' + (t.approved ? '0' : '1'),
+                  {method: 'POST'}).then(renderCaps);
+              }}, [t.approved ? 'Revoke' : 'Approve']);
+            var del = el('button', {class: 'ui-row-btn danger', onclick: async function() {
+              if (!(await window.uiConfirm('Delete "' + t.name + '"? The agent would have to ask for it again.'))) return;
+              fetch('api/appliance-tool?appliance=' + encodeURIComponent(t.appliance_id) +
+                '&name=' + encodeURIComponent(t.name), {method: 'DELETE'}).then(renderCaps);
+            }}, ['Delete']);
+            capsBox.appendChild(el('div', {class: 'ui-servitor-access-cap'}, [head, cmd, el('div', {}, [act, del])]));
+          });
+        });
+      }
+
+      renderAgents();
+      renderCaps();
+    }
+
+    window.uiRegisterClientAction('servitor_appliance_access', function() {
+      var aid = getApplianceID();
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      var sel = document.querySelector('[name="appliance_id"]');
+      var name = (sel && sel.options && sel.selectedIndex >= 0) ? sel.options[sel.selectedIndex].text : aid;
+      openAccessModal(aid, name);
+    });
 
     window.uiRegisterClientAction('servitor_new_appliance', function() {
       openApplianceModal(null);
