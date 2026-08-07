@@ -78,7 +78,15 @@ func keptRefsFor(sess *ToolSession) []keptRef {
 func keptLabel(k KeptImage) string {
 	if subject := SubjectLabel(k.Subject); subject != "" {
 		if k.Subject.Person {
-			return truncateLabel(collapseSpace(subject), maxKeptLabelChars)
+			label := subject
+			if k.Origin == ImageOriginUnknown {
+				// Marked in the matching list too, not only in the manifest.
+				// This list is read at action-choosing time and the manifest
+				// often is not, so an entry that reads as a confirmed likeness
+				// here is one the model will present as a photograph later.
+				label += " (unverified)"
+			}
+			return truncateLabel(collapseSpace(label), maxKeptLabelChars)
 		}
 		// A thing keeps its description alongside the subject: "the office" is
 		// less self-explanatory than a person's name and the caption earns its

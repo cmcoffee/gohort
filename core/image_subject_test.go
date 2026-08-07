@@ -212,3 +212,41 @@ func TestPeopleManifestSaysToKeepThemOutOfThePrompt(t *testing.T) {
 		t.Errorf("it must say WHY, or it reads as an arbitrary rule:\n%s", m)
 	}
 }
+
+// Unknown is not "given". Entries kept before provenance was recorded read back
+// unknown, and unknown used to print under the heading that says these are
+// real — so a library built up over months presented every legacy render as a
+// photograph. Asked for three reference photos, an agent delivered three of its
+// own pictures and said they were real, because the manifest told it they were.
+func TestUnrecordedOriginIsNotPresentedAsReal(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	ref := RecordRecentImage(sess, testPNG(t, 8, 8), "from somewhere", ImageOriginUnknown)
+	if _, err := KeepImageOf(sess, ref, "rory", "Real photo of Rory", ImageSubject{Person: true, Name: "Rory"}); err != nil {
+		t.Fatal(err)
+	}
+	m := KeptImageManifest(sess)
+	if !strings.Contains(m, "ORIGIN NOT RECORDED") {
+		t.Errorf("an unrecorded origin must say so:\n%s", m)
+	}
+	if !strings.Contains(m, "NO RECORDED ORIGIN") {
+		t.Errorf("the people section needs the caveat too:\n%s", m)
+	}
+	// The agent's own note claiming it is real must not settle the question —
+	// that is prose it wrote, not a record of where the pixels came from.
+	if !strings.Contains(m, "Do not call it a photo") {
+		t.Errorf("a confident note must not override missing provenance:\n%s", m)
+	}
+}
+
+// A recorded origin still reads cleanly — the caveat must not attach itself to
+// entries that actually know where they came from.
+func TestARecordedOriginCarriesNoCaveat(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	if _, err := RecordKeep(t, sess, "rory", ResolveKeepSubject(sess, "Rory", true)); err != nil {
+		t.Fatal(err)
+	}
+	m := KeptImageManifest(sess)
+	if strings.Contains(m, "ORIGIN NOT RECORDED") || strings.Contains(m, "NO RECORDED ORIGIN") {
+		t.Errorf("a known-origin entry must not be caveated:\n%s", m)
+	}
+}

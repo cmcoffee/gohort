@@ -494,7 +494,11 @@ func KeptImageManifest(sess *ToolSession) string {
 	// mixing the two into one alphabetical list is what left the agent
 	// choosing a reference by filename.
 	var people, things []KeptImage
+	var unknownOrigin bool
 	for _, k := range all {
+		if k.Origin == ImageOriginUnknown {
+			unknownOrigin = true
+		}
 		if k.Subject.Person && k.Subject.Named() {
 			people = append(people, k)
 			continue
@@ -513,6 +517,9 @@ func KeptImageManifest(sess *ToolSession) string {
 		}
 		b.WriteString("If a request names somebody who is NOT listed here, you do not know what they look like. Say so, or find a picture. Never render a face from a description and present it as them.\n")
 		b.WriteString("Pass the id and leave them OUT of the prompt: their name and what they look like are carried by the picture, and repeating either in words makes the renderer draw the words instead. Write only what should change around them.\n")
+		if unknownOrigin {
+			b.WriteString("One or more of these has NO RECORDED ORIGIN. Treat it as unverified: usable, but do not describe it to anyone as a real photograph, and if the request turns on it actually being them, look at it first or ask. Re-keep it from a real picture to settle it for good.\n")
+		}
 		if len(things) > 0 {
 			b.WriteString("\n")
 		}
@@ -593,6 +600,21 @@ func describeKept(k KeptImage) string {
 	// person than for a logo, not less.
 	if k.Origin.AgentMade() {
 		return "MADE BY YOU (" + string(k.Origin) + ") — not a reference for anything real: " + desc
+	}
+	if k.Origin == ImageOriginUnknown {
+		// NOT the same as "given", and it used to be printed as if it were.
+		//
+		// Entries kept before provenance was recorded read back unknown, and
+		// unknown was filed under the heading that says these are real. On a
+		// library built up over months that is not a rare stale row — it is
+		// every legacy entry, and a good number of them are renders the agent
+		// kept under confident names. Asked for three reference photos it
+		// delivered three of its own pictures and said they were real, because
+		// this line told it they were.
+		//
+		// The note cannot rescue it either: "Real photo of Craig" is prose the
+		// agent wrote, not a record of where the pixels came from.
+		return "ORIGIN NOT RECORDED — kept before this was tracked, so it may be something you made. Do not call it a photo or offer it as proof of what anyone looks like until you have looked at it: " + desc
 	}
 	return desc
 }
