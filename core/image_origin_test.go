@@ -236,3 +236,53 @@ func TestKeepAcceptsAMediaRef(t *testing.T) {
 		t.Error("the kept photo should resolve under its lasting name")
 	}
 }
+
+// The ring manifest is where a photo somebody sent lives before anyone keeps
+// it, and it used to list everything flat — so a render and a real photograph
+// differed only by the prose in their notes. Asked for a reference, the model
+// took whatever was newest, which after two attempts is always something it
+// made itself.
+func TestRingManifestSeparatesGivenFromMade(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "received from craig", ImageFromUser) == "" {
+		t.Fatal("record failed")
+	}
+	if RecordRecentImage(sess, testPNG(t, 9, 9), "generated: a dog", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	m := RecentImageManifest(sess)
+
+	given := strings.Index(m, "GIVEN or found")
+	made := strings.Index(m, "YOU MADE")
+	if given < 0 || made < 0 {
+		t.Fatalf("the manifest should separate provenance, got:\n%s", m)
+	}
+	// Given first: those are what a request for a reference means, and the
+	// newest-first flat list put the latest render at the top instead.
+	if given > made {
+		t.Errorf("pictures you were given should lead, got:\n%s", m)
+	}
+	if !strings.Contains(m, "not evidence of what anything really looks like") {
+		t.Errorf("the agent's own output should be marked, got:\n%s", m)
+	}
+	// And the instruction must point at the parameter, not the removed action.
+	if strings.Contains(m, `action="edit"`) {
+		t.Errorf("the manifest should not name a removed action, got:\n%s", m)
+	}
+}
+
+// A ring holding only renders must not print an empty "given" heading, and vice
+// versa — a heading over nothing reads as missing data.
+func TestRingManifestOmitsEmptyGroups(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a dog", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	m := RecentImageManifest(sess)
+	if strings.Contains(m, "GIVEN or found") {
+		t.Errorf("nothing was given; that heading should be absent, got:\n%s", m)
+	}
+	if !strings.Contains(m, "YOU MADE") {
+		t.Errorf("the render should still be listed, got:\n%s", m)
+	}
+}

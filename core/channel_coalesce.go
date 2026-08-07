@@ -112,6 +112,31 @@ func (c *ChannelCoalescer) Dispatch(key string, in ChannelInbound, run ChannelAg
 		c.mu.Unlock()
 		return c.lead(key, run, window)
 
+	case st.phase == phaseCollecting && !sameSpeaker(st.pending, in):
+		// A DIFFERENT PERSON. Coalescing exists for one person firing off
+		// several bubbles in a row, and merging across senders quietly rewrote
+		// who said what: the batch keeps the FIRST message's handle, so a
+		// second person's words arrived under the first person's name.
+		//
+		// That is not cosmetic. The handle is what the owner check is derived
+		// from, so the owner texting first and somebody else texting inside the
+		// window made THEIR message owner-authoritative — past the premise
+		// gate, out of the live-claim scope, and stored as the owner's own
+		// account of themselves.
+		//
+		// So the batch closes and this message waits for a batch of its OWN.
+		// One speaker per turn is an assumption the rest of the system makes.
+		//
+		// Not c.lead(key, …): that leads whatever is in the slot, which is the
+		// OTHER speaker's batch. Two goroutines then drove one state, and the
+		// loser found the slot already deleted and returned silently — so
+		// refusing to merge dropped the message instead of merging it, which is
+		// the worse of the two failures and the one nobody would report as a
+		// bug. It just looks like the agent ignored you.
+		st.deadline = time.Now() // stop extending; let its leader dispatch now
+		c.mu.Unlock()
+		return c.leadOwn(key, in, run, window)
+
 	case st.phase == phaseCollecting:
 		// A batch is still open: merge in and extend the window. The existing
 		// leader will produce the reply, so this caller stays silent.
@@ -119,6 +144,14 @@ func (c *ChannelCoalescer) Dispatch(key string, in ChannelInbound, run ChannelAg
 		st.deadline = time.Now().Add(window)
 		c.mu.Unlock()
 		return ChannelReply{}, nil
+
+	case st.phase != phaseCollecting && !sameSpeaker(st.pending, in):
+		// Same rule while a turn is running: a different person does not get
+		// folded into somebody else's turn, and the running turn is NOT
+		// cancelled — it was started by someone whose message is still worth
+		// answering. It finishes, then this one takes the slot.
+		c.mu.Unlock()
+		return c.leadOwn(key, in, run, window)
 
 	default: // phaseRunning
 		// A turn is already executing for this session. Fold this message into
@@ -134,6 +167,60 @@ func (c *ChannelCoalescer) Dispatch(key string, in ChannelInbound, run ChannelAg
 		}
 		c.mu.Unlock()
 		return c.lead(key, run, window)
+	}
+}
+
+// handoffPoll is how often a waiting speaker re-checks whether the session is
+// free. Short enough that a person waiting on a reply cannot perceive it, long
+// enough that a ten-minute turn does not spin a core.
+const handoffPoll = 25 * time.Millisecond
+
+// leadOwn waits for the session slot to empty, claims it for `in`, and leads
+// that batch.
+//
+// This is what serializes a session across speakers. Two people in one group
+// chat get two turns, one after the other, each carrying only its own speaker's
+// words and handle — rather than one turn carrying both, or (the bug this
+// replaced) one turn and one message that quietly went nowhere.
+//
+// Serializing rather than running both at once is deliberate: they share a
+// session, so concurrent turns would interleave writes to one history and each
+// would answer without seeing the other. A short wait is the cheaper mistake.
+func (c *ChannelCoalescer) leadOwn(key string, in ChannelInbound, run ChannelAgentRunnerFunc, window time.Duration) (ChannelReply, error) {
+	// Bounded by the same limit a dispatch gets: if the turn ahead is somehow
+	// stuck, this takes the slot rather than waiting on it forever. A message
+	// answered late beats a message never answered.
+	deadline := time.Now().Add(channelDispatchTimeout)
+	for {
+		c.mu.Lock()
+		st := c.sess[key]
+		switch {
+		case st == nil:
+			c.sess[key] = &coalesceState{pending: in, deadline: time.Now().Add(window), phase: phaseCollecting}
+			c.mu.Unlock()
+			return c.lead(key, run, window)
+
+		case st.phase == phaseCollecting && sameSpeaker(st.pending, in):
+			// While waiting, someone from our own side opened a batch — this
+			// belongs in it. Without this, a person's second bubble that landed
+			// behind another speaker would start a THIRD turn instead of
+			// joining the one it belongs to.
+			st.pending = mergeInbound(st.pending, in)
+			st.deadline = time.Now().Add(window)
+			c.mu.Unlock()
+			return ChannelReply{}, nil
+
+		case time.Now().After(deadline):
+			Log("[channel] session %q still busy after %s — taking the slot for %q", key, channelDispatchTimeout, in.Handle)
+			if st.cancel != nil {
+				go st.cancel()
+			}
+			c.sess[key] = &coalesceState{pending: in, deadline: time.Now().Add(window), phase: phaseCollecting}
+			c.mu.Unlock()
+			return c.lead(key, run, window)
+		}
+		c.mu.Unlock()
+		time.Sleep(handoffPoll)
 	}
 }
 
@@ -185,6 +272,19 @@ func (c *ChannelCoalescer) lead(key string, run ChannelAgentRunnerFunc, window t
 // read as one message), attachments union, and the conversation identity stays
 // base's (same sender within the window). The fuller roster and any non-nil
 // status callback are preferred so nothing useful is lost in the merge.
+// sameSpeaker reports whether two inbounds came from the same person.
+//
+// Decided on the HANDLE, which the transport supplies, never on the display
+// name, which the sender chooses — merging on a name would let two people be
+// treated as one by matching each other's.
+//
+// Empty handles compare equal: a transport that attributes nothing gives us
+// nothing to tell them apart with, and on such a surface the coalescer behaves
+// as it did before this rule existed.
+func sameSpeaker(base, add ChannelInbound) bool {
+	return strings.EqualFold(strings.TrimSpace(base.Handle), strings.TrimSpace(add.Handle))
+}
+
 func mergeInbound(base, add ChannelInbound) ChannelInbound {
 	out := base
 	out.MergedCount = messageCount(base) + messageCount(add)

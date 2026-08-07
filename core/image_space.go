@@ -210,7 +210,11 @@ func originFromNote(note string) ImageOrigin {
 	switch n := strings.ToLower(strings.TrimSpace(note)); {
 	case strings.HasPrefix(n, "generated:"):
 		return ImageFromGenerated
-	case strings.HasPrefix(n, "edited "):
+	case strings.HasPrefix(n, "edited "), strings.HasPrefix(n, "edited:"):
+		// Both spellings: the framework writes "edited <refs>: …", but a note
+		// with no refs collapses to "edited:" — and an unmatched render falls
+		// to unknown, which lists it among the pictures you were GIVEN. Wrong
+		// in the direction that matters.
 		return ImageFromEdited
 	case strings.HasPrefix(n, "received"):
 		return ImageFromUser
@@ -468,9 +472,25 @@ func RecentImageManifest(sess *ToolSession) string {
 	if len(all) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("Recent images you can reference by id (newest first):\n")
+	// SPLIT BY PROVENANCE, not listed flat.
+	//
+	// The kept-image manifest has marked the agent's own output for a while;
+	// this one did not, and this is where a photo somebody sent lives before
+	// anyone keeps it. Listed flat, a render and a real photograph differ only
+	// by the prose in their notes — so asked for a reference, the model picked
+	// whatever was newest, which after two attempts is always something it made
+	// itself. It loses the picture it was given without ever being told the
+	// difference.
+	var given, made []RecentImage
 	for _, r := range all {
+		if r.Origin.AgentMade() {
+			made = append(made, r)
+			continue
+		}
+		given = append(given, r)
+	}
+	var b strings.Builder
+	describe := func(r RecentImage) string {
 		desc := r.Note
 		switch {
 		case desc != "" && r.Caption != "":
@@ -481,8 +501,21 @@ func RecentImageManifest(sess *ToolSession) string {
 		if desc == "" {
 			desc = "image"
 		}
-		fmt.Fprintf(&b, "- %s — %s\n", r.Ref, desc)
+		return desc
 	}
-	b.WriteString("Pass one of these ids to image(action=\"edit\", images=[...]) to change it. They are kept automatically; you never need to delete them.")
+	if len(given) > 0 {
+		// First, because these are the ones a request for a reference means.
+		b.WriteString("Pictures you were GIVEN or found — these are real, and are what a request about \"the photo\" or a real person or thing refers to (newest first):\n")
+		for _, r := range given {
+			fmt.Fprintf(&b, "- %s — %s\n", r.Ref, describe(r))
+		}
+	}
+	if len(made) > 0 {
+		b.WriteString("Pictures YOU MADE — not evidence of what anything really looks like. Use one only to keep working on that same render, never as the reference for a real subject (newest first):\n")
+		for _, r := range made {
+			fmt.Fprintf(&b, "- %s — %s\n", r.Ref, describe(r))
+		}
+	}
+	b.WriteString("Pass an id in the images list of an image call to work from it. They are kept automatically; you never need to delete them.")
 	return b.String()
 }

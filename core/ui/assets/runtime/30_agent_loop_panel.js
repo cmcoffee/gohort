@@ -4737,8 +4737,16 @@
           channelTranscript = null;
         }
         var msgs = rec && rec[msgsF];
+        // How many messages the server left off the front. Zero on a full
+        // load, which is every load today — but the scrub and truncate
+        // affordances send a message's index back to be deleted, and that
+        // index has to name the message in STORAGE, not its position in
+        // whatever slice arrived. Adding the offset here means a tail load can
+        // never make the ✕ delete somebody else's message.
+        var msgOffset = (rec && typeof rec.message_offset === 'number') ? rec.message_offset : 0;
         if (Array.isArray(msgs)) {
-          msgs.forEach(function(m, i) {
+          msgs.forEach(function(m, idx) {
+            var i = idx + msgOffset;
             // Hidden messages still ride along for the LLM's history
             // view but the prior bubble already shows their content
             // (e.g. submitted ask_user card). Skip rendering the dupe.

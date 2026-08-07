@@ -203,6 +203,25 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 
 // handleSessionOne loads or deletes a session in the active agent's
 // bucket. agent_id is required on both methods.
+// servedSession is a ChatSession on its way OUT, plus how many messages were
+// left off the front.
+//
+// A serving-only wrapper rather than a field on ChatSession, which is the
+// stored struct: an offset is a fact about one response, not about the thread,
+// and persisting it would be a number that is wrong the moment anything else
+// writes.
+//
+// MessageOffset exists BEFORE anything trims, deliberately. The client computes
+// a message's storage index from its position in the array it received, and
+// uses that index to scrub or truncate — so the day a tail is served, every one
+// of those indices is silently off by the number dropped, and the scrub deletes
+// the wrong message. Shipping the offset first, while it is always 0, makes
+// that a no-op change; shipping the tail first makes it data loss.
+type servedSession struct {
+	ChatSession
+	MessageOffset int `json:"message_offset"`
+}
+
 func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -387,7 +406,7 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		s.UIBlocks = settleResolvedBlocks(s.UIBlocks, user)
 		s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(s)
+		_ = json.NewEncoder(w).Encode(servedSession{ChatSession: s, MessageOffset: 0})
 	case http.MethodDelete:
 		// Tear down any persistent shells the session opened
 		// (psql/redis-cli/ssh/etc.) so the bwrap processes don't

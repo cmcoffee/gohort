@@ -35,7 +35,10 @@ func mergedMessagesNote(in ChannelInbound) string {
 	if in.MergedCount < 2 {
 		return ""
 	}
-	return fmt.Sprintf("The user sent %d separate messages in quick succession; they are joined below in the order they arrived, separated by blank lines. Treat them as one turn with %d parts and address ALL of them — a later message may add to, correct, or replace an earlier one.", in.MergedCount, in.MergedCount)
+	// "The same person" rather than "the user": a merged batch is now always
+	// one sender (the coalescer refuses to merge across handles), and in a room
+	// "the user" was the wrong noun for whoever happened to be typing.
+	return fmt.Sprintf("The same person sent %d separate messages in quick succession; they are joined below in the order they arrived, separated by blank lines. Treat them as one turn with %d parts and address ALL of them — a later message may add to, correct, or replace an earlier one.", in.MergedCount, in.MergedCount)
 }
 
 // channelSurfaceContextFull is what the runner passes: the merge note (which

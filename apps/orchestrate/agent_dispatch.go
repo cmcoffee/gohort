@@ -696,8 +696,18 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		OnStep:            func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
 		TurnNotes:         func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
 		TurnClaimJudge:    T.turnClaimJudge(ctx),
-		DeliveredCount:    func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
-		Backgrounded:      func() bool { return subSess.Detach.Any() },
+		// And whether the reply KNOWS what it asserts. This site had the claim
+		// judge and not this one — an inconsistency rather than a decision, and
+		// the kind that is invisible because the path still works: a reply here
+		// was checked for describing work it had not done, and not for stating
+		// an unchecked claim as fact.
+		//
+		// No LiveClaimSpeaker: this path has no third party writing to it, so
+		// there is no live claim and nothing to be cautious about.
+		TurnGroundingJudge: T.turnGroundingJudge(ctx),
+		UncheckedClaims:    UncheckedFactNotes(subFacts),
+		DeliveredCount:     func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
+		Backgrounded:       func() bool { return subSess.Detach.Any() },
 		Confirm:           confirm,
 		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
 		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,

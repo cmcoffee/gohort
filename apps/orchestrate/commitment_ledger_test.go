@@ -137,7 +137,11 @@ func TestNotesComposeInActingOrder(t *testing.T) {
 	recordTurnCommitment(db, "s1", promiseSaid, false)
 
 	got := turnNotes(sess, db, "s1", "Wiwee, are you really going to fix that picture?")
-	img := strings.Index(got, "Recent images")
+	// Anchored on the manifest's closing instruction rather than its heading:
+	// the heading now varies with provenance (pictures you were GIVEN vs ones
+	// YOU MADE), and this test is about ORDER, not about how the manifest
+	// labels its groups.
+	img := strings.Index(got, "images list of an image call")
 	com := strings.Index(got, "OUTSTANDING FROM YOUR LAST TURN")
 	if img < 0 || com < 0 {
 		t.Fatalf("both notes must appear:\n%s", got)
