@@ -512,6 +512,7 @@ func KeptImageManifest(sess *ToolSession) string {
 			fmt.Fprintf(&b, "- %s — %s\n", k.Ref, personLine(k))
 		}
 		b.WriteString("If a request names somebody who is NOT listed here, you do not know what they look like. Say so, or find a picture. Never render a face from a description and present it as them.\n")
+		b.WriteString("Pass the id and leave them OUT of the prompt: their name and what they look like are carried by the picture, and repeating either in words makes the renderer draw the words instead. Write only what should change around them.\n")
 		if len(things) > 0 {
 			b.WriteString("\n")
 		}

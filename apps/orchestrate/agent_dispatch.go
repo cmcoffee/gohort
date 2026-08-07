@@ -1637,8 +1637,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// the user off rephrasing a request that was understood perfectly well —
 	// while the actual cause (a round that called tools and never spoke) leaves
 	// no trace anywhere. Say what ran.
+	// Every tool this turn ran, paired call-to-result. Computed once here and
+	// used three ways below: the empty-reply diagnostic, the staged-deliverable
+	// recovery, and — the one that was missing — the stored message itself.
+	turnToolCalls := persistedToolCallsFromTranscript(transcript)
 	if cleanReply == "" && !resp.HitRoundCap {
-		trace := persistedToolCallsFromTranscript(transcript)
+		trace := turnToolCalls
 		detail := "The agent finished without producing any reply text"
 		if n := len(trace); n > 0 {
 			detail += fmt.Sprintf(" after %d tool call(s), the last being %s", n, trace[n-1].Name)
@@ -1676,7 +1680,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		}
 		priorSession.Messages = append(priorSession.Messages,
 			ChatMessage{Role: "user", Content: deliveredMessage, Created: now, Sender: run.MessageSender},
-			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs},
+			// ToolCalls is what a replayed turn shows as its tool chips, and
+			// this path never set it — so a channel turn opened later in
+			// cortex showed the reply with no sign of the six tools behind it,
+			// while the same turn run from web chat showed all six. The trace
+			// was already being computed on this path for the diagnostics and
+			// then dropped. Same field, same shape, same renderer as runner.go
+			// and scheduled_updates.go; a rule on one side of that symmetry is
+			// a bug.
+			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, ToolCalls: turnToolCalls},
 		)
 		// Bound STORAGE the same way the Cortex home thread does (runner.go
 		// handleSend): drop leading messages already folded into the summary
@@ -1700,7 +1712,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// observed failure took: "On it — let me grab some reference photos", no tool
 	// call, turn over — and then the next message ("are you really?") answered by
 	// a model with no idea it had promised anything.
-	recordTurnCommitment(runtimeDB, subSessionID, cleanReply, len(persistedToolCallsFromTranscript(transcript)) > 0)
+	recordTurnCommitment(runtimeDB, subSessionID, cleanReply, len(turnToolCalls) > 0)
 	imgs, vids := collectMessageMedia(subSess, cleanReply)
 	// Phantom-delivery backstop: the model produced a file (find/generate/fetch)
 	// but never called workspace(attach), then wrote a reply CLAIMING it sent it
@@ -1726,7 +1738,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			appendSessionDiag(runtimeDB, target.ID, subSessionID, "attach-marker-unresolved",
 				fmt.Sprintf("The reply asked to send %v, but no such file was in the workspace — most often because an earlier attach already delivered it with cleanup=true. Nothing was attached; the framework recovered the most recent staged file where it could.", missing))
 		}
-		if staged := recoverStagedDeliverable(subSess, cleanReply, turnProducedDeliverable(persistedToolCallsFromTranscript(transcript))); staged != "" {
+		if staged := recoverStagedDeliverable(subSess, cleanReply, turnProducedDeliverable(turnToolCalls)); staged != "" {
 			if b64 := resolveWorkspaceImages(subSess, []string{staged}); len(b64) > 0 {
 				Log("[orchestrate.dispatch] reply claimed a delivery but attached nothing — backstop attaching staged %q", staged)
 				if isVideoAttachment(staged) {

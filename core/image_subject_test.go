@@ -194,3 +194,21 @@ func RecordKeep(t *testing.T, sess *ToolSession, name string, subject ImageSubje
 	}
 	return KeepImageOf(sess, ref, name, "", subject)
 }
+
+// The prompt is where a good reference gets thrown away. An agent that passes
+// the picture AND writes "Rory, a man with a short beard, on a beach" hands the
+// renderer two subjects and it draws the words — so the manifest has to say to
+// leave them out, not merely to pass the id.
+func TestPeopleManifestSaysToKeepThemOutOfThePrompt(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15550199", false)
+	if _, err := RecordKeep(t, sess, "rory", ResolveKeepSubject(sess, "Rory", true)); err != nil {
+		t.Fatal(err)
+	}
+	m := KeptImageManifest(sess)
+	if !strings.Contains(m, "leave them OUT of the prompt") {
+		t.Errorf("the manifest must say the subject does not belong in the prompt:\n%s", m)
+	}
+	if !strings.Contains(m, "draw the words") {
+		t.Errorf("it must say WHY, or it reads as an arbitrary rule:\n%s", m)
+	}
+}
