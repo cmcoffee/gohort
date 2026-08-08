@@ -39,9 +39,20 @@ func init() {
 func llmConnectTimeout() time.Duration { return TuneDuration("tune_llm_connect_timeout") }
 func llmRequestTimeout() time.Duration { return TuneDuration("tune_llm_request_timeout") }
 
+// llmVisionRequestTimeout caps a single NON-STREAMING vision call (images or
+// videos in the prompt). Vision rounds disable thinking and produce short
+// factual answers, so they normally finish in seconds — but they are also the
+// calls observed to hang without ever returning headers when the server is
+// busy (280KB body queued behind a long prefill: 4m39s of silence until the
+// channel turn's whole 10-minute budget died with no retry ever attempted).
+// A tight budget here converts that hang into a fast failure the retry
+// wrapper can actually act on.
+func llmVisionRequestTimeout() time.Duration { return TuneDuration("tune_llm_vision_request_timeout") }
+
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_llm_connect_timeout", Category: "Timeouts", Label: "LLM connect timeout", Help: "Dial + TLS handshake cap for LLM API connections.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
 	RegisterTunable(TunableSpec{Key: "tune_llm_request_timeout", Category: "Timeouts", Label: "LLM request timeout (fallback)", Help: "Fallback per-request timeout for LLM endpoints when request_timeout_seconds is unset.", Kind: KindMinutes, Default: 12, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_llm_vision_request_timeout", Category: "Timeouts", Label: "LLM vision request timeout", Help: "Total budget for a single non-streaming vision call (prompt contains images or video frames). Vision rounds skip thinking and normally answer in seconds; a hung one otherwise burns the caller's whole turn budget before a retry can happen. Only tightens the general request timeout, never extends it.", Kind: KindSeconds, Default: 120, Min: 15, Max: 1800})
 }
 
 const (
@@ -1688,8 +1699,16 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	// Hard total-response deadline: give up on the LLM if the whole call
 	// (queue + prefill + thinking + streaming) exceeds the budget. The
 	// per-read/header timeouts don't bound a continuously-trickling
-	// generation; this does. See totalResponseBudget.
-	ctx, cancel := context.WithTimeout(ctx, c.totalResponseBudget())
+	// generation; this does. See totalResponseBudget. Vision calls get a
+	// tighter cap (llmVisionRequestTimeout) — never a looser one — so a
+	// hung image round fails fast enough for the retry wrapper to matter.
+	budget := c.totalResponseBudget()
+	if hasImages(messages) {
+		if v := llmVisionRequestTimeout(); v > 0 && v < budget {
+			budget = v
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	// Ollama runs locally with no per-token cost — always remove the
@@ -1763,7 +1782,11 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 
 	c.snoopRequest(body, false)
 
-	Debug("[%s]: Sending request (body=%d bytes, think=%s, thinking_budget=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode)
+	ctxDeadline := "none"
+	if d, ok := ctx.Deadline(); ok {
+		ctxDeadline = time.Until(d).Round(time.Millisecond).String()
+	}
+	Debug("[%s]: Sending request (body=%d bytes, think=%s, thinking_budget=%s, json=%v, budget=%s ctx_deadline=%s)", c.provider(), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, budget, ctxDeadline)
 	// Non-streaming: the whole body arrives as one read, so the
 	// operator's RequestTimeout (the header-wait / response budget)
 	// applies directly.
