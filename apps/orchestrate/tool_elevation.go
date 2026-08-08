@@ -16,6 +16,16 @@
 //	         in enough distinct recent sessions that it's evidently kit.
 //	         Also queues a one-time "scope it?" suggestion in the
 //	         Authorizations pane so durable curation stays a human call.
+//	Tier 3 — prior success: the agent has already CALLED this tool and got
+//	         a result back. One success is enough. Tiers 1 and 2 both miss
+//	         the ordinary case where a user asks for the thing the tool
+//	         does without naming it ("what's happening in the world today"
+//	         → get_top_stories): the intent text doesn't match, and a tool
+//	         the model reaches by improvising never accumulates load_tool
+//	         history. A tool that has worked for this agent before is the
+//	         strongest evidence available that it is the tool for the job,
+//	         and it costs nothing to have been wrong — the schema is the
+//	         only thing spent.
 package orchestrate
 
 import (
@@ -38,7 +48,15 @@ const (
 	// toolLoadHistoryCap: how many distinct sessions to remember per tool.
 	toolLoadHistoryCap = 8
 
-	toolLoadHistoryTable = "tool_load_history"
+	// toolSuccessElevateCap bounds Tier-3 promotions per turn. Every lazy
+	// tool the agent has ever used successfully would otherwise inline its
+	// schema forever, which is the cost the lazy split exists to avoid.
+	// Promotion order is most-recent-success first, so a tool that mattered
+	// once last spring falls off in favour of the ones in current use.
+	toolSuccessElevateCap = 5
+
+	toolLoadHistoryTable    = "tool_load_history"
+	toolSuccessHistoryTable = "tool_success_history"
 )
 
 // toolLoadEntry is one remembered load_tool occurrence.
@@ -114,12 +132,89 @@ func promotedByLoadHistory(db Database, agentID string) map[string]bool {
 	return out
 }
 
-// suggestToolScope queues a one-time Authorizations-pane suggestion to scope
-// a repeatedly-loaded tool to this agent. Approving routes through
-// handleApprove's "scope_tool" case, which ADDS the agent to the tool's
-// ScopeAgents — making it first-class for this agent and (when the tool was
-// shared) removing it from the general pool, which is exactly what the
-// approval text warns.
+// recordToolSuccess notes that this agent called toolName and got a result
+// back (no error) in this session. One entry per (tool, session), same as the
+// load history — a turn that calls the same tool five times is one signal.
+//
+// Only custom tools are recorded: elevation is a question about the lazy
+// schema split, and registered tools are never lazy.
+func recordToolSuccess(db Database, agentID, sessionID, toolName string) {
+	if db == nil || agentID == "" || toolName == "" {
+		return
+	}
+	hist := map[string][]toolLoadEntry{}
+	db.Get(toolSuccessHistoryTable, agentID, &hist)
+	entries := hist[toolName]
+	for _, e := range entries {
+		if e.Session == sessionID {
+			return // already counted this session
+		}
+	}
+	entries = append(entries, toolLoadEntry{Session: sessionID, At: time.Now()})
+	if len(entries) > toolLoadHistoryCap {
+		entries = entries[len(entries)-toolLoadHistoryCap:]
+	}
+	hist[toolName] = entries
+	db.Set(toolSuccessHistoryTable, agentID, hist)
+}
+
+// promotedByPriorSuccess returns the tools Tier 3 elevates, most-recent
+// success first and capped. A tool the agent has called successfully even
+// once is treated as part of its working set.
+func promotedByPriorSuccess(db Database, agentID string) []string {
+	if db == nil || agentID == "" {
+		return nil
+	}
+	hist := map[string][]toolLoadEntry{}
+	db.Get(toolSuccessHistoryTable, agentID, &hist)
+	if len(hist) == 0 {
+		return nil
+	}
+	type lastUse struct {
+		name string
+		at   time.Time
+	}
+	var uses []lastUse
+	for name, entries := range hist {
+		var newest time.Time
+		for _, e := range entries {
+			if e.At.After(newest) {
+				newest = e.At
+			}
+		}
+		uses = append(uses, lastUse{name: name, at: newest})
+	}
+	// Most recent first; name breaks ties so the set is deterministic under
+	// the cap (two successes in the same turn share a timestamp).
+	sort.Slice(uses, func(i, j int) bool {
+		if uses[i].at.Equal(uses[j].at) {
+			return uses[i].name < uses[j].name
+		}
+		return uses[i].at.After(uses[j].at)
+	})
+	out := make([]string, 0, len(uses))
+	for _, u := range uses {
+		out = append(out, u.name)
+	}
+	return out
+}
+
+// suggestToolScope queues a one-time Permissions-pane suggestion to scope a
+// repeatedly-loaded tool to this agent. Accepting routes through handleApprove's
+// "scope_tool" case, which ADDS the agent to the tool's ScopeAgents — making it
+// first-class for this agent and (when the tool was shared) removing it from the
+// general pool, which is exactly what the text warns.
+//
+// It is an OFFER and must read as one (approvalIsSuggestion keeps it out of the
+// rail badge and out of the conversation): the agent is already calling this
+// tool — three sessions of it is the evidence — so nothing is blocked, nothing
+// was refused, and ignoring this forever costs a little schema latency and
+// nothing else.
+//
+// Fires ONCE per (agent, tool): the threshold test below trips only on the
+// crossing, so a dismissed suggestion stays dismissed however many more times
+// the tool is loaded. The pending-dedupe loop is the narrower guard, for a
+// suggestion still sitting unanswered in the pane.
 func suggestToolScope(db Database, agentID, toolName string, sessions int) {
 	rec, ok := loadAgent(db, agentID)
 	if !ok {
@@ -151,22 +246,37 @@ func (t *chatTurn) elevatedToolSet(sess *ToolSession, all []AgentToolDef, kit ma
 	// Trial (unconfirmed) tools stay lazy even when matched — elevation must
 	// not out-promote the vouching gate. The Tier-2 scope suggestion still
 	// fires for them; approving it is the vouch.
+	var names []string
+	byName := map[string]AgentToolDef{}
+	for _, td := range all {
+		names = append(names, td.Tool.Name)
+		byName[td.Tool.Name] = td
+	}
 	// Tier 2 — proven-by-use kit.
 	for name := range promotedByLoadHistory(t.udb, t.agent.ID) {
 		if !kit[name] && !isTrialTool(sess, name) {
 			elevated[name] = "repeated-load"
 		}
 	}
+	// Tier 3 — the agent has called this tool successfully before. Filtered
+	// against `all` because history outlives the tool: a name the agent no
+	// longer has must not be elevated, or counted against the cap.
+	promotions := 0
+	for _, name := range promotedByPriorSuccess(t.udb, t.agent.ID) {
+		if promotions >= toolSuccessElevateCap {
+			break
+		}
+		td, have := byName[name]
+		if !have || kit[name] || elevated[name] != "" || len(td.Tool.Parameters) == 0 || isTrialTool(sess, name) {
+			continue
+		}
+		elevated[name] = "prior-success"
+		promotions++
+	}
 	// Tier 1 — the turn's intent names the tool (or its credential's host).
 	intent := strings.ToLower(t.intentText)
 	if intent == "" {
 		return elevated
-	}
-	var names []string
-	byName := map[string]AgentToolDef{}
-	for _, td := range all {
-		names = append(names, td.Tool.Name)
-		byName[td.Tool.Name] = td
 	}
 	sort.Strings(names) // deterministic promotion order under the cap
 	mentions := 0

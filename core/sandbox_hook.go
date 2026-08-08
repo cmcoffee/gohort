@@ -1134,6 +1134,26 @@ var sandboxToolShims = []sandboxToolShim{
 	{"browse_page", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"browse_page\", sys.argv[1:]))\n"},
 }
 
+// SandboxReachableNames returns the identifiers a sandboxed script may
+// legitimately name to reach gohort: the PATH shims written into <lib>/bin,
+// plus the hook methods `from gohort import ...` exposes.
+//
+// Callers that flag a shell command for naming an LLM tool MUST exclude these.
+// They are the one case where a gohort name inside a shell command is correct,
+// and refusing them would break the documented iterate-and-test flow (a script
+// under test calls fetch_url exactly as the authored tool will at dispatch).
+func SandboxReachableNames() map[string]bool {
+	out := make(map[string]bool, len(sandboxToolShims)+8)
+	for _, s := range sandboxToolShims {
+		out[strings.TrimSuffix(s.name, ".py")] = true
+	}
+	// The hook surface itself — see SandboxHookPythonShim's import forms.
+	for _, n := range []string{"fetch", "fetch_url", "fetch_via", "browse_page", "secret", "log", "gohort", "HookError"} {
+		out[n] = true
+	}
+	return out
+}
+
 // gohortShimDispatcher is the shared logic behind the bin-dir wrappers. It
 // parses a small curl-ish arg surface (--url / --method / --header / --body
 // / --credential, or a bare positional URL), calls the matching gohort hook

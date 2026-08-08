@@ -484,6 +484,18 @@ func rehomeOrphanTool(db Database, owner, toolName, target string) error {
 	if def == nil {
 		return fmt.Errorf("no orphaned tool named %q", toolName)
 	}
+	// A live tool of the same name means the orphan is a STALE fork, not a
+	// missing definition: both re-home targets end in AdminPersistTempTool,
+	// which is replace-by-name, so proceeding would silently revert the
+	// working tool to the pre-delete copy. Refuse and name the conflict —
+	// discarding the orphan (or renaming it) is the admin's call, not ours.
+	if live, ok := UserToolByName(db, owner, toolName); ok {
+		where := "your tool pool"
+		if len(live.ScopeAgents) > 0 {
+			where = fmt.Sprintf("agent scope %v", live.ScopeAgents)
+		}
+		return fmt.Errorf("a live tool named %q already exists (%s) — re-homing this orphan would overwrite it with the older copy. Discard the orphan, or rename one of the two first", toolName, where)
+	}
 	if target == "global" {
 		if err := AdminPersistTempTool(db, owner, *def); err != nil {
 			return err
@@ -503,12 +515,15 @@ func rehomeOrphanTool(db Database, owner, toolName, target string) error {
 
 // captureOrphanedTools moves an about-to-be-deleted agent's agent-scoped
 // tools into the owner's orphan store, so they survive the delete for the
-// admin to re-home. Skips any name that also lives in the global pool (the
-// global copy remains, so it isn't orphaned). Best-effort; never blocks the
-// delete.
-func captureOrphanedTools(db Database, owner string, agent AgentRecord) {
+// admin to re-home. A tool co-carried by another agent, or shared user-wide
+// (empty ScopeAgents), is left alone — only the sole-carrier case orphans.
+// Best-effort; never blocks the delete.
+//
+// Returns the names it orphaned. Those tools are now callable by NO agent,
+// which is the part of an agent delete nobody sees, so the caller reports it.
+func captureOrphanedTools(db Database, owner string, agent AgentRecord) []string {
 	if db == nil || owner == "" {
-		return
+		return nil
 	}
 	// Flattened namespace: walk the unified store for records scoped to the
 	// dying agent. Sole carrier → orphan the record; co-carried → just drop
@@ -536,10 +551,17 @@ func captureOrphanedTools(db Database, owner string, agent AgentRecord) {
 		}
 		SetUserToolScopeAgents(db, owner, p.Tool.Name, kept)
 	}
-	if len(orphans) > 0 {
-		AddOrphanedTempTools(db, owner, orphans)
-		Log("[temptool.scope] captured %d orphaned tool(s) from deleted agent %q", len(orphans), agent.Name)
+	if len(orphans) == 0 {
+		return nil
 	}
+	AddOrphanedTempTools(db, owner, orphans)
+	names := make([]string, 0, len(orphans))
+	for _, o := range orphans {
+		names = append(names, o.Tool.Name)
+	}
+	Log("[temptool.scope] captured %d orphaned tool(s) from deleted agent %q: %s",
+		len(orphans), agent.Name, strings.Join(names, ", "))
+	return names
 }
 
 // agentUserDB resolves the per-user orchestrate agent store from the

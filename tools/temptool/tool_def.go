@@ -287,7 +287,9 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	pendingByName := map[string]bool{}
 	pendingDescByName := map[string]string{}
 	pendingModeByName := map[string]string{}
+	var orphanedPool []OrphanedTempTool
 	if sess.DB != nil && sess.Username != "" {
+		orphanedPool = LoadOrphanedTempTools(sess.DB, sess.Username)
 		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 			persistentByName[p.Tool.Name] = true
 			persistentDescByName[p.Tool.Name] = p.Tool.Description
@@ -305,7 +307,7 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// permanent and global), and with no hint that someone else owns it.
 	sharedOwners := SharedToolOwners(sess.DB)
 	tools := sess.CopyTempTools()
-	if len(tools) == 0 && len(pendingByName) == 0 && len(persistentByName) == 0 {
+	if len(tools) == 0 && len(pendingByName) == 0 && len(persistentByName) == 0 && len(orphanedPool) == 0 {
 		return "No temp tools defined in this session.", nil
 	}
 	var b strings.Builder
@@ -378,6 +380,33 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 				mode = "shell"
 			}
 			fmt.Fprintf(&b, "  - %s [%s] — %s\n", name, modeLabel(mode), persistentDescByName[name])
+		}
+	}
+	// Orphaned: the last agent carrying the tool was deleted, so the record
+	// left every catalog. Listing them is what makes the disappearance
+	// legible — otherwise a tool the model used last week is simply absent,
+	// and "absent" reads as "I must reach it some other way."
+	{
+		var orphaned []OrphanedTempTool
+		for _, o := range orphanedPool {
+			if !persistentByName[o.Tool.Name] && !inSession[o.Tool.Name] {
+				orphaned = append(orphaned, o)
+			}
+		}
+		sort.Slice(orphaned, func(i, j int) bool { return orphaned[i].Tool.Name < orphaned[j].Tool.Name })
+		if len(orphaned) > 0 {
+			b.WriteString("\nORPHANED — definition survives but the tool is NOT callable by anyone (its last carrying agent was deleted). Re-home in Admin › Orphaned Tools, or tool_def get then re-create it. Do NOT try to reach these another way:\n")
+			for _, o := range orphaned {
+				mode := o.Tool.Mode
+				if mode == "" {
+					mode = "shell"
+				}
+				former := o.FormerAgentName
+				if former == "" {
+					former = "deleted agent"
+				}
+				fmt.Fprintf(&b, "  - %s [%s] (was on %s) — %s\n", o.Tool.Name, modeLabel(mode), former, o.Tool.Description)
+			}
 		}
 	}
 	return b.String(), nil
@@ -1133,7 +1162,28 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			return fmt.Sprintf("source: agent-bundled (on agent %s — action=\"update\" edits it there in place)\n%s", ownerAgent, string(body)), nil
 		}
 	}
-	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, live session tools, and your other agents' bundled tools)", name)
+	// Orphan pool — the tool's last carrying agent was deleted, so the record
+	// left every catalog at once. Checked LAST (a live copy always wins) but
+	// checked, because "no tool found" is a lie here: the definition still
+	// exists and the model's memory of having used it is correct. Erroring
+	// instead sent it looking for other ways to reach a tool it could no
+	// longer call.
+	for _, o := range LoadOrphanedTempTools(sess.DB, sess.Username) {
+		if o.Tool.Name != name {
+			continue
+		}
+		body, err := json.MarshalIndent(o.Tool, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshal tool %q: %w", name, err)
+		}
+		former := o.FormerAgentName
+		if former == "" {
+			former = "a deleted agent"
+		}
+		return fmt.Sprintf("source: ORPHANED — this tool is NOT callable right now. Its last carrying agent (%s) was deleted, which removed the tool from every agent's catalog; the definition below survived. To make it callable again, re-home it (Admin › Orphaned Tools) or re-create it with action=\"create\" using the definition below. Tell the user it needs re-homing rather than working around it.\n%s",
+			former, string(body)), nil
+	}
+	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, live session tools, your other agents' bundled tools, and the orphan pool)", name)
 }
 
 // loadExistingToolRecord resolves a tool by name to its full TempTool record,

@@ -235,7 +235,7 @@ func init() {
 	})
 
 	gt.AddAction("run", &GroupedToolAction{
-		Description: "Run a shell command inside the active workspace via bwrap. The workspace is the only writable path; reads outside silently fail. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation — use sparingly. For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead — no-confirmation, validated-input, purpose-built for that check.",
+		Description: "Run a shell command inside the active workspace via bwrap. The workspace is the only writable path; reads outside silently fail. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation — use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead — and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is the fetch family — fetch_url / fetch_via / browse_page work here as commands and as `from gohort import ...`.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead — no-confirmation, validated-input, purpose-built for that check.",
 		Params: map[string]ToolParam{
 			"command": {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
 			"env":     {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command — reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
@@ -535,6 +535,9 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	if cmd == "" {
 		return "", fmt.Errorf("command is required")
 	}
+	if msg := flagToolInvocation(cmd, sess); msg != "" {
+		return "", fmt.Errorf("%s", msg)
+	}
 	// Optional env: {"KEY":"val"} exposed to the command as $KEY / os.environ —
 	// so a debug run can supply the same variables a registered shell tool gets.
 	var extraEnv map[string]string
@@ -580,6 +583,62 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 		return output + fmt.Sprintf("\n[exit: %v]", res.Err), nil
 	}
 	return output, nil
+}
+
+// cmdIdent matches identifier-shaped tokens in a shell command. Tool names are
+// verb_noun by convention, so requiring an underscore below keeps bare words
+// (`workspace`, `date`, `image`) from ever being mistaken for a tool.
+var cmdIdent = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// flagToolInvocation returns a corrective message when a command tries to
+// reach a gohort TOOL as though it were a shell binary or a Python module,
+// and "" when the command is ordinary shell.
+//
+// Observed twice, once with the tool absent from the catalog and once with it
+// present: `python -c "from tools import get_top_stories"`, then
+// `python3 -c "subprocess.run([sys.executable, '-m', 'get_top_stories'])"`.
+// Tools are not on PATH and are not importable, so both spend a
+// confirmation-gated round to arrive at ENOENT. The model then has to infer
+// what went wrong from a Python traceback, which says nothing about tools.
+//
+// The belief is not baseless: this IS the sandbox that shell-mode tools run
+// in, and their bodies ARE Python. Only the last step is wrong. So the answer
+// is to say which door to use, not to pretend the resemblance isn't there.
+func flagToolInvocation(cmd string, sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	custom := map[string]bool{}
+	for _, t := range sess.CopyTempTools() {
+		custom[t.Name] = true
+	}
+	reachable := SandboxReachableNames()
+	for _, loc := range cmdIdent.FindAllStringIndex(cmd, -1) {
+		name := cmd[loc[0]:loc[1]]
+		if !strings.Contains(name, "_") || reachable[name] {
+			continue
+		}
+		// A token that continues into a path or a filename is data, not an
+		// invocation — `cat get_top_stories.py` stays a legal thing to run.
+		if loc[1] < len(cmd) && (cmd[loc[1]] == '.' || cmd[loc[1]] == '/') {
+			continue
+		}
+		if loc[0] > 0 && (cmd[loc[0]-1] == '/' || cmd[loc[0]-1] == '.') {
+			continue
+		}
+		switch {
+		case custom[name] && !sess.HasTool(name):
+			// The lazy-schema split: the model was shown this tool by name and
+			// description with no callable schema, which is the exact condition
+			// that produces this workaround. Name the one call that fixes it.
+			return fmt.Sprintf("%q is one of your custom tools, not a shell command — it is not on PATH and not an importable module, so this would only fail. Its schema isn't loaded yet: call load_tool(names=[%q]) first, then call %s({...}) directly. Do not try to reach it through the shell.",
+				name, name, name)
+		case custom[name] || sess.HasTool(name):
+			return fmt.Sprintf("%q is a tool you already have, not a shell command — it is not on PATH and not an importable module. Call %s({...}) directly instead of going through the shell.",
+				name, name)
+		}
+	}
+	return ""
 }
 
 // validProbeName: letters/digits/underscore/dash/dot/plus, length 1-64.

@@ -273,6 +273,13 @@ func RemoveOrphanedTempTool(db Database, username, name string) bool {
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
+	return removeOrphanedTempToolLocked(db, username, name)
+}
+
+// removeOrphanedTempToolLocked is RemoveOrphanedTempTool's body for callers
+// that already hold tempToolPersistMu (the mutex is not reentrant). db must
+// already be resolved through tempToolStore.
+func removeOrphanedTempToolLocked(db Database, username, name string) bool {
 	existing := LoadOrphanedTempTools(db, username)
 	kept := existing[:0]
 	removed := false
@@ -823,6 +830,16 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 	}
 	if dequeued {
 		db.Set(pendingTempToolsTable, username, prest)
+	}
+	// Same invariant, one pool over: a name that is live again cannot ALSO
+	// still be sitting in the orphan pool. Orphaning happens when the last
+	// agent carrying a tool is deleted (captureOrphanedTools) — re-creating
+	// or re-homing the name is the resolution of that orphan, so clear it
+	// here rather than leaving two rows with the same name for the admin UI
+	// to render side by side. Without this the stale copy also stayed
+	// re-homeable, and re-homing it would overwrite the live definition.
+	if removeOrphanedTempToolLocked(db, username, t.Name) {
+		Debug("[temp_tool_persist] persist %q: cleared the stale orphan of the same name", t.Name)
 	}
 	// Eager session-draft cleanup — same rationale as in
 	// ApprovePendingTempTool: prevent the new persistent entry from

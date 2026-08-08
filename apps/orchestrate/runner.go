@@ -426,6 +426,12 @@ type chatTurn struct {
 	// this (name+desc IS their schema, so they stay directly callable).
 	lazyCustomToolNames map[string]bool
 
+	// toolSuccessNoted dedupes Tier-3 elevation recording within a turn:
+	// recordToolSuccess is already idempotent per (tool, session), but it
+	// reads the store to find that out, and a loop calling one tool twenty
+	// times should not pay for that twenty times.
+	toolSuccessNoted map[string]bool
+
 	// loadedCustomTools tracks which lazy custom tools the LLM has
 	// pulled in via load_tool this turn. The DynamicTools feed surfaces
 	// a lazy tool's full def only once it's here, so the schema enters
@@ -3330,6 +3336,19 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				})
 			}
 			t.recordToolCall(rec)
+			// Tier-3 elevation evidence: a CUSTOM tool that returned a result
+			// for this agent joins its working set, so the next session's
+			// catalog carries the schema instead of leaving the model to
+			// discover it cannot reach the tool. Registered tools are never
+			// lazy, so recording them would be noise. The turn-local set keeps
+			// a loop that calls one tool repeatedly to a single store read.
+			if err == nil && !t.toolSuccessNoted[name] && sess.LookupTempTool(name) != nil {
+				if t.toolSuccessNoted == nil {
+					t.toolSuccessNoted = map[string]bool{}
+				}
+				t.toolSuccessNoted[name] = true
+				recordToolSuccess(t.udb, t.agent.ID, sess.ChatSessionID, name)
+			}
 			return out, err
 		}
 	}

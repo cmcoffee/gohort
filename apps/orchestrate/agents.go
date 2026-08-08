@@ -809,11 +809,25 @@ func listAgents(db Database, owner string) []AgentRecord {
 // to every turn's prompt, knowledge chunks surfacing in semantic
 // search, etc.). No-op on a virgin seed (no shadow row to remove).
 func deleteAgent(db Database, id, owner string) error {
+	_, err := deleteAgentReporting(db, id, owner)
+	return err
+}
+
+// deleteAgentReporting is deleteAgent plus the names of any tools the delete
+// took out of every catalog (the agent was their last carrier, so they went
+// to the orphan pool). Cascaded sub-agent deletes contribute theirs too.
+//
+// The list exists because the drop was otherwise silent everywhere it
+// mattered: the tool stopped being callable by ANY agent, no surface said so,
+// and a model that had used it before went looking for other ways to reach
+// it — inventing a shell invocation for a tool that no longer existed. A
+// delete that removes capability has to say which capability it removed.
+func deleteAgentReporting(db Database, id, owner string) ([]string, error) {
 	if isSeedID(id) {
 		// Shadow record (if any) is owned by the user; nothing to
 		// guard since the user is mutating their own copy.
 		if exists := db.Get(agentsTable, id, &AgentRecord{}); !exists {
-			return fmt.Errorf("agent %q is at framework defaults (nothing to revert)", id)
+			return nil, fmt.Errorf("agent %q is at framework defaults (nothing to revert)", id)
 		}
 		db.Unset(agentsTable, id)
 		// A seed revert ALSO drops the user's accumulated memory +
@@ -823,19 +837,19 @@ func deleteAgent(db Database, id, owner string) error {
 		// shadow's accumulated context, which contradicts "revert
 		// to defaults".
 		dropAgentSideData(db, owner, id)
-		return nil
+		return nil, nil
 	}
 	a, ok := loadAgent(db, id)
 	if !ok {
-		return fmt.Errorf("agent %q not found", id)
+		return nil, fmt.Errorf("agent %q not found", id)
 	}
 	if a.Owner != owner {
-		return fmt.Errorf("agent %q is not yours", id)
+		return nil, fmt.Errorf("agent %q is not yours", id)
 	}
 	// Agent-scoped tools live INSIDE this record, so they'd vanish with it.
 	// Capture any that aren't also global into the owner's orphan pool so the
 	// admin can re-home or discard them deliberately (Orphaned Tools surface).
-	captureOrphanedTools(db, owner, a)
+	orphaned := captureOrphanedTools(db, owner, a)
 	// Cascade-delete sub-agents — anything where OwnedBy points at the
 	// agent being deleted. Recursive (a sub-agent that owns its own
 	// sub-agents propagates the delete down). Idempotent: a sub-agent
@@ -852,7 +866,8 @@ func deleteAgent(db Database, id, owner string) error {
 		}
 		if child.OwnedBy == id && child.Owner == owner {
 			Log("[orchestrate.agents] cascade-deleting sub-agent %q (owned_by=%q)", child.Name, a.Name)
-			_ = deleteAgent(db, child.ID, owner)
+			childOrphans, _ := deleteAgentReporting(db, child.ID, owner)
+			orphaned = append(orphaned, childOrphans...)
 		}
 	}
 	// Clear cross-references so a deleted agent doesn't dangle in the fleet:
@@ -913,7 +928,11 @@ func deleteAgent(db Database, id, owner string) error {
 	dropChatSessionBucket(db, id)
 	db.Unset(agentsTable, id)
 	dropAgentSideData(db, owner, id)
-	return nil
+	if len(orphaned) > 0 {
+		Warn("[orchestrate.agents] deleting %q left %d tool(s) callable by NO agent — %s. Re-home them in Admin › Orphaned Tools or they stay dark.",
+			a.Name, len(orphaned), strings.Join(orphaned, ", "))
+	}
+	return orphaned, nil
 }
 
 // dropAgentSideData wipes per-(user, agent) state that lives outside

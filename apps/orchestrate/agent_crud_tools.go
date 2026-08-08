@@ -547,8 +547,22 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			return "", errors.New(msg)
 		}
 	}
-	if err := deleteAgent(sess.DB, id, sess.Username); err != nil {
+	orphaned, err := deleteAgentReporting(sess.DB, id, sess.Username)
+	if err != nil {
 		return "", err
+	}
+	if len(orphaned) > 0 {
+		// The delete took these tools out of EVERY agent's catalog, not just
+		// this one's. Say so in the result the model reads, so it can tell the
+		// user — a capability that quietly stops existing is the thing that
+		// later gets worked around instead of reported.
+		out, _ := json.Marshal(map[string]any{
+			"deleted":        id,
+			"orphaned_tools": orphaned,
+			"warning": fmt.Sprintf("%d tool(s) were only carried by this agent and are now callable by NO agent: %s. Their definitions survive in Admin › Orphaned Tools and must be re-homed to work again. Tell the user.",
+				len(orphaned), strings.Join(orphaned, ", ")),
+		})
+		return string(out), nil
 	}
 	return fmt.Sprintf(`{"deleted":%q}`, id), nil
 }
