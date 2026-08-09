@@ -36,6 +36,17 @@ import (
 // nobody rewrote them.
 const staleNotesAfter = 60 * 24 * time.Hour
 
+const (
+	// maxAuditFindings caps what the pane renders. Past a dozen the block
+	// stops being a list of things to fix and becomes a wall to scroll past,
+	// which is the failure mode this whole feature is trying to avoid.
+	maxAuditFindings = 12
+	// maxAuditChunkScan bounds the Reference Memory sweep. The derived corpus
+	// is unbounded and this runs on every pane open, so it reads a slice
+	// rather than the whole vector store.
+	maxAuditChunkScan = 400
+)
+
 // MemoryFinding is one entry worth a second look.
 type MemoryFinding struct {
 	Layer  string `json:"layer"`  // "Working notes" | "Saved facts" — where to go fix it
@@ -97,9 +108,100 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 		}
 	}
 
+	out = append(out, auditGraphMemory(udb, ns, known, orphaned)...)
+	out = append(out, auditReferenceMemory(user, agentID, known, orphaned)...)
+
 	// Orphan findings first — those name something known to be gone, where the
 	// others are judgements about shape.
 	sort.SliceStable(out, func(i, j int) bool { return kindRank(out[i].Kind) < kindRank(out[j].Kind) })
+	if len(out) > maxAuditFindings {
+		out = out[:maxAuditFindings]
+	}
+	return out
+}
+
+// auditGraphMemory scans entity names, aliases and attribute VALUES. An
+// attribute is where a tool name realistically lands here ("uses_tool:
+// get_top_stories"); the attribute KEY is skipped, because key names are
+// snake_case by convention and auditing them would flag every entity in the
+// graph.
+func auditGraphMemory(udb Database, ns string, known, orphaned map[string]bool) []MemoryFinding {
+	var out []MemoryFinding
+	for _, e := range ListGraphEntities(udb, ns) {
+		parts := make([]string, 0, len(e.Attrs)+1+len(e.Aliases))
+		parts = append(parts, e.Name)
+		parts = append(parts, e.Aliases...)
+		for _, v := range e.Attrs {
+			parts = append(parts, v)
+		}
+		for _, f := range deadToolFindings("Graph Memory", strings.Join(parts, "\n"), known, orphaned) {
+			// Name the entity: "Graph Memory" alone doesn't tell you which of
+			// thirty nodes to open.
+			f.Detail = fmt.Sprintf("Entity %q — %s", e.Name, f.Detail)
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// auditReferenceMemory scans the derived chunk corpus — memory_save findings
+// and synthesis auto-ingest, which is exactly where "the working approach was
+// tool X" gets recorded and then outlives X.
+//
+// Findings are aggregated PER TOOL rather than per chunk. One retired tool can
+// appear in dozens of saved findings, and thirty rows saying the same thing is
+// how a findings list stops being read; one row saying "referenced in 30
+// entries" is the same information and remains actionable.
+func auditReferenceMemory(user, agentID string, known, orphaned map[string]bool) []MemoryFinding {
+	if VectorDB == nil {
+		return nil
+	}
+	prefix := agentKnowledgePrefix(user, agentID)
+	type hit struct {
+		count   int
+		example string
+		detail  string
+	}
+	byTool := map[string]*hit{}
+	var order []string
+	scanned := 0
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
+		if scanned >= maxAuditChunkScan {
+			break
+		}
+		var c EmbeddedChunk
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
+			continue
+		}
+		if !strings.HasPrefix(c.Source, prefix) && c.Source != prefix {
+			continue
+		}
+		if chunkProvenance(c.Source, c.ReportID) != "derived" {
+			continue
+		}
+		scanned++
+		for _, f := range deadToolFindings("Reference Memory", c.Text, known, orphaned) {
+			h, seen := byTool[f.Detail]
+			if !seen {
+				h = &hit{example: f.Quote, detail: f.Detail}
+				byTool[f.Detail] = h
+				order = append(order, f.Detail)
+			}
+			h.count++
+		}
+	}
+	out := make([]MemoryFinding, 0, len(order))
+	for _, k := range order {
+		h := byTool[k]
+		detail := h.detail
+		if h.count > 1 {
+			detail = fmt.Sprintf("%s Referenced in %d saved entries.", detail, h.count)
+		}
+		out = append(out, MemoryFinding{
+			Layer: "Reference Memory", Kind: "dead_tool",
+			Detail: detail, Quote: h.example,
+		})
+	}
 	return out
 }
 

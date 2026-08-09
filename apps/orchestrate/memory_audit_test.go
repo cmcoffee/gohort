@@ -8,6 +8,7 @@
 package orchestrate
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +193,128 @@ func TestCleanMemoryHasNoFindings(t *testing.T) {
 
 	if found := auditOf(t, app, udb, rec, user); len(found) != 0 {
 		t.Errorf("clean memory must be silent: %+v", found)
+	}
+}
+
+// Reference Memory is where "the working approach was tool X" gets recorded by
+// memory_save, and then outlives X. Findings aggregate per tool: one retired
+// tool can sit in dozens of saved entries, and thirty identical rows is how a
+// findings list stops being read.
+func TestReferenceMemoryIsAuditedAndAggregated(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	vdb := &DBase{Store: kvlite.MemStore()}
+	prevV := VectorDB
+	VectorDB = vdb
+	t.Cleanup(func() { VectorDB = prevV })
+
+	AddOrphanedTempTools(udb, user, []OrphanedTempTool{{Tool: TempTool{Name: "get_top_stories"}}})
+	src := agentKnowledgePrefix(user, rec.ID)
+	for i, text := range []string{
+		"the reliable path for headlines is get_top_stories with category=all",
+		"get_top_stories beats scraping the sites directly",
+		"user prefers the terse summary format",
+	} {
+		vdb.Set(EmbeddedChunks, fmt.Sprintf("c%d", i), EmbeddedChunk{
+			ID: fmt.Sprintf("c%d", i), Source: src, Text: text,
+		})
+	}
+
+	found := auditOf(t, app, udb, rec, user)
+	var ref []MemoryFinding
+	for _, f := range found {
+		if f.Layer == "Reference Memory" {
+			ref = append(ref, f)
+		}
+	}
+	if len(ref) != 1 {
+		t.Fatalf("two chunks naming one dead tool must collapse to one finding, got %d: %+v", len(ref), ref)
+	}
+	if !strings.Contains(ref[0].Detail, "2 saved entries") {
+		t.Errorf("the finding must carry the count: %s", ref[0].Detail)
+	}
+}
+
+// Curated content is not derived memory — an uploaded document mentioning a
+// retired tool is a document, not a belief the agent formed.
+func TestCuratedChunksAreNotAudited(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	vdb := &DBase{Store: kvlite.MemStore()}
+	prevV := VectorDB
+	VectorDB = vdb
+	t.Cleanup(func() { VectorDB = prevV })
+
+	AddOrphanedTempTools(udb, user, []OrphanedTempTool{{Tool: TempTool{Name: "get_top_stories"}}})
+	vdb.Set(EmbeddedChunks, "u1", EmbeddedChunk{
+		ID: "u1", Source: agentKnowledgePrefix(user, rec.ID),
+		ReportID: "orch-upload-1", Text: "the old runbook used get_top_stories",
+	})
+
+	for _, f := range auditOf(t, app, udb, rec, user) {
+		if f.Layer == "Reference Memory" {
+			t.Errorf("uploaded content is not derived memory: %+v", f)
+		}
+	}
+}
+
+// Another agent's chunks live in the same vector store under a different
+// prefix and must not leak into this agent's findings.
+func TestReferenceMemoryAuditIsScopedToTheAgent(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	vdb := &DBase{Store: kvlite.MemStore()}
+	prevV := VectorDB
+	VectorDB = vdb
+	t.Cleanup(func() { VectorDB = prevV })
+
+	AddOrphanedTempTools(udb, user, []OrphanedTempTool{{Tool: TempTool{Name: "get_top_stories"}}})
+	vdb.Set(EmbeddedChunks, "other", EmbeddedChunk{
+		ID: "other", Source: agentKnowledgePrefix(user, "some-other-agent"),
+		Text: "call get_top_stories for the feed",
+	})
+
+	for _, f := range auditOf(t, app, udb, rec, user) {
+		if f.Layer == "Reference Memory" {
+			t.Errorf("another agent's memory must not appear here: %+v", f)
+		}
+	}
+}
+
+// Graph attributes are where a tool name realistically lands in the graph.
+// The finding has to name the entity — "Graph Memory" alone doesn't say which
+// of thirty nodes to open.
+func TestGraphAttributesAreAuditedAndNameTheEntity(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	AddOrphanedTempTools(udb, user, []OrphanedTempTool{{Tool: TempTool{Name: "get_top_stories"}}})
+	ns := factsNamespace(rec.ID)
+	udb.Set(GraphEntityTable, ns+"/thing:morning-brief", GraphEntity{
+		Namespace: ns, ID: "thing:morning-brief", Kind: "thing", Name: "Morning Brief",
+		Attrs: map[string]string{"built_from": "get_top_stories"},
+	})
+
+	var graph []MemoryFinding
+	for _, f := range auditOf(t, app, udb, rec, user) {
+		if f.Layer == "Graph Memory" {
+			graph = append(graph, f)
+		}
+	}
+	if len(graph) != 1 {
+		t.Fatalf("want one Graph Memory finding, got %d: %+v", len(graph), graph)
+	}
+	if !strings.Contains(graph[0].Detail, "Morning Brief") {
+		t.Errorf("the finding must name the entity: %s", graph[0].Detail)
+	}
+}
+
+// Attribute KEYS are snake_case by convention. Auditing them would flag most
+// of the graph on the first open.
+func TestGraphAttributeKeysAreNotAudited(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	ns := factsNamespace(rec.ID)
+	udb.Set(GraphEntityTable, ns+"/person:dana", GraphEntity{
+		Namespace: ns, ID: "person:dana", Kind: "person", Name: "Dana",
+		Attrs: map[string]string{"home_office": "two monitors", "preferred_contact": "text"},
+	})
+
+	if found := auditOf(t, app, udb, rec, user); len(found) != 0 {
+		t.Errorf("attribute keys must not be audited as tools: %+v", found)
 	}
 }
