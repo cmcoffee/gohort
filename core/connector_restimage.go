@@ -480,9 +480,80 @@ func sameImageHost(submitURL, otherURL string) error {
 		return fmt.Errorf("upload_url is not a URL: %w", err)
 	}
 	if a.Host != b.Host {
-		return fmt.Errorf("upload_url host %q must match submit_url host %q — the backend's dispatch is scoped to one host", b.Host, a.Host)
+		return fmt.Errorf("upload_url host %q must match submit_url host %q — the backend's dispatch is scoped to one host.%s",
+			b.Host, a.Host, hostTypoHint(a.Host, b.Host))
 	}
 	return nil
+}
+
+// hostTypoHint points at WHERE two nearly-identical hosts diverge, and returns
+// "" when they are plainly different servers.
+//
+// Reported from the field as an impossible error:
+//
+//	upload_url host "alpaca.snuglab.locl:8188" must match
+//	submit_url host "alpaca.snuglab.local:8188"
+//
+// One missing letter. Printing both strings is the right thing to do and still
+// useless — at a glance they are the same string, so the message reads as the
+// validator malfunctioning rather than as a typo. Naming the position and the
+// two divergent tails makes the difference impossible to miss, without relying
+// on a monospace font or aligned output the way a caret diagram would.
+//
+// Deliberately silent for genuinely different hosts: "these differ from
+// character 1" is noise when someone has simply pointed the two endpoints at
+// two machines, and the base message already covers that.
+func hostTypoHint(submitHost, uploadHost string) string {
+	a, b := []rune(submitHost), []rune(uploadHost)
+	if !nearIdenticalHosts(a, b) {
+		return ""
+	}
+	i := 0
+	for i < len(a) && i < len(b) && a[i] == b[i] {
+		i++
+	}
+	return fmt.Sprintf(" They are identical up to character %d, then submit_url has %q and upload_url has %q — check for a typo rather than a different server.",
+		i, string(a[i:]), string(b[i:]))
+}
+
+// nearIdenticalHosts reports whether two hosts are within a couple of edits of
+// each other — a typo, rather than two different machines.
+func nearIdenticalHosts(a, b []rune) bool {
+	const maxEdits = 2
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	if len(a)-len(b) > maxEdits || len(b)-len(a) > maxEdits {
+		return false
+	}
+	// Levenshtein, single row. Hosts are short; this is not worth optimizing.
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(cur[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)] <= maxEdits
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
 }
 
 // Materialize registers the per-connector generate_image_<name> chat tool. The
