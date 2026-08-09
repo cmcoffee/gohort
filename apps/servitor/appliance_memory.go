@@ -397,6 +397,8 @@ func (T *Servitor) handleApplianceMemory(w http.ResponseWriter, r *http.Request)
 		orch.PublicHandleAgentFactsForScope(w, r, scope, id)
 	case suffix == "notes":
 		orch.PublicHandleAgentNotesForScope(w, r, scope, id)
+	case suffix == "memaudit":
+		orch.PublicHandleAgentMemoryAuditForScope(w, r, scope, id)
 	case suffix == "graph":
 		// First graph read bridges the appliance's existing ssh_facts into
 		// the scope as an entity (one-time; see the func doc) so the Graph

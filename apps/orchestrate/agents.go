@@ -2233,6 +2233,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentNotes(w, r, user, id)
 		return
 	}
+	if action == "memaudit" {
+		T.handleAgentMemoryAudit(w, r, user, id)
+		return
+	}
 	if action == "memsearch" {
 		T.handleAgentMemorySearch(w, r, user, id)
 		return

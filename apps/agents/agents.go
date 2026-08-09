@@ -140,6 +140,8 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleAgentFacts(w, r, agent.ID)
 	case rest == "api/notes":
 		orch.PublicHandleAgentNotes(w, r, agent.ID)
+	case rest == "api/memaudit":
+		orch.PublicHandleAgentMemoryAudit(w, r, agent.ID)
 	case rest == "api/graph":
 		orch.PublicHandleAgentGraph(w, r, agent.ID)
 	case rest == "api/graph/edge":

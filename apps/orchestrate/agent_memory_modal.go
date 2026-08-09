@@ -224,6 +224,52 @@ const agentMemoryModalTemplate = `<script>
         });
         container.appendChild(add);
       }
+      // --- Needs attention (the memory audit) ---
+      // Placed FIRST and rendered on open rather than behind a button: nobody
+      // clicks an audit, and the note that motivated this survived months of
+      // not being looked for. Read-only by design — it points at the layer's
+      // own editor below and the owner decides, because wrongly evicting
+      // someone's memory is worse than a stale entry.
+      var auditWrap = document.createElement('div');
+      auditWrap.style.cssText = 'margin-bottom:1rem;padding:0.6rem 0.7rem;border:1px solid var(--danger,#ff7b72);border-radius:6px;background:var(--bg-1);display:none';
+      var auditTitle = document.createElement('div');
+      auditTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+      auditWrap.appendChild(auditTitle);
+      var auditIntro = document.createElement('p');
+      auditIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
+      auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Nothing is removed for you — fix each one in its section below.';
+      auditWrap.appendChild(auditIntro);
+      var auditList = document.createElement('div');
+      auditList.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem';
+      auditWrap.appendChild(auditList);
+      body.appendChild(auditWrap);
+
+      fetch(MEMBASE + 'memaudit').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
+        var found = (d && d.findings) || [];
+        if (!found.length) return;              // silent when clean
+        auditWrap.style.display = '';
+        auditTitle.textContent = 'Needs attention (' + found.length + ')';
+        found.forEach(function(f) {
+          var row = document.createElement('div');
+          row.style.cssText = 'border-left:2px solid var(--danger,#ff7b72);padding-left:0.55rem';
+          var where = document.createElement('div');
+          where.style.cssText = 'font-size:0.78rem;font-weight:600;color:var(--text)';
+          where.textContent = f.layer;
+          row.appendChild(where);
+          var why = document.createElement('div');
+          why.style.cssText = 'font-size:0.82rem;color:var(--text-mute);margin:0.1rem 0';
+          why.textContent = f.detail;
+          row.appendChild(why);
+          if (f.quote) {
+            var q = document.createElement('div');
+            q.style.cssText = 'font-size:0.78rem;color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';
+            q.textContent = '“' + f.quote + '”';
+            row.appendChild(q);
+          }
+          auditList.appendChild(row);
+        });
+      });
+
       // --- Facts section (store_fact entries, framing-aware) ---
       var facts = [];
       var factsWrap = document.createElement('div');
