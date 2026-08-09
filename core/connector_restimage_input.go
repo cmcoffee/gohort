@@ -92,8 +92,17 @@ const maxCascadeStages = 6
 // images. Five images into a 3-input backend is [3, 2]: edit the first three,
 // then blend that result with the remaining two.
 //
+// EVERY stage must be exactly full. A compose graph writes one mapped node per
+// image and errors on a partial fill (BuildComfyBody), because an unwritten
+// node renders against whatever placeholder the workflow was saved with. So a
+// short final stage is not a smaller render, it is a failed one — after the
+// earlier stages have already been paid for. That makes the arithmetic exact:
+// R renders consume R*max and produce R, so n + (R-1) = R*max, i.e. a cascade
+// exists only when (n-1) is divisible by (max-1).
+//
 // Returns nil when n doesn't fit: max < 2 leaves no slot to carry a result
-// forward, and past maxCascadeStages the chain is too long to be worth running.
+// forward, n-1 not divisible leaves a stage underfilled, and past
+// maxCascadeStages the chain is too long to be worth running.
 func planImageCascade(n, max int) []int {
 	if n <= 0 || max <= 0 {
 		return nil
@@ -104,18 +113,139 @@ func planImageCascade(n, max int) []int {
 	if max < 2 {
 		return nil // a 1-input backend has no slot for the carried result
 	}
+	if (n-1)%(max-1) != 0 {
+		return nil // some stage would be short, and short means failed
+	}
 	stages := []int{max}
 	for left := n - max; left > 0; left -= max - 1 {
-		take := max - 1
-		if left < take {
-			take = left
-		}
-		stages = append(stages, take)
+		stages = append(stages, max-1)
 		if len(stages) > maxCascadeStages {
 			return nil
 		}
 	}
 	return stages
+}
+
+// cascadeImageCounts lists the source-image counts a backend can actually
+// combine, for an error message that offers a way forward instead of only a
+// limit. A 2-input backend takes any count; a 3-input one takes odd counts.
+func cascadeImageCounts(max int) []int {
+	if max < 2 {
+		return []int{max}
+	}
+	out := make([]int, 0, maxCascadeStages)
+	for s := 1; s <= maxCascadeStages; s++ {
+		out = append(out, 1+s*(max-1))
+	}
+	return out
+}
+
+// --- tree merge --------------------------------------------------------------
+
+// cascadeRef is one input slot of one render: either a source image the caller
+// passed, or the output of an earlier render.
+type cascadeRef struct {
+	Source int // index into the caller's images; -1 when this is a step result
+	Step   int // index into the step list; -1 when this is a source image
+}
+
+func srcRef(i int) cascadeRef  { return cascadeRef{Source: i, Step: -1} }
+func stepRef(i int) cascadeRef { return cascadeRef{Source: -1, Step: i} }
+
+// cascadeStep is one render and what feeds it.
+type cascadeStep struct{ In []cascadeRef }
+
+// planCascadeTree combines images pairwise-and-upward instead of accumulating
+// left to right. Same number of renders as the chain — that count is fixed by
+// the arithmetic above — but a much shallower one.
+//
+// Depth is the whole point. On a 2-input backend a chain of five images puts
+// the first picture through four renders and the last through one, so the
+// early subjects are re-encoded four times and drift while the late ones stay
+// crisp. The tree puts every source through roughly the same number of passes,
+// so whatever degradation there is lands evenly instead of falling entirely on
+// whoever was listed first.
+//
+// Grouping stays in order — (1,2), (3,4) — so it remains an ordered combine,
+// just not an ordered accumulation.
+func planCascadeTree(n, max int) []cascadeStep {
+	if n <= 0 || max < 2 || (n > max && (n-1)%(max-1) != 0) {
+		return nil
+	}
+	frontier := make([]cascadeRef, 0, n)
+	for i := 0; i < n; i++ {
+		frontier = append(frontier, srcRef(i))
+	}
+	var steps []cascadeStep
+	for len(frontier) > 1 {
+		next := make([]cascadeRef, 0, len(frontier))
+		rendered := false
+		for i := 0; i < len(frontier); i += max {
+			end := i + max
+			if end > len(frontier) {
+				end = len(frontier)
+			}
+			group := frontier[i:end]
+			if len(group) < max {
+				// A short tail is not renderable on its own; it waits and
+				// joins a full group on the next level.
+				next = append(next, group...)
+				continue
+			}
+			steps = append(steps, cascadeStep{In: append([]cascadeRef{}, group...)})
+			next = append(next, stepRef(len(steps)-1))
+			rendered = true
+		}
+		if !rendered || len(next) >= len(frontier) {
+			return nil // no progress: refuse rather than spin
+		}
+		if len(steps) > maxCascadeStages {
+			return nil
+		}
+		frontier = next
+	}
+	return steps
+}
+
+// chainSteps expresses the linear plan in the same step form, so one executor
+// runs both shapes.
+func chainSteps(stages []int) []cascadeStep {
+	var steps []cascadeStep
+	next := 0
+	for i, count := range stages {
+		in := make([]cascadeRef, 0, count+1)
+		if i > 0 {
+			in = append(in, stepRef(len(steps)-1)) // carry the previous result
+		}
+		for k := 0; k < count; k++ {
+			in = append(in, srcRef(next))
+			next++
+		}
+		steps = append(steps, cascadeStep{In: in})
+	}
+	return steps
+}
+
+// treeMergeMaxSlots is the slot count at or below which a cascade merges as a
+// TREE rather than a chain. At two slots the chain is pathological — every
+// render folds in exactly one new image, so depth is n-1 and the first picture
+// is re-encoded once per remaining image. Above this the chain is already
+// shallow, and its left-to-right accumulation is the ordering the caller asked
+// for, so it stays the default.
+const treeMergeMaxSlots = 2
+
+// cascadeSteps is the plan an edit actually runs.
+func cascadeSteps(n, max int) []cascadeStep {
+	stages := planImageCascade(n, max)
+	if stages == nil {
+		return nil
+	}
+	if len(stages) > 1 && max <= treeMergeMaxSlots {
+		if tree := planCascadeTree(n, max); tree != nil {
+			return tree
+		}
+	}
+	return chainSteps(stages)
 }
 
 // cascadeCapacity is the most images a backend can handle across a full

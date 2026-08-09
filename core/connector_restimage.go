@@ -1355,14 +1355,28 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 		return nil, fmt.Errorf("editing needs at least one source image")
 	}
 	max := s.MaxImages()
-	stages := planImageCascade(len(req.Images), max)
-	if stages == nil {
-		// Unchanged refusal for the cases a cascade cannot rescue: a 1-input
-		// backend has no slot to carry a result forward, and a chain past the
-		// stage cap is not the operation the user meant. Still says do not
-		// retry with fewer and call it done.
-		return nil, fmt.Errorf("this backend takes at most %d image(s) at a time and %d were given, which is more than it can combine even in stages. Do NOT retry with fewer and present it as the blend that was asked for — a composite missing pictures is not the picture requested. Tell the user this backend can combine only %d at a time",
-			max, len(req.Images), cascadeCapacity(max))
+	steps := cascadeSteps(len(req.Images), max)
+	if steps == nil {
+		// Three ways a cascade is impossible, and the message has to separate
+		// them or the user cannot tell which one they hit. Every case keeps
+		// the "do not retry with fewer" line: a composite missing pictures is
+		// not the picture that was asked for.
+		var why string
+		switch {
+		case max < 2:
+			why = "it takes one image at a time, which leaves no slot to carry a partial result into the next pass, so it cannot be staged at all"
+		case len(req.Images) > cascadeCapacity(max):
+			why = fmt.Sprintf("staging tops out at %d images", cascadeCapacity(max))
+		default:
+			// The divisibility case: every render must be exactly full,
+			// because a compose graph errors on a partial fill. Offer the
+			// counts that DO work rather than only the ceiling — "use 5 or 7"
+			// is actionable where "not 6" is not.
+			why = fmt.Sprintf("every pass has to be exactly full or the backend renders an unfilled input against a leftover photo, so it can combine %s images — not %d",
+				joinCounts(cascadeImageCounts(max)), len(req.Images))
+		}
+		return nil, fmt.Errorf("this backend composes %d image(s) at a time and %d were given: %s. Do NOT retry with fewer and present it as the blend that was asked for — a composite missing pictures is not the picture requested. Tell the user what this backend can actually combine",
+			max, len(req.Images), why)
 	}
 	images, err := resolveInputImages(sess, req.Images, cascadeCapacity(max))
 	if err != nil {
@@ -1383,8 +1397,8 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	if seed == 0 {
 		seed = -1
 	}
-	if len(stages) > 1 {
-		return s.editCascaded(sess, req, stages, images, mask, seed)
+	if len(steps) > 1 {
+		return s.editCascaded(sess, req, steps, images, mask, seed)
 	}
 	// No width/height: an edit inherits its size from the source photo. That
 	// isn't enforced here — it falls out of the wiring. An img2img graph draws
@@ -1426,25 +1440,28 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 // The mask, if any, applies only to the FIRST stage. It was drawn against the
 // original source; against a composited intermediate it selects a region that
 // no longer means what the caller marked.
-func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, stages []int, images []inputImage, mask *inputImage, seed int) (*ImageGenResult, error) {
-	Log("[rest_image] %q: %d source image(s) over a %d-image limit — running %d stage(s) %v",
-		req.Backend, len(images), s.MaxImages(), len(stages), stages)
-	var carried *inputImage
+func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, steps []cascadeStep, images []inputImage, mask *inputImage, seed int) (*ImageGenResult, error) {
+	Log("[rest_image] %q: %d source image(s) over a %d-image limit — running %d render(s), %s",
+		req.Backend, len(images), s.MaxImages(), len(steps), cascadeShape(steps))
+	results := make([]inputImage, len(steps))
 	var out restImageOutcome
-	next := 0
-	for i, count := range stages {
-		batch := make([]inputImage, 0, count+1)
-		if carried != nil {
-			batch = append(batch, *carried)
+	for i, step := range steps {
+		batch := make([]inputImage, 0, len(step.In))
+		for _, ref := range step.In {
+			if ref.Step >= 0 {
+				batch = append(batch, results[ref.Step])
+				continue
+			}
+			batch = append(batch, images[ref.Source])
 		}
-		batch = append(batch, images[next:next+count]...)
-		next += count
-
+		// The mask rides only the render that touches the ORIGINAL sources in
+		// their given order — it was drawn against those, and against a
+		// composited intermediate it selects a region that no longer means
+		// what the caller marked.
 		stageMask := mask
-		if i > 0 {
+		if i > 0 || !allSourceRefs(step.In) {
 			stageMask = nil
 		}
-		stage := i + 1
 		var err error
 		out, err = timeImageRender(req.Backend, func() (restImageOutcome, error) {
 			return s.generate(sess, restImageParams{
@@ -1457,21 +1474,55 @@ func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, sta
 			})
 		})
 		if err != nil {
-			// Name the stage: a chain that dies on step 3 of 4 otherwise reports
+			// Name the render: one that dies on step 3 of 4 otherwise reports
 			// the same message as one that never started, and the difference
 			// decides whether retrying is worth anything.
-			return nil, fmt.Errorf("image cascade stage %d of %d (%d image(s) in) failed: %w", stage, len(stages), len(batch), err)
+			return nil, fmt.Errorf("image cascade render %d of %d (%d image(s) in) failed: %w", i+1, len(steps), len(batch), err)
 		}
-		if i == len(stages)-1 {
+		if i == len(steps)-1 {
 			break
 		}
-		fed, err := outcomeAsInputImage(out, fmt.Sprintf("cascade-stage-%d.png", stage))
+		fed, err := outcomeAsInputImage(out, fmt.Sprintf("cascade-step-%d.png", i+1))
 		if err != nil {
-			return nil, fmt.Errorf("image cascade stage %d of %d: %w", stage, len(stages), err)
+			return nil, fmt.Errorf("image cascade render %d of %d: %w", i+1, len(steps), err)
 		}
-		carried = &fed
+		results[i] = fed
 	}
 	return restImageResult(out, req.Prompt)
+}
+
+// allSourceRefs reports whether a render consumes only original images.
+func allSourceRefs(in []cascadeRef) bool {
+	for _, ref := range in {
+		if ref.Step >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// cascadeShape renders a plan for the log — "[1 2] [3 4] [r1 r2]" — so a
+// support question about a staged edit can be answered from the log alone.
+func cascadeShape(steps []cascadeStep) string {
+	var b strings.Builder
+	for i, st := range steps {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString("[")
+		for k, ref := range st.In {
+			if k > 0 {
+				b.WriteString(" ")
+			}
+			if ref.Step >= 0 {
+				fmt.Fprintf(&b, "r%d", ref.Step+1)
+			} else {
+				fmt.Fprintf(&b, "%d", ref.Source+1)
+			}
+		}
+		b.WriteString("]")
+	}
+	return b.String()
 }
 
 // outcomeAsInputImage turns one stage's render into the next stage's source.
@@ -1490,6 +1541,18 @@ func outcomeAsInputImage(out restImageOutcome, name string) (inputImage, error) 
 		return inputImage{}, fmt.Errorf("backend returned invalid base64: %w", err)
 	}
 	return verifyInputImage(name, data)
+}
+
+// joinCounts renders a workable-count list as "3, 5, 7, 9, 11 or 13".
+func joinCounts(counts []int) string {
+	parts := make([]string, 0, len(counts))
+	for _, c := range counts {
+		parts = append(parts, strconv.Itoa(c))
+	}
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " or " + parts[len(parts)-1]
 }
 
 // resolveImageConnector loads an approved rest_image connector's spec by name.
