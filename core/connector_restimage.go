@@ -504,19 +504,77 @@ func (h restImageHandler) Materialize(c Connector) error {
 		return generateRestImageNative(name, prompt, landscape)
 	})
 	restImageMu.Lock()
-	defer restImageMu.Unlock()
-	if registeredRestImageTools[name] {
-		return nil
+	ownedImageBackends[name] = true
+	already := registeredRestImageTools[name]
+	if !already {
+		registeredRestImageTools[name] = true
 	}
-	RegisterChatTool(&restImageTool{connector: name})
-	registeredRestImageTools[name] = true
+	restImageMu.Unlock()
+	if !already {
+		RegisterChatTool(&restImageTool{connector: name})
+	}
+	// Every save reloads the whole image-generation surface, not just the row
+	// that changed. A connector edit is exactly when the registry is most
+	// likely to be out of step with the store — a rename leaves the old name
+	// registered, an unapprove elsewhere left a live closure — and a partial
+	// refresh is indistinguishable from a stale one to whoever is looking at
+	// the picker and wondering why a restart fixes it.
+	reconcileImageBackends(RootDB)
 	return nil
 }
 
-// Teardown is a no-op on the registry (append-only): the proxy live-resolves the
-// connector, so once this connector is unapproved/deleted the tool returns an
-// "unavailable" error. Mirrors the MCP kind.
-func (restImageHandler) Teardown(c Connector) error { return nil }
+// Teardown drops this connector's backend. The chat tool stays registered (the
+// registry is append-only and the proxy live-resolves, so it errors cleanly on
+// use), but the BACKEND must go: it is what ImageBackendRegistered answers on,
+// and a stale yes kept an unapproved or deleted connector on offer as an image
+// provider for the rest of the process.
+func (restImageHandler) Teardown(c Connector) error {
+	name := strings.TrimSpace(c.Name)
+	UnregisterImageBackend(name)
+	restImageMu.Lock()
+	delete(ownedImageBackends, name)
+	restImageMu.Unlock()
+	reconcileImageBackends(RootDB)
+	return nil
+}
+
+// reconcileImageBackends makes the process-level backend registry match the
+// stored connectors: every approved, parseable rest_image connector is
+// registered, and every name we own that no longer has one is dropped.
+//
+// rest_image is the only registrar (RegisterImageBackend has one other caller,
+// itself), so a full sweep is safe — but it still only removes names it put
+// there, tracked in ownedImageBackends, so a future registrar isn't clobbered.
+func reconcileImageBackends(db Database) {
+	if db == nil {
+		return
+	}
+	live := map[string]bool{}
+	for _, c := range ListConnectors(db) {
+		if c.Kind != RestImageConnectorKind || !c.Approved {
+			continue
+		}
+		if _, err := (restImageHandler{}).parse(c); err != nil {
+			continue
+		}
+		live[strings.TrimSpace(c.Name)] = true
+	}
+	restImageMu.Lock()
+	var stale []string
+	for name := range ownedImageBackends {
+		if !live[name] {
+			stale = append(stale, name)
+		}
+	}
+	for _, name := range stale {
+		delete(ownedImageBackends, name)
+	}
+	restImageMu.Unlock()
+	for _, name := range stale {
+		UnregisterImageBackend(name)
+		Log("[rest_image] dropped backend %q — no approved connector of that name", name)
+	}
+}
 
 func (h restImageHandler) Summary(c Connector) string {
 	s, _ := h.parse(c)
@@ -538,6 +596,9 @@ func (h restImageHandler) Summary(c Connector) string {
 var (
 	restImageMu              sync.Mutex
 	registeredRestImageTools = map[string]bool{}
+	// ownedImageBackends are the image-backend names this handler registered,
+	// so a reconcile sweep only removes its own.
+	ownedImageBackends = map[string]bool{}
 )
 
 // restImageToolName is the chat-tool name for a connector. Hyphens (legal in a

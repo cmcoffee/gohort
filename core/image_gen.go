@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,32 @@ func RegisterImageBackend(name string, fn ImageBackendFunc) {
 	imageBackendMu.Lock()
 	imageBackends[name] = fn
 	imageBackendMu.Unlock()
+}
+
+// UnregisterImageBackend drops a named backend. Teardown used to be a no-op
+// here, so an unapproved or deleted connector kept a live closure for the rest
+// of the process — ImageBackendRegistered still said yes, and the admin's
+// image-provider picker went on offering a backend that no longer existed.
+func UnregisterImageBackend(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	imageBackendMu.Lock()
+	delete(imageBackends, name)
+	imageBackendMu.Unlock()
+}
+
+// RegisteredImageBackends returns the currently-registered backend names.
+func RegisteredImageBackends() []string {
+	imageBackendMu.RLock()
+	defer imageBackendMu.RUnlock()
+	out := make([]string, 0, len(imageBackends))
+	for n := range imageBackends {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ImageBackendRegistered reports whether a named backend exists — lets the admin

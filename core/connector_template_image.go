@@ -9,6 +9,7 @@ package core
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 )
 
@@ -132,7 +133,18 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	}
 	spec.PromptSuffix = TemplateStr(vals, "prompt_suffix")
 	spec.PromptGuidance = TemplateStr(vals, "prompt_guidance")
-	if u := TemplateStr(vals, "upload_url"); u != "" {
+	// ApplyRestImagePreset above already derived UploadURL from the CURRENT
+	// base_url. Only let the submitted field override that when it is a
+	// genuinely custom endpoint.
+	//
+	// The Configure panel prefills upload_url from the stored spec, so once it
+	// held a concrete host, re-saving wrote that old host straight back over
+	// the freshly-derived one — and sameImageHost then refused the save for
+	// disagreeing with the new base_url. Changing the ComfyUI server became
+	// impossible, from a field marked Advanced that the admin never sees.
+	// Same shape as the frozen poll defaults MigrateFrozenImageDefaults
+	// unfroze: preset residue stored as though it were a choice.
+	if u := TemplateStr(vals, "upload_url"); u != "" && !isDerivedUploadURL(u) {
 		spec.UploadURL = u
 	}
 	// 0 means "use the deadline tunable for this backend's kind", which is the
@@ -160,6 +172,27 @@ func addComfyNodeChoices(vals map[string]any, workflow string) {
 	if nodes, err := ComfyGraphNodes(workflow); err == nil && len(nodes) > 0 {
 		vals[comfyNodeChoicesKey] = nodes
 	}
+}
+
+// isDerivedUploadURL reports whether an upload endpoint is just the preset's
+// default shape for some host — "<host>/upload/image", or the unsubstituted
+// "{base_url}/upload/image" template. Those follow the ComfyUI URL and are
+// re-derived on every build; only a different PATH is a real choice worth
+// preserving. Host is deliberately ignored: a differing host is precisely the
+// stale case, and sameImageHost forbids it anyway.
+func isDerivedUploadURL(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return true
+	}
+	if strings.HasPrefix(s, "{base_url}") {
+		return strings.TrimPrefix(s, "{base_url}") == "/upload/image"
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return false // unparseable: leave it alone and let validation speak
+	}
+	return strings.TrimSuffix(u.Path, "/") == "/upload/image"
 }
 
 func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
