@@ -135,11 +135,18 @@ func liveImageActions(sess *ToolSession) imageActions {
 
 // maxEditImages is the largest source-photo count any reachable editing backend
 // accepts — what the `images` param can promise.
+// Reports the CASCADE capacity, not the per-call limit: a backend given more
+// images than it takes at once now runs them as chained stages, so promising
+// only the per-call number would make the model refuse work that succeeds.
 func (a imageActions) maxEditImages() int {
 	max := 0
 	for _, e := range a.editors {
-		if e.MaxImages > max {
-			max = e.MaxImages
+		n := e.CascadeMax
+		if n < e.MaxImages {
+			n = e.MaxImages
+		}
+		if n > max {
+			max = n
 		}
 	}
 	return max
@@ -270,6 +277,13 @@ func (a imageActions) backendParamDesc() string {
 				// every mapped input has to be filled or it renders the
 				// placeholder its workflow was saved with.
 				note += ", composes " + strconv.Itoa(c.MaxImages) + " images and needs all " + strconv.Itoa(c.MaxImages)
+				// More than that is not a refusal any more — it runs as staged
+				// calls, each folding the running result into the next batch.
+				// Worth saying, or the model caps itself at the per-call number
+				// and tells the user the rest cannot be combined.
+				if c.CascadeMax > c.MaxImages {
+					note += " (pass more and they are combined in stages, up to " + strconv.Itoa(c.CascadeMax) + ")"
+				}
 			}
 		} else {
 			note += "generates from text (use with action=generate)"

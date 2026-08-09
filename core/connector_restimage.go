@@ -1112,6 +1112,11 @@ type ImageBackendChoice struct {
 	Edits bool
 	// MaxImages is how many source photos an editing backend accepts.
 	MaxImages int
+	// CascadeMax is how many it can combine in TOTAL, by chaining calls: the
+	// first takes MaxImages, each later one carries the running result in a
+	// slot and folds in MaxImages-1 more. Equals MaxImages when the backend
+	// cannot cascade (a single input slot leaves nothing to carry forward).
+	CascadeMax int
 	// AcceptsMask is true when the workflow has a mask loader, so inpainting
 	// ("change just this part") is possible.
 	AcceptsMask bool
@@ -1188,6 +1193,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 			Default:     c.Name == defaultProvider,
 			Edits:       s.SupportsImageInput(),
 			MaxImages:   s.MaxImages(),
+			CascadeMax:  cascadeCapacity(s.MaxImages()),
 			AcceptsMask: len(s.ComfyMap.MaskNodes) > 0,
 		})
 	}
@@ -1277,7 +1283,17 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	if len(req.Images) == 0 {
 		return nil, fmt.Errorf("editing needs at least one source image")
 	}
-	images, err := resolveInputImages(sess, req.Images, s.MaxImages())
+	max := s.MaxImages()
+	stages := planImageCascade(len(req.Images), max)
+	if stages == nil {
+		// Unchanged refusal for the cases a cascade cannot rescue: a 1-input
+		// backend has no slot to carry a result forward, and a chain past the
+		// stage cap is not the operation the user meant. Still says do not
+		// retry with fewer and call it done.
+		return nil, fmt.Errorf("this backend takes at most %d image(s) at a time and %d were given, which is more than it can combine even in stages. Do NOT retry with fewer and present it as the blend that was asked for — a composite missing pictures is not the picture requested. Tell the user this backend can combine only %d at a time",
+			max, len(req.Images), cascadeCapacity(max))
+	}
+	images, err := resolveInputImages(sess, req.Images, cascadeCapacity(max))
 	if err != nil {
 		return nil, err
 	}
@@ -1295,6 +1311,9 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	seed := req.Seed
 	if seed == 0 {
 		seed = -1
+	}
+	if len(stages) > 1 {
+		return s.editCascaded(sess, req, stages, images, mask, seed)
 	}
 	// No width/height: an edit inherits its size from the source photo. That
 	// isn't enforced here — it falls out of the wiring. An img2img graph draws
@@ -1315,6 +1334,91 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 		return nil, err
 	}
 	return restImageResult(out, req.Prompt)
+}
+
+// editCascaded runs an edit whose source images outnumber the backend's input
+// slots, as a chain of renders: the first stage takes a full load, and every
+// stage after it carries the previous stage's OUTPUT in its first slot
+// alongside the next batch of new images.
+//
+// The prompt is applied at EVERY stage. A later stage is composing a partial
+// result with pictures it has not seen, so it needs the same instruction the
+// first one had — dropping it would leave the tail of the chain blending
+// blind. The cost is that an instruction naming a specific subject gets
+// re-applied to an image that already satisfies it, which is the lesser
+// failure and the one the user can see and correct.
+//
+// The carried result goes FIRST because slot order is subject-then-material on
+// a compose graph (see orderImageNodesByConsumer): the accumulation so far is
+// the subject, the new images are what gets folded into it.
+//
+// The mask, if any, applies only to the FIRST stage. It was drawn against the
+// original source; against a composited intermediate it selects a region that
+// no longer means what the caller marked.
+func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, stages []int, images []inputImage, mask *inputImage, seed int) (*ImageGenResult, error) {
+	Log("[rest_image] %q: %d source image(s) over a %d-image limit — running %d stage(s) %v",
+		req.Backend, len(images), s.MaxImages(), len(stages), stages)
+	var carried *inputImage
+	var out restImageOutcome
+	next := 0
+	for i, count := range stages {
+		batch := make([]inputImage, 0, count+1)
+		if carried != nil {
+			batch = append(batch, *carried)
+		}
+		batch = append(batch, images[next:next+count]...)
+		next += count
+
+		stageMask := mask
+		if i > 0 {
+			stageMask = nil
+		}
+		stage := i + 1
+		var err error
+		out, err = timeImageRender(req.Backend, func() (restImageOutcome, error) {
+			return s.generate(sess, restImageParams{
+				prompt:   req.Prompt,
+				negative: s.DefaultNegative,
+				steps:    firstPositive(req.Steps, s.DefaultSteps),
+				seed:     seed,
+				images:   batch,
+				mask:     stageMask,
+			})
+		})
+		if err != nil {
+			// Name the stage: a chain that dies on step 3 of 4 otherwise reports
+			// the same message as one that never started, and the difference
+			// decides whether retrying is worth anything.
+			return nil, fmt.Errorf("image cascade stage %d of %d (%d image(s) in) failed: %w", stage, len(stages), len(batch), err)
+		}
+		if i == len(stages)-1 {
+			break
+		}
+		fed, err := outcomeAsInputImage(out, fmt.Sprintf("cascade-stage-%d.png", stage))
+		if err != nil {
+			return nil, fmt.Errorf("image cascade stage %d of %d: %w", stage, len(stages), err)
+		}
+		carried = &fed
+	}
+	return restImageResult(out, req.Prompt)
+}
+
+// outcomeAsInputImage turns one stage's render into the next stage's source.
+//
+// Inline bytes are the normal case (ComfyUI's poll fetches the finished frame).
+// A URL-only backend cannot cascade: feeding it forward would mean fetching an
+// arbitrary URL to use as an input image, which is the SSRF that
+// resolveInputImage refuses by design — and quietly widening it here for
+// convenience would be the worst place to make that call.
+func outcomeAsInputImage(out restImageOutcome, name string) (inputImage, error) {
+	if out.b64 == "" {
+		return inputImage{}, fmt.Errorf("this backend returns an image URL rather than image data, so one stage's output cannot be fed into the next — it can only combine as many images as it takes in a single call")
+	}
+	data, err := base64.StdEncoding.DecodeString(out.b64)
+	if err != nil {
+		return inputImage{}, fmt.Errorf("backend returned invalid base64: %w", err)
+	}
+	return verifyInputImage(name, data)
 }
 
 // resolveImageConnector loads an approved rest_image connector's spec by name.

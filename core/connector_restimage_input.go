@@ -74,6 +74,59 @@ func resolveInputImages(sess *ToolSession, refs []string, max int) ([]inputImage
 	return out, nil
 }
 
+// --- cascade planning -------------------------------------------------------
+
+// maxCascadeStages bounds a cascade. Each stage is a full render — on a local
+// GPU that is tens of seconds with a model load in front of it — so an
+// unbounded chain is a request that never visibly finishes. Six stages is 7
+// images on a 2-input backend and 26 on a 6-input one, past which "combine
+// these" is not really the operation being asked for.
+const maxCascadeStages = 6
+
+// planImageCascade splits n source images into per-stage counts for a backend
+// that takes max at once.
+//
+// The first stage takes a full load. Every stage after that carries the
+// previous stage's OUTPUT in one of its input slots — that is what makes it a
+// cascade rather than n unrelated renders — so it has max-1 slots left for new
+// images. Five images into a 3-input backend is [3, 2]: edit the first three,
+// then blend that result with the remaining two.
+//
+// Returns nil when n doesn't fit: max < 2 leaves no slot to carry a result
+// forward, and past maxCascadeStages the chain is too long to be worth running.
+func planImageCascade(n, max int) []int {
+	if n <= 0 || max <= 0 {
+		return nil
+	}
+	if n <= max {
+		return []int{n} // fits in one call — the ordinary path
+	}
+	if max < 2 {
+		return nil // a 1-input backend has no slot for the carried result
+	}
+	stages := []int{max}
+	for left := n - max; left > 0; left -= max - 1 {
+		take := max - 1
+		if left < take {
+			take = left
+		}
+		stages = append(stages, take)
+		if len(stages) > maxCascadeStages {
+			return nil
+		}
+	}
+	return stages
+}
+
+// cascadeCapacity is the most images a backend can handle across a full
+// cascade — what callers should validate against instead of the per-call max.
+func cascadeCapacity(max int) int {
+	if max < 2 {
+		return max
+	}
+	return max + (maxCascadeStages-1)*(max-1)
+}
+
 // CheckImageInputs answers "would this edit's source references resolve, right
 // now?" without rendering anything — the preflight an image edit runs before it
 // is allowed to detach.
@@ -92,7 +145,10 @@ func CheckImageInputs(sess *ToolSession, backend string, refs []string, mask str
 	if err != nil {
 		return err
 	}
-	if _, err := resolveInputImages(sess, refs, s.MaxImages()); err != nil {
+	// The cap is the CASCADE's, not one call's: more images than the backend
+	// takes at once is run as stages, so the preflight must not refuse what the
+	// render would go on to accept.
+	if _, err := resolveInputImages(sess, refs, cascadeCapacity(s.MaxImages())); err != nil {
 		return err
 	}
 	if m := strings.TrimSpace(mask); m != "" {
