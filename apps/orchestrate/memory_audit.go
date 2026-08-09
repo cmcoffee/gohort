@@ -327,6 +327,87 @@ func truncateQuote(s string) string {
 	return s
 }
 
+// --- event-driven flagging ---------------------------------------------------
+
+// noteOrphanedToolMemory runs at the moment a tool stops being callable —
+// an agent delete took its last carrier — and queues a suggestion for every
+// OTHER agent whose memory still names it.
+//
+// The Memory pane's audit only runs when someone opens the Memory pane, which
+// is the same hole the original failure fell through: the note survived
+// because nobody went looking. This fires on the event instead. Deleting an
+// agent is exactly when the framework knows a capability just disappeared, and
+// exactly when it can say who was still counting on it.
+//
+// Approving the suggestion RE-HOMES the tool onto the remembering agent, which
+// makes the memory true again. That is the right repair and the reason this is
+// a suggestion rather than a warning: the alternative fix — editing the memory
+// — stays a manual call in the Memory pane, because this never deletes.
+//
+// Best-effort throughout: a delete must not fail because a suggestion could
+// not be queued.
+func noteOrphanedToolMemory(udb Database, owner string, toolNames []string) {
+	if udb == nil || owner == "" || len(toolNames) == 0 || RootDB == nil {
+		return
+	}
+	for _, rec := range listAgents(udb, owner) {
+		ns := factsNamespace(rec.ID)
+		for _, tool := range toolNames {
+			if !memoryMentionsTool(udb, ns, tool) {
+				continue
+			}
+			suggestOrphanedToolRehome(owner, rec, tool)
+		}
+	}
+}
+
+// memoryMentionsTool reports whether an agent's always-in-prompt memory names
+// a tool. Notes, facts and graph attributes only — the derived corpus is a
+// vector scan, too heavy to run per agent inside a delete, and the Memory
+// pane's audit covers it when someone looks.
+func memoryMentionsTool(udb Database, ns, tool string) bool {
+	word := regexp.MustCompile(`\b` + regexp.QuoteMeta(tool) + `\b`)
+	if word.MatchString(LoadOperatingNotes(udb, ns).Text) {
+		return true
+	}
+	for _, f := range ListMemoryFacts(udb, ns) {
+		if word.MatchString(f.Note) {
+			return true
+		}
+	}
+	for _, e := range ListGraphEntities(udb, ns) {
+		for _, v := range e.Attrs {
+			if word.MatchString(v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// suggestOrphanedToolRehome queues the offer, once per (agent, tool).
+func suggestOrphanedToolRehome(owner string, rec AgentRecord, tool string) {
+	for _, ex := range ListAuthorizations(RootDB, owner) {
+		if ex.Action == orphanMemoryRefAction && ex.Agent == rec.ID && ex.Brief == tool {
+			return // already offered and still unanswered
+		}
+	}
+	SaveAuthorization(RootDB, Authorization{
+		Owner:  owner,
+		Action: orphanMemoryRefAction,
+		Agent:  rec.ID,
+		Brief:  tool,
+		Text: fmt.Sprintf("%q remembers using %q, but that tool's last agent was just deleted, so nothing can call it now. Approving re-homes the tool onto %s so its memory is true again. Ignoring this is fine — the tool's definition is kept in Orphaned Tools either way, and you can edit the memory instead from the agent's Memory pane.",
+			rec.Name, tool, rec.Name),
+	})
+	Log("[orchestrate.memaudit] %s still references orphaned tool %q — suggested re-home", rec.Name, tool)
+}
+
+// orphanMemoryRefAction is the Authorizations action for the offer above.
+// Classified as a SUGGESTION (see approvalIsSuggestion): nothing is blocked on
+// it — the agent runs fine, it just runs with a belief that is no longer true.
+const orphanMemoryRefAction = "orphan_memory_ref"
+
 // --- HTTP handler ------------------------------------------------------------
 
 // handleAgentMemoryAudit serves the findings the Memory pane shows as a

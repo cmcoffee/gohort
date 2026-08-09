@@ -318,3 +318,112 @@ func TestGraphAttributeKeysAreNotAudited(t *testing.T) {
 		t.Errorf("attribute keys must not be audited as tools: %+v", found)
 	}
 }
+
+// The audit only runs when someone opens the Memory pane — the same hole the
+// original failure fell through, since the note survived because nobody went
+// looking. Deleting an agent is the moment the framework KNOWS a capability
+// just disappeared, so that is where it says who was still counting on it.
+func TestDeletingAnAgentFlagsWhoStillRemembersItsTool(t *testing.T) {
+	app, udb, keeper, user := auditFixture(t)
+	_ = app
+	// The agent that carries the tool, and a second one that remembers it.
+	carrier, err := saveAgent(udb, AgentRecord{Name: "Carrier", Owner: user, OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	if err := AdminPersistTempTool(udb, user, TempTool{Name: "get_top_stories"}); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	SetUserToolScopeAgents(udb, user, "get_top_stories", []string{carrier.ID})
+	SaveOperatingNotes(udb, factsNamespace(keeper.ID), "headlines come from get_top_stories")
+
+	if err := deleteAgent(udb, carrier.ID, user); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	var found *Authorization
+	for _, a := range ListAuthorizations(RootDB, user) {
+		if a.Action == orphanMemoryRefAction && a.Agent == keeper.ID {
+			cp := a
+			found = &cp
+		}
+	}
+	if found == nil {
+		t.Fatal("the agent that remembers the tool must be flagged when it goes dark")
+	}
+	if found.Brief != "get_top_stories" {
+		t.Errorf("brief = %q, want the tool name", found.Brief)
+	}
+	// Nothing is blocked on this — the agent runs fine, it just runs believing
+	// something untrue — so it belongs with the OFFERS rather than in the count
+	// of things the user is blocking. That classification lives in
+	// approvalIsSuggestion, which is not asserted here because it is not part
+	// of this commit.
+}
+
+// Only agents that actually reference the tool get flagged. Queuing a card for
+// every agent on every delete would make the pane worthless.
+func TestAgentsThatNeverMentionedTheToolAreNotFlagged(t *testing.T) {
+	app, udb, bystander, user := auditFixture(t)
+	_ = app
+	carrier, err := saveAgent(udb, AgentRecord{Name: "Carrier", Owner: user, OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	if err := AdminPersistTempTool(udb, user, TempTool{Name: "get_top_stories"}); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	SetUserToolScopeAgents(udb, user, "get_top_stories", []string{carrier.ID})
+	SaveOperatingNotes(udb, factsNamespace(bystander.ID), "drafting section 3")
+
+	if err := deleteAgent(udb, carrier.ID, user); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	for _, a := range ListAuthorizations(RootDB, user) {
+		if a.Action == orphanMemoryRefAction {
+			t.Errorf("nobody referenced the tool; nothing should be queued: %+v", a)
+		}
+	}
+}
+
+// A delete that orphans nothing says nothing.
+func TestADeleteThatOrphansNothingIsSilent(t *testing.T) {
+	app, udb, keeper, user := auditFixture(t)
+	_ = app
+	other, err := saveAgent(udb, AgentRecord{Name: "Other", Owner: user, OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	// Shared user-wide, so deleting an agent does not orphan it.
+	if err := AdminPersistTempTool(udb, user, TempTool{Name: "get_top_stories"}); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	SaveOperatingNotes(udb, factsNamespace(keeper.ID), "headlines come from get_top_stories")
+
+	if err := deleteAgent(udb, other.ID, user); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	for _, a := range ListAuthorizations(RootDB, user) {
+		if a.Action == orphanMemoryRefAction {
+			t.Errorf("the tool is still callable; nothing to flag: %+v", a)
+		}
+	}
+}
+
+// Facts and graph attributes count as remembering it, not just notes.
+func TestFactsAndGraphAlsoCountAsRemembering(t *testing.T) {
+	_, udb, _, _ := auditFixture(t)
+	ns := "probe"
+	StoreMemoryFact(udb, ns, "the feed comes from get_top_stories", nil)
+	if !memoryMentionsTool(udb, ns, "get_top_stories") {
+		t.Error("a fact naming the tool counts")
+	}
+	if memoryMentionsTool(udb, ns, "some_other_tool") {
+		t.Error("an unrelated name must not match")
+	}
+	// Substring matches would flag get_top_stories_v2 as get_top_stories.
+	StoreMemoryFact(udb, "probe2", "we use get_top_stories_v2 now", nil)
+	if memoryMentionsTool(udb, "probe2", "get_top_stories") {
+		t.Error("must match whole names, not substrings")
+	}
+}

@@ -551,6 +551,7 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if err != nil {
 		return "", err
 	}
+	noteOrphanedToolMemory(sess.DB, sess.Username, orphaned)
 	if len(orphaned) > 0 {
 		// The delete took these tools out of EVERY agent's catalog, not just
 		// this one's. Say so in the result the model reads, so it can tell the

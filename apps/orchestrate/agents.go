@@ -809,7 +809,13 @@ func listAgents(db Database, owner string) []AgentRecord {
 // to every turn's prompt, knowledge chunks surfacing in semantic
 // search, etc.). No-op on a virgin seed (no shadow row to remove).
 func deleteAgent(db Database, id, owner string) error {
-	_, err := deleteAgentReporting(db, id, owner)
+	orphaned, err := deleteAgentReporting(db, id, owner)
+	// Fired from the top-level entry points rather than inside the recursive
+	// body, so a cascade of sub-agent deletes queues one set of suggestions
+	// for the whole operation instead of one per level.
+	if err == nil {
+		noteOrphanedToolMemory(db, owner, orphaned)
+	}
 	return err
 }
 
