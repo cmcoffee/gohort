@@ -2229,6 +2229,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentFacts(w, r, user, id)
 		return
 	}
+	if action == "notes" {
+		T.handleAgentNotes(w, r, user, id)
+		return
+	}
 	if action == "memsearch" {
 		T.handleAgentMemorySearch(w, r, user, id)
 		return

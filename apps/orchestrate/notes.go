@@ -10,7 +10,9 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -38,6 +40,79 @@ func (t *chatTurn) operatingNotes() OperatingNotes {
 		return OperatingNotes{}
 	}
 	return ResolveOperatingNotes(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes)
+}
+
+// --- HTTP handler ---------------------------------------------------------
+
+// handleAgentNotes serves the Working notes block to the Memory modal.
+//
+//	GET  → the effective text (store, or the record's SeedNotes when the
+//	       store is empty), when it was last rewritten, whether notes are
+//	       enabled for this agent, and the cap.
+//	POST → replaces the block wholesale, same semantics as update_notes.
+//
+// Notes were the one memory layer with no owner-facing surface: facts, graph
+// and Reference Memory all had panels, notes had only the cross-layer text
+// search. They are also the layer the model rewrites on its own, unprompted
+// and unreviewed, and the one that renders nearest the top of the prompt — so
+// a wrong note steered every turn with nowhere to go and look at it. That is
+// how a stale "pending task: <tool> with <args>" survived across sessions.
+//
+// user is the STATE scope; the caller resolves and authorizes it, matching
+// handleAgentFacts (RequireUser on the web surfaces, an appliance scope for
+// the per-scope variant).
+func (T *OrchestrateApp) handleAgentNotes(w http.ResponseWriter, r *http.Request, user, agentID string) {
+	udb := UserDB(T.DB, user)
+	if udb == nil {
+		http.Error(w, "no store for user", http.StatusInternalServerError)
+		return
+	}
+	if agentID == "" || strings.Contains(agentID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	a, ok := loadAgent(udb, agentID)
+	if !ok || (a.Owner != user && a.Owner != seedOwner) {
+		http.NotFound(w, r)
+		return
+	}
+	ns := factsNamespace(agentID)
+	switch r.Method {
+	case http.MethodGet:
+		stored := LoadOperatingNotes(udb, ns)
+		eff := ResolveOperatingNotes(udb, ns, a.SeedNotes)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"text":    eff.Text,
+			"enabled": a.EnableNotes,
+			"cap":     OperatingNotesCap,
+			// Distinguishes "the agent wrote this" from "nobody has written
+			// anything, you're looking at the configured seed" — clearing is
+			// meaningless in the second case, and the panel says which it is.
+			"from_seed":  strings.TrimSpace(stored.Text) == "" && strings.TrimSpace(eff.Text) != "",
+			"updated_at": stored.UpdatedAt,
+		})
+	case http.MethodPost:
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		text := strings.TrimSpace(body.Text)
+		if n := len([]rune(text)); n > OperatingNotesCap {
+			http.Error(w, fmt.Sprintf("notes are %d characters, over the %d limit", n, OperatingNotesCap), http.StatusBadRequest)
+			return
+		}
+		if _, over := SaveOperatingNotes(udb, ns, text); over {
+			http.Error(w, fmt.Sprintf("over the %d character limit", OperatingNotesCap), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // updateNotesToolDef binds the always-in-prompt Working notes block. Unlike

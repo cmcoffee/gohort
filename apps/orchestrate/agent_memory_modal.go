@@ -249,6 +249,100 @@ const agentMemoryModalTemplate = `<script>
         renderRowList(factsList, facts, '+ Add', '(no entries yet)');
       });
 
+      // --- Working notes section (the update_notes block) ---
+      // The agent rewrites this itself, unprompted, and it renders nearest the
+      // TOP of every prompt. It was also the only memory layer with no panel
+      // here, so a wrong note steered every turn with nowhere to go and look
+      // at it — which is how a stale parked tool call survived across sessions.
+      var notesWrap = document.createElement('div');
+      notesWrap.style.cssText = 'margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)';
+      var notesHeader = document.createElement('div');
+      notesHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem';
+      var notesTitle = document.createElement('div');
+      notesTitle.style.cssText = 'font-weight:600;color:var(--text)';
+      notesTitle.textContent = 'Working notes';
+      notesHeader.appendChild(notesTitle);
+      var notesMeta = document.createElement('div');
+      notesMeta.style.cssText = 'color:var(--text-mute);font-size:0.75rem';
+      notesHeader.appendChild(notesMeta);
+      notesWrap.appendChild(notesHeader);
+      var notesIntro = document.createElement('p');
+      notesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.85rem';
+      notesIntro.textContent = 'The agent keeps its own running state here and rewrites it as work moves. Trim anything stale — especially a parked tool call ("pending task: some_tool with x=y"), which it cannot make from a note and will try to work around.';
+      notesWrap.appendChild(notesIntro);
+      var notesArea = document.createElement('textarea');
+      notesArea.rows = 5;
+      notesArea.spellcheck = false;
+      notesArea.style.cssText = 'width:100%;box-sizing:border-box;font:inherit;font-size:0.82rem;line-height:1.4;padding:0.45rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);resize:vertical';
+      notesWrap.appendChild(notesArea);
+      var notesBar = document.createElement('div');
+      notesBar.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-top:0.4rem';
+      var notesSave = document.createElement('button');
+      notesSave.type = 'button';
+      notesSave.style.cssText = 'padding:0.2rem 0.6rem;background:var(--accent,#6366f1);border:1px solid var(--accent,#6366f1);border-radius:4px;color:#fff;font-size:0.76rem;cursor:pointer';
+      notesSave.textContent = 'Save';
+      notesBar.appendChild(notesSave);
+      var notesClear = document.createElement('button');
+      notesClear.type = 'button';
+      notesClear.style.cssText = 'padding:0.2rem 0.55rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--danger,#ff7b72);font-size:0.74rem;cursor:pointer';
+      notesClear.textContent = 'Clear';
+      notesBar.appendChild(notesClear);
+      var notesStatus = document.createElement('span');
+      notesStatus.style.cssText = 'color:var(--text-mute);font-size:0.76rem';
+      notesBar.appendChild(notesStatus);
+      notesWrap.appendChild(notesBar);
+      body.appendChild(notesWrap);
+
+      var notesCap = 0;
+      function notesCount() {
+        // The cap is what update_notes enforces; showing the overage here
+        // beats a 400 after the user has typed a paragraph.
+        if (!notesCap) { notesMeta.textContent = ''; return; }
+        var n = notesArea.value.length;
+        notesMeta.textContent = n + ' / ' + notesCap;
+        notesMeta.style.color = n > notesCap ? 'var(--danger,#ff7b72)' : 'var(--text-mute)';
+      }
+      notesArea.addEventListener('input', function() { notesCount(); notesStatus.textContent = ''; });
+      function notesPut(text, okMsg) {
+        notesStatus.style.color = 'var(--text-mute)';
+        notesStatus.textContent = 'Saving...';
+        fetch(MEMBASE + 'notes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({text: text})
+        }).then(function(r) {
+          if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
+          notesStatus.textContent = okMsg;
+          notesCount();
+        }).catch(function(e) {
+          notesStatus.style.color = 'var(--danger,#ff7b72)';
+          notesStatus.textContent = String(e.message || e);
+        });
+      }
+      notesSave.addEventListener('click', function() { notesPut(notesArea.value, 'Saved.'); });
+      notesClear.addEventListener('click', function() {
+        if (!confirm('Clear this agent\'s working notes? It will start the next turn with none.')) return;
+        notesArea.value = '';
+        notesPut('', 'Cleared.');
+      });
+      fetch(MEMBASE + 'notes').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
+        if (!d) { notesWrap.style.display = 'none'; return; }
+        if (!d.enabled) {
+          // Notes are opt-in per agent. Say so rather than showing an editor
+          // whose contents would never reach a prompt.
+          notesArea.disabled = true; notesSave.disabled = true; notesClear.disabled = true;
+          notesIntro.textContent = 'Working notes are turned off for this agent, so nothing here reaches its prompt. Enable them in the agent editor to give it a running-state scratchpad.';
+        }
+        notesCap = d.cap || 0;
+        notesArea.value = d.text || '';
+        notesCount();
+        if (d.from_seed) {
+          notesStatus.textContent = 'Showing the configured seed — the agent has not written notes yet.';
+        } else if (d.updated_at && String(d.updated_at).indexOf('0001-01-01') !== 0) {
+          notesStatus.textContent = 'Agent last rewrote this ' + new Date(d.updated_at).toLocaleString() + '.';
+        }
+      });
+
       // --- Reference Memory section (read-only list w/ delete + wipe) ---
       // Vector-grown derived chunks (memory_save findings, synthesis
       // auto-ingest). Read-only — editing embeddings doesn't make

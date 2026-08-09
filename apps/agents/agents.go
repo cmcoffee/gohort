@@ -138,6 +138,8 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleSessionOne(w, r, agent.ID, strings.TrimPrefix(rest, "api/sessions/"))
 	case rest == "api/facts":
 		orch.PublicHandleAgentFacts(w, r, agent.ID)
+	case rest == "api/notes":
+		orch.PublicHandleAgentNotes(w, r, agent.ID)
 	case rest == "api/graph":
 		orch.PublicHandleAgentGraph(w, r, agent.ID)
 	case rest == "api/graph/edge":
