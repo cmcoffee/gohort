@@ -1,6 +1,16 @@
 APPNAME   := Gohort
 VERSION   := 0.1.0
 
+# gohort-desktop is its own Go module nested inside the gohort repo. A
+# go.work in a parent directory (the workshop tree has one) makes Go
+# resolve packages against the WORKSPACE's main module instead — which
+# doesn't `use` this module, so every build dies with "main module
+# (github.com/cmcoffee/gohort) does not contain package …/gohort-desktop".
+# Force workspace mode off for everything this Makefile runs (wails and
+# go inherit the environment); the module is self-contained via its own
+# go.mod/go.sum, so nothing is lost.
+export GOWORK := off
+
 # Wails outputs to build/bin/<name>.app on macOS. Override OUTDIR to
 # place artifacts elsewhere.
 OUTDIR    := build/bin
@@ -172,8 +182,15 @@ uninstall:
 	fi
 
 # Remove all build artifacts.
+# Only the GENERATED subdirectories — the ones .gitignore already lists.
+#
+# This was `rm -rf build/`, and build/appicon.png is tracked source that lives
+# in there: cleaning deleted the app icon, and the next `wails build` found no
+# icon and helpfully wrote its own default in its place. The result is a build
+# that succeeds, an icns generated faithfully from the wrong picture, and a dock
+# showing the Wails "W" with nothing anywhere reporting a failure.
 clean:
-	rm -rf build/
+	rm -rf $(OUTDIR) build/darwin build/windows build/linux
 
 help:
 	@echo "gohort-desktop build targets:"
