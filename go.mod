@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/cmcoffee/snugforge v0.1.0
+	github.com/esimov/pigo v1.4.6
 	github.com/go-pdf/fpdf v1.4.3
 	github.com/go-rod/rod v0.116.2
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0

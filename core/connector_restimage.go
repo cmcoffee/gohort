@@ -1334,6 +1334,12 @@ type EditImageRequest struct {
 	Mask    string
 	Steps   int
 	Seed    int
+	// RefineFaces runs a second, face-only render over the FIRST pass's output
+	// (image_face_refine.go). Off by the zero value on purpose: a native caller
+	// building this struct directly — a writer-app illustration, an admin probe
+	// — has no identity to preserve and should not silently pay for a second
+	// render. The agent path (planEdit) turns it on unless asked not to.
+	RefineFaces bool
 }
 
 // EditImageWithBackend runs a source photo (or several) through an editing
@@ -1418,7 +1424,7 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	if err != nil {
 		return nil, err
 	}
-	return restImageResult(out, req.Prompt)
+	return restImageResult(s.refineFaces(sess, req, images, out, seed), req.Prompt)
 }
 
 // editCascaded runs an edit whose source images outnumber the backend's input
@@ -1488,7 +1494,10 @@ func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, ste
 		}
 		results[i] = fed
 	}
-	return restImageResult(out, req.Prompt)
+	// The face pass runs once, on the finished composite. Refining an
+	// intermediate would be wasted work at best: a later stage renders straight
+	// over it.
+	return restImageResult(s.refineFaces(sess, req, images, out, seed), req.Prompt)
 }
 
 // allSourceRefs reports whether a render consumes only original images.

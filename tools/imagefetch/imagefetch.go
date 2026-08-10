@@ -204,6 +204,17 @@ func (a imageActions) anyEditorTakesMask() bool {
 	return false
 }
 
+// canRefineFaces reports whether the face pass could run on any editor here.
+//
+// It needs two input slots: one for the crop being refined, one for the source
+// photo that says who the person is. A one-slot editor can still edit, it just
+// cannot be told an identity, so the parameter is withheld rather than offered
+// and ignored — an advertised switch that does nothing is the shape a model
+// reaches for and then reports as done.
+func (a imageActions) canRefineFaces() bool {
+	return a.maxEditImages() >= 2
+}
+
 // selectableBackends is every backend a caller may name, generators and editors
 // together, in ReachableImageBackends' sorted order. One `backend` param covers
 // both actions: the model holds one concept ("which backend"), and picking one
@@ -412,6 +423,9 @@ func imageSchemaFor(a imageActions) imageSchema {
 		}
 		if a.anyEditorTakesMask() {
 			params["mask"] = ToolParam{Type: "string", Description: "Optional black-and-white mask image (same reference forms as images) marking WHICH PART to change. White = repaint, black = keep. Use for \"change just the sky\"."}
+		}
+		if a.canRefineFaces() {
+			params["preserve_faces"] = ToolParam{Type: "boolean", Description: "Defaults to TRUE and you rarely need to send it. When a source picture shows a person, the edit runs a second pass over the face so the result still looks like them — an edit that redraws the whole scene renders the face too small to keep a likeness. Set FALSE only when the instruction is deliberately ABOUT the face and must be free to change it: ageing someone, changing their expression, making them somebody else, or turning them into a statue, a cartoon, an animal. Setting it false on an ordinary edit costs you the likeness; leaving it true on a face-changing one fights the change you asked for."}
 		}
 	}
 	if len(a.backendNames()) > 1 {
@@ -1100,6 +1114,11 @@ type editPlan struct {
 	prompt  string
 	refs    []string
 	mask    string
+	// refineFaces is the second, face-only render (core/image_face_refine.go).
+	// Default ON, which is why it lives on the plan rather than being read at
+	// the call site: "absent" and "false" are opposite instructions here, and a
+	// plain BoolArg collapses them.
+	refineFaces bool
 	// note is what the pre-dispatch subject check rewrote, in words for the
 	// model. Carried on the plan rather than returned separately so Preflight
 	// and the real call run identical checks — a check that only one of them
@@ -1187,7 +1206,27 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 	if !ImageBackendReachable(sess, backend) {
 		return p, fmt.Errorf("image backend %q is not available to you — use one of: %s", backend, strings.Join(editorNames(avail), ", "))
 	}
-	return editPlan{backend: backend, prompt: prompt, refs: refs, mask: StringArg(args, "mask"), note: note}, nil
+	return editPlan{
+		backend: backend, prompt: prompt, refs: refs,
+		mask: StringArg(args, "mask"),
+		// Gated on the BACKEND, not just the argument: the pass needs a second
+		// input slot for the identity reference, and asking for it where there
+		// is none would spend a whole extra render sharpening a stranger.
+		refineFaces: avail.canRefineFaces() && boolArgDefault(args, "preserve_faces", true),
+		note:        note,
+	}, nil
+}
+
+// boolArgDefault reads a boolean argument whose default is not false.
+//
+// BoolArg cannot express one: it answers false for a key that is absent and for
+// a key that is present and false, and for a default-ON switch those are
+// opposite instructions.
+func boolArgDefault(args map[string]any, key string, def bool) bool {
+	if v, ok := args[key]; !ok || v == nil {
+		return def
+	}
+	return BoolArg(args, key)
 }
 
 // editImage runs the edit action: check the arguments, hand the caller's image
@@ -1199,10 +1238,11 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 		return "", err
 	}
 	result, err := EditImageWithBackend(sess, EditImageRequest{
-		Backend: p.backend,
-		Prompt:  p.prompt,
-		Images:  p.refs,
-		Mask:    p.mask,
+		Backend:     p.backend,
+		Prompt:      p.prompt,
+		Images:      p.refs,
+		Mask:        p.mask,
+		RefineFaces: p.refineFaces,
 	})
 	if err != nil {
 		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
