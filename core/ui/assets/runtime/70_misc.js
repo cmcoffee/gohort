@@ -462,6 +462,222 @@
     return root;
   };
 
+  // upload_panel — pick or drop files, upload each with its own progress bar,
+  // retry the one that failed, then optionally finalize and poll a status
+  // endpoint until server-side processing finishes. See ui.UploadPanel.
+  //
+  // XMLHttpRequest, not fetch: fetch gives no upload progress events, so a
+  // large POST behind it is indistinguishable from a hang. One request per
+  // file, so a failure is isolated to the file that failed.
+  components.upload_panel = function(cfg) {
+    var field    = cfg.field || 'file';
+    var pollMs   = (cfg.poll_seconds || 3) * 1000;
+    var multiple = cfg.multiple !== false;
+    var items    = [];   // {file, row, bar, status, state}
+    var started  = false;
+
+    var root  = el('div', {class: 'ui-upload'});
+    var drop  = el('div', {class: 'ui-upload-drop'}, ['Drop files here, or ']);
+    var input = el('input', {type: 'file', style: 'display:none'});
+    if (cfg.accept) input.accept = cfg.accept;
+    if (multiple) input.multiple = true;
+    var pick = el('button', {type: 'button', class: 'ui-row-btn'}, ['choose files']);
+    pick.addEventListener('click', function(){ input.click(); });
+    drop.appendChild(pick);
+    drop.appendChild(input);
+
+    var list   = el('div', {class: 'ui-upload-list'});
+    var status = el('div', {class: 'ui-upload-status'});
+    var goBtn  = el('button', {type: 'button', class: 'ui-row-btn primary'}, [cfg.button_label || 'Upload']);
+    goBtn.disabled = true;
+
+    root.appendChild(drop);
+    if (cfg.note) root.appendChild(el('div', {class: 'ui-form-hint'}, [cfg.note]));
+    root.appendChild(list);
+    root.appendChild(goBtn);
+    root.appendChild(status);
+
+    function human(n) {
+      if (n < 1024) return n + ' B';
+      var u = ['KB','MB','GB','TB'], i = -1;
+      do { n = n / 1024; i++; } while (n >= 1024 && i < u.length - 1);
+      return n.toFixed(1) + ' ' + u[i];
+    }
+
+    function addFiles(files) {
+      for (var i = 0; i < files.length; i++) {
+        (function(f) {
+          if (cfg.max_bytes && f.size > cfg.max_bytes) {
+            // Refused here rather than after transferring it: the server
+            // would reject it too, but only once the bytes had crossed the
+            // wire, which for a file this size is the whole cost.
+            status.textContent = f.name + ' is ' + human(f.size) + ', over the ' + human(cfg.max_bytes) + ' limit.';
+            return;
+          }
+          var bar   = el('div', {class: 'ui-upload-bar-fill'});
+          var state = el('span', {class: 'ui-upload-state'}, ['queued']);
+          var row = el('div', {class: 'ui-upload-row'}, [
+            el('div', {class: 'ui-upload-name'}, [f.name + '  (' + human(f.size) + ')']),
+            el('div', {class: 'ui-upload-bar'}, [bar]),
+            state,
+          ]);
+          list.appendChild(row);
+          items.push({file: f, row: row, bar: bar, state: state, done: false});
+        })(files[i]);
+      }
+      goBtn.disabled = items.length === 0 || started;
+    }
+
+    input.addEventListener('change', function(){ addFiles(input.files); input.value = ''; });
+    drop.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      drop.classList.add('over');
+    });
+    drop.addEventListener('dragleave', function(){ drop.classList.remove('over'); });
+    drop.addEventListener('drop', function(e) {
+      e.preventDefault();
+      drop.classList.remove('over');
+      if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+    });
+
+    // uploadOne resolves true on success, false on failure. It never rejects:
+    // the caller stops the batch on a false, and a rejected promise here would
+    // just be an error nobody rendered.
+    function uploadOne(item, isFirst) {
+      return new Promise(function(resolve) {
+        var url = cfg.url;
+        if (isFirst && cfg.reset_param) {
+          url += (url.indexOf('?') >= 0 ? '&' : '?') + encodeURIComponent(cfg.reset_param) + '=1';
+        }
+        var fd = new FormData();
+        fd.append(field, item.file, item.file.name);
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.upload.addEventListener('progress', function(e) {
+          if (!e.lengthComputable) return;
+          var pct = Math.round(e.loaded * 100 / e.total);
+          item.bar.style.width = pct + '%';
+          item.state.textContent = pct + '%';
+        });
+        xhr.addEventListener('load', function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            item.bar.style.width = '100%';
+            item.state.textContent = 'staged';
+            item.done = true;
+            resolve(true);
+            return;
+          }
+          item.state.textContent = 'failed';
+          item.row.classList.add('failed');
+          status.textContent = item.file.name + ': ' + (xhr.responseText || ('HTTP ' + xhr.status));
+          addRetry(item);
+          resolve(false);
+        });
+        xhr.addEventListener('error', function() {
+          item.state.textContent = 'failed';
+          item.row.classList.add('failed');
+          status.textContent = item.file.name + ': the connection dropped.';
+          addRetry(item);
+          resolve(false);
+        });
+        xhr.send(fd);
+      });
+    }
+
+    // addRetry puts a per-file retry button on the failed row. Retrying ONE
+    // file is the point of uploading them separately — a batch that fails on
+    // its last file should not re-send the ones that already landed.
+    function addRetry(item) {
+      if (item.retry) return;
+      item.retry = el('button', {type: 'button', class: 'ui-row-btn'}, ['Retry']);
+      item.retry.addEventListener('click', function() {
+        item.retry.disabled = true;
+        item.row.classList.remove('failed');
+        item.state.textContent = 'queued';
+        item.bar.style.width = '0%';
+        uploadOne(item, false).then(function(ok) {
+          if (item.retry) { item.retry.remove(); item.retry = null; }
+          if (ok) runRemaining();
+          else if (item.retry) item.retry.disabled = false;
+        });
+      });
+      item.row.appendChild(item.retry);
+    }
+
+    // runRemaining uploads every not-yet-done file in order, then finalizes.
+    function runRemaining() {
+      var pending = items.filter(function(i){ return !i.done; });
+      var anyDone = items.some(function(i){ return i.done; });
+      var chain = Promise.resolve(true);
+      pending.forEach(function(item, idx) {
+        chain = chain.then(function(ok) {
+          if (!ok) return false;
+          return uploadOne(item, idx === 0 && !anyDone);
+        });
+      });
+      return chain.then(function(ok) {
+        if (!ok) return;
+        if (!cfg.finalize_url) { finish(); return; }
+        status.textContent = 'Starting…';
+        return fetch(cfg.finalize_url, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(cfg.finalize_body || {}),
+        }).then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { status.textContent = 'Failed to start: ' + t; });
+          poll();
+        });
+      });
+    }
+
+    goBtn.addEventListener('click', function() {
+      if (!items.length) return;
+      started = true;
+      goBtn.disabled = true;
+      pick.disabled = true;
+      status.textContent = 'Uploading…';
+      runRemaining();
+    });
+
+    function labelFor(state) {
+      if (cfg.status_labels && cfg.status_labels[state]) return cfg.status_labels[state];
+      return state;
+    }
+
+    function poll() {
+      if (!cfg.status_url) { finish(); return; }
+      fetch(cfg.status_url)
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(rec) {
+          if (!rec) { status.textContent = 'Lost track of the status — reload to see where it got to.'; return; }
+          var state = String(rec[cfg.status_field || 'state'] || '');
+          var failed = (cfg.status_failed || []).indexOf(state) >= 0;
+          var done   = (cfg.status_done || []).indexOf(state) >= 0;
+          if (failed) {
+            var why = cfg.status_error_field ? rec[cfg.status_error_field] : '';
+            status.textContent = why ? ('Failed: ' + why) : 'Failed.';
+            pick.disabled = false;
+            return;
+          }
+          if (done) { finish(); return; }
+          status.textContent = labelFor(state) || 'Working…';
+          setTimeout(poll, pollMs);
+        })
+        .catch(function() {
+          // A transient fetch failure while polling is not a failed job —
+          // keep watching rather than reporting an outcome we do not have.
+          setTimeout(poll, pollMs);
+        });
+    }
+
+    function finish() {
+      status.textContent = 'Done.';
+      if (cfg.reload_on_done) setTimeout(function(){ window.location.reload(); }, 600);
+    }
+
+    return root;
+  };
+
   components.card = function(cfg) {
     var wrap = el('div', {class: 'ui-card'});
     wrap.innerHTML = cfg.html || '';

@@ -728,9 +728,12 @@
         onclick: function(){ setType('command'); }}, ['Local Command']);
       var typeRepo = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('repo'); }}, ['Git Repository']);
+      var typeBundle = el('button', {class: 'ui-row-btn',
+        onclick: function(){ setType('bundle'); }}, ['Evidence Bundle']);
       var typeWorkspace = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('workspace'); }}, ['Workspace']);
-      var typeRow = el('div', {class: 'ui-servitor-app-tabs'}, [typeSsh, typeCmd, typeRepo, typeWorkspace]);
+      var typeRow = el('div', {class: 'ui-servitor-app-tabs'},
+        [typeSsh, typeCmd, typeRepo, typeBundle, typeWorkspace]);
 
       // SSH section
       var hostIn = el('input', {type: 'text', class: 'ui-form-input',
@@ -857,17 +860,126 @@
           ['Give each member a short role when they are not interchangeable — "scheduler + primary DB" vs "app worker". The coordinator routes on it, so a question about a service that lives on one node goes to that node instead of being asked of all of them. Leave blank for true peers.']),
       ]);
 
+      // Linked Source Code — repo appliances whose ingested code this SYSTEM's
+      // investigations may search (search_code/read_file join the worker's
+      // tools). Shown for ssh/command types only; loaded lazily like the
+      // workspace member list, from the same api/appliances listing. Defined
+      // BEFORE setType, which toggles it on the initial call at modal open.
+      var lrSelected = (rec.linked_repos || []).slice();
+      var lrBox = el('div', {}, ['Loading repositories…']);
+      var lrLoaded = false;
+      function loadLinkedRepos() {
+        if (lrLoaded) return;
+        lrLoaded = true;
+        fetch('api/appliances')
+          .then(function(r){ return r.ok ? r.json() : []; })
+          .then(function(list) {
+            list = (list || []).filter(function(a){ return a.type === 'repo'; });
+            lrBox.innerHTML = '';
+            if (!list.length) {
+              lrBox.appendChild(el('div', {class: 'ui-form-hint'},
+                ['No repositories yet — add one (New Appliance → Repo), then link it here.']));
+              return;
+            }
+            list.forEach(function(a) {
+              var cb = el('input', {type: 'checkbox'});
+              cb.checked = lrSelected.indexOf(a.id) >= 0;
+              cb.onchange = function() {
+                var i = lrSelected.indexOf(a.id);
+                if (cb.checked && i < 0) lrSelected.push(a.id);
+                else if (!cb.checked && i >= 0) lrSelected.splice(i, 1);
+              };
+              lrBox.appendChild(el('label', {
+                style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0;'},
+                [cb, a.name || a.id]));
+            });
+          })
+          .catch(function() {
+            lrBox.innerHTML = '';
+            lrBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load repositories.']));
+          });
+      }
+      var linkedRepoSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Linked Source Code']), lrBox,
+        el('div', {class: 'ui-form-hint'},
+          ['Pick the repos whose code runs on this system. Its investigations can then search and read that code in the same probe — e.g. trace a log excerpt to the exact line that emits it while checking the live state.']),
+      ]);
+
+      // Evidence bundle section — uploaded logs/dumps. Nothing is configured
+      // here at create time: the record has to exist before there is anywhere
+      // to send the bytes, so a NEW bundle shows an explanation and the upload
+      // panel appears once the record has been saved and reopened.
+      var bundleSection = el('div', {class: 'ui-servitor-app-section'}, []);
+      function buildBundleSection() {
+        bundleSection.innerHTML = '';
+        bundleSection.appendChild(el('label', {}, ['Evidence']));
+        if (!isEdit) {
+          bundleSection.appendChild(el('div', {class: 'ui-form-hint'},
+            ['Create the bundle first, then reopen it with Edit to upload the files. ' +
+             'Archives (.tar.gz, .tgz, .tar, .zip, .gz, .bz2) are expanded automatically; ' +
+             'the uploaded copy is deleted once it has been ingested into encrypted storage.']));
+          return;
+        }
+        // What is already ingested, so a re-upload is a decision and not a
+        // surprise. Counts come straight off the record the modal loaded.
+        if (rec.bundle_files) {
+          var summary = rec.bundle_files + ' files ingested';
+          if (rec.bundle_lines) summary += ', ' + rec.bundle_lines.toLocaleString() + ' lines';
+          if (rec.bundle_ingested) summary += ' (' + rec.bundle_ingested.replace('T', ' ').slice(0, 19) + ')';
+          bundleSection.appendChild(el('div', {class: 'ui-form-hint'}, [summary]));
+          if (rec.bundle_unopened) {
+            bundleSection.appendChild(el('div', {class: 'ui-form-hint'},
+              [rec.bundle_unopened + ' archive(s) could not be opened by the built-in expanders (xz, 7z, zst, encrypted). Their contents are NOT searchable.']));
+          }
+        }
+        if (rec.bundle_state === 'failed' && rec.bundle_error) {
+          bundleSection.appendChild(el('div', {class: 'ui-form-hint'},
+            ['Last ingest failed: ' + rec.bundle_error]));
+        }
+        var host = el('div', {});
+        window.uiMountComponent({
+          type: 'upload_panel',
+          url: 'api/bundle/upload?appliance_id=' + encodeURIComponent(rec.id),
+          field: 'file',
+          reset_param: 'reset',
+          finalize_url: 'api/bundle/ingest',
+          finalize_body: {appliance_id: rec.id},
+          status_url: 'api/appliance/' + encodeURIComponent(rec.id),
+          status_field: 'bundle_state',
+          status_done: ['ready'],
+          status_failed: ['failed'],
+          status_error_field: 'bundle_error',
+          status_labels: {
+            staging: 'Receiving files…',
+            ingesting: 'Expanding and indexing — this can take a few minutes on a large dump.',
+          },
+          button_label: 'Upload and ingest',
+          reload_on_done: true,
+          note: 'Uploading REPLACES whatever is currently ingested. Archives are expanded automatically; ' +
+                'text files are indexed by line, timestamp, and severity, and the uploaded copy is deleted afterwards.',
+        }, host);
+        bundleSection.appendChild(host);
+      }
+      buildBundleSection();
+
       function setType(t) {
         rec.type = t;
         typeSsh.classList.toggle('primary', t === 'ssh');
         typeCmd.classList.toggle('primary', t === 'command');
         typeRepo.classList.toggle('primary', t === 'repo');
+        typeBundle.classList.toggle('primary', t === 'bundle');
         typeWorkspace.classList.toggle('primary', t === 'workspace');
         sshSection.style.display = t === 'ssh' ? '' : 'none';
         cmdSection.style.display = t === 'command' ? '' : 'none';
         repoSection.style.display = t === 'repo' ? '' : 'none';
+        bundleSection.style.display = t === 'bundle' ? '' : 'none';
         workspaceSection.style.display = t === 'workspace' ? '' : 'none';
+        // A bundle carries linked repos for the same reason a live system does:
+        // a stack frame in the evidence should reach the line that emitted it.
+        linkedRepoSection.style.display =
+          (t === 'ssh' || t === 'command' || t === 'bundle') ? '' : 'none';
         if (t === 'workspace') loadWorkspaceMembers();
+        if (t === 'ssh' || t === 'command' || t === 'bundle') loadLinkedRepos();
       }
       setType(rec.type || 'ssh');
 
@@ -917,10 +1029,11 @@
 
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
-        typeRow, sshSection, cmdSection, repoSection, workspaceSection,
+        typeRow, sshSection, cmdSection, repoSection, bundleSection, workspaceSection,
         el('label', {}, ['Custom Instructions']), instrIn,
         el('label', {}, ['Persona']),
         personaNameIn, personaPromptIn,
+        linkedRepoSection,
         knowledgeSection,
         sharedRow, sharedHint,
       ]);
@@ -951,12 +1064,14 @@
             members:        wsSelected.slice(),
             member_roles:   wsRoles,
             collections:    kbSelected.slice(),
+            linked_repos:   lrSelected.slice(),
           };
           // Name is optional for repos — the server derives owner/repo from the URL.
           if (!payload.name && payload.type !== 'repo') { window.uiAlert('Name is required'); return; }
           if (payload.type === 'ssh' && !payload.host) { window.uiAlert('Host is required'); return; }
           if (payload.type === 'command' && !payload.command) { window.uiAlert('Command is required'); return; }
           if (payload.type === 'repo' && !payload.repo_url) { window.uiAlert('Git URL is required'); return; }
+          if (payload.type === 'bundle' && !payload.name) { window.uiAlert('Name is required'); return; }
           if (payload.type === 'workspace' && !payload.members.length) { window.uiAlert('Select at least one member appliance'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {

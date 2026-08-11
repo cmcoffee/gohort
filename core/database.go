@@ -57,6 +57,17 @@ var (
 	// with no extra work; the plaintext clone lives only transiently in a
 	// tmpfs before ingest. Set at startup; nil when unset.
 	RepoFilesDB Database
+
+	// BundleFilesDB is the dedicated store for uploaded evidence bundles —
+	// support dumps, log tarballs, diagnostic captures the user hands the
+	// system rather than a host it can reach. Same reasoning as RepoFilesDB
+	// (bulk, encrypted at rest, relocatable to local SSD via [paths]
+	// bundle_dir), and a separate file for a different reason: repo content
+	// is RE-CLONABLE and a bundle is not. Losing the repo store costs a
+	// clone; losing the bundle store loses evidence that may no longer
+	// exist anywhere else, so the two should not share a blast radius.
+	// Set at startup; nil when unset.
+	BundleFilesDB Database
 )
 
 // OpenDB opens a database from the given filename.

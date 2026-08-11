@@ -256,6 +256,20 @@ select:-webkit-autofill {
   flex-shrink: 0; margin-left: auto; padding-left: 0.5rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%;
 }
+/* Stop control on a live row. Only rendered when the entry declares a cancel
+   endpoint, so it never appears on work that cannot be stopped. Muted until
+   hovered: it sits in a menu people open to READ, and a row that shouts "Stop"
+   invites the click it was meant to make merely possible. */
+.ui-live-stop {
+  flex-shrink: 0; margin-left: 0.5rem;
+  font-size: 0.65rem; line-height: 1;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--text-mute);
+  cursor: pointer;
+}
+.ui-live-stop:hover:not(:disabled) { color: var(--danger, #dc2626); border-color: var(--danger, #dc2626); }
+.ui-live-stop:disabled { opacity: 0.6; cursor: default; }
 .ui-live-label {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -5010,4 +5024,49 @@ select:-webkit-autofill {
 .ui-chat-msg-pending .ui-chat-msg-body::after {
   content: " · queued for the running turn";
   font-size: 0.75rem; color: var(--text-mute); font-style: italic;
+}
+
+/* --- upload_panel ---------------------------------------------------------
+ * A drop zone, one row per file with its own progress bar, and a status line
+ * under the button. The per-file row is the point: a batch upload that reports
+ * only an aggregate percentage cannot say WHICH file failed, which is the one
+ * thing the user needs in order to retry it. */
+.ui-upload { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-upload-drop {
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding: 1rem; text-align: center; color: var(--text-mute);
+  transition: border-color 0.15s, background 0.15s;
+}
+.ui-upload-drop.over {
+  border-color: var(--accent, #6366f1);
+  background: var(--accent-soft, rgba(99,102,241,0.12));
+}
+.ui-upload-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.ui-upload-row {
+  display: grid; grid-template-columns: 1fr 6rem auto auto;
+  align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.4rem; border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.ui-upload-row.failed { border-color: var(--danger, #d9534f); }
+.ui-upload-name {
+  font-size: 0.85rem; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-upload-bar {
+  height: 6px; border-radius: 3px;
+  background: var(--bg-2, rgba(127,127,127,0.2)); overflow: hidden;
+}
+.ui-upload-bar-fill {
+  height: 100%; width: 0%;
+  background: var(--accent, #6366f1); transition: width 0.15s linear;
+}
+.ui-upload-state { font-size: 0.75rem; color: var(--text-mute); min-width: 3.5rem; }
+.ui-upload-status { font-size: 0.8rem; color: var(--text-mute); min-height: 1.1em; }
+
+/* Narrow screens: the name gets its own line so the bar keeps a usable width
+ * instead of collapsing to a sliver next to a truncated filename. */
+@media (max-width: 560px) {
+  .ui-upload-row { grid-template-columns: 1fr auto auto; }
+  .ui-upload-name { grid-column: 1 / -1; }
 }

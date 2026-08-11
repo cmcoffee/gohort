@@ -483,6 +483,86 @@ func (c ChipPicker) MarshalJSON() ([]byte, error) {
 	}{"chip_picker", alias(c)})
 }
 
+// UploadPanel is the framework's file-upload surface: pick or drop several
+// files, watch each one's progress, retry the one that failed without
+// re-sending the rest, then (optionally) kick off server-side processing and
+// poll until it finishes.
+//
+// It exists because "post a file and wait" is not one interaction but four —
+// select, transfer, process, report — and every app that needed it was
+// otherwise going to hand-roll an <input type=file> plus a fetch plus a
+// spinner, and get the middle two wrong. A browser gives no progress for a
+// fetch() upload and no way to resume one, so a 400 MB POST behind a fetch is
+// indistinguishable from a hang.
+//
+// Deliberately domain-agnostic: it knows about files, an endpoint, and a status
+// field to watch. It knows nothing about what is being uploaded or what the
+// server does with it. Sequencing is one request per file (so progress and
+// retry are per file), then one POST to FinalizeURL, then polling StatusURL.
+//
+// Typical use is inside an app's own modal via window.uiMountComponent, with
+// the app supplying its own endpoints and status vocabulary.
+type UploadPanel struct {
+	// URL receives one POST per file as multipart/form-data. It is called
+	// once per file, not once per batch.
+	URL string `json:"url"`
+	// Field is the multipart field name each file is sent under. Default
+	// "file".
+	Field string `json:"field,omitempty"`
+	// ResetParam, when set, is appended as "<ResetParam>=1" to the FIRST
+	// file's URL of a batch. Gives the server a way to distinguish "start of
+	// a new upload" from "another file in the current one" without the
+	// panel needing a separate begin-transaction endpoint.
+	ResetParam string `json:"reset_param,omitempty"`
+	// Accept is the file input's accept attribute (e.g. ".tar.gz,.log,.txt").
+	Accept string `json:"accept,omitempty"`
+	// Multiple allows selecting more than one file at a time. Default true.
+	Multiple *bool `json:"multiple,omitempty"`
+	// MaxBytes rejects an oversized file in the browser, before any of it is
+	// sent. 0 means no client-side limit — the server still has its own.
+	MaxBytes int64 `json:"max_bytes,omitempty"`
+	// FinalizeURL is POSTed once, after every file has uploaded
+	// successfully. FinalizeBody is sent as its JSON body. Leave empty when
+	// the per-file POST is the whole interaction.
+	FinalizeURL  string         `json:"finalize_url,omitempty"`
+	FinalizeBody map[string]any `json:"finalize_body,omitempty"`
+	// StatusURL is GETed on a timer after finalize, to follow work that
+	// outlives the request. StatusField names the key in that response
+	// holding the state; StatusDone lists the terminal values;
+	// StatusErrorField names the key holding a failure reason, shown to the
+	// user when the state lands on one of StatusFailed.
+	StatusURL        string   `json:"status_url,omitempty"`
+	StatusField      string   `json:"status_field,omitempty"`
+	StatusDone       []string `json:"status_done,omitempty"`
+	StatusFailed     []string `json:"status_failed,omitempty"`
+	StatusErrorField string   `json:"status_error_field,omitempty"`
+	// StatusLabels maps a raw state value to what the user should read
+	// ("ingesting" → "Expanding and indexing…"). A state with no entry is
+	// shown as-is rather than hidden: an unlabelled state is still progress.
+	StatusLabels map[string]string `json:"status_labels,omitempty"`
+	// PollSeconds is the status poll interval. Default 3.
+	PollSeconds int `json:"poll_seconds,omitempty"`
+	// ButtonLabel overrides the upload button ("Upload" by default).
+	ButtonLabel string `json:"button_label,omitempty"`
+	// Note renders under the drop zone — the place to say what the server
+	// will do with these files, which is the app's business and not the
+	// panel's.
+	Note string `json:"note,omitempty"`
+	// ReloadOnDone reloads the page when the status reaches a done value.
+	// For a surface whose surrounding chrome was rendered server-side and is
+	// now stale.
+	ReloadOnDone bool `json:"reload_on_done,omitempty"`
+}
+
+func (UploadPanel) componentType() string { return "upload_panel" }
+func (c UploadPanel) MarshalJSON() ([]byte, error) {
+	type alias UploadPanel
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"upload_panel", alias(c)})
+}
+
 // ACLPickerConfig configures ACLPicker. Always set OptionsSource (the candidate
 // list) and PostTo (the save target). The current selection comes from ONE of two
 // modes:

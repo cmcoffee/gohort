@@ -40,6 +40,38 @@ func WorkspacesDir() string {
 	return workspacesDir
 }
 
+// Bulk staging is a separate concern from the per-user workspaces above. A
+// workspace is a small, persistent sandbox an LLM writes into; staging is a
+// large, transient area where an inbound upload lands before it is unpacked and
+// ingested into an encrypted store, and then deleted. They are kept apart
+// because they want opposite storage: a workspace follows the user's data, and
+// staging wants fast local disk with room for a multi-gigabyte extract.
+//
+// Nothing may be READ from staging by a tool — it is producer/consumer scratch
+// between an upload handler and an ingest pass, never a place an agent browses.
+var (
+	bulkStagingDirMu sync.RWMutex
+	bulkStagingDir   string
+)
+
+// SetBulkStagingDir configures the base directory for large transient uploads.
+// Call once at startup alongside SetWorkspacesDir.
+func SetBulkStagingDir(dir string) {
+	bulkStagingDirMu.Lock()
+	bulkStagingDir = dir
+	bulkStagingDirMu.Unlock()
+}
+
+// BulkStagingDir returns the configured base, or "" when unset. An empty value
+// means "large uploads are not available" rather than a fallback to a temp dir:
+// a several-hundred-megabyte extract landing somewhere nobody chose is the kind
+// of surprise that fills a root partition.
+func BulkStagingDir() string {
+	bulkStagingDirMu.RLock()
+	defer bulkStagingDirMu.RUnlock()
+	return bulkStagingDir
+}
+
 // FetchCacheQuotaBytes returns the per-user fetch_url cache quota in
 // bytes, configured via the admin Settings panel (key: fetch_cache_quota_mb).
 // Defaults to 100MB when unset. Returns 0 when AuthDB isn't wired or

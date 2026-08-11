@@ -26,6 +26,11 @@ var servitorWorkerToolAllowList = map[string]bool{
 	"search_code":        true, // local: substring search over the encrypted repo store
 	"read_file":          true, // local: read a file from the encrypted repo store
 	"list_dir":           true, // local: list a directory in the encrypted repo store
+	"bundle_summary":     true, // local: read the bundle index in the encrypted evidence store
+	"list_bundle":        true, // local: list files in the encrypted evidence store
+	"search_bundle":      true, // local: regex scan over the encrypted evidence store
+	"read_bundle_file":   true, // local: bounded line-range read from the evidence store
+	"bundle_timeline":    true, // local: merge evidence-store lines by timestamp
 	"read_log":           true, // local: read log file from local fs / kvlite
 	"search_logs":        true, // local: grep over stored logs
 	"count_lines":        true, // local: bounded line count via SSH or local

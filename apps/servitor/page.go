@@ -28,6 +28,7 @@ func applianceFields() []ui.FormField {
 				{Value: "ssh", Label: "SSH host"},
 				{Value: "command", Label: "Local command"},
 				{Value: "repo", Label: "Git repository"},
+				{Value: "bundle", Label: "Evidence bundle (upload)"},
 			}},
 		// SSH-only fields. ShowWhen value-matches type==ssh so only SSH
 		// rows show host/port/user/password.
@@ -56,6 +57,15 @@ func applianceFields() []ui.FormField {
 		{Field: "repo_token", Label: "Access token (optional)", Type: "password",
 			Help:     "For private repositories. Stored encrypted.",
 			ShowWhen: "type:repo"},
+		// Bundle-only. Nothing to configure at create time: the appliance is
+		// minted empty and filled by an upload, since the record has to exist
+		// before there is anywhere to send the bytes. The upload affordance is
+		// a row action on the appliance list, not a field here.
+		//
+		// The instructions field below carries the same weight it does for
+		// every other type, so a bundle's provenance ("dump from cust-42,
+		// pulled 14 Mar after the outage") lives there rather than needing a
+		// field of its own.
 		// Shared persona + instruction fields.
 		{Field: "persona_name", Label: "Persona name", Type: "text",
 			Placeholder: "Support, QA, …",

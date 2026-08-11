@@ -1317,6 +1317,21 @@ func init_database() {
 	RepoFilesDB, err = SecureDatabase(repo_filename)
 	Critical(err)
 
+	// Dedicated evidence-bundle store — uploaded dumps and log archives,
+	// unpacked and ingested into hardware-locked encrypted storage. Split from
+	// the repo store because a bundle is NOT re-clonable: it is the only copy of
+	// evidence someone handed us. Relocatable to local SSD via [paths]
+	// bundle_dir, which also hosts the staging area an upload streams into
+	// before it is unpacked, ingested, and deleted — so the transient extract
+	// and the permanent store land on the same (fast, chosen) volume instead of
+	// wherever os.TempDir happens to point.
+	bundle_dir := loadPath("bundle_dir", data_dir)
+	MkDir(bundle_dir + "/")
+	bundle_filename := FormatPath(fmt.Sprintf("%s/%s_bundles.db", bundle_dir, APPNAME))
+	BundleFilesDB, err = SecureDatabase(bundle_filename)
+	Critical(err)
+	SetBulkStagingDir(FormatPath(bundle_dir + "/staging"))
+
 	// Per-app private databases (core.OpenAppDB): apps that opt in get their own
 	// dedicated, hardware-locked kvlite file — co-located in data_dir, same
 	// at-rest encryption as the main DB — instead of a bucket of global.db. main
@@ -1369,6 +1384,11 @@ func init_database() {
 	// Silent no-op when unconfigured — videodl falls back to
 	// frames-only.
 	LoadTranscribeConfigFromDB(global.db)
+	// Where page rendering happens. Restored here so a peer chosen for browsing
+	// survives a restart — otherwise BrowserFetchFunc silently reverts to the
+	// local browser (or to nothing, on a machine that has none) and every
+	// browse quietly changes behaviour after a bounce.
+	LoadBrowseConfigFromDB(global.db)
 
 	// Deployment document branding — set the PDF export header line from the
 	// admin-configured brand (falls back to the built-in default when unset).

@@ -102,7 +102,7 @@ type LogEntry struct {
 // Appliance is a saved remote host with connection params and cached system knowledge.
 type Appliance struct {
 	ID   string `json:"id"`
-	Type string `json:"type"` // "ssh" (default) | "command" | "repo" | "workspace"
+	Type string `json:"type"` // "ssh" (default) | "command" | "repo" | "bundle" | "workspace"
 	Name string `json:"name"`
 	// SSH fields
 	Host     string `json:"host"`
@@ -125,6 +125,37 @@ type Appliance struct {
 	// ingest, on top of the built-in defaults (VCS/venv/build artifacts). Lets a
 	// project drop its own generated trees (e.g. "dist", "target", "coverage").
 	RepoSkipDirs []string `json:"repo_skip_dirs,omitempty"`
+	// Bundle fields (Type == "bundle") — uploaded evidence: a support dump, a
+	// log tarball, a diagnostic capture. The upload is staged on local disk,
+	// expanded, sliced into the encrypted BundleFilesDB, and the staged
+	// plaintext is deleted. See docs/servitor-evidence-bundles.md.
+	//
+	// BundleState is the lifecycle ("staging" | "ingesting" | "ready" |
+	// "failed") and is what the UI polls: expanding a multi-gigabyte dump
+	// outlives its HTTP request by minutes, so the record, not the response,
+	// is where progress lives.
+	BundleState    string   `json:"bundle_state,omitempty"`
+	BundleError    string   `json:"bundle_error,omitempty"`    // why the last ingest failed
+	BundleSources  []string `json:"bundle_sources,omitempty"`  // the filenames the user uploaded
+	BundleUploaded string   `json:"bundle_uploaded,omitempty"` // RFC3339 of the last upload
+	BundleIngested string   `json:"bundle_ingested,omitempty"` // RFC3339 of the last successful ingest
+	BundleFiles    int      `json:"bundle_files,omitempty"`    // index entries written
+	BundleLines    int      `json:"bundle_lines,omitempty"`    // lines ingested as text
+	BundleBytes    int64    `json:"bundle_bytes,omitempty"`    // expanded size seen
+	// BundleBinaries / BundleUnopened count what is present but UNREAD — a
+	// core dump, an xz archive nothing built-in could open. Kept on the record
+	// rather than only in the log, so a bundle that looks thin can say why
+	// without anyone going to find out.
+	BundleBinaries int `json:"bundle_binaries,omitempty"`
+	BundleUnopened int `json:"bundle_unopened,omitempty"`
+	// LinkedRepos (system types only) are repo-appliance IDs whose ingested
+	// code THIS system's investigations may search — the owner's declaration
+	// that this box runs that code. The linked repos' search/read tools join
+	// the worker's toolset, so a log excerpt seen on the box can be traced to
+	// the line that emits it inside the same investigation. Distinct from a
+	// workspace: no fan-out, one lead holds both views. Ignored on repo and
+	// workspace records.
+	LinkedRepos []string `json:"linked_repos,omitempty"`
 	// Workspace fields (Type == "workspace") — a master appliance that references
 	// other appliances (repos and/or SSH boxes) and investigates them together.
 	// It owns no store/creds of its own; each member is resolved and run in its
@@ -491,6 +522,11 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
 	sub.HandleFunc("/api/memory/clear", T.handleMemoryClear)
 	sub.HandleFunc("/api/repo/refresh", T.handleRepoRefresh)
+	// Evidence bundles: staging one file per request, then a single ingest
+	// over everything staged — which doubles as the retry path after a failed
+	// ingest, without re-sending a gigabyte. See bundle_upload.go.
+	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
+	sub.HandleFunc("/api/bundle/ingest", T.handleBundleIngest)
 	sub.HandleFunc("/api/collections", T.handleCollectionsList)
 	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
 	sub.HandleFunc("/api/save_destinations", T.handleSaveDestinations)
@@ -597,6 +633,13 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			if req.Name == "" {
 				req.Name = repoNameFromURL(req.RepoURL)
 			}
+		case "bundle":
+			// A bundle owns no host and no remote of its own — it is created
+			// empty and filled by an upload, so a name is all that is required.
+			if req.Name == "" {
+				http.Error(w, "name required", http.StatusBadRequest)
+				return
+			}
 		case "workspace":
 			// A workspace references other appliances; it owns no creds/store.
 			req.Members = dedupeStrings(req.Members)
@@ -655,6 +698,34 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.Scanned = existing.Scanned
 			req.RepoFiles = existing.RepoFiles
 			req.RepoCloned = existing.RepoCloned
+			// Bundle ingest state is derived from the uploaded evidence, never
+			// from the edit form. Without this an edit that only renamed the
+			// appliance would zero the counters and the tools would start
+			// reporting the bundle as not ingested.
+			req.BundleState = existing.BundleState
+			req.BundleError = existing.BundleError
+			req.BundleSources = existing.BundleSources
+			req.BundleUploaded = existing.BundleUploaded
+			req.BundleIngested = existing.BundleIngested
+			req.BundleFiles = existing.BundleFiles
+			req.BundleLines = existing.BundleLines
+			req.BundleBytes = existing.BundleBytes
+			req.BundleBinaries = existing.BundleBinaries
+			req.BundleUnopened = existing.BundleUnopened
+		}
+		// Linked repos: keep only ids that resolve (own or shared) to a REPO
+		// appliance. Repo and workspace records carry none — a repo linking a
+		// repo means nothing, and a workspace already composes members.
+		if req.Type == "repo" || req.Type == "workspace" {
+			req.LinkedRepos = nil
+		} else if len(req.LinkedRepos) > 0 {
+			kept := req.LinkedRepos[:0]
+			for _, rid := range req.LinkedRepos {
+				if la, _, _, ok := T.resolveAppliance(userID, udb, rid); ok && la.Type == "repo" {
+					kept = append(kept, la.ID)
+				}
+			}
+			req.LinkedRepos = kept
 		}
 		req.Owner = owner
 		if req.ID == "" {
@@ -801,6 +872,16 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 	// Drop the orchestrate-scoped memory too, so a deleted appliance leaves no
 	// orphaned scope behind.
 	clearApplianceScopedMemory(udb, applianceID)
+
+	// Bulk content stores live outside the user DB, keyed by appliance id, so
+	// deleting the record does not touch them on its own. Both are dropped
+	// here: an appliance the user deleted should not leave its ingested
+	// contents sitting in an encrypted store nothing points at any more.
+	// Bundles additionally clear any staged upload that never finished
+	// ingesting, which is the one place uploaded evidence exists as plaintext.
+	wipeRepoFiles(userID, applianceID)
+	wipeBundleFiles(userID, applianceID)
+	purgeBundleStaging(userID, applianceID)
 
 	dropConn(userID, applianceID)
 }
@@ -1079,6 +1160,12 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 				repoDisplayTarget(appliance),
 			)
 		}
+		if appliance.Type == "bundle" {
+			mapMsg = fmt.Sprintf(
+				"Map the uploaded evidence bundle %s. Be systematic and thorough: establish what period it covers, which hosts and services appear in it, which file carries which kind of event, and the shape of any failure it captured. Record what the bundle does NOT contain as carefully as what it does.",
+				bundleDisplayTarget(appliance),
+			)
+		}
 		hist := []Message{{Role: "user", Content: mapMsg}}
 		// Persist the map as a session so it shows in the left rail and its
 		// reconnaissance summary stays reviewable, not just streamed live.
@@ -1230,6 +1317,14 @@ func (T *Servitor) handleMemoryClear(w http.ResponseWriter, r *http.Request) {
 		rec.RepoFiles = 0
 		rec.RepoCloned = ""
 		ownerUDB.Set(applianceTable, req.ApplianceID, rec)
+	}
+	// Bundles: clearing memory drops the recorded findings, NOT the evidence.
+	// A re-clone restores a repo; nothing restores a dump, so the ingested
+	// content survives a memory clear and is removed only by deleting the
+	// appliance or replacing it with a new upload.
+	if rec.Type == "bundle" {
+		Log("[servitor.bundle] cleared recorded memory for %s; %d ingested files kept (evidence is not re-obtainable)",
+			req.ApplianceID, rec.BundleFiles)
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -1746,6 +1841,9 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 	if appliance.Type == "repo" {
 		return buildRepoInvestigatorPrompt(appliance)
 	}
+	if appliance.Type == "bundle" {
+		return buildBundleInvestigatorPrompt(appliance)
+	}
 	var b strings.Builder
 	writePersona(&b, appliance)
 	b.WriteString(fmt.Sprintf(
@@ -1805,6 +1903,9 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 func buildProbeWorkerPrompt(appliance Appliance, scratch string, mapping bool) string {
 	if appliance.Type == "repo" {
 		return buildRepoProbeWorkerPrompt(appliance) // repo workers never touch a filesystem
+	}
+	if appliance.Type == "bundle" {
+		return buildBundleProbeWorkerPrompt(appliance) // bundle workers only read the ingested evidence
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -1935,9 +2036,37 @@ func linkedKnowledgeNote(a Appliance) string {
 		"The owner has attached curated knowledge (runbooks, vendor docs, guides) to this appliance. When a question could be answered or corroborated by that material, dispatch a worker to call `search_knowledge` — it searches the linked collections and does NOT touch the live system — and fold what it returns into your answer. Prefer verified system evidence; use linked knowledge to fill gaps and cross-check.\n\n"
 }
 
+// linkedReposNote tells the lead this system's SOURCE CODE is reachable: the
+// owner linked one or more repo appliances, and the worker holds their
+// search_code / read_file / list_dir alongside the SSH tools. Empty when
+// nothing is linked. Names resolve from the caller's store; a shared repo
+// whose record lives elsewhere falls back to its id, which the tools accept.
+func linkedReposNote(udb Database, a Appliance) string {
+	if len(a.LinkedRepos) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(a.LinkedRepos))
+	for _, rid := range a.LinkedRepos {
+		var r Appliance
+		if udb != nil && udb.Get(applianceTable, rid, &r) {
+			names = append(names, applianceLabel(r.Name, r.ID))
+		} else {
+			names = append(names, rid)
+		}
+	}
+	return "## Linked source code\n\n" +
+		"This system runs code from the linked repository(ies): " + strings.Join(names, "; ") + ". " +
+		"The worker can search and read that code (`search_code`, `read_file`, `list_dir`) in the same probe that inspects the live system. " +
+		"Use it whenever behavior needs its origin: trace a log excerpt to the exact line that emits it, find what a config key actually does, or check what the running version SHOULD be doing before concluding from live state alone. " +
+		"Code reads never touch the live system.\n\n"
+}
+
 func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool) string {
 	if appliance.Type == "repo" {
 		return buildRepoLeadPrompt(appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
+	}
+	if appliance.Type == "bundle" {
+		return buildBundleLeadPrompt(udb, appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -1982,6 +2111,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 
 	leadStaticGuidance(&b)
 	b.WriteString(linkedKnowledgeNote(appliance))
+	b.WriteString(linkedReposNote(udb, appliance))
 
 	// Provenance fence for everything recorded FROM the target system.
 	// Discoveries, facts, docs, the system map, lessons, and techniques are
@@ -2056,6 +2186,9 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 func buildConsolidationPrompt(appliance Appliance) string {
 	if appliance.Type == "repo" {
 		return buildRepoConsolidationPrompt(appliance)
+	}
+	if appliance.Type == "bundle" {
+		return buildBundleConsolidationPrompt(appliance)
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
@@ -2516,6 +2649,23 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			return
 		}
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading repository %s", repoDisplayTarget(appliance))})
+	} else if appliance.Type == "bundle" {
+		// No connection and nothing to refresh: unlike a repo, a bundle
+		// cannot be re-fetched. A Map run reads whatever was ingested — if
+		// that is nothing, the fix is an upload, which is the user's move and
+		// not something this session can perform on their behalf.
+		if n := bundleFileCount(ownerUser, appliance.ID); n == 0 {
+			msg := "No evidence ingested yet — upload the bundle's files first."
+			if appliance.BundleState == bundleStateIngesting {
+				msg = "The upload is still being expanded and ingested. Wait for it to finish, then ask again."
+			} else if appliance.BundleState == bundleStateFailed && appliance.BundleError != "" {
+				msg = "The last ingest failed: " + appliance.BundleError
+			}
+			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: msg}, true)
+			probeSessions.ScheduleCleanup(id)
+			return
+		}
+		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading evidence bundle %s", bundleDisplayTarget(appliance))})
 	} else {
 		client, err := acquireConn(userID, appliance)
 		if err != nil {
@@ -2585,12 +2735,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		return a.exec_command_ctx(ctx, cmd)
 	}
 
-	// Give this run a private scratch directory on the target. Repo appliances
-	// have no filesystem to write to, so they get none — their workers only read
-	// the ingested store. Setup and teardown deliberately use the RAW exec path:
-	// routing them through the gated tool would let the risk gate refuse the very
-	// cleanup that keeps the host clean.
-	if appliance.Type != "repo" {
+	// Give this run a private scratch directory on the target. Repo and bundle
+	// appliances have no filesystem to write to, so they get none — their
+	// workers only read an ingested store. Setup and teardown deliberately use
+	// the RAW exec path: routing them through the gated tool would let the risk
+	// gate refuse the very cleanup that keeps the host clean.
+	if appliance.Type != "repo" && appliance.Type != "bundle" {
 		rawExec := func(c context.Context, cmd string) (string, error) {
 			if appliance.Type == "command" {
 				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
@@ -3704,6 +3854,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
 		)
+	} else if appliance.Type == "bundle" {
+		// Bundle workers read the encrypted evidence store. Nothing executes:
+		// there is no host here, only files somebody uploaded.
+		workerTools = append(bundleCodeTools(ownerUser, appliance.ID),
+			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
+			save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
+		)
 	} else if appliance.Type == "command" {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool,
@@ -3724,6 +3881,27 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// see a dead tool.
 	if len(appliance.Collections) > 0 {
 		workerTools = append(workerTools, search_knowledge_tool)
+	}
+	// Linked repos — the 360 join. A system that declares which code it runs
+	// hands its investigation that repo's search/read tools, so one probe can
+	// trace a log excerpt to the emitting line WHILE inspecting the live
+	// state, instead of the human joining two investigations by hand. Repos
+	// skip this (they ARE the code); workspaces never reach here.
+	if appliance.Type != "repo" && len(appliance.LinkedRepos) > 0 {
+		var linked []linkedRepo
+		for _, rid := range appliance.LinkedRepos {
+			if ra, raOwner, _, ok := T.resolveAppliance(userID, udb, rid); ok && ra.Type == "repo" {
+				linked = append(linked, linkedRepo{Owner: raOwner, ID: ra.ID, Name: applianceLabel(ra.Name, ra.ID)})
+			}
+		}
+		if len(linked) > 0 {
+			workerTools = append(workerTools, linkedRepoTools(linked)...)
+			names := make([]string, 0, len(linked))
+			for _, lr := range linked {
+				names = append(names, lr.Name)
+			}
+			emit(id, probeEvent{Kind: "status", Text: "Code linked: " + strings.Join(names, ", ")})
+		}
 	}
 	// Enforced sanity check — servitor handles sensitive system data and
 	// must never call out to third-party services. assertOnlyAllowedTools
@@ -3746,6 +3924,9 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if appliance.Type == "repo" {
 				emit(id, probeEvent{Kind: "status", Text: "Reading repository layout…"})
 				snapshot = runRepoSnapshot(ownerUser, appliance.ID)
+			} else if appliance.Type == "bundle" {
+				emit(id, probeEvent{Kind: "status", Text: "Reading the bundle index…"})
+				snapshot = runBundleSnapshot(ownerUser, appliance.ID)
 			} else {
 				emit(id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
 				snapshot = runQuickSnapshot(ctx, sshExec)
