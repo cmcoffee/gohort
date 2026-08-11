@@ -399,11 +399,24 @@ func applyBedrockMetrics(st *anthStreamState, event []byte) {
 	}
 	// Guard on >0 so a metrics block that omits a field cannot zero out a count
 	// the stream did report correctly.
+	//
+	// And do NOT override once the stream has reported cache tokens. This count
+	// is the billed TOTAL for the prompt; the Anthropic events break that same
+	// prompt into uncached/read/written. Overwriting the uncached part with the
+	// total and then summing the three double-counts everything cached — which
+	// is most of a long conversation. When there is no cache breakdown, this is
+	// the only real number available and it wins, which is the placeholder case
+	// this was written for.
 	if n := wrapper.Metrics.InputTokenCount; n > 0 {
-		if st.inputTokens > 0 && n != st.inputTokens {
-			Debug("[bedrock-runtime]: input tokens %d -> %d (billed)", st.inputTokens, n)
+		if st.cacheRead > 0 || st.cacheWrite > 0 {
+			Debug("[bedrock-runtime]: billed input %d; keeping the stream's breakdown (uncached=%d cache_read=%d cache_write=%d)",
+				n, st.inputTokens, st.cacheRead, st.cacheWrite)
+		} else {
+			if st.inputTokens > 0 && n != st.inputTokens {
+				Debug("[bedrock-runtime]: input tokens %d -> %d (billed)", st.inputTokens, n)
+			}
+			st.inputTokens = n
 		}
-		st.inputTokens = n
 	}
 	if n := wrapper.Metrics.OutputTokenCount; n > 0 {
 		st.outputTokens = n

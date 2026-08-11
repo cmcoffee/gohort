@@ -3858,10 +3858,19 @@ func (t *chatTurn) emitStats(msgID string, resp *Response, start time.Time) {
 	}
 	usage := &ChatMessageUsage{ElapsedMs: elapsedMs}
 	if resp != nil {
-		payload["input_tokens"] = resp.InputTokens
+		// The prompt is the SUM. A provider reports input_tokens as the
+		// uncached remainder only, so on a conversation whose system prompt and
+		// history are a cache hit it is near zero — the turn looks free while
+		// costing whatever a large prompt costs.
+		promptTokens := resp.InputTokens + resp.CacheReadTokens + resp.CacheWriteTokens
+		payload["input_tokens"] = promptTokens
+		payload["cache_read_tokens"] = resp.CacheReadTokens
+		payload["cache_write_tokens"] = resp.CacheWriteTokens
 		payload["output_tokens"] = resp.OutputTokens
 		payload["reasoning_tokens"] = resp.ReasoningTokens
-		usage.InputTokens = resp.InputTokens
+		usage.InputTokens = promptTokens
+		usage.CacheReadTokens = resp.CacheReadTokens
+		usage.CacheWriteTokens = resp.CacheWriteTokens
 		usage.OutputTokens = resp.OutputTokens
 		usage.ReasoningTokens = resp.ReasoningTokens
 		// Prefer the backend's per-phase throughput (llama.cpp) when

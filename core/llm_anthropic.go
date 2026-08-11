@@ -147,7 +147,9 @@ type anthStreamEvent struct {
 	Delta        *anthContentBlock `json:"delta,omitempty"`
 	Message      *anthResponse     `json:"message,omitempty"`
 	Usage        *struct {
-		OutputTokens int `json:"output_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage,omitempty"`
 }
 
@@ -367,12 +369,14 @@ func parseAnthResponse(result anthResponse) *Response {
 		}
 	}
 	return &Response{
-		Content:      text.String(),
-		ToolCalls:    toolCalls,
-		Model:        result.Model,
-		InputTokens:  result.Usage.InputTokens,
-		OutputTokens: result.Usage.OutputTokens,
-		StopReason:   result.StopReason,
+		Content:          text.String(),
+		ToolCalls:        toolCalls,
+		Model:            result.Model,
+		InputTokens:      result.Usage.InputTokens,
+		CacheReadTokens:  result.Usage.CacheReadInputTokens,
+		CacheWriteTokens: result.Usage.CacheCreationInputTokens,
+		OutputTokens:     result.Usage.OutputTokens,
+		StopReason:       result.StopReason,
 	}
 }
 
@@ -512,8 +516,12 @@ type anthStreamState struct {
 	model        string
 	inputTokens  int
 	outputTokens int
-	stopReason   string
-	toolCalls    []ToolCall
+	// The cached halves of the prompt. Without these, a turn whose system
+	// prompt and history are a cache hit reports a two-token prompt.
+	cacheRead  int
+	cacheWrite int
+	stopReason string
+	toolCalls  []ToolCall
 
 	// blocks tracks in-flight content blocks by index, for tool_use assembly
 	// (a tool call's arguments arrive as partial JSON across many deltas).
@@ -541,6 +549,8 @@ func (a *anthStreamState) feed(data []byte) {
 		if event.Message != nil {
 			a.model = event.Message.Model
 			a.inputTokens = event.Message.Usage.InputTokens
+			a.cacheRead = event.Message.Usage.CacheReadInputTokens
+			a.cacheWrite = event.Message.Usage.CacheCreationInputTokens
 		}
 	case "content_block_start":
 		if event.ContentBlock == nil {
@@ -626,6 +636,14 @@ func (a *anthStreamState) feed(data []byte) {
 	case "message_delta":
 		if event.Usage != nil {
 			a.outputTokens = event.Usage.OutputTokens
+			// Restated here by some providers; take the larger so a
+			// message_start value is never lost to a zero.
+			if n := event.Usage.CacheReadInputTokens; n > a.cacheRead {
+				a.cacheRead = n
+			}
+			if n := event.Usage.CacheCreationInputTokens; n > a.cacheWrite {
+				a.cacheWrite = n
+			}
 		}
 		// Terminal stop reason is delivered here on the stream. Without
 		// capturing it, a refusal or a max_tokens truncation is invisible
@@ -639,9 +657,13 @@ func (a *anthStreamState) feed(data []byte) {
 // response materializes the accumulated state, emitting the same trace lines
 // both transports relied on.
 func (a *anthStreamState) response(tag string) *Response {
-	Debug("[%s]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d",
-		tag, a.model, a.inputTokens, a.outputTokens, len(a.toolCalls))
-	Trace("<-- STREAM COMPLETE: model=%s input_tokens=%d output_tokens=%d", a.model, a.inputTokens, a.outputTokens)
+	// Prompt size is the SUM. Logging input_tokens alone is what made a
+	// cache-hit turn read as a two-token prompt.
+	Debug("[%s]: Stream complete: model=%s prompt=%d (uncached=%d cache_read=%d cache_write=%d) output_tokens=%d tool_calls=%d",
+		tag, a.model, a.inputTokens+a.cacheRead+a.cacheWrite, a.inputTokens, a.cacheRead, a.cacheWrite,
+		a.outputTokens, len(a.toolCalls))
+	Trace("<-- STREAM COMPLETE: model=%s prompt=%d (uncached=%d cache_read=%d cache_write=%d) output_tokens=%d",
+		a.model, a.inputTokens+a.cacheRead+a.cacheWrite, a.inputTokens, a.cacheRead, a.cacheWrite, a.outputTokens)
 	if a.textContent.Len() > 0 {
 		Trace("<-- RESPONSE TEXT:\n%s", a.textContent.String())
 	}
@@ -651,12 +673,14 @@ func (a *anthStreamState) response(tag string) *Response {
 	}
 	warnStopReason(a.stopReason)
 	return &Response{
-		Content:      a.textContent.String(),
-		ToolCalls:    a.toolCalls,
-		Model:        a.model,
-		InputTokens:  a.inputTokens,
-		OutputTokens: a.outputTokens,
-		StopReason:   a.stopReason,
+		Content:          a.textContent.String(),
+		ToolCalls:        a.toolCalls,
+		Model:            a.model,
+		InputTokens:      a.inputTokens,
+		CacheReadTokens:  a.cacheRead,
+		CacheWriteTokens: a.cacheWrite,
+		OutputTokens:     a.outputTokens,
+		StopReason:       a.stopReason,
 	}
 }
 

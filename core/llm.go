@@ -73,6 +73,25 @@ type Response struct {
 	Model        string
 	InputTokens  int
 	OutputTokens int
+	// CacheReadTokens / CacheWriteTokens are the rest of the prompt when prompt
+	// caching is in play, which for Anthropic-family models it is — the client
+	// marks the system block and the history tail with cache_control.
+	//
+	// InputTokens then counts ONLY the uncached remainder, which is the API's
+	// definition and is easy to read as the whole prompt. It is not: on a
+	// conversation whose system prompt and history are a cache hit, the
+	// uncached remainder is a handful of tokens. An "input_tokens=2" against a
+	// prompt of thousands is not a bug, it is a near-total cache hit reported
+	// faithfully — and reporting only that number makes an expensive turn look
+	// free.
+	//
+	// The prompt's real size is InputTokens + CacheReadTokens +
+	// CacheWriteTokens. They are kept apart rather than summed because they
+	// bill at different rates (a read is far cheaper than an ordinary input
+	// token, a write slightly dearer), so cost and size are different sums over
+	// the same three numbers.
+	CacheReadTokens  int
+	CacheWriteTokens int
 	// StopReason is the provider's terminal signal for the turn (Anthropic:
 	// end_turn / tool_use / max_tokens / refusal / pause_turn). Populated by
 	// the Anthropic client; other backends may leave it empty. Lets callers

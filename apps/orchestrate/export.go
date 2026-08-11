@@ -302,8 +302,16 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 				b.WriteString("\n")
 			}
 			if m.Usage != nil {
-				fmt.Fprintf(&b, "_Stats: %d in / %d out / %d think / %.0f tok/s / %dms_\n\n",
-					m.Usage.InputTokens, m.Usage.OutputTokens, m.Usage.ReasoningTokens,
+				// InputTokens is the whole prompt. Name the cached share when
+				// there is one — otherwise a 40k-token prompt and a 40k-token
+				// prompt that was almost entirely a cache hit read identically,
+				// and they cost very different amounts.
+				cached := ""
+				if n := m.Usage.CacheReadTokens + m.Usage.CacheWriteTokens; n > 0 {
+					cached = fmt.Sprintf(" (%d cached)", n)
+				}
+				fmt.Fprintf(&b, "_Stats: %d in%s / %d out / %d think / %.0f tok/s / %dms_\n\n",
+					m.Usage.InputTokens, cached, m.Usage.OutputTokens, m.Usage.ReasoningTokens,
 					m.Usage.TokensPerSec, m.Usage.ElapsedMs)
 			}
 			assistantSeq++

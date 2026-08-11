@@ -1084,12 +1084,18 @@ type PersistedToolCall struct {
 // replay path can hand it straight to renderMessageStats without
 // further mapping.
 type ChatMessageUsage struct {
-	InputTokens     int     `json:"input_tokens,omitempty"`
-	OutputTokens    int     `json:"output_tokens,omitempty"`
-	ReasoningTokens int     `json:"reasoning_tokens,omitempty"`
-	TokensPerSec    float64 `json:"tokens_per_sec,omitempty"`
-	PromptPerSec    float64 `json:"prompt_per_sec,omitempty"`
-	ElapsedMs       int64   `json:"elapsed_ms,omitempty"`
+	// InputTokens is the WHOLE prompt: uncached plus whatever was served from
+	// or written to the cache. The provider reports only the uncached part
+	// under that name, which on a cache hit is a handful of tokens and made an
+	// expensive turn read as a free one.
+	InputTokens      int     `json:"input_tokens,omitempty"`
+	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
+	OutputTokens     int     `json:"output_tokens,omitempty"`
+	ReasoningTokens  int     `json:"reasoning_tokens,omitempty"`
+	TokensPerSec     float64 `json:"tokens_per_sec,omitempty"`
+	PromptPerSec     float64 `json:"prompt_per_sec,omitempty"`
+	ElapsedMs        int64   `json:"elapsed_ms,omitempty"`
 }
 
 // PlanSnapshot captures the plan as it stood at the end of one user
