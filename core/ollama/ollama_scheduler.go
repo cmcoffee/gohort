@@ -271,6 +271,39 @@ func StartLlamacppScheduler(maxParallel int) {
 	nfo.Log("[llm-queue] llama.cpp request cap: max_parallel=%d (server-side --parallel is separate; a lower value here is the binding limit)", maxParallel)
 }
 
+// AcquireEmbedSlot queues an embedding on whichever local-model scheduler this
+// deployment is running, and returns the matching release.
+//
+// Embeddings historically took no slot at all. They are usually served by the
+// SAME process as the worker model — the settings help says so outright — so an
+// unscheduled embed competes with chat for the thing chat is being queued for,
+// and the queue it skips is the only thing keeping that server responsive. On
+// stock llama.cpp, which is single-threaded, an embed arriving mid-generation
+// is not merely unfair but a source of 503s.
+//
+// Picking by which scheduler is RUNNING rather than by inspecting the embedding
+// URL: a deployment runs one local model server, and the operator started the
+// scheduler for it. Guessing the server type from an endpoint string would be a
+// heuristic that silently picks the wrong queue when it is wrong. When neither
+// is configured this is a pass-through, exactly as before.
+//
+// The returned release is always non-nil and safe to defer.
+func AcquireEmbedSlot(ctx context.Context, callerID string) (func(), error) {
+	if llamacppSchedOnce.Load() {
+		if err := AcquireLlamacppSlot(ctx, callerID); err != nil {
+			return func() {}, err
+		}
+		return func() { ReleaseLlamacppSlot(callerID) }, nil
+	}
+	if ollamaSchedOnce.Load() {
+		if err := AcquireOllamaSlot(ctx, callerID); err != nil {
+			return func() {}, err
+		}
+		return func() { ReleaseOllamaSlot(callerID) }, nil
+	}
+	return func() {}, nil
+}
+
 // AcquireLlamacppSlot blocks until a llama.cpp slot is available.
 // Caller MUST call ReleaseLlamacppSlot after the HTTP call completes.
 // Returns immediately when the scheduler has not been started.

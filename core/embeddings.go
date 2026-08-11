@@ -126,6 +126,34 @@ func Embed(ctx context.Context, text string) ([]float32, error) {
 	return EmbedWith(ctx, GetEmbeddingConfig(), text)
 }
 
+// embedCallerKey carries who an embed is on behalf of, for fair queueing.
+type embedCallerKey struct{}
+
+// embedCallerLocal is the default: work this instance started for itself.
+const embedCallerLocal = "local"
+
+// WithEmbedCaller labels embeds made under ctx, so the scheduler can round-robin
+// between them and everyone else. Without a label every embed looks like the
+// same caller and fair-share has nothing to be fair between — a peer running
+// bulk ingestion would be indistinguishable from the local turn it is delaying.
+func WithEmbedCaller(ctx context.Context, caller string) context.Context {
+	if caller = strings.TrimSpace(caller); caller == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, embedCallerKey{}, caller)
+}
+
+// embedCaller reads the label, defaulting to local.
+func embedCaller(ctx context.Context) string {
+	if ctx == nil {
+		return embedCallerLocal
+	}
+	if s, ok := ctx.Value(embedCallerKey{}).(string); ok && s != "" {
+		return s
+	}
+	return embedCallerLocal
+}
+
 // EmbedWith embeds text using an explicitly-provided embedding config, so a
 // caller (an SDK consumer, an injected AppCore) can supply its own backend
 // without touching the process-global config. SDK Phase 1.
@@ -153,6 +181,23 @@ func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32
 	}
 
 	url := strings.TrimRight(cfg.Endpoint, "/") + "/embeddings"
+
+	// Queue behind the local model scheduler, the same one chat completions
+	// use. An embed is usually served by the SAME process as the worker model,
+	// so an unscheduled one competes with chat for exactly the resource the
+	// queue exists to protect.
+	//
+	// Not when the embedder is a PEER: that work happens on another instance,
+	// which schedules it against its own load. Queueing it here would stall it
+	// behind a local model that is not doing it.
+	if !strings.Contains(cfg.Endpoint, "/api/peer/") {
+		release, err := AcquireEmbedSlot(ctx, embedCaller(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("embed queue: %w", err)
+		}
+		defer release()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err

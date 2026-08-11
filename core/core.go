@@ -466,6 +466,7 @@ var (
 	StartLlamacppScheduler     = ollama.StartLlamacppScheduler
 	AcquireLlamacppSlot        = ollama.AcquireLlamacppSlot
 	ReleaseLlamacppSlot        = ollama.ReleaseLlamacppSlot
+	AcquireEmbedSlot           = ollama.AcquireEmbedSlot
 )
 
 // --- injection (queued notes pushed into a running turn) --------------------

@@ -243,9 +243,15 @@ func HandlePeerEmbeddings(w http.ResponseWriter, r *http.Request) {
 		Model  string `json:"model"`
 	}{Object: "list", Model: cfg.Model}
 
+	// Label the work as this peer's. The local scheduler round-robins between
+	// callers, so a peer running bulk ingestion interleaves with local turns
+	// instead of arriving as an anonymous flood that looks like local work and
+	// delays the conversation a person is waiting on.
+	ctx := WithEmbedCaller(r.Context(), "peer:"+k.Label)
+
 	started := time.Now()
 	for i, text := range inputs {
-		vec, err := Embed(r.Context(), text)
+		vec, err := Embed(ctx, text)
 		if err != nil {
 			peerDeny(w, http.StatusBadGateway, "embed failed: "+err.Error())
 			return
