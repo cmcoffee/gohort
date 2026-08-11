@@ -194,3 +194,57 @@ func TestPeerConnectorNamesAreAlwaysValid(t *testing.T) {
 		}
 	}
 }
+
+// Locally, generators and editors are a strict PARTITION: a spec whose body
+// carries {images} is an editor and is dropped from the generator list, because
+// an img2img graph has no text-only mode.
+//
+// Putting {images} in every peer connector therefore classified a remote
+// TEXT-TO-IMAGE backend as an editor here, left the generator list empty, and
+// made the image tool refuse generate at preflight —
+//
+//	the generate action is unavailable — no image-generation provider is
+//	configured. Tell the user image generation isn't set up; do NOT retry
+//
+// — naming a missing provider while a perfectly good one sat registered and
+// approved, with the refusal landing before the backend was ever consulted.
+func TestPeerGeneratorIsNotMisfiledAsAnEditor(t *testing.T) {
+	peerImageDB(t)
+	p := RemotePeer{Name: "gpu-box", BaseURL: "https://gpu.example", Key: "k", Caps: []string{PeerCapImages}}
+
+	made, err := provisionPeerImages(p, []PeerImageBackend{
+		{Name: "txt2img", Edits: false},
+		{Name: "img2img", Edits: true, MaxImages: 2},
+	})
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	if len(made) != 2 {
+		t.Fatalf("made %d, want 2", len(made))
+	}
+
+	specFor := func(name string) RestImageSpec {
+		c, ok := GetConnector(RootDB, name)
+		if !ok {
+			t.Fatalf("connector %q missing", name)
+		}
+		var s RestImageSpec
+		if err := json.Unmarshal(c.Spec, &s); err != nil {
+			t.Fatalf("spec %q: %v", name, err)
+		}
+		return s
+	}
+
+	gen := specFor(peerConnectorName("gpu-box", "txt2img"))
+	if gen.SupportsImageInput() {
+		t.Errorf("a remote text-to-image backend claims image input, so it is filed as an "+
+			"editor and the generate action reports no provider configured: body=%q", gen.SubmitBody)
+	}
+	edit := specFor(peerConnectorName("gpu-box", "img2img"))
+	if !edit.SupportsImageInput() {
+		t.Errorf("a remote editing backend does NOT accept images — edits would refuse: body=%q", edit.SubmitBody)
+	}
+	if edit.MaxImages() != 2 {
+		t.Errorf("editor max images = %d, want the remote's 2", edit.MaxImages())
+	}
+}

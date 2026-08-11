@@ -66,6 +66,24 @@ const peerImageSubmitBody = `{"prompt":"{prompt}","negative_prompt":"{negative}"
 	`"init_images":{images},"backend":%s,"steps":{steps},"seed":{seed},` +
 	`"width":{width},"height":{height}}`
 
+// peerImageGenerateBody is the same request WITHOUT the {images} token.
+//
+// The distinction is load-bearing, and getting it wrong cost a working peer its
+// only usable action. Locally, generators and editors are a strict PARTITION:
+// a backend whose body contains {images} is classified as an editor and is
+// removed from the generator list entirely, because an img2img graph has no
+// text-only mode. Putting {images} in every peer connector therefore made even
+// a remote TEXT-TO-IMAGE backend an editor here, left the generator list empty,
+// and made the image tool refuse "generate" at preflight with "no
+// image-generation provider is configured" — before the backend it was
+// complaining about was ever consulted.
+//
+// So the token goes in only when the remote says it edits. The remote's own
+// Edits flag is the authority: it reflects that graph's real shape.
+const peerImageGenerateBody = `{"prompt":"{prompt}","negative_prompt":"{negative}",` +
+	`"backend":%s,"steps":{steps},"seed":{seed},` +
+	`"width":{width},"height":{height}}`
+
 // provisionPeerImages installs a credential and one connector per renderer the
 // peer advertises, and returns the connector names it created.
 //
@@ -99,11 +117,15 @@ func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, e
 			continue
 		}
 		remote, _ := json.Marshal(b.Name) // JSON-quoted, so an odd remote name cannot break the body
+		body := peerImageGenerateBody
+		if b.Edits {
+			body = peerImageSubmitBody
+		}
 		spec := RestImageSpec{
 			Credential:     credName,
 			SubmitURL:      strings.TrimRight(p.BaseURL, "/") + "/api/peer/v1/images/render",
 			SubmitMethod:   "POST",
-			SubmitBody:     fmt.Sprintf(peerImageSubmitBody, string(remote)),
+			SubmitBody:     fmt.Sprintf(body, string(remote)),
 			ImageB64Path:   "images.0",
 			MaxInputImages: b.MaxImages,
 			PromptGuidance: b.Guidance,
