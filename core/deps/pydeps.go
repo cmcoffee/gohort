@@ -83,7 +83,16 @@ func EnsurePyDepsDir() string {
 
 func ensurePyDepsDirLocked() string {
 	if pyDepsDirPath != "" {
-		return pyDepsDirPath
+		// Re-validate rather than trusting the cache for the life of the
+		// process. A path cached once and since removed — the data dir moved, a
+		// tmp reaper, an operator clearing space — is worse than no cache at
+		// all: bwrap refuses to start with "Can't find source path" and EVERY
+		// sandboxed run fails, naming a directory rather than a cause.
+		if _, err := os.Stat(pyDepsDirPath); err == nil {
+			return pyDepsDirPath
+		}
+		nfo.Debug("[pydeps] cached dir %s has gone away — re-creating", pyDepsDirPath)
+		pyDepsDirPath = ""
 	}
 	base := workspacesDir()
 	if base == "" {

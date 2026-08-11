@@ -77,6 +77,50 @@ func detectBwrap() string {
 	return bwrapPath
 }
 
+// sandboxPythonPath builds the PYTHONPATH for a run, given the bwrap binary
+// that will (or will not) carry it.
+//
+// Under bwrap the helpers reach the script through bind mounts at fixed paths.
+// Without bwrap there are no mounts, so the only paths that resolve are the
+// host directories the mounts would have pointed at. Naming the mount paths in
+// both cases is the bug this exists to prevent: on a host with no bwrap it puts
+// two directories on PYTHONPATH that do not exist, and the first line of every
+// hook-using script dies with ModuleNotFoundError.
+//
+// Passing bwrap in rather than calling detectBwrap() keeps the decision
+// testable — the whole point is what happens on a machine that has no bwrap,
+// which is not the machine the tests run on.
+func sandboxPythonPath(bwrap, existing string) string {
+	libPath, depsPath := SandboxGohortLibMountPath, SandboxPyDepsMountPath
+	if bwrap == "" {
+		// Ensure* both deploys the helper and reports where it landed. On this
+		// path it is also the only thing that deploys it at all: it used to run
+		// solely as a side effect of building the bwrap argv.
+		libPath, depsPath = EnsureGohortLibDir(), EnsurePyDepsDir()
+	}
+	// Prepend rather than clobber so a caller-supplied PYTHONPATH stays
+	// searchable; empty entries are dropped.
+	return PrependPythonPath(existing, libPath, depsPath)
+}
+
+// sandboxShimBinDir returns the directory holding the fetch_url / fetch_via /
+// browse_page shims for a run, or "" when there is none to offer.
+//
+// Under bwrap that is the mount point; without it, the host dir the mount would
+// have pointed at. Same shape as sandboxPythonPath, and deliberately so: these
+// two are the entire bridge between a sandboxed script and the hook, and they
+// went wrong the same way for the same reason.
+func sandboxShimBinDir(bwrap string) string {
+	if bwrap != "" {
+		return SandboxGohortBinMountPath
+	}
+	libDir := EnsureGohortLibDir()
+	if libDir == "" {
+		return ""
+	}
+	return filepath.Join(libDir, "bin")
+}
+
 // SandboxedShellResult is what RunSandboxedShell returns. Combined
 // stdout+stderr in Output, exec error (if any) in Err. Sandbox=true
 // means bwrap actually wrapped the command.
@@ -203,12 +247,28 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	if extraEnv == nil {
 		extraEnv = map[string]string{}
 	}
-	// PYTHONPATH must include both the gohort helper mount (so `from
-	// gohort import fetch` resolves) and the managed python-deps mount
-	// (so `import openpyxl` and friends resolve). Prepend rather than
-	// clobber so a caller-supplied PYTHONPATH also stays searchable.
-	extraEnv["PYTHONPATH"] = PrependPythonPath(extraEnv["PYTHONPATH"],
-		SandboxGohortLibMountPath, SandboxPyDepsMountPath)
+	// PYTHONPATH must include both the gohort helper (so `from gohort import
+	// fetch` resolves) and the managed python-deps (so `import openpyxl` and
+	// friends resolve). WHERE those are depends on whether we are about to run
+	// under bwrap.
+	//
+	// The mount paths are real only INSIDE the sandbox — they are where bwrap
+	// binds the host directories. Without bwrap nothing is mounted anywhere and
+	// the only real location is the host directory itself, so pointing
+	// PYTHONPATH at /opt/gohort-lib there names a path that does not exist.
+	//
+	// This is every macOS deployment, where bwrap does not exist at all, plus
+	// any Linux host without bubblewrap installed. The symptom is that
+	// `from gohort import fetch_url` raises ModuleNotFoundError on the FIRST
+	// line of every hook-using script, while the hook socket itself is present
+	// and working — so it reads as a broken install rather than a wrong path,
+	// and the obvious next move (hunting for the module) fails too: the helper
+	// really is on disk, just somewhere PYTHONPATH never mentions.
+	//
+	// Calling Ensure* here also makes the no-bwrap path deploy the helper at
+	// all. It used to be written only as a side effect of building the bwrap
+	// argv, so on a host with no bwrap the package was never even created.
+	extraEnv["PYTHONPATH"] = sandboxPythonPath(bwrap, extraEnv["PYTHONPATH"])
 
 	var c *exec.Cmd
 	sandbox := false
@@ -225,7 +285,7 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 		c = exec.CommandContext(ctx, "sh", "-c", command)
 		c.Dir = workspaceDir
 	}
-	env := sandboxEnv()
+	env := sandboxEnv(bwrap)
 	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
 	// possible) wins over the inherited PATH inside the subshell.
 	for k, v := range extraEnv {
@@ -433,7 +493,7 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 		c = exec.CommandContext(ctx, "sh", "-c", command)
 		c.Dir = "/tmp"
 	}
-	c.Env = sandboxEnv()
+	c.Env = sandboxEnv(bwrap)
 	c.Stdin = strings.NewReader(stdinData)
 
 	var buf bytes.Buffer
@@ -518,7 +578,17 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 		})
 		c = exec.CommandContext(ctx, interpreter, "-c", script)
 	}
-	c.Env = sandboxEnv()
+	c.Env = sandboxEnv(bwrap)
+	// The managed python deps reach a bwrap run through --setenv on the mount
+	// path (see bwrapScriptArgv). Without bwrap there is no mount and no
+	// --setenv, so this ran with no PYTHONPATH at all and every generator that
+	// imports openpyxl / python-docx / python-pptx failed on a host where the
+	// packages were provisioned and present.
+	if bwrap == "" {
+		if pyDir := EnsurePyDepsDir(); pyDir != "" {
+			c.Env = append(c.Env, "PYTHONPATH="+PrependPythonPath("", pyDir))
+		}
+	}
 	c.Stdin = strings.NewReader(stdinData)
 
 	var stdout, stderr bytes.Buffer
@@ -577,7 +647,7 @@ func bwrapScriptArgv(interpreter, script string) []string {
 // survive so common utilities resolve; secrets the gohort process holds
 // must NOT survive — env vars like API keys, AWS creds, etc. would
 // otherwise leak straight into LLM-controlled shell scope.
-func sandboxEnv() []string {
+func sandboxEnv(bwrap string) []string {
 	// Minimal allowlist. Anything not in this list is dropped.
 	keep := map[string]bool{
 		"PATH":     true,
@@ -611,16 +681,25 @@ func sandboxEnv() []string {
 	}
 	// Prepend the gohort shim bin dir so a script can invoke fetch_url /
 	// fetch_via / browse_page as ordinary commands (they proxy to the hook,
-	// which still enforces capabilities). It's a subpath of the RO lib mount
-	// and only exists inside a bwrap sandbox; on the non-bwrap fallback it's a
-	// dead PATH entry, which the kernel's PATH search simply skips.
-	for i, kv := range env {
-		if strings.HasPrefix(kv, "PATH=") {
-			rest := kv[len("PATH="):]
-			if !strings.HasPrefix(rest, SandboxGohortBinMountPath+":") {
-				env[i] = "PATH=" + SandboxGohortBinMountPath + ":" + rest
+	// which still enforces capabilities).
+	//
+	// Which directory that is depends on bwrap, for the same reason PYTHONPATH
+	// does: the mount path is a subpath of the RO lib mount and exists only
+	// inside a sandbox. This used to prepend the mount path unconditionally and
+	// call the result harmless — "a dead PATH entry, which the PATH search
+	// simply skips". It is not harmless. Skipping it means that on any host
+	// without bwrap the documented shell interface is silently absent, and
+	// `fetch_url https://…` fails as command-not-found on a system whose hook
+	// is present, granted, and answering.
+	if binDir := sandboxShimBinDir(bwrap); binDir != "" {
+		for i, kv := range env {
+			if strings.HasPrefix(kv, "PATH=") {
+				rest := kv[len("PATH="):]
+				if !strings.HasPrefix(rest, binDir+":") {
+					env[i] = "PATH=" + binDir + ":" + rest
+				}
+				break
 			}
-			break
 		}
 	}
 	return env

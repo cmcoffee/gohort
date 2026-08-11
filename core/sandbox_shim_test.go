@@ -50,19 +50,31 @@ func TestEnsureGohortLibDirWritesShims(t *testing.T) {
 }
 
 // The shim bin dir must sit at the FRONT of the sandbox PATH so its
-// fetch_url/browse_page win over any same-named host binary.
+// fetch_url/browse_page win over any same-named host binary — and it must be
+// the dir that actually EXISTS for the run in question. Under bwrap that is the
+// mount point; without bwrap nothing is mounted, and prepending the mount path
+// there left the shims unreachable on every host with no bubblewrap.
 func TestSandboxEnvPrependsShimBin(t *testing.T) {
-	var path string
-	for _, kv := range sandboxEnv() {
-		if strings.HasPrefix(kv, "PATH=") {
-			path = kv[len("PATH="):]
-			break
+	pathFor := func(bwrap string) string {
+		t.Helper()
+		for _, kv := range sandboxEnv(bwrap) {
+			if strings.HasPrefix(kv, "PATH=") {
+				return kv[len("PATH="):]
+			}
 		}
-	}
-	if path == "" {
 		t.Fatal("sandboxEnv produced no PATH")
+		return ""
 	}
-	if !strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
-		t.Errorf("PATH %q not prefixed with shim bin %q", path, SandboxGohortBinMountPath)
+
+	if path := pathFor("/usr/bin/bwrap"); !strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
+		t.Errorf("under bwrap, PATH %q not prefixed with the shim mount %q", path, SandboxGohortBinMountPath)
+	}
+
+	path := pathFor("")
+	if strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
+		t.Errorf("without bwrap, PATH leads with the unmounted %q: %q", SandboxGohortBinMountPath, path)
+	}
+	if want := sandboxShimBinDir(""); want != "" && !strings.HasPrefix(path, want+":") {
+		t.Errorf("without bwrap, PATH %q should lead with the host shim dir %q", path, want)
 	}
 }
