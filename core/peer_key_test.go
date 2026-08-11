@@ -10,6 +10,23 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
+// anUnservedCap returns a capability this build declares but does not serve.
+//
+// Tests that need "an unbuilt capability" pick it from the predicate rather
+// than naming one: images was that example until it shipped, at which point
+// three tests asserted the opposite of the truth. Chosen dynamically, they keep
+// testing the PROPERTY as capabilities land.
+func anUnservedCap(t *testing.T) string {
+	t.Helper()
+	for _, c := range PeerCapabilities() {
+		if !PeerCapabilityServed(c) {
+			return c
+		}
+	}
+	t.Skip("every declared capability is served — nothing left to test the unbuilt path with")
+	return ""
+}
+
 // peerTestDB points RootDB at a fresh store and restores it afterwards, since
 // the peer key store is process-global.
 func peerTestDB(t *testing.T) {
@@ -141,11 +158,12 @@ func TestPeerManifestSeparatesServedFromGranted(t *testing.T) {
 	if e := seen[PeerCapEmbeddings]; !e.Served || !e.Granted {
 		t.Errorf("embeddings should be served AND granted: %+v", e)
 	}
-	if e := seen[PeerCapImages]; e.Served {
-		t.Errorf("images is not implemented yet but reported served: %+v", e)
+	unbuilt := anUnservedCap(t)
+	if e := seen[unbuilt]; e.Served {
+		t.Errorf("%s is not implemented yet but reported served: %+v", unbuilt, e)
 	}
-	if e := seen[PeerCapImages]; e.Granted {
-		t.Errorf("images was not granted to this key but reported granted: %+v", e)
+	if e := seen[unbuilt]; e.Granted {
+		t.Errorf("%s was not granted to this key but reported granted: %+v", unbuilt, e)
 	}
 }
 

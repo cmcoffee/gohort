@@ -333,10 +333,10 @@ func EmbeddingProviderOptions() []ui.SelectOption {
 // without reading the source.
 func peerCapOptions() []ui.SelectOption {
 	help := map[string]string{
-		PeerCapEmbeddings: "Let the peer embed text using this instance's embedder. Available now.",
-		PeerCapImages:     "Image generation and editing on this instance's GPU. Not implemented yet — granting it now has no effect until it ships.",
-		PeerCapModels:     "Chat completions against this instance's configured models. Not implemented yet.",
-		PeerCapTranscode:  "Media transcoding and frame sampling. Not implemented yet.",
+		PeerCapEmbeddings: "Let the peer embed text using this instance's embedder.",
+		PeerCapImages:     "Generate and edit images on this instance's GPU, including multi-image edits.",
+		PeerCapModels:     "Chat completions against this instance's configured models.",
+		PeerCapTranscode:  "Media transcoding and frame sampling.",
 	}
 	label := map[string]string{
 		PeerCapEmbeddings: "Embeddings",
@@ -346,7 +346,16 @@ func peerCapOptions() []ui.SelectOption {
 	}
 	out := make([]ui.SelectOption, 0, len(PeerCapabilities()))
 	for _, c := range PeerCapabilities() {
-		out = append(out, ui.SelectOption{Value: c, Label: label[c], Help: help[c]})
+		h := help[c]
+		// Derived, not hand-written: a capability that ships stops being
+		// labelled unbuilt without anyone remembering to edit this copy, and one
+		// that has not shipped can never be advertised as working.
+		if PeerCapabilityServed(c) {
+			h += " Available now."
+		} else {
+			h += " Not implemented yet — granting it now has no effect until it ships."
+		}
+		out = append(out, ui.SelectOption{Value: c, Label: label[c], Help: h})
 	}
 	return out
 }

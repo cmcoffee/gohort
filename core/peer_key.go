@@ -39,9 +39,9 @@ const peerKeysTable = "peer_keys"
 // Capability names a PeerKey can grant. Each is a distinct resource this
 // instance is willing to spend on someone else's behalf.
 //
-// Only embeddings is served today. The others are declared so the manifest can
-// report them as unavailable rather than omitting them — a peer asking "what do
-// you offer" should learn the vocabulary, not have to guess at it.
+// Embeddings and images are served today. The rest are declared so the manifest
+// can report them as unavailable rather than omitting them — a peer asking "what
+// do you offer" should learn the vocabulary, not have to guess at it.
 const (
 	PeerCapEmbeddings = "embeddings"
 	PeerCapImages     = "images"
@@ -57,7 +57,14 @@ func PeerCapabilities() []string {
 // peerCapServed reports whether this build can actually serve a capability.
 // A key may GRANT a capability that is not implemented yet; the manifest says
 // so plainly rather than advertising something that would 404.
-func peerCapServed(cap string) bool { return cap == PeerCapEmbeddings }
+func peerCapServed(cap string) bool {
+	return cap == PeerCapEmbeddings || cap == PeerCapImages
+}
+
+// PeerCapabilityServed is peerCapServed for callers outside core — the admin UI
+// builds its capability checklist from it, so a capability that ships stops
+// being labelled "not implemented" without anyone remembering to edit the copy.
+func PeerCapabilityServed(cap string) bool { return peerCapServed(cap) }
 
 // PeerKey is one remote instance's grant. The secret is stored as issued: it
 // authenticates a machine the operator explicitly invited, and it must be

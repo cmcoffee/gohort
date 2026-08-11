@@ -75,13 +75,11 @@ func TestPeerCapOptionsCoverEveryCapability(t *testing.T) {
 // entitled to know that before they go looking for why the peer is refused.
 func TestUnservedCapabilitiesSaySoInTheUI(t *testing.T) {
 	for _, o := range peerCapOptions() {
-		if o.Value == PeerCapEmbeddings {
-			if strings.Contains(strings.ToLower(o.Help), "not implemented") {
-				t.Errorf("embeddings IS implemented but its help says otherwise: %q", o.Help)
-			}
-			continue
+		unbuilt := strings.Contains(strings.ToLower(o.Help), "not implemented")
+		if PeerCapabilityServed(o.Value) && unbuilt {
+			t.Errorf("capability %q IS served but its help says otherwise: %q", o.Value, o.Help)
 		}
-		if !strings.Contains(strings.ToLower(o.Help), "not implemented") {
+		if !PeerCapabilityServed(o.Value) && !unbuilt {
 			t.Errorf("capability %q is not served yet but its help does not say so: %q", o.Value, o.Help)
 		}
 	}

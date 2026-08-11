@@ -42,7 +42,8 @@ func peerServer(t *testing.T, caps ...string) (base, key string) {
 // SERVES and this key was GRANTED — the intersection. Storing the raw grant
 // would put a capability in the picker that fails at first use.
 func TestSaveRemotePeerStoresTheUsableIntersection(t *testing.T) {
-	base, key := peerServer(t, PeerCapEmbeddings, PeerCapImages)
+	unbuilt := anUnservedCap(t)
+	base, key := peerServer(t, PeerCapEmbeddings, unbuilt)
 
 	p, err := SaveRemotePeer(t.Context(), "gpu-box", base, key)
 	if err != nil {
@@ -51,9 +52,9 @@ func TestSaveRemotePeerStoresTheUsableIntersection(t *testing.T) {
 	if !p.Offers(PeerCapEmbeddings) {
 		t.Error("embeddings is served and granted but not stored as usable")
 	}
-	// Images was GRANTED but this build does not serve it.
-	if p.Offers(PeerCapImages) {
-		t.Errorf("images is granted but unserved — it must not be offered as usable: %q", p.Caps)
+	// Granted, but this build does not serve it.
+	if p.Offers(unbuilt) {
+		t.Errorf("%s is granted but unserved — it must not be offered as usable: %q", unbuilt, p.Caps)
 	}
 	if p.EmbedModel != "nomic-embed-text" {
 		t.Errorf("embed model = %q, want the remote's", p.EmbedModel)
@@ -66,7 +67,7 @@ func TestSaveRemotePeerStoresTheUsableIntersection(t *testing.T) {
 // A key that can use nothing is refused at add time rather than stored as a
 // peer that looks fine and does nothing.
 func TestSaveRemotePeerRefusesAKeyThatGrantsNothingUsable(t *testing.T) {
-	base, key := peerServer(t, PeerCapImages) // granted, but unserved
+	base, key := peerServer(t, anUnservedCap(t)) // granted, but unserved
 
 	_, err := SaveRemotePeer(t.Context(), "gpu-box", base, key)
 	if err == nil {

@@ -87,6 +87,10 @@ type PeerManifest struct {
 	Instance     string              `json:"instance"`
 	Capabilities []PeerManifestEntry `json:"capabilities"`
 	Embeddings   *PeerEmbeddingsInfo `json:"embeddings,omitempty"`
+	// Images lists the renderers on offer. The consuming side turns each into
+	// a local backend entry, so this carries what that entry needs to be
+	// truthful — whether it edits, and how many source photos it takes.
+	Images []PeerImageBackend `json:"images,omitempty"`
 }
 
 type PeerManifestEntry struct {
@@ -144,6 +148,9 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 			info.Dim = len(vec)
 		}
 		m.Embeddings = info
+	}
+	if k.Allows(PeerCapImages) && peerCapServed(PeerCapImages) {
+		m.Images = peerImageBackends()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(m)

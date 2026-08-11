@@ -1047,6 +1047,10 @@ func ServeDashboard(addr string) error {
 	// at <base>/api/peer/v1 and needs no gohort-specific client at all.
 	RegisterPublicPath("/api/peer/v1/embeddings")
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
+	// Renders for a peer. A1111-shaped so the far side drives it with an
+	// ordinary rest_image connector rather than a bespoke client.
+	RegisterPublicPath("/api/peer/v1/images/render")
+	mux.HandleFunc("/api/peer/v1/images/render", HandlePeerImageRender)
 
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.
