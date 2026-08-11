@@ -102,7 +102,7 @@ type LogEntry struct {
 // Appliance is a saved remote host with connection params and cached system knowledge.
 type Appliance struct {
 	ID   string `json:"id"`
-	Type string `json:"type"` // "ssh" (default) | "command" | "repo" | "bundle" | "workspace"
+	Type string `json:"type"` // "ssh" (default) | "command" | "repo" | "bundle" | "toolset" | "workspace"
 	Name string `json:"name"`
 	// SSH fields
 	Host     string `json:"host"`
@@ -148,6 +148,18 @@ type Appliance struct {
 	// without anyone going to find out.
 	BundleBinaries int `json:"bundle_binaries,omitempty"`
 	BundleUnopened int `json:"bundle_unopened,omitempty"`
+	// Toolset fields (Type == "toolset") — an appliance investigated through a
+	// CURATED set of already-authored tools rather than a host or a clone. The
+	// bindings are the permission: each names one of the owner's pool tools, a
+	// posture, and a fingerprint of the tool as approved. See toolset.go and
+	// docs/servitor-toolset-type.md.
+	Toolset []ToolBinding `json:"toolset,omitempty"`
+	// Domain is the owner's one-paragraph account of what this target IS —
+	// "a GitLab project: issues, merge requests, pipelines, file contents". The
+	// bound tools' own descriptions carry most of the domain knowledge; what
+	// this adds is what the target is as a whole, what a good answer looks like
+	// for it, and what "absent" means here.
+	Domain string `json:"domain,omitempty"`
 	// LinkedRepos (system types only) are repo-appliance IDs whose ingested
 	// code THIS system's investigations may search — the owner's declaration
 	// that this box runs that code. The linked repos' search/read tools join
@@ -525,6 +537,8 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Evidence bundles: staging one file per request, then a single ingest
 	// over everything staged — which doubles as the retry path after a failed
 	// ingest, without re-sending a gigabyte. See bundle_upload.go.
+	// Tools bindable to a toolset appliance — the owner's own pool.
+	sub.HandleFunc("/api/bindable-tools", T.handleBindableTools)
 	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
 	sub.HandleFunc("/api/bundle/ingest", T.handleBundleIngest)
 	sub.HandleFunc("/api/collections", T.handleCollectionsList)
@@ -640,6 +654,15 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "name required", http.StatusBadRequest)
 				return
 			}
+		case "toolset":
+			if req.Name == "" {
+				http.Error(w, "name required", http.StatusBadRequest)
+				return
+			}
+			// Fingerprints are stamped further down, once the OWNER is known —
+			// a shared appliance's tools come from the owner's pool, not the
+			// editor's.
+			req.Domain = strings.TrimSpace(req.Domain)
 		case "workspace":
 			// A workspace references other appliances; it owns no creds/store.
 			req.Members = dedupeStrings(req.Members)
@@ -728,6 +751,16 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.LinkedRepos = kept
 		}
 		req.Owner = owner
+		// Toolset bindings are fingerprinted on the way IN, against the owner's
+		// pool, so a binding can never reach the store without the pin that
+		// makes it verifiable. Any hash the client sent is discarded: a
+		// caller-supplied fingerprint would let it bless a body nobody
+		// approved, which is the whole thing the pin exists to prevent.
+		if req.Type == "toolset" {
+			req.Toolset = bindToolsetTools(owner, userID, req.Toolset)
+		} else {
+			req.Toolset = nil
+		}
 		if req.ID == "" {
 			req.ID = UUIDv4()
 		}
@@ -1837,12 +1870,18 @@ func runQuickSnapshot(ctx context.Context, execFn func(string) (string, error)) 
 // buildInvestigatorSystemPrompt is the system prompt for the investigator agent in mapping mode.
 // The investigator orchestrates targeted probes, records discoveries, and develops a complete
 // operational picture — thinking like a security researcher, not a checklist executor.
-func buildInvestigatorSystemPrompt(appliance Appliance) string {
+// rt carries the resolved toolset and is present ONLY for a toolset appliance —
+// variadic so the four other types' call sites stay unchanged rather than
+// passing an empty struct they have no use for.
+func buildInvestigatorSystemPrompt(appliance Appliance, rt ...resolvedToolset) string {
 	if appliance.Type == "repo" {
 		return buildRepoInvestigatorPrompt(appliance)
 	}
 	if appliance.Type == "bundle" {
 		return buildBundleInvestigatorPrompt(appliance)
+	}
+	if appliance.Type == "toolset" {
+		return buildToolsetInvestigatorPrompt(appliance, firstToolset(rt))
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -1900,12 +1939,15 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 // alternatives — the retry rules below swap with the protocol, because telling a
 // worker both "stop after one attempt" and "try two approaches" instructs it in
 // nothing.
-func buildProbeWorkerPrompt(appliance Appliance, scratch string, mapping bool) string {
+func buildProbeWorkerPrompt(appliance Appliance, scratch string, mapping bool, rt ...resolvedToolset) string {
 	if appliance.Type == "repo" {
 		return buildRepoProbeWorkerPrompt(appliance) // repo workers never touch a filesystem
 	}
 	if appliance.Type == "bundle" {
 		return buildBundleProbeWorkerPrompt(appliance) // bundle workers only read the ingested evidence
+	}
+	if appliance.Type == "toolset" {
+		return buildToolsetProbeWorkerPrompt(appliance, firstToolset(rt)) // no shell, no filesystem — only the bound tools
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -2061,12 +2103,15 @@ func linkedReposNote(udb Database, a Appliance) string {
 		"Code reads never touch the live system.\n\n"
 }
 
-func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool) string {
+func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool, rt ...resolvedToolset) string {
 	if appliance.Type == "repo" {
 		return buildRepoLeadPrompt(appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
 	}
 	if appliance.Type == "bundle" {
 		return buildBundleLeadPrompt(udb, appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
+	}
+	if appliance.Type == "toolset" {
+		return buildToolsetLeadPrompt(udb, appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -2189,6 +2234,9 @@ func buildConsolidationPrompt(appliance Appliance) string {
 	}
 	if appliance.Type == "bundle" {
 		return buildBundleConsolidationPrompt(appliance)
+	}
+	if appliance.Type == "toolset" {
+		return buildToolsetConsolidationPrompt(appliance)
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
@@ -2666,6 +2714,18 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			return
 		}
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading evidence bundle %s", bundleDisplayTarget(appliance))})
+	} else if appliance.Type == "toolset" {
+		// No connection and no filesystem: the target is reached only through
+		// the bound tools. An appliance with nothing bound has no way to
+		// investigate anything, which is a configuration gap rather than a
+		// failure, so it says so instead of running an empty session.
+		if len(appliance.Toolset) == 0 {
+			probeSessions.AppendEvent(id, probeEvent{Kind: "error",
+				Text: "No tools are bound to this system yet — edit it and pick the tools its investigations may use."}, true)
+			probeSessions.ScheduleCleanup(id)
+			return
+		}
+		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Working through %s", toolsetDisplayTarget(appliance))})
 	} else {
 		client, err := acquireConn(userID, appliance)
 		if err != nil {
@@ -2740,7 +2800,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// workers only read an ingested store. Setup and teardown deliberately use
 	// the RAW exec path: routing them through the gated tool would let the risk
 	// gate refuse the very cleanup that keeps the host clean.
-	if appliance.Type != "repo" && appliance.Type != "bundle" {
+	if appliance.Type != "repo" && appliance.Type != "bundle" && appliance.Type != "toolset" {
 		rawExec := func(c context.Context, cmd string) (string, error) {
 			if appliance.Type == "command" {
 				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
@@ -3799,6 +3859,54 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
+	// record_finding — report something worth documenting WITHOUT choosing where
+	// it goes. The complement to push_to_guide, and the one a worker should
+	// normally reach for: deciding which guide a finding belongs in and what the
+	// section is called are editorial judgments this worker is not positioned to
+	// make (it can see one probe, not the corpus, and not the other findings from
+	// the same run). The Guide Curator batches these and decides. push_to_guide
+	// stays for the case where the USER named a destination in the request.
+	// See docs/guides-curator.md.
+	record_finding_tool := AgentToolDef{
+		Tool: Tool{
+			Name:        "record_finding",
+			Description: "Report something you learned that is worth DOCUMENTING, without choosing a destination. Use this for anything durable a future reader would want: a config value, a path, a working procedure, a failure mode and its cause. A curator later decides which guide it belongs in, merges it with related findings, and drops what isn't worth keeping — so you do NOT name a guide or a section. Do NOT report that a probe ran, or that a service was up at one moment; that is not documentation. Local save action — never run anything on the appliance for this.",
+			Parameters: map[string]ToolParam{
+				"topic":      {Type: "string", Description: "One line naming what this is ABOUT — e.g. \"nginx TLS cert renewal\", \"scheduler queue timeout\". Not a section title; the curator decides those."},
+				"content":    {Type: "string", Description: "The finding itself, in markdown, written so it is useful months from now: the concrete values, paths, and commands, not a narration of how you found them."},
+				"confidence": {Type: "string", Description: "\"verified\" (checked directly, more than once or from more than one angle), \"probable\" (consistent with what you saw, not separately confirmed), or \"single-observation\" (seen once). Be honest — a single observation cannot overwrite documented text, and claiming more than you checked is how a wrong value gets into a guide.", Enum: []string{"verified", "probable", "single-observation"}},
+			},
+			Required: []string{"topic", "content"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			topic := strings.TrimSpace(strArg(args, "topic"))
+			content := strings.TrimSpace(strArg(args, "content"))
+			if content == "" {
+				return "", fmt.Errorf("content is required")
+			}
+			if !AcceptsFindings("guide") {
+				return "", fmt.Errorf("nothing on this deployment accepts findings for documentation")
+			}
+			id, err := SubmitFinding(userID, "guide", DocFinding{
+				Content:    content,
+				Topic:      topic,
+				Confidence: strArg(args, "confidence"),
+				Origin: DocFindingOrigin{
+					SourceKind: "system",
+					ItemID:     appliance.ID,
+					ItemLabel:  applianceLabel(appliance.Name, appliance.ID),
+					RunID:      id,
+					Observed:   time.Now().Format(time.RFC3339),
+				},
+			})
+			if err != nil {
+				return "", fmt.Errorf("could not record that finding: %w", err)
+			}
+			return fmt.Sprintf("Recorded (%s). The Guide Curator will decide where it belongs; you do not need to file it anywhere.", id), nil
+		},
+		NeedsConfirm: false,
+	}
+
 	push_to_guide_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "push_to_guide",
@@ -3846,33 +3954,51 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// workerTools holds a placeholder run_command entry. Every call site must use
 	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
 	var workerTools []AgentToolDef
+	// Populated for toolset appliances only; carries the bound tools plus what
+	// was withheld and why, and feeds both the allow-list check and the
+	// orientation pass below.
+	var resolvedTools resolvedToolset
 	if appliance.Type == "repo" {
 		// Repo workers search/read the encrypted code store instead of
 		// executing commands; the recording/plan/map tools are shared and
 		// scope-based, so they carry over unchanged.
 		workerTools = append(repoCodeTools(ownerUser, appliance.ID),
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
+			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
 		)
+	} else if appliance.Type == "toolset" {
+		// The bound tools ARE the target. Resolved in the owner's context, with
+		// every binding's fingerprint checked; anything that changed since it
+		// was approved is withheld and named rather than quietly handed over.
+		resolvedTools = resolveToolset(ctx, ownerUser, appliance)
+		workerTools = append(resolvedTools.Defs,
+			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
+			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+		)
+		for _, w := range resolvedTools.Withheld {
+			// Surfaced, not logged. An investigation that quietly got quieter
+			// is indistinguishable from a target with less to say.
+			emit(id, probeEvent{Kind: "status", Text: "Tool withheld: " + w})
+		}
 	} else if appliance.Type == "bundle" {
 		// Bundle workers read the encrypted evidence store. Nothing executes:
 		// there is no host here, only files somebody uploaded.
 		workerTools = append(bundleCodeTools(ownerUser, appliance.ID),
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
+			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
 		)
 	} else if appliance.Type == "command" {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool,
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			count_lines_tool, read_range_tool, save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
+			count_lines_tool, read_range_tool, save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
 		}
 	} else {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool, newRunPtyTool(),
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			count_lines_tool, read_range_tool,
-			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
+			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
 		}
 	}
 	// Curated linked knowledge (owner-attached collections) is searchable by the
@@ -3906,7 +4032,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// Enforced sanity check — servitor handles sensitive system data and
 	// must never call out to third-party services. assertOnlyAllowedTools
 	// panics if anything outside the local-only allow-list sneaks in.
-	assertOnlyAllowedTools("servitor.worker", workerTools, servitorWorkerToolAllowList)
+	assertAllowedWithBindings("servitor.worker", workerTools, servitorWorkerToolAllowList, toolsetBindingNames(appliance))
 
 	var reply string
 	var consolidateFn func() // set by chat mode, fired after reply is emitted
@@ -3927,6 +4053,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			} else if appliance.Type == "bundle" {
 				emit(id, probeEvent{Kind: "status", Text: "Reading the bundle index…"})
 				snapshot = runBundleSnapshot(ownerUser, appliance.ID)
+			} else if appliance.Type == "toolset" {
+				// One owner-nominated tool, or nothing. See runToolsetSnapshot.
+				if resolvedTools.Snapshot != "" {
+					emit(id, probeEvent{Kind: "status", Text: "Orienting via " + resolvedTools.Snapshot + "…"})
+				}
+				snapshot = runToolsetSnapshot(resolvedTools)
 			} else {
 				emit(id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
 				snapshot = runQuickSnapshot(ctx, sshExec)
@@ -4056,7 +4188,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 								// mapping=true: this is the reconnaissance pass, so the
 								// worker persists through failures rather than handing
 								// the first dead end back to the investigator.
-								SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, true),
+								SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, true, resolvedTools),
 								Tools:           withFreshRunTool(workerTools),
 								MaxRounds:       12,
 								RouteKey:        "app.servitor",
@@ -4261,7 +4393,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
 			)
 			invCfg := AgentLoopConfig{
-				SystemPrompt:    buildInvestigatorSystemPrompt(appliance),
+				SystemPrompt:    buildInvestigatorSystemPrompt(appliance, resolvedTools),
 				Tools:           investigatorTools,
 				MaxRounds:       investigatorRoundBudget,
 				RouteKey:        "app.servitor",
@@ -4508,7 +4640,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 						AgentLoopConfig{
 							// mapping=false: a chat probe stops at the first dead end and
 							// lets the investigator pick the next angle.
-							SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, false),
+							SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, false, resolvedTools),
 							Tools:           withFreshRunTool(workerTools),
 							MaxRounds:       15,
 							RouteKey:        "app.servitor",

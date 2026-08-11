@@ -72,12 +72,38 @@ func (m wsMember) Name() string {
 }
 
 // Kind collapses the appliance type into what the coordinator can DO with the
-// member: search its code, or ask it about itself.
+// member. It is NOT cosmetic: the lead routes on it, the scout picks its cheap
+// pass from it, and the search tools refuse a member of the wrong kind. Folding
+// every non-repo type into "system" told the lead that a log dump was a live
+// host — which is wrong in the one direction that matters, since a live host can
+// be re-queried and a dump cannot.
 func (m wsMember) Kind() string {
-	if m.Rec.Type == "repo" {
+	switch m.Rec.Type {
+	case "repo":
 		return "repo"
+	case "bundle":
+		return "evidence"
+	case "toolset":
+		return "service"
+	default:
+		return "system"
 	}
-	return "system"
+}
+
+// KindNote is a one-line description of what this kind of member IS, rendered
+// into the roster. The lead cannot route well on a bare label: "evidence" only
+// helps if it also knows the evidence is fixed and cannot be re-queried.
+func (m wsMember) KindNote() string {
+	switch m.Kind() {
+	case "repo":
+		return "ingested source code — searchable directly with search_code"
+	case "evidence":
+		return "an uploaded snapshot (logs, a dump). FIXED: it cannot be re-queried, so anything not captured is unobtainable rather than merely unknown"
+	case "service":
+		return "reached only through the tools bound to it — no shell, no filesystem"
+	default:
+		return "a live system, reachable and re-queryable"
+	}
 }
 
 // Target is the member's concrete address — a host for a system, a git remote
@@ -88,6 +114,10 @@ func (m wsMember) Target() string {
 		return repoDisplayTarget(m.Rec)
 	case "command":
 		return m.Rec.Command
+	case "bundle":
+		return bundleDisplayTarget(m.Rec)
+	case "toolset":
+		return toolsetDisplayTarget(m.Rec)
 	default:
 		return m.Rec.Host
 	}
@@ -265,12 +295,47 @@ func (T *Servitor) scoutWorkspace(ws Appliance, members []wsMember, question str
 					break
 				}
 			}
+		case "evidence":
+			// The bundle analogue of the repo pass: search the evidence itself
+			// rather than only what was recorded about it. Without this an
+			// un-mapped bundle scouts as empty and the lead skips the one member
+			// that actually holds the answer.
+			if bundleFileCount(m.Owner, m.ID) == 0 {
+				s.Note = "no evidence ingested yet — upload this bundle's files to make it searchable"
+				break
+			}
+			seen := make(map[string]bool)
+			for _, term := range terms {
+				res, err := searchBundle(m.Owner, m.ID, bundleQuery{Pattern: regexpQuoteMeta(term), MaxHits: 6})
+				if err != nil {
+					continue
+				}
+				for _, h := range res.Hits {
+					key := fmt.Sprintf("%s:%d", h.Path, h.Line)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					s.Hits = append(s.Hits, repoSearchHit{Path: h.Path, Line: h.Line, Text: h.Text})
+					s.Score++
+				}
+				if len(s.Hits) >= 18 {
+					break
+				}
+			}
+			if s.Score == 0 {
+				s.Note = "the question's terms do not appear in this bundle's ingested text"
+			}
 		default:
 			ownerUDB := UserDB(T.DB, m.Owner)
 			if ownerUDB == nil {
 				s.Note = "owner store unavailable"
 				break
 			}
+			// A toolset's data lives behind its tools, so there is nothing local
+			// to grep — the cheap pass can only read what was recorded about it.
+			// Said plainly, because "nothing matched" on a service member means
+			// something different than it does on a live host.
 			docs := allDocs(ownerUDB, m.ID)
 			for _, name := range knowledgeDocNames {
 				c, age := readDocWithAge(ownerUDB, m.ID, name, now)
@@ -289,7 +354,10 @@ func (T *Servitor) scoutWorkspace(ws Appliance, members []wsMember, question str
 			if s.Score == 0 && len(docs) == 0 {
 				// Never mapped, so there is nothing to match against. That is the
 				// opposite of "irrelevant" — the lead should know it's unexplored.
-				s.Note = "never mapped — nothing known about this system yet"
+				s.Note = "never mapped — nothing known about this member yet"
+				if m.Kind() == "service" {
+					s.Note += "; its data is only reachable through its tools, so a dispatch is the ONLY way to find out"
+				}
 			}
 		}
 		out = append(out, s)
@@ -315,7 +383,7 @@ func scoutBlock(scouts []memberScout, missing []string) string {
 		if t := m.Target(); t != "" {
 			fmt.Fprintf(&b, " (%s)", t)
 		}
-		b.WriteString("\n")
+		fmt.Fprintf(&b, " — %s\n", m.KindNote())
 		// Role and capability are printed for EVERY member on EVERY question.
 		// This is what the lead routes on: without it, a function that lives on
 		// exactly one node is invisible unless the question happened to name it.
@@ -333,7 +401,11 @@ func scoutBlock(scouts []memberScout, missing []string) string {
 		}
 		switch {
 		case len(s.Hits) > 0:
-			fmt.Fprintf(&b, "- Code matches (%d):\n", len(s.Hits))
+			label := "Code matches"
+			if m.Kind() == "evidence" {
+				label = "Log matches"
+			}
+			fmt.Fprintf(&b, "- %s (%d):\n", label, len(s.Hits))
 			for i, h := range s.Hits {
 				if i >= 8 {
 					fmt.Fprintf(&b, "  - …and %d more\n", len(s.Hits)-8)
@@ -466,3 +538,10 @@ func divergence_report(perNode map[string]string) string {
 	b.WriteString("\nThese are LEADS, not conclusions: a value missing from a report means that node's worker did not mention it, which is not proof the node lacks it. Verify any difference that matters with a targeted follow-up before stating it as fact.\n")
 	return b.String()
 }
+
+// regexpQuoteMeta escapes a scout term for the bundle search, which takes a
+// regular expression. Scout terms come from the user's question, so an
+// unescaped "(" or "*" would either error or match something nobody asked for —
+// at scout time that reads as "this member has nothing", which is the one
+// conclusion the cheap pass must never reach by accident.
+func regexpQuoteMeta(s string) string { return regexp.QuoteMeta(s) }

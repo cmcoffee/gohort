@@ -90,7 +90,9 @@ func (T *Servitor) memberInvestigation(ctx context.Context, parentID, reqUser st
 			}
 		}
 	}()
-	T.runSession(runCtx, sid, reqUser, m.Owner, m.Rec, confirm, []Message{{Role: "user", Content: task}}, m.UDB, false)
+	// Marked read-only so a member that resolves tools can withhold the ones
+	// needing approval UP FRONT, instead of offering them and denying each call.
+	T.runSession(WithReadOnlyDrill(runCtx), sid, reqUser, m.Owner, m.Rec, confirm, []Message{{Role: "user", Content: task}}, m.UDB, false)
 
 	events, _ := probeSessions.SnapshotEvents(sid)
 	var reply, errText string
@@ -376,7 +378,11 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				return "", fmt.Errorf("no member %q in this workspace. Valid members: %s", ref, memberRefList(members))
 			}
 			if m.Kind() != "repo" {
-				return "", fmt.Errorf("%s is a %s member, not a repo — use investigate_member to ask it questions", m.Name(), m.Kind())
+				alt := "investigate_member"
+				if m.Kind() == "evidence" {
+					alt = "search_evidence"
+				}
+				return "", fmt.Errorf("%s is a %s member, not a repo — use %s for it", m.Name(), m.Kind(), alt)
 			}
 			query, _ := args["query"].(string)
 			if strings.TrimSpace(query) == "" {
@@ -397,7 +403,66 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 		NeedsConfirm: false,
 	}
 
-	tools := []AgentToolDef{investigate_member, investigate_cluster, search_code}
+	// search_evidence is the bundle analogue of search_code: a cheap, immediate
+	// look INSIDE a member before deciding whether a full investigation is
+	// warranted. Evidence members need their own because a dump's content is not
+	// code and its search takes a time window, which is usually the whole point
+	// of asking it anything.
+	search_evidence := AgentToolDef{
+		Tool: Tool{
+			Name:        "search_evidence",
+			Description: "Search an evidence member's ingested logs for a regular expression and return matching lines with file paths and line numbers. Immediate and cheap — use it to check whether a dump even mentions something before dispatching a full investigation.",
+			Parameters: map[string]ToolParam{
+				"member":  {Type: "string", Description: "Evidence member ID (or exact name) from the roster."},
+				"pattern": {Type: "string", Description: "Regular expression to find — an error string, a request id, a hostname. Not a question."},
+				"since":   {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14 02:00:00\"."},
+				"until":   {Type: "string", Description: "Optional latest timestamp, same format."},
+			},
+			Required: []string{"member", "pattern"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			ref, _ := args["member"].(string)
+			m, ok := findMember(members, ref)
+			if !ok {
+				return "", fmt.Errorf("no member %q in this workspace. Valid members: %s", ref, memberRefList(members))
+			}
+			if m.Kind() != "evidence" {
+				return "", fmt.Errorf("%s is a %s member, not an evidence bundle — use search_code for a repo, or investigate_member otherwise", m.Name(), m.Kind())
+			}
+			pattern, _ := args["pattern"].(string)
+			if strings.TrimSpace(pattern) == "" {
+				return "", fmt.Errorf("pattern is required")
+			}
+			q := bundleQuery{Pattern: pattern, MaxHits: 40}
+			var terr error
+			if q.Since, terr = parseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["since"]))); terr != nil && args["since"] != nil {
+				return "", terr
+			}
+			if q.Until, terr = parseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["until"]))); terr != nil && args["until"] != nil {
+				return "", terr
+			}
+			res, err := searchBundle(m.Owner, m.ID, q)
+			if err != nil {
+				return "", err
+			}
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_evidence %s %q: %d hit(s)", m.Name(), pattern, len(res.Hits))})
+			if len(res.Hits) == 0 {
+				return fmt.Sprintf("No matches for %q in %s across %d file(s) scanned. The bundle does not contain that text — but say whether the file that WOULD carry it is even in the bundle before concluding it did not happen.", pattern, m.Name(), res.Scanned), nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d match(es) for %q in %s (`%s`):\n\n", len(res.Hits), pattern, m.Name(), m.ID)
+			for _, h := range res.Hits {
+				fmt.Fprintf(&b, "- `%s:%d` — %s\n", h.Path, h.Line, h.Text)
+			}
+			if res.Truncated {
+				b.WriteString("\nTRUNCATED — there are more matches than shown. Treat this as a lower bound, not a count.\n")
+			}
+			return b.String(), nil
+		},
+		NeedsConfirm: false,
+	}
+
+	tools := []AgentToolDef{investigate_member, investigate_cluster, search_code, search_evidence}
 
 	if len(ws.Collections) > 0 {
 		tools = append(tools, AgentToolDef{

@@ -730,10 +730,12 @@
         onclick: function(){ setType('repo'); }}, ['Git Repository']);
       var typeBundle = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('bundle'); }}, ['Evidence Bundle']);
+      var typeToolset = el('button', {class: 'ui-row-btn',
+        onclick: function(){ setType('toolset'); }}, ['Tool-backed Service']);
       var typeWorkspace = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('workspace'); }}, ['Workspace']);
       var typeRow = el('div', {class: 'ui-servitor-app-tabs'},
-        [typeSsh, typeCmd, typeRepo, typeBundle, typeWorkspace]);
+        [typeSsh, typeCmd, typeRepo, typeBundle, typeToolset, typeWorkspace]);
 
       // SSH section
       var hostIn = el('input', {type: 'text', class: 'ui-form-input',
@@ -962,6 +964,79 @@
       }
       buildBundleSection();
 
+      // Tool-backed service section — the Domain paragraph plus one row per
+      // bindable tool with its posture. Loaded lazily like the other pickers.
+      var domainIn = el('textarea', {class: 'ui-form-input', rows: 3,
+        placeholder: 'What is this target? e.g. "A GitLab project: issues, merge requests, pipelines, and file contents."'});
+      domainIn.value = rec.domain || '';
+      var tsBound = {};
+      (rec.toolset || []).forEach(function(b){ tsBound[b.name] = b; });
+      var tsBox = el('div', {}, ['Loading tools…']);
+      var tsLoaded = false;
+      function loadBindableTools() {
+        if (tsLoaded) return;
+        tsLoaded = true;
+        var q = rec.id ? ('?appliance_id=' + encodeURIComponent(rec.id)) : '';
+        fetch('api/bindable-tools' + q)
+          .then(function(r){ return r.ok ? r.json() : []; })
+          .then(function(list) {
+            tsBox.innerHTML = '';
+            if (!list || !list.length) {
+              tsBox.appendChild(el('div', {class: 'ui-form-hint'},
+                ['You have no tools in your pool yet. Author them with the Builder first, then bind them here.']));
+              return;
+            }
+            list.forEach(function(t) {
+              var row = el('div', {style: 'display:flex; align-items:center; gap:0.5rem; padding:0.25rem 0; flex-wrap:wrap;'});
+              var cb = el('input', {type: 'checkbox'});
+              cb.checked = !!tsBound[t.name];
+              var sel = el('select', {class: 'ui-form-input', style: 'width:auto; padding:0.15rem 0.4rem;'});
+              ['ask', 'allow'].forEach(function(p) {
+                var o = el('option', {value: p}, [p === 'ask' ? 'ask first' : 'run freely']);
+                if ((tsBound[t.name] && tsBound[t.name].posture) === p) o.selected = true;
+                sel.appendChild(o);
+              });
+              var snap = el('input', {type: 'radio', name: 'ts_snapshot'});
+              snap.checked = !!(tsBound[t.name] && tsBound[t.name].snapshot);
+              function sync() {
+                if (cb.checked) {
+                  tsBound[t.name] = {name: t.name, posture: sel.value, snapshot: snap.checked};
+                } else {
+                  delete tsBound[t.name];
+                  snap.checked = false;
+                }
+                sel.disabled = !cb.checked;
+                snap.disabled = !cb.checked;
+              }
+              cb.onchange = sync; sel.onchange = sync; snap.onchange = sync;
+              sel.disabled = !cb.checked; snap.disabled = !cb.checked;
+              row.appendChild(cb);
+              row.appendChild(el('strong', {}, [t.name]));
+              row.appendChild(sel);
+              row.appendChild(el('label', {style: 'font-size:0.8rem; display:flex; align-items:center; gap:0.25rem;'},
+                [snap, 'orientation']));
+              if (t.changed) {
+                row.appendChild(el('span', {style: 'font-size:0.78rem; color:var(--danger,#d9534f);'},
+                  ['changed since approval — re-save to re-approve']));
+              }
+              if (t.desc) row.appendChild(el('div', {class: 'ui-form-hint', style: 'flex-basis:100%; margin:0;'}, [t.desc]));
+              tsBox.appendChild(row);
+            });
+          })
+          .catch(function() {
+            tsBox.innerHTML = '';
+            tsBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load your tools.']));
+          });
+      }
+      var toolsetSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['What this target is']), domainIn,
+        el('div', {class: 'ui-form-hint'},
+          ['The tools\' own descriptions carry most of the detail. This adds what the target is as a whole, and what counts as a good answer about it.']),
+        el('label', {}, ['Tools it may use']), tsBox,
+        el('div', {class: 'ui-form-hint'},
+          ['Only the tools you tick are reachable — there is no shell here. "ask first" prompts you per call. "orientation" marks the one cheap tool run at the start of a mapping session to orient the investigator. Each binding records a fingerprint of the tool as approved; if the tool is edited later it is withheld until you re-save this appliance.']),
+      ]);
+
       function setType(t) {
         rec.type = t;
         typeSsh.classList.toggle('primary', t === 'ssh');
@@ -973,6 +1048,9 @@
         cmdSection.style.display = t === 'command' ? '' : 'none';
         repoSection.style.display = t === 'repo' ? '' : 'none';
         bundleSection.style.display = t === 'bundle' ? '' : 'none';
+        toolsetSection.style.display = t === 'toolset' ? '' : 'none';
+        typeToolset.classList.toggle('primary', t === 'toolset');
+        if (t === 'toolset') loadBindableTools();
         workspaceSection.style.display = t === 'workspace' ? '' : 'none';
         // A bundle carries linked repos for the same reason a live system does:
         // a stack frame in the evidence should reach the line that emitted it.
@@ -1029,7 +1107,7 @@
 
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
-        typeRow, sshSection, cmdSection, repoSection, bundleSection, workspaceSection,
+        typeRow, sshSection, cmdSection, repoSection, bundleSection, toolsetSection, workspaceSection,
         el('label', {}, ['Custom Instructions']), instrIn,
         el('label', {}, ['Persona']),
         personaNameIn, personaPromptIn,
@@ -1065,6 +1143,8 @@
             member_roles:   wsRoles,
             collections:    kbSelected.slice(),
             linked_repos:   lrSelected.slice(),
+            domain:         domainIn.value.trim(),
+            toolset:        Object.keys(tsBound).map(function(k){ return tsBound[k]; }),
           };
           // Name is optional for repos — the server derives owner/repo from the URL.
           if (!payload.name && payload.type !== 'repo') { window.uiAlert('Name is required'); return; }
@@ -1072,6 +1152,7 @@
           if (payload.type === 'command' && !payload.command) { window.uiAlert('Command is required'); return; }
           if (payload.type === 'repo' && !payload.repo_url) { window.uiAlert('Git URL is required'); return; }
           if (payload.type === 'bundle' && !payload.name) { window.uiAlert('Name is required'); return; }
+          if (payload.type === 'toolset' && !payload.toolset.length) { window.uiAlert('Pick at least one tool this system may use'); return; }
           if (payload.type === 'workspace' && !payload.members.length) { window.uiAlert('Select at least one member appliance'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {

@@ -29,6 +29,7 @@ func applianceFields() []ui.FormField {
 				{Value: "command", Label: "Local command"},
 				{Value: "repo", Label: "Git repository"},
 				{Value: "bundle", Label: "Evidence bundle (upload)"},
+				{Value: "toolset", Label: "Tool-backed service"},
 			}},
 		// SSH-only fields. ShowWhen value-matches type==ssh so only SSH
 		// rows show host/port/user/password.
