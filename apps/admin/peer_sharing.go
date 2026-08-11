@@ -48,15 +48,37 @@ func peerKeysJSON() []byte {
 	return b
 }
 
-// handlePeerKeys serves the collection: GET lists, POST mints.
+// handlePeerKeys serves the collection listing that backs the table.
+//
+// GET only, and separate from minting on purpose. A FormPanel GETs its Source
+// to load current values and POSTs that same state back, so pointing the mint
+// form here made it load the LIST — an array — and post the array as the new
+// key. The save failed with a decode error naming a struct the operator never
+// saw. A read endpoint whose shape is a list cannot also be a form's source.
 func (a *AdminApp) handlePeerKeys(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed — mint at /api/peer-keys/mint", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(peerKeysJSON())
+}
+
+// handlePeerKeyMint backs the mint form. GET returns an empty record so the
+// form loads blank; POST issues the key.
+func (a *AdminApp) handlePeerKeyMint(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r) {
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// A blank record, not the key list. The form posts back whatever it
+		// loaded, so what it loads has to be the shape it saves.
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(peerKeysJSON())
+		w.Write([]byte(`{"label":"","caps":[],"rate_per_min":0}`))
 	case http.MethodPost:
 		var req struct {
 			Label    string          `json:"label"`
@@ -159,6 +181,152 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
+// --- consuming side: peers this instance borrows FROM -----------------------
+
+// peerRow is one row of the peers table.
+type peerRow struct {
+	Name        string   `json:"name"`
+	Instance    string   `json:"instance"`
+	BaseURL     string   `json:"base_url"`
+	Caps        []string `json:"caps"`
+	EmbedModel  string   `json:"embed_model"`
+	Status      string   `json:"status"`
+	LastChecked string   `json:"last_checked"`
+}
+
+// peersJSON renders registered peers for the table.
+func peersJSON() []byte {
+	peers := ListRemotePeers()
+	rows := make([]peerRow, 0, len(peers))
+	for _, p := range peers {
+		status := "ok"
+		if p.LastError != "" {
+			// The error itself, not a flag: "unreachable" sends the operator
+			// looking, where "did not recognize that key" answers it.
+			status = p.LastError
+		}
+		rows = append(rows, peerRow{
+			Name: p.Name, Instance: p.Instance, BaseURL: p.BaseURL, Caps: p.Caps,
+			EmbedModel: p.EmbedModel, Status: status, LastChecked: p.LastChecked,
+		})
+	}
+	b, _ := json.Marshal(rows)
+	return b
+}
+
+// handlePeers lists registered peers (GET) — the table's source.
+func (a *AdminApp) handlePeers(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed — add a peer at /api/peers/add", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(peersJSON())
+}
+
+// handlePeerAdd backs the add-peer form. Same split as the mint form: a form's
+// Source must return the shape it saves, never a list.
+func (a *AdminApp) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"name":"","base_url":"","key":""}`))
+	case http.MethodPost:
+		var req struct {
+			Name    string `json:"name"`
+			BaseURL string `json:"base_url"`
+			Key     string `json:"key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		p, err := SaveRemotePeer(r.Context(), req.Name, req.BaseURL, req.Key)
+		if err != nil {
+			// The probe's message is the useful one — it distinguishes an
+			// unreachable host from a revoked key from a key that grants
+			// nothing. Pass it through verbatim.
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"message": "Connected to " + p.Instance + ". It offers: " + strings.Join(p.Caps, ", ") +
+				". Pick it as a provider in the relevant capability's settings.",
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePeerItem serves one peer: POST re-probes it, DELETE forgets it.
+func (a *AdminApp) handlePeerItem(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/api/peers/")
+	action := ""
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		name, action = name[:i], name[i+1:]
+	}
+	if name == "" {
+		http.Error(w, "missing peer name", http.StatusBadRequest)
+		return
+	}
+	switch {
+	case r.Method == http.MethodDelete:
+		if !DeleteRemotePeer(name) {
+			http.Error(w, "no such peer", http.StatusNotFound)
+			return
+		}
+	case r.Method == http.MethodPost && action == "refresh":
+		if _, err := RefreshRemotePeer(r.Context(), name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+// EmbeddingProviderOptions builds the provider dropdown for the Embeddings
+// settings: this instance, plus every peer that actually offers embeddings.
+//
+// Exported because the Embeddings section lives in page.go with the rest of the
+// capability settings; the peer knowledge stays here.
+func EmbeddingProviderOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{
+		Value: EmbeddingProviderLocal,
+		Label: "This instance",
+		Help:  "Embed locally, using the endpoint and model below.",
+	}}
+	for _, p := range PeersOffering(PeerCapEmbeddings) {
+		label := "Peer: " + p.Name
+		if p.Instance != "" {
+			label += " (" + p.Instance + ")"
+		}
+		help := "Embed on " + p.BaseURL
+		if p.EmbedModel != "" {
+			help += " using " + p.EmbedModel
+		}
+		if p.LastError != "" {
+			help += " — last check failed: " + p.LastError
+		}
+		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
+	}
+	return out
+}
+
 // peerCapOptions builds the capability checklist, marking the ones this build
 // cannot serve yet. Offering them is deliberate: a grant made today starts
 // working the day the capability ships, and the operator can see the roadmap
@@ -193,21 +361,79 @@ func peerSharingSections() []ui.Section {
 				"only the capabilities you mean to lend, and paste it into the OTHER instance's " +
 				"configuration. A peer key is not an account: it cannot sign in, read conversations, " +
 				"or reach anything outside the capabilities checked here.",
-			Body: ui.FormPanel{
-				Source:      "api/peer-keys",
-				Method:      "POST",
-				SubmitLabel: "Mint key",
-				Fields: []ui.FormField{
-					{Field: "label", Label: "Issued to", Type: "text", Required: true,
-						Placeholder: "craig's MacBook",
-						Help:        "How you'll recognize this peer later. Shown only to you."},
-					{Field: "caps", Label: "Capabilities", Type: "checklist",
-						Options: peerCapOptions(),
-						Help:    "The key can do these and nothing else. Add more later by minting a new key."},
-					{Field: "rate_per_min", Label: "Calls per minute", Type: "number", Min: 0, Max: 100000,
-						Help: "Ceiling on how hard this peer may work this instance. Leave 0 for the default (600/min)."},
+			// The mint form and the instructions for using what it mints are one
+			// task, so they are one pane. Split across two rail items, the half
+			// that answers "now what do I do with this key" sat behind a
+			// separate click from the half that produced it.
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Card{HTML: peerConnectHelpHTML},
+				ui.FormPanel{
+					// Its OWN endpoint, not the list. A FormPanel loads its
+					// Source and posts that state back, so a source returning
+					// the key list would make the form save an array.
+					Source:      "api/peer-keys/mint",
+					Method:      "POST",
+					SubmitLabel: "Mint key",
+					// Refresh the table below once a key exists — the form and
+					// the list no longer share an endpoint, so this no longer
+					// happens on its own.
+					Invalidate: []string{"api/peer-keys"},
+					Fields: []ui.FormField{
+						{Field: "label", Label: "Issued to", Type: "text", Required: true,
+							Placeholder: "craig's MacBook",
+							Help:        "How you'll recognize this peer later. Shown only to you."},
+						{Field: "caps", Label: "Capabilities", Type: "checklist",
+							Options: peerCapOptions(),
+							Help:    "The key can do these and nothing else. Add more later by minting a new key."},
+						{Field: "rate_per_min", Label: "Calls per minute", Type: "number", Min: 0, Max: 100000,
+							Help: "Ceiling on how hard this peer may work this instance. Leave 0 for the default (600/min)."},
+					},
 				},
-			},
+			}},
+		},
+		{
+			Title: "Peers",
+			Subtitle: "Other instances THIS one can borrow from. Add a peer with the key it issued you, " +
+				"and its capabilities become selectable in the matching settings — a peer offering " +
+				"embeddings appears in the Embeddings provider dropdown.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					Source:      "api/peers/add",
+					Method:      "POST",
+					SubmitLabel: "Connect",
+					Invalidate:  []string{"api/peers"},
+					Fields: []ui.FormField{
+						{Field: "name", Label: "Name", Type: "text", Required: true,
+							Placeholder: "gpu-box",
+							Help:        "Short local nickname — lowercase letters, digits, - or _. How you'll pick it from a dropdown."},
+						{Field: "base_url", Label: "Address", Type: "text", Required: true,
+							Placeholder: "https://gpu-box.example",
+							Help:        "Where this machine can reach that instance. Pasting a /api/peer/... path is fine — it gets trimmed."},
+						{Field: "key", Label: "Peer key", Type: "text", Required: true,
+							Help: "Minted on THAT instance under Capabilities › Resource Sharing. Connecting checks it immediately and reports what it grants."},
+					},
+				},
+				ui.Table{
+					Source: "api/peers",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Label: "Name", Flex: 1},
+						{Field: "instance", Label: "Host", Flex: 1, Mute: true},
+						{Field: "caps", Label: "Offers", Type: "pills", Flex: 2},
+						{Field: "status", Label: "Status", Flex: 2, Mute: true},
+						{Field: "last_checked", Label: "Checked", Format: "reltime", Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Re-check", PostTo: "api/peers/{name}/refresh",
+							Method: "POST", Compact: true},
+						{Type: "button", Label: "Forget", PostTo: "api/peers/{name}", Method: "DELETE",
+							Variant: "danger", Compact: true,
+							Confirm: "Forget this peer? Anything already configured to use it keeps working — " +
+								"its address and key were copied into that setting when you selected it — but it " +
+								"stops appearing as a choice."},
+					},
+				},
+			}},
 		},
 		{
 			Title: "Shared With",
@@ -233,12 +459,6 @@ func peerSharingSections() []ui.Section {
 				},
 			},
 		},
-		{
-			Title: "How a peer connects",
-			Subtitle: "What to enter on the OTHER instance. Embeddings need no extra software there — " +
-				"the peer's ordinary embedding settings point at this instance.",
-			Body: ui.Card{HTML: peerConnectHelpHTML},
-		},
 	}
 }
 
@@ -247,15 +467,15 @@ func peerSharingSections() []ui.Section {
 // REACH this instance at, which this instance cannot know — behind a proxy or
 // a tunnel, the host in an admin request is frequently not it.
 const peerConnectHelpHTML = `
-<p style="margin:0 0 .75rem">On the peer instance, open <strong>Admin &rsaquo; Capabilities &rsaquo; Embeddings</strong> and set:</p>
-<ul style="margin:0 0 .75rem 1.1rem;padding:0;line-height:1.7">
-  <li><strong>Endpoint</strong> — <code>https://THIS-HOST/api/peer/v1</code></li>
-  <li><strong>Model</strong> — the model name this instance reports (see below)</li>
-  <li><strong>API key</strong> — the peer key from the table above</li>
-</ul>
-<p style="margin:0 0 .75rem">Replace <code>THIS-HOST</code> with an address the peer can actually reach this machine at.</p>
-<p style="margin:0 0 .75rem">To check a key and see what it may use, the peer can call:</p>
+<p style="margin:0 0 .75rem"><strong>To let another instance use this one:</strong> mint a key below, then on
+that instance open <em>Admin &rsaquo; Capabilities &rsaquo; Resource Sharing &rsaquo; Peers</em>, and enter its
+address plus the key. It checks the connection immediately and reports what the key grants.</p>
+<p style="margin:0 0 .75rem">The address is whatever <em>that</em> machine can reach <em>this</em> one at —
+this instance cannot work that out for you, since behind a proxy or a tunnel the host in your browser's URL
+is usually not it.</p>
+<p style="margin:0 0 .5rem">Once connected, the peer appears as a provider option in the matching setting —
+an embeddings grant shows up in that instance's <em>Embeddings</em> provider dropdown. To check a key by hand:</p>
 <pre style="margin:0 0 .75rem;padding:.6rem .8rem;overflow-x:auto"><code>curl -H "X-Gohort-Peer-Key: &lt;key&gt;" https://THIS-HOST/api/peer/manifest</code></pre>
-<p style="margin:0;opacity:.75">The manifest lists every capability, whether this build serves it, and whether
-that key was granted it — so a peer that gets refused can tell "not built yet" from "not yours".</p>
+<p style="margin:0;opacity:.75">The manifest names every capability, whether this build serves it, and whether
+that key was granted it — so a refusal tells you which of the two it is.</p>
 `

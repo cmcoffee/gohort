@@ -273,7 +273,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// These administer the grants; the peer-facing surface they authorize is
 	// served by core at /api/peer/* and never touches this app.
 	sub.HandleFunc("/api/peer-keys", a.handlePeerKeys)
+	// Registered before the subtree pattern reads better, but either order
+	// works: net/http picks the LONGEST matching pattern, so an exact
+	// /mint wins over the /api/peer-keys/ subtree that serves {id}.
+	sub.HandleFunc("/api/peer-keys/mint", a.handlePeerKeyMint)
 	sub.HandleFunc("/api/peer-keys/", a.handlePeerKeyItem)
+
+	// API: peers this instance borrows FROM — the consuming side. Adding one
+	// probes it immediately, so a peer in the table is a peer that answered.
+	sub.HandleFunc("/api/peers", a.handlePeers)
+	sub.HandleFunc("/api/peers/add", a.handlePeerAdd)
+	sub.HandleFunc("/api/peers/", a.handlePeerItem)
 
 	// API: list users.
 	sub.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
@@ -810,12 +820,22 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			// A peer selection carries no endpoint of its own — the manual
+			// fields are hidden while one is picked. Resolve it into a complete,
+			// ordinary config here so everything downstream (Embed,
+			// EmbedVersion, the vector store) stays peer-unaware.
+			resolved, err := ResolveEmbeddingProvider(req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			req = resolved
 			if a.db != nil {
 				a.db.Set(EmbeddingTable, "current", req)
 			}
 			SetEmbeddingConfig(req)
-			Log("[admin] user %q updated embeddings config (enabled=%v endpoint=%q model=%q)",
-				AuthCurrentUser(r), req.Enabled, req.Endpoint, req.Model)
+			Log("[admin] user %q updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
+				AuthCurrentUser(r), req.Enabled, req.Provider, req.Endpoint, req.Model)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

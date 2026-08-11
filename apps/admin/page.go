@@ -922,10 +922,18 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					TestLabel: "Test embed call",
 					Fields: []ui.FormField{
 						{Field: "enabled", Label: "Enable embeddings", Type: "toggle"},
+						// Where the embedding happens. "This instance" keeps the
+						// manual endpoint/model below; picking a peer fills those
+						// from its manifest at save time, so everything
+						// downstream sees an ordinary config.
+						{Field: "provider", Label: "Embed on", Type: "select",
+							Options:  EmbeddingProviderOptions(),
+							ShowWhen: "enabled",
+							Help:     "Use this instance's own embedder, or a peer instance you've connected under Resource Sharing › Peers."},
 						{Field: "endpoint", Label: "Endpoint", Type: "text",
 							Placeholder: "http://localhost:11434/api",
 							Help:        "Base URL including the API version prefix — gohort appends /embeddings. Pick a preset below for the canonical path on common platforms.",
-							ShowWhen:    "enabled",
+							ShowWhen:    "enabled;provider:local",
 							Presets: []ui.FieldPreset{
 								{Label: "Ollama", Value: "http://localhost:11434/api", Hint: "Ollama native API (→ /api/embeddings)"},
 								{Label: "llama.cpp", Value: "http://localhost:8080/v1", Hint: "llama.cpp OpenAI-compatible (→ /v1/embeddings)"},
@@ -935,11 +943,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Field: "model", Label: "Model", Type: "text",
 							Placeholder: "nomic-embed-text",
 							Help:        "Leave blank for single-model backends (llama.cpp, vLLM, hf-tei — they ignore this field). Required for Ollama. Click a chip below to fill from the endpoint's model list.",
-							ShowWhen:    "enabled",
+							ShowWhen:    "enabled;provider:local",
 							ChipsSource: "api/embeddings/models"},
 						{Field: "api_key", Label: "API Key", Type: "password",
 							Help:     "Optional bearer token. Set for OpenAI hosted / authenticated proxies; leave blank for local Ollama, llama.cpp, or vLLM.",
-							ShowWhen: "enabled"},
+							ShowWhen: "enabled;provider:local"},
 					},
 				},
 			},
@@ -2438,7 +2446,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 
 		"Embeddings":                "Capabilities",
 		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
-		"Resource Sharing": "Capabilities", "Shared With": "Capabilities", "How a peer connects": "Capabilities",
+		"Resource Sharing": "Capabilities", "Peers": "Capabilities", "Shared With": "Capabilities",
 		"Web Search": "Capabilities", "Mail (SMTP)": "System",
 		"Network Timeouts": "Tuning",
 

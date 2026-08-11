@@ -84,6 +84,107 @@ func TestUnservedCapabilitiesSaySoInTheUI(t *testing.T) {
 	}
 }
 
+// walkSharing collects every form and table in the sharing surface, descending
+// into Stacks — the sections group related components, so a direct type
+// assertion on Section.Body finds nothing.
+func walkSharing(t *testing.T) (forms map[string]ui.FormPanel, tables map[string]ui.Table) {
+	t.Helper()
+	forms, tables = map[string]ui.FormPanel{}, map[string]ui.Table{}
+	var visit func(c ui.Component)
+	visit = func(c ui.Component) {
+		switch b := c.(type) {
+		case ui.FormPanel:
+			forms[b.Source] = b
+		case ui.Table:
+			tables[b.Source] = b
+		case ui.Stack:
+			for _, child := range b.Children {
+				visit(child)
+			}
+		}
+	}
+	for _, sec := range peerSharingSections() {
+		visit(sec.Body)
+	}
+	return forms, tables
+}
+
+// Every form's Source must differ from every table's Source. A FormPanel GETs
+// its Source to load current values and POSTs that state back, so a form
+// sharing an endpoint with a list loads an array and saves an array — which is
+// exactly what happened:
+//
+//	Save failed: invalid JSON: json: cannot unmarshal array into Go value of
+//	type struct { Label string; Caps json.RawMessage; RatePerM int }
+//
+// naming a struct the operator never saw, from a form they filled in correctly.
+func TestNoFormSharesASourceWithAList(t *testing.T) {
+	forms, tables := walkSharing(t)
+	if len(forms) == 0 || len(tables) == 0 {
+		t.Fatal("expected forms and tables in the sharing surface")
+	}
+	for src := range forms {
+		if _, clash := tables[src]; clash {
+			t.Errorf("a form and a table share the source %q — the form will load the list and post it back", src)
+		}
+	}
+	// Each form must refresh the list its writes affect, since splitting the
+	// endpoints means that no longer happens on its own.
+	pairs := map[string]string{
+		"api/peer-keys/mint": "api/peer-keys",
+		"api/peers/add":      "api/peers",
+	}
+	for formSrc, listSrc := range pairs {
+		f, ok := forms[formSrc]
+		if !ok {
+			t.Errorf("no form at %q", formSrc)
+			continue
+		}
+		var found bool
+		for _, inv := range f.Invalidate {
+			if inv == listSrc {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("form %q does not invalidate %q, so a new record will not appear", formSrc, listSrc)
+		}
+	}
+}
+
+// The blank record the mint form loads must decode into the same shape the mint
+// handler accepts — that round trip IS the contract, and it is what broke.
+func TestMintFormLoadsTheShapeItSaves(t *testing.T) {
+	var blank struct {
+		Label    string          `json:"label"`
+		Caps     json.RawMessage `json:"caps"`
+		RatePerM int             `json:"rate_per_min"`
+	}
+	if err := json.Unmarshal([]byte(`{"label":"","caps":[],"rate_per_min":0}`), &blank); err != nil {
+		t.Fatalf("the blank record the form loads does not decode as a mint request: %v", err)
+	}
+	if caps := decodeCapsField(blank.Caps); len(caps) != 0 {
+		t.Errorf("blank caps decoded to %q, want empty", caps)
+	}
+	// And every field the form declares must exist in that blank record, or it
+	// loads as undefined and posts back something the handler ignores.
+	var record map[string]any
+	json.Unmarshal([]byte(`{"label":"","caps":[],"rate_per_min":0}`), &record)
+	forms, _ := walkSharing(t)
+	mint, ok := forms["api/peer-keys/mint"]
+	if !ok {
+		t.Fatal("no mint form at api/peer-keys/mint")
+	}
+	for _, f := range mint.Fields {
+		if f.Type == "header" {
+			continue
+		}
+		if _, ok := record[f.Field]; !ok {
+			t.Errorf("form field %q is absent from the blank record the form loads", f.Field)
+		}
+	}
+}
+
 // The table has to render the fields the row JSON actually carries — a column
 // bound to a field that is never emitted shows an empty cell forever, and it is
 // the kind of miss nothing else catches.
@@ -92,16 +193,10 @@ func TestPeerKeyTableColumnsMatchTheRowShape(t *testing.T) {
 	b, _ := json.Marshal(peerKeyRow{ID: "x", Label: "mac", Caps: []string{"embeddings"}})
 	json.Unmarshal(b, &row)
 
-	sections := peerSharingSections()
-	var table ui.Table
-	var found bool
-	for _, s := range sections {
-		if tb, ok := s.Body.(ui.Table); ok {
-			table, found = tb, true
-		}
-	}
+	_, tables := walkSharing(t)
+	table, found := tables["api/peer-keys"]
 	if !found {
-		t.Fatal("no table section in the sharing surface")
+		t.Fatal("no keys table in the sharing surface")
 	}
 	for _, c := range table.Columns {
 		if _, ok := row[c.Field]; !ok {
@@ -119,5 +214,40 @@ func TestPeerKeyTableColumnsMatchTheRowShape(t *testing.T) {
 				t.Errorf("toggle bound to %q, which the row JSON does not carry", ra.Field)
 			}
 		}
+	}
+}
+
+// Same binding check for the peers table. Status carries the probe's error
+// verbatim, which is the column that actually earns its place — a peer whose
+// key was revoked should say so here, not look healthy until an embed fails.
+func TestPeersTableColumnsMatchTheRowShape(t *testing.T) {
+	var row map[string]any
+	b, _ := json.Marshal(peerRow{Name: "gpu-box", Caps: []string{"embeddings"}})
+	json.Unmarshal(b, &row)
+
+	_, tables := walkSharing(t)
+	table, found := tables["api/peers"]
+	if !found {
+		t.Fatal("no peers table in the sharing surface")
+	}
+	for _, c := range table.Columns {
+		if _, ok := row[c.Field]; !ok {
+			t.Errorf("column %q is bound to a field the row JSON does not carry", c.Field)
+		}
+	}
+	if _, ok := row[table.RowKey]; !ok {
+		t.Errorf("RowKey %q is not present in the row JSON", table.RowKey)
+	}
+}
+
+// With no peers registered, the provider dropdown still offers local — a
+// select whose only option is missing would strand the whole Embeddings form.
+func TestEmbeddingProviderOptionsAlwaysOfferLocal(t *testing.T) {
+	opts := EmbeddingProviderOptions()
+	if len(opts) == 0 || opts[0].Value != EmbeddingProviderLocal {
+		t.Fatalf("local must be the first provider option, got %+v", opts)
+	}
+	if opts[0].Label == "" || opts[0].Help == "" {
+		t.Errorf("the local option needs a label and help: %+v", opts[0])
 	}
 }

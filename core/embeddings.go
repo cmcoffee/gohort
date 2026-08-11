@@ -23,6 +23,16 @@ type EmbeddingConfig struct {
 	Model    string `json:"model"`    // optional — required for Ollama, ignored by single-model backends (llama.cpp, vLLM, hf-tei)
 	APIKey   string `json:"api_key"`  // optional bearer token (OpenAI hosted, authenticated proxies)
 	Enabled  bool   `json:"enabled"`  // false → ingestion and search become no-ops
+	// Provider records WHERE this config came from: "local" (the fields above
+	// were typed in) or "peer:<name>" (they were resolved from a registered
+	// peer instance — see ResolveEmbeddingProvider).
+	//
+	// It is bookkeeping for the UI, not a branch in the embed path. Selecting a
+	// peer writes that peer's endpoint, model and key into the fields above at
+	// SAVE time, so Embed, EmbedVersion and the vector store keep working with
+	// no knowledge that peers exist. Blank means local, which is what every
+	// config stored before peers existed says.
+	Provider string `json:"provider,omitempty"`
 }
 
 var (
