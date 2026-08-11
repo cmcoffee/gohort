@@ -10,6 +10,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
@@ -831,7 +832,71 @@ func applyOpts(defaultModel string, defaultMaxTokens int, opts []ChatOption) Cha
 	if cfg.SystemPrompt != "" && !cfg.SuppressAutoDate {
 		cfg.SystemPrompt = "Today's date is " + time.Now().Format("January 2, 2006") + ". " + cfg.SystemPrompt
 	}
+	cfg.Tools = dropInvalidlyNamedTools(cfg.Tools, cfg.Caller)
 	return cfg
+}
+
+// validLLMToolName reports whether a tool name satisfies ^[a-zA-Z0-9_-]{1,128}$,
+// the class every provider validates against. Anthropic states it directly and
+// Bedrock relays the same rejection; OpenAI and Gemini are no more permissive.
+// Hand-rolled rather than a regexp because this runs over the whole catalog on
+// every call.
+func validLLMToolName(name string) bool {
+	if len(name) == 0 || len(name) > maxLLMToolNameBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// badToolNamesLogged remembers which names have already been reported (sync.Map
+// keyed by name), so a
+// permanently misnamed tool costs one log line rather than one per LLM call.
+var badToolNamesLogged sync.Map
+
+// dropInvalidlyNamedTools removes tools the provider would reject on name, and
+// says so.
+//
+// The guard exists because the blast radius is the whole request, not the one
+// tool. A provider handed a single malformed name rejects the ENTIRE call, so
+// one bad tool takes every other tool in the catalog down with it and the agent
+// silently loses all tool use — which is what a remote MCP server's
+// "atlassian.search" did (see mcpExposedName). Every tool source that composes
+// a name should validate it at the point it is minted; this is the backstop for
+// the next source that forgets, converting a total outage into one missing tool
+// plus a log line naming it.
+//
+// Deliberately drop rather than rename: the model calls a tool by the name it
+// was given, so a rename here would need a reverse mapping on the response path
+// and would turn a loud failure into a confusing one.
+func dropInvalidlyNamedTools(tools []Tool, caller string) []Tool {
+	bad := 0
+	for i := range tools {
+		if !validLLMToolName(tools[i].Name) {
+			bad++
+		}
+	}
+	if bad == 0 {
+		return tools // the overwhelmingly common path allocates nothing
+	}
+	out := make([]Tool, 0, len(tools)-bad)
+	for _, t := range tools {
+		if validLLMToolName(t.Name) {
+			out = append(out, t)
+			continue
+		}
+		if _, seen := badToolNamesLogged.LoadOrStore(t.Name, true); !seen {
+			Log("[llm] tool %q has a name the model APIs reject (must match ^[a-zA-Z0-9_-]{1,128}$); dropping it from the catalog so the rest of the tools still work. Caller: %s", t.Name, caller)
+		}
+	}
+	return out
 }
 
 // LLMProviderConfig holds stored configuration for an LLM provider.

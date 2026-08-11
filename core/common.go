@@ -409,7 +409,11 @@ func (s *Session) ChatStream(ctx context.Context, messages []Message, handler St
 // is unset — older/custom code paths that don't populate it.
 // Safe to call with nil.
 func (s *Session) recordTokens(resp *Response) {
-	if resp == nil || (resp.InputTokens == 0 && resp.OutputTokens == 0) {
+	// The cached share counts as consumption: a turn whose whole prompt was a
+	// cache hit reports InputTokens=2, and the old guard dropped it as an empty
+	// response — so the most expensive kind of conversation recorded nothing.
+	if resp == nil || (resp.InputTokens == 0 && resp.OutputTokens == 0 &&
+		resp.CacheReadTokens == 0 && resp.CacheWriteTokens == 0) {
 		return
 	}
 	tier := resp.Tier
@@ -421,9 +425,13 @@ func (s *Session) recordTokens(resp *Response) {
 	if tier == LEAD {
 		s.counters.LeadInput += int64(resp.InputTokens)
 		s.counters.LeadOutput += int64(resp.OutputTokens)
+		s.counters.LeadCacheRead += int64(resp.CacheReadTokens)
+		s.counters.LeadCacheWrite += int64(resp.CacheWriteTokens)
 	} else {
 		s.counters.WorkerInput += int64(resp.InputTokens)
 		s.counters.WorkerOutput += int64(resp.OutputTokens)
+		s.counters.WorkerCacheRead += int64(resp.CacheReadTokens)
+		s.counters.WorkerCacheWrite += int64(resp.CacheWriteTokens)
 	}
 }
 
@@ -434,7 +442,7 @@ func (s *Session) Report() SessionUsage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return SessionUsage{
-		Input:  s.counters.WorkerInput + s.counters.LeadInput,
+		Input:  s.counters.WorkerPrompt() + s.counters.LeadPrompt(),
 		Output: s.counters.WorkerOutput + s.counters.LeadOutput,
 	}
 }
@@ -573,8 +581,18 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 		Debug("[llm] lead chat completed in %s (input: %d, output: %d tokens)", elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
 	}
 	// Track the response against the tier that actually served it.
-	// Fallback path → worker tokens. Non-fallback → lead tokens.
-	if fellBackToWorker {
+	//
+	// Falling back is not the only way a "lead" call is served by the worker.
+	// GetLeadLLM returns T.LLM when no lead is configured, and LeadIsDistinct
+	// is false when a lead IS set but resolves to the same model — in both
+	// cases lead.Chat above ran the WORKER, succeeded, and skipped the two
+	// fallback branches (each of which requires a distinct lead to exist). So
+	// every escalation on a worker-only deployment was recorded as lead
+	// tokens and priced at the lead rate. With the usual arrangement — a local
+	// worker at no cost, a cloud lead that is anything but — that does not
+	// shade the estimate, it invents the entire bill.
+	servedByWorker := fellBackToWorker || !T.HasDistinctLead()
+	if servedByWorker {
 		if resp != nil {
 			resp.Tier = WORKER
 		}
@@ -602,6 +620,13 @@ type WebSearchConfig struct {
 	Provider string `json:"provider"` // Search provider: "duckduckgo", "brave", "google", "searxng"
 	APIKey   string `json:"api_key"`  // API key (not required for duckduckgo/searxng)
 	Endpoint string `json:"endpoint"` // Custom endpoint (for searxng instances)
+	// Source records WHERE this config came from: "local" (a provider was
+	// picked below) or "peer:<name>" (the fields were filled from a peer — see
+	// ResolveSearchProvider). Separate from Provider because a resolved peer
+	// config IS a searxng config, and without this the admin form would show
+	// "SearXNG" back to an operator who chose a peer, with nothing on screen
+	// admitting where the searches actually go.
+	Source string `json:"source,omitempty"`
 }
 
 // OllamaBackendFunc returns the Ollama backend base URL, configured model name,
@@ -1156,8 +1181,10 @@ func (T *AppCore) trackTokens(resp *Response) {
 		return
 	}
 	if T.Report != nil {
-		if resp.InputTokens > 0 {
-			T.Report.Tally("Input Tokens").Add(resp.InputTokens)
+		// The WHOLE prompt, not the uncached remainder — otherwise a cached
+		// turn tallies a handful of tokens against a prompt of thousands.
+		if n := resp.InputTokens + resp.CacheReadTokens + resp.CacheWriteTokens; n > 0 {
+			T.Report.Tally("Input Tokens").Add(n)
 		}
 		if resp.OutputTokens > 0 {
 			T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
@@ -1165,7 +1192,7 @@ func (T *AppCore) trackTokens(resp *Response) {
 	}
 	// Also feed the process-wide UsageTracker so per-run Scope()
 	// callers see the worker portion of consumption.
-	ProcessUsage().AddWorker(resp.InputTokens, resp.OutputTokens)
+	ProcessUsage().AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
 }
 
 // trackLeadTokens is the lead-tier counterpart to trackTokens. Called
@@ -1178,14 +1205,16 @@ func (T *AppCore) trackLeadTokens(resp *Response) {
 		return
 	}
 	if T.Report != nil {
-		if resp.InputTokens > 0 {
-			T.Report.Tally("Input Tokens").Add(resp.InputTokens)
+		// The WHOLE prompt, not the uncached remainder — otherwise a cached
+		// turn tallies a handful of tokens against a prompt of thousands.
+		if n := resp.InputTokens + resp.CacheReadTokens + resp.CacheWriteTokens; n > 0 {
+			T.Report.Tally("Input Tokens").Add(n)
 		}
 		if resp.OutputTokens > 0 {
 			T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
 		}
 	}
-	ProcessUsage().AddLead(resp.InputTokens, resp.OutputTokens)
+	ProcessUsage().AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
 }
 
 // SetLimiter sets the limiter with the given limit.
@@ -1291,6 +1320,32 @@ type InternetTool interface {
 // migration-safe; tighten gradually as tools opt in.
 type CapabilityTool interface {
 	Caps() []Capability
+}
+
+// CategorizedTool is an optional interface a ChatTool implements to CLAIM a
+// category — the section header it groups under in every tool picker (see
+// Tool.Category for the field this populates).
+//
+// Temp tools carry their category as a stored field; a registered Go tool had
+// no way to state one, so its grouping fell back to the admin-curated
+// ToolGroup.Members list. That works for a fixed set of built-ins and not at
+// all for tools that appear at runtime: an MCP server's tools are discovered
+// when it connects, so nobody can pre-list them as members of anything, and
+// they all landed in the generic capability bucket together.
+//
+// ToolCategory below is the canonical accessor.
+type CategorizedTool interface {
+	Category() string
+}
+
+// ToolCategory returns the category a tool claims, or "" when it claims none —
+// in which case the caller falls back to ToolGroup.Members and then to the
+// capability label, in that order.
+func ToolCategory(t ChatTool) string {
+	if c, ok := t.(CategorizedTool); ok {
+		return strings.TrimSpace(c.Category())
+	}
+	return ""
 }
 
 // FrameworkTool is an optional interface tools implement to declare
@@ -1742,6 +1797,15 @@ type ToolSession struct {
 type DetachLedger struct {
 	mu    sync.Mutex
 	slots map[string]TaskRun
+	// est is the wait the framework TOLD the model to quote, when it had a
+	// measured one. Recorded because the turn judge is asked to distinguish "a
+	// duration the assistant made up" from one it was given, and could not: the
+	// evidence it receives never mentioned that a number had been supplied, so
+	// the carve-out was unusable and every quoted estimate read as invented.
+	// The framework said "This usually takes about 13 seconds; say so if it is
+	// worth knowing", the model said so, and the machinery guard retracted the
+	// reply for saying it.
+	est time.Duration
 }
 
 // NewDetachLedger returns a ledger for one turn. Share it across every session
@@ -1772,6 +1836,26 @@ func (d *DetachLedger) record(tool string, run TaskRun) {
 		d.slots = map[string]TaskRun{}
 	}
 	d.slots[tool] = run
+}
+
+func (d *DetachLedger) recordEstimate(v time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Longest wins. With two jobs running, the honest thing for the model to
+	// have quoted is the one that keeps the user waiting.
+	if v > d.est {
+		d.est = v
+	}
+}
+
+// Estimate is the wait this turn's detach notices offered, or 0 if none did.
+func (d *DetachLedger) Estimate() time.Duration {
+	if d == nil {
+		return 0
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.est
 }
 
 // Any reports whether this turn started any background job. Read by the turn
@@ -1812,6 +1896,15 @@ func (s *ToolSession) RecordDetachSlot(tool string, run TaskRun) {
 		return
 	}
 	s.detachLedger().record(tool, run)
+}
+
+// RecordDetachEstimate remembers the wait the model was invited to quote, so
+// the turn judge can tell a supplied duration from an invented one.
+func (s *ToolSession) RecordDetachEstimate(d time.Duration) {
+	if s == nil || d <= 0 {
+		return
+	}
+	s.detachLedger().recordEstimate(d)
 }
 
 // ReleaseDetachSlot gives the slot back when the detach did not happen after all

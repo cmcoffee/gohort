@@ -117,7 +117,7 @@ type MCPManager struct {
 	mu        sync.Mutex
 	conns     map[string]*mcpConn      // SHARED connections (none/bearer/secure_api): server name -> conn
 	userConns map[string]*mcpConn      // PER-USER oauth connections: user+"\x00"+server -> conn
-	proxies   map[string]*mcpProxyTool // "<server>.<tool>" -> registered proxy (register-once)
+	proxies   map[string]*mcpProxyTool // exposed name (see mcpExposedName) -> registered proxy (register-once)
 
 	oauthMu        sync.Mutex                // serializes token refresh
 	oauthPendingMu sync.Mutex                // guards oauthPending
@@ -246,10 +246,45 @@ func (m *MCPManager) Delete(name string) error {
 	m.disconnect(name)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Read the config BEFORE removing it: deciding whether the category's
+	// description is still the generated one means regenerating it, and that
+	// needs the URL this row is about to take with it.
+	var cfg MCPServerConfig
+	if !m.db.Get(mcpServersTable, name, &cfg) {
+		cfg = MCPServerConfig{Name: name}
+	}
 	m.db.Unset(mcpServersTable, name)
 	m.db.Unset(mcpServersTable, mcpTokenKey(name))
 	m.db.Unset(mcpServersTable, mcpOAuthClientSecretKey(name))
+	dropMCPToolGroup(cfg)
 	return nil
+}
+
+// dropMCPToolGroup removes the deleted server's category — but only while it
+// still carries the description we generated. An admin who rewrote it wrote
+// something we cannot regenerate, so that row survives its server rather than
+// being deleted on our judgment; it lists as an empty category, which is a far
+// smaller problem than silently discarding their work.
+func dropMCPToolGroup(cfg MCPServerConfig) {
+	if AuthDB == nil {
+		return
+	}
+	db := AuthDB()
+	id := mcpToolGroupID(cfg.Name)
+	if db == nil || id == "" {
+		return
+	}
+	g, found := LoadToolGroup(db, id)
+	if !found {
+		return
+	}
+	if g.Description != mcpToolGroupDescription(cfg) {
+		Log("[mcp] keeping the edited category %q after removing its server; delete it from Categories if it is no longer wanted", g.Name)
+		return
+	}
+	if err := DeleteToolGroup(db, id); err != nil {
+		Log("[mcp] could not remove the category for %q: %v", cfg.Name, err)
+	}
 }
 
 // token reads the stored (decrypted) bearer token for a server.
@@ -814,9 +849,21 @@ func (m *MCPManager) registerTools(cfg MCPServerConfig, tools []mcpclient.ToolDe
 		names = append(names, t.Name)
 	}
 	sort.Strings(names)
+	// The category these tools claim, registered so it carries a description
+	// an admin can edit. Cheap on reconnect: it writes only when the row is
+	// missing or its name has drifted away from the claim.
+	if len(names) > 0 {
+		ensureMCPToolGroup(cfg)
+	}
+	taken := map[string]bool{}
 	for _, raw := range names {
 		def := byName[raw]
-		full := cfg.Name + "." + raw
+		full := mcpExposedName(cfg.Name, raw, taken)
+		if full == "" {
+			Log("[mcp] %s: tool %q has no usable name after sanitizing; skipped", cfg.Name, raw)
+			continue
+		}
+		taken[full] = true
 		params, required := mcpMapSchema(def.InputSchema)
 		desc := def.Description
 		if desc == "" {
@@ -841,6 +888,54 @@ func (m *MCPManager) registerTools(cfg MCPServerConfig, tools []mcpclient.ToolDe
 	}
 }
 
+// maxLLMToolNameBytes is the longest tool name the model APIs accept. Both
+// Anthropic (direct and through Bedrock) validate against
+// ^[a-zA-Z0-9_-]{1,128}$, and OpenAI and Gemini are no more permissive.
+const maxLLMToolNameBytes = 128
+
+// mcpExposedName is the name ONE remote MCP tool is registered and offered to
+// the model under. It is not the name used on the wire: mcpProxyTool keeps
+// rawName for that, so sanitizing here cannot break dispatch.
+//
+// This has to sanitize because a remote server names its own tools and we
+// publish them verbatim. Atlassian's server ships "search", which composed with
+// the server name gave "atlassian.search" — and a dot is not in the character
+// class every provider validates against. The failure is not a disabled tool:
+// the provider rejects the WHOLE request, so one badly named remote tool takes
+// every other tool in the catalog down with it and the agent silently loses all
+// tool use. (Same shape as the empty-enum trap in tool_schema_valid_test.go.)
+//
+// taken carries the names already assigned in this pass so two raw names that
+// sanitize to the same string do not collide. Callers iterate in sorted order,
+// which keeps the assignment stable across reloads — a name that moved between
+// restarts would invalidate any agent allow-list that referenced it.
+func mcpExposedName(server, raw string, taken map[string]bool) string {
+	base := sanitizeToolName(server + "_" + raw)
+	if base == "" {
+		return ""
+	}
+	if len(base) > maxLLMToolNameBytes {
+		base = strings.Trim(base[:maxLLMToolNameBytes], "_")
+	}
+	if !taken[base] {
+		return base
+	}
+	// Suffix until free. Trimmed from the front of the tail rather than the
+	// end so the suffix survives the length cap.
+	for n := 2; n < 1000; n++ {
+		suffix := fmt.Sprintf("_%d", n)
+		cand := base
+		if len(cand)+len(suffix) > maxLLMToolNameBytes {
+			cand = strings.Trim(cand[:maxLLMToolNameBytes-len(suffix)], "_")
+		}
+		cand += suffix
+		if !taken[cand] {
+			return cand
+		}
+	}
+	return ""
+}
+
 // mcpProxyTool adapts one remote MCP tool to the ChatTool interface. It
 // resolves the live connection at call time, so a Reload that reconnects
 // a server updates behavior without re-registering (the registry can't
@@ -860,6 +955,114 @@ type mcpProxyTool struct {
 func (t *mcpProxyTool) Name() string                 { return t.fullName }
 func (t *mcpProxyTool) Desc() string                 { return t.desc }
 func (t *mcpProxyTool) Params() map[string]ToolParam { return t.params }
+
+// Category groups every tool from one MCP server under that server's own
+// header in the pickers, rather than scattering them through the generic
+// capability buckets alongside unrelated built-ins.
+//
+// Per SERVER, not one shared "MCP" heading: the servers have nothing to do with
+// each other, a user enabling Atlassian tools is not thereby saying anything
+// about a GitHub server's tools, and a single server can contribute dozens of
+// entries. The list has to be separable to be usable.
+func (t *mcpProxyTool) Category() string { return MCPToolCategory(t.server) }
+
+// MCPToolCategory is the category label for one MCP server's tools. Exported so
+// the admin category registry can describe the group and any picker can match
+// on the same string instead of re-deriving it.
+func MCPToolCategory(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return "MCP"
+	}
+	return "MCP: " + server
+}
+
+// mcpToolGroupID is the stable ToolGroup id for one server's category. Derived
+// from the server name rather than generated, so reconnecting finds the
+// existing row instead of minting a duplicate category every restart.
+func mcpToolGroupID(server string) string {
+	s := sanitizeToolName(server)
+	if s == "" {
+		return ""
+	}
+	return "mcp-" + s
+}
+
+// ensureMCPToolGroup makes the server's category a first-class entry in the
+// category registry, so it carries a model-facing DESCRIPTION rather than
+// existing only as a picker header.
+//
+// The description matters more here than for a built-in group. The catalog
+// shows a category's description to decide whether the bundle is worth
+// expanding, and an MCP server's tools arrive with descriptions written by
+// whoever runs that server — there is no framework-authored summary of what the
+// bundle as a whole is FOR. The default below says what we actually know (the
+// server's name and host) and is explicitly an invitation for the admin to
+// replace it with something that describes the domain.
+//
+// Ownership is split, which is the whole point of only writing when needed:
+//   - Description belongs to the ADMIN. It is written once, at creation, and
+//     never touched again — a reconnect must not revert someone's edit.
+//   - Name belongs to the CODE. The tools claim their category as a computed
+//     string (MCPToolCategory), and a claim cannot follow a rename, so a
+//     renamed row is re-asserted rather than left pointing at nothing.
+func ensureMCPToolGroup(cfg MCPServerConfig) {
+	if AuthDB == nil {
+		return
+	}
+	db := AuthDB()
+	if db == nil {
+		return
+	}
+	id := mcpToolGroupID(cfg.Name)
+	if id == "" {
+		return
+	}
+	want := MCPToolCategory(cfg.Name)
+	if existing, found := LoadToolGroup(db, id); found {
+		if existing.Name == want {
+			return // nothing to do — and specifically, do NOT touch Description
+		}
+		existing.Name = want
+		if _, err := SaveToolGroup(db, existing); err != nil {
+			Log("[mcp] could not re-assert the category name for %q: %v", cfg.Name, err)
+		}
+		return
+	}
+	if _, err := SaveToolGroup(db, ToolGroup{
+		ID:          id,
+		Name:        want,
+		Description: mcpToolGroupDescription(cfg),
+		// No Members: these tools claim the category on themselves (see
+		// mcpProxyTool.Category). A membership list would go stale the moment
+		// the server changed which tools it offers.
+	}); err != nil {
+		Log("[mcp] could not create the tool category for %q: %v", cfg.Name, err)
+	}
+}
+
+// mcpToolGroupDescription is the starting description for a server's category.
+// Deliberately modest about what it knows: the tools inside are described by
+// the remote server, and nothing here has read them.
+func mcpToolGroupDescription(cfg MCPServerConfig) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Tools provided by the %q MCP server", cfg.Name)
+	if host := mcpHostOf(cfg.URL); host != "" {
+		fmt.Fprintf(&b, " (%s)", host)
+	}
+	b.WriteString(". Expand this when the request concerns the systems that server front-ends; each tool carries its own description from the server. ")
+	b.WriteString("This summary was generated when the server was first connected — edit it to describe what this server is actually for, which is what the model reads when deciding whether to look inside.")
+	return b.String()
+}
+
+// mcpHostOf returns the host of a server URL, or "" if it will not parse.
+func mcpHostOf(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
 
 // Run is the user-less fallback (shared servers). For oauth servers it
 // yields an actionable "authorize" error since no user is in scope.

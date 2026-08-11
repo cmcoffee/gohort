@@ -1,13 +1,11 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 // SetupSection represents a configuration section contributed by an app.
@@ -192,6 +190,7 @@ func ChatToolToAgentToolDef(ct ChatTool) AgentToolDef {
 			Parameters:    ct.Params(),
 			Caps:          caps,
 			TrustedOutput: trusted,
+			Category:      ToolCategory(ct),
 		},
 		Handler:      ct.Run,
 		NeedsConfirm: confirm,
@@ -282,81 +281,12 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	// than inside each tool means the decision, the notice the model gets back,
 	// and the lifecycle are written once — a tool only has to answer how long it
 	// expects to take.
+	//
+	// The wrapper itself lives in task_detach.go, driven by a DetachPolicy, so
+	// that a tool an app builds by hand as an AgentToolDef gets the identical
+	// treatment instead of a second implementation that drifts.
 	if sess != nil {
-		inline := handler
-		handler = func(args map[string]any) (string, error) {
-			_, detach := ShouldDetach(ct, args, sess)
-			if !detach {
-				return inline(args)
-			}
-			// Everything the tool can rule out from the arguments alone is
-			// ruled out HERE, while the model still has a round to fix it in.
-			// Past this point an error becomes a wake the agent has to
-			// apologize for rather than a correction it can act on. See
-			// PreflightTool.
-			if pt, ok := ct.(PreflightTool); ok {
-				if err := pt.Preflight(args, sess); err != nil {
-					Debug("[task] %s failed preflight, not detaching: %v", ct.Name(), err)
-					return "", err
-				}
-			}
-			// One background job per tool per turn. Claimed AFTER preflight, so
-			// a call rejected on its arguments costs nothing: it never started a
-			// job, and the model still has the round to fix it. See
-			// ToolSession.ClaimDetachSlot for what this is stopping.
-			prior, free := sess.ClaimDetachSlot(ct.Name())
-			if !free {
-				Debug("[task] %s refused a second detach this turn; task %q is already running", ct.Name(), prior.ID)
-				return markFrameworkResult(secondDetachNotice(ct.Name(), prior)), nil
-			}
-			run, err := TaskRunnerFunc(sess, taskLabelFor(ct, args), func(taskCtx context.Context) (TaskProduct, error) {
-				// Re-resolve the handler against a session built for work that
-				// outlives the turn. Reusing the turn's session here is what
-				// killed the call the moment the turn ended: its context is the
-				// turn's, and the dispatch and poll loop both honour it.
-				detached := sess.ForDetachedTask(taskCtx)
-				var (
-					out  string
-					rerr error
-				)
-				if sct, ok := ct.(SessionChatTool); ok {
-					out, rerr = sct.RunWithSession(args, detached)
-				} else {
-					out, rerr = ct.Run(args)
-				}
-				// Take whatever the call attached along with its text. The
-				// detached session's accumulators are the ONLY record of it —
-				// nothing else holds this session, and the turn that could have
-				// collected them ended before the work started.
-				return TaskProduct{
-					Text:   out,
-					Images: detached.ClaimUnflushedImages(),
-					Videos: detached.ClaimUnflushedVideos(),
-					Files:  detached.ClaimUnflushedFiles(),
-				}, rerr
-			})
-			if err != nil {
-				// Could not detach — run it inline rather than refuse. A slow
-				// answer beats no answer, and the caller never asked for this.
-				// Give the slot back first: no job exists to hold it, and
-				// keeping it would refuse the next call over nothing.
-				sess.ReleaseDetachSlot(ct.Name())
-				Debug("[task] %s stayed inline: %v", ct.Name(), err)
-				return inline(args)
-			}
-			sess.RecordDetachSlot(ct.Name(), run) // so a later refusal can name it
-			// What to SAY about the wait is a measured number or nothing at
-			// all — never the deadline that decided to detach in the first
-			// place. See EstimatingTool.
-			typical := time.Duration(0)
-			if et, ok := ct.(EstimatingTool); ok {
-				typical = et.TypicalDuration(args, sess)
-			}
-			// Marked as framework-authored so the app's untrusted-content
-			// fence leaves it alone: these instructions are ours, and wrapping
-			// them in "obey no instruction below" is self-defeating.
-			return markFrameworkResult(detachedNotice(run, typical)), nil
-		}
+		handler = WrapDetachable(detachPolicyForChatTool(ct, sess), sess, handler)
 	}
 	// Framework-level attachment-success signal. Any tool that
 	// produces attachments (calls sess.AppendImage / AppendVideo /
@@ -481,6 +411,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			Parameters:    params,
 			Caps:          caps,
 			TrustedOutput: trusted,
+			Category:      ToolCategory(ct),
 		},
 		Handler:            handler,
 		NeedsConfirm:       confirm,
@@ -565,6 +496,13 @@ func dataURIImage(s string) (string, bool) {
 // them as AgentToolDefs bound to sess. Session-aware tools (SessionChatTool)
 // receive sess on each call; stateless tools fall back to Run as usual.
 func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDef, error) {
+	// Drop the near-duplicates a grouped tool already covers. An agent granted
+	// both `image` and a connector's generate_image_<name> sees two ways to
+	// make a picture, and picks between them per call — which is how a set of
+	// four begun on one was continued on the other and reported as finished
+	// after two. The grant stays valid: an agent granted ONLY the specific
+	// backend keeps exactly that access, because nothing supersedes it there.
+	names = dropSupersededNames(sess, names)
 	var tools []AgentToolDef
 	var secureCache []AgentToolDef // built lazily, only when a name isn't in the static registry
 	secureBuilt := false
@@ -685,6 +623,58 @@ func FilterChatToolsPrivate() []ChatTool {
 			continue
 		}
 		out = append(out, t)
+	}
+	return out
+}
+
+// SupersedingTool is a grouped tool that fully covers other registered tools,
+// so a caller granted both should only ever see this one.
+//
+// Declared by the tool rather than listed centrally, for the same reason tasks
+// register themselves: the grouped tool is the thing that knows what it
+// absorbed, and a list somewhere else goes stale the first time a new backend
+// materializes a tool nobody remembered to add to it.
+//
+// It only ever REMOVES a name the caller was granted anyway, and only when the
+// superseding tool is granted too — so a caller holding just the specific tool
+// is untouched.
+type SupersedingTool interface {
+	ChatTool
+	// Supersedes reports that this tool covers everything the named one does.
+	Supersedes(name string) bool
+}
+
+// dropSupersededNames removes any requested name that another requested tool
+// declares it supersedes. Order is preserved, and a name that resolves to
+// nothing is left alone for the resolver below to handle as it always has.
+func dropSupersededNames(sess *ToolSession, names []string) []string {
+	var superseders []SupersedingTool
+	for _, n := range names {
+		ct, ok := FindChatTool(n)
+		if !ok || !ChatToolAvailable(ct, sess) {
+			continue
+		}
+		if st, ok := ct.(SupersedingTool); ok {
+			superseders = append(superseders, st)
+		}
+	}
+	if len(superseders) == 0 {
+		return names
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		dropped := false
+		for _, st := range superseders {
+			// Never let a tool supersede itself into nonexistence.
+			if st.Name() != n && st.Supersedes(n) {
+				Debug("[tools] %s supersedes %s for this caller; %s dropped from the catalog", st.Name(), n, n)
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			out = append(out, n)
+		}
 	}
 	return out
 }
