@@ -190,6 +190,7 @@ type peerRow struct {
 	BaseURL     string   `json:"base_url"`
 	Caps        []string `json:"caps"`
 	EmbedModel  string   `json:"embed_model"`
+	Backends    int      `json:"backends"`
 	Status      string   `json:"status"`
 	LastChecked string   `json:"last_checked"`
 }
@@ -207,7 +208,8 @@ func peersJSON() []byte {
 		}
 		rows = append(rows, peerRow{
 			Name: p.Name, Instance: p.Instance, BaseURL: p.BaseURL, Caps: p.Caps,
-			EmbedModel: p.EmbedModel, Status: status, LastChecked: p.LastChecked,
+			EmbedModel: p.EmbedModel, Backends: len(p.ImageConnectors),
+			Status: status, LastChecked: p.LastChecked,
 		})
 	}
 	b, _ := json.Marshal(rows)
@@ -404,7 +406,8 @@ func peerSharingSections() []ui.Section {
 			Title: "Peers",
 			Subtitle: "Other instances THIS one can borrow from. Add a peer with the key it issued you, " +
 				"and its capabilities become selectable in the matching settings — a peer offering " +
-				"embeddings appears in the Embeddings provider dropdown.",
+				"embeddings appears in the Embeddings provider dropdown, and one offering rendering " +
+				"contributes its image backends to the picker, edits included.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
 					Source:      "api/peers/add",
@@ -429,6 +432,10 @@ func peerSharingSections() []ui.Section {
 						{Field: "name", Label: "Name", Flex: 1},
 						{Field: "instance", Label: "Host", Flex: 1, Mute: true},
 						{Field: "caps", Label: "Offers", Type: "pills", Flex: 2},
+						// How many local image backends this peer contributed. A
+						// grant with no renderers behind it looks identical to a
+						// working one until you open the picker and find nothing.
+						{Field: "backends", Label: "Renderers", Mute: true},
 						{Field: "status", Label: "Status", Flex: 2, Mute: true},
 						{Field: "last_checked", Label: "Checked", Format: "reltime", Mute: true},
 					},

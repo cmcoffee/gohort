@@ -12,9 +12,22 @@ import (
 
 func peerImageDB(t *testing.T) {
 	t.Helper()
-	prev := RootDB
-	t.Cleanup(func() { RootDB = prev })
+	prevRoot, prevAuth := RootDB, AuthDB
+	// Secure() caches its store on first use, so the instance is reset too —
+	// otherwise a store from an earlier test leaks into this one.
+	prevSecure := secureAPIInstance
+	t.Cleanup(func() {
+		RootDB, AuthDB = prevRoot, prevAuth
+		secureAPIInstanceMu.Lock()
+		secureAPIInstance = prevSecure
+		secureAPIInstanceMu.Unlock()
+	})
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	secureAPIInstanceMu.Lock()
+	secureAPIInstance = nil
+	secureAPIInstanceMu.Unlock()
 }
 
 // A key granted embeddings must not be able to spend the GPU. The capability

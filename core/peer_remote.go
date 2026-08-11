@@ -47,6 +47,11 @@ type RemotePeer struct {
 	EmbedDim    int      `json:"embed_dim,omitempty"`
 	LastChecked string   `json:"last_checked,omitempty"`
 	LastError   string   `json:"last_error,omitempty"`
+	// ImageConnectors names the local rest_image connectors provisioned from
+	// this peer's advertised renderers. Stored rather than recomputed: teardown
+	// reads this list, so a connector the operator made themselves can never be
+	// swept up by a peer being forgotten.
+	ImageConnectors []string `json:"image_connectors,omitempty"`
 }
 
 // Offers reports whether this peer can serve a capability.
@@ -163,6 +168,10 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
 	}
+	// Renderers become local backends immediately. A peer that announces it
+	// offers rendering and then does not appear in the picker is indisputably
+	// broken from the operator's side.
+	syncPeerImages(&p, m.Images)
 	RootDB.Set(remotePeersTable, name, p)
 	Log("[peer] added remote %q at %s offering %s", name, p.BaseURL, strings.Join(caps, ", "))
 	return p, nil
@@ -189,6 +198,9 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
 	}
+	// A grant revoked on the far side stops offering a renderer here at the
+	// next check, rather than leaving a backend in the picker that 403s.
+	syncPeerImages(&p, m.Images)
 	RootDB.Set(remotePeersTable, p.Name, p)
 	return p, nil
 }
@@ -228,9 +240,14 @@ func DeleteRemotePeer(name string) bool {
 		return false
 	}
 	name = strings.TrimSpace(strings.ToLower(name))
-	if _, ok := GetRemotePeer(name); !ok {
+	p, ok := GetRemotePeer(name)
+	if !ok {
 		return false
 	}
+	// The backends this peer contributed go with it — leaving them would put
+	// renderers in the picker pointed at a machine no longer configured, and
+	// the credential holding its key would outlive the reason it existed.
+	teardownPeerImages(p)
 	RootDB.Unset(remotePeersTable, name)
 	Log("[peer] removed remote %q", name)
 	return true
