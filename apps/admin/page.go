@@ -2438,6 +2438,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 
 		"Embeddings":                "Capabilities",
 		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
+		"Resource Sharing": "Capabilities", "Shared With": "Capabilities", "How a peer connects": "Capabilities",
 		"Web Search": "Capabilities", "Mail (SMTP)": "System",
 		"Network Timeouts": "Tuning",
 
@@ -2482,6 +2483,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// no admin edit. Pre-grouped under the "Tuning" tab; the loop below skips
 	// them (their titles aren't in sectionGroup, so their Group is preserved).
 	page.Sections = append(page.Sections, buildTunableSections()...)
+	// Resource sharing — lending this instance's capabilities to a peer
+	// instance. Lands under Capabilities via sectionGroup, next to the
+	// Embeddings and Image Generation settings it shares.
+	page.Sections = append(page.Sections, peerSharingSections()...)
 	// App-contributed admin sections — framework tuning that belongs in admin
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any

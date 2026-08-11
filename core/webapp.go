@@ -1036,6 +1036,18 @@ func ServeDashboard(addr string) error {
 	// a credential. (Core-owned; phantom no longer owns the bridge key.)
 	mux.HandleFunc("/api/desktop/key", HandleDesktopKey)
 
+	// Resource sharing: the surface a PEER gohort instance calls to use this
+	// one's infrastructure. Public paths because they carry their own
+	// credential (X-Gohort-Peer-Key / Bearer) and must NOT fall through to
+	// cookie auth — a peer key is a capability grant, not a user session, and
+	// nothing here consults AuthCurrentUser. See core/peer_key.go.
+	RegisterPublicPath("/api/peer/manifest")
+	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	// Mounted at the OpenAI path so a peer points its ordinary embedding config
+	// at <base>/api/peer/v1 and needs no gohort-specific client at all.
+	RegisterPublicPath("/api/peer/v1/embeddings")
+	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
+
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.
 	QueueRestore()
@@ -1718,6 +1730,19 @@ type LiveEntry struct {
 	// without each re-deriving it. Empty means there is nowhere to send
 	// this viewer — either the work has no owning page or access says no.
 	Href string `json:"href,omitempty"`
+	// CancelURL is where a POST stops this work, when the owning app offers a
+	// way to stop it. Empty means it cannot be stopped from here, which is the
+	// honest answer for most entries — a turn the viewer is watching ends on
+	// its own, and a queued item is removed by its own queue control.
+	//
+	// It exists for work that OUTLIVES the turn that started it. A background
+	// render or a dispatched sub-agent can run for minutes with nothing on
+	// screen to stop it: the run registry has had a working cancel endpoint all
+	// along and nothing ever called it, so "wait it out" was the only option.
+	//
+	// The APP resolves the path — core/ui only learns that an entry declares
+	// one, and posts to it.
+	CancelURL string `json:"cancel_url,omitempty"`
 	// Owner is the user whose work this is. Never serialized — it exists so
 	// /api/live can decide whether THIS viewer may see the entry's Label,
 	// which for most providers is user content (the chat message, the

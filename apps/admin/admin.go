@@ -269,6 +269,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// current, possibly-unsaved values and actually talks to the provider.
 	sub.HandleFunc("/api/worker-llm/test", a.handleWorkerLLMTest)
 
+	// API: resource-sharing keys — mint/list, then toggle/delete per key.
+	// These administer the grants; the peer-facing surface they authorize is
+	// served by core at /api/peer/* and never touches this app.
+	sub.HandleFunc("/api/peer-keys", a.handlePeerKeys)
+	sub.HandleFunc("/api/peer-keys/", a.handlePeerKeyItem)
+
 	// API: list users.
 	sub.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
