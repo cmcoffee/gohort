@@ -70,8 +70,11 @@ func (t *ViewVideoTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if len(frames) == 0 {
 		return "", fmt.Errorf("no frames extracted from video")
 	}
-	for _, f := range frames {
-		sess.AppendViewImage(f)
+	// Frames are a sequence, so each says where it sits in that sequence. Other
+	// producers can queue into the same round, and "frame 2 of 6" survives that
+	// where bare position does not.
+	for i, f := range frames {
+		sess.AppendViewImageAs(f, fmt.Sprintf("video frame %d of %d, in time order", i+1, len(frames)))
 	}
 
 	meta := ExtractVideoMetadata(data)

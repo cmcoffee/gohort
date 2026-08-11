@@ -97,16 +97,16 @@ func TestShowingTheModelDegradesWhenItCannotLook(t *testing.T) {
 
 	// No LLM bound: nowhere to send the bytes, and no sentence claiming a
 	// picture the model will never receive.
-	if got := showToModel(&ToolSession{}, png, "caveat"); got != "" {
+	if got := showToModel(&ToolSession{}, png, "what", "caveat"); got != "" {
 		t.Errorf("with no LLM there is nothing to show: %q", got)
 	}
 	// Detached: the turn that asked ended, so there is no next round to inject
 	// into. Telling a model to look at something that will not arrive is how it
 	// ends up describing an image it never saw.
-	if got := showToModel(&ToolSession{Detached: true}, png, "caveat"); got != "" {
+	if got := showToModel(&ToolSession{Detached: true}, png, "what", "caveat"); got != "" {
 		t.Errorf("a detached call has no round to show into: %q", got)
 	}
-	if got := showToModel(nil, png, "caveat"); got != "" {
+	if got := showToModel(nil, png, "what", "caveat"); got != "" {
 		t.Errorf("no session, nothing to show: %q", got)
 	}
 }
@@ -119,7 +119,7 @@ func TestLookingIsNeverAskedToConfirmWhoSomeoneIs(t *testing.T) {
 	// not something looking can settle, for the agent any more than for the
 	// screen that scored it.
 	sess := &ToolSession{LLM: stubLLM{}}
-	msg := showToModel(sess, []byte("\x89PNG\r\n\x1a\nfake"), "It is a search result")
+	msg := showToModel(sess, []byte("\x89PNG\r\n\x1a\nfake"), "the image the search returned", "It is a search result")
 	if msg == "" {
 		t.Fatal("a session that can see must be shown the picture")
 	}

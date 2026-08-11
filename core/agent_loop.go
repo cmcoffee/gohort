@@ -324,6 +324,64 @@ func oneLineShape(shape string) string {
 	return shape
 }
 
+// viewImageBytes pulls the raw pixels out in queue order, which is the order
+// they are attached to the message — so the labels in viewImageNote line up
+// index for index with what the model is shown.
+func viewImageBytes(imgs []ViewImage) [][]byte {
+	out := make([][]byte, 0, len(imgs))
+	for _, v := range imgs {
+		out = append(out, v.Data)
+	}
+	return out
+}
+
+// viewImageNote writes the note that accompanies queued images.
+//
+// It enumerates them ("Image 1 of 3: …") instead of claiming they arrive "in
+// order" against "the preceding tool result". That claim was not true when it
+// mattered: image producers run in parallel by design, they append to one queue
+// from separate goroutines as each backend answers, and a round with several of
+// them has several preceding tool results with nothing tying one to the other.
+// The model was left to infer an alignment the code had not preserved, and a
+// wrong inference reads exactly like a right one.
+//
+// A single unlabeled image needs no scaffolding — there is nothing to confuse it
+// with — so it keeps the plain wording.
+func viewImageNote(imgs []ViewImage) string {
+	const look = "Look, and describe or verify only what is actually visible; do not guess beyond what is shown."
+
+	labeled := 0
+	for _, v := range imgs {
+		if strings.TrimSpace(v.Label) != "" {
+			labeled++
+		}
+	}
+	if labeled == 0 {
+		if len(imgs) == 1 {
+			return "Here is 1 image queued for you to view — the preceding tool result says what it is. " + look
+		}
+		// Nothing to anchor with: say so rather than implying an order that the
+		// parallel producers did not guarantee.
+		return fmt.Sprintf("Here are %d image(s) queued for you to view. They were produced by the tool calls above, "+
+			"but the order they arrived in is NOT necessarily the order those calls are listed in — do not assume "+
+			"the first image belongs to the first call. %s", len(imgs), look)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Here are %d image(s) queued for you to view, each named below in the order they are attached. "+
+		"Use these labels rather than the order of the tool calls above — several image tools can run at once and "+
+		"finish in any order.\n", len(imgs))
+	for i, v := range imgs {
+		label := strings.TrimSpace(v.Label)
+		if label == "" {
+			label = "(unlabeled — the tool that queued it did not say what it is)"
+		}
+		fmt.Fprintf(&b, "  Image %d of %d: %s\n", i+1, len(imgs), label)
+	}
+	b.WriteString(look)
+	return b.String()
+}
+
 // AgentToolDef combines a tool definition with its handler.
 type AgentToolDef struct {
 	Tool    Tool
@@ -798,7 +856,7 @@ type AgentLoopConfig struct {
 	// actually SEES them. Wire it to sess.DrainViewImages. Optional; nil means
 	// the loop never injects view images (the pre-fix behavior, where queued
 	// frames were silently dropped and the model "described" a video it never saw).
-	DrainViewImages func() [][]byte
+	DrainViewImages func() []ViewImage
 
 	// Stream enables streaming mode. When set, LLM responses are streamed
 	// through this handler as they arrive. Optional.
@@ -3972,8 +4030,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			if imgs := cfg.DrainViewImages(); len(imgs) > 0 {
 				history = append(history, Message{
 					Role:    "user",
-					Content: fmt.Sprintf("Here are %d image(s) queued for you to view, in order — the preceding tool result says what they are. Look, and describe or verify only what is actually visible; do not guess beyond what is shown.", len(imgs)),
-					Images:  imgs,
+					Content: viewImageNote(imgs),
+					Images:  viewImageBytes(imgs),
 				})
 			}
 		}

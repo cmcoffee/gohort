@@ -168,6 +168,15 @@ func init() {
 	// blocked. Both are per-turn (the attempt counter is session-scoped).
 	RegisterTunable(TunableSpec{Key: "tune_image_max_regens", Category: "Limits", Label: "Image auto-regeneration budget", Help: "How many times the model may regenerate an image to fix a CHECKABLE miss (a specific count, named object, or required text) before it must deliver the best result. 0 disables auto-retry — the model still SEES the image (Tier 1) but is told to caveat rather than retry.", Kind: KindInt, Default: 2, Min: 0, Max: 5})
 	RegisterTunable(TunableSpec{Key: "tune_image_gen_hard_cap", Category: "Limits", Label: "Image generations per turn (hard cap)", Help: "Absolute ceiling on generate_image calls in one turn — a runaway guard, not the retry budget. Set well above the auto-regeneration budget so legitimate multi-image requests still work.", Kind: KindInt, Default: 10, Min: 1, Max: 50})
+	// Whether a render waits or goes to the background. On, the conversation is
+	// never held open by a picture: the reply comes straight back and each
+	// finished image arrives as its own message. Off, the generic duration rule
+	// applies and only renders slower than the detach threshold go background —
+	// which for a twenty-second generate means never.
+	RegisterTunable(TunableSpec{Key: "tune_image_always_detach", Category: "Limits",
+		Label: "Run image renders in the background",
+		Help:  "Send every image generate/edit to the background instead of holding the turn open for it. The agent answers immediately and each finished picture arrives as its own message, so a set of variations is delivered one at a time rather than after the whole batch. Turn off to keep renders inline unless they are slower than the detach threshold.",
+		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
 }
 
 // imageMaxRegens / imageGenHardCap read the Tier-2 knobs with safe fallbacks.
@@ -179,7 +188,18 @@ func imageMaxRegens() int {
 	return n
 }
 
-func imageGenHardCap() int {
+// ImageGenHardCap is the absolute number of renders one turn may run.
+//
+// Exported because the tool it was written for is no longer registered. The cap
+// and its counter lived on generateImageChatTool, the grouped `image` tool in
+// tools/imagefetch replaced it, and the ceiling did not come along — so the
+// live render path had no runaway guard at all.
+//
+// What that cost: a request for "a few variations" rendered EIGHTEEN pictures
+// across seven minutes in a single turn, delivered five of them, and told the
+// user all eighteen were attached. Nothing in the loop was checking a number,
+// because the only thing that checked one had been unregistered for months.
+func ImageGenHardCap() int {
 	if n := TuneInt("tune_image_gen_hard_cap"); n >= 1 {
 		return n
 	}
@@ -253,7 +273,7 @@ func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSe
 	// `total` still climbs, so the hard cap can't be evaded by mislabeling.
 	refine, _ := args["refine_of_previous"].(bool)
 	attempt, total := sess.NextImageAttempt(refine)
-	if hardCap := imageGenHardCap(); total > hardCap {
+	if hardCap := ImageGenHardCap(); total > hardCap {
 		return "", fmt.Errorf("image generation limit reached for this turn (%d calls) — deliver the best result so far or tell the user what fell short instead of regenerating again", hardCap)
 	}
 	// On a refine (chain length > 1), tell the user the wait is deliberate
@@ -281,7 +301,10 @@ func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSe
 	data, err := os.ReadFile(result.URL)
 	if err == nil {
 		sess.AppendImage(base64.StdEncoding.EncodeToString(data)) // → user (outbox)
-		sess.AppendViewImage(data)                                // → LLM (self-verify)
+		// Labelled with the prompt it came from: a round can hold several
+		// generations at once ("three ducks"), and they finish in whatever order
+		// the backend returns them, not the order they were asked for.
+		sess.AppendViewImageAs(data, "the image you generated for: "+truncateRunes(prompt, 120)) // → LLM (self-verify)
 	}
 	os.Remove(result.URL)
 	if err != nil {

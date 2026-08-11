@@ -1376,7 +1376,7 @@ type TrustedOutputTool interface {
 type ToolSession struct {
 	Images            []string           // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
 	Videos            []string           // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
-	PendingViewImages [][]byte           // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
+	PendingViewImages []ViewImage        // images a tool wants the LLM to see on its NEXT round, each carrying a label saying what it is; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
 	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
 	imgGenAttempts    int                // Tier-2 auto-retry CHAIN length for the current image (resets on a new subject); drives the retry budget. See NextImageAttempt.
 	imgGenTotal       int                // Tier-2 absolute generate_image calls this turn (never resets); the runaway hard cap. See NextImageAttempt.
@@ -2800,17 +2800,42 @@ func normalizeMediaID(ref string) string {
 	return "media#" + num
 }
 
-// AppendViewImage queues a raw image byte slice (typically a sampled video
-// frame) for the LLM to see on its next round. Tools that want the LLM to
-// "look at" something call this; the agent loop's caller is responsible
-// for draining and injecting them as a synthetic user message before the
-// next LLM call. These bytes never reach the user — they're LLM-input only.
+// ViewImage is one image queued for the model to look at, with a label naming
+// what it is.
+//
+// The label is the anchor, and it exists because position is not one. Several
+// image-producing tools can run in the SAME round — that is deliberate, a user
+// asking for three ducks gets three parallel renders — and they all append to
+// this one queue from separate goroutines. Arrival order is decided by whichever
+// backend answered first, so it matches neither the order the model called the
+// tools in nor the order their results are listed. Handing the model a bare pile
+// of pixels and telling it the preceding tool result explains them asks it to
+// re-derive an alignment that was never preserved, and the failure is silent:
+// it describes duck two as duck one and nothing contradicts it.
+type ViewImage struct {
+	Data  []byte
+	Label string // e.g. "the render for image#r.7a3f9c2b" — what THIS picture is
+}
+
+// AppendViewImage queues an image for the LLM to see on its next round without
+// saying what it is. Prefer AppendViewImageAs: an unlabeled image is exactly the
+// ambiguity ViewImage.Label exists to remove, and it is only tolerable when the
+// round can produce just one.
 func (s *ToolSession) AppendViewImage(data []byte) {
+	s.AppendViewImageAs(data, "")
+}
+
+// AppendViewImageAs queues an image for the LLM to see on its next round, with
+// a label naming what it is. Tools that want the LLM to "look at" something call
+// this; the agent loop's caller drains and injects them as a synthetic user
+// message before the next LLM call. These bytes never reach the user — they're
+// LLM-input only.
+func (s *ToolSession) AppendViewImageAs(data []byte, label string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	s.PendingViewImages = append(s.PendingViewImages, data)
+	s.PendingViewImages = append(s.PendingViewImages, ViewImage{Data: data, Label: label})
 	s.mu.Unlock()
 }
 
@@ -2819,7 +2844,7 @@ func (s *ToolSession) AppendViewImage(data []byte) {
 // been appended to history; the frames go into a synthetic user message
 // with Images set so buildMessages handles them through the standard
 // vision content path.
-func (s *ToolSession) DrainViewImages() [][]byte {
+func (s *ToolSession) DrainViewImages() []ViewImage {
 	if s == nil {
 		return nil
 	}

@@ -210,8 +210,11 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 	if ferr != nil {
 		Debug("[videodl] frame sampling failed for %s: %v", target, ferr)
 	}
-	for _, f := range frames {
-		sess.AppendViewImage(f)
+	// Frames are a sequence, so each says where it sits in that sequence. Other
+	// producers can queue into the same round, and "frame 2 of 6" survives that
+	// where bare position does not.
+	for i, f := range frames {
+		sess.AppendViewImageAs(f, fmt.Sprintf("video frame %d of %d, in time order", i+1, len(frames)))
 	}
 
 	// Container metadata (mime, dimensions, duration, GPS-resolved

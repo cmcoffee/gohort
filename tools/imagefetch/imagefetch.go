@@ -1119,7 +1119,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		if ref := RecordRecentImage(sess, data, "found: "+truncate(query, 60), ImageFromFound); ref != "" {
 			msg += editHandleHint(name, ref)
 		}
-		msg += showToModel(sess, data, "It is a search result, not a verified answer")
+		msg += showToModel(sess, data, "the image the search returned", "It is a search result, not a verified answer")
 		return msg, nil
 	}
 
@@ -1594,7 +1594,10 @@ func queueSourceForComparison(sess *ToolSession, refs []string) bool {
 		// question the model cannot answer.
 		return false
 	}
-	sess.AppendViewImage(src)
+	// Named, not merely first. Ordering alone carried this before, and ordering
+	// alone is what got it backwards; a label survives another producer landing
+	// between the source and the result.
+	sess.AppendViewImageAs(src, "the SOURCE photo, BEFORE the edit ("+refs[0]+")")
 	return true
 }
 
@@ -1955,7 +1958,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		// invisible — an async render that came back subtly wrong — was the one
 		// case with no self-check. The view channel is separate from the
 		// delivery channel, so this cannot send the image twice.
-		sess.AppendViewImage(data)
+		sess.AppendViewImageAs(data, "the finished render (the AFTER picture)")
 		msg += " LOOK AT IT FIRST: the picture is included with this result. Describe what is actually there, not what was asked for — if the render came back wrong (blank, garbled, the wrong number of things, an edit that did nothing), say so plainly instead of announcing it as a match."
 		return msg, nil
 	}
@@ -1972,7 +1975,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// A render is a guess at the prompt, not a rendering of it: the wrong
 	// number of people, the text unreadable, the edit applied to nothing. The
 	// agent used to find that out when the user did.
-	msg += showToModel(sess, data, "This is what the backend produced, which is not always what was asked for")
+	msg += showToModel(sess, data, "the finished render (the AFTER picture)", "This is what the backend produced, which is not always what was asked for")
 	return msg, nil
 }
 
@@ -2365,7 +2368,7 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 	if ref := RecordRecentImage(sess, data, "downloaded: "+truncate(rawURL, 60), ImageFromFound); ref != "" {
 		msg += editHandleHint(name, ref)
 	}
-	msg += showToModel(sess, data, "Nothing has checked what is in it")
+	msg += showToModel(sess, data, "the image that was fetched", "Nothing has checked what is in it")
 	return msg, nil
 }
 
@@ -2398,11 +2401,14 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 // on the agent's verdict, so a model that cannot see simply proceeds as it does
 // today. Verification that must hold with no vision at all lives in the
 // provenance check, which is text.
-func showToModel(sess *ToolSession, data []byte, caveat string) string {
+func showToModel(sess *ToolSession, data []byte, what, caveat string) string {
 	if sess == nil || sess.LLM == nil || sess.Detached || len(data) == 0 {
 		return ""
 	}
-	sess.AppendViewImage(data)
+	// what names THIS picture. The round may be showing the model several, and
+	// the note that accompanies them lists these labels instead of asking it to
+	// match pixels to tool calls by position.
+	sess.AppendViewImageAs(data, what)
 	// What the agent is asked to judge has to be scoped, or showing it the
 	// picture makes things worse rather than better.
 	//
