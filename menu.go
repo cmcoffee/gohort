@@ -105,11 +105,13 @@ func set_agent_llm(agent Agent) {
 	}
 	T := agent.Get()
 	T.LLM = llm
-	// Auto-enable prompt-based tools when native tool calling is disabled.
-	// llama.cpp always uses the OpenAI-compatible endpoint which supports native tools.
-	if !cfg.NativeTools && cfg.Provider != "llama.cpp" {
-		T.PromptTools = true
-	}
+	// Auto-enable prompt-based tools ONLY for a provider that might not do
+	// native function calling. Every hosted API does; see
+	// ProviderHasNativeTools for why this is an allowlist rather than the
+	// single-provider exception it replaced.
+	T.PromptTools = !cfg.NativeTools && !ProviderHasNativeTools(cfg.Provider)
+	// Publish it so a later LLM reload can change it without a restart.
+	SetPromptToolsMode(T.PromptTools)
 
 	// Initialize lead LLM if configured.
 	lead_cfg := dbcfg.leadLLM()

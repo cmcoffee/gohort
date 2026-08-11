@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,10 +58,55 @@ type ImageTool struct{}
 // a signature drift is a build error rather than a silently skipped check —
 // losing Preflight would put every bad argument back in the background.
 var (
-	_ DetachableTool = (*ImageTool)(nil)
-	_ EstimatingTool = (*ImageTool)(nil)
-	_ PreflightTool  = (*ImageTool)(nil)
+	_ DetachableTool     = (*ImageTool)(nil)
+	_ EstimatingTool     = (*ImageTool)(nil)
+	_ PreflightTool      = (*ImageTool)(nil)
+	_ SeriesTool         = (*ImageTool)(nil)
+	_ AlwaysDetachTool   = (*ImageTool)(nil)
+	_ DetachIdentityTool = (*ImageTool)(nil)
+	_ SupersedingTool    = (*ImageTool)(nil)
 )
+
+// SeriesCapable: a render books itself against the set and asks for the next
+// one when pieces remain. See noteSeriesPiece.
+func (t *ImageTool) SeriesCapable() bool { return true }
+
+// DetachIdentity: `image` and every connector's generate_image_<name> tool are
+// the same act under different names, so they share one slot and one set.
+func (t *ImageTool) DetachIdentity() string { return RenderDetachIdentity }
+
+// Supersedes: everything this tool absorbed. The standalone trio it replaced,
+// and every connector's generate_image_<name> — `image` reaches all of those
+// backends through its `backend` param, so a caller holding both sees one tool
+// instead of a grouped one plus a twin per backend.
+//
+// Declared here rather than listed in the app because this is the tool that
+// knows what it covers, and a connector materializing a new backend tool must
+// not require anybody to remember to update a list somewhere else.
+func (t *ImageTool) Supersedes(name string) bool {
+	switch name {
+	case "find_image", "fetch_image", "generate_image":
+		return true
+	}
+	return strings.HasPrefix(name, RestImageToolPrefix)
+}
+
+// AlwaysDetach sends renders to the background whatever they are expected to
+// cost. A twenty-second generate is fast and still holds the conversation shut
+// for twenty seconds; four of them hold it for eighty, and the reply the user
+// gets at the end is one message carrying a batch they waited in silence for.
+// Detached, each picture arrives as it is ready and the agent can talk in
+// between. find and fetch are ordinary HTTP and keep waiting.
+//
+// Off by knob, not by code: a deployment that prefers the wait sets
+// tune_image_always_detach to 0 and gets the duration rule back.
+func (t *ImageTool) AlwaysDetach(args map[string]any, sess *ToolSession) bool {
+	switch effectiveImageAction(args) {
+	case "generate", "edit":
+		return TuneBool("tune_image_always_detach")
+	}
+	return false
+}
 
 func (t *ImageTool) Name() string         { return "image" }
 func (t *ImageTool) Caps() []Capability   { return []Capability{CapNetwork, CapRead} }
@@ -414,6 +460,18 @@ func imageSchemaFor(a imageActions) imageSchema {
 				" So refer to people and things by WHERE THEY ARE — \"the person in the first image\", \"the animal on the left\" — never by name and never by description."
 		}
 		params["prompt"] = ToolParam{Type: "string", Description: d}
+		// Declaring a SET up front. One call makes one picture and only one
+		// render runs at a time, so "I'll do you a few variations" needs the
+		// count to survive the gap between them — the tool is what carries it,
+		// and this is where it is told. Without it the model made one picture,
+		// was refused when it tried to start the second in the same turn, and
+		// the promise went unkept.
+		params["variations"] = ToolParam{
+			Type: "integer",
+			Description: "How many pictures you are going to make IN TOTAL, when you are making a set — variations on one idea, a few options to pick from. Say it on the FIRST call only; it carries from there. " +
+				"They render one at a time: you get this one back, deliver it, and are told to start the next. Leave it out for a single picture. " +
+				"Whenever you tell the user you will make several, put the number here — otherwise you get one, and a second call in the same turn is refused.",
+		}
 	}
 	if a.edit {
 		params["images"] = ToolParam{
@@ -561,7 +619,7 @@ func (t *ImageTool) SchemaWithSession(sess *ToolSession) (string, map[string]Too
 // is an order of magnitude larger than a generate's because the model has to
 // load first. find and fetch are ordinary HTTP and stay inline.
 func (t *ImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) time.Duration {
-	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	switch effectiveImageAction(args) {
 	case "generate", "edit":
 		return ImageBackendDeadline(sess, strings.TrimSpace(StringArg(args, "backend")))
 	}
@@ -585,7 +643,7 @@ func (t *ImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) tim
 // correctly. See core.PreflightTool.
 func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
 	avail := liveImageActions(sess)
-	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	switch effectiveImageAction(args) {
 	case "generate", "edit":
 		// One path, chosen by whether sources were passed rather than by which
 		// word the model picked. See routeRender.
@@ -613,7 +671,7 @@ func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
 // Zero until the backend has been measured, which the notice renders as saying
 // nothing about the time rather than guessing.
 func (t *ImageTool) TypicalDuration(args map[string]any, sess *ToolSession) time.Duration {
-	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	switch effectiveImageAction(args) {
 	case "generate", "edit":
 		return ImageBackendTypicalDuration(sess, strings.TrimSpace(StringArg(args, "backend")))
 	}
@@ -630,6 +688,35 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	// "unknown action".
 	avail := liveImageActions(sess)
 	action := strings.ToLower(strings.TrimSpace(StringArg(args, "action")))
+	// No action, but arguments that only one action takes. That call is a
+	// MISFIRE, and answering it with the usage spec is the worst thing this
+	// tool can do: help comes back as a SUCCESS, opening with "each saves to
+	// your workspace and returns the path" and followed by the manifest of
+	// every picture already made — so a model that skims it concludes it just
+	// rendered several, and goes looking in the workspace for them.
+	//
+	// Observed end to end: image(prompt="...armada of generational ships") with
+	// no action returned help, the agent announced "here are 4 variations",
+	// invented a filename, failed to attach it, listed the workspace, and
+	// delivered two unrelated pictures from an earlier session as the set. Not
+	// one image was rendered for that request.
+	//
+	// The arguments already say what was meant — routeRender picks generate vs
+	// edit the same way, from whether sources were passed rather than from
+	// which word the model chose — so infer it and run the call. See
+	// core.GroupedTool, which returns a directive error for the same misfire;
+	// it cannot infer because its actions share params, and here they do not.
+	if action == "" {
+		inferred, why := inferImageAction(args)
+		if inferred == "" {
+			if why != "" {
+				return "", fmt.Errorf("image was called with no \"action\" but with %s — nothing was done, and nothing was rendered. Re-call with action=\"<one>\": %s", why, strings.Join(avail.names(), " | "))
+			}
+		} else {
+			Log("[imagefetch] image called with no action; inferred %q from its arguments", inferred)
+			action = inferred
+		}
+	}
 	switch action {
 	case "find":
 		if !avail.find {
@@ -639,7 +726,22 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	case "fetch":
 		return (&FetchImageTool{}).RunWithSession(args, sess)
 	case "generate", "edit":
-		return routeRender(sess, args, avail)
+		// The ceiling, checked BEFORE the render so a refusal costs no time.
+		if err := checkRenderBudget(sess); err != nil {
+			return "", err
+		}
+		out, err := routeRender(sess, args, avail)
+		if err != nil {
+			// A failed piece ends the set. The wake for a failure already tells
+			// the model not to retry silently, and a chain that carries on after
+			// one break keeps sending pictures for a request that visibly went
+			// wrong.
+			if sess != nil && sess.Detached {
+				CloseTaskSeries(sess.DeliverySession(), RenderDetachIdentity)
+			}
+			return out, err
+		}
+		return t.noteSeriesPiece(sess, args, out), nil
 	case "keep":
 		name := StringArg(args, "name")
 		ref := strings.TrimSpace(StringArg(args, "ref"))
@@ -668,7 +770,15 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 				} else {
 					out += " Matched by name only — nobody with that name has messaged in, so this is a label rather than a confirmed identification."
 				}
-				out += " This is now THE picture of them; keeping another one for the same person replaces it."
+				// Say which of the two rules applies. Promising "replaces it"
+				// unconditionally was wrong once supersession required an
+				// anchored claim, and a model told its keep replaced something
+				// it did not would report a library it does not have.
+				if strings.TrimSpace(kept.Subject.Handle) != "" {
+					out += " This is now THE picture of them: another anchored picture of the same person replaces it."
+				} else {
+					out += " Because this is a label rather than an identification, it does NOT retire an existing picture of someone by that name — both are kept, and listed as duplicates."
+				}
 			} else {
 				out += "\nFiled as a picture of " + SubjectLabel(kept.Subject) + "."
 			}
@@ -720,7 +830,13 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		}
 		return fmt.Sprintf("Forgot %q. Its id no longer resolves.", name), nil
 	case "", "help":
-		help := "image actions: " + strings.Join(avail.names(), " | ") + ". Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...)."
+		// Say what this is NOT, first. The spec used to open with "each saves
+		// to your workspace and returns the path" above a manifest of every
+		// picture already made, which is indistinguishable from a result to
+		// anything reading quickly — and what followed was an agent attaching
+		// old pictures as the ones it had just been asked for.
+		help := "NOTHING WAS RENDERED, FOUND OR FETCHED — this is the usage spec for the image tool, not a result. No picture was made by this call.\n\n" +
+			"image actions: " + strings.Join(avail.names(), " | ") + ". Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...)."
 		if m := RecentImageManifest(sess); m != "" {
 			help += "\n\n" + m
 		}
@@ -731,6 +847,186 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	default:
 		return "", fmt.Errorf("unknown action %q for image — use %s", StringArg(args, "action"), strings.Join(avail.names(), " | "))
 	}
+}
+
+// effectiveImageAction is the action this call will actually run: the one it
+// named, or the one its arguments imply.
+//
+// Every path that inspects the action BEFORE the call — the detach decision,
+// the duration estimate, preflight — has to read it exactly the way
+// RunWithSession does. Read only the literal argument, a call whose action was
+// inferred is judged as if it had none: no estimate, so no detach, so a render
+// the framework thinks is a no-op holds the turn open and skips its preflight
+// on the way.
+func effectiveImageAction(args map[string]any) string {
+	if a := strings.ToLower(strings.TrimSpace(StringArg(args, "action"))); a != "" {
+		return a
+	}
+	inferred, _ := inferImageAction(args)
+	return inferred
+}
+
+// imageArgOwner maps an argument to the ONE action that takes it. Only the
+// unambiguous ones are listed: name/ref/of and friends are shared by keep,
+// label and forget, and guessing between three destructive-ish verbs is worse
+// than saying the action is missing.
+var imageArgOwner = map[string]string{
+	"prompt":     "generate", // generate or edit — routeRender picks, from the sources
+	"images":     "generate",
+	"variations": "generate",
+	"query":      "find",
+	"url":        "fetch",
+}
+
+// inferImageAction reads the intended action off the arguments. Returns the
+// action when exactly one is implied; otherwise an empty action and, when
+// operation params WERE passed, a description of them for the error.
+//
+// Ambiguity is not resolved here. A call carrying both a prompt and a url has
+// two readings and picking one silently is how the wrong thing gets delivered
+// with no sign anything was guessed.
+func inferImageAction(args map[string]any) (action, why string) {
+	var seen []string
+	var named []string
+	for key, owner := range imageArgOwner {
+		if !hasImageArg(args, key) {
+			continue
+		}
+		named = append(named, key)
+		if !slices.Contains(seen, owner) {
+			seen = append(seen, owner)
+		}
+	}
+	sort.Strings(named)
+	if len(seen) == 1 {
+		return seen[0], ""
+	}
+	// Keep/label/forget args count toward "something was asked for", so a call
+	// with only those still gets the error rather than the manual.
+	for _, key := range []string{"name", "ref", "note", "of", "is_person", "mask", "backend", "preserve_faces"} {
+		if hasImageArg(args, key) {
+			named = append(named, key)
+		}
+	}
+	if len(named) == 0 {
+		return "", "" // a bare call is a genuine probe — the manual is the right answer
+	}
+	sort.Strings(named)
+	return "", strings.Join(named, ", ")
+}
+
+// hasImageArg reports whether an argument was supplied with a usable value.
+// Presence alone is not enough: a model that fills every field of the schema
+// sends prompt:"" on a fetch, and an empty string must not decide the action.
+func hasImageArg(args map[string]any, key string) bool {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t) != ""
+	case []any:
+		return len(t) > 0
+	case []string:
+		return len(t) > 0
+	case bool:
+		return t
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	}
+	return true
+}
+
+// checkRenderBudget stops a turn that has stopped counting.
+//
+// A detached call is already rationed — one per tool per turn by the detach
+// ledger — so this is the INLINE ceiling, and inline is where it was missing:
+// eighteen renders in one turn, seven minutes, five of them delivered.
+//
+// It refuses BEFORE the render, and it refuses with an instruction to deliver
+// rather than a bare limit. A model told only "no" looks for another route; a
+// model told "you have unattached pictures, send those" does the thing that was
+// actually wanted.
+func checkRenderBudget(sess *ToolSession) error {
+	if sess == nil || sess.Detached {
+		return nil
+	}
+	_, total := sess.NextImageAttempt(false)
+	cap := ImageGenHardCap()
+	if total <= cap {
+		return nil
+	}
+	return fmt.Errorf("no picture was made — you have already rendered %d in this turn, which is the ceiling. "+
+		"Stop rendering and finish the request with what you have: attach every picture you have not delivered yet (workspace attach, one call per file), then write your reply. "+
+		"Do NOT call image again this turn, and do NOT tell the user a number you have not actually attached", cap)
+}
+
+// inlineSetNote is what a render says when the turn is still here and the model
+// said it was making several.
+//
+// It replaced a single sentence that did enormous damage: "call image again now
+// for the next one". That line counted nothing, so it appeared identically
+// after every render and never once said stop; and it named the next render as
+// the thing to do next, displacing the attach the result had just asked for. An
+// agent followed it eighteen times, delivered five pictures, and reported
+// eighteen.
+//
+// So this one counts (the per-turn render counter, which is turn-scoped and
+// cannot leak into the next conversation the way a declared count can), always
+// puts the attach FIRST, and terminates — explicitly, by name, at the number
+// the model itself asked for.
+func inlineSetNote(sess *ToolSession, want int) string {
+	if want < 2 {
+		return ""
+	}
+	made := sess.ImageRenderCount()
+	if made < want {
+		return fmt.Sprintf("\n\nThat is picture %d of the %d you said you would make. Attach THIS one now — deliver them as you go rather than saving them all for the end, which is how a set gets announced and never sent — then call image again for the next, varying the idea rather than repeating it.", made, want)
+	}
+	return fmt.Sprintf("\n\nThat is the LAST of the %d you said you would make — the set is COMPLETE. Attach this one, make sure every picture in the set has actually been attached, and write your reply. Do NOT render another for this request, and do not name a count you have not attached.", want)
+}
+
+// noteSeriesPiece books a finished render against a declared set and, when
+// pieces remain, leaves the instruction that starts the next one.
+//
+// It runs AFTER the render rather than before it, because a set only advances
+// on work that actually happened: a piece counted at the start and then failed
+// would move the count without producing anything, and the last picture would
+// silently never be made.
+//
+// The detached and inline paths differ because the problem does. Detached,
+// there is no round left to make the next one in, so the count has to survive to
+// the wake. Inline, the turn is still here and calling again costs nothing —
+// there is no series to keep, and saying so is what stops the model waiting for
+// a wake that is never coming.
+func (t *ImageTool) noteSeriesPiece(sess *ToolSession, args map[string]any, out string) string {
+	if sess == nil {
+		return out
+	}
+	want := IntArg(args, "variations")
+	if !sess.Detached {
+		// A set that started detached and is now finishing its pieces inline —
+		// a faster backend, a raised threshold — has nothing left to carry, and
+		// leaving the count open would renumber whatever renders next.
+		if TaskSeriesOpen(sess.DeliverySession(), RenderDetachIdentity) {
+			CloseTaskSeries(sess.DeliverySession(), RenderDetachIdentity)
+		}
+		return out + inlineSetNote(sess, want)
+	}
+	prompt := strings.TrimSpace(StringArg(args, "prompt"))
+	piece, of := BookSeriesPiece(sess, RenderDetachIdentity, want, "another take on: "+truncate(prompt, 60))
+	if of <= 1 {
+		return out
+	}
+	// Said in the RESULT as well, where it becomes part of what the thread
+	// keeps. The continuation is one-shot and disappears after the turn that
+	// acts on it; this is what a later turn reads to know the set was a set —
+	// without it, "here is a picture" three times over has nothing tying the
+	// three together, and the fourth request lands with no idea one was running.
+	return out + fmt.Sprintf("\n\nThis is picture %d of the %d you said you would make.", piece, of)
 }
 
 // --- FetchImageTool ---
@@ -1583,6 +1879,18 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		if ref := RecordRecentImage(sess, data, note, origin); ref != "" {
 			msg += fmt.Sprintf(" %s is its lasting handle if you need to edit it or send it again later.", ref)
 		}
+		// Show it, on the round that writes the line about it.
+		//
+		// showToModel refuses on a detached session, and for its other callers
+		// that is right — there is no round left to look. But a detached RENDER
+		// still ends with the model composing "here it is, it shows X", and
+		// without the picture that sentence is written from the prompt by an
+		// agent that never saw the result. So the one case where being wrong is
+		// invisible — an async render that came back subtly wrong — was the one
+		// case with no self-check. The view channel is separate from the
+		// delivery channel, so this cannot send the image twice.
+		sess.AppendViewImage(data)
+		msg += " LOOK AT IT FIRST: the picture is included with this result. Describe what is actually there, not what was asked for — if the render came back wrong (blank, garbled, the wrong number of things, an edit that did nothing), say so plainly instead of announcing it as a match."
 		return msg, nil
 	}
 

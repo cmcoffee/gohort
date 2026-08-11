@@ -1176,7 +1176,19 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// back over localhost. Keys on the real TCP peer, NOT ClientIP: an
 		// external client could otherwise send "X-Forwarded-For: 127.0.0.1" and
 		// bypass auth entirely (ClientIP trusts that header).
-		if IsGenuineLocalRequest(r) {
+		//
+		// Browsers are excluded. The bypass exists for internal RPCs, but at
+		// the TCP layer a person browsing to 127.0.0.1 looks exactly like one,
+		// so without this qualifier anyone with local access — including
+		// anyone who can `ssh -L`, since a forwarded connection also arrives
+		// on loopback with no forwarding header — gets an unauthenticated
+		// admin session. Internal callers are Go clients that send no Fetch
+		// Metadata headers, so they keep the bypass; a browser now falls
+		// through to the session-cookie check and lands on /login. This is
+		// also what gohort-desktop's proxy already assumes: it strips
+		// X-Forwarded-For specifically so logged-out webview requests get
+		// redirected to /login rather than tripping this bypass.
+		if IsGenuineLocalRequest(r) && !IsBrowserRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

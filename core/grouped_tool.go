@@ -294,6 +294,18 @@ func (g *GroupedTool) Run(args map[string]any) (string, error) {
 func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (out string, err error) {
 	action := strings.TrimSpace(StringArg(args, "action"))
 	if action == "help" {
+		// help + operation params is a MISS, not a request for the manual.
+		// A model that writes action="help", name="foo" is asking about ONE
+		// thing; the generic spec answers a different question and answers it
+		// with a SUCCESS, so the miss is invisible. Observed live: an agent
+		// asked for help on a published tool twice, got the authoring guide
+		// both times, concluded the tool needed building, and ran the verifier
+		// three times before it thought to just call the tool. Hand back the
+		// spec (it was asked for) behind a banner naming the ignored params
+		// and the actions that DO take them.
+		if extras := nonActionArgKeys(args); len(extras) > 0 {
+			return g.helpIgnoredParamsBanner(extras) + g.formatHelp(), nil
+		}
 		return g.formatHelp(), nil
 	}
 	if action == "" {
@@ -311,7 +323,21 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 				"%s was called with no \"action\" but WITH params (%s) — nothing was done. Pick an action: %s. Re-call with action=\"<one>\" plus its params (action=\"help\" for the full spec)",
 				g.name, strings.Join(extras, ", "), strings.Join(g.sortedActionNames(), ", "))
 		}
-		return g.formatHelp(), nil
+		// A COMPLETELY bare call used to return the usage spec, on the theory
+		// that it was a probe. In practice it is the shape a dropped-argument
+		// call arrives in, and answering it with help is the same trap the
+		// params-but-no-action branch above exists to avoid — worse, because
+		// there is nothing in the result to suggest anything went wrong. One
+		// observed turn spent 79 seconds re-calling archetype({}),
+		// collections({}) and agents({}), each answering with its spec, each
+		// read as a result, nothing learned.
+		//
+		// Probing is still available and is now explicit: action="help". An
+		// error that NAMES the actions keeps discovery cheap while making it
+		// unmistakable that nothing ran.
+		return "", fmt.Errorf(
+			"%s was called with no arguments — nothing was done, and this is NOT a result. Pick an action: %s. Re-call with action=\"<one>\" plus its params, or action=\"help\" for the full spec. If you meant to pass arguments, they did not arrive: send them again with the action",
+			g.name, strings.Join(g.sortedActionNames(), ", "))
 	}
 	def, ok := g.actions[action]
 	if !ok {
@@ -453,4 +479,33 @@ func (g *GroupedTool) formatHelp() string {
 	}
 	b.WriteString(`  action="help" — show this usage spec.` + "\n")
 	return b.String()
+}
+
+// helpIgnoredParamsBanner heads the spec when action="help" arrived carrying
+// operation params. It names what was ignored and routes each ignored key to
+// the actions that actually declare it, so the caller's real question ("tell
+// me about THIS one") gets an address instead of a manual.
+func (g *GroupedTool) helpIgnoredParamsBanner(extras []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "NOTE: action=\"help\" ignores every other param — %s had no effect here, and nothing was looked up. This is the GENERIC usage spec for %s, not information about %s.\n",
+		strings.Join(extras, ", "), g.name, strings.Join(extras, "/"))
+	for _, k := range extras {
+		if takers := g.actionsWithParam(k); len(takers) > 0 {
+			fmt.Fprintf(&b, "  To act on %q, call one of: %s — e.g. %s(action=%q, %s=…).\n",
+				k, strings.Join(takers, ", "), g.name, takers[0], k)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// actionsWithParam lists, in sorted order, the actions that declare a param.
+func (g *GroupedTool) actionsWithParam(param string) []string {
+	var out []string
+	for _, name := range g.sortedActionNames() {
+		if _, ok := g.actions[name].Params[param]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }

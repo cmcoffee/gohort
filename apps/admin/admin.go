@@ -15,6 +15,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -250,8 +251,23 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			http.NotFound(w, r)
 			return
 		}
+		// First run: an install with no LLM provider cannot do anything, so
+		// walk the first admin through connecting one instead of dropping
+		// them into a settings page with fifty sections. Dismissable, and
+		// self-disabling the moment a provider is saved.
+		if systemNeedsSetup(a.db) && !AuthGetFirstRunDismissed(AuthDB(), AuthCurrentUser(r)) {
+			http.Redirect(w, r, a.setupWizardPath(), http.StatusFound)
+			return
+		}
 		a.serveNewAdminPage(w, r)
 	})
+
+	// First-run wizard (and its skip affordance).
+	sub.HandleFunc("/setup", a.handleSetupWizard)
+
+	// Live connectivity check for the Worker LLM form — POSTs the form's
+	// current, possibly-unsaved values and actually talks to the provider.
+	sub.HandleFunc("/api/worker-llm/test", a.handleWorkerLLMTest)
 
 	// API: list users.
 	sub.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
@@ -3104,7 +3120,10 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						// OwnedBy — both have curated, purpose-built kits and
 						// aren't user tool-scope targets. Keep them out of
 						// this list; only top-level user-managed agents show.
-						if rec.Hidden || rec.OwnedBy != "" {
+						// The app-agent test asks the REGISTRY, because this
+						// walk reads raw shadow rows: a shadow written before
+						// a spec flipped to Hidden still decodes Hidden=false.
+						if _, isApp := appagents.AppAgentByID(rec.ID); isApp || rec.Hidden || rec.OwnedBy != "" {
 							continue
 						}
 						entry.Agents = append(entry.Agents, bundledAgent{ID: rec.ID, Name: rec.Name})
@@ -4382,52 +4401,35 @@ func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, 
 
 // handleVectorStats returns a snapshot of the semantic-search index for the
 // admin Vector Index panel: total chunks, how many carry an embedding, how
-// many failed to embed, and a per-source breakdown.
+// many failed to embed and where, and a per-source breakdown.
+//
+// The walk lives in core.VectorStats rather than here. This handler used to
+// carry its own copy of it, which left core's version with no callers — so the
+// EmptyBySource breakdown, added there, would have been born dead. One walk,
+// one definition of what "empty" means.
 func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 	db := VectorDB
 	if db == nil {
 		db = RootDB
 	}
-	var total, embedded, empty int
-	bySource := map[string]int{}
-	if db != nil {
-		for _, k := range db.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !db.Get(EmbeddedChunks, k, &c) {
-				continue
-			}
-			total++
-			if len(c.Vector) > 0 {
-				embedded++
-			} else {
-				empty++
-			}
-			src := c.Source
-			if src == "" {
-				src = "(unspecified)"
-			}
-			bySource[src]++
-		}
-	}
-	srcs := make([]string, 0, len(bySource))
-	for s := range bySource {
-		srcs = append(srcs, s)
-	}
-	sort.Strings(srcs)
-	var b strings.Builder
-	for _, s := range srcs {
-		fmt.Fprintf(&b, "%s: %d\n", s, bySource[s])
-	}
-	byText := strings.TrimSpace(b.String())
+	stats := VectorStats(db)
+	byText := stats.BySourceText
 	if byText == "" {
 		byText = "(no chunks yet)"
 	}
+	// "none" rather than "" so the row reads as a checked, healthy result
+	// instead of a field that failed to load.
+	emptyText := stats.EmptyBySourceText
+	if emptyText == "" {
+		emptyText = "none — every chunk has a vector"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"total":          total,
-		"embedded":       embedded,
-		"empty":          empty,
-		"by_source_text": byText,
+		"total":                stats.Total,
+		"embedded":             stats.Embedded,
+		"empty":                stats.Empty,
+		"by_source_text":       byText,
+		"empty_by_source_text": emptyText,
 	})
 }
 
@@ -4522,6 +4524,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 			Model                string `json:"model"`
 			APIKey               string `json:"api_key"`
 			Endpoint             string `json:"endpoint"`
+			AWSRegion            string `json:"aws_region"`
+			AWSProfile           string `json:"aws_profile"`
+			BedrockAPI           string `json:"bedrock_api"`
 			ContextSize          int    `json:"context_size"`
 			RequestTimeout       int    `json:"request_timeout_seconds"`
 			NativeTools          bool   `json:"native_tools"`
@@ -4540,6 +4545,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		a.db.Set(table, "provider", req.Provider)
 		a.db.Set(table, "model", req.Model)
 		a.db.Set(table, "endpoint", req.Endpoint)
+		a.db.Set(table, "aws_region", req.AWSRegion)
+		a.db.Set(table, "aws_profile", req.AWSProfile)
+		a.db.Set(table, "bedrock_api", req.BedrockAPI)
 		a.db.Set(table, "native_tools", req.NativeTools)
 		a.db.Set(table, "disable_thinking", req.DisableThinking)
 		a.db.Set(table, "thinking_budget", req.ThinkingBudget)
@@ -4567,7 +4575,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		return
 	}
 	// GET — current values; api_key is masked (never returned).
-	var provider, model, endpoint string
+	var provider, model, endpoint, awsRegion, awsProfile, bedrockAPI string
 	var contextSize, reqTimeout, noThinkBudget int
 	var nativeTools, disableThinking, ntPrependSys, ntPrependUser bool
 	ntKwarg, ntBudget := true, true // defaults when no-think was never configured
@@ -4575,6 +4583,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	a.db.Get(table, "provider", &provider)
 	a.db.Get(table, "model", &model)
 	a.db.Get(table, "endpoint", &endpoint)
+	a.db.Get(table, "aws_region", &awsRegion)
+	a.db.Get(table, "aws_profile", &awsProfile)
+	a.db.Get(table, "bedrock_api", &bedrockAPI)
 	a.db.Get(table, "native_tools", &nativeTools)
 	a.db.Get(table, "disable_thinking", &disableThinking)
 	a.db.Get(table, "thinking_budget", &thinkingBudget)
@@ -4591,6 +4602,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		"provider":                provider,
 		"model":                   model,
 		"endpoint":                endpoint,
+		"aws_region":              awsRegion,
+		"aws_profile":             awsProfile,
+		"bedrock_api":             bedrockAPI,
 		"native_tools":            nativeTools,
 		"disable_thinking":        disableThinking,
 		"thinking_budget":         thinkingBudget,

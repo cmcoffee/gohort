@@ -702,9 +702,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Field: "provider", Label: "Provider", Type: "select", Options: []ui.SelectOption{
 							{Value: "ollama", Label: "Ollama"}, {Value: "llama.cpp", Label: "llama.cpp"},
 							{Value: "anthropic", Label: "Anthropic"}, {Value: "openai", Label: "OpenAI"},
-							{Value: "gemini", Label: "Gemini"}},
+							{Value: "gemini", Label: "Gemini"}, {Value: "bedrock", Label: "AWS Bedrock"}},
 							Help: "Local providers (ollama / llama.cpp) are the usual worker."},
-						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b", Help: "Blank = provider default."},
+						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b",
+							Help: "Blank = provider default. On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
 							Help: "Stored encrypted. Not needed for local ollama / llama.cpp."},
 						{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1",
@@ -712,6 +713,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Presets: []ui.FieldPreset{
 								{Label: "Ollama", Value: "http://localhost:11434"},
 								{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
+						{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
+							Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1. Not every region AWS lists for Bedrock has a Messages-API endpoint — us-west-1 does not, use us-west-2.",
+							Presets: bedrockRegionPresets()},
+						{Field: "bedrock_api", Label: "Bedrock API", Type: "select",
+							Options: []ui.SelectOption{
+								{Value: "", Label: "Messages API (bedrock-mantle)"},
+								{Value: "invoke", Label: "InvokeModel (bedrock-runtime)"}},
+							Help: "Which Bedrock API your AWS role may call. Messages API needs bedrock-mantle:CreateInference; InvokeModel needs bedrock:InvokeModel and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel. Both stream."},
+						{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)",
+							Help: "AWS Bedrock only. Blank uses $AWS_PROFILE. Credentials are never stored here — for SSO, run `aws sso login` on the gohort host. The API key field above is optional and means a Bedrock bearer token instead."},
 						{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 262144,
 							Help: "0 = default (65K for ollama / llama.cpp)."},
 						{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
@@ -741,13 +752,23 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							{Value: "", Label: "(use primary)"},
 							{Value: "anthropic", Label: "Anthropic"}, {Value: "openai", Label: "OpenAI"},
 							{Value: "gemini", Label: "Gemini"}, {Value: "ollama", Label: "Ollama"},
-							{Value: "llama.cpp", Label: "llama.cpp"}},
+							{Value: "llama.cpp", Label: "llama.cpp"}, {Value: "bedrock", Label: "AWS Bedrock"}},
 							Help: "(use primary) routes lead stages to the worker model."},
 						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5"},
 						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
 							Help: "Stored encrypted. Blank reuses the primary provider's key where applicable."},
 						{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
 							Help: "For local / self-hosted lead providers."},
+						{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
+							Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1 (us-west-1 has no endpoint; use us-west-2).",
+							Presets: bedrockRegionPresets()},
+						{Field: "bedrock_api", Label: "Bedrock API", Type: "select",
+							Options: []ui.SelectOption{
+								{Value: "", Label: "Messages API (bedrock-mantle)"},
+								{Value: "invoke", Label: "InvokeModel (bedrock-runtime)"}},
+							Help: "Which Bedrock API your AWS role may call. Messages API needs bedrock-mantle:CreateInference; InvokeModel needs bedrock:InvokeModel and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel. Both stream."},
+						{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)",
+							Help: "AWS Bedrock only. Blank uses $AWS_PROFILE."},
 						{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
 							Help: "Disable for models without tool-calling support (ollama)."},
 						{Type: "header", Label: "Thinking", Collapsed: true},
@@ -2362,7 +2383,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Vector Index",
-				Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced.",
+				Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest is still stored and still found by keyword, but is invisible to semantic search until it is re-embedded — run \"Re-embed chunks missing a vector\" under Maintenance to repair those.",
 				Body: ui.Stack{Children: []ui.Component{
 					ui.DisplayPanel{
 						Source: "api/vector-stats",
@@ -2370,6 +2391,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							{Label: "Total chunks", Field: "total"},
 							{Label: "Embedded", Field: "embedded"},
 							{Label: "Empty (embed failed)", Field: "empty"},
+							// Which sources the gap is in. A bare count says an
+							// outage happened; this says what it cost, and which
+							// imports to re-run for anything the repair can't reach.
+							{Label: "Missing vectors by source", Field: "empty_by_source_text"},
 						},
 					},
 					// Per-kind breakdown (documents + chunks) — the legible view,

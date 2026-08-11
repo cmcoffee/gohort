@@ -119,3 +119,39 @@ func ReloadableLeadLLM() LLM {
 		return SharedWorkerLLM()
 	}}
 }
+
+// Prompt-tools mode, published process-wide.
+//
+// It used to be computed once per agent at startup (from the worker provider's
+// native_tools setting) and copied to every later agent. Nothing recomputed it,
+// so flipping "Native tool calling" in the admin UI rebuilt the live LLM —
+// which that form promises applies immediately — while the running process
+// stayed in whichever mode it booted with. An operator who turned native tools
+// ON kept getting prompt-parsed calls until a restart, with no way to tell:
+// the setting read correct everywhere they could look.
+//
+// Published centrally because the value was always uniform across agents
+// anyway; a per-agent snapshot bought nothing and could not be refreshed.
+var (
+	promptToolsMu   sync.RWMutex
+	promptToolsSet  bool
+	promptToolsMode bool
+)
+
+// SetPromptToolsMode publishes whether tools are described in the system
+// prompt (true) or sent natively (false). Called at startup and on every
+// LLM reload.
+func SetPromptToolsMode(v bool) {
+	promptToolsMu.Lock()
+	promptToolsMode, promptToolsSet = v, true
+	promptToolsMu.Unlock()
+}
+
+// PromptToolsMode returns the published mode. ok is false when nothing has
+// published one — an embedding caller (the SDK) that never went through the
+// framework's setup — in which case the caller's own field decides.
+func PromptToolsMode() (mode bool, ok bool) {
+	promptToolsMu.RLock()
+	defer promptToolsMu.RUnlock()
+	return promptToolsMode, promptToolsSet
+}

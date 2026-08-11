@@ -1287,6 +1287,20 @@ func formatArgs(args map[string]any) string {
 	return strings.Join(lines, "\n")
 }
 
+// countBatchDupes reports how many calls in a batch were deduped onto the
+// canonical call at results index canon. Used only to tell the model how many
+// copies it actually emitted — "you issued this 3 times" lands where "this was
+// a duplicate" gets skimmed past.
+func countBatchDupes(pairs [][2]int, canon int) int {
+	n := 0
+	for _, p := range pairs {
+		if p[1] == canon {
+			n++
+		}
+	}
+	return n
+}
+
 // guardrailArgCharsDefault is how much of each argument value the pre_action
 // warden gets to read.
 //
@@ -1435,7 +1449,7 @@ func (T *AppCore) Run(ctx context.Context, messages []Message, opts ...ChatOptio
 		SystemPrompt: T.systemPrompt,
 		Tools:        tools,
 		MaxRounds:    T.MaxRounds,
-		PromptTools:  T.PromptTools,
+		PromptTools:  T.promptToolsMode(),
 		ChatOptions:  opts,
 		OnStep: func(step StepInfo) {
 			if step.Done {
@@ -3416,6 +3430,25 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// second in the same batch is held too.
 		batchSend := map[string]bool{}
 
+		// In-batch identical-call dedup. batchSig maps a call signature to the
+		// results index of the ONE call that will actually run; batchDup lists
+		// {duplicate index, canonical index} pairs to fill in afterward.
+		//
+		// The repeatFail/repeatSame guards can't cover this: both counters are
+		// updated AFTER the round, so every sibling in a batch reads the same
+		// stale value and all of them pass. Observed live: a model emitted the
+		// same tool_def(action="test") three times in one response and the
+		// verifier — a genuine dispatch that really runs the tool — hit the
+		// live network three times for one question.
+		//
+		// Identical name AND identical args in the SAME response is a
+		// generation artifact, not intent: deliberate repetition varies
+		// something (recipient, path, offset). The native Ollama transport
+		// already collapses these at the wire (llm_openai.go), so this closes
+		// the same hole for every other provider.
+		batchSig := map[string]int{}
+		var batchDup [][2]int
+
 		// Round batch cap. A model can emit an arbitrarily large tool batch in
 		// ONE round (observed: ~120 agent dispatches in a single response) —
 		// per-tool guards then block each call individually, but all of them
@@ -3582,6 +3615,17 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				toolErrors++
 				continue
 			}
+
+			// Identical sibling already approved this batch — run it once and
+			// copy the result. Claimed here, at the append, so a call that got
+			// held by a guard above never becomes the canonical for a sibling
+			// that would otherwise have run.
+			if canon, dup := batchSig[sig]; dup {
+				Debug("[agent_loop] batch-dedup: %s call #%d is identical to #%d — running once", tc.Name, i+1, canon+1)
+				batchDup = append(batchDup, [2]int{i, canon})
+				continue
+			}
+			batchSig[sig] = i
 
 			if sendKey != "" {
 				batchSend[sendKey] = true // claim so a same-batch duplicate is held
@@ -3773,6 +3817,22 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 			wg.Wait()
 			toolErrors += int(atomic.LoadInt32(&errCount))
+		}
+
+		// Satisfy the deduped siblings from the canonical call's result. The API
+		// needs a result per tool_call id, so these can't just be omitted. They
+		// carry the SAME content (the model gets consistent data, not an error
+		// it has to reconcile) behind a one-line note, so a model that meant to
+		// vary the args can see that it didn't. IsError is copied but the error
+		// is NOT re-counted — one call ran, so one outcome is the honest count.
+		for _, d := range batchDup {
+			dup, canon := d[0], d[1]
+			src := results[canon]
+			results[dup] = ToolResult{
+				ID:      resp.ToolCalls[dup].ID,
+				Content: fmt.Sprintf("[DUPLICATE CALL — you issued this exact call %d times in one response; it ran ONCE and every copy returns the same result below. To get something different, change the arguments.]\n\n%s", countBatchDupes(batchDup, canon)+1, src.Content),
+				IsError: src.IsError,
+			}
 		}
 
 		// Corrections raised while inspecting this round's results. They MUST

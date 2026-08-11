@@ -3,6 +3,8 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 // survey is Builder's orient-first tool: zero-arg, read-only, named "survey".
@@ -44,5 +46,39 @@ func TestSurveyHelpers(t *testing.T) {
 	}
 	if got := oneLine("abcdefghij", 5); got != "abcde…" {
 		t.Errorf("oneLine truncate = %q, want abcde…", got)
+	}
+}
+
+// The survey is the Builder's picture of the fleet. Retired seeds and hidden
+// app templates showing up there is not cosmetic: it invites the Builder to
+// propose delegating to Chat, or to build on a per-appliance template that
+// nothing can address. All four exclusions converge on one predicate so the
+// answer cannot differ between the survey and the dispatch surfaces.
+func TestFleetHiddenCoversRetiredSeedsAndAppTemplates(t *testing.T) {
+	// A Hidden app agent, registered here because hiddenAppAgent consults the
+	// app-agent registry and no app is linked into this test binary. This is
+	// the same shape the Servitor Investigator registers with (Hidden: true,
+	// a per-appliance template).
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-template", OwningApp: "Test",
+		Name: "Test Template", Hidden: true,
+	})
+
+	for _, id := range []string{
+		"seed-chat",         // hard-retired
+		"seed-research",     // soft-retired archetype seed
+		"seed-kb",           // soft-retired archetype seed
+		"app-test-template", // Hidden app template
+	} {
+		if !fleetHidden(id) {
+			t.Errorf("%s must be hidden from every discovery surface", id)
+		}
+	}
+	// Real, user-facing agents must still be listed — this is a filter, not a
+	// blanket suppression.
+	for _, id := range []string{"seed-builder", "some-user-agent"} {
+		if fleetHidden(id) {
+			t.Errorf("%s is a real fleet member and must stay visible", id)
+		}
 	}
 }

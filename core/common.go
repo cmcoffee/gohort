@@ -116,6 +116,17 @@ func (T *AppCore) Handle(pattern string, handler http.Handler) {
 // Returns "" before the framework has wired it.
 func (T *AppCore) WebPrefix() string { return T.webPrefix }
 
+// promptToolsMode is the effective prompt-tools setting for this agent: the
+// process-wide published value when there is one, else the agent's own field.
+// The published value wins so a live LLM reload actually changes the mode —
+// see SetPromptToolsMode.
+func (T *AppCore) promptToolsMode() bool {
+	if mode, ok := PromptToolsMode(); ok {
+		return mode
+	}
+	return T.PromptTools
+}
+
 // SetWebMux is called by the framework before SimpleWebApp.Routes()
 // to wire the sub-mux. Apps don't call this directly.
 func (T *AppCore) SetWebMux(mux *http.ServeMux, prefix string) {
@@ -1584,6 +1595,23 @@ type ToolSession struct {
 	// stock-tracker style features). Empty for non-chat apps.
 	ChatSessionID string
 
+	// DeliverySessionID is the conversation a background result must be
+	// delivered INTO, when that is not the same as the session the work ran
+	// under. Empty means they are the same, which is the ordinary case.
+	//
+	// They come apart wherever a turn runs under a deliberately separate
+	// sub-session id. A scheduled fire and a background-task wake both do:
+	// their tool session is "scheduled:<real>", so this fire's ephemeral
+	// load_tool and temp-tool state stays off the user's interactive thread —
+	// correct, and invisible until something detached from one of those turns
+	// and tried to come home. It went home to "scheduled:<real>", a session the
+	// user is not looking at: the pictures were generated, delivered, and
+	// arrived in a conversation nobody was in.
+	//
+	// So the id the work runs under and the id its result belongs to are two
+	// facts, and the second one is the one delivery has to use.
+	DeliverySessionID string
+
 	// IntentText is the turn's driving text — the user message, standing
 	// mission, or dispatch brief this session was built to serve. Hosts set
 	// it so catalog assembly can make intent-aware choices (e.g. elevating a
@@ -1671,6 +1699,17 @@ type ToolSession struct {
 	// second is how a reply about one thing arrives carrying a picture of
 	// another.
 	stagedFiles []string
+
+	// continuation is what a DETACHED call wants the turn that delivers its
+	// result to do next — today, start the next piece of a declared series.
+	//
+	// It travels with the product rather than in it. The result text is kept in
+	// the thread as fact (it names the handle for the finished picture); an
+	// instruction kept there is one the model can read again three turns later
+	// and obey a second time, which is how a series of three became a series
+	// with no end. This channel is one-shot and lands in the delivering turn's
+	// prompt only.
+	continuation string
 
 	// Detach is this TURN's background-job ledger, one slot per tool. Shared by
 	// every session a turn mints — a host that runs a turn across several
@@ -1783,6 +1822,31 @@ func (s *ToolSession) ReleaseDetachSlot(tool string) {
 		return
 	}
 	s.detachLedger().release(tool)
+}
+
+// SetTaskContinuation records what the turn delivering this detached call's
+// result should do next. Only meaningful on a detached session — an inline call
+// still has a round of its own and says so in its return value.
+func (s *ToolSession) SetTaskContinuation(instruction string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.continuation = instruction
+}
+
+// TakeTaskContinuation returns the pending instruction and clears it, so it
+// reaches exactly one turn.
+func (s *ToolSession) TakeTaskContinuation() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.continuation
+	s.continuation = ""
+	return out
 }
 
 // detachLedger returns the turn's ledger, minting a private one on first use for
@@ -2769,6 +2833,55 @@ func (s *ToolSession) DrainViewImages() [][]byte {
 	return out
 }
 
+// DeliverySession is where a background result belongs: the conversation the
+// user is actually in, which is the sub-session id only when nothing separated
+// them. Every delivery path must read this rather than ChatSessionID.
+func (s *ToolSession) DeliverySession() string {
+	if s == nil {
+		return ""
+	}
+	if d := strings.TrimSpace(s.DeliverySessionID); d != "" {
+		return d
+	}
+	return strings.TrimSpace(s.ChatSessionID)
+}
+
+// Unattended reports whether this turn is happening somewhere NOBODY can watch
+// it work.
+//
+// A web chat shows a live pill, a progress tree and a running status line: the
+// person can see the render happening and waiting reads as working. A messaging
+// conversation shows none of that. The contact texted, and until a message
+// arrives there is nothing on their screen at all — so a turn that quietly
+// spends ninety seconds on a tool call is indistinguishable from an assistant
+// that has gone away, and they ask again, or give up.
+//
+// That difference is why the same call deserves different answers about
+// detaching. The channel path already recognises this for failures ("a
+// messaging surface must not go silent — the contact texted and expects a
+// reply"); this is the same rule applied to slowness.
+//
+// Read off the conversation rather than a flag anyone has to remember to set:
+// a turn answering a channel inbound carries the conversation it must reply to.
+func (s *ToolSession) Unattended() bool {
+	if s == nil {
+		return false
+	}
+	return strings.TrimSpace(s.ChannelChatID) != "" || strings.TrimSpace(s.ChannelHandle) != ""
+}
+
+// ImageRenderCount is how many renders this TURN has run, without recording
+// another. Turn-scoped with the session, so unlike a declared count it cannot
+// leak into the next request in the same conversation. Nil-safe.
+func (s *ToolSession) ImageRenderCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.imgGenTotal
+}
+
 // NextImageAttempt records one generate_image call and returns (attempt, total),
 // both 1-based. `attempt` is the CHAIN position that drives the retry budget:
 // refine=true continues the chain (the model is regenerating the previous image
@@ -2854,8 +2967,8 @@ const (
 type Options = nfo.Options
 
 var (
-	NewOptions      = nfo.NewOptions
-	Log             = nfo.Log             // Standard Log Output
+	NewOptions = nfo.NewOptions
+	Log        = nfo.Log // Standard Log Output
 	// AuxLog writes to the log FILE only, never the terminal (init_logging routes
 	// nfo.AUX2 there). Use for high-volume success noise — HTTP 2xx access lines,
 	// successful fetch completions — that should stay auditable in the log but not

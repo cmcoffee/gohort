@@ -80,6 +80,30 @@ func IsGenuineLocalRequest(r *http.Request) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// IsBrowserRequest reports whether a request came from a web browser rather
+// than from an internal HTTP client. It exists to qualify the loopback auth
+// bypass: an internal RPC looping back over localhost should skip auth, but a
+// person pointing a browser at 127.0.0.1 is indistinguishable from one at the
+// TCP layer and should not.
+//
+// The primary signal is the Fetch Metadata headers. Every current browser
+// sends them on EVERY request — navigations, fetch/XHR, EventSource, images —
+// and Go's http.Client sends none of them, so the split is clean in both
+// directions. Testing Accept for text/html alone would not be: a browser's
+// XHR asks for */* and would have kept the bypass, leaving the page behind a
+// login while its API calls stayed open.
+//
+// The Accept check remains as a fallback for browsers predating Fetch
+// Metadata, where a document navigation is still the case that matters most.
+func IsBrowserRequest(r *http.Request) bool {
+	if r.Header.Get("Sec-Fetch-Site") != "" ||
+		r.Header.Get("Sec-Fetch-Mode") != "" ||
+		r.Header.Get("Sec-Fetch-Dest") != "" {
+		return true
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
 // parseCIDRList parses a comma-separated list of CIDRs or bare IPs into
 // IPNets. Bare IPs are treated as /32 (v4) or /128 (v6).
 func parseCIDRList(list string) []*net.IPNet {

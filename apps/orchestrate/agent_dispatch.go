@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -686,16 +687,16 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:    gDecline,
-		SendGuardKey:      sendGuardKey,
-		SystemPrompt:      sysPrompt,
-		Tools:             tools,
-		MaxRounds:         resolveMaxWorkerRounds(target),
-		StampLocation:     UserLocation(runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:       target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		OnStep:            func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
-		TurnNotes:         func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
-		TurnClaimJudge:    T.turnClaimJudge(ctx),
+		PreEmptedReply: gDecline,
+		SendGuardKey:   sendGuardKey,
+		SystemPrompt:   sysPrompt,
+		Tools:          tools,
+		MaxRounds:      resolveMaxWorkerRounds(target),
+		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
+		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		OnStep:         func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
+		TurnNotes:      func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
+		TurnClaimJudge: T.turnClaimJudge(ctx),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here
@@ -708,11 +709,11 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		UncheckedClaims:    UncheckedFactNotes(subFacts),
 		DeliveredCount:     func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
 		Backgrounded:       func() bool { return subSess.Detach.Any() },
-		Confirm:           confirm,
-		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
-		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
+		Confirm:            confirm,
+		GuardrailCheck:     subTurn.guardrailEnforcer().Check,
+		GuardrailHalted:    subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:    subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:  subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
@@ -796,8 +797,15 @@ type AgentSyncRun struct {
 	AgentKey         string
 	SubSessionID     string
 	InjectionQueueID string
-	Message          string
-	FreshSession     bool
+	// DeliverySessionID is the CONVERSATION anything this run starts in the
+	// background must come home to. A dispatch runs under its own sub-session
+	// id so its ephemeral state stays off the caller's thread; a picture
+	// started inside it belongs to the thread all the same. Empty means the
+	// sub-session id is also the conversation, which is true for a dispatch
+	// with no parent thread. See ToolSession.DeliverySessionID.
+	DeliverySessionID string
+	Message           string
+	FreshSession      bool
 	// Kind labels this run in the live-activity ribbon / "Active now" pane
 	// ("channel" for an inbound channel/iMessage turn, else it defaults to
 	// "dispatch"). Cosmetic only — how the run is described, not how it runs.
@@ -1143,6 +1151,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		Username:           runtimeUser,
 		DB:                 runtimeDB,
 		ChatSessionID:      subSessionID,
+		DeliverySessionID:  strings.TrimSpace(run.DeliverySessionID),
 		AgentID:            target.ID,
 		IntentText:         message,                // Tier-1 tool elevation matches against the brief
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
@@ -1767,15 +1776,107 @@ func toolNamesFromTranscript(msgs []Message) []string {
 	seen := map[string]bool{}
 	for _, m := range msgs {
 		for _, tc := range m.ToolCalls {
-			name := strings.TrimSpace(tc.Name)
-			if name == "" || seen[name] {
+			brief := toolCallBrief(tc)
+			if brief == "" || seen[brief] {
 				continue
 			}
-			seen[name] = true
-			out = append(out, name)
+			seen[brief] = true
+			out = append(out, brief)
 		}
 	}
 	return out
+}
+
+// toolCallBriefKeys are the argument names worth showing, in priority order.
+// A tool call's identity lives in one or two of these: for a shell call it is
+// the command, for a search the query, for a grouped tool the action. Ordered
+// rather than alphabetical because "which of these is the interesting one" is
+// a judgement, not a sort.
+var toolCallBriefKeys = []string{
+	"command", "cmd", "script", "query", "q", "url", "path", "file",
+	"action", "prompt", "message", "to", "name", "id",
+}
+
+// toolCallBrief renders one call as "name(salient args)".
+//
+// The names alone were what the cortex card recorded, and "used: shell" tells
+// the owner nothing — the command IS the content of a shell call, and a
+// standing thread reading its own history could not see what it had already
+// done. Two arguments at most and every value clipped: this is a pointer to
+// what happened, in a feed whose whole design rule is pointers rather than
+// bodies.
+func toolCallBrief(tc ToolCall) string {
+	name := strings.TrimSpace(tc.Name)
+	if name == "" {
+		return ""
+	}
+	if len(tc.Args) == 0 {
+		return name
+	}
+	var parts []string
+	used := map[string]bool{}
+	add := func(k string) {
+		v, ok := tc.Args[k]
+		if !ok || len(parts) >= 2 || used[k] {
+			return
+		}
+		if sv := briefArgValue(v); sv != "" {
+			used[k] = true
+			// The key is noise when it is already implied by the tool ("shell",
+			// "command"); keep it when it disambiguates ("action").
+			if k == "command" || k == "cmd" || k == "script" || k == "query" || k == "q" || k == "prompt" {
+				parts = append(parts, sv)
+			} else {
+				parts = append(parts, k+"="+sv)
+			}
+		}
+	}
+	for _, k := range toolCallBriefKeys {
+		add(k)
+	}
+	// Nothing recognized — fall back to a stable pick so the brief is still
+	// more than a bare name.
+	if len(parts) == 0 {
+		keys := make([]string, 0, len(tc.Args))
+		for k := range tc.Args {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			add(k)
+		}
+	}
+	if len(parts) == 0 {
+		return name
+	}
+	return name + "(" + strings.Join(parts, ", ") + ")"
+}
+
+// briefArgValue renders one argument compactly, or "" for something not worth
+// showing (an empty value, or a nested structure that would swamp the line).
+func briefArgValue(v any) string {
+	var s string
+	switch t := v.(type) {
+	case string:
+		s = t
+	case bool, int, int64, float64:
+		s = fmt.Sprint(t)
+	case []any:
+		return fmt.Sprintf("[%d items]", len(t))
+	case map[string]any:
+		return fmt.Sprintf("{%d fields}", len(t))
+	default:
+		return ""
+	}
+	s = strings.Join(strings.Fields(s), " ") // collapse newlines: one card line
+	if s == "" {
+		return ""
+	}
+	const max = 60
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	return s
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

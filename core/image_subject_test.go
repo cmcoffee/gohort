@@ -399,3 +399,113 @@ func TestTwoHandlesAreTwoPeopleHoweverTheySpellIt(t *testing.T) {
 		t.Error("two unnamed subjects are not a known duplicate")
 	}
 }
+
+// Supersession is destructive, so it takes an anchored claim. Naming somebody
+// is not a claim anyone attested — it is a word the sender chose — and letting
+// it delete meant one person could retire everyone else's reference picture by
+// labelling their own uploads with other people's names.
+func TestMaySupersedeSubject(t *testing.T) {
+	craigAnchored := ImageSubject{Person: true, Name: "Craig", Handle: "+15551234"}
+	craigLabel := ImageSubject{Person: true, Name: "Craig"}
+	roryAnchored := ImageSubject{Person: true, Name: "Rory", Handle: "+15559999"}
+	logo := ImageSubject{Name: "logo"}
+
+	for _, tc := range []struct {
+		name               string
+		existing, incoming ImageSubject
+		byOwner            bool
+		want               bool
+	}{
+		{"same person, anchored both sides", craigAnchored, craigAnchored, false, true},
+		{"owner curating a label", craigLabel, craigLabel, true, true},
+		{"non-person subject is not an identity", logo, logo, false, true},
+
+		// The reported bug: an unanchored claim retiring somebody's picture.
+		{"label cannot retire a label", craigLabel, craigLabel, false, false},
+		{"label cannot retire an anchored entry", craigAnchored, craigLabel, false, false},
+		{"anchored cannot retire a label it never attested", craigLabel, craigAnchored, false, false},
+
+		// Different people never supersede regardless — SameSubject already
+		// separates them, but the gate must not undo that.
+		{"different handles", craigAnchored, roryAnchored, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MaySupersedeSubject(tc.existing, tc.incoming, tc.byOwner); got != tc.want {
+				t.Errorf("MaySupersedeSubject = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The reported failure, end to end.
+//
+// The vulnerable pair is LABEL versus LABEL. An anchored entry was never at
+// risk — its key is the handle and a label's is the name, so SameSubject
+// already separated them. What could be clobbered is the far more common case:
+// a picture of someone filed while they were not the one talking (so name-only),
+// which anyone could then retire just by labelling their own upload with that
+// name.
+func TestUnanchoredKeepDoesNotRetireAnothersPicture(t *testing.T) {
+	// Rory is talking. This picture is OF Craig, who is not here, so it is a
+	// label rather than an identification.
+	sess := subjectSession(t, "Rory", "+15559999", false)
+	if _, err := RecordKeep(t, sess, "craig", ResolveKeepSubject(sess, "Craig", true)); err != nil {
+		t.Fatalf("keep craig: %v", err)
+	}
+	if h := SubjectForRef(sess, "craig").Handle; h != "" {
+		t.Fatalf("setup is wrong — this entry must be name-only, got handle %q", h)
+	}
+
+	// Dana now labels HER upload "Craig" too. Same name-only key, so the old
+	// rule matched and deleted. Nothing attested either claim.
+	sess.SpeakerName, sess.SpeakerHandle, sess.SpeakerIsOwner = "Dana", "+15558888", false
+	if _, err := RecordKeep(t, sess, "not_craig", ResolveKeepSubject(sess, "Craig", true)); err != nil {
+		t.Fatalf("keep not_craig: %v", err)
+	}
+
+	names := map[string]bool{}
+	for _, k := range KeptImages(sess) {
+		names[k.Name] = true
+	}
+	if !names["craig"] {
+		t.Error("the existing picture of Craig was retired by somebody else's label — the reported bug")
+	}
+	if !names["not_craig"] {
+		t.Error("the new picture should still be kept, just not as a replacement")
+	}
+}
+
+// The legitimate path must keep working: your own anchored re-keep still
+// replaces, or the library accumulates a row per photo.
+func TestAnchoredReKeepStillSupersedes(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15559999", false)
+	if _, err := RecordKeep(t, sess, "rory_old", ResolveKeepSubject(sess, "Rory", true)); err != nil {
+		t.Fatalf("first keep: %v", err)
+	}
+	if _, err := RecordKeep(t, sess, "rory_new", ResolveKeepSubject(sess, "Rory", true)); err != nil {
+		t.Fatalf("second keep: %v", err)
+	}
+	for _, k := range KeptImages(sess) {
+		if k.Name == "rory_old" {
+			t.Error("an anchored re-keep by the same person should replace the previous picture")
+		}
+	}
+}
+
+// The owner curates: they may retire a label, which is how a mislabelled entry
+// gets corrected without deleting files by hand.
+func TestOwnerMaySupersedeALabel(t *testing.T) {
+	sess := subjectSession(t, "Rory", "+15559999", false)
+	if _, err := RecordKeep(t, sess, "guess", ImageSubject{Person: true, Name: "Dana"}); err != nil {
+		t.Fatalf("label keep: %v", err)
+	}
+	sess.SpeakerName, sess.SpeakerHandle, sess.SpeakerIsOwner = "Craig", "+15551234", true
+	if _, err := RecordKeep(t, sess, "dana", ImageSubject{Person: true, Name: "Dana"}); err != nil {
+		t.Fatalf("owner keep: %v", err)
+	}
+	for _, k := range KeptImages(sess) {
+		if k.Name == "guess" {
+			t.Error("the owner should be able to retire a mislabelled entry")
+		}
+	}
+}

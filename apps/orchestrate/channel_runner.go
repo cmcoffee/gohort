@@ -170,15 +170,49 @@ func channelClaimsClause(speaker string) string {
 // toolsUsedNote renders the tools a turn called for the standing thread.
 // Bounded: a turn that called fifteen things says so without spending fifteen
 // lines of a thread that is kept by rolling summary.
-func toolsUsedNote(names []string) string {
-	if len(names) == 0 {
+// toolsUsedNote renders what a turn actually ran, for the cortex card.
+//
+// The entries are briefs (see toolCallBrief), so they carry the salient
+// argument rather than only the tool name — "used: shell" was unactionable
+// when the command IS the content of the call, and it left the owner unable to
+// say what an agent had done on their behalf.
+//
+// One per line once arguments are present: a comma-joined run of
+// name(arg) briefs is unreadable at three or more, and this card is the only
+// record of the turn's actions.
+func toolsUsedNote(calls []string) string {
+	if len(calls) == 0 {
 		return ""
 	}
 	const max = 8
-	if len(names) <= max {
-		return "↳ used: " + strings.Join(names, ", ")
+	shown, extra := calls, 0
+	if len(calls) > max {
+		shown, extra = calls[:max], len(calls)-max
 	}
-	return fmt.Sprintf("↳ used: %s and %d more", strings.Join(names[:max], ", "), len(names)-max)
+	// No arguments anywhere: the old one-line form is still the clearest.
+	multi := false
+	for _, c := range shown {
+		if strings.Contains(c, "(") {
+			multi = true
+			break
+		}
+	}
+	if !multi {
+		if extra == 0 {
+			return "↳ used: " + strings.Join(shown, ", ")
+		}
+		return fmt.Sprintf("↳ used: %s and %d more", strings.Join(shown, ", "), extra)
+	}
+	var b strings.Builder
+	b.WriteString("↳ ran:")
+	for _, c := range shown {
+		b.WriteString("\n   • ")
+		b.WriteString(c)
+	}
+	if extra > 0 {
+		fmt.Fprintf(&b, "\n   • …and %d more", extra)
+	}
+	return b.String()
 }
 
 func channelObsFrom(in ChannelInbound) string {
@@ -428,6 +462,16 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		text, deliver := channelDelivery(replyText, res.Images, res.Videos, res.Silenced, res.PhantomDelivery)
 		if !deliver {
 			Log("[channel] agent chose silence for owner=%s agent=%s — delivering nothing", in.Owner, in.AgentID)
+			// A silent turn still has to leave a card when it DID something.
+			// Silence is the norm in a group room, and this path returned
+			// before the cortex append below — so a turn that searched the web,
+			// armed a monitor or messaged a third party and then said nothing
+			// left no trace anywhere the owner looks. That is the turn they
+			// most need to see: an action with no reply attached to explain it.
+			if used := toolsUsedNote(res.ToolsUsed); used != "" {
+				obs := strings.TrimSpace(strings.TrimSpace(in.Text) + "\n" + used + "\n↳ stayed silent (nothing sent to the channel)")
+				app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
+			}
 			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
 		}
 		if text != replyText {

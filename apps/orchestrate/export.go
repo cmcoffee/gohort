@@ -252,7 +252,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 		}
 		if m.Role == "assistant" {
 			// Plan snapshot, if any, was indexed by round
-			if p, ok := planByIdx[assistantSeq]; ok && len(p.Steps) > 0 {
+			if p, ok := planByIdx[assistantSeq]; ok && !p.Synthetic && len(p.Steps) > 0 {
 				b.WriteString("**Plan:**\n\n")
 				for _, st := range p.Steps {
 					fmt.Fprintf(&b, "  %d. **%s** — _intent:_ %s\n", st.ID, st.Title, st.Intent)

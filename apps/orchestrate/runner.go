@@ -2570,6 +2570,19 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(toolNames, "workspace") {
 		toolNames = append(toolNames, "workspace")
 	}
+	// The counterpart to a capability the framework grants unilaterally.
+	//
+	// Detaching is the framework's decision, not the agent's: work it started
+	// as one call keeps running after the turn ends whether it chose that or
+	// not. An agent that can start background work without asking must be able
+	// to STOP it without being allowlisted for the privilege, or "actually,
+	// forget the rest" is a sentence it can only apologize to while the results
+	// keep arriving. Force-included like workspace, for the same reason —
+	// deliberately NOT in frameworkUtilityTools, which is reserved for pure
+	// side-effect-free helpers and this is not one.
+	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(toolNames, "background_work") {
+		toolNames = append(toolNames, "background_work")
+	}
 	// Framework utility tools — pure CapRead helpers (calculate, date_math,
 	// time_in_zone) kept always-on so an agent never fails basic math /
 	// dates / timezones just because nobody allowlisted them. Hidden from
@@ -2790,6 +2803,24 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		}
 		// (cortex deliverables — file_deliverable / note_to_cortex — now come from
 		// frameworkConversationalTools, the shared web+channel set.)
+
+		// App-contributed tools (core/agent_tool_providers.go) — servitor's
+		// request_capability + per-machine tools, and whatever the next app
+		// binds. The channel/dispatch path adds these in dispatchExtraTools;
+		// this surface never did, so the SAME agent held its appliance tools
+		// on a channel run but sat empty-handed in its own chat page — where
+		// the owner naturally goes to ask "can you talk to lab-box?".
+		// Deliberately NOT intersected with AllowedTools: the app's own grant
+		// record is the consent (mirrors the agents tool and credential
+		// tools), and the tool-curation UI never lists these names, so an
+		// allowlist agent could not have named them anyway.
+		if appTools := AgentProvidedTools(sess, t.user, t.agent.ID); len(appTools) > 0 {
+			before := len(tools)
+			tools = mergeToolsDedup(tools, appTools)
+			for _, td := range tools[before:] {
+				toolNames = append(toolNames, td.Tool.Name)
+			}
+		}
 	}
 	// Parent-tool inheritance — an owned sub-agent that opted in (InheritParentTools)
 	// resolves its parent's NON-consequential catalog at runtime in addition to
@@ -5049,10 +5080,17 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		sse.Send(map[string]any{"kind": "done"})
 		return
 	}
+	// syntheticPlan marks the degenerate case: there IS no plan, and the step
+	// below exists only so the pipeline still produces a worker output. It must
+	// not RENDER as a plan — a turn that decided "no plan needed" and then
+	// displays "Plan: 1. Respond directly" is pure ceremony, and it is the
+	// first thing a user sees on a turn that was meant to be a direct answer.
+	syntheticPlan := false
 	if len(steps) == 0 {
 		// Degenerate: orchestrator chose neither to plan nor to ask.
 		// Run a single pseudo-step "Respond" so the flow still
 		// produces a worker output and a synthesis reply.
+		syntheticPlan = true
 		turn.emitStatus("No plan needed — direct response.")
 		steps = []PlanStep{{ID: 1, Title: "Respond directly", Status: StepPending}}
 	} else {
@@ -5064,6 +5102,11 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// dispatcher routes the repeat into the renderer's onUpdate.
 	roundIdx := len(sess.Plans)
 	blockID := planBlockID(sess.ID, roundIdx)
+	if syntheticPlan {
+		// Empty id = every emitPlanBlock call this round is a no-op, including
+		// the per-step transition re-emits further down.
+		blockID = ""
+	}
 	emitPlanBlock(sse, blockID, steps)
 
 	// --- Per-step worker execution ---
@@ -5237,6 +5280,7 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	sess.Plans = append(sess.Plans, PlanSnapshot{
 		RoundIndex: len(sess.Plans),
 		Steps:      steps,
+		Synthetic:  syntheticPlan,
 	})
 	_, _ = saveChatSession(udb, sess)
 
@@ -7220,8 +7264,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// model call. See grounding_judge.go.
 		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
 		UncheckedClaims:    UncheckedFactNotes(t.facts()),
-		DeliveredCount: func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
-		Backgrounded:   func() bool { return sess.Detach.Any() },
+		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
+		Backgrounded:       func() bool { return sess.Detach.Any() },
 		// Catch a reply that presents a picture the turn never produced, while
 		// the loop can still do something about it. The dispatch path has had
 		// this since the phantom-delivery work; interactive chat never did, so
@@ -7904,8 +7948,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// model call. See grounding_judge.go.
 		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
 		UncheckedClaims:    UncheckedFactNotes(t.facts()),
-		DeliveredCount: func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
-		Backgrounded:   func() bool { return sess.Detach.Any() },
+		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
+		Backgrounded:       func() bool { return sess.Detach.Any() },
 		// Worker-step corrections breadcrumb into the same session trail as
 		// the orchestrator loop — a silent re-prompt during a plan step is
 		// still a framework decision the user should be able to see.
@@ -8442,6 +8486,15 @@ func planBlockID(sessionID string, roundIdx int) string {
 // is NOT shipped to the renderer — findings is the visible result;
 // drill-down lives in the activity pane.
 func emitPlanBlock(sse *sseWriter, blockID string, steps []PlanStep) {
+	// An empty block id means this round has no plan worth showing — the
+	// degenerate "Respond directly" pseudo-step (see the synthesis below).
+	// Gating here rather than at each of the nine call sites, which re-emit
+	// the same block on every step transition: one of them would eventually
+	// be missed, and a plan that appears halfway through a turn is worse than
+	// one that never appears.
+	if blockID == "" {
+		return
+	}
 	items := make([]map[string]any, 0, len(steps))
 	for _, s := range steps {
 		item := map[string]any{

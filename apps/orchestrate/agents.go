@@ -1019,6 +1019,24 @@ func isSeedID(id string) bool {
 	return ok
 }
 
+// fleetHidden reports an agent that must not appear on ANY discovery surface —
+// not a picker, not a dispatch list, and not the Builder's survey.
+//
+// Four separate reasons converge on the same answer, and they had been spelled
+// out inline at each call site with different subsets: some checked all four,
+// the dispatch-discovery paths checked only the two seed predicates. That is
+// how a Hidden app agent (the Servitor Investigator, a per-appliance TEMPLATE)
+// and the retired Chat / Research / Knowledge Base seeds all turned up in a
+// survey of the fleet, presented to the Builder as things it could reuse or
+// dispatch to.
+//
+// One predicate so the answer cannot differ by surface. Contextual exclusions
+// (self, Builder) stay at their call sites — those depend on who is asking.
+func fleetHidden(id string) bool {
+	return hiddenAppAgent(id) || isCloneOnlySeed(id) ||
+		isFleetRetiredSeed(id) || isRetiringArchetypeSeed(id)
+}
+
 // isFleetRetiredSeed reports a framework seed that is structurally OUT of the
 // agent-to-agent dispatch surface as well as the user pickers — nothing lists
 // it, gets it, or runs it, and an unhidden shadow or an explicit dispatch
@@ -1745,6 +1763,20 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
 		agents := listAgents(udb, user)
+		// Hidden app agents and clone-only templates are app/framework internals
+		// on EVERY form of this endpoint — the bare list feeds the channel
+		// re-point dropdown, and offering the Servitor Investigator there let a
+		// channel be pointed at an agent no user is meant to reach.
+		{
+			kept := agents[:0]
+			for _, a := range agents {
+				if hiddenAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+					continue
+				}
+				kept = append(kept, a)
+			}
+			agents = kept
+		}
 		// role=dispatch-target scopes the list to agents that can actually be
 		// dispatch TARGETS — for the editor's "Dispatch target list" picker.
 		// Drops what agents(action="run") would refuse anyway: Builder (never

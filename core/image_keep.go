@@ -250,8 +250,17 @@ func KeepImageOf(sess *ToolSession, ref, name, note string, subject ImageSubject
 		// person. Collected now, deleted only once the new one is safely
 		// written — losing the only headshot to a failed write would be the
 		// worst possible outcome of an operation whose point is to have one.
+		//
+		// Gated on MaySupersedeSubject: matching the subject is not enough to
+		// DELETE one, because a name-only match is just a word anyone can type.
+		// An unanchored claim keeps both and lets the duplicate be reported.
 		if subject.Named() && SameSubject(k.Subject, subject) {
-			superseded = append(superseded, k.Name)
+			if MaySupersedeSubject(k.Subject, subject, sess != nil && sess.SpeakerIsOwner) {
+				superseded = append(superseded, k.Name)
+			} else {
+				Log("[image_keep] %q kept alongside %q: a name-only claim does not retire the picture of %s",
+					clean, k.Name, SubjectLabel(k.Subject))
+			}
 		}
 	}
 	if !held && len(existing) >= keptImageLimit {

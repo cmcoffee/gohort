@@ -1098,6 +1098,13 @@ type ChatMessageUsage struct {
 type PlanSnapshot struct {
 	RoundIndex int        `json:"round_index"`
 	Steps      []PlanStep `json:"steps"`
+	// Synthetic marks the placeholder plan the runner creates when the
+	// orchestrator neither planned nor asked — a single "Respond directly"
+	// step that exists so the pipeline still yields a worker output. It is
+	// STORED (dropping it would misalign RoundIndex for every later plan)
+	// but never rendered: showing a one-step plan for a direct answer is
+	// ceremony, and the status line already said "no plan needed".
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 // PlanStep is one item in a plan. Status flips pending → in_progress

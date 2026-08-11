@@ -27,10 +27,23 @@ const (
 )
 
 // anthropicClient implements the LLM interface for the Anthropic Messages API.
+//
+// The same client serves AWS Bedrock, which fronts the identical Messages API
+// under a path prefix with its own auth: see llm_bedrock.go, which sets
+// pathPrefix and swaps api.AuthFunc and leaves everything else here alone.
 type anthropicClient struct {
 	apiKey string
 	model  string
 	api    *apiclient.APIClient
+	// pathPrefix sits in front of /v1/messages. Empty for api.anthropic.com;
+	// "/anthropic" for Bedrock.
+	pathPrefix string
+	// hoistSystem folds system-role turns out of the message list. Bedrock
+	// rejects them on BOTH its endpoints ("use the top-level 'system'
+	// parameter"), while the first-party API accepts them mid-conversation on
+	// current models and gohort relies on that — so this is opt-in per client
+	// rather than a change to the shared builder.
+	hoistSystem bool
 }
 
 // NewAnthropicLLM creates an LLM client for Anthropic (Claude) using the default HTTP client.
@@ -104,6 +117,7 @@ type anthMessage struct {
 type anthContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
+	PartialJSON  string          `json:"partial_json,omitempty"` // streamed tool args; NOT Text — see anthStreamState.feed
 	ID           string          `json:"id,omitempty"`
 	Name         string          `json:"name,omitempty"`
 	Input        json.RawMessage `json:"input,omitempty"`
@@ -183,9 +197,10 @@ func snoopAnthResponse(statusCode int, body []byte) {
 
 func (c *anthropicClient) doRequest(ctx context.Context, body []byte, stream bool) (*http.Response, error) {
 	c.snoopRequest(body, stream)
-	Debug("[anthropic]: Sending request to %s/v1/messages (stream=%v)", c.api.Server, stream)
+	path := c.pathPrefix + "/v1/messages"
+	Debug("[anthropic]: Sending request to %s%s (stream=%v)", c.api.Server, path, stream)
 
-	req, err := c.api.NewRequestWithContext(ctx, "POST", "/v1/messages")
+	req, err := c.api.NewRequestWithContext(ctx, "POST", path)
 	if err != nil {
 		return nil, err
 	}
@@ -330,10 +345,19 @@ func parseAnthResponse(result anthResponse) *Response {
 		case "text":
 			text.WriteString(block.Text)
 		case "tool_use":
-			args := make(map[string]any)
-			var raw map[string]interface{}
-			if json.Unmarshal(block.Input, &raw) == nil {
-				args = parseToolArgs(raw)
+			args, err := decodeToolInput(block.Input)
+			if err != nil {
+				// Loud, because the tool is about to be called with nothing and
+				// will answer with its usage spec — which reads like success.
+				Warn("[anthropic]: tool %q: %v", block.Name, err)
+			}
+			// The raw input, whenever the decode produced nothing. An empty
+			// argument map is indistinguishable downstream from a model that
+			// meant to send none, and it is the shape that turns a grouped
+			// tool into a usage-spec loop — so record what actually arrived.
+			if len(args) == 0 {
+				Debug("[anthropic]: tool %q called with NO arguments; raw input was: %s",
+					block.Name, truncateRunes(string(block.Input), 300))
 			}
 			toolCalls = append(toolCalls, ToolCall{
 				ID:   block.ID,
@@ -379,6 +403,12 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 		}
 	}
 
+	if c.hoistSystem {
+		var lead string
+		if lead, messages = hoistSystemMessages(messages); lead != "" {
+			systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + lead)
+		}
+	}
 	msgs, err := buildAnthMessages(messages)
 	if err != nil {
 		return nil, err
@@ -431,6 +461,205 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	return r, nil
 }
 
+// decodeToolInput turns a tool_use block's input into arguments.
+//
+// It exists because the failure it replaces was silent and expensive. The old
+// code was `if json.Unmarshal(...) == nil { args = ... }` — an unparseable
+// input left an EMPTY map and said nothing, so the model's carefully
+// constructed call arrived at the tool with no arguments at all. For a grouped
+// tool that means no "action", which answers with its usage spec; the model
+// reads a long successful-looking result, learns nothing, and calls again.
+// Observed as an entire turn of archetype({}) / collections({}) / agents({})
+// returning help text on repeat.
+//
+// Two shapes are accepted. The object form is what the API documents. The
+// string form — input carrying JSON as a string — turns up in provider
+// variations, and unwrapping it costs one type switch versus losing every
+// argument. Anything else is an ERROR the caller must surface rather than
+// silently degrade into a bare call.
+func decodeToolInput(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 {
+		return map[string]any{}, nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return parseToolArgs(obj), nil
+	}
+	// String-encoded JSON: unwrap once and retry.
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		if strings.TrimSpace(asString) == "" {
+			return map[string]any{}, nil
+		}
+		if err := json.Unmarshal([]byte(asString), &obj); err == nil {
+			return parseToolArgs(obj), nil
+		}
+	}
+	return map[string]any{}, fmt.Errorf("tool arguments could not be decoded: %s", truncateRunes(string(raw), 200))
+}
+
+// anthStreamState accumulates a streamed Anthropic response event by event.
+//
+// Extracted from ChatStream so a second transport can reuse it: Bedrock's
+// InvokeModel streaming endpoint delivers the SAME event JSON, just wrapped in
+// AWS's binary event-stream framing instead of SSE (see
+// llm_bedrock_eventstream.go). Duplicating this switch was the alternative,
+// and the two copies would have drifted the first time a block type changed.
+type anthStreamState struct {
+	handler StreamHandler
+
+	textContent  strings.Builder
+	model        string
+	inputTokens  int
+	outputTokens int
+	stopReason   string
+	toolCalls    []ToolCall
+
+	// blocks tracks in-flight content blocks by index, for tool_use assembly
+	// (a tool call's arguments arrive as partial JSON across many deltas).
+	blocks []anthBlockState
+}
+
+type anthBlockState struct {
+	blockType string
+	id        string
+	name      string
+	inputBuf  strings.Builder
+}
+
+// feed applies one event's JSON. Unparseable events are skipped rather than
+// failing the stream: a single malformed frame should not discard a response
+// that is otherwise arriving fine.
+func (a *anthStreamState) feed(data []byte) {
+	var event anthStreamEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return
+	}
+
+	switch event.Type {
+	case "message_start":
+		if event.Message != nil {
+			a.model = event.Message.Model
+			a.inputTokens = event.Message.Usage.InputTokens
+		}
+	case "content_block_start":
+		if event.ContentBlock == nil {
+			Debug("[anthropic]: content_block_start at index %d carried no content_block — any tool input for this block will be dropped", event.Index)
+		}
+		if event.ContentBlock != nil {
+			if event.ContentBlock.Type != "text" && event.ContentBlock.Type != "tool_use" {
+				Debug("[anthropic]: content_block_start index=%d type=%q (not text/tool_use) — deltas for it are ignored",
+					event.Index, event.ContentBlock.Type)
+			}
+			bs := anthBlockState{blockType: event.ContentBlock.Type}
+			if event.ContentBlock.Type == "tool_use" {
+				bs.id = event.ContentBlock.ID
+				bs.name = event.ContentBlock.Name
+			}
+			for len(a.blocks) <= event.Index {
+				a.blocks = append(a.blocks, anthBlockState{})
+			}
+			a.blocks[event.Index] = bs
+		}
+	case "content_block_delta":
+		if event.Delta != nil {
+			if event.Index < len(a.blocks) {
+				bs := &a.blocks[event.Index]
+				switch bs.blockType {
+				case "text":
+					if event.Delta.Text != "" {
+						a.textContent.WriteString(event.Delta.Text)
+						if a.handler != nil {
+							a.handler(event.Delta.Text)
+						}
+					}
+				case "tool_use":
+					if event.Delta.Type == "input_json_delta" {
+						// A streamed tool call's arguments arrive as fragments
+						// across many input_json_delta events, in partial_json
+						// — a SEPARATE wire field from text. This read text,
+						// which is always empty on those events, so every
+						// streamed tool call arrived correctly named with NO
+						// arguments and every tool answered "required
+						// parameter missing". That reads as the model failing
+						// to send arguments rather than the client failing to
+						// read them, and it cost a long evening.
+						//
+						// Text is kept as a fallback only because a provider
+						// that put the fragment there would otherwise fail
+						// exactly as silently.
+						if frag := event.Delta.PartialJSON; frag != "" {
+							bs.inputBuf.WriteString(frag)
+						} else if event.Delta.Text != "" {
+							bs.inputBuf.WriteString(event.Delta.Text)
+						}
+					}
+				}
+			} else if event.Delta.Text != "" {
+				// Fallback for simple text deltas without content_block_start.
+				a.textContent.WriteString(event.Delta.Text)
+				if a.handler != nil {
+					a.handler(event.Delta.Text)
+				}
+			}
+		}
+	case "content_block_stop":
+		if event.Index < len(a.blocks) {
+			bs := &a.blocks[event.Index]
+			if bs.blockType == "tool_use" {
+				args, err := decodeToolInput(json.RawMessage(bs.inputBuf.String()))
+				if err != nil {
+					Warn("[anthropic]: tool %q: %v", bs.name, err)
+				}
+				if len(args) == 0 {
+					// blockType matters: input_json_delta is only accumulated
+					// for a block marked "tool_use", so a content_block_start
+					// whose shape this misses drops every argument while text
+					// keeps working perfectly — indistinguishable downstream
+					// from a model that sent nothing.
+					Debug("[anthropic]: tool %q called with NO arguments; blockType=%q accumulated=%q",
+						bs.name, bs.blockType, truncateRunes(bs.inputBuf.String(), 300))
+				}
+				a.toolCalls = append(a.toolCalls, ToolCall{ID: bs.id, Name: bs.name, Args: args})
+			}
+		}
+	case "message_delta":
+		if event.Usage != nil {
+			a.outputTokens = event.Usage.OutputTokens
+		}
+		// Terminal stop reason is delivered here on the stream. Without
+		// capturing it, a refusal or a max_tokens truncation is invisible
+		// (it arrives as an assistant turn with no tool calls).
+		if event.Delta != nil && event.Delta.StopReason != "" {
+			a.stopReason = event.Delta.StopReason
+		}
+	}
+}
+
+// response materializes the accumulated state, emitting the same trace lines
+// both transports relied on.
+func (a *anthStreamState) response(tag string) *Response {
+	Debug("[%s]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d",
+		tag, a.model, a.inputTokens, a.outputTokens, len(a.toolCalls))
+	Trace("<-- STREAM COMPLETE: model=%s input_tokens=%d output_tokens=%d", a.model, a.inputTokens, a.outputTokens)
+	if a.textContent.Len() > 0 {
+		Trace("<-- RESPONSE TEXT:\n%s", a.textContent.String())
+	}
+	for _, tc := range a.toolCalls {
+		argsJSON, _ := json.Marshal(tc.Args)
+		Trace("<-- TOOL CALL: id=%s name=%s args=%s", tc.ID, tc.Name, string(argsJSON))
+	}
+	warnStopReason(a.stopReason)
+	return &Response{
+		Content:      a.textContent.String(),
+		ToolCalls:    a.toolCalls,
+		Model:        a.model,
+		InputTokens:  a.inputTokens,
+		OutputTokens: a.outputTokens,
+		StopReason:   a.stopReason,
+	}
+}
+
 // ChatStream sends a streaming request.
 func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, anthDefaultStreamMaxTokens, opts)
@@ -445,6 +674,12 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		}
 	}
 
+	if c.hoistSystem {
+		var lead string
+		if lead, messages = hoistSystemMessages(messages); lead != "" {
+			systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + lead)
+		}
+	}
 	msgs, err := buildAnthMessages(messages)
 	if err != nil {
 		return nil, err
@@ -481,20 +716,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"}
 	}
 
-	var textContent strings.Builder
-	var model string
-	var inputTokens, outputTokens int
-	var stopReason string
-	var toolCalls []ToolCall
-
-	// Track current content block for tool_use assembly.
-	type blockState struct {
-		blockType string
-		id        string
-		name      string
-		inputBuf  strings.Builder
-	}
-	var currentBlocks []blockState
+	st := &anthStreamState{handler: handler}
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Default Scanner caps a line at 64KB; a single large SSE `data:` line
@@ -505,108 +727,11 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
-
-		var event anthStreamEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-
-		switch event.Type {
-		case "message_start":
-			if event.Message != nil {
-				model = event.Message.Model
-				inputTokens = event.Message.Usage.InputTokens
-			}
-		case "content_block_start":
-			if event.ContentBlock != nil {
-				bs := blockState{blockType: event.ContentBlock.Type}
-				if event.ContentBlock.Type == "tool_use" {
-					bs.id = event.ContentBlock.ID
-					bs.name = event.ContentBlock.Name
-				}
-				// Grow slice to accommodate index.
-				for len(currentBlocks) <= event.Index {
-					currentBlocks = append(currentBlocks, blockState{})
-				}
-				currentBlocks[event.Index] = bs
-			}
-		case "content_block_delta":
-			if event.Delta != nil {
-				if event.Index < len(currentBlocks) {
-					bs := &currentBlocks[event.Index]
-					switch bs.blockType {
-					case "text":
-						if event.Delta.Text != "" {
-							textContent.WriteString(event.Delta.Text)
-							if handler != nil {
-								handler(event.Delta.Text)
-							}
-						}
-					case "tool_use":
-						// input_json_delta: delta contains partial JSON.
-						if event.Delta.Type == "input_json_delta" && event.Delta.Text != "" {
-							bs.inputBuf.WriteString(event.Delta.Text)
-						}
-					}
-				} else if event.Delta.Text != "" {
-					// Fallback for simple text deltas without content_block_start.
-					textContent.WriteString(event.Delta.Text)
-					if handler != nil {
-						handler(event.Delta.Text)
-					}
-				}
-			}
-		case "content_block_stop":
-			if event.Index < len(currentBlocks) {
-				bs := &currentBlocks[event.Index]
-				if bs.blockType == "tool_use" {
-					args := make(map[string]any)
-					var raw map[string]interface{}
-					if json.Unmarshal([]byte(bs.inputBuf.String()), &raw) == nil {
-						args = parseToolArgs(raw)
-					}
-					toolCalls = append(toolCalls, ToolCall{
-						ID:   bs.id,
-						Name: bs.name,
-						Args: args,
-					})
-				}
-			}
-		case "message_delta":
-			if event.Usage != nil {
-				outputTokens = event.Usage.OutputTokens
-			}
-			// Terminal stop reason is delivered here on the stream. Without
-			// capturing it, a refusal or a max_tokens truncation is invisible
-			// (it arrives as an assistant turn with no tool calls).
-			if event.Delta != nil && event.Delta.StopReason != "" {
-				stopReason = event.Delta.StopReason
-			}
-		}
+		st.feed([]byte(strings.TrimPrefix(line, "data: ")))
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("stream read error: %w", err)
 	}
-
-	Debug("[anthropic]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d", model, inputTokens, outputTokens, len(toolCalls))
-	Trace("<-- STREAM COMPLETE: model=%s input_tokens=%d output_tokens=%d", model, inputTokens, outputTokens)
-	if textContent.Len() > 0 {
-		Trace("<-- RESPONSE TEXT:\n%s", textContent.String())
-	}
-	for _, tc := range toolCalls {
-		argsJSON, _ := json.Marshal(tc.Args)
-		Trace("<-- TOOL CALL: id=%s name=%s args=%s", tc.ID, tc.Name, string(argsJSON))
-	}
-
-	warnStopReason(stopReason)
-	return &Response{
-		Content:      textContent.String(),
-		ToolCalls:    toolCalls,
-		Model:        model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		StopReason:   stopReason,
-	}, nil
+	return st.response("anthropic"), nil
 }

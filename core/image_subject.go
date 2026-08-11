@@ -74,6 +74,45 @@ func SameSubject(a, b ImageSubject) bool {
 	return ka != "" && ka == kb
 }
 
+// MaySupersedeSubject reports whether a keep is allowed to RETIRE the picture
+// it collides with, as opposed to merely sitting alongside it.
+//
+// SameSubject decides whether two entries are the same subject. This decides
+// whether the claim is strong enough to delete, and the two are not the same
+// question. A name-only subject is a label, not an identification — the name
+// came from whoever was typing — so two of them match each other on nothing
+// more than a word anyone can say. Letting that match delete meant a person
+// could retire someone else's reference picture just by naming them, which is
+// the same failure the speaker grounding exists to prevent: an identity claim
+// that nothing outside the message attests to.
+//
+// So supersession requires one of:
+//
+//   - An ANCHORED claim: the incoming subject carries a handle matching the
+//     existing entry's. The transport attested it, so this is definitively the
+//     same person replacing their own picture.
+//   - The OWNER speaking. Curating the library is their job, and they are the
+//     one identity the session establishes independently of anything claimed
+//     in the message.
+//
+// Nothing else supersedes. The loser is not lost, it is kept alongside, and
+// SubjectCollisions surfaces the pair as duplicates — a visible duplicate is a
+// far better outcome than a silently deleted headshot.
+//
+// Only IDENTITY is protected. When neither side is a person there is nobody to
+// impersonate, so "the logo" keeps replacing "the logo" as it always did.
+func MaySupersedeSubject(existing, incoming ImageSubject, byOwner bool) bool {
+	if !existing.Person && !incoming.Person {
+		return true
+	}
+	if byOwner {
+		return true
+	}
+	hi := strings.TrimSpace(incoming.Handle)
+	he := strings.TrimSpace(existing.Handle)
+	return hi != "" && he != "" && strings.EqualFold(hi, he)
+}
+
 // SubjectLabel is how a subject reads in a manifest: the name when there is
 // one, else the handle, so an entry kept from a number nobody has named is
 // still addressable rather than blank.

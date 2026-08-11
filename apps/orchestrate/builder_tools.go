@@ -639,7 +639,17 @@ func surveyWorkspace(owner string) string {
 		}
 	}
 
-	agents := listAgents(udb, owner)
+	// Retired seeds and hidden app templates are NOT part of the fleet a
+	// builder should reuse or dispatch to. Surveying them invites exactly the
+	// wrong move: an agent proposing to delegate to Chat, or to build on a
+	// per-appliance template that is not addressable.
+	agents := make([]AgentRecord, 0, len(listAgents(udb, owner)))
+	for _, a := range listAgents(udb, owner) {
+		if fleetHidden(a.ID) {
+			continue
+		}
+		agents = append(agents, a)
+	}
 	section("AGENTS", len(agents))
 	for i, a := range agents {
 		if i >= cap {

@@ -162,7 +162,13 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 					// were in — so the destination is its own row on the
 					// monitor rather than a page that does not exist.
 					URL: "/monitor?run=" + url.QueryEscape(s.ID),
-					Order: 100 + i, // after in-view app tasks (default 0), preserving tree order
+					// And a way to STOP it. The endpoint has existed all along,
+					// ownership-checked, with a live cancel func behind it —
+					// nothing ever called it, so a fifteen-minute render or a
+					// four-piece set the user had changed their mind about had
+					// no off switch but waiting.
+					CancelURL: "/orchestrate/api/runs/" + url.PathEscape(s.ID) + "/cancel",
+					Order:     100 + i, // after in-view app tasks (default 0), preserving tree order
 					// The label is truncateObs(the user's message) —
 					// /api/live masks it for every viewer but this owner.
 					Owner: s.UserID,
@@ -454,6 +460,11 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 		opts = append(opts, opt{Value: "__default__", Label: "Default agent (recommended)"})
 	}
 	for _, a := range listAgents(UserDB(T.DB, user), user) {
+		// Relink targets are things a person may point work at: hidden
+		// app-internal agents, clone-only templates, and retired seeds are not.
+		if fleetHidden(a.ID) {
+			continue
+		}
 		label := strings.TrimSpace(a.Name)
 		if label == "" {
 			label = a.ID
@@ -2103,14 +2114,28 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		Requested string `json:"Requested,omitempty"`
 		ID        string `json:"_id"`
 		Pending   bool   `json:"_pending,omitempty"`
-		Managed   bool   `json:"_managed,omitempty"`  // a standing policy row (segmented control + Remove)
-		Policy    string `json:"_policy,omitempty"`   // allow | ask | block (the segmented state)
-		OneShot   bool   `json:"_oneshot,omitempty"`  // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
+		Managed   bool   `json:"_managed,omitempty"`    // a standing policy row (segmented control + Remove)
+		Policy    string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
+		OneShot   bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
+		Suggested bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
 	}
 	out := []permRow{}
-	// Zone 1 — live pending requests (a decision is blocked on the user).
+	// Zone 1 — live pending requests (a decision is blocked on the user), then
+	// Zone 1b — suggestions. Both come out of the Authorizations store, but only
+	// the first kind is holding anything up, so they are collected separately:
+	// requests stay on top and own the rail badge, offers sit below them and are
+	// counted nowhere. Mixing them made routine curation look like a permission.
+	var suggested []permRow
 	for _, a := range ListAuthorizations(RootDB, user) {
 		who, detail := approvalDisplay(udb, user, a)
+		if approvalIsSuggestion(a.Action) {
+			suggested = append(suggested, permRow{
+				Who: who, Detail: detail, Status: "Suggested",
+				Requested: a.Requested.Local().Format("Jan 2 3:04 PM"),
+				ID:        a.ID, Suggested: true,
+			})
+			continue
+		}
 		out = append(out, permRow{
 			Who: who, Detail: detail, Status: "Pending",
 			Requested: a.Requested.Local().Format("Jan 2 3:04 PM"),
@@ -2121,6 +2146,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 			OneShot: a.Action == "activate_sub_agent",
 		})
 	}
+	out = append(out, suggested...)
 	// Zone 2 — standing permission policy per subject (Always allow / Needs
 	// approval / Blocked, + Remove).
 	for _, e := range ListDelegationPolicies(RootDB, user) {

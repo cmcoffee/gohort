@@ -42,19 +42,26 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// (cross-device) and forward to the /agents directory when other
 	// users' agents are shared with them, else fall through to the
 	// normal surface.
+	// Redirect targets are built from WebPrefix() rather than written
+	// relative. The app is mounted with http.StripPrefix, so by the time a
+	// handler runs, r.URL.Path has already lost the mount prefix — a relative
+	// target like "agent/wizard" resolves against "/" and sends the browser to
+	// the SERVER root, which 404s whenever the app is mounted anywhere but
+	// root. It only ever worked in standalone mode, where the prefix is empty.
+	// ("/agents" below is genuinely root-absolute: that is a different app.)
 	q := r.URL.Query()
 	if q.Get("skip_first_run") == "1" {
 		AuthSetFirstRunDismissed(AuthDB(), user, true)
 		if T.hasSharedReachableAgents(r, user) {
 			http.Redirect(w, r, "/agents", http.StatusFound)
 		} else {
-			http.Redirect(w, r, ".", http.StatusFound)
+			http.Redirect(w, r, T.WebPrefix()+"/", http.StatusFound)
 		}
 		return
 	}
 	if needsFirstRunSetup(agents, user) && q.Get("agent") == "" && q.Get("session") == "" &&
 		!AuthGetFirstRunDismissed(AuthDB(), user) {
-		http.Redirect(w, r, "agent/wizard?kind=assistant&first_run=1", http.StatusFound)
+		http.Redirect(w, r, T.WebPrefix()+"/agent/wizard?kind=assistant&first_run=1", http.StatusFound)
 		return
 	}
 	// Grouped picker options (Built-in / Conversation Agents / Specialized
@@ -315,6 +322,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_oneshot", Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
 								{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_pending", HideIf: "_oneshot", Confirm: "Approve and run this once?"},
 								{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_pending", HideIf: "_oneshot", Confirm: "Approve, run, and always allow this in future?"},
+								// Suggestions (_suggestion) are offers, not requests —
+								// nothing is blocked on them and the tool already works.
+								// They reuse the same resolve endpoints but never borrow
+								// approval verbs: "Deny" would imply a refusal that isn't
+								// happening, and neither button is destructive enough to
+								// need a Confirm.
+								{Label: "Scope it", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_suggestion"},
+								{Label: "Dismiss", Method: "POST", URL: "api/console/approvals/deny", OnlyIf: "_suggestion"},
 								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
 							}},
 						{Label: "Compact Cortex", ActionURL: "api/console/channel/compact",

@@ -248,6 +248,7 @@ type (
 	ChannelLine          = messaging.ChannelLine
 	ChannelMember        = messaging.ChannelMember
 	ChannelThreads       = messaging.ChannelThreads
+	ChannelSearcher      = messaging.ChannelSearcher
 )
 
 var (
@@ -334,6 +335,7 @@ var (
 	IsAdminAllowed        = netgate.IsAdminAllowed
 	IsLoopbackRequest     = netgate.IsLoopbackRequest
 	IsGenuineLocalRequest = netgate.IsGenuineLocalRequest
+	IsBrowserRequest      = netgate.IsBrowserRequest
 	// Exported on the way out: core's auth + webapp call it 8 times.
 	ClientIP = netgate.ClientIP
 

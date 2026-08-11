@@ -25,63 +25,6 @@ import (
 // (0 = unlimited / no ceiling).
 const DEFAULT_THINKING_BUDGET = 4096
 
-// browseModels queries the provider's API for available models and presents
-// a selection menu. Sets *target to the chosen model name.
-func browseModels(provider, apiKey, endpoint string, target *string) bool {
-	var models []string
-	var err error
-
-	switch provider {
-	case "ollama":
-		ep := endpoint
-		if ep == "" {
-			ep = "http://localhost:11434"
-		}
-		models, err = OllamaModels(ep)
-	case "llama.cpp":
-		ep := endpoint
-		if ep == "" {
-			ep = "http://localhost:8080/v1"
-		}
-		models, err = LlamaCppModels(ep)
-	case "openai":
-		if apiKey == "" {
-			Stderr("\n  Set API Key first.\n")
-			return false
-		}
-		models, err = OpenAIModels(apiKey)
-	case "gemini":
-		if apiKey == "" {
-			Stderr("\n  Set API Key first.\n")
-			return false
-		}
-		models, err = GeminiModels(apiKey)
-	default:
-		Stderr("\n  Model browsing not available for %s.\n", provider)
-		return false
-	}
-
-	if err != nil {
-		Stderr("\n  Failed to query %s: %s\n", provider, err)
-		return false
-	}
-	if len(models) == 0 {
-		Stderr("\n  No models found.\n")
-		return false
-	}
-
-	sel := NewOptions(" [Select Model] ", "(selection or 'q' to cancel)", 'q')
-	for _, m := range models {
-		name := m
-		sel.Func(name, func() bool {
-			*target = name
-			return true
-		})
-	}
-	sel.Select(false)
-	return true
-}
-
 // dbCFG is a zero-value accessor for all persistent configuration stored in
 // global.db. Callers use the package-level dbcfg variable; no initialization
 // required. Adding a new config field means one new method here, not a new
@@ -96,6 +39,9 @@ func (d dbCFG) llm() LLMProviderConfig {
 	global.db.Get(LLMTable, "model", &c.Model)
 	global.db.Get(LLMTable, "api_key", &c.APIKey)
 	global.db.Get(LLMTable, "endpoint", &c.Endpoint)
+	global.db.Get(LLMTable, "aws_region", &c.Region)
+	global.db.Get(LLMTable, "aws_profile", &c.Profile)
+	global.db.Get(LLMTable, "bedrock_api", &c.BedrockAPI)
 	global.db.Get(LLMTable, "context_size", &c.ContextSize)
 	global.db.Get(LLMTable, "disable_thinking", &c.DisableThinking)
 	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
@@ -118,6 +64,9 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	global.db.Get(LeadLLMTable, "model", &c.Model)
 	global.db.Get(LeadLLMTable, "api_key", &c.APIKey)
 	global.db.Get(LeadLLMTable, "endpoint", &c.Endpoint)
+	global.db.Get(LeadLLMTable, "aws_region", &c.Region)
+	global.db.Get(LeadLLMTable, "aws_profile", &c.Profile)
+	global.db.Get(LeadLLMTable, "bedrock_api", &c.BedrockAPI)
 	global.db.Get(LeadLLMTable, "disable_thinking", &c.DisableThinking)
 	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
 	global.db.Get(LeadLLMTable, "thinking_budget", &c.ThinkingBudget)
@@ -176,6 +125,18 @@ func reloadSharedLLMs() error {
 		}
 	}
 	SetSharedLLMs(worker, lead)
+	// Recompute the tool-calling mode from the CONFIG THAT JUST LOADED. Without
+	// this the process kept whatever mode it booted with, so turning "Native
+	// tool calling" on in the admin UI rebuilt the LLM and changed nothing —
+	// every call still went out prompt-parsed, arriving at tools with the name
+	// recovered and the arguments dropped.
+	promptTools := !cfg.NativeTools && !ProviderHasNativeTools(cfg.Provider)
+	if prev, ok := PromptToolsMode(); !ok || prev != promptTools {
+		Log("[llm] tool-calling mode is now %s (provider=%s native_tools=%v)",
+			map[bool]string{true: "prompt-parsed", false: "native"}[promptTools],
+			cfg.Provider, cfg.NativeTools)
+	}
+	SetPromptToolsMode(promptTools)
 	Log("[llm] reloaded shared LLMs (worker=%s/%s)", cfg.Provider, cfg.Model)
 	return nil
 }
@@ -249,20 +210,6 @@ func (d dbCFG) openAIAPIKey() string {
 }
 
 // setup_fuzz runs the interactive configuration.
-// quickstartDefaultEndpoint returns the conventional local endpoint for a
-// self-hosted provider, so the express setup can pre-fill it and the operator
-// usually just hits enter. Cloud providers authenticate by key, not endpoint,
-// so they return "".
-func quickstartDefaultEndpoint(provider string) string {
-	switch provider {
-	case "ollama":
-		return "http://localhost:11434"
-	case "llama.cpp":
-		return "http://localhost:8080/v1"
-	}
-	return ""
-}
-
 // inputWithDefault prompts for a value, showing the default in brackets and
 // returning it when the operator just presses enter. Keeps the express setup
 // to "hit enter to accept" for the common case.
@@ -278,97 +225,36 @@ func inputWithDefault(prompt, def string) string {
 	return def
 }
 
-// quickstartProvider presents the provider picker and returns the chosen name,
-// or "" if the operator quit (skip LLM setup for now).
-func quickstartProvider() string {
-	var chosen string
-	sel := NewOptions(" [LLM Provider] ", "(pick one, or q to skip LLM setup for now)", 'q')
-	for _, p := range []string{"anthropic", "openai", "gemini", "ollama", "llama.cpp"} {
-		name := p
-		sel.Func(name, func() bool { chosen = name; return true })
-	}
-	sel.Select(false)
-	return chosen
-}
-
 // maybeQuickstart runs the guided express setup when the install is missing
-// anything a working deployment MUST have — an LLM provider, an admin login,
-// or a bind address. On an already-configured box it's a no-op, so the
+// anything a working deployment MUST have — an admin login or a bind address.
+// A missing LLM no longer counts: that is configured at /admin. On an already-configured box it's a no-op, so the
 // operator goes straight to the full menu. Called from setup_fuzz.
 func maybeQuickstart() {
-	var provider string
-	global.db.Get(LLMTable, "provider", &provider)
-	needsLLM := strings.TrimSpace(provider) == ""
 	needsAuth := !AuthHasUsers(global.db)
 	needsAddr := loadWebString("addr", "") == ""
-	if needsLLM || needsAuth || needsAddr {
+	if needsAuth || needsAddr {
 		setup_quickstart()
 	}
 }
 
 // setup_quickstart is the guided first-run path: the handful of settings a
-// fresh install needs to actually run — LLM provider + endpoint/key + model
-// (validated with a LIVE connection test via browseModels), an admin login,
-// and the bind address. Everything else has a safe default and lives in the
-// full menu that follows. Each step self-skips if already configured, so it's
-// safe to re-enter to finish a partial setup. Writes to the SAME DB/INI keys
-// the full menu saves to, so quitting right after still leaves a runnable box.
+// fresh install needs before it can serve at all — an admin login and the
+// bind address. Everything else has a safe default and lives in the full menu
+// that follows. Each step self-skips if already configured, so it's safe to
+// re-enter to finish a partial setup. Writes to the SAME DB/INI keys the full
+// menu saves to, so quitting right after still leaves a runnable box.
+//
+// LLM configuration is deliberately NOT here. It moved to the web UI, which
+// owns the whole surface (worker, lead, routing, per-provider tuning) and can
+// connection-test a provider properly; the terminal version of that step was
+// the one part of first-run setup that never worked right. A fresh install
+// serves with no model configured, and the first admin sets one up at /admin.
 func setup_quickstart() {
 	Stdout("\n=== Gohort first-time setup ===\n")
 	Stdout("A few questions to get you running. Everything else has a safe\n")
 	Stdout("default you can tune afterward in the full menu.\n")
 
-	// 1. LLM — the one thing without which nothing works.
-	var curProvider string
-	global.db.Get(LLMTable, "provider", &curProvider)
-	if strings.TrimSpace(curProvider) == "" {
-		Stdout("\n--- Language model ---\n")
-		provider := quickstartProvider()
-		if provider == "" {
-			Warn("No LLM configured — chat and apps won't work until you set one.")
-		} else {
-			var endpoint, apiKey, model string
-			local := provider == "ollama" || provider == "llama.cpp"
-			for {
-				if local {
-					endpoint = inputWithDefault("  Endpoint", quickstartDefaultEndpoint(provider))
-				} else {
-					apiKey = strings.TrimSpace(nfo.GetSecret(fmt.Sprintf("  %s API key: ", provider)))
-				}
-				// anthropic has no model-list endpoint wired into browseModels,
-				// so it can't be connection-tested here — take the model name
-				// directly. Every other provider goes through browseModels,
-				// which queries the endpoint (the live test) then lets the
-				// operator pick from what came back.
-				if provider == "anthropic" {
-					model = inputWithDefault("  Model", "claude-sonnet-5")
-					break
-				}
-				Stdout("  Testing connection...\n")
-				if browseModels(provider, apiKey, endpoint, &model) {
-					break
-				}
-				if !nfo.GetConfirm("  Couldn't reach it or list models. Try again?") {
-					break
-				}
-			}
-			global.db.Set(LLMTable, "provider", provider)
-			if model != "" {
-				global.db.Set(LLMTable, "model", model)
-			}
-			if endpoint != "" {
-				global.db.Set(LLMTable, "endpoint", endpoint)
-			}
-			if apiKey != "" {
-				global.db.CryptSet(LLMTable, "api_key", apiKey)
-			}
-			if model != "" {
-				Stdout("  Set: %s / %s\n", provider, model)
-			}
-		}
-	}
-
-	// 2. Admin login — without one, the dashboard is wide open.
+	// 1. Admin login — without one, the dashboard is wide open.
 	if !AuthHasUsers(global.db) {
 		Stdout("\n--- Admin login ---\n")
 		Stdout("Without an admin account the dashboard is OPEN to anyone who can\nreach it. Create one now:\n")
@@ -394,7 +280,7 @@ func setup_quickstart() {
 		}
 	}
 
-	// 3. Bind address — where the dashboard listens.
+	// 2. Bind address — where the dashboard listens.
 	if loadWebString("addr", "") == "" {
 		Stdout("\n--- Network ---\n")
 		addr := inputWithDefault("  Web bind address", "127.0.0.1:8181")
@@ -414,83 +300,6 @@ func setup_fuzz() {
 	// No-op once those are configured.
 	maybeQuickstart()
 
-	// Load current LLM values.
-	var provider, model, apiKey, endpoint string
-	var contextSize int
-	var requestTimeoutSec int
-	var disableThinking bool
-	thinkingBudget := 4096 // default: Qwen 3.6 sweet spot (0 = unlimited)
-	var nativeTools bool
-	var ollamaMaxParallel int
-	var llamacppMaxParallel int
-	global.db.Get(LLMTable, "provider", &provider)
-	global.db.Get(LLMTable, "model", &model)
-	global.db.Get(LLMTable, "api_key", &apiKey)
-	global.db.Get(LLMTable, "endpoint", &endpoint)
-	global.db.Get(LLMTable, "context_size", &contextSize)
-	global.db.Get(LLMTable, "request_timeout_seconds", &requestTimeoutSec)
-	global.db.Get(LLMTable, "disable_thinking", &disableThinking)
-	global.db.Get(LLMTable, "thinking_budget", &thinkingBudget)
-	global.db.Get(LLMTable, "native_tools", &nativeTools)
-	global.db.Get(LLMTable, "ollama_max_parallel", &ollamaMaxParallel)
-	if ollamaMaxParallel < 1 {
-		ollamaMaxParallel = 1 // default: strict serial execution through Ollama
-	}
-	global.db.Get(LLMTable, "llamacpp_max_parallel", &llamacppMaxParallel)
-	if llamacppMaxParallel < 1 {
-		llamacppMaxParallel = 1 // default: strict serial execution through llama.cpp
-	}
-	// No-think individual signal toggles + budget. Defaults are the
-	// proven-working combo (kwarg + budget on, prepends off).
-	var noThinkConfigured bool
-	noThinkUseKwarg := true
-	noThinkSendBudget := true
-	var noThinkPrependSystem bool
-	var noThinkPrependUser bool
-	var noThinkBudget int
-	global.db.Get(LLMTable, "no_think_configured", &noThinkConfigured)
-	if noThinkConfigured {
-		// Once explicitly configured, read all four toggles literally
-		// (so an operator can disable kwarg or budget if they need to).
-		noThinkUseKwarg, noThinkSendBudget = false, false
-		global.db.Get(LLMTable, "no_think_use_kwarg", &noThinkUseKwarg)
-		global.db.Get(LLMTable, "no_think_send_budget", &noThinkSendBudget)
-		global.db.Get(LLMTable, "no_think_prepend_system", &noThinkPrependSystem)
-		global.db.Get(LLMTable, "no_think_prepend_user", &noThinkPrependUser)
-	}
-	global.db.Get(LLMTable, "no_think_budget", &noThinkBudget)
-
-	// Load current Lead LLM values.
-	var leadProvider, leadModel, leadAPIKey, leadEndpoint string
-	var leadDisableThinking bool
-	leadThinkingBudget := 4096 // default: Qwen 3.6 sweet spot (0 = unlimited)
-	var leadNativeTools bool
-	global.db.Get(LeadLLMTable, "provider", &leadProvider)
-	global.db.Get(LeadLLMTable, "model", &leadModel)
-	global.db.Get(LeadLLMTable, "api_key", &leadAPIKey)
-	global.db.Get(LeadLLMTable, "endpoint", &leadEndpoint)
-	global.db.Get(LeadLLMTable, "disable_thinking", &leadDisableThinking)
-	global.db.Get(LeadLLMTable, "thinking_budget", &leadThinkingBudget)
-	global.db.Get(LeadLLMTable, "native_tools", &leadNativeTools)
-	var leadNoThinkConfigured bool
-	leadNoThinkUseKwarg := true
-	leadNoThinkSendBudget := true
-	var leadNoThinkPrependSystem bool
-	var leadNoThinkPrependUser bool
-	var leadNoThinkBudget int
-	global.db.Get(LeadLLMTable, "no_think_configured", &leadNoThinkConfigured)
-	if leadNoThinkConfigured {
-		leadNoThinkUseKwarg, leadNoThinkSendBudget = false, false
-		global.db.Get(LeadLLMTable, "no_think_use_kwarg", &leadNoThinkUseKwarg)
-		global.db.Get(LeadLLMTable, "no_think_send_budget", &leadNoThinkSendBudget)
-		global.db.Get(LeadLLMTable, "no_think_prepend_system", &leadNoThinkPrependSystem)
-		global.db.Get(LeadLLMTable, "no_think_prepend_user", &leadNoThinkPrependUser)
-	}
-	global.db.Get(LeadLLMTable, "no_think_budget", &leadNoThinkBudget)
-	if leadProvider == "" {
-		leadProvider = "(use primary)"
-	}
-
 	// Load current mail values.
 	var mailServer, mailFrom, mailUser, mailPass, mailRecipient string
 	global.db.Get(MailTable, "server", &mailServer)
@@ -502,77 +311,6 @@ func setup_fuzz() {
 	setup := NewOptions("--- Gohort Configuration ---", "(selection or 'q' to save & exit)", 'q')
 
 	// LLM settings.
-	llm := NewOptions(" [LLM Provider Settings] ", "(selection or 'q' to return to previous)", 'q')
-	llm.StringSelectVar(&provider, "LLM Provider", provider, "anthropic", "openai", "gemini", "ollama", "llama.cpp")
-	llm.SecretVar(&apiKey, "API Key", apiKey, NONE)
-	llm.ShowWhen(func() bool { return provider != "ollama" && provider != "llama.cpp" })
-	llm.StringVar(&model, "Model", model, "LLM model name (leave blank for provider default).")
-	llm.Func("Browse Available Models", func() bool {
-		return browseModels(provider, apiKey, endpoint, &model)
-	})
-	llm.StringVar(&endpoint, "Endpoint", endpoint, "Custom API endpoint (leave blank for default).")
-	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "llama.cpp" })
-	llm.IntVar(&contextSize, "Context Size", contextSize, "Context window size in tokens (0=default 65K). For llama.cpp: must match the --ctx-size the server was started with.", 0, 262144)
-	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "llama.cpp" })
-	llm.IntVar(&requestTimeoutSec, "Request Timeout (seconds)", requestTimeoutSec, "Max wait for first response header. 0=default 300s. Bump for slow local models or huge prompts.", 0, 3600)
-	llm.ToggleVar(&disableThinking, "Disable Thinking (force think=false on every call)", disableThinking)
-	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "gemini" || provider == "llama.cpp" })
-	llm.IntVar(&thinkingBudget, "Thinking Budget (tokens, 0=unlimited)", thinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Lower values reduce latency on simple queries. Only supported by llama.cpp and Gemini.", 0, 131072)
-	llm.ShowWhen(func() bool { return (provider == "gemini" || provider == "llama.cpp") && !disableThinking })
-	// No-Think Settings: dedicated sub-menu so the parent LLM section
-	// stays focused on connection/model basics. Each signal toggles
-	// independently — operators tune for whichever combo their model
-	// honors reliably.
-	noThinkSettings := NewOptions(" [No-Think Settings] ", "(selection or 'q' to return)", 'q')
-	noThinkSettings.ToggleVar(&noThinkUseKwarg, "Send chat_template_kwargs.enable_thinking=false", noThinkUseKwarg)
-	noThinkSettings.ToggleVar(&noThinkSendBudget, "Send thinking_budget_tokens cap", noThinkSendBudget)
-	noThinkSettings.IntVar(&noThinkBudget, "Budget value (tokens)", noThinkBudget, "thinking_budget_tokens when 'send budget' is on. 0 = built-in default (512).", 0, 8192)
-	noThinkSettings.ShowWhen(func() bool { return noThinkSendBudget })
-	noThinkSettings.ToggleVar(&noThinkPrependSystem, "Prepend /no_think to system prompt", noThinkPrependSystem)
-	noThinkSettings.ToggleVar(&noThinkPrependUser, "Prepend /no_think to last user message", noThinkPrependUser)
-	llm.Options("No-Think Settings", noThinkSettings, false)
-	llm.ShowWhen(func() bool { return provider == "llama.cpp" && !disableThinking })
-	llm.ToggleVar(&nativeTools, "Native Tool Calling (disable for models without tool support)", nativeTools)
-	llm.ShowWhen(func() bool { return provider == "ollama" })
-	llm.IntVar(&ollamaMaxParallel, "Max Parallel Ollama Requests", ollamaMaxParallel, "How many concurrent requests Ollama will process. Default 1 (strict serial). Raise only if the host GPU can truly run more in parallel. Requests are fair-queued across caller sessions.", 1, 16)
-	llm.ShowWhen(func() bool { return provider == "ollama" })
-	llm.IntVar(&llamacppMaxParallel, "Max Parallel llama.cpp Requests", llamacppMaxParallel, "How many concurrent requests llama.cpp will process. Default 1 (single-threaded). Raise only if your server supports concurrent requests. Requests are fair-queued across caller sessions.", 1, 16)
-	llm.ShowWhen(func() bool { return provider == "llama.cpp" })
-	// Precision LLM settings (judge/fact-checker — falls back to primary if not set).
-	lead := NewOptions(" [Precision LLM (Secondary)] ", "(selection or 'q' to return to previous)", 'q')
-	lead.StringSelectVar(&leadProvider, "LLM Provider", leadProvider, "(use primary)", "anthropic", "openai", "gemini", "ollama", "llama.cpp")
-	lead.SecretVar(&leadAPIKey, "API Key", leadAPIKey, "API key (leave blank to use primary).")
-	lead.ShowWhen(func() bool { return leadProvider != "ollama" && leadProvider != "(use primary)" })
-	lead.StringVar(&leadModel, "Model", leadModel, "Model name (leave blank for provider default).")
-	lead.ShowWhen(func() bool { return leadProvider != "(use primary)" })
-	lead.Func("Browse Available Models", func() bool {
-		key := leadAPIKey
-		if key == "" {
-			key = apiKey
-		}
-		return browseModels(leadProvider, key, leadEndpoint, &leadModel)
-	})
-	lead.ShowWhen(func() bool { return leadProvider != "(use primary)" })
-	lead.StringVar(&leadEndpoint, "Endpoint", leadEndpoint, "Custom API endpoint (leave blank for default).")
-	lead.ShowWhen(func() bool { return leadProvider == "ollama" || leadProvider == "llama.cpp" })
-	lead.ToggleVar(&leadDisableThinking, "Disable Thinking (force think=false on every call)", leadDisableThinking)
-	lead.ShowWhen(func() bool {
-		return leadProvider == "ollama" || leadProvider == "gemini" || leadProvider == "llama.cpp"
-	})
-	lead.IntVar(&leadThinkingBudget, "Thinking Budget (tokens, 0=unlimited)", leadThinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Only supported by llama.cpp and Gemini.", 0, 131072)
-	lead.ShowWhen(func() bool { return (leadProvider == "gemini" || leadProvider == "llama.cpp") && !leadDisableThinking })
-	leadNoThinkSettings := NewOptions(" [No-Think Settings (Lead)] ", "(selection or 'q' to return)", 'q')
-	leadNoThinkSettings.ToggleVar(&leadNoThinkUseKwarg, "Send chat_template_kwargs.enable_thinking=false", leadNoThinkUseKwarg)
-	leadNoThinkSettings.ToggleVar(&leadNoThinkSendBudget, "Send thinking_budget_tokens cap", leadNoThinkSendBudget)
-	leadNoThinkSettings.IntVar(&leadNoThinkBudget, "Budget value (tokens)", leadNoThinkBudget, "thinking_budget_tokens when 'send budget' is on. 0 = built-in default (512).", 0, 8192)
-	leadNoThinkSettings.ShowWhen(func() bool { return leadNoThinkSendBudget })
-	leadNoThinkSettings.ToggleVar(&leadNoThinkPrependSystem, "Prepend /no_think to system prompt", leadNoThinkPrependSystem)
-	leadNoThinkSettings.ToggleVar(&leadNoThinkPrependUser, "Prepend /no_think to last user message", leadNoThinkPrependUser)
-	lead.Options("No-Think Settings", leadNoThinkSettings, false)
-	lead.ShowWhen(func() bool { return leadProvider == "llama.cpp" && !leadDisableThinking })
-	lead.ToggleVar(&leadNativeTools, "Native Tool Calling (disable for models without tool support)", leadNativeTools)
-	lead.ShowWhen(func() bool { return leadProvider == "ollama" })
-
 	// LLM Routing settings — built dynamically from registered route stages.
 	stages := ListRouteStages()
 	routeVals := make([]string, len(stages))
@@ -598,8 +336,6 @@ func setup_fuzz() {
 
 	// Group all LLM settings under one menu.
 	llmSettings := NewOptions(" [LLM Settings] ", "(selection or 'q' to return to previous)", 'q')
-	llmSettings.Options("Primary Provider", llm, false)
-	llmSettings.Options("Precision LLM (Secondary)", lead, false)
 	if len(stages) > 0 {
 		routing := NewOptions(" [LLM Routing] ", "(selection or 'q' to return to previous)", 'q')
 		for i, s := range stages {
@@ -810,7 +546,10 @@ func setup_fuzz() {
 	}
 	embedEndpoint := storedEmbed.Endpoint
 	if embedEndpoint == "" {
-		embedEndpoint = endpoint // default to worker LLM's endpoint
+		// Default to the worker LLM's endpoint. Read straight from the DB:
+		// LLM connection settings are owned by the web UI now, so there is no
+		// local copy here to borrow.
+		global.db.Get(LLMTable, "endpoint", &embedEndpoint)
 	}
 	embedModel := storedEmbed.Model
 	if embedModel == "" {
@@ -870,47 +609,6 @@ func setup_fuzz() {
 	// Save app-contributed sections.
 	for _, section := range app_sections {
 		section.Save(global.db)
-	}
-
-	// Save LLM configuration.
-	global.db.Set(LLMTable, "provider", provider)
-	global.db.Set(LLMTable, "model", model)
-	global.db.Set(LLMTable, "endpoint", endpoint)
-	global.db.Set(LLMTable, "context_size", contextSize)
-	global.db.Set(LLMTable, "request_timeout_seconds", requestTimeoutSec)
-	global.db.Set(LLMTable, "disable_thinking", disableThinking)
-	global.db.Set(LLMTable, "thinking_budget", thinkingBudget)
-	global.db.Set(LLMTable, "native_tools", nativeTools)
-	global.db.Set(LLMTable, "ollama_max_parallel", ollamaMaxParallel)
-	global.db.Set(LLMTable, "llamacpp_max_parallel", llamacppMaxParallel)
-	global.db.Set(LLMTable, "no_think_configured", true)
-	global.db.Set(LLMTable, "no_think_use_kwarg", noThinkUseKwarg)
-	global.db.Set(LLMTable, "no_think_send_budget", noThinkSendBudget)
-	global.db.Set(LLMTable, "no_think_prepend_system", noThinkPrependSystem)
-	global.db.Set(LLMTable, "no_think_prepend_user", noThinkPrependUser)
-	global.db.Set(LLMTable, "no_think_budget", noThinkBudget)
-	if apiKey != "" {
-		global.db.CryptSet(LLMTable, "api_key", apiKey)
-	}
-
-	// Save Lead LLM configuration.
-	if leadProvider == "(use primary)" {
-		leadProvider = ""
-	}
-	global.db.Set(LeadLLMTable, "provider", leadProvider)
-	global.db.Set(LeadLLMTable, "model", leadModel)
-	global.db.Set(LeadLLMTable, "endpoint", leadEndpoint)
-	global.db.Set(LeadLLMTable, "disable_thinking", leadDisableThinking)
-	global.db.Set(LeadLLMTable, "thinking_budget", leadThinkingBudget)
-	global.db.Set(LeadLLMTable, "native_tools", leadNativeTools)
-	global.db.Set(LeadLLMTable, "no_think_configured", true)
-	global.db.Set(LeadLLMTable, "no_think_use_kwarg", leadNoThinkUseKwarg)
-	global.db.Set(LeadLLMTable, "no_think_send_budget", leadNoThinkSendBudget)
-	global.db.Set(LeadLLMTable, "no_think_prepend_system", leadNoThinkPrependSystem)
-	global.db.Set(LeadLLMTable, "no_think_prepend_user", leadNoThinkPrependUser)
-	global.db.Set(LeadLLMTable, "no_think_budget", leadNoThinkBudget)
-	if leadAPIKey != "" {
-		global.db.CryptSet(LeadLLMTable, "api_key", leadAPIKey)
 	}
 
 	// Save mail configuration.

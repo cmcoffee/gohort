@@ -821,6 +821,9 @@ type LLMProviderConfig struct {
 	Model               string
 	APIKey              string
 	Endpoint            string
+	Region              string        // AWS region (bedrock only); blank falls back to AWS_REGION, then us-east-1. Part of both the hostname and the SigV4 signature.
+	Profile             string        // AWS profile (bedrock only); blank falls back to AWS_PROFILE. Selects which credentials/SSO session to use — the credentials themselves are never stored here.
+	BedrockAPI          string        // Which Bedrock API to speak: "" / "messages" = the Messages-API endpoint (needs bedrock-mantle:CreateInference); "invoke" = legacy bedrock-runtime InvokeModel (needs bedrock:InvokeModel). Whichever one the account's IAM policy actually grants.
 	ContextSize         int           // Context window size (Ollama only); 0 uses default.
 	ConnectTimeout      time.Duration // Dial timeout; defaults to 10s if zero.
 	RequestTimeout      time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
@@ -1207,6 +1210,34 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 	return nil, lastErr
 }
 
+// ProviderHasNativeTools reports whether a provider's API always supports
+// native function calling, so the prompt-based fallback must never be used
+// for it.
+//
+// The fallback describes tools in the system prompt and parses <tool_call>
+// tags out of the reply. It exists for local models that cannot do native
+// calls — which in practice means some Ollama models, and is why that provider
+// has an operator toggle. Every hosted API here supports native tools.
+//
+// This is an allowlist because the denylist it replaced named exactly one
+// provider (llama.cpp), so `native_tools` being unset — its zero value, and
+// the default in a freshly configured provider — silently routed Anthropic,
+// OpenAI, Gemini and Bedrock through the fallback. The observed failure was
+// total and looked like a model problem: every call to every tool arrived with
+// EMPTY arguments, because the tag parser recovered the tool NAME from a
+// natively-formatted call and nothing else. Four tools deep, including
+// plan_set, with the agent itself reporting "I keep dropping the arguments on
+// send".
+func ProviderHasNativeTools(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp":
+		return true
+	}
+	// ollama (and anything unrecognized): depends on the model, so honor the
+	// operator's toggle.
+	return false
+}
+
 // NewLLMFromConfig creates an LLM client from a stored configuration.
 func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	api := newLLMAPIClient(cfg)
@@ -1215,16 +1246,33 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	switch cfg.Provider {
 	case "anthropic":
 		if cfg.APIKey == "" {
-			return nil, Error("anthropic API key is not configured, run --setup")
+			return nil, Error("anthropic API key is not configured — set it in the web UI under Admin → LLMs → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
 			model = "claude-sonnet-5"
 		}
 		inner = newAnthropicLLM(cfg.APIKey, model, api)
+	case "bedrock":
+		// Claude via AWS Bedrock. No key check: an empty APIKey is the normal
+		// case (it means "sign with AWS credentials"), and newBedrockLLM
+		// reports a specific error when neither a bearer token nor resolvable
+		// credentials are present.
+		var err error
+		// Two endpoints, picked by which IAM action the account grants — see
+		// llm_bedrock_runtime.go. Defaulting to the Messages API keeps the
+		// better integration (real SSE streaming) as the norm.
+		if cfg.BedrockAPI == "invoke" {
+			inner, err = newBedrockRuntimeLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
+		} else {
+			inner, err = newBedrockLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
+		}
+		if err != nil {
+			return nil, err
+		}
 	case "openai":
 		if cfg.APIKey == "" {
-			return nil, Error("openai API key is not configured, run --setup")
+			return nil, Error("openai API key is not configured — set it in the web UI under Admin → LLMs → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -1234,7 +1282,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		inner.(*openAIClient).streamIdleTimeout = cfg.StreamIdleTimeout
 	case "gemini":
 		if cfg.APIKey == "" {
-			return nil, Error("gemini API key is not configured, run --setup")
+			return nil, Error("gemini API key is not configured — set it in the web UI under Admin → LLMs → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -1297,7 +1345,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		}
 		StartLlamacppScheduler(mp)
 	default:
-		return nil, Error("unknown LLM provider, run --setup to configure")
+		return nil, Error("no LLM provider is configured — set one in the web UI under Admin → LLMs → Worker LLM")
 	}
 
 	return &retryLLM{inner: inner, maxRetries: 5}, nil
