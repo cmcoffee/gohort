@@ -61,6 +61,16 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleCollections(w, r, udb, user)
 	case path == "references":
 		T.handleReferences(w, r, udb, user)
+	// Curator: the digest (what it did), the queue (what it has not done yet),
+	// an undo per decision, and a manual drain.
+	case path == "curator/runs":
+		T.handleCuratorRuns(w, r, udb, user)
+	case path == "curator/pending":
+		T.handlePendingFindings(w, r, udb, user)
+	case path == "curator/undo":
+		T.handleCuratorUndo(w, r, udb, user)
+	case path == "curator/run":
+		T.handleCuratorRunNow(w, r, udb, user)
 	case path == "chat/active":
 		T.handleSetActive(w, r, udb)
 	case path == "chat/send":

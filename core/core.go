@@ -83,6 +83,7 @@ var (
 
 	// Transcription (STT).
 	Transcribe                  = media.Transcribe
+	TranscribeWith              = media.TranscribeWith
 	SetTranscribeConfig         = media.SetTranscribeConfig
 	GetTranscribeConfig         = media.GetTranscribeConfig
 	LoadTranscribeConfigFromDB  = media.LoadTranscribeConfigFromDB
@@ -214,10 +215,19 @@ type (
 	DocItem                   = docs.DocItem
 	DocumentTarget            = docs.DocumentTarget
 	ReferencingDocumentTarget = docs.ReferencingDocumentTarget
+	// Doc-prefixed: a bare "Finding" collides with the synthesis Finding in
+	// private/pipeline, and every app dot-imports core.
+	DocFinding       = docs.Finding
+	DocFindingOrigin = docs.Origin
+	DocFindingTarget = docs.FindingTarget
 )
 
 var (
 	// Per-user standing rules for a writer app, namespaced per app.
+	ConfidenceVerified   = docs.ConfidenceVerified
+	ConfidenceProbable   = docs.ConfidenceProbable
+	ConfidenceSingleShot = docs.ConfidenceSingleShot
+
 	DocRulesTable   = docs.DocRulesTable
 	LoadDocRules    = docs.LoadDocRules
 	FormatDocRules  = docs.FormatDocRules
@@ -236,6 +246,11 @@ var (
 	ListDocumentsReferencing = docs.ListDocumentsReferencing
 	AppendToDocument         = docs.AppendToDocument
 	HasDocumentTarget        = docs.HasDocumentTarget
+	SubmitFinding            = docs.SubmitFinding
+	PendingFindings          = docs.PendingFindings
+	FindingKinds             = docs.FindingKinds
+	AcceptsFindings          = docs.AcceptsFindings
+	NormalizeConfidence      = docs.NormalizeConfidence
 )
 
 // --- messaging (seams the transport registers so apps needn't import it) -----
@@ -279,19 +294,19 @@ const (
 )
 
 var (
-	ServiceDisplayName    = messaging.ServiceDisplayName
+	ServiceDisplayName     = messaging.ServiceDisplayName
 	ServiceRendersMarkdown = messaging.ServiceRendersMarkdown
-	LooksLikeHandle       = messaging.LooksLikeHandle
-	ChannelDirection      = messaging.ChannelDirection
-	NewChannelID          = messaging.NewChannelID
-	SaveChannel           = messaging.SaveChannel
-	GetChannel            = messaging.GetChannel
-	ListChannels          = messaging.ListChannels
-	ListChannelsForAgent  = messaging.ListChannelsForAgent
-	ChannelAllowsSender   = messaging.ChannelAllowsSender
-	DeleteChannel         = messaging.DeleteChannel
-	ChannelSessionKey     = messaging.ChannelSessionKey
-	ChannelForInbound     = messaging.ChannelForInbound
+	LooksLikeHandle        = messaging.LooksLikeHandle
+	ChannelDirection       = messaging.ChannelDirection
+	NewChannelID           = messaging.NewChannelID
+	SaveChannel            = messaging.SaveChannel
+	GetChannel             = messaging.GetChannel
+	ListChannels           = messaging.ListChannels
+	ListChannelsForAgent   = messaging.ListChannelsForAgent
+	ChannelAllowsSender    = messaging.ChannelAllowsSender
+	DeleteChannel          = messaging.DeleteChannel
+	ChannelSessionKey      = messaging.ChannelSessionKey
+	ChannelForInbound      = messaging.ChannelForInbound
 
 	RegisterChannelAgentRunner    = messaging.RegisterChannelAgentRunner
 	ChannelAgentRunnerReady       = messaging.ChannelAgentRunnerReady
@@ -395,13 +410,13 @@ var (
 type PromptBlock = prompts.PromptBlock
 
 var (
-	RegisterPromptBlock  = prompts.RegisterPromptBlock
-	AllPromptBlocks      = prompts.AllPromptBlocks
-	SetPromptOverrideDB  = prompts.SetPromptOverrideDB
-	PromptOverride       = prompts.PromptOverride
-	SetPromptOverride    = prompts.SetPromptOverride
-	ClearPromptOverride  = prompts.ClearPromptOverride
-	EffectivePromptText  = prompts.EffectivePromptText
+	RegisterPromptBlock = prompts.RegisterPromptBlock
+	AllPromptBlocks     = prompts.AllPromptBlocks
+	SetPromptOverrideDB = prompts.SetPromptOverrideDB
+	PromptOverride      = prompts.PromptOverride
+	SetPromptOverride   = prompts.SetPromptOverride
+	ClearPromptOverride = prompts.ClearPromptOverride
+	EffectivePromptText = prompts.EffectivePromptText
 )
 
 // --- costledger (metered per-source external spend) --------------------------
@@ -423,9 +438,9 @@ var (
 type PushSubHandler = pushsub.PushSubHandler
 
 var (
-	RegisterPushSubHandler  = pushsub.RegisterPushSubHandler
-	EnsurePushSubscription  = pushsub.EnsurePushSubscription
-	RemovePushSubscription  = pushsub.RemovePushSubscription
+	RegisterPushSubHandler = pushsub.RegisterPushSubHandler
+	EnsurePushSubscription = pushsub.EnsurePushSubscription
+	RemovePushSubscription = pushsub.RemovePushSubscription
 )
 
 // --- migrate (one-shot data migrations with a done-marker) -------------------
@@ -447,7 +462,7 @@ var (
 var (
 	TLSEnabled           = tlsconf.TLSEnabled
 	TLSSelfSignedEnabled = tlsconf.SelfSigned
-	ListenAndServeTLS = tlsconf.ListenAndServeTLS
+	ListenAndServeTLS    = tlsconf.ListenAndServeTLS
 )
 
 // --- ollama (local-model slot schedulers: ollama + llama.cpp) ---------------
@@ -588,12 +603,12 @@ var (
 type ToolGroup = toolgroups.ToolGroup
 
 var (
-	LoadToolGroups       = toolgroups.LoadToolGroups
-	LoadToolGroup        = toolgroups.LoadToolGroup
-	SaveToolGroup        = toolgroups.SaveToolGroup
-	DeleteToolGroup      = toolgroups.DeleteToolGroup
-	ToolGroupForMember   = toolgroups.ToolGroupForMember
-	MemberSet            = toolgroups.MemberSet
+	LoadToolGroups        = toolgroups.LoadToolGroups
+	LoadToolGroup         = toolgroups.LoadToolGroup
+	SaveToolGroup         = toolgroups.SaveToolGroup
+	DeleteToolGroup       = toolgroups.DeleteToolGroup
+	ToolGroupForMember    = toolgroups.ToolGroupForMember
+	MemberSet             = toolgroups.MemberSet
 	IsBuiltinToolGroupID  = toolgroups.IsBuiltinToolGroupID
 	DedupeAndCleanMembers = toolgroups.DedupeAndCleanMembers
 )
@@ -643,11 +658,11 @@ var (
 type AgentLoopTuning = looptune.AgentLoopTuning
 
 var (
-	SetAgentLoopTuning       = looptune.SetAgentLoopTuning
-	GetAgentLoopTuning       = looptune.GetAgentLoopTuning
+	SetAgentLoopTuning        = looptune.SetAgentLoopTuning
+	GetAgentLoopTuning        = looptune.GetAgentLoopTuning
 	LoadAgentLoopTuningFromDB = looptune.LoadAgentLoopTuningFromDB
-	SaveAgentLoopTuningToDB  = looptune.SaveAgentLoopTuningToDB
-	InitAgentLoopTuning      = looptune.InitAgentLoopTuning
+	SaveAgentLoopTuningToDB   = looptune.SaveAgentLoopTuningToDB
+	InitAgentLoopTuning       = looptune.InitAgentLoopTuning
 )
 
 // --- promotion (which sub-session the next user turn should join) -----------
@@ -658,17 +673,17 @@ type (
 )
 
 var (
-	StripPromotionEscape    = promotion.StripPromotionEscape
-	PromotionWindow         = promotion.PromotionWindow
-	PromotionTurnCap        = promotion.PromotionTurnCap
-	ResolveDispatchRoute    = promotion.ResolveDispatchRoute
-	ResolvePromotion        = promotion.ResolvePromotion
-	CreatePromotionRequest  = promotion.CreatePromotionRequest
-	ListPromotionRequests   = promotion.ListPromotionRequests
-	GetPromotionRequest     = promotion.GetPromotionRequest
+	StripPromotionEscape     = promotion.StripPromotionEscape
+	PromotionWindow          = promotion.PromotionWindow
+	PromotionTurnCap         = promotion.PromotionTurnCap
+	ResolveDispatchRoute     = promotion.ResolveDispatchRoute
+	ResolvePromotion         = promotion.ResolvePromotion
+	CreatePromotionRequest   = promotion.CreatePromotionRequest
+	ListPromotionRequests    = promotion.ListPromotionRequests
+	GetPromotionRequest      = promotion.GetPromotionRequest
 	SetPromotionRequestState = promotion.SetPromotionRequestState
-	PendingPromotion        = promotion.PendingPromotion
-	PromotionRequestKey     = promotion.RequestKey
+	PendingPromotion         = promotion.PendingPromotion
+	PromotionRequestKey      = promotion.RequestKey
 )
 
 const (

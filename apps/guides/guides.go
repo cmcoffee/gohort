@@ -81,6 +81,10 @@ func (T *Guides) Routes() {
 	// section into a user's guide. Done here (not init) because T.DB is live.
 	RegisterDocumentTarget(&guideTarget{app: T})
 	T.HandleFunc("/", T.route)
+	// The interval half of the curator's batching. The threshold half fires
+	// from SubmitFinding; this is what stops a handful of findings sitting
+	// unfiled forever because the threshold is never reached.
+	T.startCuratorLoop()
 }
 
 // findOrchestrate resolves the registered OrchestrateApp so the chat routes can

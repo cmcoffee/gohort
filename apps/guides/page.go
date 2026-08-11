@@ -51,6 +51,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
 			}},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
+			{Label: "Curator", Kind: "client", URL: "guides_curator"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
 			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
@@ -89,11 +90,13 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			HTML(guideSectionCtrlCSS).
 			CSS(guideKnowledgeCSS).
 			CSS(guideSettingsCSS).
+			CSS(guideCuratorCSS).
 			JS(guideModalElJS).
 			JS(guideSectionCode).
 			ClientAction("guides_knowledge", guideKnowledgeAction).
 			ClientAction("guides_sources", guideSourcesAction).
-			ClientAction("guides_settings", guideSettingsAction),
+			ClientAction("guides_settings", guideSettingsAction).
+			ClientAction("guides_curator", guideCuratorAction),
 	}
 	page.ServeHTTP(w, r)
 }
