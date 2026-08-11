@@ -51,9 +51,49 @@ const sourceImageLimit = 10
 // RecentImageRefPrefix is the reference form the model uses: image#1 is newest.
 const RecentImageRefPrefix = "image#"
 
+// ringIDPrefix marks a STABLE ring reference, as opposed to the positional
+// image#N or a kept image#<name>.
+//
+// The dot is load-bearing. safeKeptName strips every character outside
+// [a-z0-9-_], so a kept name can never contain one — which makes a dotted id
+// impossible to confuse with a name a user chose, without reserving any word.
+const ringIDPrefix = "r."
+
+// ringIDFromBase derives a picture's stable id from its filename.
+//
+// Files are already named <unixnano>-<uuid>, unique and never rewritten, so
+// the identity exists on disk and was simply never exposed. The model was
+// handed image#N — documented at its own definition as "NOT stable across
+// writes" — and then told to hold onto it, which is how an edit landed on a
+// picture the user never mentioned: saving a render pushes the result to
+// image#1 and slides everything else down.
+func ringIDFromBase(base string) string {
+	base = strings.TrimSuffix(base, ".png")
+	// The uuid half, shortened. Collisions inside a pruned ring of a few dozen
+	// entries are not a practical concern, and a long id is a long thing for a
+	// model to copy exactly.
+	if i := strings.Index(base, "-"); i >= 0 && i+1 < len(base) {
+		u := strings.ReplaceAll(base[i+1:], "-", "")
+		if len(u) > 8 {
+			u = u[:8]
+		}
+		if u != "" {
+			return ringIDPrefix + u
+		}
+	}
+	return ""
+}
+
+// isRingID reports whether a ref names a stable ring entry rather than a
+// position or a kept name.
+func isRingID(ref string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ref)), ringIDPrefix)
+}
+
 // RecentImage is one entry in the space.
 type RecentImage struct {
 	Ref  string    // "image#1" — position, newest first; NOT stable across writes
+	ID   string    // "image#r.7a3f9c2b" — STABLE for this picture's whole life in the ring
 	Note string    // why it exists ("generated: a cat on a bike", "edited image#2")
 	When time.Time // when it entered the space
 	// Caption is what the picture LOOKS like, from the vision pass at record
@@ -274,6 +314,26 @@ func recordRecentImage(sess *ToolSession, data []byte, note string, origin Image
 	return RecentImageRefPrefix + "1"
 }
 
+// RecordRecentImageStable records a picture and returns BOTH references to it:
+// the positional one it currently occupies, and the stable id that keeps
+// meaning this picture after other pictures are saved.
+//
+// Two returns rather than replacing the positional one: "it is image#1 right
+// now" is still the useful thing to say about a freshly saved picture, and
+// several callers print it. What was missing was anything durable to offer
+// alongside it.
+func RecordRecentImageStable(sess *ToolSession, data []byte, note string, origin ImageOrigin) (positional, stable string) {
+	positional = RecordRecentImage(sess, data, note, origin)
+	if positional == "" {
+		return "", ""
+	}
+	// The newest entry is the one just written.
+	if all := RecentImages(sess); len(all) > 0 {
+		stable = all[0].ID
+	}
+	return positional, stable
+}
+
 // CaptionOnRecord gates the describe-on-record pass. On by default; an operator
 // paying per vision call on a deployment that never searches its images can
 // turn it off and still get captions on keep, where they matter most.
@@ -346,6 +406,9 @@ func RecentImages(sess *ToolSession) []RecentImage {
 	for i, f := range files {
 		abs := filepath.Join(dir, f)
 		r := RecentImage{Ref: RecentImageRefPrefix + strconv.Itoa(i+1), path: abs}
+		if id := ringIDFromBase(f); id != "" {
+			r.ID = RecentImageRefPrefix + id
+		}
 		if ts, err := strconv.ParseInt(strings.SplitN(f, "-", 2)[0], 10, 64); err == nil {
 			r.When = time.Unix(0, ts)
 		}
@@ -373,8 +436,16 @@ func ResolveRecentImage(sess *ToolSession, ref string) ([]byte, bool) {
 	if !strings.HasPrefix(strings.ToLower(ref), RecentImageRefPrefix) {
 		return nil, false
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(ref[len(RecentImageRefPrefix):]))
+	body := strings.TrimSpace(ref[len(RecentImageRefPrefix):])
+	n, err := strconv.Atoi(body)
 	if err != nil || n < 1 {
+		// A STABLE ring id (image#r.7a3f9c2b) names one picture for its whole
+		// life in the ring, unlike the position, which moves every time
+		// anything is saved. Checked before kept names because the dot makes
+		// the two shapes disjoint — safeKeptName cannot produce one.
+		if isRingID(body) {
+			return resolveRingID(sess, body)
+		}
 		// Not a position — it may name a KEPT image (image#brand_mark). One
 		// prefix covers both on purpose: to the model they're one idea, and
 		// every caller that already resolves image#N gains the durable form
@@ -390,6 +461,24 @@ func ResolveRecentImage(sess *ToolSession, ref string) ([]byte, bool) {
 		return nil, false
 	}
 	return data, true
+}
+
+// resolveRingID reads the bytes behind a stable ring reference.
+func resolveRingID(sess *ToolSession, id string) ([]byte, bool) {
+	want := RecentImageRefPrefix + strings.ToLower(strings.TrimSpace(id))
+	for _, r := range RecentImages(sess) {
+		if strings.EqualFold(r.ID, want) {
+			data, err := os.ReadFile(r.path)
+			if err != nil || len(data) == 0 {
+				return nil, false
+			}
+			return data, true
+		}
+	}
+	// Pruned out of the ring, or never existed. Callers read false as "no such
+	// picture" and say so, rather than silently working on a different one —
+	// which is the whole failure this id exists to prevent.
+	return nil, false
 }
 
 // recentImageFiles returns the ring's .png names newest-first.
@@ -490,6 +579,16 @@ func RecentImageManifest(sess *ToolSession) string {
 		given = append(given, r)
 	}
 	var b strings.Builder
+	// Lead with the STABLE id and show the position as a parenthetical. The
+	// model copies what it is shown, and the position is only true until the
+	// next save — including the save that a render performs on its own output,
+	// which is how a follow-up edit lands on a picture nobody asked about.
+	label := func(r RecentImage) string {
+		if strings.TrimSpace(r.ID) == "" {
+			return r.Ref // pre-dates stable ids, or the name did not parse
+		}
+		return r.ID + " (now " + r.Ref + ")"
+	}
 	describe := func(r RecentImage) string {
 		desc := r.Note
 		switch {
@@ -507,15 +606,17 @@ func RecentImageManifest(sess *ToolSession) string {
 		// First, because these are the ones a request for a reference means.
 		b.WriteString("Pictures you were GIVEN or found — these are real, and are what a request about \"the photo\" or a real person or thing refers to (newest first):\n")
 		for _, r := range given {
-			fmt.Fprintf(&b, "- %s — %s\n", r.Ref, describe(r))
+			fmt.Fprintf(&b, "- %s — %s\n", label(r), describe(r))
 		}
 	}
 	if len(made) > 0 {
 		b.WriteString("Pictures YOU MADE — not evidence of what anything really looks like. Use one only to keep working on that same render, never as the reference for a real subject (newest first):\n")
 		for _, r := range made {
-			fmt.Fprintf(&b, "- %s — %s\n", r.Ref, describe(r))
+			fmt.Fprintf(&b, "- %s — %s\n", label(r), describe(r))
 		}
 	}
-	b.WriteString("Pass an id in the images list of an image call to work from it. They are kept automatically; you never need to delete them.")
+	b.WriteString("Pass an id in the images list of an image call to work from it. PREFER the image#r.… form: it always means that same picture. " +
+		"The image#N form is only its position right now — saving any picture, including your own render, makes that one image#1 and pushes the rest down. " +
+		"They are kept automatically; you never need to delete them.")
 	return b.String()
 }

@@ -1449,11 +1449,10 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 	// invented the wrong face has already cost the time and is already
 	// deliverable — a note under it is something a model can read and ship
 	// anyway. See prompt_scrub.go.
-	scrubbed, note, err := checkPromptSubjects(sess, prompt, refs)
+	prompt, note, err := buildEditPrompt(sess, prompt, refs)
 	if err != nil {
 		return p, err
 	}
-	prompt = scrubbed
 	backend := strings.TrimSpace(StringArg(args, "backend"))
 	if backend == "" {
 		// Routed by how many pictures were passed — see defaultEditBackend.
@@ -1543,11 +1542,18 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if err != nil {
 		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
 	}
+	// Source BEFORE result, so the two pictures the model is about to compare
+	// arrive in the order the instruction claims.
+	compared := queueSourceForComparison(sess, p.refs)
 	out, serr := saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited)
 	if serr != nil {
 		return out, serr
 	}
-	return out + p.note + fidelityCheck(sess, p.refs), nil
+	note := ""
+	if compared {
+		note = fidelityNote(p.refs[0])
+	}
+	return out + p.note + note, nil
 }
 
 // fidelityCheck shows the SOURCE alongside the result so the model can answer
@@ -1568,22 +1574,82 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 // first is the base/subject by the ordering this tool already documents, so it
 // is the one carrying the identity; showing all three would triple the cost of
 // every edit to answer a question about one of them.
-func fidelityCheck(sess *ToolSession, refs []string) string {
+// queueSourceForComparison puts the edit's SOURCE image in front of the model,
+// before the result is queued, and reports whether it did.
+//
+// Order is the whole point, and it used to be wrong. The result was queued
+// first (inside saveImageResult) and the source second, while the text told
+// the model the source was "above the result" — so a comparison meant to ask
+// "did the likeness survive" was made with the two pictures swapped, and any
+// decision about which one to deliver was inverted with them. Queuing the
+// source first also reads the way a before/after comparison should.
+func queueSourceForComparison(sess *ToolSession, refs []string) bool {
 	if sess == nil || sess.LLM == nil || sess.Detached || len(refs) == 0 {
-		return ""
+		return false
 	}
 	src, ok := ResolveRecentImage(sess, refs[0])
 	if !ok || len(src) == 0 {
 		// A workspace filename or a media id: resolvable elsewhere, not here.
 		// No source to compare against means no check — silence rather than a
 		// question the model cannot answer.
-		return ""
+		return false
 	}
 	sess.AppendViewImage(src)
-	return fmt.Sprintf(" COMPARE: the source you passed (%s) is included above the result. "+
-		"This is the one identity question looking CAN settle — not who the person is, but whether the person in the result is the SAME ONE as in the source. "+
+	return true
+}
+
+// fidelityNote is the instruction that goes with the two queued pictures. It
+// names the order explicitly because the model is being handed two images of
+// the same subject and everything it is asked to judge depends on telling them
+// apart.
+func fidelityNote(ref string) string {
+	return fmt.Sprintf(" COMPARE: two pictures are included with this result — FIRST the source you passed (%s), SECOND the edited result. "+
+		"This is the one identity question looking CAN settle — not who the person is, but whether the person in the second picture is the SAME ONE as in the first. "+
 		"If a face, animal or product came out visibly different, say so and try once more with the likeness named as the thing to preserve; "+
-		"if it survived, deliver it and do not raise this again.", refs[0])
+		"if it survived, deliver it and do not raise this again.", ref)
+}
+
+// buildEditPrompt produces the prompt the backend actually receives: the
+// caller's text with named people rewritten to positions (prompt_scrub), plus
+// the compositing guard. Split out so the assembly is testable without a
+// configured backend — the guard reaching the wire is the whole point of it,
+// and a test that skips when no backend is wired proves nothing.
+func buildEditPrompt(sess *ToolSession, prompt string, refs []string) (string, string, error) {
+	scrubbed, note, err := checkPromptSubjects(sess, prompt, refs)
+	if err != nil {
+		return "", "", err
+	}
+	// An EMPTY prompt stays empty. Two things depend on it: a backend that
+	// requires a prompt validates by checking for one, so padding it with the
+	// guard would let a promptless call through to render from the guard text
+	// alone; and a blend backend has no text node at all, so there is nowhere
+	// for the guard to go. Only a real prompt gets it.
+	if strings.TrimSpace(scrubbed) == "" {
+		return scrubbed, note, nil
+	}
+	return scrubbed + editCompositingGuard(), note, nil
+}
+
+// editCompositingGuard is appended to every edit prompt.
+//
+// The source pictures are handed to the backend as a plain list, and nothing in
+// that list says which is the canvas and which is only a likeness to apply.
+// The tool description tells the MODEL the convention (first is the base, later
+// ones composite onto it) and prompt_scrub rewrites names into positional
+// references, so the request itself is well formed — but the renderer is a
+// different model, and given two pictures it will sometimes place one INSIDE
+// the result rather than draw from it.
+//
+// Observed, repeatedly: a face swap that lands the right face on the character
+// and then puts a thumbnail of the original face on its forehead, and results
+// carrying the source picture inset in a corner. Both are the same mistake
+// about what a reference IS, and both are cheap to argue out of in the prompt.
+// Naming the specific artifacts beats a general "don't composite", because the
+// failure is a literal reading of the input, not a stylistic choice.
+func editCompositingGuard() string {
+	return " Produce ONE finished image. The supplied pictures are references for likeness and content ONLY —" +
+		" they must not appear as objects inside the result. No inset, thumbnail, corner overlay, watermark," +
+		" picture-in-picture, side-by-side panel, collage, or duplicate of a face anywhere in the frame."
 }
 
 // hasImageSources reports whether the caller supplied anything to work FROM.
@@ -1876,8 +1942,8 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	if sess != nil && sess.Detached {
 		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
 		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it — that would send it twice. Just say what it is.", len(data))
-		if ref := RecordRecentImage(sess, data, note, origin); ref != "" {
-			msg += fmt.Sprintf(" %s is its lasting handle if you need to edit it or send it again later.", ref)
+		if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
+			msg += fmt.Sprintf(" It is %s right now — a POSITION, which moves when the next picture is saved.%s", ref, stableRefNote(stable))
 		}
 		// Show it, on the round that writes the line about it.
 		//
@@ -1900,8 +1966,8 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// what it did instead was attach with cleanup and then try to attach the
 	// same path AGAIN — which errors, because the file is gone. From there it
 	// regenerated the picture and delivered the wrong one.
-	if ref := RecordRecentImage(sess, data, note, origin); ref != "" {
-		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working; %s is the lasting handle for this picture. Use %s to edit it later, or to send it again. Never re-attach the workspace path after a cleanup — it is already delivered.", ref, ref)
+	if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
+		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working. This picture is %s RIGHT NOW, and that is a POSITION: whatever is saved next becomes image#1 and this one moves down.%s Never re-attach the workspace path after a cleanup — it is already delivered.", ref, stableRefNote(stable))
 	}
 	// A render is a guess at the prompt, not a rendering of it: the wrong
 	// number of people, the text unreadable, the edit applied to nothing. The
@@ -2355,6 +2421,21 @@ func showToModel(sess *ToolSession, data []byte, caveat string) string {
 		" Looking settles whether it is the right KIND of thing, whether it is blank, broken or garbled, and whether an edit did what was asked."+
 		" Looking does NOT settle WHO someone is: you do not know this person's face, so a face you don't recognize is not evidence of a wrong picture — where it came from is the evidence you have, and you should not overrule it from the pixels."+
 		" Deliver it unless you can point at something concretely wrong; if you can, say what that is rather than presenting it as a match.", caveat)
+}
+
+// stableRefNote offers the durable reference for a picture that was just
+// saved, so the model has something safe to carry instead of a position.
+//
+// The position is only correct until the next save, and a render saves its own
+// result — so an agent told to "use image#1 to edit it later" edits whatever
+// happened to be saved most recently by the time it gets there. That is the
+// mix-up where a change lands on a picture nobody mentioned.
+func stableRefNote(stable string) string {
+	if strings.TrimSpace(stable) == "" {
+		return " If you will need it after any other image call, keep it under a name first: image(action=\"keep\", name=\"…\")."
+	}
+	return fmt.Sprintf(" Use %s instead whenever you refer to it later — that one always means THIS picture, however many others are saved after it."+
+		" (For a name you will recognise months from now, image(action=\"keep\", name=\"…\") still gives image#<name>.)", stable)
 }
 
 // editHandleHint names the handle to EDIT this picture by, and says plainly

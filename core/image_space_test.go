@@ -6,6 +6,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"context"
 )
 
 // testPNG is a real, decodable image — verifyInputImage rejects anything that
@@ -573,4 +573,96 @@ func TestCaptionPanicDoesNotEscape(t *testing.T) {
 		panic("boom")
 	})
 	<-done // if the recover were missing, the test binary would already be gone
+}
+
+// The whole point of a stable id: it keeps meaning ONE picture while positions
+// slide under it. Saving a render pushes the result to image#1 and moves the
+// user's original down, which is how an edit landed on a picture nobody
+// mentioned.
+func TestStableRingIDSurvivesRenumbering(t *testing.T) {
+	sess := imageSpaceSession(t)
+
+	_, original := RecordRecentImageStable(sess, []byte("ORIGINAL"), "received from craig", ImageFromUser)
+	if original == "" {
+		t.Fatal("a recorded picture must get a stable id")
+	}
+	if got, ok := ResolveRecentImage(sess, original); !ok || string(got) != "ORIGINAL" {
+		t.Fatalf("stable id should resolve to the original, got %q ok=%v", got, ok)
+	}
+
+	// Two more saves: the original is now image#3.
+	RecordRecentImageStable(sess, []byte("RESULT-1"), "generated", ImageFromGenerated)
+	pos, second := RecordRecentImageStable(sess, []byte("RESULT-2"), "generated", ImageFromGenerated)
+	if pos != "image#1" {
+		t.Errorf("the newest save is image#1, got %q", pos)
+	}
+
+	// The position that meant ORIGINAL now means something else...
+	if got, _ := ResolveRecentImage(sess, "image#1"); string(got) == "ORIGINAL" {
+		t.Error("image#1 should have moved on — the premise of this test is wrong")
+	}
+	// ...while the stable id still means ORIGINAL.
+	if got, ok := ResolveRecentImage(sess, original); !ok || string(got) != "ORIGINAL" {
+		t.Errorf("stable id drifted: got %q ok=%v", got, ok)
+	}
+	if got, ok := ResolveRecentImage(sess, second); !ok || string(got) != "RESULT-2" {
+		t.Errorf("second stable id resolves wrong: got %q ok=%v", got, ok)
+	}
+	if original == second {
+		t.Error("two pictures must not share an id")
+	}
+}
+
+// A dotted id cannot collide with a kept name, because safeKeptName strips
+// every character outside [a-z0-9-_]. That is what lets both forms share the
+// image# prefix without a reserved word.
+func TestStableRingIDCannotCollideWithAKeptName(t *testing.T) {
+	sess := imageSpaceSession(t)
+	_, stable := RecordRecentImageStable(sess, []byte("PIC"), "received", ImageFromUser)
+	if !strings.Contains(stable, ".") {
+		t.Fatalf("a ring id must carry the dot that makes it unmistakable: %q", stable)
+	}
+	if !isRingID(strings.TrimPrefix(stable, RecentImageRefPrefix)) {
+		t.Errorf("%q should be recognized as a ring id", stable)
+	}
+	// A kept-style name must NOT be treated as one.
+	if isRingID("brand_mark") {
+		t.Error("a kept name must not be mistaken for a ring id")
+	}
+}
+
+// An id for a picture that has been pruned out must fail loudly rather than
+// resolve to whatever is there now — silently working on a different picture is
+// the exact failure this exists to prevent.
+func TestUnknownStableRingIDResolvesToNothing(t *testing.T) {
+	sess := imageSpaceSession(t)
+	RecordRecentImageStable(sess, []byte("PIC"), "received", ImageFromUser)
+	if _, ok := ResolveRecentImage(sess, RecentImageRefPrefix+"r.deadbeef"); ok {
+		t.Error("an unknown ring id must not resolve to some other picture")
+	}
+}
+
+// The manifest is where the model learns which picture is which, so it must
+// lead with the reference that stays true. Showing only the position taught it
+// to carry a number that moves.
+func TestManifestLeadsWithTheStableID(t *testing.T) {
+	sess := imageSpaceSession(t)
+	_, original := RecordRecentImageStable(sess, []byte("PHOTO"), "received from craig", ImageFromUser)
+	RecordRecentImageStable(sess, []byte("RENDER"), "generated: a cat", ImageFromGenerated)
+
+	m := RecentImageManifest(sess)
+	if !strings.Contains(m, original) {
+		t.Errorf("the stable id must appear in the manifest:\n%s", m)
+	}
+	// Position still shown, but as context rather than the handle.
+	if !strings.Contains(m, "(now image#") {
+		t.Errorf("the position should be a parenthetical:\n%s", m)
+	}
+	if !strings.Contains(m, "PREFER the image#r.") {
+		t.Errorf("the manifest must say which form to carry:\n%s", m)
+	}
+	// The provenance split has to survive the relabelling.
+	if !strings.Contains(m, "GIVEN") || !strings.Contains(m, "YOU MADE") {
+		t.Errorf("provenance sections went missing:\n%s", m)
+	}
 }
