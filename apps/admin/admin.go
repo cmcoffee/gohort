@@ -867,6 +867,18 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			writeTestResult(w, false, "", "embeddings are disabled — flip the toggle on first")
 			return
 		}
+		// Resolve a peer selection the same way the SAVE path does. Without
+		// this the test ran the form's literal fields — and with a peer picked
+		// those are hidden and empty, so testing a perfectly good peer failed
+		// with "endpoint is required" against a form showing no endpoint field
+		// to fill in. A test button that cannot test the thing the form is
+		// currently configured for is worse than no test button.
+		resolved, err := ResolveEmbeddingProvider(req)
+		if err != nil {
+			writeTestResult(w, false, "", err.Error())
+			return
+		}
+		req = resolved
 		if req.Endpoint == "" {
 			writeTestResult(w, false, "", "endpoint is required")
 			return
@@ -888,7 +900,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		if modelLabel == "" {
 			modelLabel = "server default"
 		}
-		writeTestResult(w, true, fmt.Sprintf("OK — %d-dim embedding from %s", len(vec), modelLabel), "")
+		// Name WHERE it embedded. The test now has two possible meanings, and a
+		// bare "OK" would not distinguish a working peer from a local embedder
+		// that answered because the peer selection never took effect.
+		where := "this instance"
+		if p, ok := PeerFromProvider(req.Provider); ok {
+			where = "peer " + p.Name
+			if p.Instance != "" {
+				where += " (" + p.Instance + ")"
+			}
+		}
+		writeTestResult(w, true, fmt.Sprintf("OK — %d-dim embedding from %s via %s", len(vec), modelLabel, where), "")
 	})
 
 	// /api/embeddings/models — probe the saved embedding endpoint for

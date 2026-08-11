@@ -150,6 +150,37 @@ func TestResolveEmbeddingProviderFillsFromThePeer(t *testing.T) {
 	}
 }
 
+// With a peer picked, the endpoint/model/key fields are HIDDEN, so the form
+// submits them empty. Every consumer of a submitted config has to resolve
+// before it inspects those fields.
+//
+// The Test-embed button did not, and reported "endpoint is required" against a
+// form that was showing no endpoint field to fill in — a correct configuration
+// failing its own connectivity check, with the remedy invisible.
+func TestResolveFillsAConfigWhoseFieldsWereHidden(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	// Exactly what the form posts when a peer is selected: enabled, a provider,
+	// and nothing else.
+	got, err := ResolveEmbeddingProvider(EmbeddingConfig{
+		Enabled: true, Provider: PeerProviderValue("gpu-box"),
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.Endpoint == "" {
+		t.Error("endpoint still empty after resolving — any caller checking it will refuse a valid peer")
+	}
+	if got.APIKey == "" {
+		t.Error("key still empty after resolving — the embed would 401")
+	}
+	if got.Model == "" {
+		t.Error("model still empty after resolving")
+	}
+}
+
 // An unknown peer is an error, never a silent fall back to local. Falling back
 // would point the vector store at a DIFFERENT embedder than the one selected,
 // and mixing spaces degrades every comparison without failing.
