@@ -2,11 +2,14 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A "checklist" field posts a JSON array, but a form the operator never touched
@@ -249,5 +252,96 @@ func TestEmbeddingProviderOptionsAlwaysOfferLocal(t *testing.T) {
 	}
 	if opts[0].Label == "" || opts[0].Help == "" {
 		t.Errorf("the local option needs a label and help: %+v", opts[0])
+	}
+}
+
+// findField returns a form field by name.
+func findField(fields []ui.FormField, name string) (ui.FormField, bool) {
+	for _, f := range fields {
+		if f.Field == name {
+			return f, true
+		}
+	}
+	return ui.FormField{}, false
+}
+
+// With no peers registered, "Embed on" is a select with one option — a question
+// with a single possible answer. It should not appear at all.
+//
+// The trap is what goes with it. The endpoint, model and key fields are gated
+// on "provider:local" so they vanish while a peer is selected. Leave that
+// clause in place with no dropdown to set `provider`, and they are hidden on
+// every deployment that has no peers — the entire form, blank, for the
+// overwhelmingly common case. The field and the clause have to appear and
+// disappear together.
+func TestEmbeddingFormHidesTheProviderPickerWithNoPeers(t *testing.T) {
+	prev := RootDB
+	t.Cleanup(func() { RootDB = prev })
+	RootDB = nil // no peer store → no peers
+
+	fields := embeddingFormFields()
+	if _, ok := findField(fields, "provider"); ok {
+		t.Error("the provider dropdown is shown with no peers registered")
+	}
+	for _, name := range []string{"endpoint", "model", "api_key"} {
+		f, ok := findField(fields, name)
+		if !ok {
+			t.Errorf("field %q is missing from the embeddings form entirely", name)
+			continue
+		}
+		if strings.Contains(f.ShowWhen, "provider") {
+			t.Errorf("field %q is gated on %q but nothing can set provider — it would never render: %q",
+				name, "provider:local", f.ShowWhen)
+		}
+		if f.ShowWhen != "enabled" {
+			t.Errorf("field %q should show whenever embeddings are enabled, got %q", name, f.ShowWhen)
+		}
+	}
+	// The toggle is unconditional either way.
+	if f, ok := findField(fields, "enabled"); !ok || f.ShowWhen != "" {
+		t.Errorf("the enable toggle must always render: %+v", f)
+	}
+}
+
+// The paired case: register a peer and both the dropdown AND the gating on the
+// fields it controls must come back. Testing only the empty case would let a
+// change that drops the clause pass while breaking peer selection.
+func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
+	prevDB, prevCfg := RootDB, GetEmbeddingConfig()
+	t.Cleanup(func() { RootDB = prevDB; SetEmbeddingConfig(prevCfg) })
+	RootDB = &DBase{Store: kvlite.MemStore()}
+
+	// A local embedder for the manifest's dimension probe.
+	embedder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
+	}))
+	defer embedder.Close()
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: embedder.URL, Model: "nomic-embed-text"})
+
+	pk, err := MintPeerKey("consumer", []string{PeerCapEmbeddings}, 0)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", srv.URL, pk.Key); err != nil {
+		t.Fatalf("add peer: %v", err)
+	}
+
+	fields := embeddingFormFields()
+	provider, ok := findField(fields, "provider")
+	if !ok {
+		t.Fatal("a peer is registered but the provider dropdown is absent")
+	}
+	if len(provider.Options) < 2 {
+		t.Errorf("provider dropdown should offer local plus the peer, got %+v", provider.Options)
+	}
+	for _, name := range []string{"endpoint", "model", "api_key"} {
+		f, _ := findField(fields, name)
+		if !strings.Contains(f.ShowWhen, "provider:local") {
+			t.Errorf("field %q must hide while a peer is selected, got ShowWhen %q", name, f.ShowWhen)
+		}
 	}
 }

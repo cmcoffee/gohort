@@ -843,6 +843,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		if a.db != nil {
 			a.db.Get(EmbeddingTable, "current", &cfg)
 		}
+		// Every config stored before peers existed has a blank Provider. Report
+		// it as "local" so the dropdown preselects the right option instead of
+		// opening on nothing, and so a ShowWhen testing provider:local matches.
+		if strings.TrimSpace(cfg.Provider) == "" {
+			cfg.Provider = EmbeddingProviderLocal
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cfg)
 	})

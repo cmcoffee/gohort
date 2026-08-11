@@ -325,6 +325,65 @@ func mcpServerFormFields() []ui.FormField {
 // inline script) and talks to the existing /api/db/{tables,keys,record}
 // endpoints. Self-contained: scoped CSS + DOM-built rows (textContent, no
 // innerHTML injection). No backticks inside this raw string per repo rule.
+// embeddingFormFields builds the Embeddings settings form.
+//
+// The "Embed on" dropdown appears only when a peer offering embeddings is
+// actually registered. With none, it is a select with one option — a control
+// that asks a question with a single possible answer, on a page that already
+// has plenty to read.
+//
+// Its absence has to be matched by the gating on the fields below it. Those
+// carry ShowWhen "enabled;provider:local" so they disappear while a peer is
+// selected; leaving that clause in place with no dropdown to set `provider`
+// would hide the endpoint, model and key on every deployment that has no peers
+// — the whole form, blank, for the overwhelmingly common case. So the clause is
+// added and removed together with the field that drives it.
+func embeddingFormFields() []ui.FormField {
+	peers := EmbeddingProviderOptions()
+	// One option means local only: nothing to choose between.
+	hasPeers := len(peers) > 1
+
+	local := "enabled"
+	if hasPeers {
+		local = "enabled;provider:local"
+	}
+
+	fields := []ui.FormField{
+		{Field: "enabled", Label: "Enable embeddings", Type: "toggle"},
+	}
+	if hasPeers {
+		// Where the embedding happens. "This instance" keeps the manual
+		// endpoint/model below; picking a peer fills those from its manifest at
+		// save time, so everything downstream sees an ordinary config.
+		fields = append(fields, ui.FormField{
+			Field: "provider", Label: "Embed on", Type: "select",
+			Options:  peers,
+			ShowWhen: "enabled",
+			Help:     "Use this instance's own embedder, or a peer instance you've connected under Resource Sharing › Peers.",
+		})
+	}
+	return append(fields,
+		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
+			Placeholder: "http://localhost:11434/api",
+			Help:        "Base URL including the API version prefix — gohort appends /embeddings. Pick a preset below for the canonical path on common platforms.",
+			ShowWhen:    local,
+			Presets: []ui.FieldPreset{
+				{Label: "Ollama", Value: "http://localhost:11434/api", Hint: "Ollama native API (→ /api/embeddings)"},
+				{Label: "llama.cpp", Value: "http://localhost:8080/v1", Hint: "llama.cpp OpenAI-compatible (→ /v1/embeddings)"},
+				{Label: "vLLM", Value: "http://localhost:8000/v1", Hint: "vLLM OpenAI-compatible (→ /v1/embeddings)"},
+				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted (→ /v1/embeddings, requires API key support)"},
+			}},
+		ui.FormField{Field: "model", Label: "Model", Type: "text",
+			Placeholder: "nomic-embed-text",
+			Help:        "Leave blank for single-model backends (llama.cpp, vLLM, hf-tei — they ignore this field). Required for Ollama. Click a chip below to fill from the endpoint's model list.",
+			ShowWhen:    local,
+			ChipsSource: "api/embeddings/models"},
+		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
+			Help:     "Optional bearer token. Set for OpenAI hosted / authenticated proxies; leave blank for local Ollama, llama.cpp, or vLLM.",
+			ShowWhen: local},
+	)
+}
+
 func databaseBrowserCard() ui.Card {
 	return ui.Card{HTML: `
 <style>
@@ -920,35 +979,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Source:    "api/embeddings",
 					TestURL:   "api/embeddings/test",
 					TestLabel: "Test embed call",
-					Fields: []ui.FormField{
-						{Field: "enabled", Label: "Enable embeddings", Type: "toggle"},
-						// Where the embedding happens. "This instance" keeps the
-						// manual endpoint/model below; picking a peer fills those
-						// from its manifest at save time, so everything
-						// downstream sees an ordinary config.
-						{Field: "provider", Label: "Embed on", Type: "select",
-							Options:  EmbeddingProviderOptions(),
-							ShowWhen: "enabled",
-							Help:     "Use this instance's own embedder, or a peer instance you've connected under Resource Sharing › Peers."},
-						{Field: "endpoint", Label: "Endpoint", Type: "text",
-							Placeholder: "http://localhost:11434/api",
-							Help:        "Base URL including the API version prefix — gohort appends /embeddings. Pick a preset below for the canonical path on common platforms.",
-							ShowWhen:    "enabled;provider:local",
-							Presets: []ui.FieldPreset{
-								{Label: "Ollama", Value: "http://localhost:11434/api", Hint: "Ollama native API (→ /api/embeddings)"},
-								{Label: "llama.cpp", Value: "http://localhost:8080/v1", Hint: "llama.cpp OpenAI-compatible (→ /v1/embeddings)"},
-								{Label: "vLLM", Value: "http://localhost:8000/v1", Hint: "vLLM OpenAI-compatible (→ /v1/embeddings)"},
-								{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted (→ /v1/embeddings, requires API key support)"},
-							}},
-						{Field: "model", Label: "Model", Type: "text",
-							Placeholder: "nomic-embed-text",
-							Help:        "Leave blank for single-model backends (llama.cpp, vLLM, hf-tei — they ignore this field). Required for Ollama. Click a chip below to fill from the endpoint's model list.",
-							ShowWhen:    "enabled;provider:local",
-							ChipsSource: "api/embeddings/models"},
-						{Field: "api_key", Label: "API Key", Type: "password",
-							Help:     "Optional bearer token. Set for OpenAI hosted / authenticated proxies; leave blank for local Ollama, llama.cpp, or vLLM.",
-							ShowWhen: "enabled;provider:local"},
-					},
+					Fields:    embeddingFormFields(),
 				},
 			},
 			{
