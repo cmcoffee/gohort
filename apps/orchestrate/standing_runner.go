@@ -31,7 +31,14 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// it — running it anyway would defeat the approval gate. Report an
 		// attention entry naming why it didn't execute. Covers standing fires AND
 		// delegations, since both flow through the registered runner.
-		if rec, ok := loadAgent(UserDB(app.DB, sa.Owner), sa.AgentID); ok && rec.PendingApproval {
+		//
+		// Resolve by name OR id, the same way the dispatcher itself does.
+		// RunDelegation fills AgentID with whatever string the caller typed, so a
+		// delegation addressed by display name ("Research Assistant") missed an
+		// id-only lookup entirely: ok came back false and the approval hold was
+		// skipped without a word. A gate that holds or not depending on how the
+		// target was spelled is not a gate.
+		if rec, ok := findAgentByNameOrID(UserDB(app.DB, sa.Owner), sa.Owner, sa.AgentID); ok && rec.PendingApproval {
 			return StandingRunResult{
 				Status:  RunAttention,
 				Summary: "Skipped: agent \"" + rec.Name + "\" is still awaiting approval — activate it in the Authorizations pane and it will run on its next schedule.",

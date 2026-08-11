@@ -28,6 +28,7 @@ package core
 // Anthropic stream events — feed the same accumulator the SSE path uses.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -364,6 +365,50 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 			continue // keep-alive, or a frame type that carries no event
 		}
 		st.feed(event)
+		applyBedrockMetrics(st, event)
 	}
 	return st.response("bedrock-runtime"), nil
 }
+
+// applyBedrockMetrics reads the billed token counts off the final chunk.
+//
+// This endpoint does NOT report usage the way the Anthropic wire does. Its
+// message_start carries a placeholder input count — observed as 2 against a
+// prompt of several thousand tokens — and nothing later corrects it, so a turn
+// costing dollars was being recorded as costing nothing. Every per-turn cost
+// figure, budget check and usage total drawn from an InvokeModel turn was wrong
+// by orders of magnitude, and wrong in the direction nobody investigates.
+//
+// The real counts arrive once, on the last chunk, under a Bedrock-specific key
+// alongside the ordinary message_stop event. They are what AWS bills on, so
+// they win over anything the stream said earlier.
+func applyBedrockMetrics(st *anthStreamState, event []byte) {
+	// Only the final chunk carries it; skip the re-parse for every other frame.
+	if !bytes.Contains(event, []byte(bedrockMetricsKey)) {
+		return
+	}
+	var wrapper struct {
+		Metrics *struct {
+			InputTokenCount  int `json:"inputTokenCount"`
+			OutputTokenCount int `json:"outputTokenCount"`
+		} `json:"amazon-bedrock-invocationMetrics"`
+	}
+	if err := json.Unmarshal(event, &wrapper); err != nil || wrapper.Metrics == nil {
+		Debug("[bedrock-runtime]: invocation metrics present but unreadable — token counts stay as the stream reported them")
+		return
+	}
+	// Guard on >0 so a metrics block that omits a field cannot zero out a count
+	// the stream did report correctly.
+	if n := wrapper.Metrics.InputTokenCount; n > 0 {
+		if st.inputTokens > 0 && n != st.inputTokens {
+			Debug("[bedrock-runtime]: input tokens %d -> %d (billed)", st.inputTokens, n)
+		}
+		st.inputTokens = n
+	}
+	if n := wrapper.Metrics.OutputTokenCount; n > 0 {
+		st.outputTokens = n
+	}
+}
+
+// bedrockMetricsKey is the JSON key Bedrock appends to the last streamed chunk.
+const bedrockMetricsKey = "amazon-bedrock-invocationMetrics"

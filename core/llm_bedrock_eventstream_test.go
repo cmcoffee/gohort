@@ -203,6 +203,88 @@ func TestBedrockRuntimeStreamingEndToEnd(t *testing.T) {
 	}
 }
 
+// runBedrockStream plays a fixed set of events through a real ChatStream.
+func runBedrockStream(t *testing.T, events []string) *Response {
+	t.Helper()
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDTEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "SECRETTEST")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		for _, e := range events {
+			w.Write(encodeBedrockChunk(e))
+		}
+	}))
+	defer srv.Close()
+
+	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
+	llm, err := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
+		strings.TrimPrefix(srv.URL, "http://"), api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := llm.ChatStream(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	return resp
+}
+
+// Bedrock's message_start reports a placeholder input count on this endpoint —
+// 2, observed live against a prompt of thousands of tokens — and nothing later
+// in the Anthropic events corrects it. The billed counts arrive once, on the
+// last chunk, under a Bedrock-specific key. Reading only the Anthropic usage
+// blocks recorded expensive turns as costing nothing.
+//
+// The fixture is the AWS wire shape (inputTokenCount, camelCase, alongside
+// message_stop), not this package's field names.
+func TestBedrockBilledTokensOverrideThePlaceholder(t *testing.T) {
+	resp := runBedrockStream(t, []string{
+		`{"type":"message_start","message":{"model":"claude-opus-4-8","usage":{"input_tokens":2}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}`,
+		`{"type":"message_stop","amazon-bedrock-invocationMetrics":{"inputTokenCount":2447,` +
+			`"outputTokenCount":153,"invocationLatency":2100,"firstByteLatency":480}}`,
+	})
+	if resp.InputTokens != 2447 {
+		t.Errorf("input tokens = %d, want the billed 2447 (the stream's placeholder was 2)", resp.InputTokens)
+	}
+	if resp.OutputTokens != 153 {
+		t.Errorf("output tokens = %d, want the billed 153", resp.OutputTokens)
+	}
+	if resp.Content != "ok" {
+		t.Errorf("content = %q — reading metrics must not disturb the response", resp.Content)
+	}
+}
+
+// No metrics chunk (a truncated stream, or an endpoint that stops sending
+// them): keep what the Anthropic events reported rather than reporting zero.
+func TestBedrockUsageSurvivesMissingMetrics(t *testing.T) {
+	resp := runBedrockStream(t, []string{
+		`{"type":"message_start","message":{"model":"claude-opus-4-8","usage":{"input_tokens":11}}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}`,
+	})
+	if resp.InputTokens != 11 || resp.OutputTokens != 9 {
+		t.Errorf("usage in=%d out=%d, want the stream's 11/9", resp.InputTokens, resp.OutputTokens)
+	}
+}
+
+// A metrics block that omits a count must not zero out one the stream did
+// report. Overriding unconditionally would trade a wrong number for a wronger
+// one on any future shape change.
+func TestBedrockPartialMetricsDoNotZeroCounts(t *testing.T) {
+	resp := runBedrockStream(t, []string{
+		`{"type":"message_start","message":{"model":"claude-opus-4-8","usage":{"input_tokens":11}}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}`,
+		`{"type":"message_stop","amazon-bedrock-invocationMetrics":{"invocationLatency":2100}}`,
+	})
+	if resp.InputTokens != 11 || resp.OutputTokens != 9 {
+		t.Errorf("usage in=%d out=%d, want the stream's 11/9 preserved", resp.InputTokens, resp.OutputTokens)
+	}
+}
+
 // A stream that dies mid-answer should return what arrived, not nothing: the
 // caller has already rendered those tokens through the handler.
 func TestBedrockRuntimeStreamTruncationKeepsPartial(t *testing.T) {
