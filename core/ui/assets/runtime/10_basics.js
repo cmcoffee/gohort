@@ -2796,9 +2796,14 @@
         wrap.innerHTML = '';
         var data = d || {};
         (cfg.pairs || []).forEach(function(p) {
+          // Severity comes from the payload, never from this component: only
+          // the server knows whether false is good news here.
+          var sev = p.status_field ? String(data[p.status_field] || '') : '';
+          var cls = 'ui-display-value' + (p.mono ? ' mono' : '');
+          if (sev === 'ok' || sev === 'warn' || sev === 'bad') cls += ' ' + sev;
           var row = el('div', {class: 'ui-display-row'}, [
             el('span', {class: 'ui-display-label'}, [p.label]),
-            el('span', {class: 'ui-display-value' + (p.mono ? ' mono' : '')}, [fmt(data[p.field], p.format)]),
+            el('span', {class: cls}, [fmt(data[p.field], p.format)]),
           ]);
           wrap.appendChild(row);
         });

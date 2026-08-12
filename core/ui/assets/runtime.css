@@ -1712,6 +1712,11 @@ select:-webkit-autofill {
 .ui-display-row:last-child { border-bottom: none; }
 .ui-display-label { font-size: 0.85rem; color: var(--text-mute); }
 .ui-display-value { font-size: 0.9rem; color: var(--text); text-align: right; word-break: break-all; }
+/* Server-assigned severity on a display pair. Weight as well as colour, so the
+   row still reads as notable where colour is unavailable or unnoticed. */
+.ui-display-value.ok   { color: var(--success); font-weight: 600; }
+.ui-display-value.warn { color: var(--warning); font-weight: 600; }
+.ui-display-value.bad  { color: var(--danger, #dc2626); font-weight: 600; }
 .ui-display-value.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.82rem; }
 /* Block-style row: label on its own line, value as a <pre> block
    below — for multi-line content like script bodies. */

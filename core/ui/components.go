@@ -1143,6 +1143,17 @@ type DisplayPair struct {
 	// "[object Object]" a plain pair would show. Domain-agnostic — the
 	// caller names the sub-fields.
 	Items []DisplayPair `json:"items,omitempty"`
+	// StatusField names a field on the SAME payload holding "ok", "warn" or
+	// "bad", which colours this pair's value. Anything else (including absent)
+	// renders plain, so adding it to one pair changes nothing about the others.
+	//
+	// The SERVER decides the severity, not this component: core/ui has no way
+	// to know whether false is good news. A panel reporting "confined: false"
+	// in the same grey as everything around it is technically complete and
+	// practically invisible, which is the whole reason this exists — the row a
+	// reader most needs to notice is exactly the one that looks like every
+	// other row.
+	StatusField string `json:"status_field,omitempty"`
 }
 
 // ChartPanel renders a multi-series chart (bar / line / area / pie) as

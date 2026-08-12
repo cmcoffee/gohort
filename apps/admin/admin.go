@@ -4851,6 +4851,11 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// permanent state and the old warning's advice was impossible.
 		"sandbox_backend":  sandbox.Backend,
 		"sandbox_confined": sandbox.Confined,
+		// The severity the panel colours by. Decided here because only this
+		// side knows that false is the bad direction — and a row reading
+		// "confined: false" in the same grey as "user count: 3" is the row a
+		// reader most needs to notice looking exactly like one they do not.
+		"sandbox_status":   map[bool]string{true: "ok", false: "bad"}[sandbox.Confined],
 		"sandbox_required": sandbox.Required,
 		"sandbox_advice":   sandbox.Advice,
 		"tls_enabled":      TLSEnabled(),
