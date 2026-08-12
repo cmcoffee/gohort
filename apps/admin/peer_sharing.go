@@ -10,7 +10,9 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -142,7 +144,8 @@ func decodeCapsField(raw json.RawMessage) []string {
 	return nil
 }
 
-// handlePeerKeyItem serves one key: PUT toggles enabled, DELETE removes it.
+// handlePeerKeyItem serves one key: GET returns it (for the Grants modal to
+// prefill), PUT toggles enabled OR re-grants capabilities, DELETE removes it.
 func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r) {
 		return
@@ -156,15 +159,77 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
-	case http.MethodPut, http.MethodPatch, http.MethodPost:
-		var req struct {
-			Enabled *bool `json:"enabled"`
+	case http.MethodGet:
+		// Per-record GET, for the Grants modal to prefill from. Returns the
+		// same shape the PUT accepts.
+		for _, k := range ListPeerKeys() {
+			if k.ID == id {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{
+					"id": k.ID, "label": k.Label, "caps": k.Caps,
+					"appliances": peerKeyScopeValues(k),
+				})
+				return
+			}
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Enabled == nil {
-			http.Error(w, "expected {\"enabled\": bool}", http.StatusBadRequest)
+		http.Error(w, "no such key", http.StatusNotFound)
+		return
+	case http.MethodPut, http.MethodPatch, http.MethodPost:
+		// Two different edits share this verb: the row toggle sends
+		// {"enabled":bool}, the Grants modal sends {"caps":[...]}. Dispatch on
+		// which one is present rather than on the method, so neither has to
+		// know about the other.
+		var req struct {
+			Enabled    *bool     `json:"enabled"`
+			Caps       *[]string `json:"caps"`
+			Owner      *string   `json:"owner"`
+			Appliances *[]string `json:"appliances"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+			(req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil) {
+			http.Error(w, "expected {\"enabled\": bool}, {\"caps\": [...]}, or {\"owner\", \"appliances\"}", http.StatusBadRequest)
 			return
 		}
-		if !SetPeerKeyDisabled(id, !*req.Enabled) {
+		if req.Caps != nil {
+			pk, cerr := SetPeerKeyCaps(id, *req.Caps)
+			if cerr != nil {
+				http.Error(w, cerr.Error(), http.StatusBadRequest)
+				return
+			}
+			Log("[admin] user %q re-granted peer key %q: %s",
+				AuthCurrentUser(r), pk.Label, strings.Join(pk.Caps, ", "))
+		}
+		// Scope — whose appliances, and which. Sent together by the Grants
+		// modal: setting one without the other would leave a key naming
+		// machines with nobody to run as, or an owner reaching nothing.
+		if req.Owner != nil || req.Appliances != nil {
+			owner, apps := "", []string{}
+			if req.Owner != nil {
+				owner = *req.Owner
+			}
+			if req.Appliances != nil {
+				// The checklist carries "<user>:<id>" values, so the owner
+				// comes out of the selection rather than being asked for
+				// separately — see peerApplianceScopeOptions.
+				derived, ids, derr := splitPeerApplianceScope(*req.Appliances)
+				if derr != nil {
+					http.Error(w, derr.Error(), http.StatusBadRequest)
+					return
+				}
+				apps = ids
+				if derived != "" {
+					owner = derived
+				}
+			}
+			pk, serr := SetPeerKeyScope(id, owner, apps)
+			if serr != nil {
+				http.Error(w, serr.Error(), http.StatusBadRequest)
+				return
+			}
+			Log("[admin] user %q scoped peer key %q to owner=%q over %d appliance(s)",
+				AuthCurrentUser(r), pk.Label, pk.Owner, len(pk.Appliances))
+		}
+		if req.Enabled != nil && !SetPeerKeyDisabled(id, !*req.Enabled) {
 			http.Error(w, "no such key", http.StatusNotFound)
 			return
 		}
@@ -329,6 +394,81 @@ func EmbeddingProviderOptions() []ui.SelectOption {
 	return out
 }
 
+// TranscribeProviderOptions builds the provider dropdown for the Transcription
+// settings: this instance, plus every peer that actually offers STT.
+//
+// Same shape and same reasons as EmbeddingProviderOptions — the peer knowledge
+// stays in this file, the section that uses it lives in page.go.
+func TranscribeProviderOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{
+		Value: EmbeddingProviderLocal,
+		Label: "This instance",
+		Help:  "Transcribe locally, using the endpoint and model below.",
+	}}
+	for _, p := range PeersOffering(PeerCapTranscribe) {
+		label := "Peer: " + p.Name
+		if p.Instance != "" {
+			label += " (" + p.Instance + ")"
+		}
+		help := "Transcribe on " + p.BaseURL
+		if p.TranscribeModel != "" {
+			help += " using " + p.TranscribeModel
+		}
+		if p.LastError != "" {
+			help += " — last check failed: " + p.LastError
+		}
+		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
+	}
+	return out
+}
+
+// SearchProviderOptions builds the "Search on" dropdown: this instance, plus
+// every peer that actually offers search.
+func SearchProviderOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{
+		Value: EmbeddingProviderLocal,
+		Label: "This instance",
+		Help:  "Search with the provider configured below.",
+	}}
+	for _, p := range PeersOffering(PeerCapSearch) {
+		label := "Peer: " + p.Name
+		if p.Instance != "" {
+			label += " (" + p.Instance + ")"
+		}
+		help := "Search through " + p.BaseURL
+		if p.SearchProvider != "" {
+			help += ", which uses " + p.SearchProvider
+		}
+		if p.LastError != "" {
+			help += " — last check failed: " + p.LastError
+		}
+		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
+	}
+	return out
+}
+
+// BrowseProviderOptions builds the "Render pages on" dropdown: this instance,
+// plus every peer that actually offers browsing.
+func BrowseProviderOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{
+		Value: EmbeddingProviderLocal,
+		Label: "This instance",
+		Help:  "Render pages in this machine's own headless browser.",
+	}}
+	for _, p := range PeersOffering(PeerCapBrowse) {
+		label := "Peer: " + p.Name
+		if p.Instance != "" {
+			label += " (" + p.Instance + ")"
+		}
+		help := "Render pages on " + p.BaseURL + " — this machine then needs no Chromium of its own"
+		if p.LastError != "" {
+			help += " — last check failed: " + p.LastError
+		}
+		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
+	}
+	return out
+}
+
 // peerCapOptions builds the capability checklist, marking the ones this build
 // cannot serve yet. Offering them is deliberate: a grant made today starts
 // working the day the capability ships, and the operator can see the roadmap
@@ -337,14 +477,36 @@ func peerCapOptions() []ui.SelectOption {
 	help := map[string]string{
 		PeerCapEmbeddings: "Let the peer embed text using this instance's embedder.",
 		PeerCapImages:     "Generate and edit images on this instance's GPU, including multi-image edits.",
+		PeerCapTranscribe: "Turn speech into text using this instance's STT model — audio files, voice notes, the audio track of a video.",
+		PeerCapSearch:     "Run web searches through this instance's search provider. Note this SPENDS a metered API key if one is configured here; it is rate-limited separately and more tightly than everything else.",
+		PeerCapBrowse:     "Render pages in this instance's headless browser. Public web only — a peer can never reach this machine's private network through it.",
 		PeerCapModels:     "Chat completions against this instance's configured models.",
 		PeerCapTranscode:  "Media transcoding and frame sampling.",
+		PeerCapInvestigate: "Let the peer ask questions about systems THIS instance can reach — for a machine on a network the peer has no route to. " +
+			"It sends a question; this instance runs the investigation itself, read-only, under its own approval rules, and returns prose. " +
+			"No command from the peer is ever executed, and no credential leaves here. " +
+			"Requires picking which systems below — the grant alone reaches nothing.",
+		PeerCapKnowledge: "Let the peer hold a COPY of what this instance has already learned about those systems — " +
+			"the structured docs and recorded facts — so it can answer from them instantly instead of asking every time. " +
+			"Each item keeps the age it has here, so a copy of a two-month-old map reads as two months old over there. " +
+			"Separate from Investigate on purpose: this one moves knowledge off this machine, the other only answers questions. " +
+			"Uses the same system list below.",
+		PeerCapExec: "Let the peer run commands on those systems through THIS instance's connection to them — the peer as a wire to a machine it cannot route to. " +
+			"Understand what this is: a key granted it has a shell on the named systems, and the CALLING instance decides what runs, not this one. " +
+			"There is no risk gate on this side, by design — that is what makes a peer-reached system behave exactly like a local one. " +
+			"Grant it only to instances you own, and only for the systems below.",
 	}
 	label := map[string]string{
-		PeerCapEmbeddings: "Embeddings",
-		PeerCapImages:     "Image generation",
-		PeerCapModels:     "Models (chat)",
-		PeerCapTranscode:  "Transcoding",
+		PeerCapEmbeddings:  "Embeddings",
+		PeerCapImages:      "Image generation",
+		PeerCapTranscribe:  "Transcription (speech-to-text)",
+		PeerCapSearch:      "Web search",
+		PeerCapBrowse:      "Page rendering (browser)",
+		PeerCapModels:      "Models (chat)",
+		PeerCapTranscode:   "Transcoding",
+		PeerCapInvestigate: "Investigate systems (answers questions, runs no remote commands)",
+		PeerCapKnowledge:   "Share gathered knowledge (copies docs and facts to the peer)",
+		PeerCapExec:        "Run commands (the peer gets a shell on these systems, gated on ITS side)",
 	}
 	out := make([]ui.SelectOption, 0, len(PeerCapabilities()))
 	for _, c := range PeerCapabilities() {
@@ -395,7 +557,7 @@ func peerSharingSections() []ui.Section {
 							Help:        "How you'll recognize this peer later. Shown only to you."},
 						{Field: "caps", Label: "Capabilities", Type: "checklist",
 							Options: peerCapOptions(),
-							Help:    "The key can do these and nothing else. Add more later by minting a new key."},
+							Help:    "The key can do these and nothing else. Change them later with the Grants button on the key row \u2014 no need to mint a new one."},
 						{Field: "rate_per_min", Label: "Calls per minute", Type: "number", Min: 0, Max: 100000,
 							Help: "Ceiling on how hard this peer may work this instance. Leave 0 for the default (600/min)."},
 					},
@@ -469,6 +631,28 @@ func peerSharingSections() []ui.Section {
 				RowActions: []ui.RowAction{
 					{Type: "toggle", Field: "enabled", Label: "Enabled",
 						PostTo: "api/peer-keys/{id}", Method: "PUT", Leading: true},
+					// Re-granting an existing key, rather than delete-and-mint.
+					// The secret survives, so a peer already holding it picks up
+					// a newly-shipped capability without anything being
+					// re-pasted or re-probed on the other machine.
+					ui.ModalAction("Grants", ui.FormPanel{
+						Source:      "api/peer-keys/{id}",
+						PostURL:     "api/peer-keys/{id}",
+						Method:      "PUT",
+						SubmitLabel: "Save grants",
+						Invalidate:  []string{"api/peer-keys"},
+						Fields: []ui.FormField{
+							{Field: "caps", Label: "Capabilities", Type: "checklist",
+								Options: peerCapOptions(),
+								Help:    "The key can do these and nothing else. Removing one takes effect immediately; the peer keeps the same key either way."},
+							{Field: "appliances", Label: "Systems this key may reach", Type: "checklist",
+								Options: peerApplianceScopeOptions(),
+								Help: "For the Investigate, Share-knowledge and Run-commands grants, and only these — there is no \"all systems\". " +
+									"The peer sends a QUESTION; this instance runs the investigation itself, on its own network, read-only. " +
+									"Credentials never leave here. Pick systems belonging to ONE user: the investigation runs as them, so it reaches exactly what they can. " +
+									"Leave empty and an Investigate grant reaches nothing."},
+						},
+					}),
 					{Type: "button", Label: "Delete", PostTo: "api/peer-keys/{id}", Method: "DELETE",
 						Variant: "danger", Compact: true,
 						Confirm: "Delete this peer key? The peer using it loses access immediately and the key cannot be recovered."},
@@ -495,3 +679,83 @@ an embeddings grant shows up in that instance's <em>Embeddings</em> provider dro
 <p style="margin:0;opacity:.75">The manifest names every capability, whether this build serves it, and whether
 that key was granted it — so a refusal tells you which of the two it is.</p>
 `
+
+// peerApplianceScopeOptions lists every user's investigable systems as
+// "<user>:<appliance-id>".
+//
+// The owner is folded INTO the value rather than sitting in its own field
+// because a FormPanel field cannot fetch options that depend on another field's
+// value — and the encoding turns out to be the better design anyway. A key has
+// exactly one owner, and with the owner carried on each option the rule is
+// enforced by what the operator can pick rather than by a validation message
+// after the fact.
+func peerApplianceScopeOptions() []ui.SelectOption {
+	// AuthDB is a FUNC VAR — calling it unguarded panics rather than returning
+	// nil, which is how this reaches the page builder before auth is wired (and
+	// in every test binary). Third time today; the guard is cheap.
+	if AuthDB == nil {
+		return nil
+	}
+	authDB := AuthDB()
+	if authDB == nil {
+		return nil
+	}
+	var out []ui.SelectOption
+	for _, u := range AuthListUsers(authDB) {
+		user := strings.TrimSpace(u.Username)
+		if user == "" {
+			continue
+		}
+		for _, g := range ReferenceGroups(user) {
+			if g.Kind != "system" {
+				continue
+			}
+			for _, it := range g.Items {
+				label := user + " · " + it.Name
+				if strings.TrimSpace(it.Desc) != "" {
+					label += " (" + it.Desc + ")"
+				}
+				out = append(out, ui.SelectOption{Value: user + ":" + it.ID, Label: label})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
+}
+
+// splitPeerApplianceScope turns the picked "<user>:<id>" values back into an
+// owner and an id list, refusing a selection that spans two users.
+//
+// Refusing rather than picking one: a key that reached two people's machines
+// would be a permission nobody could describe in a sentence, and silently
+// dropping half the selection is worse than saying no.
+func splitPeerApplianceScope(picked []string) (owner string, ids []string, err error) {
+	for _, p := range picked {
+		u, id, ok := strings.Cut(strings.TrimSpace(p), ":")
+		u, id = strings.TrimSpace(u), strings.TrimSpace(id)
+		if !ok || u == "" || id == "" {
+			continue
+		}
+		if owner == "" {
+			owner = u
+		} else if owner != u {
+			return "", nil, fmt.Errorf(
+				"a key can reach one user's systems, not several — %q and %q were both selected", owner, u)
+		}
+		ids = append(ids, id)
+	}
+	return owner, ids, nil
+}
+
+// peerKeyScopeValues renders a key's stored scope back into the option values
+// the checklist uses, so the modal prefills with what is actually granted.
+func peerKeyScopeValues(k PeerKey) []string {
+	if strings.TrimSpace(k.Owner) == "" {
+		return nil
+	}
+	out := make([]string, 0, len(k.Appliances))
+	for _, id := range k.Appliances {
+		out = append(out, k.Owner+":"+id)
+	}
+	return out
+}

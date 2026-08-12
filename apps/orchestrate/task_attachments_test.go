@@ -182,3 +182,39 @@ func TestResultsLandingInTheWindowGoOutTogether(t *testing.T) {
 		t.Error("a result after the window closed must own its own delivery")
 	}
 }
+
+// A set still running says so to the turn that delivers this piece, and to
+// nobody afterwards. Persisted, "start the next one" is an instruction a later
+// turn can read again and obey — which is how a set of three acquires a fourth.
+func TestAContinuationDrivesTheDeliveringTurnOnly(t *testing.T) {
+	session := "sess-note-series"
+	t.Cleanup(func() { claimTaskAttachments(session, &ToolSession{}) })
+	note := buildWakeNote(session, "image generate: a red bicycle", TaskProduct{
+		Text:         "Stored. image#1 is its lasting handle.",
+		Images:       []string{"AAAA"},
+		Continuation: SeriesContinuation(1, 3, "another take on: a red bicycle"),
+	}, nil)
+
+	if !strings.Contains(note.prompt, "PIECE 1 OF 3") {
+		t.Errorf("the delivering turn must be told to start the next piece:\n%s", note.prompt)
+	}
+	if strings.Contains(note.history, "PIECE 1 OF 3") {
+		t.Errorf("a one-turn instruction must not be persisted:\n%s", note.history)
+	}
+	// The fact half is unchanged: the handle still has to survive.
+	if !strings.Contains(note.history, "image#1") {
+		t.Errorf("the handle must still reach history:\n%s", note.history)
+	}
+}
+
+// A failed piece ends the set. The wake for a failure already says not to retry
+// silently, and carrying a continuation past a visible break keeps sending
+// pictures for a request that went wrong.
+func TestAFailedPieceCarriesNoContinuation(t *testing.T) {
+	note := buildWakeNote("sess-note-series-failed", "image generate", TaskProduct{
+		Continuation: SeriesContinuation(1, 3, "another take"),
+	}, errTestTaskFailed)
+	if strings.Contains(note.prompt, "PIECE 1 OF 3") {
+		t.Errorf("a failure must not start the next piece:\n%s", note.prompt)
+	}
+}

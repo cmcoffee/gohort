@@ -297,6 +297,27 @@ func (s RestImageSpec) pollDeadline() time.Duration {
 	return TuneDuration("tune_image_poll_max_secs")
 }
 
+// submitTimeoutSecs is how long the SUBMIT request itself may take, in seconds.
+// Zero means "leave the general SecureAPI request cap alone".
+//
+// Only for a SYNCHRONOUS backend — one with no poll URL, where the submit
+// response IS the finished picture. There the render deadline and the request
+// timeout are the same wall clock, and governing it with a knob meant for
+// ordinary API calls capped every render at 30 seconds no matter what the
+// operator set the image deadline to. A peer render is exactly this shape: the
+// far side runs the whole job (its own budget is ten minutes) and answers with
+// the pixels, so a 900-second edit deadline here was being enforced at 30.
+//
+// An ASYNC backend keeps the general cap: its submit should return an id
+// immediately, the poll loop does the waiting under pollDeadline, and a submit
+// that hangs for fifteen minutes there is a fault worth surfacing quickly.
+func (s RestImageSpec) submitTimeoutSecs() int {
+	if strings.TrimSpace(s.PollURL) != "" {
+		return 0
+	}
+	return int(s.pollDeadline() / time.Second)
+}
+
 type restImageHandler struct{}
 
 func (restImageHandler) parse(c Connector) (RestImageSpec, error) {
@@ -590,7 +611,12 @@ func (h restImageHandler) Materialize(c Connector) error {
 	// registered, an unapprove elsewhere left a live closure — and a partial
 	// refresh is indistinguishable from a stale one to whoever is looking at
 	// the picker and wondering why a restart fixes it.
-	reconcileImageBackends(RootDB)
+	//
+	// This connector is live by definition — it is the one being materialized —
+	// and the sweep must be told so: on the approve path its stored row still
+	// reads Approved=false, and the sweep would drop the registration made four
+	// lines up.
+	reconcileImageBackends(RootDB, name)
 	return nil
 }
 
@@ -616,11 +642,25 @@ func (restImageHandler) Teardown(c Connector) error {
 // rest_image is the only registrar (RegisterImageBackend has one other caller,
 // itself), so a full sweep is safe — but it still only removes names it put
 // there, tracked in ownedImageBackends, so a future registrar isn't clobbered.
-func reconcileImageBackends(db Database) {
+//
+// keepLive names connectors to treat as approved regardless of what the store
+// currently says. Materialize runs BEFORE ApproveConnector writes Approved=true,
+// so a sweep at the end of it read the not-yet-approved row and immediately
+// unregistered the backend it had just registered. The connector then sat
+// approved-but-unregistered — absent from the picker, invisible to
+// ReachableImageBackends, and reported as "no backend named X is available" —
+// until the next restart re-materialized it. Which made every image connector
+// look like it needed a restart to take effect, peer-provisioned ones included.
+func reconcileImageBackends(db Database, keepLive ...string) {
 	if db == nil {
 		return
 	}
 	live := map[string]bool{}
+	for _, name := range keepLive {
+		if name = strings.TrimSpace(name); name != "" {
+			live[name] = true
+		}
+	}
 	for _, c := range ListConnectors(db) {
 		if c.Kind != RestImageConnectorKind || !c.Approved {
 			continue
@@ -686,6 +726,44 @@ func restImageToolName(connector string) string {
 type restImageTool struct{ connector string }
 
 func (t *restImageTool) Name() string { return restImageToolName(t.connector) }
+
+// The same policy the grouped `image` tool carries. Without it this tool was
+// the hole in every guarantee around it: no detach, so it held the turn open;
+// no shared identity, so a set begun on `image` forked the moment the model
+// reached for this name instead; no place to book a piece, so the model tracked
+// the count itself and got it wrong. A request for four variations came back
+// announced as four and delivered as two, because the second half of the set
+// ran through here.
+var (
+	_ DetachableTool     = (*restImageTool)(nil)
+	_ AlwaysDetachTool   = (*restImageTool)(nil)
+	_ SeriesTool         = (*restImageTool)(nil)
+	_ DetachIdentityTool = (*restImageTool)(nil)
+)
+
+// DetachIdentity: this tool and `image` are the same act under two names. One
+// slot, one set, whichever the model picks.
+func (t *restImageTool) DetachIdentity() string { return RenderDetachIdentity }
+
+func (t *restImageTool) SeriesCapable() bool { return true }
+
+// ExpectedDuration is the backend's own render deadline, the same number the
+// grouped tool reports for this backend.
+func (t *restImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) time.Duration {
+	return ImageBackendDeadline(sess, t.connector)
+}
+
+// TypicalDuration is what this backend has actually been taking — measured, and
+// therefore the only number the agent may quote.
+func (t *restImageTool) TypicalDuration(args map[string]any, sess *ToolSession) time.Duration {
+	return ImageBackendTypicalDuration(sess, t.connector)
+}
+
+// AlwaysDetach: a render is background work whatever it costs. Same knob as the
+// grouped tool, so the two cannot be configured into disagreeing.
+func (t *restImageTool) AlwaysDetach(args map[string]any, sess *ToolSession) bool {
+	return TuneBool("tune_image_always_detach")
+}
 
 func (t *restImageTool) Desc() string {
 	base := fmt.Sprintf("Generate a NEW image from a text description via the %q image backend (a ComfyUI / Automatic1111 / hosted diffusion endpoint declared as a connector). The generated image is attached to your reply AUTOMATICALLY — once this tool returns, you are DONE: do NOT search the workspace, look for a file, or call workspace(attach); the image is already delivered. USE ONLY when the user asks to CREATE, DRAW, MAKE, or GENERATE a fresh image through this specific backend. Not for finding or downloading existing images.", t.connector)
@@ -798,8 +876,16 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// it's done and no file handling is needed. Inline/fetched bytes attach to the
 	// session (the framework adds its own "[ATTACHMENT REQUEST COMPLETED]" notice);
 	// a plain URL isn't attached, so tell the model to put it in the reply.
+	// Book this render against the set BEFORE writing the result, so whichever
+	// name the model reached for, the count is the same one the grouped `image`
+	// tool keeps. See BookSeriesPiece.
+	piece, of := BookSeriesPiece(sess, RenderDetachIdentity, 0, "another take on: "+truncateRestImagePrompt(prompt))
+	setNote := ""
+	if of > 1 {
+		setNote = fmt.Sprintf(" This is picture %d of the %d you said you would make.", piece, of)
+	}
 	if out.url != "" {
-		return "Image ready. Put this URL in your reply so the user can view it: " + out.url + "\nDo NOT search the workspace or call attach.", nil
+		return "Image ready. Put this URL in your reply so the user can view it: " + out.url + "\nDo NOT search the workspace or call attach." + setNote, nil
 	}
 	if sess != nil {
 		sess.AppendImage(out.b64)
@@ -812,9 +898,19 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// model not to touch the file for the CURRENT reply (it's already delivered);
 	// the path is purely for a subsequent forward request.
 	if rel, ok := persistImageToWorkspace(sess, out.b64); ok {
-		return "Done — the image was generated and attached to your reply; the user will receive it. Nothing more is needed for THIS reply: do NOT search the workspace or call workspace(attach) again for it — it's already delivered, so just reply. (It is also saved in your workspace as \"" + rel + "\": ONLY if a later request asks you to send or post this same image somewhere else, pass \"" + rel + "\" as the attachment.)", nil
+		return "Done — the image was generated and attached to your reply; the user will receive it. Nothing more is needed for THIS reply: do NOT search the workspace or call workspace(attach) again for it — it's already delivered, so just reply. (It is also saved in your workspace as \"" + rel + "\": ONLY if a later request asks you to send or post this same image somewhere else, pass \"" + rel + "\" as the attachment.)" + setNote, nil
 	}
-	return "Done — the image was generated and attached to your reply; the user will receive it. Nothing further is needed: do NOT search the workspace, look for a file, or call workspace(attach) — the image is already delivered. Just reply.", nil
+	return "Done — the image was generated and attached to your reply; the user will receive it. Nothing further is needed: do NOT search the workspace, look for a file, or call workspace(attach) — the image is already delivered. Just reply." + setNote, nil
+}
+
+// truncateRestImagePrompt keeps the continuation's reminder of the idea short —
+// the wake turn needs to know WHAT it was making, not the whole prompt.
+func truncateRestImagePrompt(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= 60 {
+		return s
+	}
+	return strings.TrimSpace(s[:60]) + "…"
 }
 
 // persistImageToWorkspace decodes a generated image and writes it into the
@@ -843,7 +939,6 @@ func persistImageToWorkspace(sess *ToolSession, b64 string) (string, bool) {
 	}
 	return rel, true
 }
-
 
 // restImageParams carries one generation request's inputs, decoupled from the
 // tool-args map so the native image pipeline (which passes only a prompt + an
@@ -1091,7 +1186,11 @@ func (s RestImageSpec) dispatchImageUpload(sess *ToolSession, rawURL string, up 
 func (s RestImageSpec) dispatchImageCT(sess *ToolSession, rawURL, method, body, contentType string) (string, error) {
 	cred := strings.TrimSpace(s.Credential)
 	if cred != "" && cred != "no_auth" && cred != "none" {
-		return Secure().DispatchToolCallForPipeCT(sess, cred, rawURL, method, body, contentType)
+		return Secure().DispatchToolCallRequest(sess, ToolCallRequest{
+			Credential: cred, URL: rawURL, Method: method, Body: body,
+			ContentType: contentType, PipeFollowing: true,
+			TimeoutSecs: s.submitTimeoutSecs(),
+		})
 	}
 	scoped := SecureCredential{
 		Name:              "rest_image_local",
@@ -1102,6 +1201,9 @@ func (s RestImageSpec) dispatchImageCT(sess *ToolSession, rawURL, method, body, 
 	args := map[string]any{"url": rawURL, "method": method, "__pipe_following": true}
 	if body != "" {
 		args["body"] = body
+	}
+	if secs := s.submitTimeoutSecs(); secs > 0 {
+		args[secureTimeoutArg] = secs
 	}
 	// The local/LAN path builds its args by hand and so had no content-type
 	// channel at all — which is exactly the path a local ComfyUI takes, and a

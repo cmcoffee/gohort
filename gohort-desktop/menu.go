@@ -199,6 +199,18 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	// second, discoverable shortcut. Both go through copyAction.
 	custom.AddText("Copy Selection", keys.Combo("C", keys.CmdOrCtrlKey, keys.ShiftKey), copyAction(app))
 
+	// Find on Page — WKWebView has no built-in find bar, so the shim renders
+	// one (window.__desktop_find_open in popup_shim.js) driven by WebKit's
+	// window.find(). The ⌘F key equivalent lands here (Cocoa menus consume it
+	// before the page sees a keydown); the shim also captures Cmd/Ctrl+F
+	// itself for iframes and any surface where the menu doesn't fire.
+	custom.AddText("Find on Page…", keys.CmdOrCtrl("F"), func(_ *wails_menu.CallbackData) {
+		if app.ctx == nil {
+			return
+		}
+		wails_runtime.WindowExecJS(app.ctx, "window.__desktop_find_open && window.__desktop_find_open()")
+	})
+
 	custom.AddText("Reload", keys.CmdOrCtrl("R"), func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
@@ -218,39 +230,22 @@ func build_app_menu(app *App) *wails_menu.Menu {
 
 // copyAction copies the current selection to the system pasteboard.
 //
-// Entirely in Go, because the page cannot help: the Forge terminal is served
-// THROUGH THE PROXY, and Wails does not inject its Go bridge into proxy-served
-// pages — window.go is simply absent there (see proxy.go:139, wails_app.go:478,
-// and the same note on Change Server and Show Logs). Every earlier attempt at
-// this ended in window.go.main.App.CopyToClipboard, which on that page does not
-// exist, so each one failed silently no matter which source it read the text
-// from. That is one cause behind every desktop copy failure so far, including
-// the Go binding added specifically to solve it.
+// Drives the shim's window.__desktop_copy_selection (popup_shim.js), which
+// reads the DOM selection — including input/textarea selections — and POSTs
+// it to the proxy's /__desktop/copy, where Go writes the pasteboard. A plain
+// fetch, not window.go: Wails does not inject its Go bridge into proxy-served
+// pages, which is what silently killed every earlier page-side copy attempt.
 //
-// The text comes from Forge's api/clipboard, which serves tmux's paste buffer —
-// the only place the selection actually lives, since tmux owns the mouse and
-// neither the DOM nor xterm has a selection to offer. Fetched with the
-// webview's session cookies, the same way provisionBridgeKey authenticates.
-//
-// Runs on its own goroutine: menu callbacks run on the app's lifecycle
-// goroutine and this does network I/O.
+// When the DOM selection is empty (the Forge terminal, where tmux owns the
+// mouse and neither the DOM nor xterm has a selection to offer), the Go
+// handler falls back to Forge's api/clipboard — tmux's paste buffer, the only
+// place that selection actually lives. So one action covers both worlds:
+// normal pages copy like a browser, Forge copies the tmux buffer.
 func copyAction(app *App) func(*wails_menu.CallbackData) {
 	return func(_ *wails_menu.CallbackData) {
-		go func() {
-			text, err := app.forgeClipboard()
-			if err != nil {
-				core.Log("[gohort-desktop] menu: copy failed: %v", err)
-				return
-			}
-			if text == "" {
-				core.Log("[gohort-desktop] menu: copy found nothing to copy")
-				return
-			}
-			if msg := app.CopyToClipboard(text); msg != "" {
-				core.Log("[gohort-desktop] menu: pasteboard write failed: %s", msg)
-				return
-			}
-			core.Log("[gohort-desktop] menu: copied %d bytes", len(text))
-		}()
+		if app.ctx == nil {
+			return
+		}
+		wails_runtime.WindowExecJS(app.ctx, "window.__desktop_copy_selection && window.__desktop_copy_selection()")
 	}
 }

@@ -732,10 +732,12 @@
         onclick: function(){ setType('bundle'); }}, ['Evidence Bundle']);
       var typeToolset = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('toolset'); }}, ['Tool-backed Service']);
+      var typeRemote = el('button', {class: 'ui-row-btn',
+        onclick: function(){ setType('remote'); }}, ['Remote (peer)']);
       var typeWorkspace = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('workspace'); }}, ['Workspace']);
       var typeRow = el('div', {class: 'ui-servitor-app-tabs'},
-        [typeSsh, typeCmd, typeRepo, typeBundle, typeToolset, typeWorkspace]);
+        [typeSsh, typeCmd, typeRepo, typeBundle, typeToolset, typeRemote, typeWorkspace]);
 
       // SSH section
       var hostIn = el('input', {type: 'text', class: 'ui-form-input',
@@ -800,6 +802,8 @@
       // lazily the first time the Workspace tab is opened.
       var wsSelected = (rec.members || []).slice();
       var wsRoles = Object.assign({}, rec.member_roles || {});
+      var wsLinks = (rec.member_links || []).slice();
+      var wsNames = {};
       var wsMembersBox = el('div', {}, ['Loading appliances…']);
       var wsLoaded = false;
       function loadWorkspaceMembers() {
@@ -839,8 +843,19 @@
                 if (cb.checked && i < 0) wsSelected.push(a.id);
                 else if (!cb.checked && i >= 0) wsSelected.splice(i, 1);
                 syncRole();
+                // Unselecting a member must drop any link naming it, or the
+                // link list offers a member that is no longer in the workspace
+                // and the server prunes it silently on save.
+                wsLinks = wsLinks.filter(function(l) {
+                  return wsSelected.indexOf(l.from) >= 0 && wsSelected.indexOf(l.to) >= 0;
+                });
+                renderLinks();
               };
-              var typeTag = a.type === 'repo' ? 'repo' : (a.type === 'command' ? 'cmd' : 'ssh');
+              wsNames[a.id] = a.name || a.id;
+              var typeTag = a.type === 'repo' ? 'repo' :
+                (a.type === 'command' ? 'cmd' :
+                (a.type === 'bundle' ? 'dump' :
+                (a.type === 'toolset' ? 'svc' : 'ssh')));
               syncRole();
               wsMembersBox.appendChild(el('div', {
                 style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0; flex-wrap:wrap;'},
@@ -848,11 +863,63 @@
                   [cb, el('span', {style:'opacity:0.6; font-size:0.85em; min-width:2.6em;'}, [typeTag]), (a.name || a.id)]),
                  role]));
             });
+            renderLinks();
           })
           .catch(function() {
             wsMembersBox.innerHTML = '';
             wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load appliances.']));
           });
+      }
+
+      // Member links — how the members relate to EACH OTHER. Without these the
+      // coordinator infers relationships from names, and a correlation across
+      // two members nobody said were related is a coincidence, not a finding.
+      var wsLinksBox = el('div', {});
+      var LINK_RELS = [
+        ['runs',          'runs the code in'],
+        ['code-for',      'is the code for'],
+        ['captured-from', 'was captured from'],
+        ['talks-to',      'talks to'],
+      ];
+      function memberOptions(sel, current) {
+        wsSelected.forEach(function(id) {
+          var o = el('option', {value: id}, [wsNames[id] || id]);
+          if (id === current) o.selected = true;
+          sel.appendChild(o);
+        });
+      }
+      function renderLinks() {
+        wsLinksBox.innerHTML = '';
+        if (wsSelected.length < 2) {
+          wsLinksBox.appendChild(el('div', {class: 'ui-form-hint'},
+            ['Select at least two members to link them.']));
+          return;
+        }
+        wsLinks.forEach(function(l, idx) {
+          var row = el('div', {style: 'display:flex; align-items:center; gap:0.4rem; padding:0.15rem 0; flex-wrap:wrap;'});
+          var from = el('select', {class: 'ui-form-input', style: 'width:auto; padding:0.15rem 0.3rem;'});
+          memberOptions(from, l.from);
+          var rel = el('select', {class: 'ui-form-input', style: 'width:auto; padding:0.15rem 0.3rem;'});
+          LINK_RELS.forEach(function(r) {
+            var o = el('option', {value: r[0]}, [r[1]]);
+            if (r[0] === l.rel) o.selected = true;
+            rel.appendChild(o);
+          });
+          var to = el('select', {class: 'ui-form-input', style: 'width:auto; padding:0.15rem 0.3rem;'});
+          memberOptions(to, l.to);
+          function sync() { wsLinks[idx] = {from: from.value, rel: rel.value, to: to.value}; }
+          from.onchange = sync; rel.onchange = sync; to.onchange = sync;
+          var del = el('button', {class: 'ui-row-btn', onclick: function() {
+            wsLinks.splice(idx, 1); renderLinks();
+          }}, ['×']);
+          row.appendChild(from); row.appendChild(rel); row.appendChild(to); row.appendChild(del);
+          wsLinksBox.appendChild(row);
+        });
+        var add = el('button', {class: 'ui-row-btn', onclick: function() {
+          wsLinks.push({from: wsSelected[0], rel: 'runs', to: wsSelected[1]});
+          renderLinks();
+        }}, ['+ Add link']);
+        wsLinksBox.appendChild(add);
       }
       var workspaceSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Member Appliances *']), wsMembersBox,
@@ -860,6 +927,9 @@
           ['Pick the repos and SSH boxes this workspace investigates together. A question fans out to the relevant members and the answers are combined — e.g. trace a log line seen on a box back to the repo that emits it.']),
         el('div', {class: 'ui-form-hint'},
           ['Give each member a short role when they are not interchangeable — "scheduler + primary DB" vs "app worker". The coordinator routes on it, so a question about a service that lives on one node goes to that node instead of being asked of all of them. Leave blank for true peers.']),
+        el('label', {}, ['How members relate']), wsLinksBox,
+        el('div', {class: 'ui-form-hint'},
+          ['Declare how the members connect — "this dump was captured from that box", "this repo is the code for that system". The coordinator reads these both ways round, so one link tells it which member to ask from either direction, and makes a correlation across two members a finding rather than a coincidence.']),
       ]);
 
       // Linked Source Code — repo appliances whose ingested code this SYSTEM's
@@ -986,7 +1056,25 @@
                 ['You have no tools in your pool yet. Author them with the Builder first, then bind them here.']));
               return;
             }
+            // Grouped by the tool's self-declared category, the same way the
+            // agent Tools modal presents them — so a user binding tools here
+            // reads the organization they already know from an agent's kit,
+            // MCP-per-server headings included.
+            var groups = {}, order = [];
             list.forEach(function(t) {
+              var g = t.group || 'My Tools';
+              if (!groups[g]) { groups[g] = []; order.push(g); }
+              groups[g].push(t);
+            });
+            order.sort(function(a, b) { return a.localeCompare(b); });
+            var flat = [];
+            order.forEach(function(g) {
+              tsBox.appendChild(el('div', {
+                style: 'margin:0.6rem 0 0.2rem; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; opacity:0.6;'},
+                [g]));
+              groups[g].forEach(function(t) { flat.push(t); renderToolRow(t); });
+            });
+            function renderToolRow(t) {
               var row = el('div', {style: 'display:flex; align-items:center; gap:0.5rem; padding:0.25rem 0; flex-wrap:wrap;'});
               var cb = el('input', {type: 'checkbox'});
               cb.checked = !!tsBound[t.name];
@@ -1021,7 +1109,7 @@
               }
               if (t.desc) row.appendChild(el('div', {class: 'ui-form-hint', style: 'flex-basis:100%; margin:0;'}, [t.desc]));
               tsBox.appendChild(row);
-            });
+            }
           })
           .catch(function() {
             tsBox.innerHTML = '';
@@ -1037,6 +1125,139 @@
           ['Only the tools you tick are reachable — there is no shell here. "ask first" prompts you per call. "orientation" marks the one cheap tool run at the start of a mapping session to orient the investigator. Each binding records a fingerprint of the tool as approved; if the tool is edited later it is withheld until you re-save this appliance.']),
       ]);
 
+      // Remote section — a stub pointing at an appliance on another instance.
+      // Nothing is configured here except WHICH one: the credentials, the SSH
+      // config and the accumulated knowledge all stay on that instance, and the
+      // only thing that crosses the wire is the question.
+      var remotePeerIn = el('input', {type: 'hidden', value: rec.peer_name || ''});
+      var remoteIDIn = el('input', {type: 'hidden', value: rec.remote_id || ''});
+      // The far side's type. Stored AS the appliance's type, so an SSH box
+      // reached through a peer gets the SSH prompts and tools rather than a
+      // second, thinner code path that would drift from them.
+      var remoteKindIn = el('input', {type: 'hidden', value: rec.remote_kind || 'ssh'});
+      var remoteBox = el('div', {}, ['Loading remote systems…']);
+      var remoteLoaded = false;
+      function loadRemoteAppliances() {
+        if (remoteLoaded) return;
+        remoteLoaded = true;
+        fetch('api/peer-appliances')
+          .then(function(r){ return r.ok ? r.json() : []; })
+          .then(function(list) {
+            remoteBox.innerHTML = '';
+            if (!list || !list.length) {
+              remoteBox.appendChild(el('div', {class: 'ui-form-hint'},
+                ['No peer is offering any systems. On the OTHER instance, mint a peer key granting ' +
+                 '"investigate" and pick which systems it may reach (Admin \u203a Resource Sharing \u203a Keys \u203a Grants). ' +
+                 'Then register that instance under Peers here.']));
+              return;
+            }
+            var sel = el('select', {class: 'ui-form-input'});
+            sel.appendChild(el('option', {value: ''}, ['— pick a system —']));
+            list.forEach(function(it) {
+              var v = it.peer + '\u0000' + it.id + '\u0000' + (it.kind || 'ssh');
+              var label = it.peer + ' \u00b7 ' + it.name;
+              if (it.kind) label += ' (' + it.kind + ')';
+              if (it.desc) label += ' \u2014 ' + it.desc;
+              var o = el('option', {value: v}, [label]);
+              if (it.peer === remotePeerIn.value && it.id === remoteIDIn.value) o.selected = true;
+              sel.appendChild(o);
+            });
+            sel.onchange = function() {
+              var parts = sel.value.split('\u0000');
+              remotePeerIn.value = parts[0] || '';
+              remoteIDIn.value = parts[1] || '';
+              remoteKindIn.value = parts[2] || 'ssh';
+              // Default the name to what the far side calls it, so a stub is
+              // recognizable without the user retyping it.
+              if (!nameIn.value.trim() && sel.selectedIndex > 0) {
+                var chosen = list[sel.selectedIndex - 1];
+                if (chosen) nameIn.value = chosen.name;
+              }
+            };
+            remoteBox.appendChild(sel);
+          })
+          .catch(function() {
+            remoteBox.innerHTML = '';
+            remoteBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load remote systems.']));
+          });
+      }
+      var remoteSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['System on a peer']), remoteBox, remotePeerIn, remoteIDIn, remoteKindIn,
+        el('div', {class: 'ui-form-hint'},
+          ['For a machine this instance cannot route to but a peer can. The peer is used as a WIRE: ' +
+           'the investigation runs HERE \u2014 your plan, your probes, your risk gate, your approvals, your ' +
+           'accumulated knowledge \u2014 and only each command travels. It behaves like a local system in every ' +
+           'other respect. Requires the "Run commands" grant on the peer key over there.']),
+      ]);
+
+      // Peers that may investigate this system. Sits beside the Shared toggle
+      // because it answers the same question the user came here to ask —
+      // who can see this box — and the grant itself lives on a peer key in
+      // Admin, which is not where anyone thinks to look.
+      var peerShareBox = el('div', {});
+      var peerShareLoaded = false;
+      function loadAppliancePeers() {
+        if (!rec.id) {
+          peerShareBox.innerHTML = '';
+          peerShareBox.appendChild(el('div', {class: 'ui-form-hint'},
+            ['Save this system first, then reopen it to share it with a peer.']));
+          return;
+        }
+        if (peerShareLoaded) return;
+        peerShareLoaded = true;
+        fetch('api/appliance-peers?appliance_id=' + encodeURIComponent(rec.id))
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(d) {
+            peerShareBox.innerHTML = '';
+            if (!d || !d.keys || !d.keys.length) {
+              peerShareBox.appendChild(el('div', {class: 'ui-form-hint'},
+                ['No peer keys grant investigation yet. An admin mints one under ' +
+                 'Admin \u203a Resource Sharing \u203a Keys, granting "Investigate systems".']));
+              return;
+            }
+            d.keys.forEach(function(k) {
+              var row = el('div', {style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0; flex-wrap:wrap;'});
+              var cb = el('input', {type: 'checkbox'});
+              cb.checked = !!k.granted;
+              cb.disabled = !d.can_manage || !!k.blocked;
+              cb.onchange = function() {
+                cb.disabled = true;
+                fetch('api/appliance-peers', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({appliance_id: rec.id, key_id: k.key_id, granted: cb.checked})})
+                  .then(function(r) {
+                    cb.disabled = !d.can_manage;
+                    if (!r.ok) return r.text().then(function(t) {
+                      cb.checked = !cb.checked;
+                      window.uiAlert(t);
+                    });
+                  });
+              };
+              row.appendChild(cb);
+              row.appendChild(el('span', {}, [k.label || k.key_id]));
+              if (k.owner) row.appendChild(el('span', {class: 'ui-form-hint', style: 'margin:0;'}, ['runs as ' + k.owner]));
+              if (k.blocked) row.appendChild(el('span', {style: 'font-size:0.78rem; color:var(--text-mute);'}, [k.blocked]));
+              peerShareBox.appendChild(row);
+            });
+            if (!d.can_manage) {
+              peerShareBox.appendChild(el('div', {class: 'ui-form-hint'},
+                ['Only this system\u2019s owner or an admin can change these.']));
+            }
+          })
+          .catch(function() {
+            peerShareBox.innerHTML = '';
+            peerShareBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load peer keys.']));
+          });
+      }
+      var peerShareSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Peers that may investigate this']), peerShareBox,
+        el('div', {class: 'ui-form-hint'},
+          ['For another gohort instance that cannot reach this system itself. It sends a QUESTION; ' +
+           'this instance runs the investigation, read-only, under its own approval rules, and returns the answer. ' +
+           'No command from the peer is executed here and no credential leaves this machine. ' +
+           'Revoke any time here or on the key.']),
+      ]);
+      loadAppliancePeers();
+
       function setType(t) {
         rec.type = t;
         typeSsh.classList.toggle('primary', t === 'ssh');
@@ -1049,6 +1270,12 @@
         repoSection.style.display = t === 'repo' ? '' : 'none';
         bundleSection.style.display = t === 'bundle' ? '' : 'none';
         toolsetSection.style.display = t === 'toolset' ? '' : 'none';
+        remoteSection.style.display = t === 'remote' ? '' : 'none';
+        // A remote stub owns nothing here, so there is nothing to lend onward;
+        // a workspace's members are shared individually.
+        peerShareSection.style.display = (t === 'remote' || t === 'workspace') ? 'none' : '';
+        typeRemote.classList.toggle('primary', t === 'remote');
+        if (t === 'remote') loadRemoteAppliances();
         typeToolset.classList.toggle('primary', t === 'toolset');
         if (t === 'toolset') loadBindableTools();
         workspaceSection.style.display = t === 'workspace' ? '' : 'none';
@@ -1094,6 +1321,7 @@
         el('label', {}, ['Linked Knowledge']), kbBox,
       ]);
 
+
       // Shared toggle — when on, every user can discover and use this
       // appliance/repo (owner's creds, one repo clone, shared accumulated
       // knowledge) while keeping their own chat sessions.
@@ -1107,12 +1335,13 @@
 
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
-        typeRow, sshSection, cmdSection, repoSection, bundleSection, toolsetSection, workspaceSection,
+        typeRow, sshSection, cmdSection, repoSection, bundleSection, toolsetSection, remoteSection, workspaceSection,
         el('label', {}, ['Custom Instructions']), instrIn,
         el('label', {}, ['Persona']),
         personaNameIn, personaPromptIn,
         linkedRepoSection,
         knowledgeSection,
+        peerShareSection,
         sharedRow, sharedHint,
       ]);
 
@@ -1141,9 +1370,13 @@
             shared:         sharedIn.checked,
             members:        wsSelected.slice(),
             member_roles:   wsRoles,
+            member_links:   wsLinks,
             collections:    kbSelected.slice(),
             linked_repos:   lrSelected.slice(),
             domain:         domainIn.value.trim(),
+            peer_name:      remotePeerIn.value,
+            remote_id:      remoteIDIn.value,
+            remote_kind:    remoteKindIn.value,
             toolset:        Object.keys(tsBound).map(function(k){ return tsBound[k]; }),
           };
           // Name is optional for repos — the server derives owner/repo from the URL.
@@ -1153,6 +1386,7 @@
           if (payload.type === 'repo' && !payload.repo_url) { window.uiAlert('Git URL is required'); return; }
           if (payload.type === 'bundle' && !payload.name) { window.uiAlert('Name is required'); return; }
           if (payload.type === 'toolset' && !payload.toolset.length) { window.uiAlert('Pick at least one tool this system may use'); return; }
+          if (payload.type === 'remote' && (!payload.peer_name || !payload.remote_id)) { window.uiAlert('Pick the system on the peer'); return; }
           if (payload.type === 'workspace' && !payload.members.length) { window.uiAlert('Select at least one member appliance'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {

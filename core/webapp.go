@@ -1047,10 +1047,35 @@ func ServeDashboard(addr string) error {
 	// at <base>/api/peer/v1 and needs no gohort-specific client at all.
 	RegisterPublicPath("/api/peer/v1/embeddings")
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
+	// Public in the session-auth sense ONLY: the peer key is the credential, and
+	// HandlePeerInvestigate authenticates it before anything else. Without this
+	// the session layer 401s a peer with a bare "unauthorized" that never
+	// reaches — and so never mentions — the key.
+	RegisterPublicPath("/api/peer/v1/investigate")
+	mux.HandleFunc("/api/peer/v1/investigate", HandlePeerInvestigate)
+	// Same reasoning: peer-key authenticated, so it must bypass session auth.
+	RegisterPublicPath("/api/peer/v1/knowledge")
+	mux.HandleFunc("/api/peer/v1/knowledge", HandlePeerKnowledge)
+	// The command transport. Peer-key authenticated, so session auth must not
+	// see it first.
+	RegisterPublicPath("/api/peer/v1/exec")
+	mux.HandleFunc("/api/peer/v1/exec", HandlePeerExec)
 	// Renders for a peer. A1111-shaped so the far side drives it with an
 	// ordinary rest_image connector rather than a bespoke client.
 	RegisterPublicPath("/api/peer/v1/images/render")
 	mux.HandleFunc("/api/peer/v1/images/render", HandlePeerImageRender)
+	// Speech-to-text for a peer, at the OpenAI path for the same reason as
+	// embeddings: the far side points its ordinary TranscribeConfig at
+	// <base>/api/peer/v1 and needs no gohort-specific client.
+	RegisterPublicPath("/api/peer/v1/audio/transcriptions")
+	mux.HandleFunc("/api/peer/v1/audio/transcriptions", HandlePeerTranscribe)
+	// Search in the SearXNG JSON shape, so the far side drives it with an
+	// ordinary searxng-provider config and no client of its own.
+	RegisterPublicPath("/api/peer/v1/search")
+	mux.HandleFunc("/api/peer/v1/search", HandlePeerSearch)
+	// Page rendering on this instance's headless browser.
+	RegisterPublicPath("/api/peer/v1/browse")
+	mux.HandleFunc("/api/peer/v1/browse", HandlePeerBrowse)
 
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.

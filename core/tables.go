@@ -12,6 +12,7 @@ const (
 	EmbeddingTable   = "embedding_config"  // endpoint + model for vector-DB ingestion
 	EmbeddedChunks   = "embedded_chunks"   // stored per-chunk vectors keyed by chunk ID
 	TranscribeTable  = "transcribe_config" // endpoint + model for audio transcription (STT)
+	BrowseTable      = "browse_config"     // where page rendering happens: locally, or on a peer
 	RoutingTable     = "llm_routing"
 	WebTable         = "web_config"
 	AuthTable        = "auth_config"

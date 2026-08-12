@@ -100,7 +100,7 @@ func (T *Servitor) grantRows(user string, udb Database) []grantRow {
 	agents := map[string]string{}
 	for _, t := range ListExternalTargets(RootDB, user) {
 		if t.Group == "Agents" {
-			agents[strings.ToLower(t.Value)] = t.Label
+			agents[strings.ToLower(normalizeAgentID(t.Value))] = t.Label
 		}
 	}
 	appliances := map[string]string{}
@@ -149,12 +149,14 @@ func allowsText(cats []string) string {
 	return strings.Join(cats, ", ")
 }
 
-// agentAccessOptions lists the user's agents for the appliance form.
+// agentAccessOptions lists the user's agents for the appliance form. Values
+// are the BARE agent ids — the picker's "agent:" wrapper is stripped, because
+// what a grant stores has to be what a run dispatches with.
 func agentAccessOptions(user string) []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, t := range ListExternalTargets(RootDB, user) {
 		if t.Group == "Agents" {
-			out = append(out, ui.SelectOption{Value: t.Value, Label: t.Label})
+			out = append(out, ui.SelectOption{Value: normalizeAgentID(t.Value), Label: t.Label})
 		}
 	}
 	return out
@@ -171,7 +173,7 @@ func (T *Servitor) handleAccessAgents(w http.ResponseWriter, r *http.Request) {
 	out := []ui.SelectOption{}
 	for _, t := range ListExternalTargets(RootDB, user) {
 		if t.Group == "Agents" {
-			out = append(out, ui.SelectOption{Value: t.Value, Label: t.Label})
+			out = append(out, ui.SelectOption{Value: normalizeAgentID(t.Value), Label: t.Label})
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

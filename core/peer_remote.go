@@ -38,20 +38,33 @@ var remotePeerNameRE = regexp.MustCompile(`^[a-z0-9_-]+$`)
 // intersection, computed at probe time. Storing the intersection rather than
 // the raw grant means the UI offers only choices that will work.
 type RemotePeer struct {
-	Name        string   `json:"name"`     // local nickname
-	BaseURL     string   `json:"base_url"` // https://host — no /api/peer suffix
-	Key         string   `json:"key"`      // the peer key that instance issued
-	Caps        []string `json:"caps"`     // served AND granted, from the manifest
-	Instance    string   `json:"instance,omitempty"`
-	EmbedModel  string   `json:"embed_model,omitempty"`
-	EmbedDim    int      `json:"embed_dim,omitempty"`
-	LastChecked string   `json:"last_checked,omitempty"`
-	LastError   string   `json:"last_error,omitempty"`
+	Name       string   `json:"name"`     // local nickname
+	BaseURL    string   `json:"base_url"` // https://host — no /api/peer suffix
+	Key        string   `json:"key"`      // the peer key that instance issued
+	Caps       []string `json:"caps"`     // served AND granted, from the manifest
+	Instance   string   `json:"instance,omitempty"`
+	EmbedModel string   `json:"embed_model,omitempty"`
+	EmbedDim   int      `json:"embed_dim,omitempty"`
+	// TranscribeModel is the speech model the peer said it uses. Advisory —
+	// unlike EmbedModel, a mismatch produces worse text rather than vectors in
+	// the wrong space — but stored so the operator can see what they picked.
+	TranscribeModel string `json:"transcribe_model,omitempty"`
+	// SearchProvider is the upstream the peer searches with ("serper",
+	// "duckduckgo"). Shown to the operator because borrowing a free DuckDuckGo
+	// relay and borrowing a metered Serper key look identical otherwise.
+	SearchProvider string `json:"search_provider,omitempty"`
+	LastChecked    string `json:"last_checked,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
 	// ImageConnectors names the local rest_image connectors provisioned from
 	// this peer's advertised renderers. Stored rather than recomputed: teardown
 	// reads this list, so a connector the operator made themselves can never be
 	// swept up by a peer being forgotten.
 	ImageConnectors []string `json:"image_connectors,omitempty"`
+	// Investigable is what this peer's manifest said THIS instance's key may
+	// ask about. Cached on the record so the "add a remote system" picker can
+	// offer real names without a round trip, and refreshed whenever the
+	// manifest is re-read.
+	Investigable []PeerInvestigable `json:"investigable,omitempty"`
 }
 
 // Offers reports whether this peer can serve a capability.
@@ -168,6 +181,12 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
 	}
+	if m.Transcribe != nil {
+		p.TranscribeModel = m.Transcribe.Model
+	}
+	if m.Search != nil {
+		p.SearchProvider = m.Search.Provider
+	}
 	// Renderers become local backends immediately. A peer that announces it
 	// offers rendering and then does not appear in the picker is indisputably
 	// broken from the operator's side.
@@ -198,11 +217,51 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
 	}
+	p.TranscribeModel, p.SearchProvider = "", ""
+	if m.Transcribe != nil {
+		p.TranscribeModel = m.Transcribe.Model
+	}
+	if m.Search != nil {
+		p.SearchProvider = m.Search.Provider
+	}
+	// Replaced wholesale, not merged: an appliance withdrawn on the far side
+	// must disappear here at the next check rather than lingering in the picker
+	// as something that 403s when asked.
+	p.Investigable = m.Investigable
 	// A grant revoked on the far side stops offering a renderer here at the
 	// next check, rather than leaving a backend in the picker that 403s.
 	syncPeerImages(&p, m.Images)
 	RootDB.Set(remotePeersTable, p.Name, p)
 	return p, nil
+}
+
+// RefreshRemotePeers re-probes every stored peer, so what this instance
+// believes about the far side is refreshed by the clock rather than only by an
+// operator opening the admin page and clicking Refresh.
+//
+// Until this existed, a peer's record was written once and never revisited. A
+// renderer reshaped on the far side, a capability withdrawn, or a local build
+// that changed how a peer's backends are translated all left a stale connector
+// in place indefinitely — and the failure surfaced as an error from the OTHER
+// machine, about a backend the operator never configured by hand.
+//
+// Errors are logged, not returned: one unreachable peer must not stop the rest
+// from being refreshed, and RefreshRemotePeer already records the failure on the
+// peer record where the admin table shows it.
+func RefreshRemotePeers(ctx context.Context) {
+	for _, p := range ListRemotePeers() {
+		if _, err := RefreshRemotePeer(ctx, p.Name); err != nil {
+			Debug("[peer] refreshing %q: %v", p.Name, err)
+		}
+	}
+}
+
+// Runs at scheduler start and every 30 minutes thereafter.
+func init() {
+	RegisterReconciler("peer_refresh", func(ctx context.Context) error {
+		RefreshRemotePeers(ctx)
+		return nil
+	})
 }
 
 // GetRemotePeer looks one up by name.

@@ -54,6 +54,15 @@ type TurnClaimEvidence struct {
 	// report back when it's done" TRUE, and that reply is one the framework
 	// explicitly asks for — see detachedNotice.
 	Backgrounded bool
+	// GivenEstimate is the wait the framework itself offered for that job
+	// ("about 13 seconds"), empty when it offered none.
+	//
+	// The machinery rule distinguishes a duration the assistant INVENTED from
+	// one it was handed, and that distinction is unanswerable from the reply
+	// alone — the sentence reads identically either way. Without this the judge
+	// had a rule it could not apply, so it flagged the compliant reply and the
+	// loop retracted a message the framework had asked for in those words.
+	GivenEstimate string
 }
 
 // TurnClaimVerdict is the judge's answer.

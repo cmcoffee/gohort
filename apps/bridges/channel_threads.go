@@ -56,6 +56,45 @@ func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelL
 	return out
 }
 
+// SearchMessages implements the optional ChannelSearcher capability: full-
+// history substring search over one conversation, newest first. This is the
+// pull side of "channels store, wakes push, cortex pulls" — an agent asked
+// "what was the last thing said about X" looks it up here instead of needing
+// the whole feed resident in its context.
+func (c channelThreadsImpl) SearchMessages(owner, chatID, query string, limit int) []ChannelLine {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || chatID == "" {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	// Full history, oldest-first (recentMessages with no cap), then filter and
+	// take the TAIL — the newest mentions are the ones "last thing about X"
+	// wants, and a capped-head scan would return the oldest instead.
+	var hits []StoredMessage
+	for _, m := range c.T.recentMessages(chatID, 0) {
+		if strings.Contains(strings.ToLower(m.Text), query) {
+			hits = append(hits, m)
+		}
+	}
+	if len(hits) > limit {
+		hits = hits[len(hits)-limit:]
+	}
+	// Newest first for the reader.
+	out := make([]ChannelLine, 0, len(hits))
+	for i := len(hits) - 1; i >= 0; i-- {
+		m := hits[i]
+		out = append(out, ChannelLine{
+			Role:      m.Role,
+			Sender:    m.DisplayName,
+			Text:      m.Text,
+			Timestamp: m.Timestamp,
+		})
+	}
+	return out
+}
+
 func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text, agentName string, images []string) error {
 	svc := strings.TrimSpace(service)
 	if svc == "" {

@@ -101,7 +101,7 @@ export namespace main {
 	export class tool_descriptor {
 	    name: string;
 	    desc: string;
-	    params: {[key: string]: core.ToolParam};
+	    params: Record<string, core.ToolParam>;
 	    required: string[];
 	
 	    static createFrom(source: any = {}) {

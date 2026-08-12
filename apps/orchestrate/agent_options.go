@@ -43,6 +43,14 @@ func pickerAgents(agents []AgentRecord) []AgentRecord {
 			if _, isApp := appagents.AppAgentByID(a.ID); !isApp {
 				continue
 			}
+			// Visible app agents are an app's own surface and stay; hidden
+			// ones are internals. Dropped HERE, not just in agentPickerOptions,
+			// because userCanSeeAgent validates the default-agent preference
+			// against this filter — the display check alone let a hidden app
+			// agent be persisted as someone's default.
+			if hiddenAppAgent(a.ID) {
+				continue
+			}
 		}
 		out = append(out, a)
 	}

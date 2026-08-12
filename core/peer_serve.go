@@ -91,6 +91,23 @@ type PeerManifest struct {
 	// a local backend entry, so this carries what that entry needs to be
 	// truthful — whether it edits, and how many source photos it takes.
 	Images []PeerImageBackend `json:"images,omitempty"`
+	// Investigable lists the appliances the CALLING key may ask about. Scoped
+	// to the key rather than to the instance: two peers holding different keys
+	// see different lists, and a key granted the capability but no appliances
+	// sees an empty one — which is the honest rendering of "granted nothing".
+	Investigable []PeerInvestigable `json:"investigable,omitempty"`
+	// Transcribe says where to point an OpenAI-shaped STT client, and with
+	// which model. Absent when this instance has no transcription configured —
+	// advertising a path that answers "disabled" to everything is worse than
+	// saying nothing.
+	Transcribe *PeerTranscribeInfo `json:"transcribe,omitempty"`
+	// Search says where to point a SearXNG-shaped client and which upstream
+	// this instance actually uses — a free DuckDuckGo relay and a metered
+	// Serper key are the same endpoint and very different favours.
+	Search *PeerSearchInfo `json:"search,omitempty"`
+	// Browse is the page-rendering endpoint, present only when a browser is
+	// linked into this build.
+	Browse string `json:"browse,omitempty"`
 }
 
 type PeerManifestEntry struct {
@@ -135,8 +152,17 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 			e.Note = "not implemented by this instance yet"
 		case e.Served && !e.Granted:
 			e.Note = "offered, but this key was not granted it"
+		case name == PeerCapInvestigate && len(k.Appliances) == 0:
+			// Granted the capability and no appliances reaches nothing. Said
+			// plainly, because the capability list otherwise reads as working.
+			e.Note = "granted, but this key names no appliances — it can reach none"
+		case name == PeerCapInvestigate && strings.TrimSpace(k.Owner) == "":
+			e.Note = "granted, but this key has no owner — an investigation runs as a user and there is none"
 		}
 		m.Capabilities = append(m.Capabilities, e)
+	}
+	if inv := peerInvestigablesFor(k); len(inv) > 0 {
+		m.Investigable = inv
 	}
 	if k.Allows(PeerCapEmbeddings) && peerCapServed(PeerCapEmbeddings) {
 		cfg := GetEmbeddingConfig()
@@ -151,6 +177,15 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if k.Allows(PeerCapImages) && peerCapServed(PeerCapImages) {
 		m.Images = peerImageBackends()
+	}
+	if k.Allows(PeerCapTranscribe) && peerCapServed(PeerCapTranscribe) {
+		m.Transcribe = peerTranscribeInfo("/api/peer/v1")
+	}
+	if k.Allows(PeerCapSearch) && peerCapServed(PeerCapSearch) {
+		m.Search = peerSearchInfo("/api/peer/v1")
+	}
+	if k.Allows(PeerCapBrowse) && peerCapServed(PeerCapBrowse) && peerBrowseServed() {
+		m.Browse = "/api/peer/v1/browse"
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(m)

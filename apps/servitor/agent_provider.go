@@ -4,15 +4,17 @@
 // question on every dispatch and never learns what a machine is. What comes
 // back is decided entirely here, from records the owner maintains.
 //
-// TWO THINGS ARE OFFERED, and the split matters:
+// THREE THINGS ARE OFFERED, and the split matters:
 //
 //	request_capability   — to an agent connected to ANY machine
+//	ask_system           — same gate: questions routed to the investigator
 //	the minted tools     — per machine, and only the approved ones
 //
-// An agent with a connection but no approved tools still gets the asking tool,
-// because otherwise it has no way to tell anyone what it needs and the loop
-// never starts. An agent connected to nothing gets neither, so a fleet where
-// nobody has enabled anything pays no tokens for a capability it cannot use.
+// An agent with a connection but no approved tools still gets the asking
+// tools, because otherwise it has no way to answer a question about the box or
+// to tell anyone what it needs, and the loop never starts. An agent connected
+// to nothing gets none of it, so a fleet where nobody has enabled anything
+// pays no tokens for a capability it cannot use.
 package servitor
 
 import (
@@ -54,7 +56,7 @@ func applianceGrantsFor(user, agentID string) []AgentGrant {
 	}
 	var out []AgentGrant
 	for _, g := range ListCommandGrants(udb) {
-		if !strings.EqualFold(g.AgentID, agentID) {
+		if !strings.EqualFold(g.AgentID, normalizeAgentID(agentID)) {
 			continue
 		}
 		label := names[strings.ToLower(g.ApplianceID)]
@@ -98,7 +100,13 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	if servitorRef != nil {
 		chat = servitorRef.WorkerChat
 	}
-	out := []AgentToolDef{RequestCapabilityToolDef(udb, chat, agentID)}
+	out := []AgentToolDef{
+		RequestCapabilityToolDef(udb, chat, agentID, enabled),
+		// The question route: open-ended "what's the state of X?" goes to the
+		// per-appliance investigator (read-only, via InvestigateSync) rather
+		// than being something the calling agent needs a shell for.
+		AskSystemToolDef(udb, owner, agentID, enabled),
+	}
 	for _, a := range enabled {
 		out = append(out, ApplianceToolDefs(udb, owner, agentID, a)...)
 	}

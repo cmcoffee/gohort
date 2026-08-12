@@ -1160,6 +1160,10 @@ type AgentLoopConfig struct {
 	// detachedNotice explicitly asks for — so the judge must never see such a
 	// turn. Nil reads as false.
 	Backgrounded func() bool
+	// BackgroundEstimate reports the wait the framework offered for that job,
+	// humanized ("13 seconds"), or empty. Feeds the turn judge so a quoted
+	// estimate the framework supplied is not convicted as an invented one.
+	BackgroundEstimate func() string
 
 	// TurnClaimJudge reads the finished turn and reports whether the reply is
 	// honest about what the turn actually did — the backstop for the shapes the
@@ -3205,6 +3209,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				LastToolError: lastToolError,
 				Delivered:     cfg.deliveredCount(),
 				Backgrounded:  cfg.backgrounded(),
+				GivenEstimate: cfg.backgroundEstimate(),
 			}); convicted {
 				// Two independent findings share one verdict, so each branch checks
 				// its own. A machinery-only conviction reaching the claim branch
@@ -4562,6 +4567,13 @@ func (c AgentLoopConfig) deliveredCount() int {
 
 func (c AgentLoopConfig) backgrounded() bool {
 	return c.Backgrounded != nil && c.Backgrounded()
+}
+
+func (c AgentLoopConfig) backgroundEstimate() string {
+	if c.BackgroundEstimate == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.BackgroundEstimate())
 }
 
 // phantomDeliveryRefs asks the app whether a reply promises files that do not

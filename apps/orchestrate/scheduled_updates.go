@@ -406,11 +406,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// session (we still append the reply into the real session below).
 	schedSessID := "scheduled:" + p.SessionID
 	subSess := &ToolSession{
-		LLM:               app.LLM,
-		LeadLLM:           app.LeadLLM,
-		Username:          p.Username,
-		DB:                udb,
-		ChatSessionID:     schedSessID,
+		LLM:           app.LLM,
+		LeadLLM:       app.LeadLLM,
+		Username:      p.Username,
+		DB:            udb,
+		ChatSessionID: schedSessID,
+		// The fire runs under its own id; anything it starts in the background
+		// belongs to the conversation the user is actually in. See
+		// ToolSession.DeliverySessionID — without this a picture started from a
+		// wake was delivered into "scheduled:<real>" and nobody ever saw it.
+		DeliverySessionID: p.SessionID,
 		AgentID:           agent.ID,
 		IntentText:        p.Prompt, // Tier-1 tool elevation matches against the mission
 		DeniedCredentials: credentialDenySet(agent, p.Username),
@@ -516,6 +521,24 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// the run exists for its snapshot (status / round / last tool).
 	liveRun := app.runsRegistry().Create(p.Username, agent.ID, "", nil).
 		Describe("scheduled", agent.Name, truncateObs(p.Prompt, 100))
+	// Tag the context with this run, and give the session the tagged context.
+	//
+	// Without it, nothing started from a wake or a scheduled fire could detach.
+	// TaskRunnerFunc resolves the owning agent by walking back to the enclosing
+	// run (parentRunFromCtx) and refuses when it finds none, and the refusal is
+	// a SILENT fallback to running inline — correct as a fallback, invisible as
+	// a diagnosis.
+	//
+	// What it cost: a set of three pictures where the wake turn faithfully
+	// started pieces two and three, both ran inline instead of detaching, both
+	// came back with "call workspace(attach)" that the model never called, and
+	// the user received one picture out of three while being told all three
+	// were done. Every guarantee built on detaching — the one-job slot, the
+	// per-piece wake, the delivery of what it made — was off in exactly the
+	// turns that needed it, because the dispatch paths tag their runs here and
+	// this one never did.
+	ctx = withParentRun(ctx, liveRun.ID)
+	subSess.Ctx = ctx
 	// Safety net only — Complete is idempotent (first call sticks), and the
 	// explicit call right after the loop below lands first with the real
 	// status. This catches a panic/early-return path so the run can't be
@@ -682,6 +705,26 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// announces a schedule that does not exist.
 	if isTaskWake(p.Prompt) {
 		detail = agentLabel + " · finished in the background"
+	}
+	// A wake that was told to start the next piece, and started nothing.
+	//
+	// The no-tool-call suppression above is deliberately OFF for a task wake,
+	// because an ordinary one has nothing left to do but say what came back.
+	// A wake carrying a continuation is the opposite shape: the tool call WAS
+	// the job. Observed — "Here is your first take… Starting the second
+	// variation now", no call, set stranded at 1 of 3, and the only trace was
+	// a ledger entry that expired half an hour later.
+	//
+	// The reply still posts: the picture it delivered is real and the user is
+	// waiting for it. What changes is that the set closes now rather than
+	// lingering to renumber the next unrelated render, and the stall leaves a
+	// breadcrumb instead of looking like a set that simply ended.
+	if strings.Contains(p.Prompt, SeriesContinuationMarker) && len(toolTrace) == 0 {
+		CloseTaskSeries(p.SessionID, RenderDetachIdentity)
+		Log("[orchestrate/task] agent=%s session=%s delivered a piece but called no tool — the set stops here", agentLabel, p.SessionID)
+		appendSessionDiag(udb, p.AgentID, p.SessionID, "series-abandoned",
+			"A background set was told to start its next piece and the turn made no tool call — it answered in prose only. The finished piece was delivered; the rest of the set was NOT started, and the set has been closed rather than left open. If this recurs, the continuation instruction is not reaching the model, or the model is answering before acting.")
+		detail += " · set not continued"
 	}
 	if hitCap {
 		detail += fmt.Sprintf(" · hit round cap (%d) — may be incomplete", softCap)

@@ -48,7 +48,7 @@ func withTaskRunner(t *testing.T) *[]string {
 func TestSlowCallsDetachAndFastOnesDoNot(t *testing.T) {
 	withTaskRunner(t)
 	sess := &ToolSession{}
-	threshold := taskDetachThreshold()
+	threshold := taskDetachThreshold(nil)
 
 	if _, ok := ShouldDetach(&slowTool{dur: threshold + time.Minute}, nil, sess); !ok {
 		t.Error("a call past the threshold must detach")
@@ -83,7 +83,7 @@ func TestDetachNeedsAHostThatCanRunTasks(t *testing.T) {
 func TestDetachedCallStillRunsAndReturnsANotice(t *testing.T) {
 	started := withTaskRunner(t)
 	ran := make(chan struct{})
-	tool := &slowTool{dur: taskDetachThreshold() + time.Hour, ran: ran, result: "the real result"}
+	tool := &slowTool{dur: taskDetachThreshold(nil) + time.Hour, ran: ran, result: "the real result"}
 
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
 	out, err := def.Handler(map[string]any{"action": "edit", "prompt": "make it snowy"})
@@ -135,7 +135,7 @@ func TestABadArgumentIsReportedBeforeTheCallDetaches(t *testing.T) {
 	started := withTaskRunner(t)
 	ran := make(chan struct{})
 	tool := &preflightTool{
-		slowTool: slowTool{dur: taskDetachThreshold() + time.Hour, ran: ran, result: "rendered"},
+		slowTool: slowTool{dur: taskDetachThreshold(nil) + time.Hour, ran: ran, result: "rendered"},
 		bad:      errors.New("media#1 doesn't exist — use image#1 or the filename"),
 	}
 
@@ -162,7 +162,7 @@ func TestABadArgumentIsReportedBeforeTheCallDetaches(t *testing.T) {
 
 func TestAGoodCallStillDetachesAfterPreflight(t *testing.T) {
 	started := withTaskRunner(t)
-	tool := &preflightTool{slowTool: slowTool{dur: taskDetachThreshold() + time.Hour, result: "rendered"}}
+	tool := &preflightTool{slowTool: slowTool{dur: taskDetachThreshold(nil) + time.Hour, result: "rendered"}}
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
 	out, err := def.Handler(map[string]any{"action": "edit"})
 	if err != nil {
@@ -185,7 +185,7 @@ func TestFailureToDetachFallsBackToRunningInline(t *testing.T) {
 	}
 	t.Cleanup(func() { TaskRunnerFunc = saved })
 
-	tool := &slowTool{dur: taskDetachThreshold() + time.Hour, result: "inline result"}
+	tool := &slowTool{dur: taskDetachThreshold(nil) + time.Hour, result: "inline result"}
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
 	out, err := def.Handler(map[string]any{})
 	if err != nil {
@@ -218,7 +218,7 @@ func TestGenerateStaysInlineAndEditDetaches(t *testing.T) {
 	//
 	// Pinned against the real defaults, so moving either one without thinking
 	// about the other fails here rather than in a conversation.
-	threshold := taskDetachThreshold()
+	threshold := taskDetachThreshold(nil)
 	genDeadline := TuneDuration("tune_image_poll_max_secs")
 	editDeadline := TuneDuration("tune_image_edit_poll_max_secs")
 
@@ -249,7 +249,7 @@ func TestDetachedWorkSurvivesTheTurnEnding(t *testing.T) {
 	}
 	t.Cleanup(func() { TaskRunnerFunc = saved })
 
-	tool := &ctxCapturingTool{dur: taskDetachThreshold() + time.Hour, saw: saw}
+	tool := &ctxCapturingTool{dur: taskDetachThreshold(nil) + time.Hour, saw: saw}
 	def := ChatToolToAgentToolDefWithSession(tool, turnSess)
 	if _, err := def.Handler(map[string]any{}); err != nil {
 		t.Fatalf("handler: %v", err)
@@ -442,7 +442,7 @@ func TestDetachedCallHandsBackWhatItAttached(t *testing.T) {
 	t.Cleanup(func() { TaskRunnerFunc = saved })
 
 	turnSess := &ToolSession{Username: "alice"}
-	tool := &attachingTool{dur: taskDetachThreshold() + time.Hour}
+	tool := &attachingTool{dur: taskDetachThreshold(nil) + time.Hour}
 	def := ChatToolToAgentToolDefWithSession(tool, turnSess)
 	if _, err := def.Handler(map[string]any{}); err != nil {
 		t.Fatalf("handler: %v", err)

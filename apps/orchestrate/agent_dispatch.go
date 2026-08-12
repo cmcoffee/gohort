@@ -709,6 +709,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		UncheckedClaims:    UncheckedFactNotes(subFacts),
 		DeliveredCount:     func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
 		Backgrounded:       func() bool { return subSess.Detach.Any() },
+		BackgroundEstimate: func() string { return subSess.Detach.EstimateText() },
 		Confirm:            confirm,
 		GuardrailCheck:     subTurn.guardrailEnforcer().Check,
 		GuardrailHalted:    subTurn.guardrailEnforcer().Halted,
@@ -1597,6 +1598,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	loopCfg.DeliveredCount = func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) }
 	loopCfg.Backgrounded = func() bool { return subSess.Detach.Any() }
+	loopCfg.BackgroundEstimate = func() string { return subSess.Detach.EstimateText() }
 	// Catch a reply that promises a file it never made, while the loop can still
 	// do something about it. Without this the claim reaches the channel, strips
 	// to an empty reply, and the contact is asked to rephrase.

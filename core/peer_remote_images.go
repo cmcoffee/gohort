@@ -16,9 +16,11 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -84,14 +86,51 @@ const peerImageGenerateBody = `{"prompt":"{prompt}","negative_prompt":"{negative
 	`"backend":%s,"steps":{steps},"seed":{seed},` +
 	`"width":{width},"height":{height}}`
 
+// peerImageConnector builds the local connector record one advertised renderer
+// translates into.
+//
+// Pure on purpose — it writes nothing — so a re-sync can compare what it WOULD
+// create against what is already stored, and leave a matching one untouched.
+func peerImageConnector(p RemotePeer, credName string, b PeerImageBackend) (Connector, error) {
+	remote, _ := json.Marshal(b.Name) // JSON-quoted, so an odd remote name cannot break the body
+	body := peerImageGenerateBody
+	if b.Edits {
+		body = peerImageSubmitBody
+	}
+	spec := RestImageSpec{
+		Credential:     credName,
+		SubmitURL:      strings.TrimRight(p.BaseURL, "/") + "/api/peer/v1/images/render",
+		SubmitMethod:   "POST",
+		SubmitBody:     fmt.Sprintf(body, string(remote)),
+		ImageB64Path:   "images.0",
+		MaxInputImages: b.MaxImages,
+		PromptGuidance: b.Guidance,
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return Connector{}, err
+	}
+	return Connector{
+		Name: peerConnectorName(p.Name, b.Name),
+		Kind: RestImageConnectorKind,
+		Desc: "Renders on peer " + p.Name + " (" + b.Name + ")",
+		Spec: raw,
+	}, nil
+}
+
 // provisionPeerImages installs a credential and one connector per renderer the
-// peer advertises, and returns the connector names it created.
+// peer advertises, and returns the connector names this peer now owns.
 //
 // Approved on creation. The gate exists so an agent cannot quietly add outward
 // reach; here the operator has already made that decision explicitly, by typing
 // this peer's address and key into the admin UI. Leaving them pending would
 // mean adding a peer, being told it offers rendering, and then finding nothing
 // in the picker until a second approval nobody mentioned.
+//
+// Idempotent: a connector that already says exactly what this peer currently
+// advertises is left alone. Re-provisioning runs on a timer, and rewriting an
+// unchanged record every pass would re-materialize a live backend and re-approve
+// one an operator had deliberately disabled.
 func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, error) {
 	if RootDB == nil {
 		return nil, fmt.Errorf("no database available")
@@ -111,45 +150,31 @@ func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, e
 		return nil, fmt.Errorf("storing the peer key as a credential: %w", err)
 	}
 
-	var made []string
+	var made, wrote []string
 	for _, b := range backends {
 		if strings.TrimSpace(b.Name) == "" {
 			continue
 		}
-		remote, _ := json.Marshal(b.Name) // JSON-quoted, so an odd remote name cannot break the body
-		body := peerImageGenerateBody
-		if b.Edits {
-			body = peerImageSubmitBody
-		}
-		spec := RestImageSpec{
-			Credential:     credName,
-			SubmitURL:      strings.TrimRight(p.BaseURL, "/") + "/api/peer/v1/images/render",
-			SubmitMethod:   "POST",
-			SubmitBody:     fmt.Sprintf(body, string(remote)),
-			ImageB64Path:   "images.0",
-			MaxInputImages: b.MaxImages,
-			PromptGuidance: b.Guidance,
-		}
-		raw, err := json.Marshal(spec)
+		c, err := peerImageConnector(p, credName, b)
 		if err != nil {
 			return made, err
 		}
-		name := peerConnectorName(p.Name, b.Name)
-		c := Connector{
-			Name: name,
-			Kind: RestImageConnectorKind,
-			Desc: "Renders on peer " + p.Name + " (" + b.Name + ")",
-			Spec: raw,
+		if cur, ok := GetConnector(RootDB, c.Name); ok &&
+			cur.Kind == c.Kind && cur.Desc == c.Desc && bytes.Equal(cur.Spec, c.Spec) {
+			made = append(made, c.Name)
+			continue
 		}
 		if err := SaveConnector(RootDB, c); err != nil {
-			return made, fmt.Errorf("creating backend %q: %w", name, err)
+			return made, fmt.Errorf("creating backend %q: %w", c.Name, err)
 		}
-		if err := ApproveConnector(RootDB, name); err != nil {
-			return made, fmt.Errorf("enabling backend %q: %w", name, err)
+		if err := ApproveConnector(RootDB, c.Name); err != nil {
+			return made, fmt.Errorf("enabling backend %q: %w", c.Name, err)
 		}
-		made = append(made, name)
+		made, wrote = append(made, c.Name), append(wrote, c.Name)
 	}
-	Log("[peer] %q contributed %d image backend(s): %s", p.Name, len(made), strings.Join(made, ", "))
+	if len(wrote) > 0 {
+		Log("[peer] %q contributed %d image backend(s): %s", p.Name, len(wrote), strings.Join(wrote, ", "))
+	}
 	return made, nil
 }
 
@@ -179,12 +204,33 @@ func teardownPeerImages(p RemotePeer) {
 // Called on every save and refresh, so a grant revoked on the far side stops
 // offering a renderer here at the next check rather than leaving a backend in
 // the picker that answers 403.
+//
+// It also repairs DRIFT, which is the failure this shape exists for: a peer's
+// backends are a snapshot taken at provisioning time, and both ends move. A
+// renderer whose graph was swapped from img2img to text-only on the far side —
+// or one provisioned by an older build that marked every peer backend an editor
+// — leaves a connector here claiming a capability the remote no longer has. The
+// symptom is remote and unhelpful: source photos get shipped to a text-only
+// backend, which refuses them, and the operator sees a 502 from a machine they
+// were not looking at. Re-syncing rewrites the spec from what the peer says
+// TODAY.
 func syncPeerImages(p *RemotePeer, backends []PeerImageBackend) {
 	if p.Offers(PeerCapImages) && len(backends) > 0 {
-		// Drop the previous set first: a renderer removed on the far side must
-		// not linger locally, and re-approving the survivors is cheap.
-		teardownPeerImages(*p)
+		prev := p.ImageConnectors
 		made, err := provisionPeerImages(*p, backends)
+		// Remove only what this peer used to contribute and no longer does — a
+		// renderer withdrawn on the far side, or one whose name changed. The
+		// previous shape dropped every backend first and rebuilt it, which was
+		// fine when this ran only on an operator's click and is not when it
+		// runs on a timer: it would delete and recreate a working, in-use
+		// connector on every pass.
+		for _, old := range prev {
+			if !slices.Contains(made, old) {
+				if err := DeleteConnector(RootDB, old); err != nil {
+					Debug("[peer] removing withdrawn backend %q: %v", old, err)
+				}
+			}
+		}
 		p.ImageConnectors = made
 		if err != nil {
 			p.LastError = err.Error()

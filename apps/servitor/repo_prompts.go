@@ -206,7 +206,7 @@ func buildRepoLeadPrompt(appliance Appliance, docs map[string]string, cachedFact
 		b.WriteString(cachedFacts)
 		b.WriteString("\n")
 	}
-	if gb := scopedGraphBlock(appliance); gb != "" {
+	if gb := scopedGraphPromptBlock(appliance); gb != "" {
 		b.WriteString("## Code Map (components and how they connect)\n\n")
 		b.WriteString("The topology recorded in prior sessions — packages, types, tables, routes, and their relationships. Use it to target searches precisely.\n\n")
 		b.WriteString(gb)

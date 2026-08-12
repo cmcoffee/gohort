@@ -1157,6 +1157,11 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// candidate, and a search that fetched six perfectly good photographs
 	// reports a download failure.
 	scored := 0
+	// blind counts candidates whose answer showed the screen never saw the
+	// picture. Those are abstentions, not rejections — but they are worth
+	// counting separately, because the repair is to fix the model rather than
+	// to search again.
+	blind := 0
 	// fallback is the candidate to use when the screen abstains entirely —
 	// preferring one whose page text matched, since that is the only signal
 	// left at that point.
@@ -1205,6 +1210,9 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		if score >= 0 {
 			scored++
 		}
+		if score == scoreScreenBlind {
+			blind++
+		}
 		Log("[imagefetch/find_image] query=%q candidate %d (title %q) text=%v vision=%d/100", query, usable, r.Title, textMatch, score)
 		if textMatch && score >= imageMatchThreshold {
 			return saveAndReturn(data, r) // confident match — stop here
@@ -1220,7 +1228,11 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		// the right image HERE is cheaper than paying a fresh page-fetch +
 		// vision call on the next candidate, so it's faster overall when it
 		// converts a multi-candidate search into a one-candidate hit.
-		if textMatch && score < imageMatchThreshold {
+		// A blind screen is excluded: re-rendering the page to fetch a better
+		// image only helps when something is judging the pixels, and paying for
+		// a headless render per candidate to be told "I can't see it" again is
+		// the most expensive way to learn nothing.
+		if textMatch && score < imageMatchThreshold && score != scoreScreenBlind {
 			if raw, rerr := browser.FetchPageImage(r.Link); rerr == nil {
 				if rdata, _, _, rok := normalizeToJPEG(raw); rok {
 					rscore := scoreImageMatch(sess, rdata, query)
@@ -1267,12 +1279,27 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		// it wasn't found. Note the screen abstains most often on exactly these
 		// queries — asking a model to confirm a specific person is the question
 		// it declines — so this path and the identity case coincide constantly.
+		if blind > 0 {
+			Log("[imagefetch/find_image] query=%q the vision screen never saw the picture on %d of %d candidate(s) — the model in use appears to have no image modality; searches will run unscreened until it does", query, blind, usable)
+		}
 		if identityRequired && !fallbackTextMatch {
 			Log("[imagefetch/find_image] query=%q REFUSED: vision screen abstained on all %d candidate(s) and none mentions %v", query, usable, namedSubjectTokens(query))
 			return "", identityUnverifiableError(query, usable)
 		}
 		Log("[imagefetch/find_image] query=%q vision screen returned no rating for any of %d candidate(s) — delivering the best text match unscreened", query, usable)
 		return saveAndReturn(fallbackData, fallbackMeta)
+	}
+	// Every candidate rated, every one of them exactly zero. A screen that is
+	// really looking spreads its scores; a flat zero across several different
+	// pictures is the signature of one that isn't seeing them and is answering
+	// the question anyway. Say that, rather than telling the caller to reword a
+	// query that was never the problem — this is the exit that answered "house"
+	// with "none clearly depict it" while holding photographs of houses.
+	if bestScore == 0 && scored > 1 {
+		return "", fmt.Errorf("found %d image(s) for %q, and the vision screen rated every one of them 0/100 — "+
+			"identical zeros across %d different pictures point at a screen that is not seeing them (a model with no image "+
+			"modality) rather than that many genuinely wrong results. Do NOT just reword the query; use fetch_image with a "+
+			"specific image URL, and tell the user the image screen looks misconfigured", usable, query, scored)
 	}
 	return "", fmt.Errorf("found image(s) for %q but none clearly depict it (best visual match %d/100) — the search may have surfaced lookalikes or unrelated results; refine the query, or use fetch_image with a specific image URL", query, bestScore)
 }
@@ -2245,10 +2272,27 @@ func resolvePageURL(base, ref string) string {
 // than returning a wrong image. Tunable.
 const imageMatchThreshold = 50
 
+// scoreScreenBlind is what the screen reports when its own answer shows it
+// never saw the picture — a model with no image modality, or an endpoint that
+// dropped the attachment.
+//
+// It has to be distinct from both a real 0 and a missing rating. A blind model
+// asked to rate how well an image depicts "house" says it cannot see any image
+// and then, obediently, answers 0 — which is indistinguishable from a genuine
+// rejection and is scored as one. Every candidate then "fails", and the tool
+// reports "none clearly depict it (best visual match 0/100) — refine the query",
+// sending the caller to reword a query that was never the problem. Below -1 so
+// the existing `score >= 0` (rated) and `score > bestScore` (better) tests both
+// treat it as an abstention with no further changes.
+const scoreScreenBlind = -2
+
 // scoreImageMatch asks the vision LLM to actually LOOK at ONE image and rate
 // 0-100 how well it depicts the query. Forcing a one-line description first
 // makes the model examine the pixels instead of guessing from metadata or
-// from a confusing multi-image prompt. Returns -1 if no usable score came back.
+// from a confusing multi-image prompt — and doubles as the tell that it saw
+// nothing at all, which is why the description is read and not just the number.
+// Returns -1 if no usable score came back, scoreScreenBlind if the screen never
+// saw the picture.
 func scoreImageMatch(sess *ToolSession, img []byte, query string) int {
 	prompt := fmt.Sprintf(
 		"Look closely at this image. In one sentence, describe what it ACTUALLY shows. "+
@@ -2263,6 +2307,11 @@ func scoreImageMatch(sess *ToolSession, img []byte, query string) int {
 	)
 	if err != nil || resp == nil {
 		return -1
+	}
+	if ModelSawNoImage(resp.Content) {
+		Log("[imagefetch/find_image] the vision screen answered without seeing the image: %q",
+			truncate(strings.TrimSpace(resp.Content), 160))
+		return scoreScreenBlind
 	}
 	return parseTrailingScore(resp.Content)
 }

@@ -80,6 +80,29 @@ func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error
 		// straight into the corpus, which then chokes the embedder
 		// and pollutes search results with <script>/<style> noise.
 		return extractHTML(doc.Data)
+	case mime == "application/json" || ext == ".json":
+		// An API specification is decomposed into one section per operation, so
+		// the report chunker lands one chunk on each endpoint. Ingested as raw
+		// JSON it retrieves badly: size-based chunking cuts through objects and
+		// separates a summary from the path it describes. See openapi.go.
+		if LooksLikeOpenAPI(doc.Data) {
+			md, err := OpenAPIToMarkdown(doc.Data)
+			if err == nil {
+				nfo.Debug("[document_extract] %q parsed as an OpenAPI spec (%d bytes of markdown)", doc.Name, len(md))
+				return md, nil
+			}
+			// A spec that announces itself and then will not parse is worth
+			// saying out loud — falling silently back to raw JSON would look
+			// like it worked and retrieve like it did not.
+			nfo.Log("[document_extract] %q looks like an OpenAPI spec but did not render (%v) — ingesting as plain JSON", doc.Name, err)
+		}
+		return string(doc.Data), nil
+	case ext == ".yaml" || ext == ".yml" || mime == "application/x-yaml" || mime == "text/yaml":
+		// Accepted as text. YAML specs are common and this build has no YAML
+		// parser, so they ingest whole rather than per-operation: better than
+		// the outright rejection this used to be, and worse than the JSON path.
+		// Convert to JSON for per-endpoint retrieval.
+		return string(doc.Data), nil
 	case strings.HasPrefix(mime, "text/") || ext == ".txt" || ext == ".md" || ext == ".log" || ext == ".csv":
 		return string(doc.Data), nil
 	case isAudioAttachment(mime, ext):

@@ -706,8 +706,10 @@ func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, own
 // fresh ID, this install's embedding, and the collection's source tag. Runs
 // off the request goroutine — embedding a large corpus can take minutes.
 // Chunks that fail to embed (or arrive with no backend configured) are
-// stored WITHOUT a vector: keyword search still reaches them, and a future
-// re-embed pass can fill the gap; dropping the text would be data loss.
+// stored WITHOUT a vector: keyword search still reaches them, and
+// ReembedUnvectoredChunks fills the gap once the embedder is back (admin
+// Maintenance → "Re-embed chunks missing a vector"). Dropping the text to
+// force a clean failure would be data loss.
 func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 	db := VectorDB
 	if db == nil {

@@ -27,15 +27,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"io"
 	"github.com/atotto/clipboard"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -588,6 +595,49 @@ func (a *App) CopyToClipboard(text string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// copyImageToClipboard writes raw image bytes to the system pasteboard as a
+// real image (so Paste in Preview, Mail, Slack, etc. inserts the picture, not
+// text). atotto/clipboard is text-only, so the write goes through osascript:
+// normalize the bytes to PNG, park them in a temp file, and have AppleScript
+// read the file onto the general pasteboard as «class PNGf». No cgo, no new
+// dependency — and osascript ships on every macOS.
+//
+// Unexported on purpose: called from the proxy's /__desktop/copyimg handler
+// (same package); exporting it would add it to the Wails JS binding surface.
+func (a *App) copyImageToClipboard(raw []byte) error {
+	if goruntime.GOOS != "darwin" {
+		return fmt.Errorf("image copy is only supported on macOS")
+	}
+	png_bytes := raw
+	if !bytes.HasPrefix(raw, []byte("\x89PNG\r\n\x1a\n")) {
+		img, _, err := image.Decode(bytes.NewReader(raw))
+		if err != nil {
+			return fmt.Errorf("decode image: %w", err)
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return fmt.Errorf("encode png: %w", err)
+		}
+		png_bytes = buf.Bytes()
+	}
+	f, err := os.CreateTemp("", "gohort_copyimg_*.png")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(png_bytes); err != nil {
+		f.Close()
+		return err
+	}
+	f.Close()
+	script := fmt.Sprintf("set the clipboard to (read (POSIX file %q) as «class PNGf»)", f.Name())
+	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
+		return fmt.Errorf("pasteboard write: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	core.Log("[gohort-desktop] copied image (%d bytes PNG) to pasteboard", len(png_bytes))
+	return nil
 }
 
 // forgeClipboard fetches whatever tmux most recently copied, from Forge's

@@ -16,15 +16,15 @@ func privilegeRowByName(rows []privilegeGrant, name string) (privilegeGrant, boo
 	return privilegeGrant{}, false
 }
 
-// TestPrivilegeToolRowsPolicies pins the three tiers the card draws: a
-// read-only tool runs freely, a consequential one asks unless it has been
-// pre-authorized for unattended runs.
+// TestPrivilegeToolRowsPolicies pins the three tiers the card draws. Policy
+// answers "what happens on an unattended run", so it tracks the gate: what stops
+// is a credential configured to ask, and it stops unless pre-authorized.
 func TestPrivilegeToolRowsPolicies(t *testing.T) {
 	sess := &ToolSession{Username: "u"}
 	bundled := []TempTool{
 		{Name: "read_notes", CommandTemplate: "cat notes"},
-		{Name: "post_update", CommandTemplate: "curl x", RawNetwork: true},
-		{Name: "ship_it", CommandTemplate: "curl y", RawNetwork: true},
+		{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"},
+		{Name: "ship_it", CommandTemplate: "curl y", Credential: "loud_api"},
 	}
 	rec := AgentRecord{
 		ID:               "a1",
@@ -38,7 +38,7 @@ func TestPrivilegeToolRowsPolicies(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"read_notes":  "auto",  // benign shell tool — never stops
-		"post_update": "ask",   // leaves the sandbox, not pre-authorized
+		"post_update": "ask",   // unresolvable credential → fails closed, not pre-authorized
 		"ship_it":     "allow", // same tier, pre-authorized
 	} {
 		row, ok := privilegeRowByName(rows, name)
@@ -51,17 +51,40 @@ func TestPrivilegeToolRowsPolicies(t *testing.T) {
 	}
 }
 
+// The card used to tier on temptool.NeedsConfirm, so a raw-network tool rendered
+// "ask" — inviting the user to grant something the gate never withholds, since a
+// tool with no credential configured to ask just runs. Policy now tells the truth
+// and DETAIL still discloses the reach, which is the part worth knowing.
+func TestRawNetworkToolRunsAndSaysSo(t *testing.T) {
+	sess := &ToolSession{Username: "u"}
+	bundled := []TempTool{{Name: "post_update", CommandTemplate: "curl x", RawNetwork: true}}
+	rec := AgentRecord{ID: "a1b", Name: "Poster", AllowedTools: []string{"post_update"}}
+	rows := privilegeToolRows(sess, rec, bundled)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want one", rows)
+	}
+	if rows[0].Policy != "auto" {
+		t.Errorf("policy = %q, want %q — nothing is configured to hold this back", rows[0].Policy, "auto")
+	}
+	if rows[0].Detail != "raw network" {
+		t.Errorf("detail = %q — the card must still disclose the reach", rows[0].Detail)
+	}
+}
+
 // TestPrivilegeToolRowsSubAgent — a sub-agent carries its parent's authority,
 // so the card must not draw per-tool controls that would never fire.
 func TestPrivilegeToolRowsSubAgent(t *testing.T) {
 	sess := &ToolSession{Username: "u"}
-	bundled := []TempTool{{Name: "post_update", CommandTemplate: "curl x", RawNetwork: true}}
+	bundled := []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}}
 	rec := AgentRecord{ID: "a2", Name: "Helper", OwnedBy: "parent-1", AllowedTools: []string{"post_update"}}
 	rows := privilegeToolRows(sess, rec, bundled)
 	if len(rows) != 1 || rows[0].Policy != "auto" {
 		t.Fatalf("sub-agent rows = %+v, want one auto row", rows)
 	}
-	if want := "raw network · via parent"; rows[0].Detail != want {
+	// The annotation is the REASON it doesn't stop, so it belongs only where the
+	// parent's authority is what's carrying it — a tool nothing was withholding
+	// isn't running "via parent", it's just running.
+	if want := "credential: loud_api · via parent"; rows[0].Detail != want {
 		t.Errorf("detail = %q, want %q", rows[0].Detail, want)
 	}
 }
@@ -145,7 +168,7 @@ func TestEmitPrivilegeCardPayload(t *testing.T) {
 		gotID, gotName, gotData = id, name, data
 	}
 	rec := AgentRecord{ID: "a7", Name: "Poster", Author: true, AllowedTools: []string{"post_update"}}
-	emitPrivilegeCard(sess, rec, []TempTool{{Name: "post_update", CommandTemplate: "curl x", RawNetwork: true}})
+	emitPrivilegeCard(sess, rec, []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}})
 	if gotID != "a7" || gotName != "Poster" {
 		t.Fatalf("card target = %q/%q", gotID, gotName)
 	}

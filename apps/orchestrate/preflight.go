@@ -4,9 +4,10 @@
 // Two gates decide an unattended fire, and neither is consulted until the fire
 // happens:
 //
-//   - The TOOL gate (autonomousGate.confirm): a NeedsConfirm tool runs only if
-//     the owner pre-authorized it in AutoApproveTools. Otherwise it is refused
-//     for that fire and queued as an "autonomous_tool" authorization.
+//   - The TOOL gate (autonomousGate.confirm): a tool whose credential is set to
+//     require confirmation before each call runs only if the owner pre-authorized
+//     it in AutoApproveTools. Otherwise it is refused for that fire and queued as
+//     an "autonomous_tool" authorization.
 //   - The RECIPIENT gate (the send_message action in channel_tools.go): a
 //     proactive message goes out only if the contact is pre-authorized or the
 //     agent is an authorized sender for the channel. Otherwise it is queued as a
@@ -65,54 +66,42 @@ func (app *OrchestrateApp) PreflightAutonomous(owner, agentID string) []Prefligh
 	if !ok {
 		return nil
 	}
-	return append(preflightTools(udb, agent), preflightRecipients(udb, owner, agent)...)
+	gate := app.newAutonomousGate(owner, agentID, nil)
+	return append(preflightToolFindings(agent, gate.allows), preflightRecipients(udb, owner, agent)...)
 }
 
-// confirmingTool is one of the agent's tools reduced to what the gate cares
-// about. Resolution (which needs the live registry) is kept out of the policy
-// below so the rule itself is testable on its own.
-type confirmingTool struct {
-	Name         string
-	NeedsConfirm bool
-}
-
-// preflightTools resolves the agent's tools and applies the gate rule.
-func preflightTools(udb Database, agent AgentRecord) []PreflightFinding {
-	// Resolve one at a time: a single unresolvable name (a custom tool that only
-	// materializes with a live session) must not blank the whole report.
-	var tools []confirmingTool
-	for _, name := range agent.AllowedTools {
-		defs, err := GetAgentTools(name)
-		if err != nil || len(defs) == 0 {
-			continue // can't resolve it here; the fire will resolve it for real
-		}
-		tools = append(tools, confirmingTool{Name: name, NeedsConfirm: defs[0].NeedsConfirm})
-	}
-	return preflightToolFindings(agent, autonomousApprovedSet(udb, agent.ID), tools)
-}
-
-// preflightToolFindings mirrors autonomousGate.confirm: every NeedsConfirm tool
-// must be in the inherited AutoApproveTools set, or that call is refused and
-// queued when the task fires. Pure — same inputs the gate sees, same decision,
-// just made early.
-func preflightToolFindings(agent AgentRecord, approved map[string]bool, tools []confirmingTool) []PreflightFinding {
-	// A sub-agent runs under its parent's authority — the gate returns true for
-	// everything, so there is nothing to warn about. Mirrors newAutonomousGate's
-	// subAgent flag; keep the two in step.
+// preflightToolFindings asks the GATE ITSELF about each of the agent's tools —
+// allows is autonomousGate.allows, the same predicate confirm() decides on, minus
+// the queueing. It is passed in rather than reached for so the reporting shell
+// stays testable on its own, but production has exactly one implementation of the
+// rule and this is not it.
+//
+// It used to re-implement the rule instead, keyed on AgentToolDef.NeedsConfirm —
+// which stopped being the rule when the gate moved to the credential's own
+// "require confirm" toggle, and the two shipped in the SAME commit. The result was
+// a warning at authoring time naming tools that would never actually be refused:
+// "get_weather asks for confirmation" for a tool already enabled on the agent and
+// running fine on every fire. A pre-flight that cries wolf is worse than none,
+// because the one real finding is now indistinguishable from the noise.
+func preflightToolFindings(agent AgentRecord, allows func(string) bool) []PreflightFinding {
+	// A sub-agent runs under its parent's authority — allows returns true for
+	// everything, so this is only an early out, not a second copy of that rule.
 	if strings.TrimSpace(agent.OwnedBy) != "" {
 		return nil
 	}
 	var out []PreflightFinding
-	for _, tl := range tools {
-		if !tl.NeedsConfirm || approved[tl.Name] {
+	for _, name := range agent.AllowedTools {
+		name = strings.TrimSpace(name)
+		if name == "" || name == noToolsSentinel || allows(name) {
 			continue
 		}
 		out = append(out, PreflightFinding{
 			Gate: PreflightGateTool,
-			Name: tl.Name,
-			Detail: fmt.Sprintf("%q asks for confirmation, and nobody is present on a scheduled run. "+
-				"The call is refused for that fire and queued for approval instead.", tl.Name),
-			Fix: fmt.Sprintf("Pre-authorize %q for this agent (Auto-approve tools), or approve it once from the Authorizations pane after the first fire.", tl.Name),
+			Name: name,
+			Detail: fmt.Sprintf("%q dispatches through a credential set to require confirmation before every call, "+
+				"and nobody is present on a scheduled run. The call is refused for that fire and queued for approval instead.", name),
+			Fix: fmt.Sprintf("Pre-authorize %q for this agent (Auto-approve tools), turn off \"Require confirm before each call\" on its credential, "+
+				"or approve it once from the Authorizations pane after the first fire.", name),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

@@ -213,10 +213,25 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	if udb != nil {
 		if events := guardrailExportEvents(udb, agent.ID, sess.ID); len(events) > 0 {
 			fmt.Fprintf(&b, "## Guardrail activity\n\n")
-			fmt.Fprintf(&b, "An enforced check acted %d time(s) during this session. Which rule fired is\n", len(events))
-			fmt.Fprintf(&b, "deliberately not included here; it is in the session's diagnostics in the app.\n\n")
+			fmt.Fprintf(&b, "A check acted %d time(s) during this session, so one or more replies below are not\n", len(events))
+			b.WriteString("what the model originally wrote. ")
+			if TuneBool(tuneExportGuardrailDetail) {
+				fmt.Fprintf(&b, "Each event's own detail is included below because\n")
+				fmt.Fprintf(&b, "the admin setting for it is on; it names the rules this agent enforces.\n\n")
+			} else {
+				fmt.Fprintf(&b, "Which rule fired, and what it said, are\n")
+				fmt.Fprintf(&b, "deliberately not included here; they are in the session's diagnostics in the app.\n\n")
+			}
 			for _, e := range events {
 				fmt.Fprintf(&b, "- %s — %s\n", e.At.Format(time.RFC3339), e.What)
+				if e.Detail != "" {
+					// Blockquoted and indented under its own bullet: the detail
+					// is quoted material (a rule, a retracted claim) and runs
+					// long enough that inlining it makes the list unreadable.
+					for _, line := range strings.Split(e.Detail, "\n") {
+						fmt.Fprintf(&b, "  > %s\n", strings.TrimSpace(line))
+					}
+				}
 			}
 			b.WriteString("\n---\n\n")
 		}
@@ -347,11 +362,37 @@ func slugifyAgentName(name string) string {
 	return s
 }
 
+// tuneExportGuardrailDetail names the admin knob that adds each event's own
+// detail to an export's guardrail section.
+//
+// Off by default, and the default is the whole design: an export is the one
+// artifact that leaves the owner's pane, and a diag's detail names the rule that
+// fired and quotes what it caught. Handing that to a reader gives them the
+// bisection signal every decline works to withhold. On is for the other case —
+// an operator exporting their OWN session to work out why a reply came back
+// different from what the agent wrote, which is the question the kind-level
+// summary can raise but not answer.
+const tuneExportGuardrailDetail = "tune_export_guardrail_detail"
+
+// Its own category rather than a line in Limits. The Tuning tab renders one
+// rail entry per category, and this is a DISCLOSURE setting — nothing about it
+// is a limit. Filed among forty-odd byte caps and retention counts it would be
+// invisible to the one person who has reason to look for it: someone about to
+// hand an export to somebody else.
+func init() {
+	RegisterTunable(TunableSpec{Key: tuneExportGuardrailDetail, Category: "Exports",
+		Label: "Include guardrail detail in session exports",
+		Help: "Add the full detail of each guardrail or correction event — the rule that fired, the check's reason, the claim that was retracted — to an exported transcript. Off by default: exports get forwarded, and the detail names the rules an agent enforces. Turn on when exporting your own sessions for debugging.",
+		Kind: KindBool, Default: 0, Min: 0, Max: 1})
+}
+
 // guardrailExportEvent is one guardrail action, reduced to what is safe to put in
-// an exported transcript: when, and what kind of thing happened.
+// an exported transcript: when, and what kind of thing happened. Detail is
+// populated only when the admin knob above is on.
 type guardrailExportEvent struct {
-	At   time.Time
-	What string
+	At     time.Time
+	What   string
+	Detail string
 }
 
 // guardrailExportEvents reads the session's diagnostics trail and returns the
@@ -378,11 +419,46 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 		"guardrail-output-substituted": "a reply kept breaking a rule and a neutral decline was substituted",
 		"guardrail-error":              "a check could not run; the turn proceeded unchecked",
 		"guardrail-no-verdict":         "a check reached no verdict; the turn proceeded unchecked",
+		"guardrail-appeal-honored":     "the agent appealed a rule and the appeal was honored",
+		"guardrail-appeal-upheld":      "the agent appealed a rule and the block was upheld",
+		"guardrail-appeal-failed":      "the agent appealed a rule and the appeal could not be judged",
+
+		// The FRAMEWORK's own corrections, which this list used to omit
+		// entirely. They are the ones a reader is most likely to be looking
+		// for: every one of them means the reply on screen is not the reply
+		// the model wrote, and the most common question asked of an export is
+		// "why did it not hand over the thing it said it would". Without these
+		// the transcript shows an agent that simply chose not to, and the
+		// retraction that actually caused it is invisible.
+		//
+		// Safe by the same rule as the rest: kind only, no detail. These carry
+		// no user-authored rule text — they name a mechanical check — but their
+		// Detail does quote the reply, so it stays out like everything else.
+		"phantom-delivery-corrected":   "a reply claimed to hand over a file that did not exist; the claim was removed and the turn retried",
+		"phantom-delivery-uncorrected": "a reply kept claiming a file that did not exist; it was replaced with a truthful one",
+		"unkept-claim-corrected":       "a reply promised something the turn had not done; the turn was retried",
+		"unkept-claim-uncorrected":     "a reply kept promising something the turn had not done; it was replaced",
+		"ungrounded-claim-corrected":   "a reply asserted something the turn had no support for; the turn was retried",
+		"ungrounded-claim-uncorrected": "a reply kept asserting something unsupported; it was replaced",
+		"unverified-premise-held":      "a claim rested on an unverified premise and was held",
+		"machinery-corrected":          "a reply exposed internal machinery; the turn was retried",
+		"machinery-uncorrected":        "a reply kept exposing internal machinery; it was replaced",
+		"announced-call-corrected":     "a reply announced a tool call it never made; the turn was retried",
+		"tool-markup-corrected":        "a reply wrote a tool call as text instead of calling it; the turn was retried",
+		"tool-mention-corrected":       "a reply named internal tooling to the user; the turn was retried",
+		"empty-round-retried":          "a round produced nothing and was retried",
+		"giveup-retried":               "a reply gave up without trying; the turn was retried",
+		"round-batch-capped":           "the turn requested more tool calls at once than are allowed and was capped",
 	}
+	withDetail := TuneBool(tuneExportGuardrailDetail)
 	var out []guardrailExportEvent
 	for _, d := range list {
 		if what, ok := label[d.Kind]; ok {
-			out = append(out, guardrailExportEvent{At: d.At, What: what})
+			e := guardrailExportEvent{At: d.At, What: what}
+			if withDetail {
+				e.Detail = strings.TrimSpace(d.Detail)
+			}
+			out = append(out, e)
 		}
 	}
 	return out

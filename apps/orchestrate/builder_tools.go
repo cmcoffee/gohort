@@ -57,6 +57,17 @@ import (
 // a setup card into the conversation (SSE block + session UIBlock);
 // nil is fine — drafting still works, the card just doesn't render.
 func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
+	// The calling user, taken from whichever carrier is actually present. t is
+	// documented as optional and three dispatch paths pass nil outright, so
+	// anything here that needs a user must read it from the SESSION first —
+	// dereferencing t is a nil panic on every delegated Builder run.
+	authoringUser := ""
+	if sess != nil {
+		authoringUser = sess.Username
+	}
+	if authoringUser == "" && t != nil {
+		authoringUser = t.user
+	}
 	tools := []AgentToolDef{
 		// survey — Builder's "read the repo" move: one call maps the user's whole
 		// gohort (agents, tools, credentials + wired tools, apps, pipelines,
@@ -65,6 +76,9 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		surveyWorkspaceToolDef(t),
 		ChatToolToAgentToolDefWithSession(&createAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&updateAgentTool{}, sess),
+		// What an agent can be attached to. Sits beside create/update because
+		// attached_sources is undiscoverable without it.
+		listReferenceSourcesToolDef(authoringUser),
 		// archetype — build recipes for the common shapes (research, KB,
 		// conversational). The successors to the Chat/Research/KB seeds:
 		// Builder reads a recipe and composes a user-owned agent from it

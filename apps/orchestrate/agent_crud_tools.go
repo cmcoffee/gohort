@@ -621,6 +621,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"hidden":                   {Type: "boolean", Description: "When true, hidden from other agents' \"Available agents\" block and refused by agents(run) — unless a caller lists it in allowed_dispatch_targets. Default false."},
 		"allowed_dispatch_targets": {Type: "array", Description: "Dispatch allowlist of agent IDs. Empty (default) = may call any non-hidden agent. Non-empty = ONLY these, hidden or not — the explicit pick wins, so it reaches hidden specialists too.", Items: &ToolParam{Type: "string"}},
 		"attached_collections":     {Type: "array", Description: "Document Collection IDs merged into this agent's RAG recall — a curated reference corpus without authoring a skill. Bound at the agent layer, no activation needed. IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
+		"attached_sources":         {Type: "array", Description: "Cross-app REFERENCE SOURCES this agent may draw on, each as \"<kind>:<item_id>\" — e.g. \"system:<appliance-id>\" for a servitor system, evidence bundle, tool-backed service, or a whole servitor WORKSPACE spanning several of them. Each attachment surfaces as its own named tools on the agent: search_<name>_knowledge (instant, already-gathered), get_<name>_facts, and investigate_<name> (dispatch a live read-only investigation — slow). Use list_reference_sources to discover valid kinds and ids. Attach a workspace when the agent needs answers that span code, live state, evidence and services at once. Default empty.", Items: &ToolParam{Type: "string"}},
 		"attached_pipelines":       {Type: "array", Description: "Pipeline IDs (pipeline action=list). Each becomes its own callable tool here (run_<pipeline>), so a saved multi-stage workflow is on hand without the generic pipeline tool. Author the pipeline first. Default empty.", Items: &ToolParam{Type: "string"}},
 		"recall_hints":             {Type: "boolean", Description: "Each turn surfaces a short scored list of the agent's OWN knowledge relevant to the message — pointers (title + doc_id for fetch_knowledge_doc), not content. Needs a real corpus. Default false."},
 		"triggers":                 {Type: "array", Description: "Substring/glob patterns matched against each user message. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\") — loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
@@ -725,6 +726,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if _, ok := args["attached_collections"]; ok {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
+	}
+	if _, ok := args["attached_sources"]; ok {
+		rec.AttachedSources = referenceSelectionsFromArgs(args, "attached_sources")
 	}
 	if _, ok := args["attached_pipelines"]; ok {
 		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")
@@ -860,6 +864,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["attached_collections"]; ok && v != nil {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
+	}
+	if v, ok := args["attached_sources"]; ok && v != nil {
+		rec.AttachedSources = referenceSelectionsFromArgs(args, "attached_sources")
 	}
 	if v, ok := args["attached_pipelines"]; ok && v != nil {
 		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")

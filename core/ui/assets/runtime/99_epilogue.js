@@ -207,6 +207,29 @@
           if (it.status) {
             row.appendChild(el('span', {class: 'ui-live-status'}, [it.status]));
           }
+          // A way to stop work that outlives the turn that started it. Only
+          // when the entry declares one: most rows cannot be stopped from
+          // here, and a button that does nothing is worse than none. core/ui
+          // learns only that an endpoint exists and posts to it; which app,
+          // which run, and whether this viewer may is all resolved server-side.
+          if (it.cancel_url) {
+            var stop = el('button', {class: 'ui-live-stop', title: 'Stop this'}, ['Stop']);
+            stop.addEventListener('click', function(ev) {
+              // The row is a link. Without this, stopping the work also
+              // navigates away from the page you were reading.
+              ev.preventDefault();
+              ev.stopPropagation();
+              stop.disabled = true;
+              stop.textContent = 'Stopping…';
+              fetch(it.cancel_url, {method: 'POST'}).then(function() {
+                refreshLive();
+              }).catch(function() {
+                stop.disabled = false;
+                stop.textContent = 'Stop';
+              });
+            });
+            row.appendChild(stop);
+          }
           liveMenu.appendChild(row);
         });
       }

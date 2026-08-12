@@ -29,6 +29,7 @@ func init() {
 	RegisterChatTool(new(WebSearchTool))
 	RegisterChatTool(new(FetchURLTool))
 	CrossSearchFunc = CrossProviderSearch
+	SearchWithProviderFunc = SearchWithProvider
 }
 
 // Source represents a single search result with title, URL, and snippet.
@@ -833,7 +834,7 @@ func SearchWithProvider(query string, provider string, apiKey string, endpoint s
 	case "google":
 		result, err = searchGoogle(query, apiKey)
 	case "searxng":
-		result, err = searchSearXNG(query, endpoint)
+		result, err = searchSearXNG(query, endpoint, apiKey)
 	case "serper":
 		result, err = searchSerper(query, apiKey)
 	default:
@@ -1163,7 +1164,12 @@ type searxngResponse struct {
 }
 
 // searchSearXNG uses a SearXNG instance's JSON API.
-func searchSearXNG(query string, endpoint string) (string, error) {
+//
+// apiKey is optional and sent as a bearer. A public SearXNG needs none, but an
+// instance behind an authenticating proxy does — and so does a gohort PEER,
+// which serves this exact shape at /api/peer/v1/search precisely so that
+// borrowing another instance's search needs no client of its own.
+func searchSearXNG(query, endpoint, apiKey string) (string, error) {
 	if endpoint == "" {
 		return "", fmt.Errorf("searxng requires an endpoint URL (configure with --setup)")
 	}
@@ -1187,6 +1193,9 @@ func searchSearXNG(query string, endpoint string) (string, error) {
 	req, err := client.NewRequest("GET", path)
 	if err != nil {
 		return "", fmt.Errorf("searxng request failed: %w", err)
+	}
+	if key := strings.TrimSpace(apiKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
 	resp, err := client.SendRawRequest("", req)

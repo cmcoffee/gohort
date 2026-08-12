@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -53,6 +54,18 @@ type PeerImageBackend struct {
 	MaxImages  int    `json:"max_images,omitempty"`
 	CascadeMax int    `json:"cascade_max,omitempty"`
 	Default    bool   `json:"default,omitempty"`
+}
+
+// peerBackendEdits reports whether a locally-offered backend takes source
+// photos. Reads the same list the manifest advertises, so what a peer is told
+// and what it is held to cannot disagree.
+func peerBackendEdits(name string) bool {
+	for _, b := range ReachableImageBackends(nil) {
+		if b.Name == name {
+			return b.Edits
+		}
+	}
+	return false
 }
 
 // peerImageBackends lists what this instance can render with.
@@ -97,6 +110,22 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 	backend := strings.TrimSpace(req.Backend)
 	if backend != "" && !ImageBackendReachable(nil, backend) {
 		peerDeny(w, http.StatusBadRequest, "no image backend named "+backend+" is available here")
+		return
+	}
+
+	// Source photos aimed at a text-only renderer mean the CALLER is working
+	// from a stale picture of what this instance offers: its connector was
+	// provisioned when that backend still edited, or by a build that assumed
+	// every peer backend did. Refusing here, as a bad request that names the
+	// repair, beats letting it fall through to peerRenderEdit — that returns a
+	// 502, which reads as "the machine I borrowed broke" and sends the operator
+	// looking at the wrong end of the link.
+	if len(req.InitImages) > 0 && backend != "" && !peerBackendEdits(backend) {
+		// Hostname for the same reason the manifest carries one: the caller may
+		// have several peers configured and has to know which one is stale.
+		host, _ := os.Hostname()
+		peerDeny(w, http.StatusBadRequest, "backend "+backend+" on "+host+" generates from text only and has no image "+
+			"input, so it cannot edit a photo — this peer's record of what "+host+" offers is out of date; refresh the peer on that side")
 		return
 	}
 
@@ -151,8 +180,18 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 // bytes instead. RefineFaces stays off — the second pass is an agent-path
 // choice, and a peer that wants it can ask for it on its own side, where the
 // decision and the cost belong together.
+//
+// The session needs a workspace ROOT, not just the files. resolveInputImages
+// resolves every ref against sess.WorkspaceDir and rejects absolute paths
+// outright, so a bare &ToolSession{} plus full temp paths fell through to the
+// last branch and failed with "no workspace available to read
+// /opt/gohort/data/images/….png from" — an error quoting a serving-side path,
+// returned to a peer, about a directory that exists and a file that had just
+// been written to it. Rooting the session where writeImageTemp actually puts
+// them and passing basenames puts the refs back inside the containment check
+// they were always meant to pass.
 func peerRenderEdit(req peerImageRequest, backend string) (*ImageGenResult, error) {
-	sess := &ToolSession{}
+	sess := &ToolSession{WorkspaceDir: ImageDir()}
 	refs := make([]string, 0, len(req.InitImages))
 	for i, b64 := range req.InitImages {
 		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
@@ -167,7 +206,7 @@ func peerRenderEdit(req peerImageRequest, backend string) (*ImageGenResult, erro
 			return nil, err
 		}
 		defer os.Remove(path)
-		refs = append(refs, path)
+		refs = append(refs, filepath.Base(path))
 	}
 	return EditImageWithBackend(sess, EditImageRequest{
 		Backend: backend,

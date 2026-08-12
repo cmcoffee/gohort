@@ -5,7 +5,6 @@ package browser
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -54,7 +53,7 @@ func init() {
 	// directly — getting just the page text without the LLM-shaped
 	// "Fetched X via browser (N chars):" preamble that
 	// BrowsePageTool.Run wraps on for the LLM consumer.
-	BrowserFetchFunc = Fetch
+	RegisterBrowserFetch(Fetch)
 }
 
 // shared is the singleton used by both the LLM tool and the package-level Fetch function.
@@ -378,20 +377,17 @@ func (t *BrowsePageTool) Run(args map[string]any) (string, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "", fmt.Errorf("url must be http:// or https://%s", SameOriginURLHint(target))
 	}
-	// SSRF guard — same rules as fetch_url.
-	if host := parsed.Hostname(); host != "" {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
-			}
-		}
-		lower := strings.ToLower(host)
-		if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
-		}
+	// SSRF guard — same rules as fetch_url, and now literally the same code:
+	// this check had been copy-pasted here, into the sandbox hook, and was
+	// about to be pasted a third time into the peer endpoint.
+	if err := RefuseNonPublicHost(target); err != nil {
+		return "", err
 	}
 
-	text, err := t.fetch(target, 10000)
+	// Through the routed variable, not t.fetch: that is what lets an operator
+	// point page rendering at a peer and have the LLM-callable tool follow
+	// along with everything else.
+	text, err := BrowserFetchFunc(target, 10000)
 	if err != nil {
 		return "", err
 	}

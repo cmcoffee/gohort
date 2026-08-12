@@ -33,6 +33,7 @@ func peerServer(t *testing.T, caps ...string) (base, key string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
+	mux.HandleFunc("/api/peer/v1/audio/transcriptions", HandlePeerTranscribe)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv.URL, pk.Key
@@ -240,6 +241,41 @@ func TestEmbedThroughAConfiguredPeer(t *testing.T) {
 	}
 	if len(vec) != 4 {
 		t.Errorf("vector length = %d, want the 4 the remote embedder returns", len(vec))
+	}
+}
+
+// What this instance believes about a peer used to be written once, at save
+// time, and never revisited unless an operator opened the admin page and
+// clicked Refresh. Anything that moved on the far side — a renderer reshaped, a
+// capability withdrawn — stayed wrong locally for as long as nobody looked.
+func TestStoredPeersAreRefreshedOnTheClock(t *testing.T) {
+	reconcilersMu.Lock()
+	_, registered := reconcilers["peer_refresh"]
+	reconcilersMu.Unlock()
+	if !registered {
+		t.Error("no peer reconciler is registered — a peer's record only updates when an operator clicks Refresh")
+	}
+
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	// Blank what the save recorded, so only a sweep can put it back.
+	p, _ := GetRemotePeer("gpu-box")
+	p.LastChecked, p.LastError = "", "stale failure from before"
+	RootDB.Set(remotePeersTable, p.Name, p)
+
+	RefreshRemotePeers(t.Context())
+
+	p, ok := GetRemotePeer("gpu-box")
+	if !ok {
+		t.Fatal("the peer vanished during a refresh sweep")
+	}
+	if p.LastChecked == "" {
+		t.Error("the sweep did not re-probe a stored peer")
+	}
+	if p.LastError != "" {
+		t.Errorf("a reachable peer kept a stale error after being re-probed: %q", p.LastError)
 	}
 }
 

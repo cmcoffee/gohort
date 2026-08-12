@@ -989,24 +989,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Source:    "api/transcribe",
 					TestURL:   "api/transcribe/test",
 					TestLabel: "Test endpoint",
-					Fields: []ui.FormField{
-						{Field: "enabled", Label: "Enable transcription", Type: "toggle"},
-						{Field: "endpoint", Label: "Endpoint", Type: "text",
-							Placeholder: "http://localhost:8089/v1",
-							Help:        "Base URL with the version prefix — gohort appends /audio/transcriptions.",
-							ShowWhen:    "enabled",
-							Presets: []ui.FieldPreset{
-								{Label: "whisper.cpp", Value: "http://localhost:8089/v1", Hint: "Default whisper.cpp HTTP server port"},
-								{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted Whisper"},
-							}},
-						{Field: "model", Label: "Model", Type: "text",
-							Placeholder: "whisper-1",
-							Help:        "Optional. whisper.cpp ignores this; OpenAI expects 'whisper-1'.",
-							ShowWhen:    "enabled"},
-						{Field: "api_key", Label: "API Key", Type: "password",
-							Help:     "Optional bearer token. Set for real OpenAI / authenticated proxies; leave blank for local whisper.cpp.",
-							ShowWhen: "enabled"},
-					},
+					Fields: transcribeFormFields(),
 				},
 			},
 			{
@@ -1061,21 +1044,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Source:    "api/web-search",
 					TestURL:   "api/web-search/test",
 					TestLabel: "Test search call",
-					Fields: []ui.FormField{
-						{Field: "provider", Label: "Provider", Type: "select",
-							Options: []ui.SelectOption{
-								{Value: "duckduckgo", Label: "DuckDuckGo (no key)"},
-								{Value: "brave", Label: "Brave"},
-								{Value: "google", Label: "Google"},
-								{Value: "serper", Label: "Serper"},
-								{Value: "searxng", Label: "SearXNG (self-hosted)"},
-							}},
-						{Field: "api_key", Label: "API Key", Type: "password",
-							Help: "Required for Brave / Google / Serper."},
-						{Field: "endpoint", Label: "Endpoint", Type: "text",
-							Placeholder: "https://searx.example.com",
-							Help:        "Required for SearXNG. The base URL of your instance."},
-					},
+					Fields:    webSearchFormFields(),
+				},
+			},
+			{
+				Title:    "Page Rendering (Browser)",
+				Subtitle: "Where browse_page and the page-render escalations run. A headless Chromium is a heavyweight dependency to install on every machine; borrowing a peer's lets a laptop skip it entirely. Public web only either way.",
+				Body: ui.FormPanel{
+					Source: "api/browse",
+					Fields: browseFormFields(),
 				},
 			},
 			{
@@ -3290,3 +3267,108 @@ const skillsExportAction = `function(ctx){
 const skillsExportAllAction = `function(){
   __artifactExport('?all=skill', 'skills.gohort.json');
 }`
+
+// transcribeFormFields builds the STT settings, with the peer picker added only
+// when a peer actually offers transcription.
+//
+// Same conditional shape as embeddingFormFields, and for the same reason: the
+// endpoint/model/key carry ShowWhen "enabled;provider:local" so they disappear
+// while a peer is selected, and leaving that clause in with no dropdown to set
+// `provider` would hide the whole form on every deployment with no peers.
+func transcribeFormFields() []ui.FormField {
+	peers := TranscribeProviderOptions()
+	hasPeers := len(peers) > 1
+
+	local := "enabled"
+	if hasPeers {
+		local = "enabled;provider:local"
+	}
+
+	fields := []ui.FormField{
+		{Field: "enabled", Label: "Enable transcription", Type: "toggle"},
+	}
+	if hasPeers {
+		fields = append(fields, ui.FormField{
+			Field: "provider", Label: "Transcribe on", Type: "select",
+			Options:  peers,
+			ShowWhen: "enabled",
+			Help:     "Use this instance's own STT endpoint, or a peer instance you've connected under Resource Sharing › Peers.",
+		})
+	}
+	return append(fields,
+		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
+			Placeholder: "http://localhost:8089/v1",
+			Help:        "Base URL with the version prefix — gohort appends /audio/transcriptions.",
+			ShowWhen:    local,
+			Presets: []ui.FieldPreset{
+				{Label: "whisper.cpp", Value: "http://localhost:8089/v1", Hint: "Default whisper.cpp HTTP server port"},
+				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted Whisper"},
+			}},
+		ui.FormField{Field: "model", Label: "Model", Type: "text",
+			Placeholder: "whisper-1",
+			Help:        "Optional. whisper.cpp ignores this; OpenAI expects 'whisper-1'.",
+			ShowWhen:    local},
+		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
+			Help:     "Optional bearer token. Set for real OpenAI / authenticated proxies; leave blank for local whisper.cpp.",
+			ShowWhen: local},
+	)
+}
+
+// webSearchFormFields builds the Web Search settings, with the peer picker
+// added only when a peer actually offers search.
+//
+// Same conditional shape as embeddings and transcription: the provider/key/
+// endpoint fields carry ShowWhen "source:local" so they disappear while a peer
+// is selected, and the clause is added and removed together with the dropdown
+// that drives it — leaving it in with no dropdown would blank the whole form on
+// every deployment with no peers.
+func webSearchFormFields() []ui.FormField {
+	peers := SearchProviderOptions()
+	hasPeers := len(peers) > 1
+	local := ""
+	if hasPeers {
+		local = "source:local"
+	}
+
+	var fields []ui.FormField
+	if hasPeers {
+		fields = append(fields, ui.FormField{
+			Field: "source", Label: "Search on", Type: "select",
+			Options: peers,
+			Help:    "Search from this instance, or through a peer you've connected under Resource Sharing › Peers. Borrowing a peer means this machine never holds the search API key.",
+		})
+	}
+	return append(fields,
+		ui.FormField{Field: "provider", Label: "Provider", Type: "select",
+			ShowWhen: local,
+			Options: []ui.SelectOption{
+				{Value: "duckduckgo", Label: "DuckDuckGo (no key)"},
+				{Value: "brave", Label: "Brave"},
+				{Value: "google", Label: "Google"},
+				{Value: "serper", Label: "Serper"},
+				{Value: "searxng", Label: "SearXNG (self-hosted)"},
+			}},
+		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
+			ShowWhen: local,
+			Help:     "Required for Brave / Google / Serper."},
+		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
+			Placeholder: "https://searx.example.com",
+			ShowWhen:    local,
+			Help:        "Required for SearXNG. The base URL of your instance."},
+	)
+}
+
+// browseFormFields is the page-rendering picker. Unlike search or STT there is
+// nothing to configure locally — the browser is either linked into the build or
+// it is not — so this is one choice, and the section says so rather than
+// showing an empty form when no peer offers rendering.
+func browseFormFields() []ui.FormField {
+	opts := BrowseProviderOptions()
+	help := "Only this instance offers page rendering. Connect a peer that grants it under Resource Sharing › Peers to render elsewhere."
+	if len(opts) > 1 {
+		help = "Render locally, or on a peer. Borrowing means this machine never downloads or runs Chromium."
+	}
+	return []ui.FormField{
+		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help},
+	}
+}

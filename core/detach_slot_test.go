@@ -124,7 +124,7 @@ func TestASlotIsPerTurnNotPerSession(t *testing.T) {
 }
 
 func TestTheRefusalDoesNotReadAsAFailure(t *testing.T) {
-	notice := secondDetachNotice("image", TaskRun{ID: "task-1", Label: "editing image#1"})
+	notice := secondDetachNotice("image", TaskRun{ID: "task-1", Label: "editing image#1"}, 0)
 
 	// It has to name the job, or "you already have one running" is unfalsifiable
 	// from where the model sits.
@@ -153,7 +153,7 @@ func TestTheSecondCallOfATurnStartsNoSecondJob(t *testing.T) {
 	// same session, same tool, two calls a round apart. The first detaches; the
 	// second must come back with the refusal and leave the runner alone.
 	started := withTaskRunner(t)
-	tool := &slowTool{dur: taskDetachThreshold() + time.Hour, result: "rendered"}
+	tool := &slowTool{dur: taskDetachThreshold(nil) + time.Hour, result: "rendered"}
 	sess := &ToolSession{Username: "craig"}
 	def := ChatToolToAgentToolDefWithSession(tool, sess)
 
@@ -191,7 +191,7 @@ func TestNeitherNoticeHandsOverTheVocabularyItBans(t *testing.T) {
 	// the background means" and then asked for a one-line reply, so the model
 	// wrote the phrase back. A notice that supplies the words it does not want
 	// repeated is the one at fault.
-	second := secondDetachNotice("image", TaskRun{ID: "task-1", Label: "editing image#1"})
+	second := secondDetachNotice("image", TaskRun{ID: "task-1", Label: "editing image#1"}, 0)
 	if strings.Contains(strings.ToLower(second), "running in the background") {
 		t.Errorf("the refusal must not hand over the phrase it wants suppressed:\n%s", second)
 	}

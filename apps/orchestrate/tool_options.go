@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -311,4 +312,115 @@ func firstLine(s string) string {
 		return ln
 	}
 	return ""
+}
+
+// buildAttachedSourceToolDefs mints the per-source tools for every reference
+// source attached to this agent.
+//
+// Mirrors buildAttachedPipelineToolDefs: curated by the owner, small in number,
+// so the tools go in directly rather than behind a lazy load_tool. Resolution
+// runs through core.ReferenceItemTools, the same call the writer apps make, so
+// an agent and a guide asking the same system a question get identical tools
+// rather than two implementations that drift.
+//
+// A selection whose source is no longer registered — the app was removed, the
+// item deleted — contributes nothing and is logged rather than erroring the
+// turn: an agent that cannot start because one of five attachments went missing
+// is worse than one that runs with four.
+func (t *chatTurn) buildAttachedSourceToolDefs() []AgentToolDef {
+	if t == nil || len(t.agent.AttachedSources) == 0 {
+		return nil
+	}
+	var out []AgentToolDef
+	seen := map[string]bool{}
+	for _, ref := range t.agent.AttachedSources {
+		kind, item := strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)
+		if kind == "" || item == "" {
+			continue
+		}
+		defs := ReferenceItemTools(t.user, kind, item)
+		if len(defs) == 0 {
+			Log("[orchestrate.tools] agent=%s: attached source %s/%s resolved to no tools (removed or no longer shared?)",
+				t.agent.ID, kind, item)
+			continue
+		}
+		for _, d := range defs {
+			// Two attachments can mint the same tool name — the same system
+			// attached twice, or two items whose names slug identically. First
+			// wins, because the alternative is a catalog with a duplicate name
+			// where which one runs is undefined.
+			if seen[d.Tool.Name] {
+				continue
+			}
+			seen[d.Tool.Name] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// referenceSelectionsFromArgs parses the "<kind>:<item_id>" strings the agent
+// CRUD tools accept into selections.
+//
+// A flat string list rather than an array of objects because that is the shape
+// models reliably produce, and the id half can itself contain colons (a UUID
+// will not, a future kind's id might), so the split is on the FIRST colon only.
+// Anything without a colon is dropped rather than guessed at: inventing a kind
+// would attach the agent to a source nobody chose.
+func referenceSelectionsFromArgs(args map[string]any, key string) []ReferenceSelection {
+	var out []ReferenceSelection
+	seen := map[string]bool{}
+	for _, raw := range stringSliceFromArgs(args, key) {
+		kind, item, found := strings.Cut(strings.TrimSpace(raw), ":")
+		kind, item = strings.TrimSpace(kind), strings.TrimSpace(item)
+		if !found || kind == "" || item == "" {
+			Log("[orchestrate.agents] ignoring attached source %q — expected \"<kind>:<item_id>\"", raw)
+			continue
+		}
+		if seen[kind+":"+item] {
+			continue
+		}
+		seen[kind+":"+item] = true
+		out = append(out, ReferenceSelection{Kind: kind, ItemID: item})
+	}
+	return out
+}
+
+// listReferenceSourcesToolDef lets the Builder discover what an agent can be
+// attached to. Without it, attached_sources is a parameter whose valid values
+// are undiscoverable — the Builder would have to be told the ids by the user,
+// which defeats the point of it doing the wiring.
+func listReferenceSourcesToolDef(user string) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name: "list_reference_sources",
+			Description: "List the cross-app knowledge sources an agent can be attached to (attached_sources) — servitor systems, evidence bundles, tool-backed services, whole servitor workspaces, connected document spaces. " +
+				"Returns each source's kind and its items with ids, ready to pass as \"<kind>:<item_id>\". " +
+				"Attaching one gives the agent named tools for it: instant search over what has already been gathered, its recorded facts, and a live read-only investigation. No arguments.",
+		},
+		Handler: func(map[string]any) (string, error) { return renderReferenceSources(user), nil },
+	}
+}
+
+// renderReferenceSources is the tool body, split out so it is testable without a
+// session.
+func renderReferenceSources(user string) string {
+	groups := ReferenceGroups(user)
+	if len(groups) == 0 {
+		return "No reference sources are available to this user. Servitor systems appear once appliances exist; document spaces appear once connected."
+	}
+	var b strings.Builder
+	b.WriteString("Attachable reference sources. Pass these as attached_sources entries in the form \"<kind>:<item_id>\":\n\n")
+	for _, g := range groups {
+		fmt.Fprintf(&b, "## %s (kind: %s)\n", g.Label, g.Kind)
+		for _, it := range g.Items {
+			fmt.Fprintf(&b, "- %s:%s — %s", g.Kind, it.ID, it.Name)
+			if strings.TrimSpace(it.Desc) != "" {
+				fmt.Fprintf(&b, " (%s)", it.Desc)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

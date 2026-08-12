@@ -56,12 +56,34 @@ type CommandGrant struct {
 	Categories  []string `json:"categories"`   // empty = nothing auto-runs here
 }
 
+// normalizeAgentID strips the "agent:" namespace the grantable-targets picker
+// wraps around agent ids. The picker value exists to keep agents apart from
+// channels in one list; the runtime dispatches with the BARE id, and a grant
+// saved under the wrapped form can never be found by the run that needs it.
+func normalizeAgentID(agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if len(agentID) > 6 && strings.EqualFold(agentID[:6], "agent:") {
+		agentID = strings.TrimSpace(agentID[6:])
+	}
+	return agentID
+}
+
 // commandGrantKey is the record id. Both parts are normalized so a grant saved
-// from the UI and one resolved during a run cannot miss each other on case.
+// from the UI and one resolved during a run cannot miss each other on case or
+// on the picker's "agent:" wrapper.
 func commandGrantKey(agentID, applianceID string) string {
-	a := strings.ToLower(strings.TrimSpace(agentID))
+	a := strings.ToLower(normalizeAgentID(agentID))
 	p := strings.ToLower(strings.TrimSpace(applianceID))
 	return "agent:" + a + "|appliance:" + p
+}
+
+// legacyCommandGrantKey is the key a grant landed under before agent ids were
+// normalized: the picker's "agent:<id>" value taken verbatim, doubling the
+// prefix. Kept only so records written then are found and re-keyed.
+func legacyCommandGrantKey(agentID, applianceID string) string {
+	a := strings.ToLower(normalizeAgentID(agentID))
+	p := strings.ToLower(strings.TrimSpace(applianceID))
+	return "agent:agent:" + a + "|appliance:" + p
 }
 
 // GrantScope names which record answered a lookup. Returned alongside the set
@@ -82,7 +104,7 @@ func ResolveCommandGrant(udb Database, agentID, applianceID string) (map[RiskCat
 	if udb == nil {
 		return map[RiskCategory]bool{}, ScopeUserDefault
 	}
-	if agentID = strings.TrimSpace(agentID); agentID != "" {
+	if agentID = normalizeAgentID(agentID); agentID != "" {
 		if g, ok := loadCommandGrant(udb, agentID, applianceID); ok {
 			return categorySet(g.Categories), ScopeAgentAppliance
 		}
@@ -98,17 +120,26 @@ func loadCommandGrant(udb Database, agentID, applianceID string) (CommandGrant, 
 		return CommandGrant{}, false
 	}
 	var g CommandGrant
-	if !udb.Get(commandGrantsTable, commandGrantKey(agentID, applianceID), &g) {
-		return CommandGrant{}, false
+	if udb.Get(commandGrantsTable, commandGrantKey(agentID, applianceID), &g) {
+		g.AgentID = normalizeAgentID(g.AgentID)
+		return g, true
 	}
-	return g, true
+	// A record written before ids were normalized sits under the doubled key
+	// with the wrapped id inside. Re-key it now so the next lookup is direct.
+	if udb.Get(commandGrantsTable, legacyCommandGrantKey(agentID, applianceID), &g) {
+		g.AgentID = normalizeAgentID(g.AgentID)
+		udb.Set(commandGrantsTable, commandGrantKey(agentID, applianceID), g)
+		udb.Unset(commandGrantsTable, legacyCommandGrantKey(agentID, applianceID))
+		return g, true
+	}
+	return CommandGrant{}, false
 }
 
 // SaveCommandGrant writes one scope, keeping only recognized category names so
 // a typo cannot sit in a record looking like a permission.
 func SaveCommandGrant(udb Database, agentID, applianceID string, categories []string) CommandGrant {
 	g := CommandGrant{
-		AgentID:     strings.TrimSpace(agentID),
+		AgentID:     normalizeAgentID(agentID),
 		ApplianceID: strings.TrimSpace(applianceID),
 		Categories:  cleanCategories(categories),
 	}
@@ -125,6 +156,9 @@ func DeleteCommandGrant(udb Database, agentID, applianceID string) {
 		return
 	}
 	udb.Unset(commandGrantsTable, commandGrantKey(agentID, applianceID))
+	// A pre-normalization record answers lookups through the legacy fallback,
+	// so removing only the modern key would leave the connection alive.
+	udb.Unset(commandGrantsTable, legacyCommandGrantKey(agentID, applianceID))
 }
 
 // ListCommandGrants returns every grant, agent then appliance, for a UI that
@@ -137,6 +171,7 @@ func ListCommandGrants(udb Database) []CommandGrant {
 	for _, k := range udb.Keys(commandGrantsTable) {
 		var g CommandGrant
 		if udb.Get(commandGrantsTable, k, &g) {
+			g.AgentID = normalizeAgentID(g.AgentID)
 			out = append(out, g)
 		}
 	}

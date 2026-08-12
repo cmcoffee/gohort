@@ -316,3 +316,41 @@ func TestRestImageToolName(t *testing.T) {
 		t.Errorf("hyphen not normalized: %q", got)
 	}
 }
+
+// Approving an image connector must leave its backend registered.
+//
+// Materialize ends in a full sweep of the registry against the store, and on
+// the approve path it runs BEFORE ApproveConnector writes Approved=true — so
+// the sweep read the not-yet-approved row and unregistered the backend
+// Materialize had just registered. The connector then sat approved-but-absent:
+// missing from the picker, missing from ReachableImageBackends, and answering
+// "no image backend named X is available" to anything that named it, until a
+// restart re-materialized it. Every image connector looked like it needed a
+// restart to take effect.
+func TestApprovingAnImageConnectorLeavesItRegistered(t *testing.T) {
+	peerImageDB(t)
+	c := decodeSpec(t, RestImageSpec{
+		SubmitURL: "https://gpu.example/render", SubmitMethod: "POST",
+		SubmitBody: `{"prompt":"{prompt}"}`, ImageB64Path: "images.0",
+	})
+	if err := SaveConnector(RootDB, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := ApproveConnector(RootDB, c.Name); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if !ImageBackendRegistered(c.Name) {
+		t.Error("the backend is not registered right after approval — it will not appear until a restart")
+	}
+	if !ImageBackendReachable(nil, c.Name) {
+		t.Error("an approved connector is not reachable, so nothing can name it as a backend")
+	}
+
+	// The sweep must still do its job: unapproving drops the backend.
+	if err := UnapproveConnector(RootDB, c.Name); err != nil {
+		t.Fatalf("unapprove: %v", err)
+	}
+	if ImageBackendRegistered(c.Name) {
+		t.Error("an unapproved connector kept a live backend")
+	}
+}

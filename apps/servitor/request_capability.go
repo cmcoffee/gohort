@@ -144,17 +144,31 @@ func sortedParamNames(p map[string]ToolParam) []string {
 
 // RequestCapabilityToolDef is the tool an agent is offered. Read-capability
 // only: it writes a PROPOSAL, and a proposal cannot do anything.
-func RequestCapabilityToolDef(udb Database, chat FactChatFunc, agentID string) AgentToolDef {
+//
+// connected is the list of systems this agent may ask about, and it goes INTO
+// the description: without it, an agent holding only this tool has no way to
+// answer "can you talk to lab-box?" — the connection was real but invisible,
+// and the model guessed no. The provider passes the list already sorted, so
+// the description is byte-stable across turns and the prompt prefix caches.
+func RequestCapabilityToolDef(udb Database, chat FactChatFunc, agentID string, connected []Appliance) AgentToolDef {
+	desc := "Ask for a new ability on one of the owner's systems, described in plain words — \"restart the web server\", \"tail the app log\", \"deploy a given version\". " +
+		"Servitor works out the exact command for THAT machine and stores it as a proposal for the owner to approve. " +
+		"Nothing runs now, and nothing runs later without their approval. " +
+		"Use this when you need to do something on a system and have no tool for it; do not use it to run something once — it exists to create a lasting, named ability. " +
+		"After calling it, tell the person what you asked for and move on."
+	if len(connected) > 0 {
+		names := make([]string, 0, len(connected))
+		for _, a := range connected {
+			names = append(names, applianceLabel(a.Name, a.ID))
+		}
+		desc += " Systems you are connected to and may ask about: " + strings.Join(names, "; ") + "."
+	}
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "request_capability",
-			Description: "Ask for a new ability on one of the owner's systems, described in plain words — \"restart the web server\", \"tail the app log\", \"deploy a given version\". " +
-				"Servitor works out the exact command for THAT machine and stores it as a proposal for the owner to approve. " +
-				"Nothing runs now, and nothing runs later without their approval. " +
-				"Use this when you need to do something on a system and have no tool for it; do not use it to run something once — it exists to create a lasting, named ability. " +
-				"After calling it, tell the person what you asked for and move on.",
+			Name:        "request_capability",
+			Description: desc,
 			Parameters: map[string]ToolParam{
-				"system": {Type: "string", Description: "Which machine, by the name or id shown when systems are listed."},
+				"system": {Type: "string", Description: "Which machine, by the exact name or id from the connected-systems list in this tool's description."},
 				"intent": {Type: "string", Description: "What the tool should DO, in prose. Describe the job, not a command — \"restart the web server\", not \"sudo systemctl restart nginx\". Say what varies between runs (a version, a filename, a service) so it becomes a value you can supply each time."},
 			},
 			Required: []string{"system", "intent"},

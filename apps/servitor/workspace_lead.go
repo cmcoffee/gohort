@@ -157,7 +157,7 @@ func buildWorkspaceLeadPrompt(ws Appliance, scouts []memberScout, missing []stri
 		b.WriteString(strings.TrimSpace(ws.Instructions))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(scoutBlock(scouts, missing))
+	b.WriteString(scoutBlockFor(ws, scouts, missing))
 	return b.String()
 }
 

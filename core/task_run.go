@@ -48,6 +48,24 @@ func init() {
 		// cold prefill nobody asked for.
 		Kind: KindSeconds, Default: 300, Min: 15, Max: 3600,
 	})
+	// The same call, judged by where the conversation is happening.
+	//
+	// A threshold is really a question about how long the assistant may go
+	// quiet, and the honest answer differs by surface. In a web chat the person
+	// watches a live pill and a progress tree, so a minute of work looks like a
+	// minute of work. On a messaging channel there is nothing to look at: the
+	// contact sent a text and the next thing they see is a reply, so the same
+	// minute reads as an assistant that stopped answering.
+	//
+	// Low by default, because on that surface the cost of detaching (an extra
+	// message) is small and the cost of waiting (looking gone) is what people
+	// actually complain about. Raise it to make a channel behave like a chat.
+	RegisterTunable(TunableSpec{
+		Key: "tune_task_detach_threshold_unattended", Category: "Timeouts",
+		Label: "Detach long tool calls after (messaging)",
+		Help:  "Detach threshold for turns answering a messaging conversation, where the person sees nothing at all until a reply arrives — no progress indicator, no live status. Set lower than the main threshold so an agent on a channel answers straight away and reports back, instead of going quiet mid-conversation. Raise it to the main value to treat both surfaces alike.",
+		Kind:  KindSeconds, Default: 20, Min: 5, Max: 3600,
+	})
 }
 
 // DetachableTool is an optional interface for tools whose calls can outlive the
@@ -75,6 +93,63 @@ type EstimatingTool interface {
 	ChatTool
 	TypicalDuration(args map[string]any, sess *ToolSession) time.Duration
 }
+
+// AlwaysDetachTool is a DetachableTool whose work belongs in the background
+// because of WHAT IT IS, not how long it takes.
+//
+// The duration test cannot express this. A render that finishes in twenty
+// seconds is fast by any measure and still holds the whole conversation for
+// those twenty seconds — and a set of four holds it for eighty, during which
+// the assistant cannot say a word. Detaching them turns one blocked turn into
+// four messages that arrive as each picture is ready, which is what a person
+// asking for variations actually wants.
+//
+// It is a policy, so it belongs behind a knob rather than in an estimate: a
+// deployment that would rather wait keeps the duration rule by turning it off.
+type AlwaysDetachTool interface {
+	DetachableTool
+	// AlwaysDetach reports that THIS call goes to the background whatever its
+	// estimate says. Per call, because the same tool has actions that should
+	// not — a URL fetch has nothing to wait for.
+	AlwaysDetach(args map[string]any, sess *ToolSession) bool
+}
+
+// SeriesTool is a DetachableTool that can work through a SET one piece per
+// turn: it books each finished piece against the count (AdvanceTaskSeries) and
+// leaves the instruction that starts the next (SetTaskContinuation).
+//
+// Declared rather than assumed, because the refusal a second detach gets now
+// PROMISES that the running piece will ask for the next one. A tool that does
+// not keep that promise leaves the model waiting for an instruction nothing
+// will send — worse than the flat refusal it replaced.
+type SeriesTool interface {
+	DetachableTool
+	// SeriesCapable reports that this tool books its own pieces. A method
+	// rather than a marker so it reads as a capability at the call site.
+	SeriesCapable() bool
+}
+
+// DetachIdentityTool lets several tools that are the SAME ACT under different
+// names share one background slot and one set.
+//
+// The rationing is per identity, not per name, and the distinction is not
+// academic: every approved rest_image connector materializes its own
+// generate_image_<name> tool beside the grouped `image` tool, and a model
+// treats them as interchangeable ways to make a picture. Rationed by name, two
+// of them run two jobs for one request and deliver it twice; a set begun on one
+// forks when the model reaches for the other, which is how a set of four
+// reported four and sent two.
+//
+// The name still appears in every message the model reads — only the
+// bookkeeping is shared.
+type DetachIdentityTool interface {
+	ChatTool
+	DetachIdentity() string
+}
+
+// RenderDetachIdentity is the shared identity for every tool whose job is
+// producing a picture. One slot, one set, whichever name the model reaches for.
+const RenderDetachIdentity = "render"
 
 // PreflightTool is an optional companion to DetachableTool: the part of the
 // call that can be checked WITHOUT doing the work. Implement it for anything
@@ -120,6 +195,12 @@ type TaskProduct struct {
 	Images []string // base64, in the order the tool attached them
 	Videos []string
 	Files  []FileAttachment
+
+	// Continuation is what the delivering turn should do NEXT — the seam that
+	// lets a tool run a declared series one piece per turn (see task_series.go).
+	// Unlike Text it is an instruction for that one turn, so the host must keep
+	// it out of the thread's record. Empty for the ordinary one-and-done call.
+	Continuation string
 }
 
 // TaskRunnerFunc starts fn in the background and returns a handle. The host
@@ -137,8 +218,16 @@ type TaskProduct struct {
 // touches must hang off that instead — see ForDetachedTask.
 var TaskRunnerFunc func(sess *ToolSession, label string, fn func(ctx context.Context) (TaskProduct, error)) (TaskRun, error)
 
-// taskDetachThreshold is the duration past which a call is detached.
-func taskDetachThreshold() time.Duration { return TuneDuration("tune_task_detach_threshold") }
+// taskDetachThreshold is the duration past which a call is detached, for the
+// surface this turn is happening on. See ToolSession.Unattended.
+func taskDetachThreshold(sess *ToolSession) time.Duration {
+	if sess.Unattended() {
+		if d := TuneDuration("tune_task_detach_threshold_unattended"); d > 0 {
+			return d
+		}
+	}
+	return TuneDuration("tune_task_detach_threshold")
+}
 
 // ShouldDetach reports whether this call should run detached, and how long it
 // is expected to take. All three conditions have to hold: a host that can run
@@ -153,10 +242,17 @@ func ShouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) (time.Dur
 		return 0, false
 	}
 	expected := d.ExpectedDuration(args, sess)
+	// A tool that says this work is background work outranks the clock. See
+	// AlwaysDetachTool — the estimate can be twenty seconds and the answer
+	// still be yes, because the cost being avoided is a blocked conversation,
+	// not a long one.
+	if a, ok := ct.(AlwaysDetachTool); ok && a.AlwaysDetach(args, sess) {
+		return expected, true
+	}
 	if expected <= 0 {
 		return 0, false
 	}
-	return expected, expected >= taskDetachThreshold()
+	return expected, expected >= taskDetachThreshold(sess)
 }
 
 // frameworkResultMark tags a tool result the FRAMEWORK wrote rather than one the
@@ -237,7 +333,12 @@ func detachedNotice(run TaskRun, typical time.Duration) string {
 //
 // So it says the same thing the original notice said, in the one place the
 // model cannot skim past: the answer to its call.
-func secondDetachNotice(tool string, prior TaskRun) string {
+// of is the size of the set this refused call now belongs to, 0 when it is not
+// part of one. It changes what the notice is FOR: without a set the answer is
+// "you already did this"; with one it is "you are early, and the rest is
+// booked" — which is the true statement, and the only one that does not read
+// as a failure the model should work around.
+func secondDetachNotice(tool string, prior TaskRun, of int) string {
 	var b strings.Builder
 	b.WriteString("NOT STARTED — you already have one of these running this turn")
 	if id := strings.TrimSpace(prior.ID); id != "" {
@@ -250,6 +351,15 @@ func secondDetachNotice(tool string, prior TaskRun) string {
 	b.WriteString(".\n")
 	b.WriteString("Nothing was wrong with this call. It was not run because a second background job delivers a SECOND result to the user, minutes later, as its own message — for one thing they asked for once.\n")
 	b.WriteString("The first job is still working. It has not failed, and getting nothing back yet is not a sign that it did. Do NOT call " + tool + " again this turn, and do NOT go looking for another way to do the same thing.\n")
+	// The refusal used to end the matter, and for a model that genuinely meant
+	// to make several that was the wrong answer to the wrong question: it was
+	// not repeating itself, it was working through a set. So say what has
+	// actually been arranged on its behalf. See core/task_series.go.
+	if of > 1 {
+		fmt.Fprintf(&b, "You are not being told no — you are being told EARLY. This is now a set of %d: the one already running is the first, and when it lands you will be told to start the next, and so on until the set is done. Nothing is lost by waiting, and you do not need to remember the count.\n", of)
+	} else {
+		b.WriteString("If you MEANT to make several, they still happen — one at a time, not all at once. Say how many you intend on the FIRST call (the count parameter, where the tool has one) and you will be told to start the next as each finishes.\n")
+	}
 	// The wording matters, and this notice used to get it wrong in a way that
 	// showed up verbatim in front of a user. It explained the situation with the
 	// phrase "that is what running in the background means" and then asked for a
@@ -336,12 +446,13 @@ func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
 		Detached: true,
 
 		// Identity + storage.
-		Username:      s.Username,
-		AgentID:       s.AgentID,
-		ChatSessionID: s.ChatSessionID,
-		DB:            s.DB,
-		WorkspaceDir:  s.WorkspaceDir,
-		WorkspaceID:   s.WorkspaceID,
+		Username:          s.Username,
+		AgentID:           s.AgentID,
+		ChatSessionID:     s.ChatSessionID,
+		DeliverySessionID: s.DeliverySessionID,
+		DB:                s.DB,
+		WorkspaceDir:      s.WorkspaceDir,
+		WorkspaceID:       s.WorkspaceID,
 		// The read fallback travels too. Without it a detached call resolves
 		// paths against its agent's directory ALONE, so a file at the user's
 		// own root — reachable from every inline turn — is missing only when

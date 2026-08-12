@@ -89,7 +89,12 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		if cred == "" {
 			return true
 		}
-		c, ok := Secure().Load(cred)
+		// Resolve, not Load — the user's OWN credential shadows a global one and is
+		// invisible to the global-namespace Load, which silently skipped the toggle
+		// on every user-owned credential. Note this path stays OPEN on an
+		// unresolvable name where the unattended gate fails CLOSED: a person is
+		// watching here, and can deny.
+		c, ok := Secure().Resolve(cred, t.user)
 		if !ok || !c.RequiresConfirm {
 			return true
 		}

@@ -54,6 +54,12 @@ func (a *agentArtifact) ListArtifacts(_ Database) []ArtifactSel {
 			if rec.OwnedBy != "" {
 				continue // sub-agent — bundled with its parent
 			}
+			// App agents are code-registered, identical for every user, and
+			// re-created from the registry at startup — exporting one copy per
+			// user bundles N recipes nothing can meaningfully import.
+			if isAppAgent(rec.ID) {
+				continue
+			}
 			out = append(out, ArtifactSel{Type: "agent", Name: rec.Name, Owner: u.Username})
 		}
 	}

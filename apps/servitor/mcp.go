@@ -54,10 +54,22 @@ func registerServitorMCPTools() {
 }
 
 // servitorUserDB resolves the owner's Servitor store — the SAME store the web UI
-// reads. Servitor data lives in the app's own bucket (RootDB.Bucket("servitor"),
-// the framework's T.DB), NOT RootDB itself.
+// reads. That means the running instance's T.DB, which carries the bucket
+// migration RegisterRoutes performs (servitor → sysprobe → ssh_probe): on a
+// deployment whose data still lives under an older bucket name, recomputing
+// RootDB.Bucket("servitor") by name lands on the NEW, EMPTY bucket — the web UI
+// then shows appliances and connections while every reader through this
+// function (the agent tool provider, the MCP tools) sees none of them.
 func servitorUserDB(owner string) Database {
-	if RootDB == nil || owner == "" {
+	if owner == "" {
+		return nil
+	}
+	if servitorRef != nil && servitorRef.DB != nil {
+		return UserDB(servitorRef.DB, owner)
+	}
+	// No registered instance (tests, or servitor compiled in but never
+	// started): the un-migrated bucket name is the only address there is.
+	if RootDB == nil {
 		return nil
 	}
 	return UserDB(RootDB.Bucket("servitor"), owner)

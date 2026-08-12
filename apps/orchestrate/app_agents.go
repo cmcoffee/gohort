@@ -31,6 +31,15 @@ func isAppAgent(id string) bool {
 	return ok
 }
 
+// hiddenAppAgent reports whether id is an app agent whose SPEC says Hidden.
+// Keys on the registry for the same reason isAppAgent does: a stale per-user
+// shadow can carry Hidden=false long after the spec flipped, and every listing
+// that consulted the record instead of the spec has leaked one already.
+func hiddenAppAgent(id string) bool {
+	s, ok := appagents.AppAgentByID(id)
+	return ok && s.Hidden
+}
+
 // appAgentVisibilityWarnOnce fires the visible-app-agent lint a single time,
 // the first time app agents are folded into resolution (startup / first agent
 // list). Guarded so the per-request registeredAppAgents() call doesn't spam.

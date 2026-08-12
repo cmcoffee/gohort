@@ -972,6 +972,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			// A peer selection carries no endpoint of its own — the manual
+			// fields are hidden while one is picked. Resolve it into a
+			// complete, ordinary config here so everything downstream
+			// (Transcribe, the transcribe tool, inbound voice notes) stays
+			// peer-unaware. Same shape as the embeddings save above.
+			resolved, err := ResolveTranscribeProvider(req, req.Provider)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			req = resolved
 			if a.db != nil {
 				a.db.Set(TranscribeTable, "current", req)
 			}
@@ -1440,12 +1451,35 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			writeTestResult(w, false, "", "transcription is disabled — flip the toggle on first")
 			return
 		}
+		// Resolve a peer selection the same way the SAVE path does. Without
+		// this the test ran the form's literal fields — and with a peer picked
+		// those are hidden and empty, so testing a perfectly good peer failed
+		// with "endpoint is required" against a form showing no endpoint field
+		// to fill in. Exactly the bug the embeddings test button already had.
+		resolved, rerr := ResolveTranscribeProvider(req, req.Provider)
+		if rerr != nil {
+			writeTestResult(w, false, "", rerr.Error())
+			return
+		}
+		req = resolved
 		if req.Endpoint == "" {
 			writeTestResult(w, false, "", "endpoint is required")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
+		// A peer is probed through its MANIFEST rather than the GET probe
+		// below. The peer base serves exactly one path — /audio/transcriptions
+		// — so /models would 404 and the root fallback would land on the far
+		// side's web UI and report a cheerful success for a link that cannot
+		// transcribe. The manifest answers the questions that actually matter
+		// (is it reachable, is the key good, is transcribe granted, does that
+		// instance still have STT configured) and says which one failed.
+		if p, isPeer := PeerFromProvider(req.Provider); isPeer {
+			ok, msg, errMsg := peerTranscribeTestResult(ctx, p)
+			writeTestResult(w, ok, msg, errMsg)
+			return
+		}
 		// probeURL: GET with optional bearer header. Returns the response status
 		// or any transport error. Closing the body inline so callers don't have to.
 		probeURL := func(url string) (int, error) {
@@ -1596,35 +1630,89 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		if r.Method == http.MethodPost {
-			var req struct {
-				Provider string `json:"provider"`
-				APIKey   string `json:"api_key"`
-				Endpoint string `json:"endpoint"`
-			}
+			var req WebSearchConfig
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			// A peer selection carries no provider/key/endpoint of its own —
+			// those fields are hidden while one is picked. Resolve here, the
+			// same way the embeddings and transcription saves do, so what gets
+			// stored is an ordinary searxng config and tools/websearch never
+			// learns that peers exist.
+			resolved, serr := ResolveSearchProvider(req, req.Source)
+			if serr != nil {
+				http.Error(w, serr.Error(), http.StatusBadRequest)
+				return
+			}
+			req = resolved
 			if a.db != nil {
 				a.db.Set(SearchTable, "provider", req.Provider)
 				a.db.Set(SearchTable, "api_key", req.APIKey)
 				a.db.Set(SearchTable, "endpoint", req.Endpoint)
+				a.db.Set(SearchTable, "source", req.Source)
 			}
 			Log("[admin] user %q updated web-search config (provider=%q)",
 				AuthCurrentUser(r), req.Provider)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		var provider, key, endpoint string
+		var provider, key, endpoint, source string
 		if a.db != nil {
 			a.db.Get(SearchTable, "provider", &provider)
 			a.db.Get(SearchTable, "api_key", &key)
 			a.db.Get(SearchTable, "endpoint", &endpoint)
+			a.db.Get(SearchTable, "source", &source)
+		}
+		if source == "" {
+			source = EmbeddingProviderLocal
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"provider": provider, "api_key": key, "endpoint": endpoint,
+			"provider": provider, "api_key": key, "endpoint": endpoint, "source": source,
 		})
+	})
+
+	// Page rendering — where browse_page and the render escalations happen.
+	sub.HandleFunc("/api/browse", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			var req BrowseConfig
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			src := strings.TrimSpace(req.Source)
+			// Validate the selection rather than storing a name that silently
+			// renders nothing: a peer that was forgotten, or had its browse
+			// grant pulled, must be refused here where the operator can see it.
+			if src != "" && src != EmbeddingProviderLocal {
+				p, ok := PeerFromProvider(src)
+				if !ok {
+					http.Error(w, "no peer named "+strings.TrimPrefix(src, "peer:")+" is registered", http.StatusBadRequest)
+					return
+				}
+				if !p.Offers(PeerCapBrowse) {
+					http.Error(w, "peer "+p.Name+" does not offer page rendering (it offers: "+strings.Join(p.Caps, ", ")+")", http.StatusBadRequest)
+					return
+				}
+			}
+			if a.db != nil {
+				a.db.Set(BrowseTable, "source", src)
+			}
+			SetBrowseConfig(BrowseConfig{Source: src})
+			Log("[admin] user %q set page rendering to %q", AuthCurrentUser(r), src)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		cfg := LoadBrowseConfig()
+		if cfg.Source == "" {
+			cfg.Source = EmbeddingProviderLocal
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cfg)
 	})
 
 	// Web search connectivity test — temporarily swap in the form's
@@ -1645,6 +1733,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeTestResult(w, false, "", "invalid request body")
 			return
+		}
+		// Resolve before inspecting the fields — with a peer picked they are
+		// hidden and empty, and testing a valid peer would otherwise fail on
+		// the provider being blank. Same lesson as the embeddings and
+		// transcription test buttons.
+		if resolved, serr := ResolveSearchProvider(req, req.Source); serr != nil {
+			writeTestResult(w, false, "", serr.Error())
+			return
+		} else {
+			req = resolved
 		}
 		if req.Provider == "" {
 			writeTestResult(w, false, "", "provider is required")

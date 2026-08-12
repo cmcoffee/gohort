@@ -370,6 +370,14 @@ func (T *Servitor) scoutWorkspace(ws Appliance, members []wsMember, question str
 // stay listed — "nothing matched" is information the lead needs to decide
 // whether to drill anyway.
 func scoutBlock(scouts []memberScout, missing []string) string {
+	return scoutBlockFor(Appliance{}, scouts, missing)
+}
+
+// scoutBlockFor renders the roster, including the workspace's declared member
+// links. Split from scoutBlock so the links — which live on the WORKSPACE record
+// rather than on any member — can be rendered without threading the record
+// through every caller that only wants the plain roster.
+func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string {
 	var b strings.Builder
 	b.WriteString("## Members\n\n")
 	b.WriteString("Members are NOT interchangeable. A function often lives on exactly one of them. Read **Role** and **Known to run** before dispatching: they tell you where a thing lives, independently of this question.\n\n")
@@ -392,6 +400,13 @@ func scoutBlock(scouts []memberScout, missing []string) string {
 		}
 		if s.Capability != "" {
 			fmt.Fprintf(&b, "- Known to run: %s\n", s.Capability)
+		}
+		// Declared relations to other members. Printed for every member on every
+		// question, like Role: a link is what makes a cross-member correlation
+		// meaningful rather than a coincidence, and the lead cannot use one it
+		// was never told about.
+		if lines := memberLinkLines(ws, m.ID, func(id string) string { return memberDisplayName(scouts, id) }); len(lines) > 0 {
+			fmt.Fprintf(&b, "- Linked: %s\n", strings.Join(lines, "; "))
 		}
 		if s.Role == "" && s.Capability == "" && s.Note == "" {
 			b.WriteString("- Role not declared and nothing mapped yet — ask this member directly if the question might involve it.\n")
@@ -545,3 +560,132 @@ func divergence_report(perNode map[string]string) string {
 // at scout time that reads as "this member has nothing", which is the one
 // conclusion the cheap pass must never reach by accident.
 func regexpQuoteMeta(s string) string { return regexp.QuoteMeta(s) }
+
+// ── Member links ─────────────────────────────────────────────────────────────
+
+// Relations a member link may declare. Deliberately few and concrete: a
+// free-text relation would be unroutable, and the point of declaring one is that
+// the coordinator can act on it.
+const (
+	MemberRelRuns         = "runs"          // this system runs that code
+	MemberRelCodeFor      = "code-for"      // this repo/service is that system's source
+	MemberRelCapturedFrom = "captured-from" // this evidence came off that system
+	MemberRelTalksTo      = "talks-to"      // this system calls that service
+)
+
+// MemberLink is one declared relation between two members of a workspace.
+type MemberLink struct {
+	From string `json:"from"` // member appliance id
+	Rel  string `json:"rel"`
+	To   string `json:"to"` // member appliance id
+}
+
+// memberRelLabel renders a relation for the roster, in the direction it reads.
+func memberRelLabel(rel string) string {
+	switch rel {
+	case MemberRelRuns:
+		return "runs the code in"
+	case MemberRelCodeFor:
+		return "is the code for"
+	case MemberRelCapturedFrom:
+		return "was captured from"
+	case MemberRelTalksTo:
+		return "talks to"
+	}
+	return strings.ReplaceAll(rel, "-", " ")
+}
+
+// memberRelInverse renders the same relation read from the other end, so the
+// roster can state a link on BOTH members. A link declared once should not have
+// to be read from only one side — the coordinator arrives at a member from
+// whichever direction the question came.
+func memberRelInverse(rel string) string {
+	switch rel {
+	case MemberRelRuns:
+		return "its code runs on"
+	case MemberRelCodeFor:
+		return "its code is in"
+	case MemberRelCapturedFrom:
+		return "evidence was captured from it into"
+	case MemberRelTalksTo:
+		return "is called by"
+	}
+	return "related to"
+}
+
+// validMemberRel reports whether rel is one this code can act on.
+func validMemberRel(rel string) bool {
+	switch strings.TrimSpace(rel) {
+	case MemberRelRuns, MemberRelCodeFor, MemberRelCapturedFrom, MemberRelTalksTo:
+		return true
+	}
+	return false
+}
+
+// pruneMemberLinks drops links whose endpoints are not both current members,
+// whose relation is unknown, or which point a member at itself. Same discipline
+// as pruneMemberRoles: unchecking a member must not leave a link behind that
+// resurfaces if it is re-added.
+func pruneMemberLinks(links []MemberLink, members []string) []MemberLink {
+	if len(links) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(members))
+	for _, id := range members {
+		keep[id] = true
+	}
+	seen := map[string]bool{}
+	out := make([]MemberLink, 0, len(links))
+	for _, l := range links {
+		l.From, l.Rel, l.To = strings.TrimSpace(l.From), strings.TrimSpace(l.Rel), strings.TrimSpace(l.To)
+		if l.From == "" || l.To == "" || l.From == l.To {
+			continue
+		}
+		if !keep[l.From] || !keep[l.To] || !validMemberRel(l.Rel) {
+			continue
+		}
+		key := l.From + "\x00" + l.Rel + "\x00" + l.To
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, l)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
+		}
+		return out[i].Rel < out[j].Rel
+	})
+	return out
+}
+
+// memberLinkLines renders every link touching one member, from that member's
+// point of view, for its roster entry.
+func memberLinkLines(ws Appliance, memberID string, name func(string) string) []string {
+	var out []string
+	for _, l := range ws.MemberLinks {
+		switch memberID {
+		case l.From:
+			out = append(out, memberRelLabel(l.Rel)+" "+name(l.To))
+		case l.To:
+			out = append(out, memberRelInverse(l.Rel)+" "+name(l.From))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// memberDisplayName resolves a member id to its roster name, falling back to the
+// id so a link pointing at something unresolvable still reads as something.
+func memberDisplayName(scouts []memberScout, id string) string {
+	for _, s := range scouts {
+		if s.Member.ID == id {
+			return s.Member.Name()
+		}
+	}
+	return id
+}

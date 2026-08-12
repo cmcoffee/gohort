@@ -6723,6 +6723,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		allTools = append(allTools, attachedPipes...)
 		Log("[orchestrate.tools] surfaced %d attached pipeline tool(s) for agent=%s", len(attachedPipes), t.agent.ID)
 	}
+	// Attached reference sources (servitor systems, workspaces, connected doc
+	// spaces). Same treatment as pipelines: curated, few, surfaced directly.
+	if attachedSrc := t.buildAttachedSourceToolDefs(); len(attachedSrc) > 0 {
+		t.wrapToolsForActivity(sess, attachedSrc)
+		allTools = append(allTools, attachedSrc...)
+		Log("[orchestrate.tools] surfaced %d attached source tool(s) for agent=%s", len(attachedSrc), t.agent.ID)
+	}
 	// Private-mode backstop for dynamically built AgentToolDefs (the
 	// `agents` grouped tool, temp tools, source-hooked tools, etc.).
 	// resolveWorkerTools only filters tools that exist in the global
@@ -7275,6 +7282,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		UncheckedClaims:    UncheckedFactNotes(t.facts()),
 		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:       func() bool { return sess.Detach.Any() },
+		BackgroundEstimate: func() string { return sess.Detach.EstimateText() },
 		// Catch a reply that presents a picture the turn never produced, while
 		// the loop can still do something about it. The dispatch path has had
 		// this since the phantom-delivery work; interactive chat never did, so
@@ -7959,6 +7967,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		UncheckedClaims:    UncheckedFactNotes(t.facts()),
 		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:       func() bool { return sess.Detach.Any() },
+		BackgroundEstimate: func() string { return sess.Detach.EstimateText() },
 		// Worker-step corrections breadcrumb into the same session trail as
 		// the orchestrator loop — a silent re-prompt during a plan step is
 		// still a framework decision the user should be able to see.

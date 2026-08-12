@@ -184,12 +184,25 @@ type KnowledgeDocEntry struct {
 
 // writeDoc persists a knowledge document with the current timestamp.
 func writeDoc(udb Database, applianceID, doc, content string) {
+	writeDocAt(udb, applianceID, doc, content, time.Now().Format(time.RFC3339))
+}
+
+// writeDocAt persists a document with an EXPLICIT timestamp — used when the
+// content was learned somewhere else and copied here (a knowledge pull from a
+// peer). Stamping the copy time would make a June map read as today's, and the
+// lead would then state it as current: every staleness signal in this app
+// (docStaleAfter, the "[last updated: X]" annotations) is downstream of this
+// field being the moment the thing was LEARNED, not the moment it was stored.
+func writeDocAt(udb Database, applianceID, doc, content, updated string) {
 	if udb == nil || applianceID == "" || doc == "" {
 		return
 	}
+	if strings.TrimSpace(updated) == "" {
+		updated = time.Now().Format(time.RFC3339)
+	}
 	udb.Set(knowledgeTable, applianceID+":"+doc, KnowledgeDocEntry{
 		Content: strings.TrimSpace(content),
-		Updated: time.Now().Format(time.RFC3339),
+		Updated: updated,
 	})
 }
 

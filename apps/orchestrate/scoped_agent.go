@@ -387,3 +387,141 @@ func (T *OrchestrateApp) SeedScopedKnowledge(ctx context.Context, scope AgentSco
 	ingestAgentKnowledge(ctx, T.DB, scope.ScopeUser, scope.AgentID, topic, title, body)
 	return nil
 }
+
+// --- graph traversal -------------------------------------------------------
+//
+// ScopedGraphSummary above renders the WHOLE map into a prompt, which is the
+// cheapest possible context right up until the map stops fitting. Past that the
+// consumer needs to ask questions of the graph instead of reading it: what is
+// this, what does it touch, how does it reach that.
+//
+// The accessors below expose exactly that, and no more. Resolving the scope to a
+// (database, namespace) pair is orchestrate's business — a consumer that
+// recomputed factsNamespace itself would silently read a different graph the day
+// that derivation changed.
+
+// ScopedGraphEntityByID fetches one entity by its slug ID. Distinct from
+// ScopedGraphEntity above, which resolves a NAME or alias: a traversal follows
+// edges, and an edge names its endpoints by ID.
+func (T *OrchestrateApp) ScopedGraphEntityByID(scope AgentScope, id string) (GraphEntity, bool) {
+	db, ns, ok := T.scopedGraph(scope)
+	if !ok {
+		return GraphEntity{}, false
+	}
+	return GetGraphEntity(db, ns, id)
+}
+
+// ScopedGraphEdges returns the edges leaving and entering one entity. Both
+// directions, because a traversal that only follows outbound edges answers "what
+// does this use" and never "what uses this" — and the second question is the one
+// asked when something breaks.
+func (T *OrchestrateApp) ScopedGraphEdges(scope AgentScope, id string) (out, in []GraphEdge) {
+	db, ns, ok := T.scopedGraph(scope)
+	if !ok {
+		return nil, nil
+	}
+	return GraphEdgesFrom(db, ns, id), GraphEdgesTo(db, ns, id)
+}
+
+// ScopedGraphCounts reports the size of the scope's graph, so a caller can
+// decide between pasting the whole map and handing over traversal tools.
+func (T *OrchestrateApp) ScopedGraphCounts(scope AgentScope) (entities, edges int) {
+	db, ns, ok := T.scopedGraph(scope)
+	if !ok {
+		return 0, 0
+	}
+	return GraphCounts(db, ns)
+}
+
+// scopedGraph resolves a scope to the store and namespace its graph lives in.
+func (T *OrchestrateApp) scopedGraph(scope AgentScope) (Database, string, bool) {
+	if scope.ScopeUser == "" || scope.AgentID == "" {
+		return nil, "", false
+	}
+	db := UserDB(T.DB, scope.ScopeUser)
+	if db == nil {
+		return nil, "", false
+	}
+	return db, factsNamespace(scope.AgentID), true
+}
+
+// ScopedGraphAvailable reports whether the scope's graph can be READ at all,
+// as opposed to being readable and empty.
+//
+// The two are not the same answer and must not produce the same message. "This
+// is not in the map" means nobody recorded it; "the map cannot be read" means we
+// do not know. A consumer that cannot tell them apart reports an unreachable
+// store as an absent fact, which is the failure this codebase spends most of its
+// prompt discipline preventing.
+func (T *OrchestrateApp) ScopedGraphAvailable(scope AgentScope) bool {
+	_, _, ok := T.scopedGraph(scope)
+	return ok
+}
+
+// ScopedGraphExport returns every entity and edge in a scope's graph, for
+// copying it to another instance.
+func (T *OrchestrateApp) ScopedGraphExport(scope AgentScope) ([]GraphEntity, []GraphEdge) {
+	db, ns, ok := T.scopedGraph(scope)
+	if !ok {
+		return nil, nil
+	}
+	ents := ListGraphEntities(db, ns)
+	var edges []GraphEdge
+	for _, e := range ents {
+		edges = append(edges, GraphEdgesFrom(db, ns, e.ID)...)
+	}
+	return ents, edges
+}
+
+// ScopedGraphImport merges a graph exported elsewhere into this scope, keeping
+// whichever side is NEWER per entity.
+//
+// Recency rather than replace-all, because by the time a second copy exists
+// both sides are being written to: the receiving instance investigates too, and
+// wholesale replacement would delete what it just learned. Per-entity is the
+// finest grain the timestamps support, and it is explainable — "the more
+// recently updated one wins" is a rule an operator can predict.
+//
+// Edges are additive. An edge is a statement that two things are related, and a
+// relationship absent from one side's copy is far more often "that side never
+// looked" than "that side established it is false".
+func (T *OrchestrateApp) ScopedGraphImport(scope AgentScope, ents []GraphEntity, edges []GraphEdgeByName) (imported, kept int) {
+	db, ns, ok := T.scopedGraph(scope)
+	if !ok {
+		return 0, 0
+	}
+	for _, in := range ents {
+		if strings.TrimSpace(in.Name) == "" {
+			continue
+		}
+		if mine, found := FindGraphEntity(db, ns, in.Name); found && mine.Updated.After(in.Updated) {
+			kept++
+			continue
+		}
+		UpsertGraphEntity(db, ns, in.Kind, in.Name, in.Aliases, in.Attrs)
+		imported++
+	}
+	for _, ed := range edges {
+		from, to := strings.TrimSpace(ed.From), strings.TrimSpace(ed.To)
+		if from == "" || to == "" || strings.TrimSpace(ed.Rel) == "" {
+			continue
+		}
+		// replace=false: an import must not retire an edge this instance
+		// recorded from its own probe.
+		LinkGraphEdge(db, ns, from, ed.Rel, to, ed.Note, false)
+		imported++
+	}
+	return imported, kept
+}
+
+// GraphEdgeByName is an edge whose endpoints are NAMES rather than slug ids.
+//
+// Ids are derived from names by the receiving store, so shipping ids across
+// instances means depending on two builds slugging identically forever. Names
+// survive that; the importer re-slugs on write.
+type GraphEdgeByName struct {
+	From string
+	Rel  string
+	To   string
+	Note string
+}

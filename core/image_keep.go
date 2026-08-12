@@ -661,6 +661,16 @@ func CaptionImage(sess *ToolSession, data []byte) (caption, description string) 
 		return "", ""
 	}
 	out := strings.TrimSpace(resp.Content)
+	// A model that never saw the picture still answers, politely, that it did
+	// not — and stored verbatim that refusal BECOMES the picture's description.
+	// It then goes into the manifest, and an agent reading its own image list
+	// finds "no image appears to be attached" against a render that succeeded,
+	// concludes the backend is broken, and tells the user so. No caption at all
+	// is the honest outcome and one every caller already handles.
+	if ModelSawNoImage(out) {
+		Log("[image_keep] caption skipped — the vision model answered without seeing the image: %.120s", out)
+		return "", ""
+	}
 	// Label is the first line; everything after it is the detail. A model that
 	// answers with one line only still yields a usable label — the detail is
 	// the part that degrades, and an empty one is handled everywhere.

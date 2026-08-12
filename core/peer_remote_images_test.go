@@ -178,6 +178,84 @@ func TestSyncRemovesBackendsThePeerNoLongerOffers(t *testing.T) {
 	}
 }
 
+// A peer's backends are a SNAPSHOT, and both ends move. When a renderer that
+// once edited comes back text-only — its graph swapped on the far side, or the
+// local build that provisioned it having marked every peer backend an editor —
+// the stale connector keeps claiming image input. Nothing local objects: the
+// spec says it edits, so source photos ship, and the refusal arrives from the
+// other machine as a 502 about a backend the operator never configured by hand.
+//
+// Re-syncing has to rewrite the spec from what the peer says TODAY.
+func TestSyncRepairsABackendThatStoppedEditing(t *testing.T) {
+	peerImageDB(t)
+	p := RemotePeer{Name: "gpu-box", BaseURL: "https://gpu.example", Key: "k", Caps: []string{PeerCapImages}}
+
+	syncPeerImages(&p, []PeerImageBackend{{Name: "comfy", Edits: true, MaxImages: 2}})
+	name := peerConnectorName("gpu-box", "comfy")
+	specOf := func() RestImageSpec {
+		c, ok := GetConnector(RootDB, name)
+		if !ok {
+			t.Fatalf("connector %q missing", name)
+		}
+		var s RestImageSpec
+		if err := json.Unmarshal(c.Spec, &s); err != nil {
+			t.Fatalf("spec: %v", err)
+		}
+		return s
+	}
+	if !specOf().SupportsImageInput() {
+		t.Fatal("the editing backend was not provisioned as an editor")
+	}
+
+	// The same renderer, now text-only.
+	syncPeerImages(&p, []PeerImageBackend{{Name: "comfy", Edits: false}})
+	if s := specOf(); s.SupportsImageInput() {
+		t.Errorf("the connector still claims image input after the peer stopped editing — "+
+			"source photos will be shipped to a text-only backend and refused remotely: body=%q", s.SubmitBody)
+	}
+	if len(p.ImageConnectors) != 1 || p.ImageConnectors[0] != name {
+		t.Errorf("the repaired backend is no longer owned by the peer: %v", p.ImageConnectors)
+	}
+}
+
+// Re-syncing runs on a timer now, not only on an operator's click. An unchanged
+// backend must therefore be left completely alone: the old delete-and-rebuild
+// would drop and recreate a working, in-use connector every half hour, and
+// re-approve one that had been deliberately disabled.
+func TestSyncLeavesAnUnchangedBackendUntouched(t *testing.T) {
+	peerImageDB(t)
+	p := RemotePeer{Name: "gpu-box", BaseURL: "https://gpu.example", Key: "k", Caps: []string{PeerCapImages}}
+	backends := []PeerImageBackend{{Name: "comfy", Edits: true, MaxImages: 2}, {Name: "txt2img"}}
+
+	syncPeerImages(&p, backends)
+	before := make(map[string]Connector, len(p.ImageConnectors))
+	for _, n := range p.ImageConnectors {
+		c, ok := GetConnector(RootDB, n)
+		if !ok {
+			t.Fatalf("connector %q missing", n)
+		}
+		before[n] = c
+	}
+	if len(before) != 2 {
+		t.Fatalf("provisioned %d, want 2", len(before))
+	}
+
+	syncPeerImages(&p, backends)
+	for n, was := range before {
+		now, ok := GetConnector(RootDB, n)
+		if !ok {
+			t.Errorf("connector %q was deleted by a no-op re-sync", n)
+			continue
+		}
+		if !now.Updated.Equal(was.Updated) {
+			t.Errorf("connector %q was rewritten by a no-op re-sync (%v → %v)", n, was.Updated, now.Updated)
+		}
+		if !now.Created.Equal(was.Created) {
+			t.Errorf("connector %q was recreated by a no-op re-sync", n)
+		}
+	}
+}
+
 // Connector names may not contain dots, so the ring-id form is unavailable and
 // the name has to be sanitized. It must stay valid whatever the peer and remote
 // backend are called, or the save fails with a regex the operator never saw.

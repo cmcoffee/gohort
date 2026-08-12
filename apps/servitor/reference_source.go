@@ -241,11 +241,12 @@ func (s servitorSource) ItemTools(user, itemID string) []AgentToolDef {
 		return nil
 	}
 	id := a.ID // capture for the closures; itemID and a.ID are the same value
+	noun, live := refTargetWords(a)
 
 	searchTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_" + slug + "_knowledge",
-			Description: fmt.Sprintf("Search the knowledge gohort has ALREADY gathered about the system %q — its mapped facts, structured docs, and linked collections — for material relevant to a query, and return the best matches. Read-only and instant: it does NOT touch the live machine. Use this FIRST when writing a guide section about %s; only reach for investigate_%s when you need something the gathered knowledge doesn't already contain.", name, name, slug),
+			Description: fmt.Sprintf("Search the knowledge gohort has ALREADY gathered about %s %q — its recorded facts, structured docs, and linked collections — for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s. Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", noun, name, live.searchCaveat, slug),
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What you're writing about — a focused topic, e.g. 'network interfaces and firewall zones'."},
 			},
@@ -276,7 +277,7 @@ func (s servitorSource) ItemTools(user, itemID string) []AgentToolDef {
 	investigateTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "investigate_" + slug,
-			Description: fmt.Sprintf("Investigate the LIVE system %q to answer a specific question, by dispatching gohort's investigator to run read-only SSH commands on it right now. Use this only when the gathered knowledge (search_%s_knowledge / get_%s_facts) doesn't already hold what a guide section needs — e.g. current config, running services, exact command output. Slow (tens of seconds) and it touches the real machine (read-only — any destructive command is auto-declined). Call it deliberately, then write the section grounded strictly in what it returns.", name, slug, slug),
+			Description: fmt.Sprintf("Investigate %s %q to answer a specific question, by dispatching gohort's investigator %s. Use this only when the gathered knowledge (search_%s_knowledge / get_%s_facts) does not already hold what you need. Slow (tens of seconds). %s Call it deliberately, then ground what you write strictly in what it returns.", noun, name, live.dispatchPhrase, slug, slug, live.safetyNote),
 			Parameters: map[string]ToolParam{
 				"question": {Type: "string", Description: "The specific thing to find out on the live system, e.g. 'which TLS versions does the nginx config enable?'"},
 			},
@@ -399,4 +400,62 @@ func refQueryMatch(text, query string) bool {
 		}
 	}
 	return false
+}
+
+// refTargetWords supplies the description language for one appliance TYPE.
+//
+// Every appliance now flows through this one tool builder — an SSH host, a repo,
+// an uploaded evidence bundle, a tool-backed service, a workspace spanning
+// several of them — and until this existed they all described themselves as
+// "the LIVE system … run read-only SSH commands on it right now". Wrong for four
+// of the five, and a tool description is not decoration: it is what the model
+// reads to decide whether the tool answers its question. A workspace advertising
+// SSH gets avoided for the cross-domain questions it is the only thing able to
+// answer.
+func refTargetWords(a Appliance) (noun string, live refLiveWords) {
+	switch a.Type {
+	case "repo":
+		return "the repository", refLiveWords{
+			searchCaveat:   "re-clone or read the live remote",
+			dispatchPhrase: "to search and read its ingested source",
+			safetyNote:     "It reads the ingested copy, never the live remote.",
+		}
+	case "bundle":
+		return "the evidence bundle", refLiveWords{
+			searchCaveat:   "re-read the original files",
+			dispatchPhrase: "to search and read the ingested logs",
+			safetyNote:     "The evidence is a fixed snapshot: whatever was not captured cannot be obtained by asking again.",
+		}
+	case "toolset":
+		return "the service", refLiveWords{
+			searchCaveat:   "call the service",
+			dispatchPhrase: "to query it through the tools bound to it",
+			safetyNote:     "Read-only: any tool needing approval is declined automatically.",
+		}
+	case "workspace":
+		return "the workspace", refLiveWords{
+			searchCaveat:   "reach any of its members",
+			dispatchPhrase: "to fan the question out across its members and combine their answers",
+			safetyNote:     "Read-only across every member; anything destructive is declined automatically. This is the one source that can answer a question spanning code, live state, evidence and services at once.",
+		}
+	case "command":
+		return "the local command target", refLiveWords{
+			searchCaveat:   "run anything",
+			dispatchPhrase: "to run read-only commands against it right now",
+			safetyNote:     "Read-only — any destructive command is auto-declined.",
+		}
+	}
+	return "the system", refLiveWords{
+		searchCaveat:   "touch the live machine",
+		dispatchPhrase: "to run read-only SSH commands on it right now",
+		safetyNote:     "It touches the real machine (read-only — any destructive command is auto-declined).",
+	}
+}
+
+// refLiveWords are the type-specific fragments the three per-source tool
+// descriptions differ by.
+type refLiveWords struct {
+	searchCaveat   string // completes "it does NOT …"
+	dispatchPhrase string // completes "dispatching gohort's investigator …"
+	safetyNote     string // a full sentence about what the dispatch may do
 }

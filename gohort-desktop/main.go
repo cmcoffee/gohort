@@ -116,6 +116,12 @@ func runViewer() {
 		MinWidth:  core.MIN_WINDOW_WIDTH,
 		MinHeight: core.MIN_WINDOW_HEIGHT,
 
+		// Wails disables the webview's right-click menu in production
+		// builds by default. Turning it back on restores browser-style
+		// context actions — Copy on a text selection above all — which
+		// the desktop otherwise has no path to.
+		EnableDefaultContextMenu: true,
+
 		// AssetServer.Handler runs only for wails://wails.localhost/*
 		// requests — that's just the initial webview load. Its sole
 		// job is to bounce the navigation to the local HTTP listener

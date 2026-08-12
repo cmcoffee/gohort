@@ -472,6 +472,18 @@ type AgentRecord struct {
 	// surfaces (uploaded knowledge + Reference Memory).
 	AttachedCollections []string `json:"attached_collections,omitempty"`
 
+	// AttachedSources lists cross-app REFERENCE SOURCES this agent may draw on —
+	// a servitor system, an evidence bundle, a tool-backed service, a whole
+	// servitor workspace, a connected document space. Each selection surfaces as
+	// its own named tools (search_<name>_knowledge / get_<name>_facts /
+	// investigate_<name>), exactly as it already does for the writer apps.
+	//
+	// This is the same registry guides/techwriter/codewriter consume
+	// (core.ReferenceItemTools). Agents were the one consumer left out, which
+	// meant the only way to ask servitor a question from an agent was to not
+	// have one — the knowledge existed and nothing could reach it.
+	AttachedSources []ReferenceSelection `json:"attached_sources,omitempty"`
+
 	// AttachedPipelines lists pipeline def IDs this agent can run as
 	// tools. Each attached pipeline surfaces as a callable tool on the
 	// agent's catalog (lazy-loaded, like custom tools): calling it runs

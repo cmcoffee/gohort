@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -98,6 +99,19 @@ const SAVE_PATH = "/__desktop/save"
 // default browser. Like SAVE_PATH, it runs in Go because proxy-served pages
 // can't reach the Wails Go-bridge (window.runtime is absent there).
 const OPEN_PATH = "/__desktop/open"
+
+// COPY_PATH receives selected text from popup_shim.js and writes it to the
+// system pasteboard in Go. The shim mirrors every page copy (Cmd+C, context
+// menu, copy buttons) here because WKWebView's own pasteboard write has been
+// unreliable in this app; an empty text falls back to Forge's tmux paste
+// buffer so the explicit Copy Selection menu item still works in the terminal.
+const COPY_PATH = "/__desktop/copy"
+
+// COPYIMG_PATH receives image bytes (base64) from the shim's image context
+// menu and writes them to the pasteboard as a real image (see
+// App.copyImageToClipboard). Separate from COPY_PATH because the pasteboard
+// flavor is different: text vs «class PNGf».
+const COPYIMG_PATH = "/__desktop/copyimg"
 
 // SAVE_SETTINGS_PATH / GET_SETTINGS_PATH back the configure form. The
 // form is served from the loopback origin (see main.go), where Wails
@@ -191,6 +205,19 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// we open it from the Go side instead.
 	if r.URL.Path == OPEN_PATH {
 		gp.handle_open_post(w, r)
+		return
+	}
+	// Copy to pasteboard — popup_shim.js POSTs the page selection here (the
+	// Wails clipboard runtime is absent on proxy-served pages, and WKWebView's
+	// own copy has failed silently before — see menu.go's copyAction).
+	if r.URL.Path == COPY_PATH {
+		gp.handle_copy_post(w, r)
+		return
+	}
+	// Copy image to pasteboard — the shim's right-click menu on <img>
+	// elements POSTs the image bytes here.
+	if r.URL.Path == COPYIMG_PATH {
+		gp.handle_copyimg_post(w, r)
 		return
 	}
 	// Configure-form backends. The form lives on the loopback origin
@@ -461,6 +488,89 @@ func (gp *gohort_proxy) handle_open_post(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := gp.app.openURL(req.URL); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// handle_copy_post writes text to the system pasteboard from the Go side.
+// Empty text means "nothing selected in the DOM" — that happens on the Forge
+// terminal, where tmux owns the mouse and the selection lives in its paste
+// buffer, so we fall back to fetching that (the pre-existing Copy Selection
+// behavior). The quiet mirror paths in the shim never POST empty text, so
+// the fallback only fires on the explicit menu action.
+func (gp *gohort_proxy) handle_copy_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bad request: " + err.Error()})
+		return
+	}
+	text := req.Text
+	if strings.TrimSpace(text) == "" {
+		if t, err := gp.app.forgeClipboard(); err == nil {
+			text = t
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "copied": 0})
+		return
+	}
+	if msg := gp.app.CopyToClipboard(text); msg != "" {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": msg})
+		return
+	}
+	core.Debug("[gohort-desktop] copied %d bytes to pasteboard", len(text))
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "copied": len(text)})
+}
+
+// handle_copyimg_post decodes base64 image bytes from the shim's Copy Image
+// menu item and writes them to the pasteboard as an image. Mirrors
+// handle_save_post's base64 handling (standard first, URL-safe fallback).
+func (gp *gohort_proxy) handle_copyimg_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	var req struct {
+		B64  string `json:"b64"`
+		Mime string `json:"mime"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bad request: " + err.Error()})
+		return
+	}
+	b64 := strings.TrimSpace(req.B64)
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		if alt, aerr := base64.URLEncoding.DecodeString(b64); aerr == nil {
+			raw = alt
+		} else {
+			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "decode image: " + err.Error()})
+			return
+		}
+	}
+	if len(raw) == 0 {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "empty image"})
+		return
+	}
+	if err := gp.app.copyImageToClipboard(raw); err != nil {
 		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

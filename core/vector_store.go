@@ -889,6 +889,13 @@ type VectorIndexStats struct {
 	// generic declarative DisplayPanel can show the breakdown as a plain
 	// labeled value instead of teaching the renderer about maps.
 	BySourceText string `json:"by_source_text"`
+
+	// EmptyBySource narrows Empty to WHERE the gap is. A bare "Empty: 412"
+	// says an outage happened but not what it cost; the same 412 spread over
+	// every source is a config problem, while 412 concentrated in one is one
+	// import worth re-running. Rendered the same way, for the same reason.
+	EmptyBySource     map[string]int `json:"empty_by_source"`
+	EmptyBySourceText string         `json:"empty_by_source_text"`
 }
 
 // VectorStats walks the EmbeddedChunks table once and summarizes how
@@ -896,7 +903,7 @@ type VectorIndexStats struct {
 // empty (because embed was down at ingest time), and the breakdown per
 // source. Intended for admin-panel visibility — not hot-path.
 func VectorStats(db Database) VectorIndexStats {
-	stats := VectorIndexStats{BySource: map[string]int{}}
+	stats := VectorIndexStats{BySource: map[string]int{}, EmptyBySource: map[string]int{}}
 	if db == nil {
 		return stats
 	}
@@ -906,30 +913,40 @@ func VectorStats(db Database) VectorIndexStats {
 			continue
 		}
 		stats.Total++
+		src := c.Source
+		if src == "" {
+			src = "(unspecified)"
+		}
 		if len(c.Vector) > 0 {
 			stats.Embedded++
 		} else {
 			stats.Empty++
-		}
-		src := c.Source
-		if src == "" {
-			src = "unknown"
+			stats.EmptyBySource[src]++
 		}
 		stats.BySource[src]++
 	}
-	if len(stats.BySource) > 0 {
-		keys := make([]string, 0, len(stats.BySource))
-		for k := range stats.BySource {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%d", k, stats.BySource[k]))
-		}
-		stats.BySourceText = strings.Join(parts, ", ")
-	}
+	stats.BySourceText = formatSourceCounts(stats.BySource)
+	stats.EmptyBySourceText = formatSourceCounts(stats.EmptyBySource)
 	return stats
+}
+
+// formatSourceCounts renders a source→count map as a stable, source-sorted
+// "src=N, src2=M" string. Empty map renders empty, not "0" — the caller
+// decides what "nothing here" should read as.
+func formatSourceCounts(m map[string]int) string {
+	if len(m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // MaintenanceFunc is a named one-shot repair function registered by a

@@ -31,7 +31,7 @@ func pendingApprovalBlocks(udb Database, owner, agentID string) []UIBlock {
 	}
 	var out []UIBlock
 	for _, a := range ListAuthorizations(RootDB, owner) {
-		if !approvalBelongsToAgent(udb, a, agentID) {
+		if approvalIsSuggestion(a.Action) || !approvalBelongsToAgent(udb, a, agentID) {
 			continue
 		}
 		who, detail := approvalDisplay(udb, owner, a)
@@ -87,6 +87,26 @@ func approvalBelongsToAgent(udb Database, a Authorization, agentID string) bool 
 		id = rec.OwnedBy
 	}
 	return false
+}
+
+// approvalIsSuggestion separates the records that are OFFERS from the ones that
+// are REQUESTS. They share the Authorizations store — same owner scoping, same
+// resolve endpoints — but they are not the same thing to a user, and rendering
+// them the same way made the store's shape leak into the product:
+//
+// A request is work that has already stopped. Something was refused, an agent is
+// waiting, and the badge on the 🔑 rail is a count of things blocked on the
+// person reading it. A suggestion is nothing of the sort — the tool it names is
+// already working, the agent already calls it, and "denying" refuses nothing. It
+// was showing up as a pending approval card, in the thread and in the count,
+// which taught the user that routine curation was a permission they had to grant
+// and quietly inflated the one number in the UI that should mean "you are the
+// blocker".
+//
+// So: suggestions stay in the pane, where an offer is welcome, and stay out of
+// the badge and the conversation, where they'd read as an obligation.
+func approvalIsSuggestion(action string) bool {
+	return action == "scope_tool" || action == orphanMemoryRefAction
 }
 
 // approvalAlwaysMeans reports whether "Always allow" does something DIFFERENT

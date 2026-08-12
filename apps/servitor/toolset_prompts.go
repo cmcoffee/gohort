@@ -183,7 +183,7 @@ func buildToolsetLeadPrompt(udb Database, a Appliance, docs map[string]string, c
 	if cachedFacts != "" {
 		b.WriteString("## Stored Facts (pre-verified values from prior sessions)\n\n" + cachedFacts + "\n")
 	}
-	if gb := scopedGraphBlock(a); gb != "" {
+	if gb := scopedGraphPromptBlock(a); gb != "" {
 		b.WriteString("## Map (things and how they connect)\n\n" + gb + "\n")
 	}
 	if cachedNotes != "" {

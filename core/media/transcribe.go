@@ -49,6 +49,13 @@ type TranscribeConfig struct {
 	Model    string `json:"model"`    // optional, e.g. "whisper-1"
 	APIKey   string `json:"api_key"`  // optional bearer token (real OpenAI / authenticated proxies)
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers skip
+	// Provider records WHERE this config came from: "local" (the fields above
+	// were typed in) or "peer:<name>" (they were filled from a peer instance —
+	// see ResolveTranscribeProvider). Mirrors EmbeddingConfig.Provider, and for
+	// the same reason: the resolved fields are indistinguishable from
+	// hand-entered ones, so without this the admin form cannot show the
+	// operator which choice is in force.
+	Provider string `json:"provider,omitempty"`
 }
 
 var (
@@ -124,7 +131,14 @@ func TranscribeRuntimeFlagScript() string {
 // audio left the machine on an unaudited connection — so a deployment that
 // wires this is strictly better off, and one that doesn't is no worse than it
 // was.
-var GovernedUploadFunc func(ctx context.Context, url, field, filename string, body []byte, fields map[string]string) (string, error)
+// bearer carries the endpoint's API key. It is a parameter rather than
+// something the core side reads for itself because this seam is generic — any
+// media upload rides it — and only the caller knows which config the URL came
+// from. Omitting it was silent: the governed path synthesized an
+// unauthenticated credential, so a local whisper.cpp kept working while every
+// AUTHENTICATED endpoint (real OpenAI, a peer instance) lost its key on the way
+// out and answered 401 to a configuration that looked correct.
+var GovernedUploadFunc func(ctx context.Context, url, field, filename string, body []byte, fields map[string]string, bearer string) (string, error)
 
 // Transcribe sends audio bytes to the configured STT endpoint and
 // returns the recognized text. Filename hints the server about the
@@ -134,7 +148,18 @@ var GovernedUploadFunc func(ctx context.Context, url, field, filename string, bo
 // Returns ("", error) when STT is disabled or unreachable — callers
 // should treat this as a skip condition, not a fatal error.
 func Transcribe(ctx context.Context, audio []byte, filename string) (string, error) {
-	cfg := GetTranscribeConfig()
+	return TranscribeWith(ctx, GetTranscribeConfig(), audio, filename)
+}
+
+// TranscribeWith is Transcribe against an EXPLICIT config rather than the
+// process-wide one.
+//
+// Mirrors EmbedWith, and exists for the same reason: the process-global config
+// makes it impossible for one instance to speak to a peer while also SERVING
+// one, which is exactly the arrangement resource sharing creates. A caller that
+// has already resolved a config — the peer path, a connectivity test — passes
+// it here instead of installing it globally first.
+func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, filename string) (string, error) {
 	if !cfg.Enabled {
 		nfo.Debug("[transcribe] disabled (cfg.Enabled=false)")
 		return "", fmt.Errorf("transcription disabled")
@@ -159,7 +184,7 @@ func Transcribe(ctx context.Context, audio []byte, filename string) (string, err
 		if cfg.Model != "" {
 			fields["model"] = cfg.Model
 		}
-		out, err := GovernedUploadFunc(ctx, url, "file", filepath.Base(filename), audio, fields)
+		out, err := GovernedUploadFunc(ctx, url, "file", filepath.Base(filename), audio, fields, cfg.APIKey)
 		if err != nil {
 			nfo.Debug("[transcribe] governed upload failed: %v", err)
 			return "", err

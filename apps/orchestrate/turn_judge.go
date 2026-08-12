@@ -69,30 +69,7 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	if T == nil || T.LLM == nil {
 		return TurnClaimVerdict{}, false
 	}
-	ran := "none"
-	if len(ev.ToolCalls) > 0 {
-		ran = strings.Join(ev.ToolCalls, ", ")
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "USER ASKED:\n%s\n\n", truncateObs(strings.TrimSpace(ev.Request), 800))
-	fmt.Fprintf(&b, "TOOLS THE TURN RAN: %s\n", ran)
-	fmt.Fprintf(&b, "TOOL CALLS THAT FAILED: %d\n", ev.ToolErrors)
-	if ev.LastToolError != "" {
-		fmt.Fprintf(&b, "MOST RECENT TOOL ERROR: %s\n", truncateObs(oneLineError(ev.LastToolError, 300), 300))
-	}
-	fmt.Fprintf(&b, "FILES BEING DELIVERED WITH THIS REPLY: %d\n", ev.Delivered)
-	// The claim arm suppresses itself on this fact rather than on a Go branch,
-	// which is what leaves the machinery arm free to look at these turns — and
-	// a detach is exactly where plumbing leaks, because the model has just been
-	// handed a task id and a paragraph about how the work is being run.
-	if ev.Backgrounded {
-		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: yes — so a promise to deliver the result later IS TRUE, and must be answered KEPT.\n\n")
-	} else {
-		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: no.\n\n")
-	}
-	fmt.Fprintf(&b, "THE REPLY:\n%s\n", truncateObs(strings.TrimSpace(ev.Reply), 2000))
-
-	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: b.String()}},
+	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: turnJudgeEvidenceMessage(ev)}},
 		WithSystemPrompt(turnJudgeSysPrompt), WithJSONMode(),
 		WithRouteKey("app.orchestrate.worker"), WithThink(false))
 	if err != nil {
@@ -177,4 +154,46 @@ func (T *OrchestrateApp) turnClaimJudge(ctx context.Context) TurnClaimJudge {
 	return func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
 		return T.judgeTurnClaims(ctx, ev)
 	}
+}
+
+// turnJudgeEvidenceMessage renders the evidence the judge reasons over.
+//
+// Split out from the call so the prompt can be asserted on without a model.
+// The machinery arm turns entirely on what this message does and does not
+// mention: a rule the judge cannot check against the evidence is a rule it
+// applies by guesswork.
+func turnJudgeEvidenceMessage(ev TurnClaimEvidence) string {
+	ran := "none"
+	if len(ev.ToolCalls) > 0 {
+		ran = strings.Join(ev.ToolCalls, ", ")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "USER ASKED:\n%s\n\n", truncateObs(strings.TrimSpace(ev.Request), 800))
+	fmt.Fprintf(&b, "TOOLS THE TURN RAN: %s\n", ran)
+	fmt.Fprintf(&b, "TOOL CALLS THAT FAILED: %d\n", ev.ToolErrors)
+	if ev.LastToolError != "" {
+		fmt.Fprintf(&b, "MOST RECENT TOOL ERROR: %s\n", truncateObs(oneLineError(ev.LastToolError, 300), 300))
+	}
+	fmt.Fprintf(&b, "FILES BEING DELIVERED WITH THIS REPLY: %d\n", ev.Delivered)
+	// The claim arm suppresses itself on this fact rather than on a Go branch,
+	// which is what leaves the machinery arm free to look at these turns — and
+	// a detach is exactly where plumbing leaks, because the model has just been
+	// handed a task id and a paragraph about how the work is being run.
+	if ev.Backgrounded {
+		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: yes — so a promise to deliver the result later IS TRUE, and must be answered KEPT.\n")
+	} else {
+		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: no.\n")
+	}
+	// The machinery rule already excused "a duration the assistant was given"
+	// — but nothing ever told the judge one HAD been given, so the exception
+	// was dead text and every quoted estimate was convicted as invented. The
+	// framework asks for this number in these words; convicting the reply for
+	// containing it retracts a message the framework itself specified.
+	if est := strings.TrimSpace(ev.GivenEstimate); est != "" {
+		fmt.Fprintf(&b, "THE FRAMEWORK TOLD THE ASSISTANT THIS WAIT AND INVITED IT TO SAY SO: about %s — quoting it, in any wording, is NOT machinery and must NOT be flagged.\n", est)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "THE REPLY:\n%s\n", truncateObs(strings.TrimSpace(ev.Reply), 2000))
+
+	return b.String()
 }

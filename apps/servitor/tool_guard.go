@@ -30,6 +30,9 @@ import (
 // carries. Nothing on this list changes for that type; the bound set is checked
 // alongside it.
 var servitorWorkerToolAllowList = map[string]bool{
+	"map_find":           true, // local: read the appliance's scoped graph
+	"map_neighbors":      true, // local: traverse the appliance's scoped graph
+	"map_path":           true, // local: shortest recorded chain in the scoped graph
 	"run_command":        true, // SSH exec on the user's appliance
 	"run_pty":            true, // SSH pty on the user's appliance
 	"search_code":        true, // local: substring search over the encrypted repo store
@@ -67,6 +70,9 @@ var servitorWorkerToolAllowList = map[string]bool{
 // itself only plans and records. Same external-call posture: nothing
 // here may reach a third-party service.
 var servitorOrchestratorToolAllowList = map[string]bool{
+	"map_find":              true, // local: read the appliance's scoped graph
+	"map_neighbors":         true, // local: traverse the appliance's scoped graph
+	"map_path":              true, // local: shortest recorded chain in the scoped graph
 	"probe":                 true, // delegate to a worker (internal)
 	"read_doc":              true, // local: doc state read
 	"update_doc":            true, // local: doc state write

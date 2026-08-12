@@ -109,25 +109,72 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSe
 // carry their own approval queue (a proactive send is still queued at the
 // channel layer, whatever this returns).
 func (g *autonomousGate) alwaysConfirms(name string) bool {
-	cred := credentialForToolCall(g.sess, name)
+	return toolAlwaysConfirms(UserDB(g.app.DB, g.owner), g.owner, g.sess, name)
+}
+
+// toolAlwaysConfirms is alwaysConfirms without a gate to hang it on, so the
+// surfaces that PREDICT the gate (the schedule pre-flight, the authoring
+// privileges card) can ask the same question the gate asks at fire time. Every
+// one of them used to answer it their own way and drifted; see
+// autonomousToolAllowed for why that drift is expensive.
+func toolAlwaysConfirms(udb Database, owner string, sess *ToolSession, name string) bool {
+	cred := credentialForToolCall(sess, name)
 	if cred == "" {
 		// A standing fire builds its session INSIDE the dispatch, so the gate is
 		// constructed without one. The name→credential mapping doesn't need a
 		// session though — it's on the stored tool. Resolving it here is what
 		// keeps the two unattended surfaces on the same policy instead of the
 		// session-less one quietly allowing everything.
-		if p, ok := UserToolByName(UserDB(g.app.DB, g.owner), g.owner, name); ok {
+		if p, ok := UserToolByName(udb, owner, name); ok {
 			cred = strings.TrimSpace(p.Tool.Credential)
 		}
 	}
+	return credentialAlwaysConfirms(owner, cred)
+}
+
+// credentialAlwaysConfirms is the innermost question — does THIS credential ask
+// before every call — split out for callers holding the credential already (the
+// privileges card classifies a tool the authoring call just committed, which is
+// not yet resolvable by name through either the session or the store).
+func credentialAlwaysConfirms(owner, cred string) bool {
+	cred = strings.TrimSpace(cred)
 	if cred == "" {
 		return false // no credential in play → nothing configured to ask
 	}
-	c, ok := Secure().Load(cred)
+	// Resolve, not Load: a credential the user OWNS (@u:<owner>:<name>) is absent
+	// from the global namespace Load reads, so a Load-only lookup missed it and
+	// fell to the fail-closed branch below — queueing an approval on every fire
+	// for a tool that dispatches perfectly well in chat, where dispatch resolves
+	// the same name user-aware. The lookup has to match the one dispatch does.
+	c, ok := Secure().Resolve(cred, owner)
 	if !ok {
 		return true // named a credential we can't resolve — fail closed
 	}
 	return c.RequiresConfirm
+}
+
+// autonomousToolAllowed is THE rule for whether a tool may run on an unattended
+// fire. Every surface that decides or predicts that answer calls this — the gate
+// itself (via allows), the schedule pre-flight, the authoring privileges card —
+// because when they each re-implemented it they drifted, and the drift is
+// invisible until a user is told their tool will be refused and it isn't (or
+// worse, the reverse).
+//
+// The three clauses, in the order they stop mattering: a SUB-AGENT runs under
+// its parent's authority; a PRE-AUTHORIZED tool was granted by the owner; and
+// everything else runs unless the credential it dispatches through is configured
+// to ask before each call. Attaching a tool to an agent IS the authorization.
+func autonomousToolAllowed(subAgent bool, approved map[string]bool, name string, alwaysConfirms func(string) bool) bool {
+	if subAgent || approved[name] {
+		return true
+	}
+	return !alwaysConfirms(name)
+}
+
+// allows applies the rule to this gate's agent, with no side effects — the
+// predicting surfaces need the verdict without queueing anything.
+func (g *autonomousGate) allows(name string) bool {
+	return autonomousToolAllowed(g.subAgent, g.auto, name, g.alwaysConfirms)
 }
 
 // autonomousApprovedSet is the union of an agent's AutoApproveTools and every
@@ -163,19 +210,12 @@ func autonomousApprovedSet(udb Database, agentID string) map[string]bool {
 // parent's act of creating it IS the authorization. Reaching BEYOND the parent (a
 // channel / recipient the parent isn't authorized for) is still flagged, but at the
 // send/channel layer (channelSenderAuthorized queues it), not here. A TOP-LEVEL
-// agent has no parent to vouch for it, so the owner is its direct authority and it
-// keeps the explicit gate: only tools it (or an ancestor) pre-authorized run;
-// anything else is queued for the owner to approve.
+// agent has no parent to vouch for it, so the owner is its direct authority — but
+// attaching the tool is how that authority is exercised, so what stays gated is
+// what the owner explicitly marked as gated. The rule itself is
+// autonomousToolAllowed; this is the half that has a queue to write to.
 func (g *autonomousGate) confirm(name, args string) bool {
-	if g.subAgent || g.auto[name] {
-		return true
-	}
-	// The tool is on this agent and nothing about it demands per-call approval,
-	// so run it — matching confirmFuncFor, the interactive policy, which
-	// escalates ONLY on a credential whose toggle asks for it. The two used to
-	// disagree, which meant an agent's own tools worked in chat and were refused
-	// on a schedule.
-	if !g.alwaysConfirms(name) {
+	if g.allows(name) {
 		return true
 	}
 	g.queue(name, args)

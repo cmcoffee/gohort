@@ -12,6 +12,7 @@ package servitor
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -38,7 +39,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	// Bucket by type so the picker renders separated <optgroup> sections in a
 	// stable order (SSH Hosts → Local Commands → Repositories → Evidence →
 	// Workspaces), rather than one flat mixed list.
-	var sshOpts, cmdOpts, repoOpts, bundleOpts, toolsetOpts, workspaceOpts []ui.SelectOption
+	var sshOpts, cmdOpts, repoOpts, bundleOpts, toolsetOpts, remoteOpts, workspaceOpts []ui.SelectOption
 	seen := map[string]bool{}
 	add := func(a Appliance, sharedByOther bool) {
 		if a.ID == "" || seen[a.ID] {
@@ -57,6 +58,15 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 			t = "ssh"
 		}
 		applianceTypes[a.ID] = t
+		// Reached through a peer: grouped by HOW it is reached rather than what
+		// it is, because that is the fact an operator needs when picking — the
+		// stored type is the far side's, and deliberately indistinguishable
+		// from a local one everywhere else.
+		if strings.TrimSpace(a.PeerName) != "" {
+			remoteOpts = append(remoteOpts, ui.SelectOption{
+				Value: a.ID, Label: name + " · via " + a.PeerName, Group: "Remote (on a peer)"})
+			return
+		}
 		switch t {
 		case "command":
 			cmdOpts = append(cmdOpts, ui.SelectOption{Value: a.ID, Label: name, Group: "Local Commands"})
@@ -98,6 +108,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	applianceOpts = append(applianceOpts, repoOpts...)
 	applianceOpts = append(applianceOpts, bundleOpts...)
 	applianceOpts = append(applianceOpts, toolsetOpts...)
+	applianceOpts = append(applianceOpts, remoteOpts...)
 	applianceOpts = append(applianceOpts, workspaceOpts...)
 	typeMapJSON, _ := json.Marshal(applianceTypes)
 	applianceTypesScript := "<script>window.servitorApplianceTypes = " + string(typeMapJSON) + ";</script>"

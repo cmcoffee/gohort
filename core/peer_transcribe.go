@@ -1,0 +1,195 @@
+// Transcription sharing, serving half: turning speech into text on this
+// instance's hardware for a peer.
+//
+// Wire shape is the OpenAI /audio/transcriptions multipart one — file + model +
+// response_format in, plain text out — for the same reason the embeddings
+// endpoint speaks OpenAI and the render endpoint speaks A1111: core/media's
+// Transcribe already POSTs exactly that to {endpoint}/audio/transcriptions with
+// a Bearer token. Mounted at /api/peer/v1, a consuming instance points its
+// ordinary TranscribeConfig at the peer and every caller — the transcribe tool,
+// the video pipeline, inbound voice notes — keeps working with no idea the
+// whisper model is on another machine. A gohort-shaped protocol would have
+// meant writing that side again and keeping the two in step forever.
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// peerTranscribeBudget bounds one transcription. Whisper on a busy GPU is
+// minutes for a long recording, but finite, so a wedged backend cannot pin a
+// peer's connection open indefinitely. Matches the local tool's own ceiling.
+const peerTranscribeBudget = 5 * time.Minute
+
+// maxPeerAudioBytes caps one inbound clip. Audio is the heaviest REQUEST any
+// peer capability carries — an hour of speech is tens of megabytes — and an
+// unbounded one is a way to spend this instance's memory from off-machine.
+const maxPeerAudioBytes = 64 << 20
+
+// PeerTranscribeInfo tells a peer what it will be transcribing with.
+//
+// Model is advisory, unlike the embeddings model. Two embedders produce vectors
+// in incomparable spaces, so a mismatch there is a silent correctness failure
+// worth refusing over; two speech models produce text, and the worse one is
+// merely worse. A peer that cares which it gets can read this and decide.
+type PeerTranscribeInfo struct {
+	Model string `json:"model,omitempty"`
+	Path  string `json:"path"` // where to point an OpenAI-shaped client
+}
+
+// peerTranscribeInfo describes this instance's STT for the manifest, or nil
+// when it has none configured — a peer must not be told to point at an endpoint
+// that will answer "transcription disabled" to everything.
+func peerTranscribeInfo(baseURL string) *PeerTranscribeInfo {
+	cfg := GetTranscribeConfig()
+	if !cfg.Enabled || strings.TrimSpace(cfg.Endpoint) == "" {
+		return nil
+	}
+	return &PeerTranscribeInfo{Model: strings.TrimSpace(cfg.Model), Path: baseURL}
+}
+
+// HandlePeerTranscribe serves POST /api/peer/v1/audio/transcriptions.
+func HandlePeerTranscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		peerDeny(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	k, ok := peerAuthorize(w, r, PeerCapTranscribe)
+	if !ok {
+		return
+	}
+	// Refuse to relay, exactly as embeddings does. If this instance is itself
+	// borrowing transcription from a peer, serving it onward makes A→B→A a loop
+	// neither side can see, and the failure is a hang rather than an error.
+	cfg := GetTranscribeConfig()
+	if strings.Contains(cfg.Endpoint, "/api/peer/") {
+		peerDeny(w, http.StatusServiceUnavailable,
+			"this instance borrows its own transcription from another peer and will not relay it")
+		return
+	}
+	if !cfg.Enabled || strings.TrimSpace(cfg.Endpoint) == "" {
+		peerDeny(w, http.StatusServiceUnavailable, "this instance has transcription disabled")
+		return
+	}
+
+	// ParseMultipartForm buffers up to the given size in memory and spills the
+	// rest to disk; MaxBytesReader is what actually refuses an oversized clip,
+	// and it has to wrap the body BEFORE parsing or the cap arrives too late.
+	r.Body = http.MaxBytesReader(w, r.Body, maxPeerAudioBytes)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		peerDeny(w, http.StatusBadRequest,
+			"expected a multipart form with a \"file\" part (OpenAI /audio/transcriptions shape): "+err.Error())
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		peerDeny(w, http.StatusBadRequest, "the \"file\" part is required — it carries the audio to transcribe")
+		return
+	}
+	defer file.Close()
+	audio, err := io.ReadAll(file)
+	if err != nil {
+		peerDeny(w, http.StatusBadRequest, "could not read the uploaded audio: "+err.Error())
+		return
+	}
+	if len(audio) == 0 {
+		peerDeny(w, http.StatusBadRequest, "the uploaded audio is empty")
+		return
+	}
+	name := "audio.mp3"
+	if header != nil && strings.TrimSpace(header.Filename) != "" {
+		// Base name only. The filename reaches the STT endpoint, which uses the
+		// extension to pick a decoder, and a path from off-machine has no
+		// business being carried any further than that.
+		name = pathBase(header.Filename)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), peerTranscribeBudget)
+	defer cancel()
+	text, err := Transcribe(ctx, audio, name)
+	if err != nil {
+		peerDeny(w, http.StatusBadGateway, "transcription failed: "+err.Error())
+		return
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		// Not an error. A clip with no speech in it transcribes to nothing, and
+		// the caller has to be able to tell that from a fault — an empty 200
+		// says "I heard nothing", a 502 says "I broke".
+		Debug("[peer] %q transcribed %d bytes to no speech", k.Label, len(audio))
+	} else {
+		Debug("[peer] %q transcribed %d bytes to %d chars", k.Label, len(audio), len(text))
+	}
+
+	// response_format is honoured for "text" (what every gohort client asks
+	// for) and defaults to the OpenAI JSON envelope otherwise, so a non-gohort
+	// client pointed here still gets the shape it expects.
+	if strings.EqualFold(strings.TrimSpace(r.FormValue("response_format")), "text") {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, text)
+		touchPeerKey(k)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"text": text})
+	touchPeerKey(k)
+}
+
+// pathBase strips any directory component from an uploaded filename, on either
+// separator — the sender's OS is not this one's.
+func pathBase(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	if name == "" {
+		return "audio.mp3"
+	}
+	return name
+}
+
+// --- consuming half ----------------------------------------------------------
+
+// TranscribeURL is where a peer's OpenAI-shaped STT client should point.
+// Mirrors EmbeddingsURL: the same /api/peer/v1 base, because both endpoints
+// hang off it at their standard OpenAI paths.
+func (p RemotePeer) TranscribeURL() string {
+	return strings.TrimRight(p.BaseURL, "/") + "/api/peer/v1"
+}
+
+// ResolveTranscribeProvider turns a submitted transcription config into the one
+// to store. When Provider names a peer, the endpoint, model and key come from
+// that peer's record — so the stored config is an ordinary one that Transcribe
+// can use with no peer awareness at all.
+//
+// Mirrors ResolveEmbeddingProvider down to the failure modes, including
+// refusing an unknown peer rather than falling back to local: a silent fall
+// back would send audio somewhere the operator did not choose.
+func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (TranscribeConfig, error) {
+	provider = strings.TrimSpace(provider)
+	if provider == "" || provider == EmbeddingProviderLocal {
+		return cfg, nil
+	}
+	p, ok := PeerFromProvider(provider)
+	if !ok {
+		return cfg, fmt.Errorf("no peer named %q is registered — add it under Peers first",
+			strings.TrimPrefix(provider, peerProviderPrefix))
+	}
+	if !p.Offers(PeerCapTranscribe) {
+		return cfg, fmt.Errorf("peer %q does not offer transcription (it offers: %s)",
+			p.Name, strings.Join(p.Caps, ", "))
+	}
+	cfg.Endpoint = p.TranscribeURL()
+	cfg.Model = p.TranscribeModel
+	cfg.APIKey = p.Key
+	cfg.Enabled = true
+	return cfg, nil
+}

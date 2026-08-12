@@ -25,6 +25,15 @@ type UsageTracker struct {
 	leadOutput   int64
 	searchCalls  int64
 	imageCalls   int64
+	// Cached prompt, kept apart from the uncached remainder because the two
+	// are different questions with the same units. SIZE is the sum of all
+	// three; COST is a weighted sum, since a cache read bills at a fraction of
+	// an ordinary input token and a write at slightly more. Response.InputTokens
+	// documents the same split — the tracker simply had not been told.
+	workerCacheRead  int64
+	workerCacheWrite int64
+	leadCacheRead    int64
+	leadCacheWrite   int64
 }
 
 // UsageSnapshot is an immutable copy of the tracker's counters at
@@ -37,6 +46,29 @@ type UsageSnapshot struct {
 	LeadOutput   int64
 	SearchCalls  int64
 	ImageCalls   int64
+	// WorkerInput / LeadInput are the UNCACHED remainder only, matching the
+	// API's own definition (see Response.InputTokens). The cached share lands
+	// here. Use PromptTokens() for the number a human means by "input".
+	WorkerCacheRead  int64 `json:"worker_cache_read,omitempty"`
+	WorkerCacheWrite int64 `json:"worker_cache_write,omitempty"`
+	LeadCacheRead    int64 `json:"lead_cache_read,omitempty"`
+	LeadCacheWrite   int64 `json:"lead_cache_write,omitempty"`
+}
+
+// WorkerPrompt is the whole worker prompt — what the session UI shows as
+// "in", and what a reader means by input tokens.
+//
+// Reporting WorkerInput alone made a cache-heavy turn look free: a 38,679-token
+// prompt served almost entirely from cache reports an uncached remainder of 2,
+// so the cost chart said 2 while the session said 38,679. Same bug the v0.5.999
+// commit fixed in the UI, unfixed here until the tracker learned the split.
+func (s UsageSnapshot) WorkerPrompt() int64 {
+	return s.WorkerInput + s.WorkerCacheRead + s.WorkerCacheWrite
+}
+
+// LeadPrompt is the whole lead prompt.
+func (s UsageSnapshot) LeadPrompt() int64 {
+	return s.LeadInput + s.LeadCacheRead + s.LeadCacheWrite
 }
 
 // UsageDiff is the per-run delta — identical shape to UsageSnapshot,
@@ -59,26 +91,46 @@ func ProcessUsage() *UsageTracker { return processUsage }
 // token counts). Also rolls the diff into the persistent daily-cost
 // log so the admin's Cost History chart reflects every call.
 func (u *UsageTracker) AddWorker(input, output int) {
-	if input == 0 && output == 0 {
+	u.AddWorkerTokens(input, output, 0, 0)
+}
+
+// AddWorkerTokens records a worker-tier call including its cached prompt.
+func (u *UsageTracker) AddWorkerTokens(input, output, cacheRead, cacheWrite int) {
+	if input == 0 && output == 0 && cacheRead == 0 && cacheWrite == 0 {
 		return
 	}
 	u.mu.Lock()
 	u.workerInput += int64(input)
 	u.workerOutput += int64(output)
+	u.workerCacheRead += int64(cacheRead)
+	u.workerCacheWrite += int64(cacheWrite)
 	u.mu.Unlock()
-	recordDailyUsage(UsageDiff{WorkerInput: int64(input), WorkerOutput: int64(output)})
+	recordDailyUsage(UsageDiff{
+		WorkerInput: int64(input), WorkerOutput: int64(output),
+		WorkerCacheRead: int64(cacheRead), WorkerCacheWrite: int64(cacheWrite),
+	})
 }
 
 // AddLead records token consumption from a lead-tier LLM call.
 func (u *UsageTracker) AddLead(input, output int) {
-	if input == 0 && output == 0 {
+	u.AddLeadTokens(input, output, 0, 0)
+}
+
+// AddLeadTokens records a lead-tier call including its cached prompt.
+func (u *UsageTracker) AddLeadTokens(input, output, cacheRead, cacheWrite int) {
+	if input == 0 && output == 0 && cacheRead == 0 && cacheWrite == 0 {
 		return
 	}
 	u.mu.Lock()
 	u.leadInput += int64(input)
 	u.leadOutput += int64(output)
+	u.leadCacheRead += int64(cacheRead)
+	u.leadCacheWrite += int64(cacheWrite)
 	u.mu.Unlock()
-	recordDailyUsage(UsageDiff{LeadInput: int64(input), LeadOutput: int64(output)})
+	recordDailyUsage(UsageDiff{
+		LeadInput: int64(input), LeadOutput: int64(output),
+		LeadCacheRead: int64(cacheRead), LeadCacheWrite: int64(cacheWrite),
+	})
 }
 
 // AddSearchCall increments the external search counter. Should fire
@@ -109,12 +161,16 @@ func (u *UsageTracker) Snapshot() UsageSnapshot {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return UsageSnapshot{
-		WorkerInput:  u.workerInput,
-		WorkerOutput: u.workerOutput,
-		LeadInput:    u.leadInput,
-		LeadOutput:   u.leadOutput,
-		SearchCalls:  u.searchCalls,
-		ImageCalls:   u.imageCalls,
+		WorkerInput:      u.workerInput,
+		WorkerOutput:     u.workerOutput,
+		LeadInput:        u.leadInput,
+		LeadOutput:       u.leadOutput,
+		SearchCalls:      u.searchCalls,
+		ImageCalls:       u.imageCalls,
+		WorkerCacheRead:  u.workerCacheRead,
+		WorkerCacheWrite: u.workerCacheWrite,
+		LeadCacheRead:    u.leadCacheRead,
+		LeadCacheWrite:   u.leadCacheWrite,
 	}
 }
 
@@ -124,12 +180,16 @@ func (u *UsageTracker) Snapshot() UsageSnapshot {
 func (u *UsageTracker) Diff(start UsageSnapshot) UsageDiff {
 	now := u.Snapshot()
 	return UsageDiff{
-		WorkerInput:  now.WorkerInput - start.WorkerInput,
-		WorkerOutput: now.WorkerOutput - start.WorkerOutput,
-		LeadInput:    now.LeadInput - start.LeadInput,
-		LeadOutput:   now.LeadOutput - start.LeadOutput,
-		SearchCalls:  now.SearchCalls - start.SearchCalls,
-		ImageCalls:   now.ImageCalls - start.ImageCalls,
+		WorkerInput:      now.WorkerInput - start.WorkerInput,
+		WorkerOutput:     now.WorkerOutput - start.WorkerOutput,
+		LeadInput:        now.LeadInput - start.LeadInput,
+		LeadOutput:       now.LeadOutput - start.LeadOutput,
+		SearchCalls:      now.SearchCalls - start.SearchCalls,
+		ImageCalls:       now.ImageCalls - start.ImageCalls,
+		WorkerCacheRead:  now.WorkerCacheRead - start.WorkerCacheRead,
+		WorkerCacheWrite: now.WorkerCacheWrite - start.WorkerCacheWrite,
+		LeadCacheRead:    now.LeadCacheRead - start.LeadCacheRead,
+		LeadCacheWrite:   now.LeadCacheWrite - start.LeadCacheWrite,
 	}
 }
 

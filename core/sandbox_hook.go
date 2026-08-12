@@ -786,17 +786,9 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 		writeHookError(conn, "browse_page refused: url must be an http:// or https:// URL"+SameOriginURLHint(rawURL))
 		return
 	}
-	if host := parsed.Hostname(); host != "" {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				writeHookError(conn, fmt.Sprintf("browse_page refused: refusing to reach non-public host %s — same rule as the LLM-callable browse_page tool", host))
-				return
-			}
-		}
-		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			writeHookError(conn, fmt.Sprintf("browse_page refused: refusing to reach non-public host %s — same rule as the LLM-callable browse_page tool", host))
-			return
-		}
+	if err := RefuseNonPublicHost(rawURL); err != nil {
+		writeHookError(conn, "browse_page refused: "+err.Error()+" — same rule as the LLM-callable browse_page tool")
+		return
 	}
 	// Same whitespace guard as fetch — almost always an unencoded
 	// f-string substitution; surface a clear error instead of a

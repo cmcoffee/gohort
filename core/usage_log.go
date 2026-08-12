@@ -53,9 +53,11 @@ func recordDailyUsage(diff UsageDiff) {
 	if RootDB == nil {
 		return
 	}
-	if diff.WorkerInput == 0 && diff.WorkerOutput == 0 &&
-		diff.LeadInput == 0 && diff.LeadOutput == 0 &&
-		diff.SearchCalls == 0 && diff.ImageCalls == 0 {
+	if diff == (UsageDiff{}) {
+		// Compared whole rather than field-by-field: the old list predated the
+		// cache counters, so a call that was ENTIRELY a cache hit — the most
+		// expensive kind — matched "nothing happened" and was dropped before it
+		// could be recorded.
 		return
 	}
 	usageDailyDropOnce.Do(dropLegacyUsageDaily)
@@ -76,20 +78,35 @@ func recordDailyUsage(diff UsageDiff) {
 	rec.LeadOutput += diff.LeadOutput
 	rec.SearchCalls += diff.SearchCalls
 	rec.ImageCalls += diff.ImageCalls
+	rec.WorkerCacheRead += diff.WorkerCacheRead
+	rec.WorkerCacheWrite += diff.WorkerCacheWrite
+	rec.LeadCacheRead += diff.LeadCacheRead
+	rec.LeadCacheWrite += diff.LeadCacheWrite
 	rec.RunCount++
 	// Recompute cost using the current rates so the stored cost
 	// reflects whatever rates were configured at call time. The
 	// admin chart re-derives cost on render anyway, but having it
 	// stored makes ad-hoc DB inspection meaningful.
-	rec.Cost = GetCostRates().Estimate(UsageDiff{
-		WorkerInput:  rec.WorkerInput,
-		WorkerOutput: rec.WorkerOutput,
-		LeadInput:    rec.LeadInput,
-		LeadOutput:   rec.LeadOutput,
-		SearchCalls:  rec.SearchCalls,
-		ImageCalls:   rec.ImageCalls,
-	})
+	rec.Cost = GetCostRates().Estimate(dailyCostUsage(rec))
 	RootDB.Set(usageDailyTable, day, rec)
+}
+
+// dailyCostUsage projects a stored day rollup back into a UsageDiff. One
+// place, because the two that existed had to be kept in step by hand and the
+// cache counters were exactly the kind of field one of them would miss.
+func dailyCostUsage(rec DailyCost) UsageDiff {
+	return UsageDiff{
+		WorkerInput:      rec.WorkerInput,
+		WorkerOutput:     rec.WorkerOutput,
+		LeadInput:        rec.LeadInput,
+		LeadOutput:       rec.LeadOutput,
+		SearchCalls:      rec.SearchCalls,
+		ImageCalls:       rec.ImageCalls,
+		WorkerCacheRead:  rec.WorkerCacheRead,
+		WorkerCacheWrite: rec.WorkerCacheWrite,
+		LeadCacheRead:    rec.LeadCacheRead,
+		LeadCacheWrite:   rec.LeadCacheWrite,
+	}
 }
 
 // scanDailyUsage returns every persisted day rollup as a DatedUsage
@@ -107,17 +124,7 @@ func scanDailyUsage() []DatedUsage {
 		if !RootDB.Get(usageDailyTable, k, &rec) {
 			continue
 		}
-		out = append(out, DatedUsage{
-			Date: rec.Date,
-			Usage: UsageDiff{
-				WorkerInput:  rec.WorkerInput,
-				WorkerOutput: rec.WorkerOutput,
-				LeadInput:    rec.LeadInput,
-				LeadOutput:   rec.LeadOutput,
-				SearchCalls:  rec.SearchCalls,
-				ImageCalls:   rec.ImageCalls,
-			},
-		})
+		out = append(out, DatedUsage{Date: rec.Date, Usage: dailyCostUsage(rec)})
 	}
 	return out
 }

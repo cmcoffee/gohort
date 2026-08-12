@@ -2557,6 +2557,24 @@
     function unmarkEmptyBubble(m) {
       if (m && m.bubble) m.bubble.classList.remove('ui-agent-msg-empty');
     }
+    // markEmptyBubble puts the class BACK when a bubble's text is
+    // cleared after it had some. Only unmark existed, so the class was
+    // a one-way door: a bubble that streamed text and was then blanked
+    // (a guardrail retracting a blocked draft, the over-long lead-in
+    // clear) kept the text removed and the CARD on screen — the empty
+    // grey bubble that shows up whenever a check fires.
+    //
+    // A bubble hosting its own tool pills or attachments is left alone.
+    // Those record work that really happened, they are pinned to this
+    // element (toolHostFor / agentMsgAttachmentBox), and hiding the
+    // bubble would take them with it.
+    function markEmptyBubble(m) {
+      if (!m || !m.bubble) return;
+      if (m.bubble.querySelector(':scope > .ui-agent-tools-panel, ' +
+                                 ':scope > .ui-agent-tools-toggle, ' +
+                                 ':scope > .ui-agent-msg-attachments')) return;
+      m.bubble.classList.add('ui-agent-msg-empty');
+    }
     function appendChunk(id, text) {
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
@@ -2573,6 +2591,7 @@
       m.rawText = text || '';
       m.body.textContent = m.rawText;
       if (m.rawText.length > 0) unmarkEmptyBubble(m);
+      else markEmptyBubble(m);
       scrollConvo(false);
     }
 
@@ -2586,7 +2605,11 @@
       // round), keep the bubble hidden so the user doesn't see an
       // empty card. The next assistant turn will land in a fresh
       // bubble; spinner stays cleared by message_done's caller.
+      // Marking, not just skipping the unmark: a round that streamed
+      // text and had it cleared before settling has already lost the
+      // class, and "keep hidden" has to be able to re-hide it.
       if ((m.rawText || '').length > 0) unmarkEmptyBubble(m);
+      else markEmptyBubble(m);
       // Streaming-mode pre-wrap is no longer needed once mdToHTML
       // emits structured block elements (p / pre / lists handle
       // their own whitespace). Leaving it on would add weird gaps

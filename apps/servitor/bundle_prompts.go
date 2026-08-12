@@ -188,7 +188,7 @@ func buildBundleLeadPrompt(udb Database, appliance Appliance, docs map[string]st
 		b.WriteString(cachedFacts)
 		b.WriteString("\n")
 	}
-	if gb := scopedGraphBlock(appliance); gb != "" {
+	if gb := scopedGraphPromptBlock(appliance); gb != "" {
 		b.WriteString("## Evidence Map (hosts, services, files, and how they connect)\n\n")
 		b.WriteString("The topology recorded in prior sessions. Use it to target searches precisely.\n\n")
 		b.WriteString(gb)

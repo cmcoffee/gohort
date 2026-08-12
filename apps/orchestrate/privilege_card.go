@@ -119,20 +119,36 @@ func privilegeToolRows(sess *ToolSession, rec AgentRecord, bundled []TempTool) [
 }
 
 // classifyPrivilegeTool reports a short human detail for a tool and whether it
-// is consequential (would stop for approval on an unattended run). It must
-// agree with the runtime gate: temp tools defer to temptool.NeedsConfirm, the
-// same predicate autonomousGate honors, and registry/secure-API tools to the
-// NeedsConfirm the assembled def carries.
+// is consequential — which the Policy field defines as "would stop for approval
+// on an unattended run", so the answer is the gate's, not a second opinion:
+// toolAlwaysConfirms is the clause autonomousToolAllowed decides on once the
+// sub-agent and pre-authorized bypasses (handled by the caller) are out.
+//
+// It used to answer with temptool.NeedsConfirm, describing itself as "the same
+// predicate autonomousGate honors". That stopped being true when the gate moved
+// to the credential's own toggle, and the card kept marking tools "ask" — asking
+// the user to grant something the runtime never withholds. NeedsConfirm still has
+// a job (it selects the guardrail pre-action check), it just isn't this one.
+//
+// DETAIL still reports reach — "raw network", the credential's name — because the
+// card's other job is disclosure, and a tool that runs freely is exactly the one
+// worth being told about.
 func classifyPrivilegeTool(sess *ToolSession, name string, tt *TempTool) (string, bool) {
+	owner, udb := "", Database(nil)
+	if sess != nil {
+		owner, udb = sess.Username, sess.DB
+	}
 	if tt != nil {
-		needs := temptool.NeedsConfirm(tt)
+		// The credential comes off the record in hand, not a name lookup: a tool
+		// this very call committed is not in the session or the store yet, so
+		// resolving it by name would find nothing and read as "runs freely".
 		switch {
 		case strings.TrimSpace(tt.Credential) != "":
-			return "credential: " + strings.TrimSpace(tt.Credential), needs
+			return "credential: " + strings.TrimSpace(tt.Credential), credentialAlwaysConfirms(owner, tt.Credential)
 		case tt.RawNetwork:
-			return "raw network", needs
-		case needs:
-			return "consequential", true
+			return "raw network", false
+		case temptool.NeedsConfirm(tt):
+			return "consequential", false
 		default:
 			return "read-only", false
 		}
@@ -145,7 +161,7 @@ func classifyPrivilegeTool(sess *ToolSession, name string, tt *TempTool) (string
 		return "unresolved", true
 	}
 	if defs[0].NeedsConfirm {
-		return "needs approval", true
+		return "needs approval", toolAlwaysConfirms(udb, owner, sess, name)
 	}
 	return "read-only", false
 }

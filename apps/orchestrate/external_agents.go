@@ -235,6 +235,14 @@ func init() {
 		var skipped []string
 		all := listAgents(udb, owner)
 		for _, a := range all {
+			// A hidden app agent is reached by its APP's label — which agent
+			// implements the app is deliberately invisible (resolveAppByLabel).
+			// Listing its internal id here disclosed the very name that design
+			// withholds, the moment the app's feature grant was on.
+			if hiddenAppAgent(a.ID) {
+				skipped = append(skipped, fmt.Sprintf("%s(%s: app-internal — reached by app name)", a.Name, a.ID))
+				continue
+			}
 			if !externallyReachable(a, owner) && (granted == nil || !granted("agent:"+a.ID)) {
 				// Name what was passed over and why. "My agent is not in the
 				// list" is otherwise unanswerable without a code read: the

@@ -22,6 +22,7 @@ package video
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/tools/transcribe"
@@ -38,6 +39,57 @@ func init() { RegisterChatTool(&VideoTool{}) }
 type VideoTool struct{}
 
 func (t *VideoTool) Name() string { return "video" }
+
+// The framework asks for these by assertion; pinned so a signature drift is a
+// build error rather than a silently skipped check.
+var (
+	_ DetachableTool  = (*VideoTool)(nil)
+	_ SupersedingTool = (*VideoTool)(nil)
+)
+
+// Supersedes the standalone tools this one absorbed. They stay registered —
+// phantom drives them directly, and an agent allowlisted onto just one keeps
+// it — but a caller granted both sees one `video` instead of five near-
+// duplicates to oscillate between.
+func (t *VideoTool) Supersedes(name string) bool {
+	switch name {
+	case "find_video", "view_video", "download_video", "transcribe":
+		return true
+	}
+	return false
+}
+
+// ExpectedDuration is how long the framework should assume this call runs, so
+// it can decide whether the conversation waits for it.
+//
+// Declared and conservative, not measured. Nothing here times itself yet, and
+// the honest thing to publish is an upper bound the work rarely exceeds rather
+// than an average dressed up as an observation — TypicalDuration is deliberately
+// left unimplemented, so the detach notice puts no number in front of the user
+// instead of one we made up.
+//
+// The numbers matter most on a messaging surface, where the threshold is low
+// and the person sees nothing while they wait. A yt-dlp fetch of a long video
+// and an ffmpeg re-encode both routinely run past a minute — on a text thread
+// that is an assistant who stopped replying mid-conversation.
+func (t *VideoTool) ExpectedDuration(args map[string]any, sess *ToolSession) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	case "download", "view":
+		// yt-dlp against an arbitrary site: seconds for a short clip, minutes
+		// for a long one, and the tool cannot tell which until it starts.
+		return 90 * time.Second
+	case "transcribe":
+		// Speech-to-text over whatever was downloaded — proportional to the
+		// runtime of the media, not to the size of the request.
+		return 5 * time.Minute
+	case "transcode":
+		// A full re-encode. The reason it is being called at all is that a
+		// file was too big to send, so it is a big file by definition.
+		return 5 * time.Minute
+	}
+	// find is a search API call, and help is local. Both stay inline.
+	return 0
+}
 
 func (t *VideoTool) Caps() []Capability {
 	// Union of underlying caps. CapNetwork covers find/download/

@@ -72,6 +72,23 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			Type:        "string",
 			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base, and it re-threads your prior dispatches to it this session (ephemeral continuity), so a follow-up can be brief without repeating earlier context.",
 		}
+		// Whether the CALLER needs the answer, which is the one thing about a
+		// dispatch only the caller knows.
+		//
+		// Deliberately not a duration question. The framework decides detaching
+		// from how long work takes, and it can read that off a render backend;
+		// it cannot read whether this turn's reply depends on what comes back.
+		// Asked plainly, in the terms the model already thinks in — "am I
+		// waiting for this, or handing it off" — that IS answerable, and it is
+		// the difference between a specialist's answer the caller weaves into
+		// its reply and a job it should not be sitting silent through.
+		params["await"] = ToolParam{
+			Type: "boolean",
+			Description: "TRUE (the default) when you need this agent's answer to write your own reply — the call waits and hands you the answer. " +
+				"FALSE when you are handing the work off: the call returns immediately, the agent works in the background, and its answer arrives on its own as a message when it is done. " +
+				"Use false for \"go do X and let me know\" and for anything you would otherwise sit silent through for minutes; use true for \"find out X so I can use it\". " +
+				"On a messaging conversation prefer false — the person sees nothing at all while you wait, so a long silence reads as an assistant that stopped answering.",
+		}
 		// CapNetwork is tagged here even though the bare tool itself
 		// doesn't make HTTP calls: the `run` action dispatches into a
 		// sub-agent whose tools may. Without this cap, Private mode
@@ -139,6 +156,18 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			Description: "One of: " + strings.Join(acts, " | ") + ".",
 		}
 	}
+	// The `agents` tool is built by hand rather than converted from a ChatTool,
+	// so it never passed through the detach wrapper — and it is the longest-
+	// running call the framework has. A dispatch that hands work off can now go
+	// to the background like anything else; see the await param and
+	// core.WrapDetachable.
+	handler := t.agentsHandler(allowRun, allowRunTool)
+	// Nil app means a turn assembled for its SCHEMA alone (tests, the catalog
+	// picker) — there is nothing to dispatch into and no session to mint, and
+	// WrapDetachable would be a no-op anyway.
+	if t.app != nil {
+		handler = WrapDetachable(t.agentsDispatchPolicy(allowRun), t.newToolSession(), handler)
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "agents",
@@ -171,37 +200,42 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		// prior's bookkeeping — so the cap now cuts a runaway batch off AT
 		// the ceiling instead of after it.
 		SerialFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
-			action := strings.TrimSpace(stringArg(args, "action"))
-			switch action {
-			case "", "help":
-				return agentsToolHelp(allowRun, allowRunTool), nil
-			case "list":
-				return t.agentsListAction()
-			case "get":
-				return t.agentsGetAction(args)
-			case "run":
-				if !allowRun {
-					return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
-				}
-				return fenceAgentsOutput(t.agentsRunAction(args))
-			case "run_tool":
-				if !allowRunTool {
-					return "", fmt.Errorf("agents(run_tool) is not available to this agent — it's a Builder-only allowance for verifying an agent's tools directly")
-				}
-				return fenceAgentsOutput(t.agentsRunToolAction(args))
-			default:
-				acts := []string{"list", "get"}
-				if allowRun {
-					acts = append(acts, "run")
-				}
-				if allowRunTool {
-					acts = append(acts, "run_tool")
-				}
-				acts = append(acts, "help")
-				return "", fmt.Errorf("unknown action %q for agents tool. valid: %s", action, strings.Join(acts, ", "))
+		Handler:            handler,
+	}
+}
+
+// agentsHandler is the tool's own behaviour, before the framework wraps it.
+func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
+	return func(args map[string]any) (string, error) {
+		action := strings.TrimSpace(stringArg(args, "action"))
+		switch action {
+		case "", "help":
+			return agentsToolHelp(allowRun, allowRunTool), nil
+		case "list":
+			return t.agentsListAction()
+		case "get":
+			return t.agentsGetAction(args)
+		case "run":
+			if !allowRun {
+				return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
 			}
-		},
+			return fenceAgentsOutput(t.agentsRunAction(args))
+		case "run_tool":
+			if !allowRunTool {
+				return "", fmt.Errorf("agents(run_tool) is not available to this agent — it's a Builder-only allowance for verifying an agent's tools directly")
+			}
+			return fenceAgentsOutput(t.agentsRunToolAction(args))
+		default:
+			acts := []string{"list", "get"}
+			if allowRun {
+				acts = append(acts, "run")
+			}
+			if allowRunTool {
+				acts = append(acts, "run_tool")
+			}
+			acts = append(acts, "help")
+			return "", fmt.Errorf("unknown action %q for agents tool. valid: %s", action, strings.Join(acts, ", "))
+		}
 	}
 }
 
@@ -346,6 +380,13 @@ func (t *chatTurn) agentsListAction() (string, error) {
 			continue
 		}
 		if isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
+			continue
+		}
+		// Hidden app agents are an app's internal surface, and the run gate
+		// refuses hidden targets — listing one advertises an id the very next
+		// call rejects, and teaches the model an agent exists that no caller
+		// is meant to address.
+		if hiddenAppAgent(a.ID) {
 			continue
 		}
 		// Sub-agents held for approval aren't live — keep them out of the
@@ -569,19 +610,32 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 // Direct chat with a sub-agent via Agency's secondary picker is a SEPARATE
 // code path (handleSend) with normal ChatSession persistence — that's the
 // testing/iteration surface, not the dispatch surface.
-func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
+// agentsRunGate runs every check that can refuse a dispatch from its ARGUMENTS
+// and the caller's policy alone — target resolution, self/cycle/depth, the
+// dispatch mode, ownership, delegation blocks, transitive authority.
+//
+// Split out because a dispatch that runs in the background has to be refusable
+// while the model still has a round to fix it in. Detached, "that agent is
+// hidden" arrives minutes later as a wake the agent has to apologize for,
+// with no turn left to correct it — see core.PreflightTool.
+//
+// Deliberately free of side effects, so it can run twice (once as preflight,
+// once for real) without the second run being different from the first. The
+// per-turn dispatch COUNTERS are therefore not here: they mutate, and they
+// belong to the inline path that can be looped.
+func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, error) {
 	if t.dispatchDepth >= maxDispatchDepth {
-		return "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
+		return AgentRecord{}, "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
 	}
 	key := strings.TrimSpace(stringArg(args, "agent"))
 	msg := strings.TrimSpace(stringArg(args, "message"))
 	if key == "" || msg == "" {
-		return "", errors.New("agent and message are required for action=run")
+		return AgentRecord{}, "", errors.New("agent and message are required for action=run")
 	}
 	fleetDB, fleetUser := t.fleetView()
 	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
 	if !ok {
-		return "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
+		return AgentRecord{}, "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
 	}
 	// A dispatch to a retiring archetype seed (Research / KB) materializes the
 	// user's own copy and runs that — retirement never breaks a live dispatch.
@@ -589,10 +643,10 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// A sub-agent held for approval is not live yet — refuse to dispatch it until
 	// the owner activates it from the Authorizations pane.
 	if target.PendingApproval {
-		return "", fmt.Errorf("agents(run, agent=%q) refused — that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused — that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
 	}
 	if target.ID == t.agent.ID {
-		return "", fmt.Errorf("agents(run, agent=%q) is impossible — you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing — pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) is impossible — you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing — pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
 	}
 	// Builder is never dispatchable. Builder's authoring rhythm needs
 	// a human in the loop — Phase 1 conversational intake, ask_user
@@ -616,13 +670,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// dispatch runs Builder as a sub-agent and its output lands
 	// PendingApproval.
 	if isBuilderAgent(target.ID) && !t.agent.Fleet && !t.agent.AllowBuilderDispatch {
-		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
 	}
 	// seed-chat is retired from every surface, dispatch included — an
 	// unhidden shadow or an explicit allowlist pick must not resurrect the
 	// fossil. (seed-research / seed-kb stay dispatchable on purpose.)
 	if isFleetRetiredSeed(target.ID) {
-		return "", fmt.Errorf("agents(run, agent=%q) refused — the framework Chat seed is retired; handle the request yourself or dispatch to one of the user's own agents", key)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused — the framework Chat seed is retired; handle the request yourself or dispatch to one of the user's own agents", key)
 	}
 	// Cycle guard. The current turn's agent is always considered "in
 	// flight" — combined with dispatchChain (inherited from parent
@@ -634,7 +688,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// turn right back into Builder.
 	for _, prior := range t.dispatchChain {
 		if prior == target.ID {
-			return "", fmt.Errorf("agents(run): dispatch cycle — %q is already on the call chain for this turn; pick a different target or answer directly", target.Name)
+			return AgentRecord{}, "", fmt.Errorf("agents(run): dispatch cycle — %q is already on the call chain for this turn; pick a different target or answer directly", target.Name)
 		}
 	}
 	// Dispatch gate. Two cases mirror the visibility logic in
@@ -672,7 +726,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// dispatching its own sub-agent 100+ times in one autonomous turn via
 	// the ownership bypass.
 	if effectiveDispatchMode(t.agent) == dispatchNone {
-		return "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access) — it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
+		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access) — it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
 	}
 	// The Permissions pane records a per-TARGET delegation policy in the root
 	// store. The Operator's delegate tool has always honored a Block there,
@@ -683,7 +737,16 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// the ownership carve-outs because a Block is about the TARGET, not the
 	// route taken to reach it.
 	if IsDelegationBlocked(RootDB, fleetUser, target.Name) || IsDelegationBlocked(RootDB, fleetUser, target.ID) {
-		return "", fmt.Errorf("agents(run): delegation to %q is BLOCKED in the user's permission settings — the call was refused. Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane", target.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run): delegation to %q is BLOCKED in the user's permission settings — the call was refused. Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane", target.Name)
+	}
+	// A hidden app agent is refused OUTRIGHT, before any carve-out — including
+	// the allowlist mode, which deliberately ignores Hidden for user agents. An
+	// app's internal agent runs with the app's own machinery and scoping; the
+	// fleet reaches the APP (its tools, its label externally), never the
+	// implementing agent. Keyed on the registry so a stale shadow or a stray
+	// allowlist entry from the era these leaked into pickers cannot reopen it.
+	if hiddenAppAgent(target.ID) {
+		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is an app-internal agent and cannot be dispatched directly — use the app's own tools instead", target.Name)
 	}
 	if target.OwnedBy == t.agent.ID {
 		// Allowed by ownership; skip the standard checks.
@@ -708,25 +771,25 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// hand that agent the parent's reach. It's internal composition owned by one
 		// parent, not a shared fleet capability. (A capability meant to be shared
 		// should be a top-level agent, not a sub-agent.)
-		return "", fmt.Errorf("agents(run): %q is a sub-agent owned by another agent and is private to its owner — you can't dispatch to it. If you need this capability, ask its owning agent, or have the user make it a top-level agent.", target.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is a sub-agent owned by another agent and is private to its owner — you can't dispatch to it. If you need this capability, ask its owning agent, or have the user make it a top-level agent.", target.Name)
 	} else {
 		switch effectiveDispatchMode(t.agent) {
 		case dispatchNone:
-			return "", fmt.Errorf("agents(run): this agent is set to dispatch to NO other agents (Security & Access → Allow none); ask the user to change its dispatch policy before it can reach %q", target.Name)
+			return AgentRecord{}, "", fmt.Errorf("agents(run): this agent is set to dispatch to NO other agents (Security & Access → Allow none); ask the user to change its dispatch policy before it can reach %q", target.Name)
 		case dispatchOnly:
 			if !dispatchListContains(t.agent, target.ID) {
-				return "", fmt.Errorf("agents(run): agent %q is not on this agent's dispatch allow list; ask the user to add it (Security & Access) or change the policy to Allow all", target.Name)
+				return AgentRecord{}, "", fmt.Errorf("agents(run): agent %q is not on this agent's dispatch allow list; ask the user to add it (Security & Access) or change the policy to Allow all", target.Name)
 			}
 		case dispatchExcept:
 			if dispatchListContains(t.agent, target.ID) {
-				return "", fmt.Errorf("agents(run): agent %q is on this agent's dispatch block list; ask the user to remove it (Security & Access) to reach it", target.Name)
+				return AgentRecord{}, "", fmt.Errorf("agents(run): agent %q is on this agent's dispatch block list; ask the user to remove it (Security & Access) to reach it", target.Name)
 			}
 			if target.Hidden {
-				return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or switch this agent to Only-allow and add it", target.Name, target.Name)
+				return AgentRecord{}, "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or switch this agent to Only-allow and add it", target.Name, target.Name)
 			}
 		default: // dispatchAll
 			if target.Hidden {
-				return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or add it to this agent's dispatch allow list", target.Name, target.Name)
+				return AgentRecord{}, "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or add it to this agent's dispatch allow list", target.Name, target.Name)
 			}
 		}
 	}
@@ -744,9 +807,17 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		if !origin.allows(target) {
 			Log("[orchestrate.agents.run] blocked transitive dispatch %s → %s: not permitted by originator %s",
 				t.agent.ID, target.ID, origin.AgentID)
-			return "", fmt.Errorf("agents(run): %q is not reachable on this dispatch. You are running on behalf of %q, whose dispatch policy does not permit %q — a delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted",
+			return AgentRecord{}, "", fmt.Errorf("agents(run): %q is not reachable on this dispatch. You are running on behalf of %q, whose dispatch policy does not permit %q — a delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted",
 				target.Name, origin.AgentName, target.Name, target.Name)
 		}
+	}
+	return target, msg, nil
+}
+
+func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
+	target, msg, err := t.agentsRunGate(args)
+	if err != nil {
+		return "", err
 	}
 	// Per-turn dispatch caps — the hard stop for a chat agent that re-fires
 	// agents(run, X) round after round in ONE turn. dispatchDepth (recursion)
@@ -793,11 +864,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// async promotion, which orchestrate doesn't do (dispatch is sync).
 	subSessID := "dispatch:" + parentSessID + ":" + target.ID
 	subSess := &ToolSession{
-		LLM:               t.app.LLM,
-		LeadLLM:           t.app.LeadLLM,
-		Username:          t.user,
-		DB:                t.udb,
-		ChatSessionID:     subSessID,
+		LLM:           t.app.LLM,
+		LeadLLM:       t.app.LeadLLM,
+		Username:      t.user,
+		DB:            t.udb,
+		ChatSessionID: subSessID,
+		// A dispatch runs under its own id so its ephemeral state stays off the
+		// caller's thread; anything it starts in the background still belongs
+		// to the thread. See ToolSession.DeliverySessionID.
+		DeliverySessionID: parentSessID,
 		AgentID:           target.ID,
 		DeniedCredentials: credentialDenySet(target, t.user),
 		SubAgentRunner:    t.runPipelineSubAgent,
@@ -1076,4 +1151,98 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		Log("[orchestrate.agents.run] WARN persist dispatch sub-session %s: %v", subSessID, err)
 	}
 	return fmt.Sprintf("From %s:\n\n%s", target.Name, cleanReply), nil
+}
+
+// agentsDispatchPolicy is how a dispatch behaves when the caller has handed the
+// work off rather than waited for it.
+//
+// Detaching is driven by `await`, not by a duration, and that is the deliberate
+// exception to "the framework decides, not the model". The framework can read
+// how long a render takes off its backend; it cannot read whether THIS turn's
+// reply depends on the answer coming back. Only the caller knows that, it is a
+// question the caller can actually answer, and getting it wrong in the other
+// direction is worse: a turn that needed the answer and got "started" instead
+// writes its reply around a hole.
+//
+// So an awaited dispatch always waits, on every surface. An un-awaited one
+// always detaches, on every surface — a caller that has said it is not waiting
+// has no reason to hold the conversation open even for a fast sub-agent.
+func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
+	if !allowRun {
+		return DetachPolicy{} // read-only variant: nothing here can detach
+	}
+	handoff := func(args map[string]any, _ *ToolSession) bool {
+		return strings.TrimSpace(stringArg(args, "action")) == "run" &&
+			!boolArgDefault(args, "await", true)
+	}
+	return DetachPolicy{
+		Tool: "agents",
+		// Duration never decides: an awaited dispatch waits however long it
+		// takes, and a handoff detaches however quick it might have been.
+		Always: handoff,
+		// Everything refusable about a dispatch — target, policy, cycle,
+		// authority — checked while the model still has a round to fix it in.
+		// Detached, "that agent is hidden" arrives as a wake with no turn left
+		// to correct it, and the agent invents a reason.
+		Preflight: func(args map[string]any, sess *ToolSession) error {
+			if !handoff(args, sess) {
+				return nil
+			}
+			_, _, err := t.agentsRunGate(args)
+			return err
+		},
+		Detached: func(args map[string]any, d *ToolSession) (string, error) {
+			target, msg, err := t.agentsRunGate(args)
+			if err != nil {
+				return "", err
+			}
+			// The STANDALONE dispatch entry, not this turn's inline path.
+			//
+			// agentsRunAction builds its sub-agent against the live chatTurn —
+			// its SSE stream, its activity wrapper, its per-turn dispatch
+			// counters. Every one of those belongs to a turn that has ended by
+			// the time this runs: the stream is closed, and the counters would
+			// be mutated from a goroutine racing the turn that owns them. This
+			// path is the one channels and scheduled fires already use, and it
+			// builds its own session, run and catalog with no parent turn.
+			res, rerr := t.app.RunAgentSyncContinuingRich(d.Context(), AgentSyncRun{
+				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
+				SubSessionID: "dispatch:" + t.chatSessionID() + ":" + target.ID,
+				// Where a picture the sub-agent makes has to come home to.
+				DeliverySessionID: d.DeliverySession(),
+				Message:           msg,
+			})
+			out := res.Text
+			// Fenced exactly as the inline path fences it. A sub-agent's answer
+			// is outside content whichever way it arrives, and a detached one
+			// lands in a wake note that does no fencing of its own.
+			return fenceAgentsOutput(out, rerr)
+		},
+		Label: func(args map[string]any) string {
+			return "agents run: " + truncateObs(stringArg(args, "agent"), 40)
+		},
+	}
+}
+
+// boolArgDefault reads a boolean argument, falling back when the model omitted
+// it. A missing `await` must mean "I am waiting" — the safe reading, since a
+// caller that needed the answer and did not get it writes its reply around a
+// hole, while a caller that would have handed off merely waits.
+func boolArgDefault(args map[string]any, key string, def bool) bool {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return def
+	}
+	switch b := v.(type) {
+	case bool:
+		return b
+	case string:
+		switch strings.ToLower(strings.TrimSpace(b)) {
+		case "true", "yes", "1":
+			return true
+		case "false", "no", "0":
+			return false
+		}
+	}
+	return def
 }

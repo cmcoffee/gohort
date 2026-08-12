@@ -61,6 +61,19 @@ type ChannelThreads interface {
 	Deliver(owner, service, chatID, handle, text, agentName string, images []string) error
 }
 
+// ChannelSearcher is the OPTIONAL search capability a transport may add beside
+// ChannelThreads (checked by type assertion, so implementing the base seam
+// stays sufficient). It answers "what was said about X in this conversation"
+// over the FULL stored history — read_chat's tail cannot, and pushing whole
+// feeds into an agent's context so it could would trade the entire context
+// budget for what is properly a lookup.
+type ChannelSearcher interface {
+	// SearchMessages returns messages in one conversation whose text contains
+	// query (case-insensitive), NEWEST FIRST, capped at limit. The caller
+	// enforces channel scope, exactly as it does for Messages.
+	SearchMessages(owner, chatID, query string, limit int) []ChannelLine
+}
+
 var (
 	channelThreads   ChannelThreads
 	channelThreadsMu sync.RWMutex

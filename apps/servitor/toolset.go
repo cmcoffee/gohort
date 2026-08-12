@@ -230,7 +230,17 @@ func resolveToolset(ctx context.Context, owner string, a Appliance) resolvedTool
 	// Servitor's private posture pins the route stage to the worker MODEL tier;
 	// it does not block outbound calls, and an api-mode tool bound to this
 	// appliance is an outbound call the owner explicitly sanctioned.
-	sess := &ToolSession{Username: owner, DB: authDBOrNil()}
+	sess := &ToolSession{Username: owner, DB: authDBOrNil(), Ctx: ctx}
+	// A bound tool must behave the same here as it does in the agent that
+	// authored it. An agent's session carries a workspace, so a tool that
+	// downloads a file, uses save_to, or takes an upload parameter works there
+	// and fails here with a message about a missing workspace — the same class
+	// of "looks configured, fails at call time" gap the missing DB handle was.
+	// Same directory the user's agents write to; servitor gains no path of its
+	// own, it just stops being the odd caller out.
+	if ws, err := EnsureWorkspaceDir(owner); err == nil {
+		sess.WorkspaceDir = ws
+	}
 	posture := map[string]string{}
 
 	for _, b := range a.Toolset {
@@ -447,8 +457,13 @@ func (T *Servitor) handleBindableTools(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	type row struct {
-		Name     string `json:"name"`
-		Desc     string `json:"desc,omitempty"`
+		Name string `json:"name"`
+		Desc string `json:"desc,omitempty"`
+		// Group is the tool's self-declared Category, the same label the agent
+		// tool picker groups by — so a user binding tools to an appliance reads
+		// the same organization they already know from an agent's toolkit,
+		// including the per-server "MCP: <name>" headings.
+		Group    string `json:"group,omitempty"`
 		Mode     string `json:"mode,omitempty"`
 		Cred     string `json:"credential,omitempty"`
 		Bound    bool   `json:"bound"`
@@ -469,8 +484,14 @@ func (T *Servitor) handleBindableTools(w http.ResponseWriter, r *http.Request) {
 			desc = desc[:160] + "…"
 		}
 		b, isBound := bound[t.Name]
+		group := strings.TrimSpace(t.Category)
+		if group == "" {
+			// Same fallback the agent picker uses for a user's own authored
+			// tools, rather than a generic "Other" bucket they get lost in.
+			group = "My Tools"
+		}
 		out = append(out, row{
-			Name: t.Name, Desc: desc, Mode: t.Mode, Cred: t.Credential,
+			Name: t.Name, Desc: desc, Group: group, Mode: t.Mode, Cred: t.Credential,
 			Bound: isBound, Posture: b.Posture, Snapshot: b.Snapshot,
 			Changed: isBound && b.BodyHash != "" && b.BodyHash != toolBodyHash(t),
 		})

@@ -62,6 +62,48 @@ func TestApprovalBelongsToAgent(t *testing.T) {
 	}
 }
 
+// TestSuggestionsStayOutOfTheConversation — a scope_tool record is an offer, not
+// a request: the tool already works and nothing is waiting on the user. It must
+// not render as a pending_approval card in the thread (nor, via _pending, count
+// toward the 🔑 badge), or routine curation reads as a permission to grant.
+func TestSuggestionsStayOutOfTheConversation(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	savedRoot := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = savedRoot })
+	if _, err := saveAgent(db, AgentRecord{ID: "a1", Owner: "u", Name: "A", OrchestratorPrompt: "x"}); err != nil {
+		t.Fatalf("saveAgent: %v", err)
+	}
+	SaveAuthorization(db, Authorization{Owner: "u", Action: "scope_tool", Agent: "a1", Brief: "get_meme"})
+	if blocks := pendingApprovalBlocks(db, "u", "a1"); len(blocks) != 0 {
+		t.Errorf("a suggestion must not render as an approval card, got %+v", blocks)
+	}
+	// A real request on the same agent still surfaces — the filter is by kind,
+	// not a blanket mute.
+	SaveAuthorization(db, Authorization{Owner: "u", Action: "autonomous_tool", Agent: "a1", Brief: "send_message"})
+	blocks := pendingApprovalBlocks(db, "u", "a1")
+	if len(blocks) != 1 || blocks[0].Data["action"] != "autonomous_tool" {
+		t.Errorf("a genuine request must still render, got %+v", blocks)
+	}
+}
+
+// The kinds must not overlap: a suggestion offering an "Always allow" button
+// would promise a standing grant, and a request quietly demoted to a suggestion
+// would drop out of the badge while still blocking work.
+func TestSuggestionAndRequestKindsAreDisjoint(t *testing.T) {
+	for _, action := range []string{"send_message", "", "delegate", "autonomous_tool", "activate_sub_agent", buildAgentAction, "bind_thread", "converse_contact"} {
+		if approvalIsSuggestion(action) {
+			t.Errorf("action %q blocks work — it is a request, not a suggestion", action)
+		}
+	}
+	if !approvalIsSuggestion("scope_tool") {
+		t.Error("scope_tool refuses nothing and blocks nothing — it is a suggestion")
+	}
+	if approvalIsSuggestion("scope_tool") && approvalAlwaysMeans("scope_tool") {
+		t.Error("a suggestion must never offer the Always-allow button")
+	}
+}
+
 // TestApprovalDisplayCoversQueuedActions — the card's copy comes from the same
 // labeler the Permissions pane uses. autonomous_tool and scope_tool used to
 // fall through to the raw agent id + bare tool name, which reads as noise in a

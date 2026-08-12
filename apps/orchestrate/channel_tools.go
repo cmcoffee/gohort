@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -77,7 +78,7 @@ func relativeAge(now, then time.Time) string {
 func init() {
 	RegisterReservedToolName(
 		// channel-scoped messaging
-		"send_message", "list_chats", "read_chat", "list_members",
+		"send_message", "list_chats", "read_chat", "list_members", "search_chat",
 		// operator / fleet
 		"message_contact", "notify_me", "await_result", "delegate",
 		"request_thread_binding", "release_thread_binding", "set_thread_wake",
@@ -229,7 +230,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		return "", "", false
 	}
 
-	return []AgentToolDef{
+	tools := []AgentToolDef{
 		{
 			Tool: Tool{
 				Name:        "list_chats",
@@ -450,6 +451,84 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 			},
 		},
 	}
+	// search_chat — the retrieval half of "channels store, cortex pulls". An
+	// inbound-only channel with no wake accumulates history nobody pushed into
+	// the agent's context; this is how "what was the last thing said about X"
+	// gets answered from another conversation without that feed living in the
+	// prompt. Present only when the transport implements the optional
+	// ChannelSearcher capability, so a minimal transport still registers.
+	if searcher, ok := ct.(ChannelSearcher); ok {
+		tools = append(tools, AgentToolDef{
+			Tool: Tool{
+				Name: "search_chat",
+				Description: "Search past messages on your channels for a word or phrase — the way to answer \"what was the last thing said about X?\" from a conversation you aren't currently reading. " +
+					"Searches the FULL stored history (read_chat only shows the recent tail), newest matches first. Case-insensitive. Read-only.",
+				Parameters: map[string]ToolParam{
+					"query":   {Type: "string", Description: "The word or phrase to find — a topic, a name, an error string."},
+					"chat_id": {Type: "string", Description: "Optional: limit to one conversation (chat_id from list_chats). Omit to search every conversation on your channels."},
+					"limit":   {Type: "number", Description: "Max matches to return (default 10)."},
+				},
+				Required: []string{"query"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				query := strings.TrimSpace(oArgStr(args, "query"))
+				if query == "" {
+					return "", fmt.Errorf("query is required")
+				}
+				limit := oArgInt(args, "limit")
+				if limit <= 0 {
+					limit = 10
+				}
+				chatID := strings.TrimSpace(oArgStr(args, "chat_id"))
+				type hit struct {
+					chat string
+					line ChannelLine
+				}
+				var hits []hit
+				for _, t := range scopedThreads() {
+					if chatID != "" && t.ChatID != chatID {
+						continue
+					}
+					name := chFirst(t.DisplayName, t.Handle, t.ChatID)
+					for _, ln := range searcher.SearchMessages(owner, t.ChatID, query, limit) {
+						hits = append(hits, hit{chat: name, line: ln})
+					}
+				}
+				if chatID != "" && len(hits) == 0 {
+					// Distinguish "no matches" from "not your chat" — the scope
+					// filter above silently skips a chat_id outside the agent's
+					// channels, and that must not read as an empty history.
+					inScope := false
+					for _, t := range scopedThreads() {
+						if t.ChatID == chatID {
+							inScope = true
+							break
+						}
+					}
+					if !inScope {
+						return "", fmt.Errorf("no chat %q on your channels — use a chat_id from list_chats", chatID)
+					}
+				}
+				if len(hits) == 0 {
+					return fmt.Sprintf("No messages mentioning %q on your channels.", query), nil
+				}
+				// Newest first across conversations; RFC3339 timestamps sort
+				// lexically. Then cap — per-chat search already capped, this
+				// bounds the cross-chat union.
+				sort.SliceStable(hits, func(i, j int) bool { return hits[i].line.Timestamp > hits[j].line.Timestamp })
+				if len(hits) > limit {
+					hits = hits[:limit]
+				}
+				var b strings.Builder
+				for _, h := range hits {
+					who := chFirst(h.line.Sender, h.line.Role)
+					fmt.Fprintf(&b, "[%s] %s — %s: %s\n", h.chat, localChatTime(h.line.Timestamp), who, h.line.Text)
+				}
+				return strings.TrimSpace(b.String()), nil
+			},
+		})
+	}
+	return tools
 }
 
 // looksLikeHandle moved to core.LooksLikeHandle — the canonical, shared handle

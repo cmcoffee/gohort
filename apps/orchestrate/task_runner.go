@@ -32,7 +32,7 @@ func (T *OrchestrateApp) installTaskRunner() {
 		// where it matters — see orchUpdatePayload.ChannelChatID.
 		originChat := strings.TrimSpace(sess.ChannelChatID)
 		originHandle := strings.TrimSpace(sess.ChannelHandle)
-		sessionID := strings.TrimSpace(sess.ChatSessionID)
+		sessionID := sess.DeliverySession()
 		if sessionID == "" {
 			// Nowhere to deliver the result. Better to run inline than to
 			// finish into a void — core falls back when this errors.
@@ -67,7 +67,14 @@ func (T *OrchestrateApp) installTaskRunner() {
 			Describe("task", agentName, label).
 			Parent(parentID)
 
+		// Findable, and stoppable, from inside the conversation. The runs
+		// registry keys by user and agent, and this run deliberately carries no
+		// session id — so without this nothing could answer the only question
+		// the agent actually has: what did I start in HERE, and can I stop it.
+		RegisterBackgroundJob(sessionID, TaskRun{ID: run.ID, Label: label}, run.Cancel)
+
 		go func() {
+			defer CompleteBackgroundJob(sessionID, run.ID)
 			defer func() {
 				if r := recover(); r != nil {
 					run.Complete(RunStatusFailed)
@@ -78,7 +85,15 @@ func (T *OrchestrateApp) installTaskRunner() {
 			if ctx.Err() != nil {
 				// Cancelled. The user already knows they stopped it; announcing
 				// it again in the conversation is noise.
+				//
+				// The SET it belonged to stops with it. Without this the button
+				// lies: stop the second of four renders and the next wake
+				// cheerfully starts the third, because the ledger still says
+				// there are pieces left and nothing told it otherwise.
 				run.Complete(RunStatusCanceled)
+				if n := CloseTaskSeriesForSession(sessionID); n > 0 {
+					Log("[task] cancelled run %s — closed %d set(s) still running in session %s", run.ID, n, sessionID)
+				}
 				return
 			}
 			if err != nil {
@@ -147,6 +162,14 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
 			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send — they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
 		}
+		// More of this work to do. It joins the ACT half deliberately: the
+		// count and the order belong to this one turn, and an instruction to
+		// "start the next one" left in the thread is one a later turn can read
+		// again and act on, long after the series finished. See
+		// core.SeriesContinuation.
+		if c := strings.TrimSpace(out.Continuation); c != "" {
+			act += "\n" + c
+		}
 	}
 	return wakeNote{prompt: fact.String() + act, history: strings.TrimSpace(fact.String())}
 }
@@ -202,10 +225,10 @@ func (T *OrchestrateApp) startWakeTurn(origin taskOrigin, note wakeNote) error {
 		Username:      origin.User,
 		ChannelChatID: origin.ChatID,
 		ChannelHandle: origin.Handle,
-		Prompt:      note.prompt,
-		HistoryNote: note.history,
-		Name:        "background task",
-		Surface:     "session",
+		Prompt:        note.prompt,
+		HistoryNote:   note.history,
+		Name:          "background task",
+		Surface:       "session",
 	}, false)
 }
 

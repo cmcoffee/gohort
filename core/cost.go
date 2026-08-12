@@ -27,6 +27,36 @@ type CostRates struct {
 	LeadOutputPer1K   float64 `json:"lead_output_per_1k"`
 	SearchPerCall     float64 `json:"search_per_call"`
 	ImagePerCall      float64 `json:"image_per_call"`
+	// Cache multipliers, applied to the tier's INPUT rate. A prompt served
+	// from cache bills at a fraction of an ordinary input token and one
+	// written to cache at slightly more, so pricing the cached share at the
+	// full input rate overstates a cache-heavy turn as badly as ignoring it
+	// understates one. Zero means "use the defaults below" rather than "free",
+	// because every deployment predates these fields and a stored zero must
+	// not silently make the largest part of a prompt cost nothing.
+	CacheReadMultiplier  float64 `json:"cache_read_multiplier,omitempty"`
+	CacheWriteMultiplier float64 `json:"cache_write_multiplier,omitempty"`
+}
+
+// Default cache multipliers, matching the published Anthropic ratios: a read is
+// a tenth of an input token, a write is a quarter dearer than one.
+const (
+	defaultCacheReadMultiplier  = 0.10
+	defaultCacheWriteMultiplier = 1.25
+)
+
+func (r CostRates) cacheReadMultiplier() float64 {
+	if r.CacheReadMultiplier > 0 {
+		return r.CacheReadMultiplier
+	}
+	return defaultCacheReadMultiplier
+}
+
+func (r CostRates) cacheWriteMultiplier() float64 {
+	if r.CacheWriteMultiplier > 0 {
+		return r.CacheWriteMultiplier
+	}
+	return defaultCacheWriteMultiplier
 }
 
 // Estimate computes the estimated dollar cost of a UsageDiff under
@@ -39,6 +69,11 @@ func (r CostRates) Estimate(d UsageDiff) float64 {
 	cost += float64(d.WorkerOutput) / 1000.0 * r.WorkerOutputPer1K
 	cost += float64(d.LeadInput) / 1000.0 * r.LeadInputPer1K
 	cost += float64(d.LeadOutput) / 1000.0 * r.LeadOutputPer1K
+	// The cached share of each prompt, at its own weight.
+	cost += float64(d.WorkerCacheRead) / 1000.0 * r.WorkerInputPer1K * r.cacheReadMultiplier()
+	cost += float64(d.WorkerCacheWrite) / 1000.0 * r.WorkerInputPer1K * r.cacheWriteMultiplier()
+	cost += float64(d.LeadCacheRead) / 1000.0 * r.LeadInputPer1K * r.cacheReadMultiplier()
+	cost += float64(d.LeadCacheWrite) / 1000.0 * r.LeadInputPer1K * r.cacheWriteMultiplier()
 	cost += float64(d.SearchCalls) * r.SearchPerCall
 	cost += float64(d.ImageCalls) * r.ImagePerCall
 	return cost
@@ -159,7 +194,7 @@ func (r CostRates) AsJSON() string {
 func FormatUsage(d UsageDiff) string {
 	rates := GetCostRates()
 	tokens := fmt.Sprintf("tokens: worker in=%d out=%d, lead in=%d out=%d",
-		d.WorkerInput, d.WorkerOutput, d.LeadInput, d.LeadOutput)
+		d.WorkerPrompt(), d.WorkerOutput, d.LeadPrompt(), d.LeadOutput)
 	searches := fmt.Sprintf("searches: %d", d.SearchCalls)
 	images := fmt.Sprintf("images: %d", d.ImageCalls)
 	var cost string
@@ -195,8 +230,8 @@ func FormatUsageReport(label string, d UsageDiff) string {
 	return fmt.Sprintf(
 		"[%s]\n  Worker tokens: in=%d out=%d\n  Lead tokens:   in=%d out=%d\n  Searches:      %d\n  Images:        %d\n  Est. cost:     %s",
 		label,
-		d.WorkerInput, d.WorkerOutput,
-		d.LeadInput, d.LeadOutput,
+		d.WorkerPrompt(), d.WorkerOutput,
+		d.LeadPrompt(), d.LeadOutput,
 		d.SearchCalls, d.ImageCalls, cost)
 }
 
@@ -250,6 +285,13 @@ type DailyCost struct {
 	LeadOutput   int64   `json:"lead_output"`
 	SearchCalls  int64   `json:"search_calls"`
 	ImageCalls   int64   `json:"image_calls"`
+	// Cached prompt, kept apart so the chart can price it correctly. Additive
+	// fields: rows written before these existed read back as zero, which is
+	// what they were — nothing was recorded then.
+	WorkerCacheRead  int64 `json:"worker_cache_read,omitempty"`
+	WorkerCacheWrite int64 `json:"worker_cache_write,omitempty"`
+	LeadCacheRead    int64 `json:"lead_cache_read,omitempty"`
+	LeadCacheWrite   int64 `json:"lead_cache_write,omitempty"`
 	ExternalCost float64 `json:"external_cost"` // metered source-hook / credential spend folded in at aggregation (already priced)
 	RunCount     int     `json:"run_count"`
 }
@@ -357,6 +399,10 @@ func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 		d.LeadOutput += r.Usage.LeadOutput
 		d.SearchCalls += r.Usage.SearchCalls
 		d.ImageCalls += r.Usage.ImageCalls
+		d.WorkerCacheRead += r.Usage.WorkerCacheRead
+		d.WorkerCacheWrite += r.Usage.WorkerCacheWrite
+		d.LeadCacheRead += r.Usage.LeadCacheRead
+		d.LeadCacheWrite += r.Usage.LeadCacheWrite
 		d.RunCount++
 	}
 	if days > 0 {
@@ -463,6 +509,10 @@ func ReportSessions(label string, sessions ...*Session) func() {
 			d.WorkerOutput += x.WorkerOutput
 			d.LeadInput += x.LeadInput
 			d.LeadOutput += x.LeadOutput
+			d.WorkerCacheRead += x.WorkerCacheRead
+			d.WorkerCacheWrite += x.WorkerCacheWrite
+			d.LeadCacheRead += x.LeadCacheRead
+			d.LeadCacheWrite += x.LeadCacheWrite
 		}
 		if d == (UsageDiff{}) {
 			return
@@ -527,6 +577,10 @@ func (us *UsageScope) Diff() UsageDiff {
 		d.WorkerOutput += cur.WorkerOutput - start.WorkerOutput
 		d.LeadInput += cur.LeadInput - start.LeadInput
 		d.LeadOutput += cur.LeadOutput - start.LeadOutput
+		d.WorkerCacheRead += cur.WorkerCacheRead - start.WorkerCacheRead
+		d.WorkerCacheWrite += cur.WorkerCacheWrite - start.WorkerCacheWrite
+		d.LeadCacheRead += cur.LeadCacheRead - start.LeadCacheRead
+		d.LeadCacheWrite += cur.LeadCacheWrite - start.LeadCacheWrite
 	}
 	g := ProcessUsage().Diff(us.globalStart)
 	d.SearchCalls = g.SearchCalls

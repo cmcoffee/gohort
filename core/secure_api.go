@@ -80,6 +80,19 @@ const (
 // (which doesn't need the value) never has to decrypt it. ParamName
 // applies to header (the header name) and query (the query param).
 type SecureCredential struct {
+	// inlineSecret carries the secret for a credential SYNTHESIZED in-process
+	// rather than stored — the media upload bridge is the one caller, handing
+	// over the API key from a config the operator typed into an STT form.
+	//
+	// Unexported on purpose, and that is the whole security argument. dispatch
+	// deliberately strips caller-supplied Authorization headers (auth comes
+	// from the credential, never from the call), and the args map is reachable
+	// by a model on api-mode tools — so neither of those could carry a secret
+	// safely. A private field on a value passed inside the package can be set
+	// by core and read by dispatch, never serialized to the store, never
+	// present on a loaded credential, and never nameable by a model.
+	inlineSecret string
+
 	Name              string `json:"name"`
 	Type              string `json:"type"`
 	AllowedURLPattern string `json:"allowed_url_pattern"`
@@ -1301,12 +1314,29 @@ type ToolCallRequest struct {
 	// Upload, when set, makes this a streaming multipart request. Body is
 	// ignored — the form is built from Upload instead.
 	Upload *FileUpload
+	// TimeoutSecs overrides the general per-call wall-clock cap. Zero leaves it
+	// alone. For a caller whose single request IS a long-running job — a
+	// synchronous image render, where the response is the finished picture —
+	// the general cap is the wrong clock entirely.
+	TimeoutSecs int
 }
 
 // secureUploadArg keys a *FileUpload inside the dispatch args map. Underscored
 // like the other internal arg keys so it can never collide with a caller's
 // declared parameter.
 const secureUploadArg = "__upload"
+
+// secureTimeoutArg keys a per-call wall-clock override, in seconds, inside the
+// dispatch args map.
+//
+// The generic request cap is sized for an API call. A caller whose ONE request
+// is a long-running job needs its own number, and uploads already had exactly
+// this carve-out — a photo on a slow uplink outlives a 30s cap, so it got the
+// upload timeout instead. A synchronous image render is the same shape: the
+// submit IS the render, and it ran into the 30s cap while the image-render
+// deadline the operator had actually set (900s for an edit) governed only the
+// POLL loop that a synchronous backend never reaches.
+const secureTimeoutArg = "__timeout_secs"
 
 // FileUpload declares a STREAMING multipart upload. The source is read as the
 // request is written rather than buffered, so a large file never sits in memory
@@ -1328,14 +1358,14 @@ type FileUpload struct {
 // DispatchToolCallRequest is the full-shape entry point behind the
 // DispatchToolCall* wrappers.
 func (s *SecureAPI) DispatchToolCallRequest(sess *ToolSession, r ToolCallRequest) (string, error) {
-	return s.dispatchToolCallFull(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers, r.Upload)
+	return s.dispatchToolCallFull(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers, r.Upload, r.TimeoutSecs)
 }
 
 // DispatchUpload streams a file to url through the credential's governed
 // dispatch. Prefer this over building an http.Client: the allow-list, audit
 // log, rate limit, and Private-mode gate all live on this path.
 func (s *SecureAPI) DispatchUpload(sess *ToolSession, credName, urlStr, method string, up FileUpload) (string, error) {
-	return s.dispatchToolCallFull(sess, credName, urlStr, firstNonEmpty(method, "POST"), "", "", false, nil, &up)
+	return s.dispatchToolCallFull(sess, credName, urlStr, firstNonEmpty(method, "POST"), "", "", false, nil, &up, 0)
 }
 
 // DispatchToolCallCT is DispatchToolCall with an explicit request Content-Type
@@ -1364,10 +1394,10 @@ func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr,
 }
 
 func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string) (string, error) {
-	return s.dispatchToolCallFull(sess, credName, urlStr, method, body, contentType, pipeFollowing, headers, nil)
+	return s.dispatchToolCallFull(sess, credName, urlStr, method, body, contentType, pipeFollowing, headers, nil, 0)
 }
 
-func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string, up *FileUpload) (string, error) {
+func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string, up *FileUpload, timeoutSecs int) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -1400,6 +1430,9 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 		if up != nil {
 			args[secureUploadArg] = up
 		}
+		if timeoutSecs > 0 {
+			args[secureTimeoutArg] = timeoutSecs
+		}
 		return s.dispatch(synth, args, sess)
 	}
 	c, ok := s.Resolve(credName, sessUsername(sess))
@@ -1424,6 +1457,9 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 	}
 	if up != nil {
 		args[secureUploadArg] = up
+	}
+	if timeoutSecs > 0 {
+		args[secureTimeoutArg] = timeoutSecs
 	}
 	return s.dispatch(c, args, sess)
 }
@@ -1608,7 +1644,11 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// the auth-injection branch for this type. AllowedURLPattern,
 	// audit logging, rate limits, and HTTPS enforcement still apply.
 	var secret string
-	if c.Type != SecureCredNone {
+	if c.Type != SecureCredNone && c.inlineSecret != "" {
+		// A synthesized credential brings its own secret; there is nothing in
+		// the store under this name to look up.
+		secret = c.inlineSecret
+	} else if c.Type != SecureCredNone {
 		callUser := ""
 		if sess != nil {
 			callUser = sess.Username
@@ -1665,6 +1705,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// A file goes over the wire at whatever the link allows; the 30s cap
 		// that suits an API call would abort a photo on a slow uplink.
 		callTimeout = TuneDuration("tune_secure_api_upload_timeout")
+	}
+	if secs := secureTimeoutSeconds(args); secs > 0 {
+		callTimeout = time.Duration(secs) * time.Second
 	}
 	ctx, cancel := context.WithTimeout(baseCtx, callTimeout)
 	defer cancel()
@@ -1795,7 +1838,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		return s
 	}
 
-	httpClient := &http.Client{Timeout: secureAPIRequestTimeout()}
+	// Client cap must match the context cap, or the shorter of the two wins
+	// and the override above is silently undone.
+	httpClient := &http.Client{Timeout: callTimeout}
 	if c.InsecureSkipTLS {
 		// Per-credential opt-out of cert verification (self-signed / IP-addressed
 		// LAN appliances). Scoped to this credential's allow-listed host only.
@@ -1834,7 +1879,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if parsed != nil && parsed.Host != "" {
 				host = parsed.Host
 			}
-			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT — a slow LAN appliance, connection warmup, or a momentary network blip — and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, secureAPIRequestTimeout())
+			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT — a slow LAN appliance, connection warmup, or a momentary network blip — and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, callTimeout)
 		}
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}

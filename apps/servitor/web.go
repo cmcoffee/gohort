@@ -154,6 +154,17 @@ type Appliance struct {
 	// posture, and a fingerprint of the tool as approved. See toolset.go and
 	// docs/servitor-toolset-type.md.
 	Toolset []ToolBinding `json:"toolset,omitempty"`
+	// Peer fields — a STUB pointing at an appliance that lives on another
+	// gohort instance, because that instance is on the network the system
+	// answers and this one is not. Asking it a question sends the question
+	// there; the credentials, the SSH config and the accumulated knowledge
+	// never leave the far side. See peer_appliance.go.
+	PeerName string `json:"peer_name,omitempty"` // registered peer nickname
+	RemoteID string `json:"remote_id,omitempty"` // the appliance id over there
+	// RemoteKind is what the far side calls this appliance's type. Type itself
+	// holds the same value (so every branch treats it natively); this is kept
+	// so the edit form can show which picker mode created the record.
+	RemoteKind string `json:"remote_kind,omitempty"`
 	// Domain is the owner's one-paragraph account of what this target IS —
 	// "a GitLab project: issues, merge requests, pipelines, file contents". The
 	// bound tools' own descriptions carry most of the domain knowledge; what
@@ -185,6 +196,16 @@ type Appliance struct {
 	// or the map is stale, the derived view stops mentioning it and the role
 	// still routes the question to the right box.
 	MemberRoles map[string]string `json:"member_roles,omitempty"`
+	// MemberLinks are typed relations BETWEEN members — "this dump came from
+	// that box", "this GitLab project is that system's code". The generalization
+	// of LinkedRepos, which already proves the idea at appliance scope but only
+	// expresses system→repo.
+	//
+	// Without them the coordinator infers relationships from names and roles,
+	// which is guessing. With them a correlation across members is meaningful:
+	// merging events from two members nobody said were related produces a
+	// coincidence, not a finding.
+	MemberLinks []MemberLink `json:"member_links,omitempty"`
 	// Collections are knowledge-collection IDs linked to this appliance so the
 	// investigator can draw on curated external knowledge (runbooks, vendor docs,
 	// a guide) when answering — via the search_knowledge tool — alongside what it
@@ -539,6 +560,13 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// ingest, without re-sending a gigabyte. See bundle_upload.go.
 	// Tools bindable to a toolset appliance — the owner's own pool.
 	sub.HandleFunc("/api/bindable-tools", T.handleBindableTools)
+	// Serve investigations to other instances, and list what registered peers
+	// let US ask about. Wired here rather than in init because it needs T.DB.
+	T.registerPeerInvestigation()
+	T.registerPeerKnowledge()
+	T.registerPeerExec()
+	sub.HandleFunc("/api/peer-appliances", T.handlePeerAppliances)
+	sub.HandleFunc("/api/appliance-peers", T.handleAppliancePeers)
 	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
 	sub.HandleFunc("/api/bundle/ingest", T.handleBundleIngest)
 	sub.HandleFunc("/api/collections", T.handleCollectionsList)
@@ -632,6 +660,8 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		if req.Type == "" {
 			req.Type = "ssh"
 		}
+		// Set by the "remote" case, which rewrites Type to the far side's kind.
+		isRemote := false
 		switch req.Type {
 		case "command":
 			if req.Name == "" || req.Command == "" {
@@ -654,6 +684,29 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "name required", http.StatusBadRequest)
 				return
 			}
+		case "remote":
+			// "remote" is a PICKER mode, not a stored type. What gets stored is
+			// the type the far side reported, so every prompt, tool set and
+			// branch downstream treats this exactly as it would a local
+			// appliance of that kind — which is the whole point. PeerName is
+			// what says "the exec seam goes over the wire"; nothing else in the
+			// session behaves differently.
+			req.PeerName = strings.TrimSpace(req.PeerName)
+			req.RemoteID = strings.TrimSpace(req.RemoteID)
+			isRemote = true
+			if req.PeerName == "" || req.RemoteID == "" {
+				http.Error(w, "a remote system needs a peer and the appliance id on that peer", http.StatusBadRequest)
+				return
+			}
+			if _, ok := GetRemotePeer(req.PeerName); !ok {
+				http.Error(w, fmt.Sprintf("no peer named %q is registered — add it under Peers first", req.PeerName), http.StatusBadRequest)
+				return
+			}
+			if req.Name == "" {
+				http.Error(w, "name required", http.StatusBadRequest)
+				return
+			}
+			req.Type = firstNonEmptyStr(strings.TrimSpace(req.RemoteKind), "ssh")
 		case "toolset":
 			if req.Name == "" {
 				http.Error(w, "name required", http.StatusBadRequest)
@@ -675,6 +728,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			req.MemberRoles = pruneMemberRoles(req.MemberRoles, req.Members)
+			req.MemberLinks = pruneMemberLinks(req.MemberLinks, req.Members)
 		default:
 			req.Type = "ssh"
 			if req.Name == "" || req.Host == "" {
@@ -739,6 +793,9 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// Linked repos: keep only ids that resolve (own or shared) to a REPO
 		// appliance. Repo and workspace records carry none — a repo linking a
 		// repo means nothing, and a workspace already composes members.
+		if req.Type != "workspace" {
+			req.MemberLinks = nil
+		}
 		if req.Type == "repo" || req.Type == "workspace" {
 			req.LinkedRepos = nil
 		} else if len(req.LinkedRepos) > 0 {
@@ -760,6 +817,12 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.Toolset = bindToolsetTools(owner, userID, req.Toolset)
 		} else {
 			req.Toolset = nil
+		}
+		// Only a remote stub carries peer coordinates. Cleared otherwise so an
+		// edit that changes the type cannot leave a record that short-circuits
+		// to a peer while claiming to be a local SSH box.
+		if !isRemote {
+			req.PeerName, req.RemoteID = "", ""
 		}
 		if req.ID == "" {
 			req.ID = UUIDv4()
@@ -2190,7 +2253,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 		b.WriteString(cachedFacts)
 		b.WriteString("\n")
 	}
-	if gb := scopedGraphBlock(appliance); gb != "" {
+	if gb := scopedGraphPromptBlock(appliance); gb != "" {
 		b.WriteString("## System Map (components and how they connect)\n\n")
 		b.WriteString("The topology recorded in prior sessions — services, databases, apps, and their relationships. Use it to target probes precisely; re-verify live state.\n\n")
 		b.WriteString(gb)
@@ -2375,6 +2438,9 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 	// its own cleanup. Mapping a CLI tool legitimately stages scratch files.
 	{
 		rawExec := func(c context.Context, cmd string) (string, error) {
+			if strings.TrimSpace(appliance.PeerName) != "" {
+				return peerExecFor(c, appliance)(cmd)
+			}
 			if appliance.Type == "command" {
 				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
 			}
@@ -2669,7 +2735,14 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		T.runWorkspaceSession(ctx, id, userID, appliance, messages, udb)
 		return
 	}
-	if appliance.Type == "command" {
+	if strings.TrimSpace(appliance.PeerName) != "" {
+		// Reached through a peer: no connection to acquire here, because the
+		// SSH session lives on the far side. Everything ELSE about this run is
+		// ordinary — same prompts for the appliance's type, same tools, same
+		// risk gate, same knowledge — because only the exec seam differs.
+		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+			"Working %s through %s.", applianceLabel(appliance.Name, appliance.ID), appliance.PeerName)})
+	} else if appliance.Type == "command" {
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
 	} else if appliance.Type == "repo" {
 		// No connection to acquire — probes search/read the encrypted store.
@@ -2767,6 +2840,9 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// appliances, SSH with transparent reconnect for ssh-type appliances. ctx is the
 	// session context so a cancelled session aborts in-flight commands.
 	sshExec := func(cmd string) (string, error) {
+		if strings.TrimSpace(appliance.PeerName) != "" {
+			return peerExecFor(ctx, appliance)(cmd)
+		}
 		if appliance.Type == "command" {
 			return a.exec_local_ctx(ctx, cmd, appliance.WorkDir, appliance.EnvVars)
 		}
@@ -4001,6 +4077,11 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
 		}
 	}
+	// The accumulated map, traversable. Added for EVERY appliance type: the
+	// graph is per-appliance and type-agnostic, and the questions it answers
+	// ("what does this rely on", "how does this reach that") are the same
+	// whether the thing is a service, a package or a log file.
+	workerTools = append(workerTools, mapTools(appliance.ID)...)
 	// Curated linked knowledge (owner-attached collections) is searchable by the
 	// worker via search_knowledge — added for every appliance type, but only when
 	// the appliance actually has collections linked, so agents without any don't
@@ -4256,7 +4337,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					invMsg.WriteString(cachedFacts)
 					invMsg.WriteString("\n\n")
 				}
-				if gb := scopedGraphBlock(appliance); gb != "" {
+				if gb := scopedGraphPromptBlock(appliance); gb != "" {
 					invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
 					invMsg.WriteString(gb)
 					invMsg.WriteString("\n\n")

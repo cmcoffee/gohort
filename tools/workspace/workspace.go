@@ -769,8 +769,55 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 			suffix = " (cleaned up from workspace)"
 		}
 	}
-	return fmt.Sprintf("Attached %q (%s, %s) via %s channel.%s",
-		displayName, mime, humanSize(info.Size()), channel, suffix), nil
+	return fmt.Sprintf("Attached %q (%s, %s) via %s channel.%s%s",
+		displayName, mime, humanSize(info.Size()), channel, suffix, staleAttachWarning(sess, relPath, info)), nil
+}
+
+// staleAttachWarning names a file that this turn did NOT produce.
+//
+// The workspace root is per user and shared by every session, agent and turn,
+// so "a plausible-looking file in it" and "what I just made" are different
+// questions — and the attach path could not tell them apart. What that looked
+// like live: a render never happened, the agent listed the workspace, picked
+// two gen-*.png from an earlier session, attached them, and presented them as
+// the variations it had just been asked for. Both calls returned "Attached",
+// because both were.
+//
+// A warning rather than a refusal: re-sending an older picture is a real and
+// ordinary request ("send me that one again"). What must not happen is it
+// passing SILENTLY as this turn's work.
+func staleAttachWarning(sess *ToolSession, relPath string, info os.FileInfo) string {
+	if sess == nil || sess.Detached {
+		return "" // a detached call has no turn to have staged anything in
+	}
+	staged := sess.StagedFiles()
+	if len(staged) == 0 {
+		return "" // nothing was produced this turn, so nothing is being confused with it
+	}
+	base := filepath.Base(relPath)
+	for _, name := range staged {
+		if name == relPath || filepath.Base(name) == base {
+			return ""
+		}
+	}
+	return fmt.Sprintf(" NOTE: this file is NOT one your tools produced this turn (it was already in the workspace, last written %s ago). This turn produced: %s."+
+		" If you meant to send what you just made, attach one of those instead — do not describe this one as something you have just created.",
+		humanAge(time.Since(info.ModTime())), strings.Join(staged, ", "))
+}
+
+// humanAge renders a file's age the way the warning needs to read it: coarse,
+// and never in a unit that invites the model to quote it at the user.
+func humanAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "under a minute"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d hours", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d days", int(d.Hours()/24))
+	}
 }
 
 // attachBytes delivers already-resolved bytes on the channel their type calls
