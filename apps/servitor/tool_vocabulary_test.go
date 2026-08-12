@@ -21,7 +21,7 @@ func vocabAppliances() []Appliance {
 // TestTheQuestionToolNamesServitor — the owner says "ask Servitor"; the tool has
 // to contain that word for the agent to make the connection.
 func TestTheQuestionToolNamesServitor(t *testing.T) {
-	def := AskSystemToolDef(nil, "craig", "a1", vocabAppliances())
+	def := AskSystemToolDef(nil, "craig", "a1", vocabAppliances(), nil)
 	desc := def.Tool.Description
 	if !strings.Contains(desc, "Servitor") {
 		t.Errorf("ask_system never names Servitor, so an agent cannot map the owner's word "+
@@ -40,7 +40,7 @@ func TestTheQuestionToolNamesServitor(t *testing.T) {
 // fans the question across every member. An agent front-ending a workspace has
 // to be told that, or it answers about the estate one machine at a time.
 func TestAWorkspaceIsNotDescribedAsAMachine(t *testing.T) {
-	list := connectedSystemList(vocabAppliances())
+	list := connectedSystemList(vocabAppliances(), nil)
 	if !strings.Contains(list, "Lab Estate") {
 		t.Fatalf("the workspace is missing from the list: %s", list)
 	}
@@ -58,9 +58,9 @@ func TestAWorkspaceIsNotDescribedAsAMachine(t *testing.T) {
 // and the two lists drifting is how one tool learns about workspaces and the
 // other does not.
 func TestBothToolsShareOneList(t *testing.T) {
-	ask := AskSystemToolDef(nil, "craig", "a1", vocabAppliances())
+	ask := AskSystemToolDef(nil, "craig", "a1", vocabAppliances(), nil)
 	req := RequestCapabilityToolDef(nil, nil, "a1", vocabAppliances())
-	list := connectedSystemList(vocabAppliances())
+	list := connectedSystemList(vocabAppliances(), nil)
 	for name, desc := range map[string]string{
 		"ask_system":         ask.Tool.Description,
 		"request_capability": req.Tool.Description,
@@ -85,5 +85,20 @@ func TestEveryApplianceKindReadsAsItself(t *testing.T) {
 	}
 	if applianceKindNote(Appliance{}) != "" {
 		t.Error("an untyped (legacy) appliance is annotated")
+	}
+}
+
+// TestAWorkspaceMemberSaysHowItIsReached — a member listed with no explanation
+// looks like an independent connection, and the agent loses the one fact that
+// tells it when to use the group instead.
+func TestAWorkspaceMemberSaysHowItIsReached(t *testing.T) {
+	via := map[string]string{"box-1": "Lab Estate"}
+	list := connectedSystemList(vocabAppliances(), via)
+	if !strings.Contains(list, "member of Lab Estate") {
+		t.Errorf("a workspace member does not say how it is reachable:\n%s", list)
+	}
+	// The workspace keeps its own annotation — both facts have to survive.
+	if !strings.Contains(list, "GROUP") {
+		t.Errorf("the workspace lost its group annotation:\n%s", list)
 	}
 }

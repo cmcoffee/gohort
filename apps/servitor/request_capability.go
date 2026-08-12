@@ -41,6 +41,43 @@ import (
 //
 // Console callers (no agent) are always enabled: that is the owner at their own
 // keyboard, which is who the enable would be protecting.
+// applianceAskableForAgent reports whether an agent may ASK about a machine:
+// connected to it directly, or connected to a workspace that contains it.
+//
+// A workspace exists to be a handle for the machines inside it, so a connection
+// to one reaches its members for questions. Without this an agent granted an
+// estate could ask about "the estate" and be refused on every machine in it by
+// name — the general question succeeding and the obvious follow-up failing.
+//
+// Deliberately WIDER than applianceEnabledForAgent, and used only where the
+// question is "may this be asked about". Approved command tools still key on
+// the narrow one: inheriting a shell across a group is not something anyone
+// chose by putting two boxes in a workspace together.
+func applianceAskableForAgent(udb Database, agentID, applianceID string) bool {
+	if applianceEnabledForAgent(udb, agentID, applianceID) {
+		return true
+	}
+	if udb == nil || strings.TrimSpace(agentID) == "" {
+		return false
+	}
+	want := strings.ToLower(strings.TrimSpace(applianceID))
+	for _, k := range udb.Keys(applianceTable) {
+		var a Appliance
+		if !udb.Get(applianceTable, k, &a) || a.Type != "workspace" {
+			continue
+		}
+		if !applianceEnabledForAgent(udb, agentID, a.ID) {
+			continue
+		}
+		for _, m := range a.Members {
+			if strings.ToLower(strings.TrimSpace(m)) == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func applianceEnabledForAgent(udb Database, agentID, applianceID string) bool {
 	if strings.TrimSpace(agentID) == "" {
 		return true
@@ -156,7 +193,7 @@ func RequestCapabilityToolDef(udb Database, chat FactChatFunc, agentID string, c
 		"Nothing runs now, and nothing runs later without their approval. " +
 		"Use this when you need to do something on a system and have no tool for it; do not use it to run something once — it exists to create a lasting, named ability. " +
 		"After calling it, tell the person what you asked for and move on."
-	if list := connectedSystemList(connected); list != "" {
+	if list := connectedSystemList(connected, nil); list != "" {
 		desc += " Systems you are connected to and may ask about: " + list + "."
 	}
 	return AgentToolDef{

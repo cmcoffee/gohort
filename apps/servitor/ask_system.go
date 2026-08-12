@@ -35,7 +35,7 @@ const askSystemTimeout = 5 * time.Minute
 // connected is the provider's sorted appliance list, named in the description
 // for the same reason request_capability names it: an agent that cannot see
 // its reach answers "no I can't" to a machine it holds.
-func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance) AgentToolDef {
+func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance, via map[string]string) AgentToolDef {
 	// "Servitor" appears by name because that is the word the OWNER uses. The
 	// description described the capability perfectly and never named the thing
 	// it belonged to, so an agent holding this tool answered "I have no
@@ -46,7 +46,7 @@ func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance
 		"Strictly read-only: it can inspect, never change. " +
 		"Slow (tens of seconds) — ask one well-formed question rather than many small ones. " +
 		"For ACTIONS (restart, deploy, clean up), use request_capability or an approved tool instead."
-	if list := connectedSystemList(connected); list != "" {
+	if list := connectedSystemList(connected, via); list != "" {
 		desc += " Systems you may ask Servitor about: " + list + "."
 	}
 	return AgentToolDef{
@@ -67,7 +67,10 @@ func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance
 			if !ok {
 				return "", fmt.Errorf("no system called %q — use one of the names in this tool's description exactly", system)
 			}
-			if !applianceEnabledForAgent(udb, agentID, appliance.ID) {
+			// Askable, not merely connected: a member of a granted workspace
+			// is reachable here. The narrow check would list a machine in this
+			// tool's own description and then refuse it by name.
+			if !applianceAskableForAgent(udb, agentID, appliance.ID) {
 				return "", fmt.Errorf("you are not enabled for %s. Tell the person the owner has to connect you to that system in Servitor before you can ask about it",
 					applianceLabel(appliance.Name, appliance.ID))
 			}
@@ -106,15 +109,23 @@ func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance
 // Second, the kind tells it what to expect. Asking a bundle of uploaded logs and
 // asking a live SSH host are different acts with different latencies, and
 // nothing in a name distinguishes them.
-func connectedSystemList(connected []Appliance) string {
+func connectedSystemList(connected []Appliance, via map[string]string) string {
 	if len(connected) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(connected))
 	for _, a := range connected {
 		label := applianceLabel(a.Name, a.ID)
-		if k := applianceKindNote(a); k != "" {
-			label += " (" + k + ")"
+		switch {
+		case via[strings.ToLower(a.ID)] != "":
+			// Say WHY it is reachable. An agent that knows this machine came in
+			// through a group also knows the group is the better place to send
+			// anything that is not about this machine specifically.
+			label += " (a member of " + via[strings.ToLower(a.ID)] + " — ask it directly for questions about this machine alone)"
+		default:
+			if k := applianceKindNote(a); k != "" {
+				label += " (" + k + ")"
+			}
 		}
 		parts = append(parts, label)
 	}

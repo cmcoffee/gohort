@@ -79,19 +79,58 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	if udb == nil || agentID == "" {
 		return nil
 	}
-	var enabled []Appliance
+	all := map[string]Appliance{}
 	for _, k := range udb.Keys(applianceTable) {
 		var a Appliance
-		if !udb.Get(applianceTable, k, &a) {
-			continue
+		if udb.Get(applianceTable, k, &a) {
+			all[strings.ToLower(a.ID)] = a
 		}
+	}
+	var enabled []Appliance
+	granted := map[string]bool{}
+	// member id -> the workspace label that reaches it, for the description.
+	viaWorkspace := map[string]string{}
+	for _, a := range all {
 		if applianceEnabledForAgent(udb, agentID, a.ID) {
 			enabled = append(enabled, a)
+			granted[strings.ToLower(a.ID)] = true
 		}
 	}
 	if len(enabled) == 0 {
 		return nil
 	}
+	// A workspace exists to be a handle for the machines inside it, so a
+	// connection to one reaches its members for QUESTIONS. Without this an
+	// agent granted an estate could ask about "the estate" and was refused on
+	// every machine in it by name — the general question succeeding and the
+	// obvious follow-up ("and what about lab-box specifically?") failing.
+	//
+	// The workspace itself stays askable and stays the right thing to ask for
+	// anything estate-wide; the members are for when a question is about one
+	// machine.
+	//
+	// Kept as a SEPARATE list from the connected one, because the two tools
+	// honor different rules: request_capability creates an ability on a machine
+	// and keys on a direct connection, while ask_system reads and keys on this.
+	// Handing both the same list would put a machine in one tool's description
+	// that the same tool then refuses by name.
+	askable := append([]Appliance{}, enabled...)
+	for _, a := range enabled {
+		if a.Type != "workspace" {
+			continue
+		}
+		for _, id := range a.Members {
+			key := strings.ToLower(strings.TrimSpace(id))
+			m, ok := all[key]
+			if !ok || granted[key] {
+				continue // unknown, or already connected in its own right
+			}
+			granted[key] = true
+			viaWorkspace[key] = applianceLabel(a.Name, a.ID)
+			askable = append(askable, m)
+		}
+	}
+	sortAppliancesByID(askable)
 	// Deterministic: the tool list is part of the prompt, and a catalog that
 	// reshuffles between turns costs a prefix-cache miss for nothing.
 	sortAppliancesByID(enabled)
@@ -104,10 +143,18 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 		RequestCapabilityToolDef(udb, chat, agentID, enabled),
 		// The question route: open-ended "what's the state of X?" goes to the
 		// per-appliance investigator (read-only, via InvestigateSync) rather
-		// than being something the calling agent needs a shell for.
-		AskSystemToolDef(udb, owner, agentID, enabled),
+		// than being something the calling agent needs a shell for. Gets the
+		// WIDE list — workspace members included — matching what its handler
+		// accepts.
+		AskSystemToolDef(udb, owner, agentID, askable, viaWorkspace),
 	}
 	for _, a := range enabled {
+		// Only a machine the agent is connected to IN ITS OWN RIGHT contributes
+		// approved command tools. Reached-via-workspace members are askable and
+		// nothing more — see the membership expansion above.
+		if !applianceEnabledForAgent(udb, agentID, a.ID) {
+			continue
+		}
 		out = append(out, ApplianceToolDefs(udb, owner, agentID, a)...)
 	}
 	return out
