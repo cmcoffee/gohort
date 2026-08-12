@@ -156,13 +156,14 @@ func activeSandbox() sandboxBackend {
 // exists: on macOS the old code's silence was indistinguishable from a Linux
 // host that had simply not installed a package.
 func detectSandbox() sandboxBackend {
-	return detectSandboxFor(runtime.GOOS, exec.LookPath)
+	return detectSandboxFor(runtime.GOOS, exec.LookPath, seatbeltUsable)
 }
 
-// detectSandboxFor takes the platform and the PATH lookup as arguments so the
-// selection is testable on any host — including the darwin branch, which is the
-// one that was silently wrong.
-func detectSandboxFor(goos string, look func(string) (string, error)) sandboxBackend {
+// detectSandboxFor takes the platform, the PATH lookup and the Seatbelt probe as
+// arguments so the selection is testable on any host — including the darwin
+// branch, which is the one that was silently wrong and the one that runs where
+// this suite does not.
+func detectSandboxFor(goos string, look func(string) (string, error), probe func(string) bool) sandboxBackend {
 	switch goos {
 	case "linux":
 		if p, err := look("bwrap"); err == nil {
@@ -171,10 +172,21 @@ func detectSandboxFor(goos string, look func(string) (string, error)) sandboxBac
 		}
 		Debug("[sandbox] bwrap not found on PATH — shell tools will run unconfined")
 	case "darwin":
-		// Seatbelt goes here. Deliberately NOT falling through to a bwrap
-		// lookup: it can never succeed on darwin, and pretending to try is what
-		// produced the misleading "not installed" reading this file is about.
-		Debug("[sandbox] no sandbox backend implemented for macOS yet — shell tools will run unconfined")
+		// Deliberately NOT falling through to a bwrap lookup: it can never
+		// succeed on darwin, and pretending to try is what produced the
+		// misleading "not installed" reading this file is about.
+		//
+		// Probed rather than merely located. sandbox-exec has been deprecated
+		// for a decade and its profile language is undocumented, so the binary
+		// being present is not evidence it accepts what we generate — and
+		// assuming it does would break every shell tool on the Mac at once.
+		if p, err := look(seatbeltBinary); err == nil {
+			if probe(p) {
+				Debug("[sandbox] seatbelt at %s — shell tools are OS-sandboxed", p)
+				return seatbeltSandbox{path: p}
+			}
+		}
+		Debug("[sandbox] no usable sandbox backend on macOS — shell tools will run unconfined")
 	default:
 		Debug("[sandbox] no sandbox backend for %s — shell tools will run unconfined", goos)
 	}
@@ -222,8 +234,9 @@ func unsandboxedAdviceFor(goos string) string {
 	case "linux":
 		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)."
 	case "darwin":
-		return "gohort has no sandbox backend for macOS yet — bubblewrap is Linux-only, and nothing here can be installed to fix it. " +
-			"Until one ships, either accept that shell tools run at this account's privilege, run them on a Linux peer, or set GOHORT_SANDBOX_REQUIRED=1 to refuse them."
+		return "macOS confinement uses sandbox-exec (Seatbelt), and this host either lacks it or it refused the probe profile — " +
+			"check the log for the refusal. Nothing can be installed to fix that; sandbox-exec ships with macOS or not at all. " +
+			"Either accept that shell tools run at this account's privilege, run them on a Linux peer, or set GOHORT_SANDBOX_REQUIRED=1 to refuse them."
 	default:
 		return "gohort has no sandbox backend for " + goos + "."
 	}

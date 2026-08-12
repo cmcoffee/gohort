@@ -4496,10 +4496,18 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
 			)
 			invCfg := AgentLoopConfig{
-				SystemPrompt:    buildInvestigatorSystemPrompt(appliance, resolvedTools),
-				Tools:           investigatorTools,
-				MaxRounds:       investigatorRoundBudget,
-				RouteKey:        "app.servitor",
+				SystemPrompt: buildInvestigatorSystemPrompt(appliance, resolvedTools),
+				Tools:        investigatorTools,
+				MaxRounds:    investigatorRoundBudget,
+				// The investigator's OWN stage, not the worker one. It borrowed
+				// app.servitor's tier while taking its thinking budget from
+				// app.servitor.orchestrator (see orchestratorThinkOpts), which
+				// left the "Servitor: Orchestrator" row in Admin → LLM Routing
+				// offering a tier selector that decided nothing: the budget
+				// applied and the tier was silently ignored. Default is
+				// "worker (thinking)", so this changes no behavior until an
+				// operator picks something else — which is now possible.
+				RouteKey:        "app.servitor.orchestrator",
 				MaskDebugOutput: true,
 				SerialTools:     true,
 				ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
