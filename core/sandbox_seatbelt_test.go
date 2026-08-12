@@ -81,24 +81,48 @@ func TestOnlyTheWorkspaceIsWritable(t *testing.T) {
 	}
 }
 
-// TestSystemPathsAreReadableAndExecutable — including the Homebrew prefixes.
-// On macOS the interpreters actually in use (python3, bash 5, coreutils) are
-// usually Homebrew's; omitting them gives "command not found" for the tooling
-// every script assumes, which reads as a broken sandbox rather than a missing
-// path.
-func TestSystemPathsAreReadableAndExecutable(t *testing.T) {
+// TestReadsAreBroadBecauseScopedReadsDoNotLoad — the measured constraint.
+//
+// This began as an allow-list and had to be inverted: macOS aborts a profile
+// that scopes file-read* by subpath, because a dynamically-linked binary
+// reaches paths no list here can anticipate. Verified on the target machine —
+// "(deny default)" plus an unrestricted "(allow file-read*)" runs, and the same
+// profile with "(allow file-read* (subpath \"/usr\") (subpath \"/System\"))"
+// aborts on load, with or without file-read-metadata.
+//
+// Pinned because the allow-list is the more obvious design and someone
+// (including me, later) will try to reinstate it.
+func TestReadsAreBroadBecauseScopedReadsDoNotLoad(t *testing.T) {
 	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws"})
-	readBlock := sectionAfter(t, p, "(allow file-read*\n")
-	execBlock := sectionAfter(t, p, "(allow process-exec")
-	for _, want := range []string{"/usr", "/bin", "/System", "/Library", "/opt/homebrew", "/usr/local"} {
-		if !strings.Contains(readBlock, `"`+want+`"`) {
-			t.Errorf("%s is not readable:\n%s", want, readBlock)
-		}
-		// Readable but not executable would break every interpreter on the box,
-		// which reads as a broken sandbox rather than a missing rule.
-		if !strings.Contains(execBlock, `"`+want+`"`) {
-			t.Errorf("%s is readable but not executable:\n%s", want, execBlock)
-		}
+	if !strings.Contains(p, "(allow file-read*)\n") {
+		t.Error("reads are not allowed broadly — a subpath-scoped read rule aborts the profile " +
+			"on load and takes every shell tool with it")
+	}
+	if strings.Contains(p, "(allow file-read*\n") {
+		t.Error("the read rule carries a filter list again — that shape does not load on macOS")
+	}
+}
+
+// TestTheSecretsAreDeniedAfterTheBroadAllow — the deny-list is the entire
+// protection now, and SBPL applies the LAST matching rule. Inverted, these
+// would be silently overruled and the profile would look right while protecting
+// nothing.
+func TestTheSecretsAreDeniedAfterTheBroadAllow(t *testing.T) {
+	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws"})
+	allowAt := strings.Index(p, "(allow file-read*)")
+	if allowAt < 0 {
+		t.Fatal("no broad read allow")
+	}
+	denyAt := strings.Index(p, "(deny file-read*")
+	if denyAt < 0 {
+		t.Skip("no home directory resolved in this environment, so no deny rules were rendered")
+	}
+	if denyAt < allowAt {
+		t.Error("the denials come BEFORE the blanket allow, so the allow wins and they protect nothing")
+	}
+	// The one that matters most must be there when a home resolves.
+	if !strings.Contains(p, "/.ssh") {
+		t.Errorf("private keys are not denied:\n%s", p)
 	}
 }
 
@@ -304,4 +328,68 @@ func sectionAfter(t *testing.T, profile, opener string) string {
 		return rest[:j]
 	}
 	return rest
+}
+
+// TestDeviceNodesAreLiteralsNotSubpaths — the profile read correctly and
+// aborted on load with nothing to say.
+//
+// subpath means "this directory and everything under it". /dev/null is a
+// character device with nothing under it, so listing it there asked for a
+// subtree of a device node — a filter the compiler has no meaning for. A
+// profile language with no public specification and no useful error on refusal
+// makes this exactly the kind of mistake that costs an evening, so it is pinned.
+func TestDeviceNodesAreLiteralsNotSubpaths(t *testing.T) {
+	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws"})
+	for _, dev := range seatbeltWriteFiles {
+		if strings.Contains(p, `(subpath "`+dev+`")`) {
+			t.Errorf("%s is rendered as a subpath — it is a device node, not a directory", dev)
+		}
+		if !strings.Contains(p, `(literal "`+dev+`")`) {
+			t.Errorf("%s is not writable at all: a command that cannot open it fails in ways "+
+				"that look nothing like a sandbox problem", dev)
+		}
+	}
+	// And the directory list must contain no device nodes, which is where the
+	// mistake was made in the first place.
+	for _, d := range seatbeltWritePaths {
+		if strings.HasPrefix(d, "/dev/") {
+			t.Errorf("device node %q is in the DIRECTORY write list", d)
+		}
+	}
+}
+
+// TestWritableDirectoriesAreDirectories — the general form of the rule above.
+func TestWritableDirectoriesAreDirectories(t *testing.T) {
+	for _, d := range seatbeltWritePaths {
+		if strings.Count(d, "/") > 3 && strings.Contains(d, ".") {
+			t.Errorf("%q looks like a file rather than a directory — subpath filters need a directory", d)
+		}
+	}
+}
+
+// TestDeniedFilesAreLiteralsToo — the same mistake as /dev/null, in the
+// direction where nobody notices. A subpath filter naming a regular file is
+// malformed; on a DENY that means a protection which was never expressible,
+// and the profile reads as though it were there.
+func TestDeniedFilesAreLiteralsToo(t *testing.T) {
+	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws"})
+	if !strings.Contains(p, "(deny file-read*") {
+		t.Skip("no home resolved in this environment")
+	}
+	for _, line := range strings.Split(p, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "(deny file-read*") {
+			continue
+		}
+		for _, f := range seatbeltDeniedReadFiles {
+			if strings.Contains(line, "/"+f) && strings.Contains(line, "(subpath") {
+				t.Errorf("%s is a file but is denied as a subpath: %s", f, strings.TrimSpace(line))
+			}
+		}
+	}
+	// Every named file must actually appear, or the denial is a comment.
+	for _, f := range seatbeltDeniedReadFiles {
+		if !strings.Contains(p, "/"+f) {
+			t.Errorf("%s is not denied at all", f)
+		}
+	}
 }

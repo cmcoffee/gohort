@@ -38,7 +38,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -52,25 +54,64 @@ const seatbeltProbeTimeout = 10 * time.Second
 // seatbeltBinary is Apple's profile-driven sandbox launcher.
 const seatbeltBinary = "/usr/bin/sandbox-exec"
 
-// seatbeltReadPaths are the system locations a command must be able to read and
-// execute for ordinary utilities to work.
+// seatbeltDeniedReads are the things a sandboxed command must not read, named
+// relative to the user's home unless absolute.
 //
-// /opt/homebrew and /usr/local are here because on macOS the interpreters
-// actually in use — python3, bash 5, coreutils — are usually Homebrew's, not
-// Apple's. Omitting them yields "command not found" for the tooling every
-// script assumes, which reads as a broken sandbox rather than a missing path.
-var seatbeltReadPaths = []string{
-	"/usr", "/bin", "/sbin", "/System", "/Library",
-	"/opt/homebrew", "/opt/local", "/usr/local",
-	"/etc", "/private/etc", "/var/select", "/private/var/select",
-	"/dev",
+// A DENY-LIST, and that is a retreat from how this file started. It began as an
+// allow-list — read only these system directories — which is the stronger
+// design and does not load: macOS aborts a profile that scopes file-read* by
+// subpath, because a dynamically-linked binary reaches paths no list here can
+// anticipate. Measured on the target machine: "(deny default)" with an
+// unrestricted "(allow file-read*)" runs; the same profile with
+// "(allow file-read* (subpath \"/usr\") (subpath \"/System\"))" aborts on load,
+// with or without file-read-metadata.
+//
+// So reads are broad and the secrets are named. Weaker in principle — a command
+// can read anything not on this list — and it holds the case that actually
+// matters, which is an LLM-issued command reading the operator's keys. Writes
+// and network stay properly constrained, and those are the axes Seatbelt can
+// enforce reliably.
+//
+// Anything added here must be a path a legitimate tool never needs.
+var seatbeltDeniedReads = []string{
+	".ssh",              // private keys
+	".aws",              // credentials + config
+	".config/gcloud",    //
+	".gnupg",            //
+	".kube",             // cluster credentials
+	".docker",           // registry tokens in config.json
+	"Library/Keychains", // macOS keychain
 }
 
-// seatbeltWritePaths are writable regardless of the run shape. The real /tmp,
-// because Seatbelt has no tmpfs to substitute — noted in the file header as a
-// gap rather than pretended away.
+// seatbeltDeniedReadFiles are single FILES to deny, rendered as literals.
+//
+// Separate from the list above for the reason /dev/null needed separating from
+// the writable directories: subpath means "this directory and everything under
+// it", and a subpath filter naming a regular file is not a narrower rule, it is
+// a malformed one. Getting this wrong on a DENY is the worse direction — the
+// profile still loads or not, but nobody notices a protection that was never
+// expressible.
+var seatbeltDeniedReadFiles = []string{
+	".netrc",
+	".git-credentials",
+}
+
+// seatbeltWritePaths are DIRECTORIES writable regardless of the run shape. The
+// real /tmp, because Seatbelt has no tmpfs to substitute — noted in the file
+// header as a gap rather than pretended away.
 var seatbeltWritePaths = []string{
-	"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/dev/null",
+	"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp",
+}
+
+// seatbeltWriteFiles are individual writable FILES, rendered as literals.
+//
+// Device nodes belong here and not in the list above: subpath means "this
+// directory and everything under it", and /dev/null is a character device with
+// nothing under it. It was in the directory list, so the profile asked for a
+// subtree of a device node — a filter the compiler has no meaning for, which is
+// how a profile that reads correctly aborts on load with nothing to say.
+var seatbeltWriteFiles = []string{
+	"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/dtracehelper", "/dev/tty",
 }
 
 // seatbeltSandbox confines with sandbox-exec.
@@ -161,18 +202,19 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	// plainest construct that expresses the intent is worth preferring on
 	// principle — there is nowhere to look up which of two spellings a given
 	// macOS accepts.
-	read := append([]string{}, seatbeltReadPaths...)
-	read = append(read, spec.ReadOnly...)
-	b.WriteString("(allow file-read*\n")
-	for _, p := range read {
-		b.WriteString("  " + sbSubpath(p) + "\n")
+	// Reads are broad because scoping them by subpath aborts the profile — see
+	// seatbeltDeniedReads. process-exec follows: a binary that cannot be read
+	// cannot be run, and scoping exec while reads are open buys nothing.
+	b.WriteString("(allow file-read*)\n")
+	b.WriteString("(allow process-exec)\n")
+
+	// Then take the secrets back. SBPL applies the LAST matching rule, so these
+	// override the blanket allow above and must come after it — inverted, they
+	// would be silently overruled and the profile would look right while
+	// protecting nothing.
+	if denies := seatbeltDenyRules(); denies != "" {
+		b.WriteString(denies)
 	}
-	b.WriteString(")\n")
-	b.WriteString("(allow process-exec\n")
-	for _, p := range read {
-		b.WriteString("  " + sbSubpath(p) + "\n")
-	}
-	b.WriteString(")\n")
 
 	write := append([]string{}, seatbeltWritePaths...)
 	if spec.Workspace != "" {
@@ -181,6 +223,9 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	b.WriteString("(allow file-read* file-write*\n")
 	for _, p := range write {
 		b.WriteString("  " + sbSubpath(p) + "\n")
+	}
+	for _, f := range seatbeltWriteFiles {
+		b.WriteString("  " + sbLiteral(f) + "\n")
 	}
 	b.WriteString(")\n")
 
@@ -196,6 +241,47 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	}
 	if spec.HookSocket != "" {
 		b.WriteString("(allow file-read* file-write* " + sbLiteral(spec.HookSocket) + ")\n")
+	}
+	return b.String()
+}
+
+// seatbeltDenyRules renders the read denials, resolved against the user's home.
+//
+// A path that cannot be resolved is skipped rather than guessed at: a deny rule
+// naming the wrong directory protects nothing and reads in the profile as
+// though it does.
+func seatbeltDenyRules() string {
+	var b strings.Builder
+	home, err := os.UserHomeDir()
+	resolve := func(p string) (string, bool) {
+		if strings.HasPrefix(p, "/") {
+			return p, true
+		}
+		if err != nil || strings.TrimSpace(home) == "" {
+			return "", false
+		}
+		return filepath.Join(home, p), true
+	}
+	for _, p := range seatbeltDeniedReads {
+		if full, ok := resolve(p); ok {
+			b.WriteString("(deny file-read* " + sbSubpath(full) + ")\n")
+		}
+	}
+	for _, p := range seatbeltDeniedReadFiles {
+		if full, ok := resolve(p); ok {
+			b.WriteString("(deny file-read* " + sbLiteral(full) + ")\n")
+		}
+	}
+	// The deployment's own store: credentials, peer keys, every user's data. A
+	// shell tool has no business reading the database that holds the secrets it
+	// is being denied elsewhere.
+	for _, d := range []string{WorkspacesDir(), BulkStagingDir()} {
+		if strings.TrimSpace(d) == "" {
+			continue
+		}
+		if parent := filepath.Dir(strings.TrimRight(d, "/")); parent != "" && parent != "/" && parent != "." {
+			b.WriteString("(deny file-read* " + sbSubpath(parent) + ")\n")
+		}
 	}
 	return b.String()
 }

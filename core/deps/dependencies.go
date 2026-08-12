@@ -63,7 +63,11 @@ var knownDependencies = []struct {
 	// worse than one that says nothing.
 	legacyDocDependency(),
 	{name: "git", enables: "Cloning repository appliances (servitor repo mode)", apt: "git", brew: "git", versionArgs: []string{"--version"}},
-	{name: "bwrap", enables: "Sandbox isolation for run_local and skill shell tools (without it, shell falls back to unsandboxed sh -c)", apt: "bubblewrap", versionArgs: []string{"--version"}},
+	// Named per platform for the same reason the legacy-.doc row is: bubblewrap
+	// is Linux-only and can never be installed on macOS, so a bwrap row there
+	// reported a permanent failure against a package the operator could not
+	// obtain — for a capability the machine provides under a different name.
+	sandboxDependency(),
 	{name: "python3", enables: "Python interpreter for sandboxed scripts", apt: "python3", brew: "python3", versionArgs: []string{"--version"}},
 }
 
@@ -207,5 +211,49 @@ func legacyDocDependency() struct {
 		name: "antiword", enables: enables, apt: "antiword",
 		hint:        "apt install antiword (or catdoc — either is used, whichever is present)",
 		versionArgs: []string{"-h"},
+	}
+}
+
+// sandboxDependency describes whatever confines shell tools on THIS platform.
+//
+// Linux confines with bubblewrap, macOS with Seatbelt (sandbox-exec), and the
+// two are not substitutes an operator can install for each other. A single
+// bwrap row showed every Mac a permanent red mark against a package that does
+// not exist there, while the tool that actually does the job — shipped with the
+// OS, sitting at /usr/bin/sandbox-exec — went unmentioned.
+//
+// The row reports PRESENCE only. Whether the profile this build generates is
+// accepted is a separate question, answered at startup by the probe in
+// core/sandbox_seatbelt.go and reported in Admin → System Status; a dependency
+// check has no business running a sandbox to find out.
+func sandboxDependency() struct {
+	name, enables string
+	apt, brew     string
+	hint          string
+	versionArgs   []string
+	staleAfter    time.Duration
+} {
+	const enables = "Sandbox isolation for run_local and skill shell tools (without it, shell falls back to unsandboxed sh -c)"
+	if runtime.GOOS == "darwin" {
+		return struct {
+			name, enables string
+			apt, brew     string
+			hint          string
+			versionArgs   []string
+			staleAfter    time.Duration
+		}{
+			name: "sandbox-exec", enables: enables,
+			hint: "ships with macOS at /usr/bin/sandbox-exec — nothing to install. See Admin → System Status for whether it is actually confining.",
+		}
+	}
+	return struct {
+		name, enables string
+		apt, brew     string
+		hint          string
+		versionArgs   []string
+		staleAfter    time.Duration
+	}{
+		name: "bwrap", enables: enables, apt: "bubblewrap",
+		versionArgs: []string{"--version"},
 	}
 }
