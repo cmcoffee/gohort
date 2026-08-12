@@ -465,3 +465,97 @@ func (s *OllamaScheduler) dispatch(initialMax int) {
 		}
 	}
 }
+
+// --- image rendering ---------------------------------------------------------
+//
+// Renders took no slot at all. They are the heaviest thing a peer can ask for —
+// far heavier than an embed — so the single most disruptive request was the one
+// walking straight past every queue, racing local work instead of taking turns
+// with it.
+//
+// A SEPARATE scheduler rather than the model one, deliberately. An embed shares
+// a process with the worker model and belongs in its queue; an image backend is
+// its own server (A1111, ComfyUI, a REST connector) that may or may not share a
+// GPU with the model. Putting renders in the model's queue would serialize two
+// resources that are sometimes independent — slowing a deployment down to fix a
+// contention it does not have. This queue makes renders fair against EACH OTHER,
+// which is the property that was missing, without asserting anything about what
+// else is on the card.
+var (
+	imageSchedOnce atomic.Bool
+	imageSched     *OllamaScheduler
+)
+
+// StartImageScheduler initializes the render limiter. Idempotent; a maxParallel
+// below 1 disables it.
+//
+// One by default because image backends serialize internally anyway — A1111 and
+// ComfyUI run a job at a time per GPU — so concurrent requests already queue,
+// just at the far end where nothing here can see them or take turns fairly.
+// Moving that queue client-side changes throughput not at all and makes it
+// round-robin between callers, which is the whole point.
+func StartImageScheduler(maxParallel int) {
+	if maxParallel < 1 {
+		if imageSched != nil {
+			imageSched.setN <- 1 << 30
+		}
+		return
+	}
+	if imageSchedOnce.CompareAndSwap(false, true) {
+		s := &OllamaScheduler{
+			submit:  make(chan *ollamaReqToken, 64),
+			release: make(chan string, 64),
+			setN:    make(chan int, 4),
+			statReq: make(chan chan OllamaSchedStats, 4),
+		}
+		imageSched = s
+		go s.dispatch(maxParallel)
+	} else {
+		imageSched.setN <- maxParallel
+	}
+	nfo.Log("[llm-queue] image render cap: max_parallel=%d", maxParallel)
+}
+
+// AcquireImageSlot queues a render and returns its release.
+//
+// Returns a non-nil release even when the scheduler was never started, so every
+// caller can defer it without a nil check — the shape that made the embed slot
+// safe to add to an existing call path.
+func AcquireImageSlot(ctx context.Context, callerID string) (func(), error) {
+	s := imageSched
+	if s == nil {
+		return func() {}, nil
+	}
+	if callerID == "" {
+		callerID = "local"
+	}
+	if err := s.acquire(ctx, "image", callerID); err != nil {
+		return func() {}, err
+	}
+	return func() { ReleaseImageSlot(callerID) }, nil
+}
+
+// ReleaseImageSlot returns a slot. Safe when the scheduler is disabled.
+func ReleaseImageSlot(callerID string) {
+	s := imageSched
+	if s == nil {
+		return
+	}
+	if callerID == "" {
+		callerID = "local"
+	}
+	select {
+	case s.release <- callerID:
+	default:
+	}
+}
+
+// ImageSchedulerStats reports what is holding the renderer, per caller.
+func ImageSchedulerStats() OllamaSchedStats {
+	s := imageSched
+	if s == nil {
+		return OllamaSchedStats{}
+	}
+	st, _ := s.snapshot()
+	return st
+}

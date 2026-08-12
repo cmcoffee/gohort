@@ -129,7 +129,12 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), peerImageBudget)
+	// Label the render as this peer's, for the same reason the embeddings
+	// handler labels its embeds: the queue round-robins between callers, so a
+	// peer rendering in a loop takes turns with local work instead of racing
+	// it. Unlabelled it would look local and there would be nothing to be fair
+	// between.
+	ctx, cancel := context.WithTimeout(WithRenderCaller(r.Context(), "peer:"+k.Label), peerImageBudget)
 	defer cancel()
 
 	var (
@@ -137,7 +142,7 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 		err    error
 	)
 	if len(req.InitImages) > 0 {
-		result, err = peerRenderEdit(req, backend)
+		result, err = peerRenderEdit(ctx, req, backend)
 	} else {
 		result, err = GenerateImageWithBackend(ctx, backend, req.Prompt, req.Width >= req.Height)
 	}
@@ -190,8 +195,8 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 // been written to it. Rooting the session where writeImageTemp actually puts
 // them and passing basenames puts the refs back inside the containment check
 // they were always meant to pass.
-func peerRenderEdit(req peerImageRequest, backend string) (*ImageGenResult, error) {
-	sess := &ToolSession{WorkspaceDir: ImageDir()}
+func peerRenderEdit(ctx context.Context, req peerImageRequest, backend string) (*ImageGenResult, error) {
+	sess := &ToolSession{WorkspaceDir: ImageDir(), Ctx: ctx}
 	refs := make([]string, 0, len(req.InitImages))
 	for i, b64 := range req.InitImages {
 		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))

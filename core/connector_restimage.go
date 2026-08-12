@@ -1452,6 +1452,18 @@ type EditImageRequest struct {
 //
 // Callers must authorize Backend first (ImageBackendReachable).
 func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenResult, error) {
+	// The same render queue the generate path takes. An edit is heavier still —
+	// a cascade runs the backend once per step — so leaving this one unqueued
+	// would have left the biggest job racing while the smaller one waited.
+	//
+	// The session's context when there is one, so a caller that went away stops
+	// waiting for a slot it no longer needs.
+	qctx := context.Background()
+	if sess != nil && sess.Ctx != nil {
+		qctx = sess.Ctx
+	}
+	defer queueRender(qctx)()
+
 	s, err := resolveImageConnector(req.Backend)
 	if err != nil {
 		return nil, err

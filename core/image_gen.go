@@ -418,7 +418,66 @@ func GenerateImageLandscape(ctx context.Context, apiKey, prompt string) (*ImageG
 //
 // The caller is responsible for checking the name is reachable first
 // (ImageBackendReachable); this routes, it doesn't authorize.
+// renderCallerKey labels a render for the queue, the way WithEmbedCaller does
+// for embeddings. A separate key because the two queues are separate and one
+// request can be in both.
+type renderCallerKey struct{}
+
+// WithRenderCaller labels renders made under ctx so the image scheduler can
+// round-robin between them and everyone else. Without a label every render
+// looks like the same caller and fair-share has nothing to be fair between — a
+// peer rendering in a loop would take the GPU as surely as if there were no
+// queue at all.
+func WithRenderCaller(ctx context.Context, caller string) context.Context {
+	if caller = strings.TrimSpace(caller); caller == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, renderCallerKey{}, caller)
+}
+
+// renderCaller reads the label, defaulting to local.
+func renderCaller(ctx context.Context) string {
+	if ctx == nil {
+		return "local"
+	}
+	if s, ok := ctx.Value(renderCallerKey{}).(string); ok && strings.TrimSpace(s) != "" {
+		return s
+	}
+	return "local"
+}
+
+// imageQueueOnce starts the render limiter on first use.
+//
+// Started lazily rather than at boot because nothing knows a deployment renders
+// until it does, and a scheduler goroutine for a capability nobody uses is
+// noise. An operator who wants renders unqueued calls StartImageScheduler(0).
+var imageQueueOnce sync.Once
+
+// queueRender takes a render slot and returns its release. Always returns a
+// usable release, so callers can defer without a nil check.
+func queueRender(ctx context.Context) func() {
+	imageQueueOnce.Do(func() { StartImageScheduler(defaultImageParallel) })
+	release, err := AcquireImageSlot(ctx, renderCaller(ctx))
+	if err != nil {
+		// The caller went away or its deadline passed while queued. Not a
+		// reason to refuse the render — the request below will fail on the same
+		// context and report it in its own terms.
+		return func() {}
+	}
+	return release
+}
+
+// defaultImageParallel is how many renders run at once. One, because image
+// backends serialize internally anyway (A1111 and ComfyUI run a job at a time
+// per GPU), so the requests already queue — just at the far end, where nothing
+// here can see them or take turns fairly.
+const defaultImageParallel = 1
+
 func GenerateImageWithBackend(ctx context.Context, backend, prompt string, landscape bool) (*ImageGenResult, error) {
+	// Renders took no slot at all until now: the heaviest thing on the box, and
+	// the only one racing instead of queueing.
+	defer queueRender(ctx)()
+
 	backend = strings.TrimSpace(backend)
 	if backend == "" || backend == "default" {
 		provider, key := resolveDefaultProviderAndKey()

@@ -483,6 +483,10 @@ var (
 	AcquireLlamacppSlot        = ollama.AcquireLlamacppSlot
 	ReleaseLlamacppSlot        = ollama.ReleaseLlamacppSlot
 	AcquireEmbedSlot           = ollama.AcquireEmbedSlot
+	StartImageScheduler        = ollama.StartImageScheduler
+	AcquireImageSlot           = ollama.AcquireImageSlot
+	ReleaseImageSlot           = ollama.ReleaseImageSlot
+	ImageSchedulerStats        = ollama.ImageSchedulerStats
 )
 
 // --- injection (queued notes pushed into a running turn) --------------------
