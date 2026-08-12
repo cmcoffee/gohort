@@ -22,17 +22,9 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
-)
-
-var (
-	bwrapDetectOnce sync.Once
-	bwrapPath       string
-	bwrapWarnedOnce sync.Once
 )
 
 // sandboxWaitDelay bounds how long Run() will keep blocking AFTER ctx is
@@ -61,38 +53,22 @@ func sandboxRequired() bool {
 	return false
 }
 
-// errSandboxUnavailable is returned when the sandbox is required but bwrap is
-// missing — the fail-closed alternative to running unsandboxed.
-const errSandboxUnavailable = Error("sandbox required (GOHORT_SANDBOX_REQUIRED) but bubblewrap (bwrap) is not installed — refusing to run the tool unsandboxed; install bubblewrap or clear GOHORT_SANDBOX_REQUIRED")
-
-func detectBwrap() string {
-	bwrapDetectOnce.Do(func() {
-		if p, err := exec.LookPath("bwrap"); err == nil {
-			bwrapPath = p
-			Debug("[sandbox] bwrap detected at %s — run_local and temp tools will be OS-sandboxed", p)
-		} else {
-			Debug("[sandbox] bwrap not found on PATH — run_local will fall back to plain sh -c (workspace cwd only, no namespace isolation)")
-		}
-	})
-	return bwrapPath
-}
-
 // sandboxPythonPath builds the PYTHONPATH for a run, given the bwrap binary
 // that will (or will not) carry it.
 //
-// Under bwrap the helpers reach the script through bind mounts at fixed paths.
-// Without bwrap there are no mounts, so the only paths that resolve are the
+// A remapping sandbox reaches the helpers through bind mounts at fixed paths.
+// Without remapping there are no mounts, so the only paths that resolve are the
 // host directories the mounts would have pointed at. Naming the mount paths in
-// both cases is the bug this exists to prevent: on a host with no bwrap it puts
-// two directories on PYTHONPATH that do not exist, and the first line of every
+// both cases is the bug this exists to prevent: on such a host it puts two
+// directories on PYTHONPATH that do not exist, and the first line of every
 // hook-using script dies with ModuleNotFoundError.
 //
-// Passing bwrap in rather than calling detectBwrap() keeps the decision
-// testable — the whole point is what happens on a machine that has no bwrap,
-// which is not the machine the tests run on.
-func sandboxPythonPath(bwrap, existing string) string {
+// Passing remaps in rather than asking activeSandbox() keeps the decision
+// testable — the whole point is what happens on a machine whose sandbox does
+// not remap paths, which is not the machine the tests run on.
+func sandboxPythonPath(remaps bool, existing string) string {
 	libPath, depsPath := SandboxGohortLibMountPath, SandboxPyDepsMountPath
-	if bwrap == "" {
+	if !remaps {
 		// Ensure* both deploys the helper and reports where it landed. On this
 		// path it is also the only thing that deploys it at all: it used to run
 		// solely as a side effect of building the bwrap argv.
@@ -106,12 +82,12 @@ func sandboxPythonPath(bwrap, existing string) string {
 // sandboxShimBinDir returns the directory holding the fetch_url / fetch_via /
 // browse_page shims for a run, or "" when there is none to offer.
 //
-// Under bwrap that is the mount point; without it, the host dir the mount would
-// have pointed at. Same shape as sandboxPythonPath, and deliberately so: these
-// two are the entire bridge between a sandboxed script and the hook, and they
-// went wrong the same way for the same reason.
-func sandboxShimBinDir(bwrap string) string {
-	if bwrap != "" {
+// Under a remapping sandbox that is the mount point; otherwise the host dir the
+// mount would have pointed at. Same shape as sandboxPythonPath, and
+// deliberately so: these two are the entire bridge between a sandboxed script
+// and the hook, and they went wrong the same way for the same reason.
+func sandboxShimBinDir(remaps bool) string {
+	if remaps {
 		return SandboxGohortBinMountPath
 	}
 	libDir := EnsureGohortLibDir()
@@ -234,7 +210,7 @@ func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir str
 // from the command silently fail. Missing connector = network allowed
 // (back-compat for callers not yet plumbing one through).
 func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) SandboxedShellResult {
-	bwrap := detectBwrap()
+	sb := activeSandbox()
 	allowNetwork := NetworkAllowedFromContext(ctx)
 
 	// PYTHONPATH := SandboxGohortLibMountPath so `from gohort import
@@ -268,24 +244,20 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	// Calling Ensure* here also makes the no-bwrap path deploy the helper at
 	// all. It used to be written only as a side effect of building the bwrap
 	// argv, so on a host with no bwrap the package was never even created.
-	extraEnv["PYTHONPATH"] = sandboxPythonPath(bwrap, extraEnv["PYTHONPATH"])
+	extraEnv["PYTHONPATH"] = sandboxPythonPath(sb.remapsPaths(), extraEnv["PYTHONPATH"])
 
-	var c *exec.Cmd
-	sandbox := false
-	if bwrap != "" {
-		args := bwrapArgvWithEnv(workspaceDir, command, extraEnv, allowNetwork)
-		c = exec.CommandContext(ctx, bwrap, args...)
-		sandbox = true
-	} else if sandboxRequired() {
-		return SandboxedShellResult{Err: errSandboxUnavailable}
-	} else {
-		bwrapWarnedOnce.Do(func() {
-			Log("[sandbox] WARNING: bwrap not installed — shell tools run with gohort user permissions. Install bubblewrap to enable real sandboxing (apt install bubblewrap / dnf install bubblewrap). Set GOHORT_SANDBOX_REQUIRED=1 to refuse unsandboxed execution instead.")
-		})
-		c = exec.CommandContext(ctx, "sh", "-c", command)
-		c.Dir = workspaceDir
+	if !sb.confines() {
+		if sandboxRequired() {
+			return SandboxedShellResult{Err: sandboxUnavailableErr()}
+		}
+		warnUnsandboxed("shell tools")
 	}
-	env := sandboxEnv(bwrap)
+	c := sb.build(ctx, sandboxRun{
+		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
+		Env: extraEnv, AllowNetwork: allowNetwork,
+	})
+	sandbox := sb.confines()
+	env := sandboxEnv(sb.remapsPaths())
 	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
 	// possible) wins over the inherited PATH inside the subshell.
 	for k, v := range extraEnv {
@@ -301,7 +273,7 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	// these two lines tells us exec is wedged versus the wrapper code
 	// upstream. argv-count distinguishes "tiny argv → exec failed
 	// early" from "fat argv → bind-mount setup stuck".
-	Debug("[sandbox] spawn: bwrap=%q argv=%d allowNet=%v workspace=%s", bwrap, len(c.Args), allowNetwork, workspaceDir)
+	Debug("[sandbox] spawn: backend=%s argv=%d allowNet=%v workspace=%s", sb.name(), len(c.Args), allowNetwork, workspaceDir)
 	t0 := time.Now()
 	err := c.Run()
 	dur := time.Since(t0)
@@ -476,24 +448,16 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 // without needing filesystem or network access. Falls back to plain
 // `sh -c` (cwd = /tmp) when bwrap isn't installed.
 func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) SandboxedShellResult {
-	bwrap := detectBwrap()
-
-	var c *exec.Cmd
-	sandbox := false
-	if bwrap != "" {
-		args := bwrapPipeArgv(command)
-		c = exec.CommandContext(ctx, bwrap, args...)
-		sandbox = true
-	} else if sandboxRequired() {
-		return SandboxedShellResult{Err: errSandboxUnavailable}
-	} else {
-		bwrapWarnedOnce.Do(func() {
-			Log("[sandbox] WARNING: bwrap not installed — response pipes run with gohort user permissions. Install bubblewrap to enable real sandboxing.")
-		})
-		c = exec.CommandContext(ctx, "sh", "-c", command)
-		c.Dir = "/tmp"
+	sb := activeSandbox()
+	if !sb.confines() {
+		if sandboxRequired() {
+			return SandboxedShellResult{Err: sandboxUnavailableErr()}
+		}
+		warnUnsandboxed("response pipes")
 	}
-	c.Env = sandboxEnv(bwrap)
+	c := sb.build(ctx, sandboxRun{Kind: sandboxPipeRun, Command: command})
+	sandbox := sb.confines()
+	c.Env = sandboxEnv(sb.remapsPaths())
 	c.Stdin = strings.NewReader(stdinData)
 
 	var buf bytes.Buffer
@@ -562,29 +526,22 @@ type SandboxedScriptResult struct {
 // stdin-in / stdout-out. Falls back to plain exec when bwrap isn't
 // installed (logs a warning once).
 func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData string) SandboxedScriptResult {
-	bwrap := detectBwrap()
-
-	var c *exec.Cmd
-	sandbox := false
-	if bwrap != "" {
-		args := bwrapScriptArgv(interpreter, script)
-		c = exec.CommandContext(ctx, bwrap, args...)
-		sandbox = true
-	} else if sandboxRequired() {
-		return SandboxedScriptResult{Err: errSandboxUnavailable}
-	} else {
-		bwrapWarnedOnce.Do(func() {
-			Log("[sandbox] WARNING: bwrap not installed — evaluator scripts run with gohort user permissions. Install bubblewrap to enable real sandboxing.")
-		})
-		c = exec.CommandContext(ctx, interpreter, "-c", script)
+	sb := activeSandbox()
+	if !sb.confines() {
+		if sandboxRequired() {
+			return SandboxedScriptResult{Err: sandboxUnavailableErr()}
+		}
+		warnUnsandboxed("evaluator scripts")
 	}
-	c.Env = sandboxEnv(bwrap)
-	// The managed python deps reach a bwrap run through --setenv on the mount
-	// path (see bwrapScriptArgv). Without bwrap there is no mount and no
-	// --setenv, so this ran with no PYTHONPATH at all and every generator that
-	// imports openpyxl / python-docx / python-pptx failed on a host where the
-	// packages were provisioned and present.
-	if bwrap == "" {
+	c := sb.build(ctx, sandboxRun{Kind: sandboxScriptRun, Interpreter: interpreter, Command: script})
+	sandbox := sb.confines()
+	c.Env = sandboxEnv(sb.remapsPaths())
+	// The managed python deps reach a remapped run through --setenv on the
+	// mount path (see bwrapScriptArgv). Without remapping there is no mount and
+	// no --setenv, so this ran with no PYTHONPATH at all and every generator
+	// that imports openpyxl / python-docx / python-pptx failed on a host where
+	// the packages were provisioned and present.
+	if !sb.remapsPaths() {
 		if pyDir := EnsurePyDepsDir(); pyDir != "" {
 			c.Env = append(c.Env, "PYTHONPATH="+PrependPythonPath("", pyDir))
 		}
@@ -647,7 +604,7 @@ func bwrapScriptArgv(interpreter, script string) []string {
 // survive so common utilities resolve; secrets the gohort process holds
 // must NOT survive — env vars like API keys, AWS creds, etc. would
 // otherwise leak straight into LLM-controlled shell scope.
-func sandboxEnv(bwrap string) []string {
+func sandboxEnv(remaps bool) []string {
 	// Minimal allowlist. Anything not in this list is dropped.
 	keep := map[string]bool{
 		"PATH":     true,
@@ -683,15 +640,16 @@ func sandboxEnv(bwrap string) []string {
 	// fetch_via / browse_page as ordinary commands (they proxy to the hook,
 	// which still enforces capabilities).
 	//
-	// Which directory that is depends on bwrap, for the same reason PYTHONPATH
-	// does: the mount path is a subpath of the RO lib mount and exists only
-	// inside a sandbox. This used to prepend the mount path unconditionally and
+	// Which directory that is depends on whether the sandbox remaps paths, for
+	// the same reason PYTHONPATH does: the mount path is a subpath of the RO
+	// lib mount and exists only inside one. This used to prepend it and
 	// call the result harmless — "a dead PATH entry, which the PATH search
 	// simply skips". It is not harmless. Skipping it means that on any host
-	// without bwrap the documented shell interface is silently absent, and
+	// without a remapping sandbox the documented shell interface is silently
+	// absent, and
 	// `fetch_url https://…` fails as command-not-found on a system whose hook
 	// is present, granted, and answering.
-	if binDir := sandboxShimBinDir(bwrap); binDir != "" {
+	if binDir := sandboxShimBinDir(remaps); binDir != "" {
 		for i, kv := range env {
 			if strings.HasPrefix(kv, "PATH=") {
 				rest := kv[len("PATH="):]

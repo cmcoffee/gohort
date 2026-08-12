@@ -4842,13 +4842,23 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var allow_signup bool
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
+	sandbox := GetSandboxStatus()
 	status := map[string]interface{}{
-		"tls_enabled":     TLSEnabled(),
-		"tls_self_signed": TLSSelfSignedEnabled(),
-		"auth_enabled":    AuthHasUsers(a.db),
-		"user_count":      len(AuthListUsers(a.db)),
-		"active_sessions": len(AllLiveSessions()),
-		"allow_signup":    allow_signup,
+		// Surfaced because a one-time log line at first use is not somewhere
+		// anyone looks, and "every shell command on this host runs at the
+		// daemon's privilege" is not a fact an operator should have to
+		// discover from scrollback — least of all on macOS, where it is the
+		// permanent state and the old warning's advice was impossible.
+		"sandbox_backend":  sandbox.Backend,
+		"sandbox_confined": sandbox.Confined,
+		"sandbox_required": sandbox.Required,
+		"sandbox_advice":   sandbox.Advice,
+		"tls_enabled":      TLSEnabled(),
+		"tls_self_signed":  TLSSelfSignedEnabled(),
+		"auth_enabled":     AuthHasUsers(a.db),
+		"user_count":       len(AuthListUsers(a.db)),
+		"active_sessions":  len(AllLiveSessions()),
+		"allow_signup":     allow_signup,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)

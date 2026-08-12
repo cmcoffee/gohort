@@ -521,6 +521,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Label: "User count", Field: "user_count"},
 						{Label: "Active sessions", Field: "active_sessions"},
 						{Label: "Public signup", Field: "allow_signup"},
+						// What is confining LLM-issued shell commands on this
+						// host. Sits in System Status rather than behind a
+						// tools page because when it reads "none" it applies
+						// to every tool at once.
+						{Label: "Shell sandbox", Field: "sandbox_backend"},
+						{Label: "Shell tools confined", Field: "sandbox_confined"},
+						{Label: "Sandbox required (fail closed)", Field: "sandbox_required"},
+						{Label: "Sandbox note", Field: "sandbox_advice"},
 					},
 				},
 			},

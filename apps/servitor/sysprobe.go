@@ -1191,6 +1191,26 @@ func (T *Servitor) exec_command_ctx(ctx context.Context, cmd string) (string, er
 	return execOverSSH(ctx, T.conn, cmd)
 }
 
+// newPTYSession opens an SSH session for an interactive (PTY) run, refusing a
+// nil connection rather than dereferencing it.
+//
+// It exists because run_pty is the only exec path that needs the ssh.Client
+// itself rather than an exec function, so it was the only one that did not go
+// through execOverSSH — and it reached straight into the client. On a
+// peer-reached appliance that client is nil BY DESIGN (the session lives on the
+// far side), so the tool panicked inside golang.org/x/crypto/ssh, and
+// safeInvoke rendered it as "run_pty: [masked]": a report naming the tool and
+// explaining nothing.
+//
+// A named helper rather than another inline check, so the rule is structural —
+// no caller holds a raw *ssh.Client long enough to dereference one.
+func newPTYSession(conn *ssh.Client) (*ssh.Session, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("no SSH connection")
+	}
+	return conn.NewSession()
+}
+
 // execOverSSH is the body of exec_command_ctx, taking the connection as an
 // argument so a caller that is not a probe session can use it.
 //

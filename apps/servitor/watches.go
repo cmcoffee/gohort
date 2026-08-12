@@ -69,7 +69,10 @@ func execWatch(appliance Appliance, userID, command string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ssh connect: %w", err)
 	}
-	session, err := conn.NewSession()
+	// Through the guarded helper like every other session opener: acquireConn
+	// returning (nil, nil) is not supposed to happen, and "not supposed to
+	// happen" is exactly how run_pty came to panic on a peer appliance.
+	session, err := newPTYSession(conn)
 	if err != nil {
 		return "", fmt.Errorf("new session: %w", err)
 	}

@@ -51,13 +51,14 @@ func TestEnsureGohortLibDirWritesShims(t *testing.T) {
 
 // The shim bin dir must sit at the FRONT of the sandbox PATH so its
 // fetch_url/browse_page win over any same-named host binary — and it must be
-// the dir that actually EXISTS for the run in question. Under bwrap that is the
-// mount point; without bwrap nothing is mounted, and prepending the mount path
-// there left the shims unreachable on every host with no bubblewrap.
+// the dir that actually EXISTS for the run in question. A remapping sandbox
+// reaches it at the mount point; without remapping nothing is mounted, and
+// prepending the mount path there left the shims unreachable on every host
+// with no bubblewrap — which is every macOS host.
 func TestSandboxEnvPrependsShimBin(t *testing.T) {
-	pathFor := func(bwrap string) string {
+	pathFor := func(remaps bool) string {
 		t.Helper()
-		for _, kv := range sandboxEnv(bwrap) {
+		for _, kv := range sandboxEnv(remaps) {
 			if strings.HasPrefix(kv, "PATH=") {
 				return kv[len("PATH="):]
 			}
@@ -66,15 +67,15 @@ func TestSandboxEnvPrependsShimBin(t *testing.T) {
 		return ""
 	}
 
-	if path := pathFor("/usr/bin/bwrap"); !strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
-		t.Errorf("under bwrap, PATH %q not prefixed with the shim mount %q", path, SandboxGohortBinMountPath)
+	if path := pathFor(true); !strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
+		t.Errorf("with remapping, PATH %q not prefixed with the shim mount %q", path, SandboxGohortBinMountPath)
 	}
 
-	path := pathFor("")
+	path := pathFor(false)
 	if strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
-		t.Errorf("without bwrap, PATH leads with the unmounted %q: %q", SandboxGohortBinMountPath, path)
+		t.Errorf("without remapping, PATH leads with the unmounted %q: %q", SandboxGohortBinMountPath, path)
 	}
-	if want := sandboxShimBinDir(""); want != "" && !strings.HasPrefix(path, want+":") {
-		t.Errorf("without bwrap, PATH %q should lead with the host shim dir %q", path, want)
+	if want := sandboxShimBinDir(false); want != "" && !strings.HasPrefix(path, want+":") {
+		t.Errorf("without remapping, PATH %q should lead with the host shim dir %q", path, want)
 	}
 }

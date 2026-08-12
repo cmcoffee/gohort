@@ -3245,7 +3245,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					}
 				}
 
-				sess, err := a.conn.NewSession()
+				// Through newPTYSession, never the client directly: a
+				// peer-reached appliance has no local ssh.Client, and this is
+				// where the nil used to be dereferenced. The tool is also not
+				// offered in that case (see ptyLocal below) — this is the
+				// second line of defence.
+				sess, err := newPTYSession(a.conn)
 				if err != nil {
 					// Attempt reconnect on connection-level errors.
 					errMsg := err.Error()
@@ -3262,7 +3267,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 						}
 						a.conn = newClient
 						emit(id, probeEvent{Kind: "status", Text: "SSH reconnected."})
-						sess, err = a.conn.NewSession()
+						sess, err = newPTYSession(a.conn)
 					}
 					if err != nil {
 						return "", fmt.Errorf("new SSH session: %w", err)
@@ -4027,6 +4032,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
+	// ptyLocal reports whether this run holds an ssh.Client of its own, which is
+	// what run_pty needs and what a peer-reached appliance does not have — its
+	// session lives on the far side and only whole commands cross the wire.
+	// Read off PeerName rather than off a.conn, because the toolkit is built
+	// before any reconnect could repopulate it.
+	ptyLocal := strings.TrimSpace(appliance.PeerName) == ""
+
 	// workerTools holds a placeholder run_command entry. Every call site must use
 	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
 	var workerTools []AgentToolDef
@@ -4071,10 +4083,20 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		}
 	} else {
 		workerTools = []AgentToolDef{
-			newRunTool(), read_log_tool, search_logs_tool, newRunPtyTool(),
+			newRunTool(), read_log_tool, search_logs_tool,
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			count_lines_tool, read_range_tool,
 			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+		}
+		// run_pty is the one tool that needs the ssh.Client itself rather than
+		// an exec function, so it is the one tool the peer transport cannot
+		// carry: the far side runs whole commands and returns their output,
+		// with no channel for an interactive PTY. Withheld rather than offered
+		// and failed, because a tool that is present and always errors spends
+		// rounds and pushes the worker into improvising around it instead of
+		// reaching for run_command, which works here.
+		if ptyLocal {
+			workerTools = append(workerTools, newRunPtyTool())
 		}
 	}
 	// The accumulated map, traversable. Added for EVERY appliance type: the

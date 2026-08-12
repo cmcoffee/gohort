@@ -41,7 +41,7 @@ func resetGohortLibDir(t *testing.T) {
 func TestSandboxPythonPathPointsAtRealDirsWithoutBwrap(t *testing.T) {
 	resetGohortLibDir(t)
 
-	got := sandboxPythonPath("", "")
+	got := sandboxPythonPath(false, "")
 	if got == "" {
 		t.Fatal("no PYTHONPATH at all — `from gohort import fetch_url` cannot resolve")
 	}
@@ -75,7 +75,7 @@ func TestSandboxPythonPathPointsAtRealDirsWithoutBwrap(t *testing.T) {
 func TestSandboxPythonPathUsesMountPathsUnderBwrap(t *testing.T) {
 	resetGohortLibDir(t)
 
-	got := sandboxPythonPath("/usr/bin/bwrap", "")
+	got := sandboxPythonPath(true, "")
 	for _, want := range []string{SandboxGohortLibMountPath, SandboxPyDepsMountPath} {
 		if !strings.Contains(got, want) {
 			t.Errorf("PYTHONPATH %q missing the sandbox mount %q", got, want)
@@ -92,7 +92,7 @@ func TestSandboxPythonPathUsesMountPathsUnderBwrap(t *testing.T) {
 func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {
 	resetGohortLibDir(t)
 
-	dir := sandboxShimBinDir("")
+	dir := sandboxShimBinDir(false)
 	if dir == "" {
 		t.Fatal("no shim bin dir — fetch_url / browse_page are unreachable as commands")
 	}
@@ -116,7 +116,7 @@ func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {
 func TestSandboxShimBinDirUsesMountPathUnderBwrap(t *testing.T) {
 	resetGohortLibDir(t)
 
-	if dir := sandboxShimBinDir("/usr/bin/bwrap"); dir != SandboxGohortBinMountPath {
+	if dir := sandboxShimBinDir(true); dir != SandboxGohortBinMountPath {
 		t.Errorf("shim bin dir = %q, want the mount %q", dir, SandboxGohortBinMountPath)
 	}
 }
@@ -126,7 +126,7 @@ func TestSandboxShimBinDirUsesMountPathUnderBwrap(t *testing.T) {
 func TestSandboxPythonPathKeepsCallerEntries(t *testing.T) {
 	resetGohortLibDir(t)
 
-	got := sandboxPythonPath("/usr/bin/bwrap", "/caller/libs")
+	got := sandboxPythonPath(true, "/caller/libs")
 	if !strings.Contains(got, "/caller/libs") {
 		t.Errorf("caller PYTHONPATH dropped: %q", got)
 	}
