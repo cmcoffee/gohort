@@ -281,6 +281,110 @@ func TestSlotsRepeatsLastReferenceToFill(t *testing.T) {
 	}
 }
 
+// --- identity selection -------------------------------------------------------
+
+func TestPickIdentityRefsPrefersTheMostFaceForwardPhoto(t *testing.T) {
+	// A face swap passes the picture being EDITED first and the face second.
+	// Caller order would send the model the image the crop was cut out of and
+	// drop the only photo that says who the person is — which is how a
+	// refinement comes back as a shrunken copy of the picture being edited.
+	refs := []inputImage{{name: "scene.png"}, {name: "portrait.png"}}
+	got := pickIdentityRefs(refs, []float64{0.01, 0.30})
+	if len(got) != 2 {
+		t.Fatalf("kept %d reference(s), want 2", len(got))
+	}
+	if got[0].name != "portrait.png" {
+		t.Errorf("identity = %q, want the portrait — it is the only one that says who the person is", got[0].name)
+	}
+}
+
+func TestPickIdentityRefsDropsFacelessPhotos(t *testing.T) {
+	refs := []inputImage{{name: "person.png"}, {name: "beach.png"}}
+	got := pickIdentityRefs(refs, []float64{0.2, 0})
+	if len(got) != 1 || got[0].name != "person.png" {
+		t.Fatalf("got %+v, want only person.png — a beach cannot supply an identity", got)
+	}
+}
+
+func TestPickIdentityRefsKeepsCallerOrderOnATie(t *testing.T) {
+	// Two genuine portraits: nothing here knows better than the caller did.
+	refs := []inputImage{{name: "one.png"}, {name: "two.png"}}
+	got := pickIdentityRefs(refs, []float64{0.2, 0.2})
+	if len(got) != 2 || got[0].name != "one.png" {
+		t.Fatalf("got %+v, want caller order preserved", got)
+	}
+}
+
+func TestPickIdentityRefsEmptyWhenNothingHasAFace(t *testing.T) {
+	got := pickIdentityRefs([]inputImage{{name: "a.png"}, {name: "b.png"}}, []float64{0, 0})
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want none — with no identity anywhere the pass must not run", got)
+	}
+}
+
+func TestFaceFractionIsZeroForUnreadableBytes(t *testing.T) {
+	if got := faceFraction(inputImage{name: "x.png", data: []byte("not an image")}); got != 0 {
+		t.Errorf("faceFraction = %v, want 0", got)
+	}
+}
+
+// --- the frame guard ----------------------------------------------------------
+
+func TestFramesHoldAcceptsTheSameSceneWithANewFace(t *testing.T) {
+	// What a good refinement looks like: the middle is repainted, the band the
+	// blend feathers into is untouched.
+	sent := gradientRGBA(256)
+	got := gradientRGBA(256)
+	for y := 96; y < 160; y++ {
+		for x := 96; x < 160; x++ {
+			got.SetRGBA(x, y, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+		}
+	}
+	if diff, ok := framesHold(sent, got); !ok {
+		t.Errorf("a repainted face was rejected (diff %.3f) — the guard must not eat good refinements", diff)
+	}
+}
+
+func TestFramesHoldRejectsADifferentPicture(t *testing.T) {
+	// The failure this exists for: the backend answers "make image 1 look like
+	// image 2" by returning image 2. Composited, that is a square in the middle
+	// of the picture holding a shrunken copy of another photo.
+	sent := gradientRGBA(256)
+	other := image.NewRGBA(image.Rect(0, 0, 256, 256))
+	for y := 0; y < 256; y++ {
+		for x := 0; x < 256; x++ {
+			other.SetRGBA(x, y, color.RGBA{R: 20, G: 200, B: 40, A: 255})
+		}
+	}
+	if diff, ok := framesHold(sent, other); ok {
+		t.Errorf("a different picture passed the guard (diff %.3f)", diff)
+	}
+}
+
+func TestFramesHoldToleratesResampling(t *testing.T) {
+	// The same crop round-tripped through a backend comes back a different
+	// size. That must not read as a different picture.
+	sent := gradientRGBA(1024)
+	got := scaleImageTo(scaleImageTo(sent, 512, 512), 1024, 1024)
+	if diff, ok := framesHold(sent, got); !ok {
+		t.Errorf("a resampled copy of the same crop was rejected (diff %.3f)", diff)
+	}
+}
+
+// gradientRGBA is a stand-in for a photograph: enough structure that comparing
+// two of them means something.
+func gradientRGBA(size int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(x * 255 / size), G: uint8(y * 255 / size), B: uint8((x + y) * 127 / size), A: 255,
+			})
+		}
+	}
+	return img
+}
+
 func TestSlotsTrimsSurplusReferences(t *testing.T) {
 	f := faceRefine{
 		spec: RestImageSpec{MaxInputImages: 2},
@@ -290,7 +394,9 @@ func TestSlotsTrimsSurplusReferences(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("filled %d slot(s), want 2 — more images than slots is the failure this avoids", len(got))
 	}
+	// Order in, order out: which reference leads is decided before this, by
+	// identityRefs, and slots must not second-guess it.
 	if got[1].name != "one.png" {
-		t.Errorf("slot 1 = %q, want the FIRST reference — it carries the subject", got[1].name)
+		t.Errorf("slot 1 = %q, want the first reference it was handed", got[1].name)
 	}
 }

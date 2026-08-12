@@ -35,6 +35,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"sort"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -69,9 +70,17 @@ const (
 	// straight-on face stitched onto a three-quarter shoulder. The scene owns
 	// the geometry and the light; the reference owns the identity, and nothing
 	// else.
-	faceRefinePrompt = "Keep the head angle, gaze direction, expression, lighting, shadows, skin tone and image grain of the first image exactly as they are. " +
-		"Change only the identity: make the person in the first image be the same person as in the other image(s), matching their facial structure, features and likeness. " +
-		"Do not change the pose, the framing, the background, the clothing or the crop."
+	//
+	// It also says, in as many words, that the output is image 1 and never the
+	// reference. "Make the person in the first image be the same person as in
+	// the other image(s)" is a sentence an edit model can satisfy by handing
+	// back the other image, and it does: the refinement then comes back as a
+	// full copy of the reference photo, which the stitch dutifully shrinks into
+	// a square where a face used to be. framesHold below refuses that render;
+	// this paragraph is the half that tries not to provoke it.
+	faceRefinePrompt = "Image 1 is the picture being edited. Every other image is a reference photograph of a person, supplied ONLY so you can see what that person's face looks like — do not copy their pose, their background, their framing or their crop, and do not output the reference image. " +
+		"Output image 1, changed in exactly one respect: the face of the person in image 1 becomes the face of the person in the reference photograph, matching their facial structure, features and likeness. " +
+		"Keep everything else in image 1 identical — the head angle, the gaze direction, the expression, the lighting, the shadows, the skin tone, the image grain, the hair, the clothing, the background and the framing."
 )
 
 func init() {
@@ -145,6 +154,18 @@ func (f faceRefine) run(out restImageOutcome) restImageOutcome {
 		Log("[face_refine] %d faces found, refining the %d largest", len(faces), maxFaceRefines)
 		faces = faces[:maxFaceRefines]
 	}
+	// WHICH source photo carries the identity, decided here rather than taken
+	// as "the first one". The slots left over after the crop are usually fewer
+	// than the references, and caller order does not answer the question: a
+	// face swap passes the picture being EDITED first and the face second, so
+	// filling the spare slot in order sends the model the very image the crop
+	// was cut out of and drops the only photo that says who the person is.
+	ids := f.identityRefs()
+	if len(ids) == 0 {
+		Debug("[face_refine] no face in any of the %d source photo(s) — nothing to take an identity from, skipping", len(f.refs))
+		return out
+	}
+	f.refs = ids
 
 	// One mutable canvas for the whole pass: with two faces the second
 	// composite has to land on top of the first, not on a stale copy.
@@ -214,11 +235,160 @@ func (f faceRefine) render(canvas image.Image, box image.Rectangle) (image.Image
 	if err != nil {
 		return nil, fmt.Errorf("the refinement render is unreadable: %w", err)
 	}
+	// The render is only allowed to have changed a face. Anything else it hands
+	// back gets stitched into the frame as a square, at face size, and looks
+	// exactly like a bug — because it is one, just not this file's.
+	if diff, ok := framesHold(crop, img); !ok {
+		return nil, fmt.Errorf("the refinement came back as a different picture rather than the same crop with a new face (frame differs by %.0f%%) — the backend returned the reference photo or redrew the scene", diff*100)
+	}
 	return scaleImageTo(img, box.Dx(), box.Dy()), nil
 }
 
+// identityRefs picks the source photos that can actually say who someone is,
+// most face-forward first.
+//
+// The measure is how much of the frame the biggest face fills. A portrait — the
+// picture somebody passes to mean "this person" — scores high; the scene half
+// of a composite scores low or, having no face at all, is dropped entirely. So
+// "put this person on a beach" ([person, beach]) and "put this face on that
+// photo" ([photo, face]) both resolve to the same reference without either
+// caller having to know a slot convention.
+//
+// Ties keep caller order, so a genuine two-portrait composite is unchanged.
+func (f faceRefine) identityRefs() []inputImage {
+	fracs := make([]float64, len(f.refs))
+	for i, ref := range f.refs {
+		if fracs[i] = faceFraction(ref); fracs[i] <= 0 {
+			Debug("[face_refine] source photo %q has no detectable face — not an identity reference", ref.name)
+		}
+	}
+	refs := pickIdentityRefs(f.refs, fracs)
+	if len(refs) > 0 && len(f.refs) > 1 {
+		Debug("[face_refine] identity reference: %q", refs[0].name)
+	}
+	return refs
+}
+
+// pickIdentityRefs drops the faceless references and orders the rest most
+// face-forward first. Split from the measuring so the choice can be tested
+// without a photograph of a person in the source tree.
+func pickIdentityRefs(refs []inputImage, fracs []float64) []inputImage {
+	type scored struct {
+		img  inputImage
+		frac float64
+	}
+	out := make([]scored, 0, len(refs))
+	for i, ref := range refs {
+		if i >= len(fracs) || fracs[i] <= 0 {
+			continue
+		}
+		out = append(out, scored{img: ref, frac: fracs[i]})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].frac > out[j].frac })
+	picked := make([]inputImage, 0, len(out))
+	for _, s := range out {
+		picked = append(picked, s.img)
+	}
+	return picked
+}
+
+// faceFraction is the share of img's area taken by its largest face, or 0 when
+// there is no face in it (or nothing readable at all — an unreadable reference
+// is not an identity, and the render that follows would have failed on it too).
+func faceFraction(ref inputImage) float64 {
+	img, _, err := image.Decode(bytes.NewReader(ref.data))
+	if err != nil {
+		return 0
+	}
+	faces := detectFaces(img) // largest first
+	if len(faces) == 0 {
+		return 0
+	}
+	total := area(img.Bounds())
+	if total <= 0 {
+		return 0
+	}
+	return float64(area(faces[0].box)) / float64(total)
+}
+
+// --- the frame guard ----------------------------------------------------------
+
+const (
+	// frameGuardSize is the resolution both frames are reduced to before they
+	// are compared. Small on purpose: the question is "is this the same picture
+	// with a different face in it", and at 64px a repainted background is
+	// obvious while resampling noise and a step or two of extra detail are not.
+	frameGuardSize = 64
+
+	// frameGuardBand is how far in from the edge the comparison looks, at guard
+	// size. The face sits in the middle of the crop and is SUPPOSED to change;
+	// the band is the part the blend feathers into the scene, which must still
+	// line up with what surrounds it.
+	frameGuardBand = 16
+
+	// frameGuardMaxDiff is the mean per-pixel difference across that band, as a
+	// fraction of full scale, above which the render is rejected. A real
+	// refinement lands a few percent out — same hair, same collar, same
+	// background, marginally different noise. A different picture entirely is
+	// not close, so the threshold sits far from both.
+	frameGuardMaxDiff = 0.15
+)
+
+// framesHold reports whether got is still the picture sent was: same scene,
+// same framing, a different face in the middle of it.
+//
+// This is the check that keeps a misread instruction from reaching the canvas.
+// An edit model asked to make one face match another can answer by returning
+// the reference photo instead of the edit — and that answer is a perfectly
+// valid image, of the right size, arriving through the same code path as a good
+// one. Composited, it becomes a square in the middle of the picture containing
+// a shrunken copy of another photo. Rejecting it here costs the refinement and
+// keeps pass A, which is the trade this whole file already makes everywhere
+// else.
+func framesHold(sent, got image.Image) (float64, bool) {
+	a := grayGrid(sent, frameGuardSize)
+	b := grayGrid(got, frameGuardSize)
+	var sum, n float64
+	for y := 0; y < frameGuardSize; y++ {
+		for x := 0; x < frameGuardSize; x++ {
+			if x >= frameGuardBand && x < frameGuardSize-frameGuardBand &&
+				y >= frameGuardBand && y < frameGuardSize-frameGuardBand {
+				continue // the face's own territory
+			}
+			i := y*frameGuardSize + x
+			d := a[i] - b[i]
+			if d < 0 {
+				d = -d
+			}
+			sum += float64(d)
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, true
+	}
+	diff := sum / n / 255
+	return diff, diff <= frameGuardMaxDiff
+}
+
+// grayGrid reduces an image to a size x size grayscale grid.
+func grayGrid(img image.Image, size int) []float64 {
+	small := scaleImageTo(img, size, size)
+	out := make([]float64, size*size)
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			r, g, b, _ := small.At(x, y).RGBA()
+			// Rec. 601 luma, on the 8-bit scale the threshold is written in.
+			out[y*size+x] = (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)) / 256
+		}
+	}
+	return out
+}
+
 // slots builds the image list for the refinement render: the crop first as the
-// subject being edited, then the identity references, in the caller's order.
+// subject being edited, then the identity references in the order identityRefs
+// settled on — most face-forward first, so the photo that gets cut when there
+// are more references than slots is the one least able to say who someone is.
 //
 // Filled to EXACTLY the backend's slot count. A compose graph errors on a
 // partial fill (the same rule cascadeSteps enforces for a normal edit), so when
