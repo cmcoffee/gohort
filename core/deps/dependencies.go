@@ -56,7 +56,12 @@ var knownDependencies = []struct {
 	{name: "ffprobe", enables: "Inbound-video metadata (duration / resolution); ships with ffmpeg", apt: "ffmpeg", brew: "ffmpeg", versionArgs: []string{"-version"}},
 	{name: "pdftotext", enables: "Text extraction from PDF attachments", apt: "poppler-utils", brew: "poppler", versionArgs: []string{"-v"}},
 	{name: "pandoc", enables: "Text extraction from docx / odt / rtf attachments", apt: "pandoc", brew: "pandoc", versionArgs: []string{"--version"}},
-	{name: "antiword", enables: "Text extraction from legacy binary .doc attachments (pandoc only reads .docx)", apt: "antiword", brew: "antiword", versionArgs: []string{"-h"}},
+	// macOS has no brew formula for antiword any more, and never needed one:
+	// textutil ships with the OS and reads legacy .doc natively. So the
+	// requirement is named per platform rather than listing a package the
+	// reader cannot install — a doctor that prints an impossible command is
+	// worse than one that says nothing.
+	legacyDocDependency(),
 	{name: "git", enables: "Cloning repository appliances (servitor repo mode)", apt: "git", brew: "git", versionArgs: []string{"--version"}},
 	{name: "bwrap", enables: "Sandbox isolation for run_local and skill shell tools (without it, shell falls back to unsandboxed sh -c)", apt: "bubblewrap", versionArgs: []string{"--version"}},
 	{name: "python3", enables: "Python interpreter for sandboxed scripts", apt: "python3", brew: "python3", versionArgs: []string{"--version"}},
@@ -162,5 +167,45 @@ func dependencyInstallHint(apt, brew string) string {
 			return ""
 		}
 		return "apt install " + apt
+	}
+}
+
+// legacyDocDependency describes whatever reads a legacy binary .doc on THIS
+// platform.
+//
+// On macOS that is textutil, which is part of the OS — so the row exists to
+// confirm it is there, not to sell a package. Homebrew dropped its antiword
+// formula, and the old row told every Mac operator to run an install command
+// that no longer resolves, for a capability their machine already had.
+func legacyDocDependency() struct {
+	name, enables string
+	apt, brew     string
+	hint          string
+	versionArgs   []string
+	staleAfter    time.Duration
+} {
+	const enables = "Text extraction from legacy binary .doc attachments (pandoc only reads .docx)"
+	if runtime.GOOS == "darwin" {
+		return struct {
+			name, enables string
+			apt, brew     string
+			hint          string
+			versionArgs   []string
+			staleAfter    time.Duration
+		}{
+			name: "textutil", enables: enables,
+			hint: "ships with macOS at /usr/bin/textutil — nothing to install",
+		}
+	}
+	return struct {
+		name, enables string
+		apt, brew     string
+		hint          string
+		versionArgs   []string
+		staleAfter    time.Duration
+	}{
+		name: "antiword", enables: enables, apt: "antiword",
+		hint:        "apt install antiword (or catdoc — either is used, whichever is present)",
+		versionArgs: []string{"-h"},
 	}
 }

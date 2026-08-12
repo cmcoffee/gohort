@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -490,9 +491,6 @@ func extractWithPandoc(ctx context.Context, data []byte, inputFmt string) (strin
 // column-wrapped output. pandoc cannot read this format, which is why
 // .doc gets its own extractor.
 func extractWithAntiword(ctx context.Context, data []byte) (string, error) {
-	if _, err := exec.LookPath("antiword"); err != nil {
-		return "", fmt.Errorf("antiword not installed (needed for legacy .doc files; convert to .docx or install antiword): %w", err)
-	}
 	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
 	defer cancel()
 	tmp, err := os.CreateTemp("", "gohort-doc-*.doc")
@@ -505,14 +503,64 @@ func extractWithAntiword(ctx context.Context, data []byte) (string, error) {
 		return "", fmt.Errorf("write temp: %w", err)
 	}
 	tmp.Close()
-	cmd := exec.CommandContext(ctx, "antiword", "-w", "0", tmp.Name())
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("antiword failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+
+	var lastErr error
+	// Whichever converter this machine actually has. antiword first where it
+	// exists — "-w 0" gives unwrapped paragraphs, which embed and search better
+	// than column-wrapped text — then textutil, which ships WITH macOS and
+	// needs no install at all. That fallback is why a Mac can still read a .doc
+	// now that Homebrew has dropped the antiword formula: the capability was
+	// never actually missing there, only the package.
+	for _, conv := range legacyDocConverters {
+		if _, err := exec.LookPath(conv.bin); err != nil {
+			continue
+		}
+		cmd := exec.CommandContext(ctx, conv.bin, append(conv.args, tmp.Name())...)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			// Try the next converter rather than giving up: a file one tool
+			// chokes on is often readable by another, and the alternative is
+			// refusing a document this machine could have read.
+			lastErr = fmt.Errorf("%s failed: %w (stderr: %s)", conv.bin, err, strings.TrimSpace(stderr.String()))
+			continue
+		}
+		return stdout.String(), nil
 	}
-	return stdout.String(), nil
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("no converter for legacy .doc files is installed — %s, or convert the file to .docx", legacyDocInstallHint())
+}
+
+// legacyDocConverters are the tools that can read a legacy binary Word file,
+// in preference order.
+//
+// textutil is the macOS answer and always present there, which matters more
+// than it used to: Homebrew no longer ships an antiword formula, so a Mac that
+// followed the old advice now has no way to satisfy it. The capability was
+// never missing on that platform — only the package everyone was pointed at.
+var legacyDocConverters = []struct {
+	bin  string
+	args []string
+}{
+	// -w 0 disables line wrapping, so paragraphs arrive unbroken.
+	{bin: "antiword", args: []string{"-w", "0"}},
+	// Built into macOS. -stdout keeps it in the same read-from-stdout shape.
+	{bin: "textutil", args: []string{"-convert", "txt", "-stdout"}},
+	// Common on Linux where antiword is absent; harmless where it is not.
+	{bin: "catdoc", args: nil},
+}
+
+// legacyDocInstallHint names something the reader can actually do on THIS
+// platform. Telling a Mac to install antiword is telling it to run a command
+// that no longer resolves.
+func legacyDocInstallHint() string {
+	if runtime.GOOS == "darwin" {
+		return "macOS normally provides textutil at /usr/bin/textutil; if it is missing, install catdoc"
+	}
+	return "install antiword or catdoc"
 }
 
 // FormatDocumentPreamble builds the "Attached: name\n\n<text>" block
