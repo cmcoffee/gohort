@@ -158,6 +158,19 @@ func (k PeerKey) AllowsAppliance(id string) bool {
 // cannot ask about (or the reverse) is a distinction nobody wants to maintain
 // per id.
 func (k PeerKey) AllowsApplianceFor(capability, id string) bool {
+	// Only the appliance-scoped capabilities can reach a machine at all. The
+	// others are anonymous compute — an input in, a derived output back — and
+	// nothing about them belongs to a named user here.
+	//
+	// This used to be left to the call sites, which all pass the right constant.
+	// That is true and fragile: the predicate itself would happily answer "yes,
+	// this key may embed against box-1", so one caller passing the wrong
+	// capability would silently hand an anonymous grant a route to somebody's
+	// systems. The line between the two halves is what the whole peer design
+	// rests on, so it is enforced where it is defined.
+	if !peerCapAppliesToAppliances(capability) {
+		return false
+	}
 	if !k.Allows(capability) || strings.TrimSpace(k.Owner) == "" {
 		return false
 	}
@@ -165,6 +178,20 @@ func (k PeerKey) AllowsApplianceFor(capability, id string) bool {
 		if a == id {
 			return true
 		}
+	}
+	return false
+}
+
+// peerCapAppliesToAppliances reports whether a capability is scoped to specific
+// machines rather than being anonymous compute.
+//
+// The scoped three name an Owner and an appliance list because they reach that
+// user's systems; the rest take an input and give back a derived output, and
+// must never resolve against a machine.
+func peerCapAppliesToAppliances(capability string) bool {
+	switch capability {
+	case PeerCapInvestigate, PeerCapKnowledge, PeerCapExec:
+		return true
 	}
 	return false
 }
