@@ -911,8 +911,23 @@ type AgentSyncRun struct {
 // may override. Zero fields inherit the dispatch defaults; set only what the
 // instance's loop needs. See AgentSyncRun.Loop.
 type AgentLoopOverrides struct {
-	MaxRounds     int              // >0 overrides the resolved default
-	SerialTools   bool             // run tool calls one-at-a-time
+	MaxRounds   int  // >0 overrides the resolved default
+	SerialTools bool // run tool calls one-at-a-time
+	// TierOverride pins this run to a model tier regardless of the agent's own
+	// LeadModel setting. TierUnset (the zero value) inherits, so every existing
+	// caller is unchanged.
+	//
+	// It exists because a scoped run can belong to something that has its OWN
+	// opinion about which model should serve it. Servitor's per-appliance tier
+	// reached the map/probe path — which builds an AgentLoopConfig directly —
+	// and stopped dead at the chat path, which comes through here: the setting
+	// saved, read back correctly, and did nothing on the surface an operator is
+	// most likely to be looking at.
+	//
+	// It cannot escalate past the privacy pin. The loop gates every tier
+	// decision on LeadDenied(), so a LEAD override on a ForcePrivate agent still
+	// serves from the worker.
+	TierOverride  LLMTier
 	ChatOptions   []ChatOption     // APPENDED to the dispatch defaults (last wins per option)
 	OnRoundReset  func() bool      // per-step pacing reset
 	OnRoundStart  func() []Message // pre-round injection (stuck nudges, etc.)
@@ -1538,6 +1553,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		}
 		if lc.SerialTools {
 			loopCfg.SerialTools = true
+		}
+		if lc.TierOverride != TierUnset {
+			loopCfg.TierOverride = lc.TierOverride
 		}
 		loopCfg.ChatOptions = append(loopCfg.ChatOptions, lc.ChatOptions...) // appended → last wins
 		if lc.OnRoundReset != nil {

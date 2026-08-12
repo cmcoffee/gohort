@@ -66,9 +66,13 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 			ID:         "peerwork:" + doing + ":" + caller,
 			Label:      peerRowLabel(caller, doing, n),
 			Background: true, // it started without the viewer, by definition
-			App:        "Peers",
-			Status:     "on this machine's hardware",
-			Order:      peerLiveOrder,
+			// Nothing here was typed by anybody: the peer's own key label and a
+			// fixed description of what it is doing. Masked, this row says
+			// "Peers · another user", which withholds the only thing it is for.
+			PublicLabel: true,
+			App:         "Peers",
+			Status:      "on this machine's hardware",
+			Order:       peerLiveOrder,
 		})
 	}
 	for caller, n := range st.Queued {
@@ -76,12 +80,13 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 			continue
 		}
 		out = append(out, LiveEntry{
-			ID:         "peerqueue:" + doing + ":" + caller,
-			Label:      fmt.Sprintf("%s — %d waiting to %s", peerDisplayName(caller), n, doing),
-			Queued:     true,
-			Background: true,
-			App:        "Peers",
-			Order:      peerLiveOrder,
+			ID:          "peerqueue:" + doing + ":" + caller,
+			Label:       fmt.Sprintf("%s — %d waiting to %s", peerDisplayName(caller), n, doing),
+			Queued:      true,
+			Background:  true,
+			PublicLabel: true,
+			App:         "Peers",
+			Order:       peerLiveOrder,
 		})
 	}
 	return out

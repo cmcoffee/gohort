@@ -4933,8 +4933,15 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			SessionID: id,
 		}
 		leadLoop := &orchestrate.AgentLoopOverrides{
-			MaxRounds:    75,
-			SerialTools:  true,
+			MaxRounds:   75,
+			SerialTools: true,
+			// The appliance's own tier, on THIS path too. The map/probe branch
+			// builds an AgentLoopConfig directly and has honored it since the
+			// setting shipped; chat comes through the scoped-agent dispatch,
+			// which had no way to carry it — so the setting saved, read back
+			// correctly, and did nothing on the surface an operator actually
+			// uses to ask a system a question.
+			TierOverride: applianceTierOverride(appliance.OrchestratorTier),
 			ChatOptions:  append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
 			OnRoundStart: drainInjections,
 		}

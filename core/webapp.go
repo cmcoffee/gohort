@@ -1792,6 +1792,20 @@ type LiveEntry struct {
 	// A provider that hasn't been taught to fill this shows a generic label
 	// rather than leaking; that's the safe direction to be wrong in.
 	Owner string `json:"-"`
+	// PublicLabel says this entry's label contains NO user-authored text, so it
+	// may be shown to everyone unmasked.
+	//
+	// Masking exists because a label is usually something a person typed — a
+	// prompt, a research question, a debate topic — and the ribbon is global.
+	// Some rows are not that. Work borrowed by a peer is described entirely by
+	// the framework ("Peer studio-mac — running a model"), and masking it to
+	// "another user" removes the only fact it exists to convey: WHOSE machine
+	// is competing for the GPU while your turn waits.
+	//
+	// Opt-in, and it stays that way. A provider must state that its label is
+	// framework-generated; the default remains mask-everything, because the
+	// cost of being wrong here is reading someone else's prompt off a pill.
+	PublicLabel bool `json:"-"`
 }
 
 // MaskedLabel returns the entry's label as viewer should see it: unchanged
@@ -1806,6 +1820,10 @@ type LiveEntry struct {
 // Any tree-indent prefix survives masking, or the nested view collapses.
 func (e LiveEntry) MaskedLabel(viewer string) string {
 	if e.Owner != "" && e.Owner == viewer {
+		return e.Label
+	}
+	// A label the framework wrote has nothing to protect. See PublicLabel.
+	if e.PublicLabel {
 		return e.Label
 	}
 	indent, _ := splitLiveIndent(e.Label)
