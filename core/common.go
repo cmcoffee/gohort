@@ -529,7 +529,7 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 	for _, opt := range opts {
 		opt(&probe)
 	}
-	if probe.RouteKey != "" && !RouteToLead(probe.RouteKey) {
+	if probe.RouteKey != "" && !probe.TierResolved && !RouteToLead(probe.RouteKey) {
 		if probe.Think == nil {
 			if think := RouteThink(probe.RouteKey); think != nil {
 				opts = append(opts, WithThink(*think))

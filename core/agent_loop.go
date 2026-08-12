@@ -2530,6 +2530,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			callFn := T.WorkerChat
 			if useLead {
 				callFn = T.LeadChat
+				// The tier is settled HERE, from wantsLead — which already
+				// consulted the route stage and any per-run override. Without
+				// saying so, LeadChat re-derives it from the same RouteKey,
+				// finds the stage says worker, and transparently delegates
+				// back: the override reaches the call and is undone one frame
+				// later. RouteKey stays on the options because it still
+				// carries the stage's thinking preference.
+				callOpts = append(callOpts, WithTierResolved())
 			}
 			// Empty/timeout/empty-error retry happens inside retryLLM
 			// (core/llm.go) — every caller gets it for free, including
@@ -2556,6 +2564,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				callFn := T.WorkerChat
 				if useLead {
 					callFn = T.LeadChat
+					callOpts = append(callOpts, WithTierResolved())
 				}
 				resp, err = callFn(ctx, history, callOpts...)
 			}

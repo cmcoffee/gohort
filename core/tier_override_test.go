@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -134,5 +135,108 @@ func TestEveryTierDecisionIsPrivacyGated(t *testing.T) {
 	}
 	if found == 0 {
 		t.Fatal("found no tier decisions — the sweep is no longer looking where they live")
+	}
+}
+
+// stubLLM records which tier actually served a call.
+type stubLLM struct {
+	name string
+	seen *[]string
+}
+
+func (s stubLLM) Chat(_ context.Context, _ []Message, _ ...ChatOption) (*Response, error) {
+	*s.seen = append(*s.seen, s.name)
+	return &Response{Content: "ok"}, nil
+}
+func (s stubLLM) ChatStream(_ context.Context, _ []Message, _ StreamHandler, _ ...ChatOption) (*Response, error) {
+	*s.seen = append(*s.seen, s.name)
+	return &Response{Content: "ok"}, nil
+}
+
+// TestLeadChatHonorsAResolvedTier — the defect the override actually hit.
+//
+// The agent loop decided LEAD from a per-resource override and called LeadChat
+// with the same RouteKey still attached. LeadChat consulted routing AGAIN, got
+// "worker" from the stage, and transparently delegated — so the override worked
+// all the way down to the call and was undone one frame later. Two components
+// each deriving the tier from the same input, one of them last.
+func TestLeadChatHonorsAResolvedTier(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prevAuth })
+
+	RegisterRouteStage(RouteStage{Key: "leadchat.stage", Label: "S", Default: "worker"})
+	prevLookup := LookupRouteFunc
+	LookupRouteFunc = func(key string) string {
+		var v string
+		db.Get(RoutingTable, key, &v)
+		return v
+	}
+	t.Cleanup(func() { LookupRouteFunc = prevLookup })
+	db.Set(RoutingTable, "leadchat.stage", "worker") // the stage says worker
+
+	var seen []string
+	app := &AppCore{
+		LLM:     stubLLM{name: "worker", seen: &seen},
+		LeadLLM: stubLLM{name: "lead", seen: &seen},
+	}
+
+	// Without the marker, the stage wins and the call lands on the worker —
+	// correct for a caller that has NOT already decided.
+	seen = nil
+	if _, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		WithRouteKey("leadchat.stage")); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != "worker" {
+		t.Fatalf("a plain routed LeadChat served %v, want the worker", seen)
+	}
+
+	// With it, the caller's decision stands.
+	seen = nil
+	if _, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		WithRouteKey("leadchat.stage"), WithTierResolved()); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != "lead" {
+		t.Fatalf("a resolved-tier LeadChat served %v, want the lead — the override is being "+
+			"undone by LeadChat re-deriving the tier from the same route key", seen)
+	}
+}
+
+// TestAResolvedTierStillCannotBeatThePrivacyPin — the marker says "the tier is
+// decided", never "ignore the pin". A per-resource flag that could switch off a
+// security rule by asserting it had already thought about it would be worse
+// than no flag.
+func TestAResolvedTierStillCannotBeatThePrivacyPin(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prevAuth })
+
+	var seen []string
+	app := &AppCore{
+		LLM:     stubLLM{name: "worker", seen: &seen},
+		LeadLLM: stubLLM{name: "lead", seen: &seen},
+	}
+	app.Private() // servitor's posture; Model Privacy is off by default
+
+	if _, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		WithTierResolved()); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != "worker" {
+		t.Fatalf("a resolved tier reached %v with Model Privacy off — the marker defeated the pin", seen)
+	}
+	// And with every model private it goes through, or the pin is permanent.
+	SetAllLLMsPrivate(true)
+	seen = nil
+	if _, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		WithTierResolved()); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != "lead" {
+		t.Errorf("with every model private the call served %v, want the lead", seen)
 	}
 }

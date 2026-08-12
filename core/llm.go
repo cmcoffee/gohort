@@ -657,6 +657,18 @@ type ChatConfig struct {
 	Think        *bool  // Enable/disable thinking for thinking models (nil = model default)
 	ThinkBudget  *int   // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
+	// TierResolved says the CALLER has already decided this call belongs on the
+	// lead, so LeadChat must not re-derive the tier from RouteKey and delegate
+	// back to the worker.
+	//
+	// It exists because the agent loop and LeadChat each consulted routing
+	// independently. The loop escalated on a per-resource override; LeadChat saw
+	// the same RouteKey, asked RouteToLead, got "worker" from the stage, and
+	// transparently un-escalated — so the override worked all the way down to
+	// the call and was then undone one frame later. RouteKey is still passed,
+	// because it carries the stage's THINKING preference, which the caller does
+	// want; only the tier decision is already made.
+	TierResolved bool
 	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
 	MaskDebug    bool   // Suppress request/response content from debug logs (use for sessions with sensitive data).
 	// SuppressAutoDate skips the "Today's date is …" system-prompt prepend
@@ -795,6 +807,13 @@ func WorkerJudgeThink() ChatOption { return WithThinkBudget(workerJudgeThinkBudg
 // to lead, so it's safe to add WithRouteKey before registering the stage.
 func WithRouteKey(key string) ChatOption {
 	return func(c *ChatConfig) { c.RouteKey = key }
+}
+
+// WithTierResolved marks a LeadChat call whose tier the caller has already
+// settled — see ChatConfig.TierResolved. The routing stage still supplies the
+// thinking preference; it just no longer overrules the tier.
+func WithTierResolved() ChatOption {
+	return func(c *ChatConfig) { c.TierResolved = true }
 }
 
 // WithMaskDebug suppresses request/response content from debug logs for this
