@@ -41,6 +41,18 @@ type AppAgentSpec struct {
 	// Set it for an app agent that records only into other layers (servitor writes
 	// facts to the graph and prose to Reference Memory, never Explicit Memory).
 	DisableExplicit bool `json:"disable_explicit,omitempty"`
+	// ForcePrivate declares that this agent handles material which must not
+	// reach a third-party model — SSH credentials, log contents, system facts.
+	// It locks the agent out of the lead tier the same way RouteStage.Private
+	// locks a pipeline stage out of it, and lifts under the same condition: an
+	// operator declaring that every configured model is private (see
+	// core.AllLLMsPrivate).
+	//
+	// DECLARED, not defaulted. Servitor's investigator stayed off the lead tier
+	// for a while only because LeadModel happens to be false in a zero
+	// AgentRecord — a property nothing enforced and one edit would have undone.
+	// An agent that must not escalate has to SAY so.
+	ForcePrivate bool `json:"force_private,omitempty"`
 }
 
 var (

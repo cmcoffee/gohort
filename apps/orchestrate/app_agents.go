@@ -40,6 +40,21 @@ func hiddenAppAgent(id string) bool {
 	return ok && s.Hidden
 }
 
+// appAgentForcesPrivate reports whether id is an app agent whose SPEC declares
+// ForcePrivate — it handles material that must not reach a third-party model.
+//
+// Keys on the registry for the same reason hiddenAppAgent does, and the stakes
+// are higher: a per-user shadow saved before the spec set the flag carries
+// ForcePrivate=false forever, and a record consulted instead of the spec would
+// let servitor's investigator — which reads SSH credentials, log contents and
+// system facts — escalate to a remote lead model. Hidden leaking an agent into
+// a picker is embarrassing; this one sends credentials somewhere they cannot be
+// recalled from.
+func appAgentForcesPrivate(id string) bool {
+	s, ok := appagents.AppAgentByID(id)
+	return ok && s.ForcePrivate
+}
+
 // appAgentVisibilityWarnOnce fires the visible-app-agent lint a single time,
 // the first time app agents are folded into resolution (startup / first agent
 // list). Guarded so the per-request registeredAppAgents() call doesn't spam.
@@ -74,6 +89,7 @@ func appAgentSpecToRecord(s appagents.AppAgentSpec) AgentRecord {
 		Cortex:             s.Cortex,
 		MemoryMode:         s.MemoryMode,
 		DisableExplicit:    s.DisableExplicit,
+		ForcePrivate:       s.ForcePrivate,
 	}
 }
 

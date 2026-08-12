@@ -5794,7 +5794,14 @@ func (t *chatTurn) shouldUseLeadModel() bool {
 	if AllLLMsPrivate() {
 		return true
 	}
-	return !t.agent.ForcePrivate && !t.privateMode
+	// The SPEC as well as the record. An app agent's per-user shadow can be
+	// older than the flag — the same drift that let a stale shadow carry
+	// Hidden=false — and here the consequence is an investigator holding SSH
+	// credentials talking to a hosted model.
+	if t.agent.ForcePrivate || appAgentForcesPrivate(t.agent.ID) {
+		return false
+	}
+	return !t.privateMode
 }
 
 // frameworkConversationalTools is the single source of truth for the always-on

@@ -50,6 +50,16 @@ func init() {
 		// Specific one-off findings go to Reference Memory; structured facts +
 		// topology go to the graph.
 		MemoryMode: "shortcuts",
+		// This agent reads SSH credentials, log contents and system facts. It
+		// must never reach a third-party model, and saying so here is what
+		// makes that true regardless of how the record is later edited — it
+		// held before only because LeadModel defaults to false.
+		//
+		// It is not an absolute pin: it lifts when the operator declares every
+		// configured model private, which is the same condition that lifts
+		// servitor's route stages. Private mode is what ALLOWS the better
+		// reasoner here, and its absence is what forbids it.
+		ForcePrivate: true,
 	})
 }
 
