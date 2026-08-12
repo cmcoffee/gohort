@@ -278,15 +278,45 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	} else {
 		latent = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "EmptyLatent") })
 	}
-	// 7. Size: the latent node the sampler draws from (EmptyLatentImage or variant).
-	if lin := comfyInputs(graph, latent); hasKey(lin, "width") && hasKey(lin, "height") {
-		m.WidthNodes, m.HeightNodes = []string{latent}, []string{latent}
-		if w := comfyInt(lin["width"]); w > 0 {
+	// 7. Size: EVERY node feeding the sampler that carries a literal width and
+	//    height, not just the latent one.
+	//
+	//    One requested size is often several nodes in the graph. A Flux 2
+	//    workflow has width/height on BOTH EmptyFlux2LatentImage and
+	//    Flux2Scheduler, and the scheduler derives its sigmas from the image
+	//    area — so moving only the latent leaves the scheduler solving for a
+	//    resolution that is no longer being rendered. That does not fail; it
+	//    quietly degrades the picture, which is the worse outcome, because the
+	//    backend looks like it is working and the size control looks like it
+	//    took effect.
+	//
+	//    Scoped to the sampler's ANCESTORS. A node downstream of the sampler
+	//    with a width and height is doing something else with it — an upscale,
+	//    a crop — and rewriting that to the requested size would break a
+	//    deliberate step. Only what the sampler depends on describes the render.
+	sizeNodes := comfySizeNodesFeeding(graph, sampler)
+	if len(sizeNodes) > 0 {
+		m.WidthNodes, m.HeightNodes = sizeNodes, sizeNodes
+		// Defaults from the latent node when it is one of them, since that is
+		// the one describing the output; otherwise the first found.
+		def := sizeNodes[0]
+		for _, id := range sizeNodes {
+			if id == latent {
+				def = id
+				break
+			}
+		}
+		din := comfyInputs(graph, def)
+		if w := comfyInt(din["width"]); w > 0 {
 			s.DefaultWidth = w
 		}
-		if h := comfyInt(lin["height"]); h > 0 {
+		if h := comfyInt(din["height"]); h > 0 {
 			s.DefaultHeight = h
 		}
+		// Deliberately NOT a warning. Several size nodes is the correct reading
+		// of a Flux 2 graph, not a defect, and a warning on a clean import is
+		// how a working backend comes to look broken. The mapping itself lists
+		// the nodes, which is where an operator checking the wiring looks.
 	} else if len(m.ImageNodes) == 0 {
 		// Only a defect on a txt2img graph. An img2img graph takes its size from
 		// the source photo (the latent comes from VAEEncode, not
@@ -987,4 +1017,43 @@ func hasKey(m map[string]any, k string) bool {
 	}
 	_, ok := m[k]
 	return ok
+}
+
+// comfySizeNodesFeeding returns every node the sampler depends on, directly or
+// transitively, that carries a LITERAL width and height.
+//
+// Literal on purpose. A width driven by a link is computed by the graph — a
+// primitive, a switch, a preset chain — and writing over it either loses the
+// wiring or is silently recomputed, which is the same reasoning that leaves a
+// linked `steps` unmapped rather than offering a knob that can only do harm.
+//
+// Returned sorted so the mapping is stable: it is stored on the backend record
+// and shown to an operator, and a set that reorders between saves reads as a
+// change nobody made.
+func comfySizeNodesFeeding(graph map[string]map[string]any, sampler string) []string {
+	if sampler == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	var walk func(id string)
+	walk = func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		in := comfyInputs(graph, id)
+		if hasKey(in, "width") && hasKey(in, "height") &&
+			!comfyIsLink(in["width"]) && !comfyIsLink(in["height"]) {
+			out = append(out, id)
+		}
+		for _, v := range in {
+			if target, ok := comfyLinkTarget(v); ok {
+				walk(target)
+			}
+		}
+	}
+	walk(sampler)
+	sort.Strings(out)
+	return out
 }

@@ -37,8 +37,16 @@ func TestFlux2WorkflowImports(t *testing.T) {
 	if !eqStrs(spec.ComfyMap.SeedNodes, []string{"98:25"}) || spec.ComfyMap.SeedKey != "noise_seed" {
 		t.Errorf("seed = %v key %q, want [98:25] noise_seed", spec.ComfyMap.SeedNodes, spec.ComfyMap.SeedKey)
 	}
-	if !eqStrs(spec.ComfyMap.WidthNodes, []string{"98:47"}) {
-		t.Errorf("width nodes = %v, want the Flux2 latent at 98:47", spec.ComfyMap.WidthNodes)
+	// BOTH size-bearing nodes, not just the latent. Flux2Scheduler carries its
+	// own width/height and derives sigmas from the image area, so a render that
+	// moves the latent alone leaves the scheduler solving for a resolution
+	// nobody is rendering. That does not fail — it quietly degrades the picture,
+	// which is why this assertion used to pass while the backend was wrong.
+	if !eqStrs(spec.ComfyMap.WidthNodes, []string{"98:47", "98:48"}) {
+		t.Errorf("width nodes = %v, want the Flux2 latent AND the scheduler", spec.ComfyMap.WidthNodes)
+	}
+	if !eqStrs(spec.ComfyMap.HeightNodes, []string{"98:47", "98:48"}) {
+		t.Errorf("height nodes = %v — height must move with width or the two disagree", spec.ComfyMap.HeightNodes)
 	}
 	if spec.ComfyMap.OutputNode != "9" {
 		t.Errorf("output node = %q, want 9", spec.ComfyMap.OutputNode)
