@@ -36,16 +36,18 @@ const askSystemTimeout = 5 * time.Minute
 // for the same reason request_capability names it: an agent that cannot see
 // its reach answers "no I can't" to a machine it holds.
 func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance) AgentToolDef {
-	names := make([]string, 0, len(connected))
-	for _, a := range connected {
-		names = append(names, applianceLabel(a.Name, a.ID))
-	}
-	desc := "Ask a question about the live state or configuration of one of the owner's systems — \"what's the current load?\", \"is nginx running?\", \"how full is the data disk?\". " +
-		"A specialist investigator that knows the machine answers it, probing over SSH where records aren't enough. Strictly read-only: it can inspect, never change. " +
+	// "Servitor" appears by name because that is the word the OWNER uses. The
+	// description described the capability perfectly and never named the thing
+	// it belonged to, so an agent holding this tool answered "I have no
+	// Servitor tools" when asked to consult Servitor — true of the vocabulary
+	// it had been given, and wrong about what it could do.
+	desc := "Ask Servitor a question about the live state or configuration of one of the owner's systems — \"what's the current load?\", \"is nginx running?\", \"how full is the data disk?\". " +
+		"This is THE way to answer anything about the owner's machines, servers, appliances, lab systems or infrastructure: a Servitor investigator that already knows the system answers it, consulting what it has recorded and probing over SSH where records aren't enough. " +
+		"Strictly read-only: it can inspect, never change. " +
 		"Slow (tens of seconds) — ask one well-formed question rather than many small ones. " +
 		"For ACTIONS (restart, deploy, clean up), use request_capability or an approved tool instead."
-	if len(names) > 0 {
-		desc += " Systems you may ask about: " + strings.Join(names, "; ") + "."
+	if list := connectedSystemList(connected); list != "" {
+		desc += " Systems you may ask Servitor about: " + list + "."
 	}
 	return AgentToolDef{
 		Tool: Tool{
@@ -88,4 +90,52 @@ func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance
 			return answer, nil
 		},
 	}
+}
+
+// connectedSystemList renders the connected appliances for a tool description,
+// annotating what each one IS.
+//
+// Two things an agent could not previously work out from a bare list of names.
+//
+// First, a WORKSPACE is not a machine. It reads exactly like one — a name in a
+// list of "systems" — while asking it actually fans the question across every
+// member. An agent front-ending a workspace has no way to know that the single
+// entry it can see is the thing that reaches all the others, so it answers
+// questions about the estate one machine at a time, or says it cannot.
+//
+// Second, the kind tells it what to expect. Asking a bundle of uploaded logs and
+// asking a live SSH host are different acts with different latencies, and
+// nothing in a name distinguishes them.
+func connectedSystemList(connected []Appliance) string {
+	if len(connected) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(connected))
+	for _, a := range connected {
+		label := applianceLabel(a.Name, a.ID)
+		if k := applianceKindNote(a); k != "" {
+			label += " (" + k + ")"
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// applianceKindNote describes a type in the terms a CALLER needs, not the terms
+// the record uses. An agent does not care that the type string is "workspace";
+// it cares that one question reaches every member.
+func applianceKindNote(a Appliance) string {
+	switch a.Type {
+	case "workspace":
+		return "a GROUP of systems — one question here is answered across all of its members, so prefer it over asking each machine separately"
+	case "repo":
+		return "a source repository, not a live host — answers come from the code"
+	case "bundle":
+		return "uploaded evidence (logs, dumps) — a snapshot, nothing live to probe"
+	case "toolset":
+		return "reached through curated tools rather than a shell"
+	case "command":
+		return "a local command target"
+	}
+	return ""
 }

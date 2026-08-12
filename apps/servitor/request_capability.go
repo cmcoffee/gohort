@@ -156,12 +156,8 @@ func RequestCapabilityToolDef(udb Database, chat FactChatFunc, agentID string, c
 		"Nothing runs now, and nothing runs later without their approval. " +
 		"Use this when you need to do something on a system and have no tool for it; do not use it to run something once — it exists to create a lasting, named ability. " +
 		"After calling it, tell the person what you asked for and move on."
-	if len(connected) > 0 {
-		names := make([]string, 0, len(connected))
-		for _, a := range connected {
-			names = append(names, applianceLabel(a.Name, a.ID))
-		}
-		desc += " Systems you are connected to and may ask about: " + strings.Join(names, "; ") + "."
+	if list := connectedSystemList(connected); list != "" {
+		desc += " Systems you are connected to and may ask about: " + list + "."
 	}
 	return AgentToolDef{
 		Tool: Tool{
