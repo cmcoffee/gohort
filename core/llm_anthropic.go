@@ -22,6 +22,15 @@ const (
 	// silently truncated long answers mid-thought because stop_reason was
 	// dropped; give real headroom. Streaming avoids the HTTP-timeout concern
 	// so it gets a larger default.
+	// anthDefaultThinkBudget is the reasoning allowance when a call asks for
+	// thinking without naming a budget. Matches the framework's own default
+	// (DEFAULT_THINKING_BUDGET) so a Claude call and a llama.cpp call asked for
+	// the same thing get the same thing.
+	anthDefaultThinkBudget = 4096
+	// anthThinkAnswerHeadroom is what max_tokens is lifted above the budget by
+	// when a caller's ceiling would not leave room to answer.
+	anthThinkAnswerHeadroom = 4096
+
 	anthDefaultMaxTokens       = 8192
 	anthDefaultStreamMaxTokens = 16384
 )
@@ -92,6 +101,50 @@ type anthRequest struct {
 	System    []anthSystemBlock `json:"system,omitempty"`
 	Stream    bool              `json:"stream,omitempty"`
 	Tools     []anthTool        `json:"tools,omitempty"`
+	Thinking  *anthThinking     `json:"thinking,omitempty"`
+}
+
+// anthThinking is the extended-thinking block, shared by the direct Anthropic
+// endpoint and both Bedrock modes because all three speak the Messages format.
+//
+// Until now none of them sent it. Thinking was honoured by llama.cpp, ollama and
+// Gemini and silently dropped on every Claude path — so a route stage set to
+// "lead (thinking)", a per-route budget and a per-agent budget all applied
+// perfectly and produced a request with no thinking in it. The control said one
+// thing and the model did another, on the tier where the reasoning was most
+// likely to be wanted.
+type anthThinking struct {
+	Type         string `json:"type"`          // "enabled"
+	BudgetTokens int    `json:"budget_tokens"` // reasoning allowance
+}
+
+// anthThinkingFor builds the thinking block for a call, and returns the
+// max_tokens that must accompany it.
+//
+// max_tokens has to EXCEED the budget: the two share one output allowance, and a
+// request whose ceiling is at or below its thinking budget is rejected outright.
+// Raising it here rather than asking every caller to remember is the difference
+// between a feature that works and one that 400s the first time somebody sets a
+// budget near the default ceiling.
+//
+// Returns nil when thinking is off or unasked-for, which keeps every existing
+// call byte-identical — this changes nothing until a route or an agent asks for
+// thinking, so no bill moves by surprise.
+func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, int) {
+	if cfg.Think == nil || !*cfg.Think {
+		return nil, maxTokens
+	}
+	budget := anthDefaultThinkBudget
+	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
+		budget = *cfg.ThinkBudget
+	}
+	if maxTokens <= budget {
+		// Headroom for an actual answer on top of the reasoning. Without it a
+		// turn could spend its entire allowance thinking and return nothing,
+		// which reads as the model having failed.
+		maxTokens = budget + anthThinkAnswerHeadroom
+	}
+	return &anthThinking{Type: "enabled", BudgetTokens: budget}, maxTokens
 }
 
 // anthSystemBlock is the block form of the system prompt so a cache_control
@@ -419,10 +472,12 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	}
 	addCacheBreakpoint(msgs)
 
+	thinking, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
 	payload := anthRequest{
 		Model:     cfg.Model,
 		Messages:  msgs,
-		MaxTokens: cfg.MaxTokens,
+		MaxTokens: maxTokens,
+		Thinking:  thinking,
 		System:    buildSystemBlocks(systemPrompt),
 		Tools:     buildAnthTools(cfg.Tools),
 	}
@@ -710,10 +765,12 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	}
 	addCacheBreakpoint(msgs)
 
+	thinking, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
 	payload := anthRequest{
 		Model:     cfg.Model,
 		Messages:  msgs,
-		MaxTokens: cfg.MaxTokens,
+		MaxTokens: maxTokens,
+		Thinking:  thinking,
 		System:    buildSystemBlocks(systemPrompt),
 		Stream:    true,
 		Tools:     buildAnthTools(cfg.Tools),

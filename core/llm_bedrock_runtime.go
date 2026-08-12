@@ -62,6 +62,9 @@ type bedrockInvokeRequest struct {
 	MaxTokens        int               `json:"max_tokens"`
 	System           []anthSystemBlock `json:"system,omitempty"`
 	Tools            []anthTool        `json:"tools,omitempty"`
+	// Same block the direct endpoint takes — InvokeModel carries the Messages
+	// body verbatim, so thinking crosses unchanged. See anthThinkingFor.
+	Thinking *anthThinking `json:"thinking,omitempty"`
 }
 
 // bedrockRuntimeClient implements LLM against bedrock-runtime InvokeModel.
@@ -215,10 +218,12 @@ func (c *bedrockRuntimeClient) buildBody(messages []Message, cfg ChatConfig) ([]
 		return nil, err
 	}
 	addCacheBreakpoint(msgs)
+	thinking, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
 	return json.Marshal(bedrockInvokeRequest{
 		AnthropicVersion: bedrockAnthropicVersion,
 		Messages:         msgs,
-		MaxTokens:        cfg.MaxTokens,
+		MaxTokens:        maxTokens,
+		Thinking:         thinking,
 		System:           buildSystemBlocks(systemPrompt),
 		Tools:            buildAnthTools(cfg.Tools),
 	})
