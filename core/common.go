@@ -2297,6 +2297,26 @@ type TempTool struct {
 	// tools the user wants available while building but NOT surfaced to Chat,
 	// Research, etc. Distinct from Disabled (off everywhere including Builder).
 	BuilderOnly bool `json:"builder_only,omitempty"`
+	// BoundOnly hides the tool from every agent's catalog while leaving it
+	// available wherever something BINDS it by name — a servitor appliance's
+	// toolset today, another binder later.
+	//
+	// The case it exists for: a set of read tools for one service, authored so
+	// a servitor system can be investigated through them, which have no business
+	// appearing in every chat the user has. Disabled turns the tool off
+	// everywhere including its binder; BuilderOnly reserves it for authoring.
+	// This one says "reachable only where it was deliberately attached", which
+	// is neither of those.
+	//
+	// It is a VISIBILITY rule, not an access-control one. A binding is what
+	// grants use, and the binding already had to be approved; this only stops
+	// the tool being offered to agents that never asked for it.
+	//
+	// Builder still sees it, like the two above and for the same reason: it has
+	// to load, RUN and fix these, and a tool it cannot run is a tool nobody can
+	// repair. A set of read tools authored for one system is precisely what
+	// somebody asks Builder to fix.
+	BoundOnly bool `json:"bound_only,omitempty"`
 	// Template records the tool template that authored this tool (provenance),
 	// so it can be reconfigured through the same template later — the tool-side
 	// analog of Connector.Template. Empty for hand-authored tools.

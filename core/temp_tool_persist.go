@@ -799,6 +799,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		next.Tool.Locked = approved[i].Tool.Locked
 		next.Tool.Disabled = approved[i].Tool.Disabled
 		next.Tool.BuilderOnly = approved[i].Tool.BuilderOnly
+		next.Tool.BoundOnly = approved[i].Tool.BoundOnly
 		// Wrapper-level state survives a re-persist too. ScopeAgents is the
 		// flattened namespace's scope — dropping it would silently promote an
 		// agent-scoped tool to shared on every Builder edit. Shared /

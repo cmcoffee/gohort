@@ -1561,7 +1561,13 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		// Builder always loads the full pool so it can load, RUN, test, fix, and
 		// re-enable them — building AND verifying is its whole job; a disabled
 		// tool it couldn't run would be unfixable.
-		if (p.Tool.Disabled || p.Tool.BuilderOnly) && !isBuilderAgent(t.agent.ID) {
+		// Bound-only joins the same carve-out for the same reason the comment
+		// above gives: Builder has to be able to load, RUN and fix these, and a
+		// tool it cannot run is a tool it cannot repair. A set of read tools
+		// authored for one system is exactly the kind of thing somebody asks
+		// Builder to fix, so reserving it away from the one agent that could
+		// would be trading a real capability for a tidier catalog.
+		if (p.Tool.Disabled || p.Tool.BuilderOnly || p.Tool.BoundOnly) && !isBuilderAgent(t.agent.ID) {
 			continue
 		}
 		// Private mode hides API-mode temp tools (network side effects);

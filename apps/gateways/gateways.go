@@ -290,6 +290,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Locked      bool `json:"locked"`       // frozen — AI can't modify/delete
 			Disabled    bool `json:"disabled"`     // off for every agent
 			BuilderOnly bool `json:"builder_only"` // exposed to Builder only
+			BoundOnly   bool `json:"bound_only"`   // hidden from agents; usable only where bound
 			// Promotion (publish-to-catalog) request state for this tool.
 			Requested  bool `json:"requested"`   // a promotion request is pending admin review
 			CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
@@ -348,7 +349,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Category: p.Tool.Category,
 				Missing: missing, Shared: p.Shared, LastUsed: last,
-				Locked: p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly,
+				Locked: p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly,
 				Requested: pending, CanRequest: !p.Shared && !pending,
 				Pool: true, Deletable: true, DisableOK: true,
 				Group: "All Agents (Global tools)",
@@ -716,6 +717,15 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			tt.BuilderOnly = true
 		case "builder_only_off":
 			tt.BuilderOnly = false
+		case "bound_only_on":
+			tt.BoundOnly = true
+			// Mutually exclusive with Builder-only, which is a different
+			// statement: one reserves a tool for authoring, the other says it
+			// belongs to whatever binds it. Holding both would leave the
+			// selector describing a state no filter produces.
+			tt.BuilderOnly = false
+		case "bound_only_off":
+			tt.BoundOnly = false
 		default:
 			http.Error(w, "unknown action", http.StatusBadRequest)
 			return
@@ -1262,6 +1272,9 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "disabled", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Disabled", Color: "danger"},
 					}},
+					{Field: "bound_only", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Bound only", Color: "info"},
+					}},
 					{Field: "builder_only", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Builder-only", Color: "warning"},
 					}},
@@ -1668,9 +1681,9 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 		// whole pool by identity); this is the one Builder-shaped control that
 		// is real. Prepended AFTER the fallback above so the "no items → offer
 		// re-home targets" trigger keeps meaning what it says.
-		builderOnly := false
+		builderOnly, boundOnly := false, false
 		if row, ok := UserToolByName(db, user, name); ok {
-			builderOnly = row.Tool.BuilderOnly
+			builderOnly, boundOnly = row.Tool.BuilderOnly, row.Tool.BoundOnly
 		}
 		if builderOnly {
 			// While Builder-only is ON, the selector below it is dead weight:
@@ -1684,7 +1697,22 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, out)
 			return
 		}
-		items = append([]pill{{Key: "builder_only", Label: "Builder-only (authoring)", On: builderOnly}}, items...)
+		if boundOnly {
+			// Same reasoning as Builder-only above: while this is on, every
+			// agent pill below is overridden, and a wall of toggles that do
+			// nothing invites clicking them to find out.
+			out["items"] = []pill{{Key: "bound_only", Label: "Bound targets only", On: true}}
+			out["note"] = "Bound targets only: hidden from your agents. The tool stays available wherever it is " +
+				"explicitly attached — a Servitor system's Tools list, for instance — and Builder still loads it, " +
+				"so it can be tested and fixed. Turn this off to offer it to agents."
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, out)
+			return
+		}
+		items = append([]pill{
+			{Key: "builder_only", Label: "Builder-only (authoring)", On: builderOnly},
+			{Key: "bound_only", Label: "Bound targets only", On: boundOnly},
+		}, items...)
 		out["primary"] = map[string]any{"label": "All my agents", "on": found && st.Global}
 		switch {
 		case !found:
@@ -1738,13 +1766,58 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 		// copy (so a Builder re-persist can't clear it), which means writing it
 		// through a re-persist path would be silently stomped — the exact trap
 		// the enable toggle fell into elsewhere.
-		if target == "builder_only" {
+		// Both flags are handled here, before the provider, for the same reason:
+		// they live ON the tool record rather than being scope transitions, so
+		// falling through would look up an AGENT by that name and report
+		// `agent "bound_only" not found` — a pill that renders, posts, and fails
+		// on a lookup it was never meant to reach.
+		if target == "builder_only" || target == "bound_only" {
 			row, ok := UserToolByName(db, user, name)
+			if !ok {
+				// An ORPHAN — a committed tool that lost its agent — is not in
+				// the persistent pool, so the lookup missed and the click
+				// reported "tool not found" on a tool sitting right there in the
+				// list. Homing it to the user-wide pool first is what the
+				// operator was otherwise made to do by hand: pick "All my
+				// agents", then come back and set the flag.
+				//
+				// Especially wrong for bound-only, whose whole point is that the
+				// tool belongs to a BINDING rather than to any agent. Requiring
+				// it to be given to every agent first, so it can then be taken
+				// away from all of them, is the opposite of the intent.
+				if AdminRehomeOrphanTool != nil {
+					for _, o := range LoadOrphanedTempTools(db, user) {
+						if o.Tool.Name != name {
+							continue
+						}
+						if err := AdminRehomeOrphanTool(db, user, name, "global"); err != nil {
+							http.Error(w, "could not adopt this tool: "+err.Error(), http.StatusBadRequest)
+							return
+						}
+						row, ok = UserToolByName(db, user, name)
+						break
+					}
+				}
+			}
 			if !ok {
 				http.Error(w, "tool not found", http.StatusNotFound)
 				return
 			}
-			row.Tool.BuilderOnly = body.On
+			if target == "builder_only" {
+				row.Tool.BuilderOnly = body.On
+			} else {
+				row.Tool.BoundOnly = body.On
+			}
+			// Mutually exclusive: one reserves a tool for authoring, the other
+			// says it belongs to whatever binds it. Holding both would leave the
+			// selector describing a state no filter produces.
+			if body.On {
+				if target == "builder_only" {
+					row.Tool.BoundOnly = false
+				} else {
+					row.Tool.BuilderOnly = false
+				}
+			}
 			if !UpdatePersistentTempTool(db, user, row.Tool) {
 				http.Error(w, "update failed", http.StatusBadRequest)
 				return
