@@ -1,12 +1,14 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -463,4 +465,141 @@ func TestAPeerNotOfferingInferenceIsRefused(t *testing.T) {
 // SaveRemotePeer performs.
 func putTestPeer(p RemotePeer) {
 	RootDB.Set(remotePeersTable, strings.ToLower(p.Name), p)
+}
+
+// --- scheduling -----------------------------------------------------------
+
+// TestAPeerRequestQueuesBehindTheLocalScheduler — the correctness half.
+//
+// The serializer is enforced CLIENT-side, inside gohort's llama.cpp client, and
+// this endpoint is a raw proxy — so a peer's request used to go straight at the
+// inference server while local turns waited behind the mutex. That is not a
+// fairness nicety: stock llama.cpp is single-threaded and answers 503 under
+// concurrent load, so an overlapping peer turn could fail a local one outright.
+func TestAPeerRequestQueuesBehindTheLocalScheduler(t *testing.T) {
+	db := peerModelDB(t)
+	StartLlamacppScheduler(1)
+
+	// Hold the only slot, as a local turn would.
+	if err := AcquireLlamacppSlot(context.Background(), "local"); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	var reached atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Store(true)
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+	setTier(db, LLMTable, "llama.cpp", "qwen", upstream.URL+"/v1")
+	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
+			strings.NewReader(`{"messages":[]}`)).WithContext(ctx)
+		r.Header.Set(peerKeyHeader, pk.Key)
+		HandlePeerChatCompletions(httptest.NewRecorder(), r)
+	}()
+
+	// While the local slot is held the peer must NOT reach the model.
+	time.Sleep(150 * time.Millisecond)
+	if reached.Load() {
+		t.Error("a peer request reached the inference server while a local turn held the only slot — " +
+			"the two now race, and llama.cpp answers 503 under concurrent load")
+	}
+
+	ReleaseLlamacppSlot("local")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("the peer request never proceeded after the local slot was released")
+	}
+	if !reached.Load() {
+		t.Error("the peer request never reached the model even after the slot freed")
+	}
+	cancel()
+}
+
+// TestTheSlotIsHeldForTheWholeStream — releasing at the response header would
+// make the serialization fictional for exactly the requests that need it most:
+// a streaming generation returns headers in milliseconds and runs for minutes.
+func TestTheSlotIsHeldForTheWholeStream(t *testing.T) {
+	db := peerModelDB(t)
+	StartLlamacppScheduler(1)
+
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f, _ := w.(http.Flusher)
+		fmt.Fprint(w, "data: {}\n\n")
+		f.Flush() // headers and first byte are out; the generation continues
+		<-release
+	}))
+	defer upstream.Close()
+	setTier(db, LLMTable, "llama.cpp", "qwen", upstream.URL+"/v1")
+	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
+
+	srv := httptest.NewServer(http.HandlerFunc(HandlePeerChatCompletions))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"stream":true,"messages":[]}`))
+	req.Header.Set(peerKeyHeader, pk.Key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 64)
+	resp.Body.Read(buf) // the stream is live and mid-generation
+
+	// The slot must still be taken. Ask for it with a deadline rather than
+	// blocking, so a regression is a failure and not a hung test.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := AcquireLlamacppSlot(ctx, "local"); err == nil {
+		ReleaseLlamacppSlot("local")
+		t.Error("the slot was free mid-stream — it is being released at the response header, " +
+			"so a long generation serializes against nothing")
+	}
+	close(release)
+	io.Copy(io.Discard, resp.Body)
+}
+
+// TestTheSchedulerLabelsThePeer — the scheduler round-robins BETWEEN callers and
+// already counts in-flight and queued per caller, so labelling is both what
+// stops a peer's batch monopolizing the queue and what a live indicator would
+// read. Anonymous, it looks like local work.
+func TestTheSchedulerLabelsThePeer(t *testing.T) {
+	db := peerModelDB(t)
+	StartLlamacppScheduler(1)
+
+	seen := make(chan map[string]int, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case seen <- LlamacppSchedulerStats().Callers:
+		default:
+		}
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+	setTier(db, LLMTable, "llama.cpp", "qwen", upstream.URL+"/v1")
+	pk, _ := MintPeerKey("studio-mac", []string{PeerCapModels}, 0)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
+		strings.NewReader(`{"messages":[]}`))
+	r.Header.Set(peerKeyHeader, pk.Key)
+	HandlePeerChatCompletions(httptest.NewRecorder(), r)
+
+	select {
+	case callers := <-seen:
+		if callers["peer:studio-mac"] == 0 {
+			t.Errorf("the scheduler does not know which peer holds the slot: %v — "+
+				"a peer's work is indistinguishable from local work", callers)
+		}
+	default:
+		t.Fatal("upstream was never reached")
+	}
 }

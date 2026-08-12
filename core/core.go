@@ -478,6 +478,7 @@ var (
 	AcquireOllamaSlot          = ollama.AcquireOllamaSlot
 	ReleaseOllamaSlot          = ollama.ReleaseOllamaSlot
 	OllamaSchedulerStats       = ollama.OllamaSchedulerStats
+	LlamacppSchedulerStats     = ollama.LlamacppSchedulerStats
 	StartLlamacppScheduler     = ollama.StartLlamacppScheduler
 	AcquireLlamacppSlot        = ollama.AcquireLlamacppSlot
 	ReleaseLlamacppSlot        = ollama.ReleaseLlamacppSlot

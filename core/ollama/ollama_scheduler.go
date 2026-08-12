@@ -231,6 +231,23 @@ func OllamaSchedulerStats() OllamaSchedStats {
 	return st
 }
 
+// LlamacppSchedulerStats returns a snapshot of the llama.cpp serializer.
+//
+// The ollama scheduler has had one since it was written; this one never did,
+// which meant the backend most deployments actually run was the one nothing
+// could report on. It matters now that peer requests queue here under their own
+// caller label: what is holding the GPU is a read of THIS state, and without an
+// accessor a surface would have to keep its own counter and eventually disagree
+// with the thing doing the scheduling.
+func LlamacppSchedulerStats() OllamaSchedStats {
+	s := llamacppSched
+	if s == nil {
+		return OllamaSchedStats{}
+	}
+	st, _ := s.snapshot()
+	return st
+}
+
 // llamacppSched serializes requests to llama.cpp. llama.cpp is
 // single-threaded and returns 503 under concurrent load. A maxParallel
 // of 1 turns this into a pure mutex; >1 allows controlled bursting when

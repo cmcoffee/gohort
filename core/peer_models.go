@@ -29,6 +29,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +37,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
 // peerLendableProviders are the backends this instance will proxy.
@@ -48,9 +51,18 @@ var peerLendableProviders = map[string]bool{
 	"ollama":    true,
 }
 
-// peerModelStreamIdle bounds the gap between bytes on a proxied stream. The
-// upstream is local so a long silence means it has wedged, and without this the
-// connection would hold a slot open until the caller gave up.
+// peerModelStreamIdle bounds the gap between bytes on a proxied stream.
+//
+// Not a cap on how long a generation may take — a long answer is not a stuck
+// one, and a deadline here would cut a working response off mid-token. It
+// bounds SILENCE: the upstream is on this machine, so minutes without a byte
+// means it has wedged.
+//
+// It became load-bearing when the proxy started holding a scheduler slot for
+// the life of the response. A wedged upstream used to cost one hung connection;
+// now it would hold the slot too, and on stock llama.cpp at maxParallel=1 that
+// is every local turn on the machine blocked behind a peer request that will
+// never finish.
 const peerModelStreamIdle = 5 * time.Minute
 
 // peerModelMaxBody caps a proxied request. Generous because a vision turn
@@ -307,6 +319,37 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Queue behind the SAME serializer local turns use, labelled as this peer.
+	//
+	// Without it a peer's request went straight at the inference server while
+	// gohort's own turns waited politely behind the mutex — and the serializer
+	// is not a fairness nicety: stock llama.cpp is single-threaded and answers
+	// 503 under concurrent load, so an overlapping peer turn could fail a local
+	// one outright, with nothing on either machine explaining why.
+	//
+	// The label is the peer's, not "unknown", for the reason WithEmbedCaller
+	// carries one: the scheduler round-robins between callers, so a peer
+	// grinding through a batch interleaves with local work instead of arriving
+	// as an anonymous flood that looks like local work and delays the
+	// conversation a person is waiting on. It also makes the peer visible in
+	// OllamaSchedulerStats, which already counts in-flight and queued PER
+	// caller — so what is borrowing the GPU is a read of existing state rather
+	// than a second counter that could disagree with it.
+	release, err := acquirePeerModelSlot(r.Context(), tier.Provider, "peer:"+k.Label)
+	if err != nil {
+		// Queued and the caller went away, or the deadline passed while
+		// waiting. Not an upstream failure, and saying so keeps a busy GPU from
+		// reading as a broken one.
+		peerDeny(w, http.StatusServiceUnavailable,
+			"gave up waiting for a slot on this instance's model: "+err.Error())
+		return
+	}
+	// Held until the RESPONSE BODY is done, not until headers arrive. A
+	// streaming generation returns headers in milliseconds and runs for
+	// minutes; releasing at the header would free the slot immediately and make
+	// the serialization fictional for exactly the requests that need it most.
+	defer release()
+
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, strings.NewReader(string(body)))
 	if err != nil {
 		peerDeny(w, http.StatusInternalServerError, "could not build the upstream request: "+err.Error())
@@ -331,6 +374,11 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	// Fail on silence rather than on elapsed time — see peerModelStreamIdle.
+	// The read loop below then returns an error instead of blocking forever,
+	// which is what lets the deferred release actually run.
+	body_ := iotimeout.NewReadCloser(resp.Body, peerModelStreamIdle)
+	defer body_.Close()
 
 	// Copy the upstream's own headers and status through, so an upstream error
 	// reaches the caller as that error rather than as a peer-flavoured
@@ -352,7 +400,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	n, cerr := streamPeerBody(w, resp.Body, peek.Stream)
+	n, cerr := streamPeerBody(w, body_, peek.Stream)
 	if cerr != nil {
 		// The status and some bytes are already on the wire, so this cannot
 		// become an error response. Logged instead — a truncated stream that
@@ -362,6 +410,33 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	Debug("[peer] %q ran %s (%s tier) in %s (%d bytes, stream=%v)",
 		k.Label, tier.Model, tier.Tier, time.Since(started).Round(time.Millisecond), n, peek.Stream)
 	touchPeerKey(k)
+}
+
+// acquirePeerModelSlot queues this request behind the scheduler for the backend
+// that will serve it, returning the release func.
+//
+// Which scheduler depends on the provider: llama.cpp and ollama each run their
+// own, sized differently, and charging the wrong one would leave the real
+// backend unprotected while throttling against a limit nothing enforces. An
+// unstarted scheduler passes straight through, which is what a deployment with
+// no configured cap has always done.
+func acquirePeerModelSlot(ctx context.Context, provider, caller string) (func(), error) {
+	switch provider {
+	case "llama.cpp":
+		if err := AcquireLlamacppSlot(ctx, caller); err != nil {
+			return nil, err
+		}
+		return func() { ReleaseLlamacppSlot(caller) }, nil
+	case "ollama":
+		if err := AcquireOllamaSlot(ctx, caller); err != nil {
+			return nil, err
+		}
+		return func() { ReleaseOllamaSlot(caller) }, nil
+	}
+	// Unreachable while peerLendableProviders holds these two, and a no-op
+	// rather than a refusal if it ever grows: failing to schedule is a
+	// performance bug, refusing to serve is an outage.
+	return func() {}, nil
 }
 
 // streamPeerBody copies the upstream response to the caller, flushing as it
