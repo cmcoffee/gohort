@@ -179,6 +179,22 @@ type Appliance struct {
 	// workspace: no fan-out, one lead holds both views. Ignored on repo and
 	// workspace records.
 	LinkedRepos []string `json:"linked_repos,omitempty"`
+	// OrchestratorTier / WorkerTier pin THIS appliance's runs to a model tier,
+	// overriding the global routing stages. "" follows routing (the default and
+	// what every existing record says); "lead" and "worker" pin.
+	//
+	// Split in two because they are different bets. The orchestrator reasons
+	// about the whole investigation and is one call per round, so paying for the
+	// lead there is often worth it on a system that keeps defeating the worker.
+	// The workers run the SSH commands and are the high-volume half — pinning
+	// THEM to the lead is a large cost change, which is why it has to be said
+	// separately rather than ridden in on one switch.
+	//
+	// Neither can escalate past the privacy pin: with "All LLMs are private"
+	// off, servitor stays on the worker whatever these say. See
+	// core/llm_privacy.go.
+	OrchestratorTier string `json:"orchestrator_tier,omitempty"`
+	WorkerTier       string `json:"worker_tier,omitempty"`
 	// Workspace fields (Type == "workspace") — a master appliance that references
 	// other appliances (repos and/or SSH boxes) and investigates them together.
 	// It owns no store/creds of its own; each member is resolved and run in its
@@ -741,6 +757,19 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			if req.User == "" {
 				req.User = "root"
 			}
+		}
+		// Normalize the tier overrides, and enforce the privacy rule SERVER-side.
+		// The form omits "lead" when the deployment forbids it, but a form is not
+		// a gate: a saved record, an import, or a second tab open from before the
+		// setting changed would all carry a value the runtime then silently
+		// ignores. Refusing here means the stored record and the behavior agree.
+		req.OrchestratorTier = normalizeApplianceTier(req.OrchestratorTier)
+		req.WorkerTier = normalizeApplianceTier(req.WorkerTier)
+		if !AllLLMsPrivate() && (req.OrchestratorTier == "lead" || req.WorkerTier == "lead") {
+			http.Error(w, "pinning this appliance to the lead model needs Admin → LLMs → Model Privacy turned on — "+
+				"Servitor handles credentials and log contents, so it stays on the worker until every configured model is private",
+				http.StatusBadRequest)
+			return
 		}
 		isNew := req.ID == ""
 		// The store the record lives in, and its owner. A new record is owned by
@@ -2628,6 +2657,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				Tools:           []AgentToolDef{run_tool, note_lesson_tool},
 				MaxRounds:       60,
 				RouteKey:        "app.servitor",
+				TierOverride:    applianceTierOverride(appliance.WorkerTier),
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithThink(false)},
 			},
@@ -4295,6 +4325,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 								Tools:           withFreshRunTool(workerTools),
 								MaxRounds:       12,
 								RouteKey:        "app.servitor",
+								TierOverride:    applianceTierOverride(appliance.WorkerTier),
 								MaskDebugOutput: true,
 								ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
 								SerialTools:     true,
@@ -4508,6 +4539,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				// "worker (thinking)", so this changes no behavior until an
 				// operator picks something else — which is now possible.
 				RouteKey:        "app.servitor.orchestrator",
+				TierOverride:    applianceTierOverride(appliance.OrchestratorTier),
 				MaskDebugOutput: true,
 				SerialTools:     true,
 				ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
@@ -4598,6 +4630,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 						Tools:           nil,
 						MaxRounds:       1,
 						RouteKey:        "app.servitor",
+						TierOverride:    applianceTierOverride(appliance.OrchestratorTier),
 						MaskDebugOutput: true,
 						ChatOptions:     []ChatOption{WithThink(false)},
 					},
@@ -4755,6 +4788,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 							Tools:           withFreshRunTool(workerTools),
 							MaxRounds:       15,
 							RouteKey:        "app.servitor",
+							TierOverride:    applianceTierOverride(appliance.WorkerTier),
 							MaskDebugOutput: true,
 							ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
 							SerialTools:     true,
@@ -4947,6 +4981,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, link_entities_tool, record_discovery_tool, record_technique_tool, note_lesson_tool},
 					MaxRounds:       10,
 					RouteKey:        "app.servitor",
+					TierOverride:    applianceTierOverride(appliance.OrchestratorTier),
 					MaskDebugOutput: true,
 					ChatOptions:     []ChatOption{WithThink(false)},
 				})
@@ -5284,4 +5319,37 @@ func (T *Servitor) handleSaveSnippet(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"id": id, "name": out.Name})
+}
+
+// applianceTierOverride turns an appliance's stored tier preference into a loop
+// override.
+//
+// Returns TierUnset for anything unrecognized as well as for the empty string,
+// so a value written by a future version — or a typo in a hand-edited record —
+// falls back to following the routing stage rather than pinning a tier nobody
+// chose.
+func applianceTierOverride(pref string) LLMTier {
+	switch strings.ToLower(strings.TrimSpace(pref)) {
+	case "lead":
+		return LEAD
+	case "worker":
+		return WORKER
+	}
+	return TierUnset
+}
+
+// normalizeApplianceTier reduces a stored/submitted tier preference to one of
+// "", "lead" or "worker".
+//
+// Anything unrecognized becomes "" (follow routing) rather than an error at
+// read time: a record written by a future version, or hand-edited, should fall
+// back to the deployment's routing rather than pinning a tier nobody chose.
+func normalizeApplianceTier(pref string) string {
+	switch strings.ToLower(strings.TrimSpace(pref)) {
+	case "lead":
+		return "lead"
+	case "worker":
+		return "worker"
+	}
+	return ""
 }

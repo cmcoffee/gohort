@@ -143,6 +143,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 		Tools:           tools,
 		MaxRounds:       40,
 		RouteKey:        "app.servitor",
+		TierOverride:    applianceTierOverride(appliance.WorkerTier),
 		MaskDebugOutput: true,
 		SerialTools:     true,
 		ChatOptions:     []ChatOption{WithThink(false)},

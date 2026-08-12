@@ -74,10 +74,15 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 		resp, _, err = a.RunAgentLoop(ctx,
 			[]Message{{Role: "user", Content: buildScopedLeadMessage(messages)}},
 			AgentLoopConfig{
-				SystemPrompt:    leadPrompt,
-				Tools:           tools,
-				MaxRounds:       40,
-				RouteKey:        "app.servitor",
+				SystemPrompt: leadPrompt,
+				Tools:        tools,
+				MaxRounds:    40,
+				RouteKey:     "app.servitor",
+				// The coordinator REASONS across members rather than running
+				// commands, so it follows the orchestrator setting — of the
+				// workspace record, which is the appliance the operator
+				// configured; each member's own run picks up its own.
+				TierOverride:    applianceTierOverride(ws.OrchestratorTier),
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(true)},
 				SerialTools:     true,

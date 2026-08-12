@@ -759,7 +759,42 @@ func isGuardrailSafeFallback(s string) bool {
 	return false
 }
 
+// wantsLead reports whether this loop's configuration asks for the lead tier,
+// IGNORING whether the deployment currently permits one.
+//
+// Split out because three sites computed it independently — the round's cost
+// attribution and two chat paths — and a fourth reading would have drifted from
+// the others the first time the rules changed. It answers only "what was
+// configured"; every caller still gates on LeadDenied(), which is where the
+// privacy pin lives.
+//
+// Precedence, narrowest first: an explicit per-run TierOverride beats the route
+// stage, which beats the config's own Tier. That order is what lets one
+// resource opt out of a global routing decision without the stage having to
+// know the resource exists.
+func (cfg AgentLoopConfig) wantsLead() bool {
+	if cfg.TierOverride != TierUnset {
+		return cfg.TierOverride == LEAD
+	}
+	if cfg.RouteKey != "" {
+		return RouteToLead(cfg.RouteKey)
+	}
+	return cfg.Tier == LEAD
+}
+
 type AgentLoopConfig struct {
+	// TierOverride pins THIS run to a tier regardless of what its route stage
+	// says — the per-resource escape hatch from a deployment-wide routing
+	// decision. TierUnset (the zero value) follows RouteKey as before, so every
+	// existing caller is unchanged.
+	//
+	// It cannot escalate past the privacy pin: callers gate on LeadDenied(), so
+	// with "All LLMs are private" off a LEAD override still runs on the worker.
+	// That is deliberate — the pin exists because the lead may be a third party,
+	// and a per-resource flag is exactly the kind of thing that would otherwise
+	// quietly become the exception to it.
+	TierOverride LLMTier
+
 	// GuardrailDeclines optionally replaces the built-in neutral declines used
 	// when a reply cannot be made guardrail-compliant. Empty uses the built-in
 	// set. Authored ahead of time, never generated at block time — see
@@ -2482,19 +2517,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// pointlessly retried on the worker.
 		roundUsedLead := false
 		if deescalated == "" && !T.LeadDenied() {
-			roundUsedLead = cfg.Tier == LEAD
-			if cfg.RouteKey != "" {
-				roundUsedLead = RouteToLead(cfg.RouteKey)
-			}
+			roundUsedLead = cfg.wantsLead()
 		}
 		if streamHandler != nil {
 			resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 		} else {
 			// A binding private pin redirects all routing to worker — no escalation.
-			useLead := cfg.Tier == LEAD && !T.LeadDenied()
-			if cfg.RouteKey != "" && !T.LeadDenied() {
-				useLead = RouteToLead(cfg.RouteKey)
-			}
+			useLead := !T.LeadDenied() && cfg.wantsLead()
 			if deescalated != "" {
 				useLead = false
 			}
@@ -2520,10 +2549,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			if streamHandler != nil {
 				resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 			} else {
-				useLead := cfg.Tier == LEAD && !T.LeadDenied()
-				if cfg.RouteKey != "" && !T.LeadDenied() {
-					useLead = RouteToLead(cfg.RouteKey)
-				}
+				useLead := !T.LeadDenied() && cfg.wantsLead()
 				if deescalated != "" {
 					useLead = false
 				}

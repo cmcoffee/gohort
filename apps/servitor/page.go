@@ -9,6 +9,7 @@
 package servitor
 
 import (
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -68,6 +69,18 @@ func applianceFields() []ui.FormField {
 		// every other type, so a bundle's provenance ("dump from cust-42,
 		// pulled 14 Mar after the outage") lives there rather than needing a
 		// field of its own.
+		// Per-appliance model tier. Two fields rather than one because they are
+		// different bets: the orchestrator is one call per round and reasons
+		// about the whole investigation, while the workers are the high-volume
+		// half that runs the commands — pinning THOSE to the lead is a large
+		// cost change and should have to be said on purpose.
+		{Type: "header", Label: "Model", Collapsed: true},
+		{Field: "orchestrator_tier", Label: "Orchestrator model", Type: "select",
+			Options: applianceTierOptions("the orchestrator"),
+			Help:    applianceTierHelp("the investigation's reasoning")},
+		{Field: "worker_tier", Label: "Worker model", Type: "select",
+			Options: applianceTierOptions("the workers"),
+			Help:    applianceTierHelp("the workers that run commands on this system")},
 		// Shared persona + instruction fields.
 		{Field: "persona_name", Label: "Persona name", Type: "text",
 			Placeholder: "Support, QA, …",
@@ -79,4 +92,37 @@ func applianceFields() []ui.FormField {
 		{Field: "shared", Label: "Shared with all users", Type: "toggle",
 			Help: "Everyone can open and use it (with the stored credentials); chat sessions stay per-user. Only you or an admin can change or delete it."},
 	}
+}
+
+// applianceTierOptions builds the picker for one of the two per-appliance tier
+// fields.
+//
+// The lead option is OMITTED when the deployment does not permit a lead at all.
+// With "All LLMs are private" off, servitor is pinned to the worker no matter
+// what this says, so offering "Lead" would be a control that saves, reads back
+// correctly and changes nothing — the exact failure this codebase has now hit
+// in a routing row, a notes panel and a file picker. The field's help says why
+// it is missing, because an option that silently is not there is its own kind
+// of confusing.
+func applianceTierOptions(what string) []ui.SelectOption {
+	out := []ui.SelectOption{
+		{Value: "", Label: "Follow routing",
+			Help: "Use the global LLM Routing setting for " + what + "."},
+		{Value: "worker", Label: "Worker (always)",
+			Help: "Pin " + what + " to the local worker even when routing would escalate — for a system where the extra cost is never worth it."},
+	}
+	if AllLLMsPrivate() {
+		out = append(out, ui.SelectOption{Value: "lead", Label: "Lead (always)",
+			Help: "Pin " + what + " to the lead model, for a system that keeps defeating the worker."})
+	}
+	return out
+}
+
+// applianceTierHelp explains the field, including why Lead may be absent.
+func applianceTierHelp(what string) string {
+	base := "Which model handles " + what + " for this appliance, overriding LLM Routing."
+	if AllLLMsPrivate() {
+		return base + " Lead is selectable because every configured model is private; turning Model Privacy off returns this appliance to the worker."
+	}
+	return base + " Lead is not offered: Servitor handles credentials and log contents, so it stays on the worker unless every configured model is private (Admin → LLMs → Model Privacy)."
 }
