@@ -195,6 +195,13 @@ type Appliance struct {
 	// core/llm_privacy.go.
 	OrchestratorTier string `json:"orchestrator_tier,omitempty"`
 	WorkerTier       string `json:"worker_tier,omitempty"`
+	// LeadTierAvailable is COMPUTED for the edit form and never stored — the
+	// POST path clears it before saving. It tells the modal whether to offer
+	// "Lead", which is a deployment fact (Model Privacy) rather than anything
+	// about this appliance, and shipping it on the record the form already
+	// fetches avoids a second round trip that would leave the select empty
+	// while it resolved.
+	LeadTierAvailable bool `json:"lead_tier_available,omitempty"`
 	// Workspace fields (Type == "workspace") — a master appliance that references
 	// other appliances (repos and/or SSH boxes) and investigates them together.
 	// It owns no store/creds of its own; each member is resolved and run in its
@@ -636,6 +643,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 					}
 					a.Password = ""
 					a.RepoToken = ""
+					a.LeadTierAvailable = AllLLMsPrivate()
 					items = append(items, a)
 					seen[a.ID] = true
 				}
@@ -654,6 +662,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 					a.Shared = true
 					a.Password = ""
 					a.RepoToken = ""
+					a.LeadTierAvailable = AllLLMsPrivate()
 					items = append(items, a)
 					seen[id] = true
 				}
@@ -765,6 +774,10 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// ignores. Refusing here means the stored record and the behavior agree.
 		req.OrchestratorTier = normalizeApplianceTier(req.OrchestratorTier)
 		req.WorkerTier = normalizeApplianceTier(req.WorkerTier)
+		// Computed for the form, never stored — it would otherwise persist a
+		// snapshot of a deployment setting and go stale the moment that setting
+		// changed.
+		req.LeadTierAvailable = false
 		if !AllLLMsPrivate() && (req.OrchestratorTier == "lead" || req.WorkerTier == "lead") {
 			http.Error(w, "pinning this appliance to the lead model needs Admin → LLMs → Model Privacy turned on — "+
 				"Servitor handles credentials and log contents, so it stays on the worker until every configured model is private",
@@ -898,6 +911,7 @@ func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
 		a.Owner = owner
 		a.Password = ""
 		a.RepoToken = "" // never send the stored token back to the edit form
+		a.LeadTierAvailable = AllLLMsPrivate()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(a)
 	case http.MethodDelete:

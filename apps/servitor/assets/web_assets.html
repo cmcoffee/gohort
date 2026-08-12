@@ -1322,6 +1322,39 @@
       ]);
 
 
+      // Model tier overrides. Two selects rather than one: the orchestrator is
+      // one call per round reasoning about the whole investigation, while the
+      // workers are the high-volume half running the commands, so pinning those
+      // to the lead is a much larger cost change and has to be chosen on its
+      // own. "" follows the global LLM Routing setting.
+      //
+      // Lead is only offered when the deployment permits one at all
+      // (lead_tier_available, from Model Privacy). Servitor is pinned to the
+      // worker otherwise, so listing it would be a control that saves, reads
+      // back correctly and does nothing — and the server refuses it anyway.
+      function tierSelect(current, what) {
+        var sel = el('select', {class: 'ui-form-input'});
+        var opts = [['', 'Follow routing'], ['worker', 'Worker (always)']];
+        if (rec.lead_tier_available) opts.push(['lead', 'Lead (always)']);
+        opts.forEach(function(o) {
+          var opt = el('option', {value: o[0]}, [o[1]]);
+          if ((current || '') === o[0]) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        return sel;
+      }
+      var orchTierIn = tierSelect(rec.orchestrator_tier, 'the orchestrator');
+      var workTierIn = tierSelect(rec.worker_tier, 'the workers');
+      var tierHint = el('div', {class: 'ui-form-hint'}, [rec.lead_tier_available
+        ? 'Overrides Admin \u2192 LLMs \u2192 LLM Routing for this system alone.'
+        : 'Overrides LLM Routing for this system alone. "Lead" is not offered: Servitor handles credentials and log contents, so it stays on the worker unless every configured model is private (Admin \u2192 LLMs \u2192 Model Privacy).']);
+      var tierSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Model']),
+        el('label', {class: 'ui-form-sublabel'}, ['Orchestrator']), orchTierIn,
+        el('label', {class: 'ui-form-sublabel'}, ['Workers']), workTierIn,
+        tierHint,
+      ]);
+
       // Shared toggle — when on, every user can discover and use this
       // appliance/repo (owner's creds, one repo clone, shared accumulated
       // knowledge) while keeping their own chat sessions.
@@ -1341,6 +1374,7 @@
         personaNameIn, personaPromptIn,
         linkedRepoSection,
         knowledgeSection,
+        tierSection,
         peerShareSection,
         sharedRow, sharedHint,
       ]);
@@ -1372,6 +1406,8 @@
             member_roles:   wsRoles,
             member_links:   wsLinks,
             collections:    kbSelected.slice(),
+            orchestrator_tier: orchTierIn.value,
+            worker_tier:       workTierIn.value,
             linked_repos:   lrSelected.slice(),
             domain:         domainIn.value.trim(),
             peer_name:      remotePeerIn.value,

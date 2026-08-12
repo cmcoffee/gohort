@@ -1,22 +1,12 @@
 package servitor
 
 import (
+	"os"
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/snugforge/kvlite"
-
 	. "github.com/cmcoffee/gohort/core"
 )
-
-func tierPrivacy(t *testing.T, on bool) {
-	t.Helper()
-	db := &DBase{Store: kvlite.MemStore()}
-	prev := AuthDB
-	AuthDB = func() Database { return db }
-	t.Cleanup(func() { AuthDB = prev })
-	SetAllLLMsPrivate(on)
-}
 
 // TestApplianceTierParsing — an unrecognized value follows routing rather than
 // pinning a tier nobody chose. Records written by a future version, or edited by
@@ -41,45 +31,49 @@ func TestApplianceTierParsing(t *testing.T) {
 	}
 }
 
-// TestLeadIsNotOfferedWhenPrivacyIsOff — the rule this codebase keeps relearning:
-// a control that saves, reads back correctly and changes nothing is worse than
-// no control. Servitor is pinned to the worker with privacy off, so the option
-// must not be there to pick.
-func TestLeadIsNotOfferedWhenPrivacyIsOff(t *testing.T) {
-	tierPrivacy(t, false)
-	var values []string
-	for _, o := range applianceTierOptions("the orchestrator") {
-		values = append(values, o.Value)
+// TestTheModalGatesLeadOnTheServerFlag — the form is hand-written JS in the
+// chat page's asset, so the gate has to be checked THERE.
+//
+// This is the second half of a lesson: the per-appliance tier fields were first
+// added to applianceFields() in page.go, which read like the appliance form and
+// was called by nothing at all. They rendered nowhere. That file is gone; the
+// modal below is the form, and these assertions are against the thing that
+// actually ships.
+func TestTheModalGatesLeadOnTheServerFlag(t *testing.T) {
+	src, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, v := range values {
-		if v == "lead" {
-			t.Error("Lead is offered while Model Privacy is off — it would save, read back, and do nothing")
+	body := string(src)
+	if !strings.Contains(body, "if (rec.lead_tier_available) opts.push(['lead', 'Lead (always)']);") {
+		t.Error("the modal no longer gates the Lead option on lead_tier_available — it would " +
+			"offer a tier the server refuses to save and the runtime ignores")
+	}
+	for _, field := range []string{"orchestrator_tier: orchTierIn.value", "worker_tier:       workTierIn.value"} {
+		if !strings.Contains(body, field) {
+			t.Errorf("the save payload does not carry %q — the select would render and never persist", field)
 		}
 	}
-	// Following routing and pinning DOWN to the worker stay available: neither
-	// escalates, so neither is affected by the pin.
-	if len(values) != 2 {
-		t.Errorf("options are %v, want follow-routing and worker", values)
-	}
-	// And the help has to say WHY lead is missing, or its absence is its own
-	// kind of confusing.
-	help := applianceTierHelp("the orchestrator")
-	if !strings.Contains(help, "Model Privacy") {
-		t.Errorf("the help does not explain why Lead is absent: %q", help)
+	// Both selects must be in the modal body, or one of them is unreachable.
+	if !strings.Contains(body, "tierSection,") {
+		t.Error("the tier section is built but never added to the modal body")
 	}
 }
 
-// TestLeadIsOfferedWhenEveryModelIsPrivate — the mirror. Hiding it always would
-// make the whole feature unreachable.
-func TestLeadIsOfferedWhenEveryModelIsPrivate(t *testing.T) {
-	tierPrivacy(t, true)
-	var found bool
-	for _, o := range applianceTierOptions("the workers") {
-		if o.Value == "lead" {
-			found = true
-		}
+// TestTheAvailabilityFlagIsComputedNotStored — it is a deployment fact, so
+// persisting it would freeze a snapshot that goes stale the moment Model
+// Privacy changes.
+func TestTheAvailabilityFlagIsComputedNotStored(t *testing.T) {
+	src, err := os.ReadFile("web.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !found {
-		t.Error("Lead is not offered even though every configured model is private")
+	body := string(src)
+	if n := strings.Count(body, "LeadTierAvailable = AllLLMsPrivate()"); n < 3 {
+		t.Errorf("only %d of the appliance read paths set the availability flag — a form "+
+			"reached through one of the others would silently hide the Lead option", n)
+	}
+	if !strings.Contains(body, "req.LeadTierAvailable = false") {
+		t.Error("the save path does not clear the computed flag, so it would be persisted")
 	}
 }
