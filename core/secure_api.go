@@ -807,6 +807,36 @@ func (s *SecureAPI) SetSecured(name string, secured bool) error {
 	return nil
 }
 
+// SetSecuredOwned is SetSecured for a USER-OWNED credential.
+//
+// SetSecured reads the GLOBAL key, so it could not reach a credential living in
+// a user's namespace — which is why user-owned credentials had no way to be
+// secured at all. Every one of them was Open, and an Open credential gets an
+// auto-generated fetch_url_<name> in the catalog, so a person's own API key was
+// reachable by every agent they had. The mode existed in the model and on the
+// admin page; the surface where someone manages their OWN keys was the one
+// surface that could not lock them down.
+//
+// A blank owner falls through to the global setter so callers need no branch.
+func (s *SecureAPI) SetSecuredOwned(owner, name string, secured bool) error {
+	if strings.TrimSpace(owner) == "" {
+		return s.SetSecured(name, secured)
+	}
+	if !s.ready() || name == "" {
+		return fmt.Errorf("name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.Secured = secured
+	s.db.Set(secureAPITable, key, c)
+	return nil
+}
+
 // --- secured-credential tool bindings ---------------------------------------
 // The binding allowlist is how a SECURED credential's access follows TOOL scope:
 // a tool must be an APPROVED binding to declare (and thus dispatch through) the

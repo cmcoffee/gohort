@@ -90,12 +90,14 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			RequiresConfirm bool   `json:"requires_confirm"`
 			HasSecret       bool   `json:"has_secret"`
 			Disabled        bool   `json:"disabled"`
+			Secured         bool   `json:"secured"`
 		}
 		toRow := func(c SecureCredential) row {
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
 				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
 				HasSecret: c.Type != SecureCredNone, Disabled: c.Disabled,
+				Secured: c.Secured,
 			}
 		}
 		// ?name=<name> returns the SINGLE record — the edit form's Source. The
@@ -141,6 +143,7 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			Description     string `json:"description"`
 			Secret          string `json:"secret"`
 			RequiresConfirm bool   `json:"requires_confirm"`
+			Secured         bool   `json:"secured"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -182,6 +185,14 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+		}
+		// Secured rides its own setter because Save deliberately PRESERVES the
+		// flag from the stored record — the field is owned by this toggle, not
+		// by the form body, so an edit that never mentions it cannot clear it.
+		// Same shape as Disabled above.
+		if err := Secure().SetSecuredOwned(user, c.Name, body.Secured); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodDelete:
@@ -1093,6 +1104,10 @@ func credentialFormFields() []ui.FormField {
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://api.example.com", Help: "The server this credential talks to. Requests are allowed only under this host."},
 		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. Leave blank when editing to keep the stored value."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first. Use for anything that reaches real people or spends money."},
+		{Field: "secured", Label: "Only tools that declare it", Type: "toggle",
+			Help: "OFF: every one of your agents gets a fetch_url_<name> tool for this credential and can call the API directly. " +
+				"ON: no such tool is generated — the credential is reachable only through tools you build that name it, so access follows those tools' scope rather than being open to everything you run. " +
+				"The secret is never handed to tool code either way; calls are signed server-side."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to your agents as the tool description."},
 	}
 }
@@ -1131,9 +1146,11 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 	sections := []ui.Section{
 		{
-			Title:    "My API credentials",
-			Wide:     true,
-			Subtitle: "API keys you own and manage yourself. They live in your namespace — only your agents can dispatch through them (as fetch_url_<name>), and they never appear on the admin page. Secrets are stored encrypted and never shown to the assistant.",
+			Title: "My API credentials",
+			Wide:  true,
+			Subtitle: "API keys you own and manage yourself. They live in your namespace — no other user can reach them, and they never appear on the admin page. " +
+				"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
+				"Secrets are stored encrypted and never shown to the assistant.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source: "api/credentials",
@@ -1142,6 +1159,13 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						{Field: "name", Flex: 1},
 						{Field: "type", Mute: true},
 						{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
+						// Which credentials are open to every agent is the fact
+						// this page exists to let someone control, so it belongs
+						// in the list rather than one edit form at a time.
+						{Field: "secured", Label: "Reach", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Tools only", Color: "success"},
+							{Value: false, Label: "All my agents", Color: "warning"},
+						}},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
