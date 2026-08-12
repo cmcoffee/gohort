@@ -4086,9 +4086,28 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					newTitle = guide
 				}
 			}
-			if _, err := AppendToDocument(ctx, userID, "guide", docID, newTitle, title, content); err != nil {
+			writtenID, err := AppendToDocument(ctx, userID, "guide", docID, newTitle, title, content)
+			if err != nil {
 				return "", fmt.Errorf("push to guide failed: %w", err)
 			}
+			// Link the session to what it wrote, on this push and every one
+			// after. The returned id is the whole reason this is possible: it
+			// was being discarded, so a guide created by an investigation was
+			// findable only by going and looking for its name.
+			name := guide
+			if newTitle != "" {
+				name = newTitle
+			}
+			linkSessionGuide(udb, id, writtenID, name, newTitle != "")
+			// Said in the session as it happens. The link is durable and the
+			// session list will show it later, but "I just wrote that up" is
+			// something the person watching should see now rather than discover
+			// by going to look.
+			verb := "Added to"
+			if newTitle != "" {
+				verb = "Created"
+			}
+			emit(id, probeEvent{Kind: "status", Text: verb + " guide: " + name})
 			if newTitle != "" {
 				return fmt.Sprintf("Created guide %q and added the %q section.", newTitle, strings.TrimSpace(title)), nil
 			}

@@ -223,10 +223,20 @@ func (T *Servitor) handleServitorSessionOne(w http.ResponseWriter, r *http.Reque
 			http.NotFound(w, r)
 			return
 		}
+		// Decorated at read time rather than stored on the record: the guides an
+		// investigation wrote are a relationship, and keeping a copy on the
+		// session would go stale the moment one was renamed. The link table is
+		// the source; this is a join.
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(s)
+		_ = json.NewEncoder(w).Encode(struct {
+			chatSession
+			Guides []SessionGuide `json:"guides,omitempty"`
+		}{chatSession: s, Guides: SessionGuides(udb, id)})
 	case http.MethodDelete:
 		deleteSession(udb, appID, id)
+		// The links go with the session, never with the guide: a guide is the
+		// durable artifact and outlives the investigation that produced it.
+		forgetSessionGuides(udb, id)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
