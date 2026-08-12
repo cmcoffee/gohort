@@ -7629,6 +7629,29 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		emitCapturedAsBubble(msg)
 		return nil, "", msg, nil
 	}
+	// Nothing captured and nothing said. Reaching here with a loop error means
+	// the error was DROPPED by the guard above, which only reports when neither
+	// context is still good — and an LLM that cannot be reached is precisely the
+	// case that hangs until the turn's deadline and then fails. So the one
+	// failure a user is most likely to hit was the one that returned no content
+	// and no error: the thread kept their message, grew no reply, and the
+	// composer re-enabled. Indistinguishable from being ignored.
+	//
+	// A deliberate cancel is not a failure and stays quiet — the caller already
+	// reports that in its own words.
+	if loopErr != nil && !errors.Is(t.ctx.Err(), context.Canceled) {
+		t.turnDiag("llm-unreachable", "The model could not be reached for this turn: "+loopErr.Error())
+		return nil, "", "", loopErr
+	}
+	// No error, no content, no cancel. stay_silent returns from inside the loop
+	// and never lands here, so this is a turn that produced nothing for a reason
+	// nobody recorded. Say so rather than rendering a blank: the round-cap
+	// branch above already sets that precedent, and a silent turn reads as the
+	// assistant ignoring the request.
+	if t.ctx.Err() == nil {
+		t.turnDiag("empty-turn", "This turn produced no reply and reported no error.")
+		return nil, "", "", fmt.Errorf("the turn finished without producing a reply")
+	}
 	return nil, "", "", nil
 }
 

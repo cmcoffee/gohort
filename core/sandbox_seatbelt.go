@@ -35,7 +35,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -153,9 +155,20 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	b.WriteString("(allow sysctl-read)\n")
 	b.WriteString("(allow mach-lookup)\n")
 
+	// Two rules rather than one combined "(allow file-read* process-exec …)".
+	// Both forms are meant to be legal, but the profile language has no public
+	// specification and a rejected profile aborts with no useful message, so the
+	// plainest construct that expresses the intent is worth preferring on
+	// principle — there is nowhere to look up which of two spellings a given
+	// macOS accepts.
 	read := append([]string{}, seatbeltReadPaths...)
 	read = append(read, spec.ReadOnly...)
-	b.WriteString("(allow file-read* process-exec\n")
+	b.WriteString("(allow file-read*\n")
+	for _, p := range read {
+		b.WriteString("  " + sbSubpath(p) + "\n")
+	}
+	b.WriteString(")\n")
+	b.WriteString("(allow process-exec\n")
 	for _, p := range read {
 		b.WriteString("  " + sbSubpath(p) + "\n")
 	}
@@ -257,10 +270,36 @@ func seatbeltProbe(binary string, runner func(profile string) error) bool {
 }
 
 // seatbeltProbeRunner runs /usr/bin/true under the given profile.
+//
+// sandbox-exec's own complaint is captured and returned. Without it a rejected
+// profile reports only the process result — "signal: abort trap" — which says
+// that the profile was refused and nothing whatever about which rule did it.
+// The profile language has no public specification, so that message is the only
+// documentation there is.
 func seatbeltProbeRunner(binary string) func(string) error {
 	return func(profile string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), seatbeltProbeTimeout)
 		defer cancel()
-		return exec.CommandContext(ctx, binary, "-p", profile, "/usr/bin/true").Run()
+		c := exec.CommandContext(ctx, binary, "-p", profile, "/usr/bin/true")
+		var stderr bytes.Buffer
+		c.Stderr = &stderr
+		err := c.Run()
+		if err == nil {
+			return nil
+		}
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%v: %s", err, firstLines(msg, 3))
+		}
+		return err
 	}
+}
+
+// firstLines trims a multi-line tool complaint to its opening lines, which is
+// where a parser puts the thing it choked on.
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "; ")
 }

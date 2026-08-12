@@ -88,10 +88,16 @@ func TestOnlyTheWorkspaceIsWritable(t *testing.T) {
 // path.
 func TestSystemPathsAreReadableAndExecutable(t *testing.T) {
 	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws"})
-	readBlock := sectionAfter(t, p, "(allow file-read* process-exec")
+	readBlock := sectionAfter(t, p, "(allow file-read*\n")
+	execBlock := sectionAfter(t, p, "(allow process-exec")
 	for _, want := range []string{"/usr", "/bin", "/System", "/Library", "/opt/homebrew", "/usr/local"} {
 		if !strings.Contains(readBlock, `"`+want+`"`) {
-			t.Errorf("%s is not readable/executable:\n%s", want, readBlock)
+			t.Errorf("%s is not readable:\n%s", want, readBlock)
+		}
+		// Readable but not executable would break every interpreter on the box,
+		// which reads as a broken sandbox rather than a missing rule.
+		if !strings.Contains(execBlock, `"`+want+`"`) {
+			t.Errorf("%s is readable but not executable:\n%s", want, execBlock)
 		}
 	}
 }

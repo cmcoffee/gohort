@@ -3400,6 +3400,22 @@
           break;
         case 'error':
           addActivity('error', '', ev.text || 'unknown error');
+          // AND in the conversation. The activity pane is a collapsible side
+          // rail; a turn that failed there and nowhere else leaves the thread
+          // with the user's message, no reply, and a re-enabled composer —
+          // indistinguishable from the assistant having ignored them. The
+          // failure has to appear where the request was made.
+          clearEmpty();
+          if (thinkingEl && thinkingEl.parentNode) { thinkingEl.remove(); thinkingEl = null; }
+          var errBubble = el('div', {class: 'ui-agent-msg ui-agent-msg-failed'});
+          var errBody = el('div', {class: 'ui-agent-msg-body'});
+          // textContent, never markdown: an error carries provider text and
+          // sometimes a URL, and rendering it as markdown would let a failure
+          // message style itself like a reply.
+          errBody.textContent = 'Could not complete this turn — ' + (ev.text || 'unknown error');
+          errBubble.appendChild(errBody);
+          convoLog.appendChild(errBubble);
+          scrollConvo(true);
           setStatus('');
           enableInput();
           break;

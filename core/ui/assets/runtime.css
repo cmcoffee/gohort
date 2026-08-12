@@ -3567,6 +3567,18 @@ select:-webkit-autofill {
  * like the agent talking. Left-aligned like the assistant; tinted with
  * muted text + an accent left-stripe so it's clearly INTERIM status,
  * not the settled answer. Persists in the flow (not cleared on done). */
+/* A turn that failed, shown in the conversation rather than only in the
+   activity rail. Deliberately NOT styled like an assistant reply: it is the
+   system reporting that nothing was produced, and a user must be able to tell
+   it apart from something the model said. */
+.ui-agent-msg-failed { align-self: flex-start; max-width: 100%; }
+.ui-agent-msg-failed .ui-agent-msg-body {
+  background: rgba(220, 38, 38, 0.10);
+  border-left: 3px solid var(--danger, #dc2626);
+  color: var(--text);
+  font-size: 0.86rem;
+  white-space: pre-wrap;
+}
 .ui-agent-msg-status { align-self: flex-start; }
 .ui-agent-msg-status .ui-agent-msg-body {
   background: var(--bg-1);
