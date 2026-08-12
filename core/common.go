@@ -572,6 +572,15 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 	// came from the worker LLM (fallback path). Matters for the
 	// UsageTracker tier attribution — worker pricing, not lead.
 	fellBackToWorker := false
+	if err != nil && probe.NoTierFallback {
+		// Pinned to the lead on purpose. Surfaced at Log level rather than
+		// Debug: a pin that quietly answered from the worker is exactly what the
+		// pin was set to stop, and the failure needs to be visible without
+		// anyone having debug on.
+		Log("[llm] lead chat failed after %s and this call is pinned to the lead — NOT falling back: %s",
+			elapsed.Round(time.Millisecond), err)
+		return nil, err
+	}
 	if err != nil && T.LeadLLM != nil && T.LLM != nil && LeadIsDistinct() {
 		Debug("[llm] lead chat failed after %s: %s — falling back to primary", elapsed.Round(time.Millisecond), err)
 		T.LeadFallback = true

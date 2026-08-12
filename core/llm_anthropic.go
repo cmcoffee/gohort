@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/cmcoffee/snugforge/apiclient"
 )
@@ -102,6 +103,9 @@ type anthRequest struct {
 	Stream    bool              `json:"stream,omitempty"`
 	Tools     []anthTool        `json:"tools,omitempty"`
 	Thinking  *anthThinking     `json:"thinking,omitempty"`
+	// OutputConfig carries the effort dial adaptive thinking uses. Absent for
+	// the budgeted shape, which has no effort concept.
+	OutputConfig *anthOutputConfig `json:"output_config,omitempty"`
 }
 
 // anthThinking is the extended-thinking block, shared by the direct Anthropic
@@ -114,8 +118,99 @@ type anthRequest struct {
 // thing and the model did another, on the tier where the reasoning was most
 // likely to be wanted.
 type anthThinking struct {
-	Type         string `json:"type"`          // "enabled"
-	BudgetTokens int    `json:"budget_tokens"` // reasoning allowance
+	Type string `json:"type"` // "enabled" (budgeted) or "adaptive" (effort-led)
+	// BudgetTokens is the reasoning allowance for the BUDGETED shape. Omitted
+	// for adaptive, where the model decides and effort is the dial.
+	BudgetTokens int `json:"budget_tokens,omitempty"`
+}
+
+// anthOutputConfig carries the effort dial that goes with adaptive thinking.
+type anthOutputConfig struct {
+	Effort string `json:"effort,omitempty"` // "low" | "medium" | "high"
+}
+
+// Two thinking shapes, because Claude has two.
+//
+// The older models take a budget: thinking {type: enabled, budget_tokens: N}.
+// Newer ones reject that outright — "thinking.type.enabled is not supported for
+// this model. Use thinking.type.adaptive and output_config.effort" — and decide
+// their own depth from an effort level instead.
+//
+// Which a given model wants is not derivable from its id in any way that will
+// keep working: Bedrock ids move constantly and a hardcoded list is a
+// maintenance trap that fails closed on every model released after it was
+// written. So the budgeted shape is tried first and the model is BELIEVED when
+// it says otherwise — see noteAdaptiveThinking. One 400, once per model per
+// process, and every call after it is correct.
+const (
+	anthThinkBudgeted = "enabled"
+	anthThinkAdaptive = "adaptive"
+)
+
+var (
+	adaptiveThinkMu     sync.RWMutex
+	adaptiveThinkModels = map[string]bool{}
+)
+
+// thinkingStyleFor reports which shape this model has told us it takes.
+func thinkingStyleFor(model string) string {
+	adaptiveThinkMu.RLock()
+	defer adaptiveThinkMu.RUnlock()
+	if adaptiveThinkModels[model] {
+		return anthThinkAdaptive
+	}
+	return anthThinkBudgeted
+}
+
+// noteAdaptiveThinking records that a model rejected the budgeted shape, so the
+// next call uses the one it asked for.
+func noteAdaptiveThinking(model string) {
+	if strings.TrimSpace(model) == "" {
+		return
+	}
+	adaptiveThinkMu.Lock()
+	already := adaptiveThinkModels[model]
+	adaptiveThinkModels[model] = true
+	adaptiveThinkMu.Unlock()
+	if !already {
+		Log("[llm] %s takes adaptive thinking rather than a token budget — switching for this model", model)
+	}
+}
+
+// budgetAsEffort maps a token budget onto the effort dial adaptive thinking
+// uses.
+//
+// The two are not convertible, and pretending otherwise would be worse than
+// this: a budget says "spend up to N", an effort says "try this hard". What
+// carries across is the operator's INTENT, so the thresholds sit either side of
+// the framework default (4096) — below it they wanted less than standard, well
+// above it they wanted noticeably more.
+func budgetAsEffort(budget int) string {
+	switch {
+	case budget <= 0:
+		return ""
+	case budget < anthDefaultThinkBudget:
+		return "low"
+	case budget >= anthDefaultThinkBudget*3:
+		return "high"
+	}
+	return "medium"
+}
+
+// isUnsupportedThinkingTypeErr reports whether a provider refused the budgeted
+// shape and asked for the adaptive one.
+//
+// Matched on the message because that is what the API gives: the status is a
+// plain 400 shared with every other malformed request, and reacting to all of
+// those by changing the thinking shape would turn one clear error into two
+// confusing ones.
+func isUnsupportedThinkingTypeErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "thinking.type") &&
+		(strings.Contains(msg, "adaptive") || strings.Contains(msg, "not supported"))
 }
 
 // anthThinkingFor builds the thinking block for a call, and returns the
@@ -130,13 +225,19 @@ type anthThinking struct {
 // Returns nil when thinking is off or unasked-for, which keeps every existing
 // call byte-identical — this changes nothing until a route or an agent asks for
 // thinking, so no bill moves by surprise.
-func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, int) {
+func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, *anthOutputConfig, int) {
 	if cfg.Think == nil || !*cfg.Think {
-		return nil, maxTokens
+		return nil, nil, maxTokens
 	}
 	budget := anthDefaultThinkBudget
 	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
 		budget = *cfg.ThinkBudget
+	}
+	if thinkingStyleFor(cfg.Model) == anthThinkAdaptive {
+		// The model decides its own depth here, so max_tokens needs no headroom
+		// carved out of it — there is no budget competing for the allowance.
+		return &anthThinking{Type: anthThinkAdaptive},
+			&anthOutputConfig{Effort: budgetAsEffort(budget)}, maxTokens
 	}
 	if maxTokens <= budget {
 		// Headroom for an actual answer on top of the reasoning. Without it a
@@ -144,7 +245,7 @@ func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, int) {
 		// which reads as the model having failed.
 		maxTokens = budget + anthThinkAnswerHeadroom
 	}
-	return &anthThinking{Type: "enabled", BudgetTokens: budget}, maxTokens
+	return &anthThinking{Type: anthThinkBudgeted, BudgetTokens: budget}, nil, maxTokens
 }
 
 // anthSystemBlock is the block form of the system prompt so a cache_control
@@ -472,14 +573,15 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	}
 	addCacheBreakpoint(msgs)
 
-	thinking, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
+	thinking, outCfg, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
 	payload := anthRequest{
-		Model:     cfg.Model,
-		Messages:  msgs,
-		MaxTokens: maxTokens,
-		Thinking:  thinking,
-		System:    buildSystemBlocks(systemPrompt),
-		Tools:     buildAnthTools(cfg.Tools),
+		Model:        cfg.Model,
+		Messages:     msgs,
+		MaxTokens:    maxTokens,
+		Thinking:     thinking,
+		OutputConfig: outCfg,
+		System:       buildSystemBlocks(systemPrompt),
+		Tools:        buildAnthTools(cfg.Tools),
 	}
 
 	body, err := json.Marshal(payload)
@@ -506,7 +608,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"}
+		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"})
 	}
 
 	var result anthResponse
@@ -765,15 +867,16 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	}
 	addCacheBreakpoint(msgs)
 
-	thinking, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
+	thinking, outCfg, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
 	payload := anthRequest{
-		Model:     cfg.Model,
-		Messages:  msgs,
-		MaxTokens: maxTokens,
-		Thinking:  thinking,
-		System:    buildSystemBlocks(systemPrompt),
-		Stream:    true,
-		Tools:     buildAnthTools(cfg.Tools),
+		Model:        cfg.Model,
+		Messages:     msgs,
+		MaxTokens:    maxTokens,
+		Thinking:     thinking,
+		OutputConfig: outCfg,
+		System:       buildSystemBlocks(systemPrompt),
+		Stream:       true,
+		Tools:        buildAnthTools(cfg.Tools),
 	}
 
 	body, err := json.Marshal(payload)
@@ -794,7 +897,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"}
+		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"})
 	}
 
 	st := &anthStreamState{handler: handler}
@@ -815,4 +918,22 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		return nil, fmt.Errorf("stream read error: %w", err)
 	}
 	return st.response("anthropic"), nil
+}
+
+// noteIfAdaptiveThinking records the model's own answer about which thinking
+// shape it takes, then returns the error unchanged.
+//
+// Recorded HERE, by the client, because only the client knows the model id it
+// actually sent. The configured string and the sent string are not always the
+// same — bedrockModelID prefixes a bare name and substitutes a default for an
+// empty one — so a cache keyed from the caller's side would miss on exactly the
+// deployments that need it, and the retry would rebuild an identical request
+// forever. That is the second time this fallback was defeated by keying on the
+// wrong copy of the model name; doing it where the name is unambiguous is what
+// stops there being a third.
+func noteIfAdaptiveThinking(model string, err error) error {
+	if isUnsupportedThinkingTypeErr(err) {
+		noteAdaptiveThinking(model)
+	}
+	return err
 }

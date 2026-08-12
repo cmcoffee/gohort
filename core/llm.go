@@ -657,6 +657,17 @@ type ChatConfig struct {
 	Think        *bool  // Enable/disable thinking for thinking models (nil = model default)
 	ThinkBudget  *int   // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
+	// NoTierFallback refuses the quiet degrade to the worker when a lead call
+	// fails.
+	//
+	// The fallback is right for a routing PREFERENCE: the session continues on
+	// the worker rather than aborting, and a transient lead outage costs
+	// quality instead of the turn. It is wrong for an explicit pin. Somebody who
+	// set one system to the lead model said which model they wanted; answering
+	// from the worker anyway, behind a debug line, is the same silent
+	// substitution the pin exists to prevent — and it hid a malformed thinking
+	// request behind "it works, just slower" for every call.
+	NoTierFallback bool
 	// TierResolved says the CALLER has already decided this call belongs on the
 	// lead, so LeadChat must not re-derive the tier from RouteKey and delegate
 	// back to the worker.
@@ -807,6 +818,12 @@ func WorkerJudgeThink() ChatOption { return WithThinkBudget(workerJudgeThinkBudg
 // to lead, so it's safe to add WithRouteKey before registering the stage.
 func WithRouteKey(key string) ChatOption {
 	return func(c *ChatConfig) { c.RouteKey = key }
+}
+
+// WithNoTierFallback refuses the silent degrade to the worker on a lead
+// failure — see ChatConfig.NoTierFallback. The error surfaces instead.
+func WithNoTierFallback() ChatOption {
+	return func(c *ChatConfig) { c.NoTierFallback = true }
 }
 
 // WithTierResolved marks a LeadChat call whose tier the caller has already
@@ -1284,6 +1301,7 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 	}
 
 	var lastErr error
+	thinkingRetried := false
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		resp, err := fn()
 		if err == nil {
@@ -1291,6 +1309,24 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 		}
 		if _, ok := err.(*nonRetryableError); ok {
 			return resp, err.(*nonRetryableError).error
+		}
+		// A model refusing the budgeted thinking shape is not transient, but it
+		// IS self-correcting: it told us which shape it takes, so record that
+		// and try once more. Which shape a Claude model wants is not derivable
+		// from its id in a way that keeps working — Bedrock ids move constantly
+		// — so believing the model beats maintaining a list that fails closed on
+		// everything released after it was written.
+		//
+		// Once per model per process: the next call is built correctly and never
+		// reaches here.
+		// The client has already recorded which shape its model wants (see
+		// noteIfAdaptiveThinking), so the rebuilt request differs from the one
+		// that just failed. Retried at most once: a second identical refusal
+		// means something else is wrong and looping on it would turn one clear
+		// error into a hang.
+		if isUnsupportedThinkingTypeErr(err) && !thinkingRetried {
+			thinkingRetried = true
+			continue
 		}
 		if !isTransientError(err) {
 			return resp, err

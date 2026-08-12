@@ -64,7 +64,8 @@ type bedrockInvokeRequest struct {
 	Tools            []anthTool        `json:"tools,omitempty"`
 	// Same block the direct endpoint takes — InvokeModel carries the Messages
 	// body verbatim, so thinking crosses unchanged. See anthThinkingFor.
-	Thinking *anthThinking `json:"thinking,omitempty"`
+	Thinking     *anthThinking     `json:"thinking,omitempty"`
+	OutputConfig *anthOutputConfig `json:"output_config,omitempty"`
 }
 
 // bedrockRuntimeClient implements LLM against bedrock-runtime InvokeModel.
@@ -218,12 +219,13 @@ func (c *bedrockRuntimeClient) buildBody(messages []Message, cfg ChatConfig) ([]
 		return nil, err
 	}
 	addCacheBreakpoint(msgs)
-	thinking, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
+	thinking, outCfg, maxTokens := anthThinkingFor(cfg, cfg.MaxTokens)
 	return json.Marshal(bedrockInvokeRequest{
 		AnthropicVersion: bedrockAnthropicVersion,
 		Messages:         msgs,
 		MaxTokens:        maxTokens,
 		Thinking:         thinking,
+		OutputConfig:     outCfg,
 		System:           buildSystemBlocks(systemPrompt),
 		Tools:            buildAnthTools(cfg.Tools),
 	})
@@ -279,7 +281,7 @@ func (c *bedrockRuntimeClient) Chat(ctx context.Context, messages []Message, opt
 				msg = awsErr.Message
 			}
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "bedrock-runtime"}
+		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "bedrock-runtime"})
 	}
 
 	var result anthResponse
@@ -342,7 +344,7 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 		if json.Unmarshal(respBody, &awsErr) == nil && awsErr.Message != "" {
 			msg = awsErr.Message
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "bedrock-runtime"}
+		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "bedrock-runtime"})
 	}
 
 	st := &anthStreamState{handler: handler}

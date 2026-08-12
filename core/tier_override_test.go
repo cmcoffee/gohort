@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -239,4 +240,59 @@ func TestAResolvedTierStillCannotBeatThePrivacyPin(t *testing.T) {
 	if len(seen) != 1 || seen[0] != "lead" {
 		t.Errorf("with every model private the call served %v, want the lead", seen)
 	}
+}
+
+// TestAPinnedLeadDoesNotDegradeQuietly — the fallback is right for a routing
+// PREFERENCE (a transient lead outage costs quality, not the turn) and wrong for
+// an explicit pin. Somebody who pinned one system to the lead said which model
+// they wanted; answering from the worker behind a debug line is the same silent
+// substitution the pin exists to prevent — and it hid a malformed thinking
+// request behind "it works, just slower" on every call.
+func TestAPinnedLeadDoesNotDegradeQuietly(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+	SetAllLLMsPrivate(true) // so the pin is allowed to reach the lead at all
+
+	var seen []string
+	app := &AppCore{
+		LLM:     stubLLM{name: "worker", seen: &seen},
+		LeadLLM: failingLLM{},
+	}
+	// The fallback only engages when a DISTINCT lead is wired — otherwise
+	// escalating was always a no-op and there is nothing to fall back from.
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(app.LLM, app.LeadLLM)
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
+
+	// Without the marker: the lead fails, the worker answers, the session
+	// continues. Unchanged behaviour.
+	seen = nil
+	if _, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("an unpinned call did not fall back: %v", err)
+	}
+	if len(seen) != 1 || seen[0] != "worker" {
+		t.Fatalf("unpinned fallback served %v, want the worker", seen)
+	}
+
+	// Pinned: the failure surfaces instead.
+	seen = nil
+	_, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}}, WithNoTierFallback())
+	if err == nil {
+		t.Error("a pinned lead call fell back to the worker and reported success")
+	}
+	if len(seen) != 0 {
+		t.Errorf("a pinned call still reached %v", seen)
+	}
+}
+
+// failingLLM stands in for a lead that cannot answer.
+type failingLLM struct{}
+
+func (failingLLM) Chat(context.Context, []Message, ...ChatOption) (*Response, error) {
+	return nil, errors.New("lead unavailable")
+}
+func (failingLLM) ChatStream(context.Context, []Message, StreamHandler, ...ChatOption) (*Response, error) {
+	return nil, errors.New("lead unavailable")
 }

@@ -2538,6 +2538,15 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				// later. RouteKey stays on the options because it still
 				// carries the stage's thinking preference.
 				callOpts = append(callOpts, WithTierResolved())
+				// An EXPLICIT pin also refuses the quiet degrade. A routing
+				// preference should keep the session alive on the worker when
+				// the lead is unavailable; somebody who pinned one system to the
+				// lead said which model they wanted, and answering from the
+				// other one behind a debug line is the substitution the pin
+				// exists to prevent.
+				if cfg.TierOverride == LEAD {
+					callOpts = append(callOpts, WithNoTierFallback())
+				}
 			}
 			// Empty/timeout/empty-error retry happens inside retryLLM
 			// (core/llm.go) — every caller gets it for free, including
@@ -2565,6 +2574,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				if useLead {
 					callFn = T.LeadChat
 					callOpts = append(callOpts, WithTierResolved())
+					if cfg.TierOverride == LEAD {
+						callOpts = append(callOpts, WithNoTierFallback())
+					}
 				}
 				resp, err = callFn(ctx, history, callOpts...)
 			}
