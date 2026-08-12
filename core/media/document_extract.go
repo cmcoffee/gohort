@@ -556,3 +556,18 @@ func FormatAttachmentPreamble(name, mime, text string) string {
 	b.WriteString("\n\n---\n\n")
 	return b.String()
 }
+
+// DocumentAcceptAttr is the accept attribute for any file picker that feeds
+// ExtractDocumentText.
+//
+// It lives HERE, beside the switch it describes, because it has now drifted
+// from that switch three times — each drift presenting as "this app won't let
+// me pick a .json" while the extractor handled .json perfectly well, and a user
+// with no way to tell which end refused them. A picker narrower than the
+// extractor is a bug that is invisible from the code that causes it.
+//
+// Audio is deliberately absent: audio routes to transcription, which is a
+// different affordance with a different cost, and pickers that want it say so.
+const DocumentAcceptAttr = ".pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm," +
+	"application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
+	"application/json,text/plain,text/markdown,text/csv,text/html"

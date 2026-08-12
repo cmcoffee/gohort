@@ -5782,8 +5782,19 @@ func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, ag
 // turn keeps reasoning on the local worker so the conversation never leaves
 // for the remote lead model. Gate 1 (no lead configured) and gate 3 (admin
 // route ceiling) are enforced downstream by LeadChat / the route stage.
+//
+// Gate 2 is conditional on the lead actually being remote. When the operator
+// has declared every model private, escalating keeps the conversation on
+// hardware they control, and holding a private turn to the weaker model buys
+// nothing — see core/llm_privacy.go.
 func (t *chatTurn) shouldUseLeadModel() bool {
-	return t.agent.LeadModel && !t.agent.ForcePrivate && !t.privateMode
+	if !t.agent.LeadModel {
+		return false
+	}
+	if AllLLMsPrivate() {
+		return true
+	}
+	return !t.agent.ForcePrivate && !t.privateMode
 }
 
 // frameworkConversationalTools is the single source of truth for the always-on

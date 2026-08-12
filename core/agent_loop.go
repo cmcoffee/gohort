@@ -2481,7 +2481,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// for rounds the lead actually served, so a worker failure isn't
 		// pointlessly retried on the worker.
 		roundUsedLead := false
-		if deescalated == "" && !T.NoLead {
+		if deescalated == "" && !T.LeadDenied() {
 			roundUsedLead = cfg.Tier == LEAD
 			if cfg.RouteKey != "" {
 				roundUsedLead = RouteToLead(cfg.RouteKey)
@@ -2490,9 +2490,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		if streamHandler != nil {
 			resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 		} else {
-			// NoLead redirects all routing to worker — no escalation.
-			useLead := cfg.Tier == LEAD && !T.NoLead
-			if cfg.RouteKey != "" && !T.NoLead {
+			// A binding private pin redirects all routing to worker — no escalation.
+			useLead := cfg.Tier == LEAD && !T.LeadDenied()
+			if cfg.RouteKey != "" && !T.LeadDenied() {
 				useLead = RouteToLead(cfg.RouteKey)
 			}
 			if deescalated != "" {
@@ -2520,8 +2520,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			if streamHandler != nil {
 				resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 			} else {
-				useLead := cfg.Tier == LEAD && !T.NoLead
-				if cfg.RouteKey != "" && !T.NoLead {
+				useLead := cfg.Tier == LEAD && !T.LeadDenied()
+				if cfg.RouteKey != "" && !T.LeadDenied() {
 					useLead = RouteToLead(cfg.RouteKey)
 				}
 				if deescalated != "" {
@@ -2559,7 +2559,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// uses), so the rest of the turn stays on the worker rather than
 		// bouncing back and failing again next round.
 		if err != nil || providerRefused(resp) {
-			if roundUsedLead && deescalated == "" && !T.NoLead {
+			if roundUsedLead && deescalated == "" && !T.LeadDenied() {
 				why := "the lead model call failed"
 				diag := "The lead model could not complete this round"
 				if err == nil {

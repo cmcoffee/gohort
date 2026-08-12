@@ -4087,7 +4087,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			// Private stages can't route to lead, but allow worker ↔ worker
 			// (thinking). Tested by TIER, not by one literal, so a new lead
 			// value can't slip past this guard.
-			if IsPrivateStage(req.Key) && RouteValueIsLead(req.Value) {
+			if PrivateStageEnforced(req.Key) && RouteValueIsLead(req.Value) {
 				http.Error(w, "private stage — cannot route to lead", http.StatusForbidden)
 				return
 			}
@@ -4128,10 +4128,72 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				parts := strings.SplitN(s.Key, ".", 2)
 				group = strings.Title(parts[0])
 			}
-			out[i] = stageEntry{Key: s.Key, Label: s.Label, Value: val, Default: def, ThinkBudget: thinkBudget, DefaultBudget: s.DefaultBudget, Group: group, Private: s.Private}
+			// PrivateStageEnforced, not s.Private: the row's private flag drives
+			// which options the picker offers, so it has to mean "the server
+			// would refuse lead here" rather than "this stage is registered
+			// private". With the all-private toggle on, those differ, and a
+			// picker hiding an option the server would accept reads as broken.
+			out[i] = stageEntry{Key: s.Key, Label: s.Label, Value: val, Default: def, ThinkBudget: thinkBudget, DefaultBudget: s.DefaultBudget, Group: group, Private: PrivateStageEnforced(s.Key)}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
+	})
+
+	// Model privacy: whether every LLM this deployment uses stays under the
+	// operator's control, and therefore whether a private stage may escalate.
+	sub.HandleFunc("/api/llm-privacy", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			var req struct {
+				AllPrivate bool `json:"all_private"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			SetAllLLMsPrivate(req.AllPrivate)
+			// Logged loudly because of what it unlocks: with this on, stages
+			// holding SSH credentials and system data may reach the lead tier.
+			// An audit asking "when did servitor start using the lead model"
+			// needs to find an answer.
+			Log("[admin] user %q set all-LLMs-private=%v — private stages %s escalate to the lead tier",
+				AuthCurrentUser(r), req.AllPrivate,
+				map[bool]string{true: "MAY now", false: "may no longer"}[req.AllPrivate])
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		recommended, verdicts := RecommendAllLLMsPrivate()
+		var lines []string
+		for _, v := range verdicts {
+			p := "NOT private"
+			if v.Private {
+				p = "private"
+			}
+			where := v.Provider
+			if where == "" {
+				where = "(unset)"
+			}
+			if v.Endpoint != "" {
+				where += " at " + v.Endpoint
+			}
+			lines = append(lines, v.Tier+": "+where+" — "+p+" ("+v.Reason+")")
+		}
+		advice := strings.Join(lines, "\n")
+		if recommended {
+			advice += "\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured."
+		} else {
+			advice += "\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data — " +
+				"including SSH credentials and log contents — to it."
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"all_private": AllLLMsPrivate(),
+			"recommended": recommended,
+			"advice":      advice,
+		})
+		return
 	})
 
 	// Worker LLM thinking defaults: GET returns current settings, POST updates.

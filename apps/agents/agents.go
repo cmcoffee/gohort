@@ -941,7 +941,9 @@ const docsModalScript = `<script>
       var upRow = document.createElement('div');
       upRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap';
       var upInp = document.createElement('input'); upInp.type = 'file';
-      upInp.accept = '.pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown';
+      // Must cover every format core/media/document_extract.go handles; a
+      // narrower picker makes a supported file look unsupported.
+      upInp.accept = '.pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json,text/plain,text/markdown,text/csv,text/html';
       upInp.style.cssText = 'flex:1;min-width:0;font-size:0.8rem';
       var upBtn = document.createElement('button'); upBtn.type = 'button'; upBtn.className = 'ui-row-btn primary';
       upBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:0.8rem';

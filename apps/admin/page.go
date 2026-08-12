@@ -758,11 +758,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				Body: ui.FormPanel{
 					Source: "api/worker-llm",
 					Fields: []ui.FormField{
-						{Field: "provider", Label: "Provider", Type: "select", Options: []ui.SelectOption{
-							{Value: "ollama", Label: "Ollama"}, {Value: "llama.cpp", Label: "llama.cpp"},
-							{Value: "anthropic", Label: "Anthropic"}, {Value: "openai", Label: "OpenAI"},
-							{Value: "gemini", Label: "Gemini"}, {Value: "bedrock", Label: "AWS Bedrock"}},
-							Help: "Local providers (ollama / llama.cpp) are the usual worker."},
+						{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
+							Help: "Local providers (ollama / llama.cpp) are the usual worker. A peer offering inference appears here too — its GPU runs the turns."},
 						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b",
 							Help: "Blank = provider default. On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
@@ -807,12 +804,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				Body: ui.FormPanel{
 					Source: "api/lead-llm",
 					Fields: []ui.FormField{
-						{Field: "provider", Label: "Provider", Type: "select", Options: []ui.SelectOption{
-							{Value: "", Label: "(use primary)"},
-							{Value: "anthropic", Label: "Anthropic"}, {Value: "openai", Label: "OpenAI"},
-							{Value: "gemini", Label: "Gemini"}, {Value: "ollama", Label: "Ollama"},
-							{Value: "llama.cpp", Label: "llama.cpp"}, {Value: "bedrock", Label: "AWS Bedrock"}},
-							Help: "(use primary) routes lead stages to the worker model."},
+						{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(true),
+							Help: "(use primary) routes lead stages to the worker model. A peer offering inference appears here too."},
 						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5"},
 						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
 							Help: "Stored encrypted. Blank reuses the primary provider's key where applicable."},
@@ -842,8 +835,25 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title: "Model Privacy",
+				Subtitle: "Some stages handle material that must not reach a third-party model — SSH credentials, log contents, system facts — so they are pinned to the worker tier and cannot escalate. " +
+					"That pin exists because the lead is normally remote. If it is not, the pin costs you the better reasoner on exactly the work that needs it most.",
+				Body: ui.FormPanel{
+					Source: "api/llm-privacy",
+					Fields: []ui.FormField{
+						{Field: "all_private", Label: "All LLMs are private", Type: "toggle",
+							Help: "OFF (the default): private stages stay on the worker, always. " +
+								"ON: private stages may be routed to the lead tier as well, and the lead options appear for them in the routing table below. " +
+								"Turn this on only if you are certain every model above runs on hardware you control — this is your assertion, not a detected fact, " +
+								"and getting it wrong sends credentials and log contents to a third party with no way to recall them."},
+						{Field: "advice", Label: "What this deployment looks like", Type: "readonly",
+							Help: "Judged from the configured providers. Advice only — the toggle is what takes effect."},
+					},
+				},
+			},
+			{
 				Title:    "LLM Routing",
-				Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons. \"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier. Tier and thinking are independent — a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
+				Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons. \"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier. Tier and thinking are independent — a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead unless Model Privacy is turned on above.",
 				Body: ui.Table{
 					Source: "api/routing",
 					RowKey: "key",
@@ -989,7 +999,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Source:    "api/transcribe",
 					TestURL:   "api/transcribe/test",
 					TestLabel: "Test endpoint",
-					Fields: transcribeFormFields(),
+					Fields:    transcribeFormFields(),
 				},
 			},
 			{
@@ -2448,7 +2458,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 
 		"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
 
-		"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs",
+		"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs", "Model Privacy": "LLMs",
 		"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
 		"Local Model Scheduler": "LLMs",
 

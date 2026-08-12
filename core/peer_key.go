@@ -98,6 +98,13 @@ func peerCapServed(cap string) bool {
 	switch cap {
 	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapInvestigate, PeerCapKnowledge, PeerCapExec:
 		return true
+	case PeerCapModels:
+		// Served only when there is something lendable. A hosted provider is
+		// not proxied (see peer_models.go), so an instance configured entirely
+		// against Anthropic can honestly say it serves no inference rather than
+		// advertising an endpoint that refuses every request.
+		return peerModelsServed()
+		return true
 	}
 	return false
 }

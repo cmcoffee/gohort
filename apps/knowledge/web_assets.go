@@ -221,7 +221,7 @@ const documentsDetailBody = `
   <div class="docs-section">
     <div class="docs-section-title">Upload</div>
     <div class="docs-upload-row">
-      <input id="docs-file" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" />
+      <input id="docs-file" type="file" accept=".pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json,text/plain,text/markdown,text/csv,text/html" />
       <button id="docs-upload" class="ui-row-btn primary" disabled>Upload</button>
       <span id="docs-upload-status"></span>
     </div>

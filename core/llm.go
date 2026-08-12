@@ -1324,6 +1324,17 @@ func ProviderHasNativeTools(provider string) bool {
 
 // NewLLMFromConfig creates an LLM client from a stored configuration.
 func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
+	// A provider naming a peer is resolved HERE rather than at save time, so
+	// the stored config keeps saying "peer:den" and the endpoint and key are
+	// read fresh from the peer record on every build. Snapshotting them into
+	// the config is the bug that already bit embeddings: rotating a peer key
+	// left a config that looked correct and 401'd, with nothing on screen to
+	// suggest which of the two records was stale.
+	resolved, err := ResolveModelProvider(cfg, cfg.Provider)
+	if err != nil {
+		return nil, Error(err.Error())
+	}
+	cfg = resolved
 	api := newLLMAPIClient(cfg)
 	var inner LLM
 

@@ -1221,6 +1221,27 @@
         return fieldWrap;
       }
 
+      // Readonly field: displays a server-supplied value and contributes
+      // nothing to the save payload. For a form that has to SHOW something
+      // computed alongside the inputs — a derived status, a summary of what
+      // the settings currently amount to — without pretending it is editable
+      // and without a second component fetching the same document twice.
+      // Multi-line values keep their line breaks.
+      if (t === 'readonly') {
+        if (f.label) fieldWrap.appendChild(el('label', {class: 'ui-form-label'}, [f.label]));
+        var roVal = (f.field && current[f.field] !== undefined && current[f.field] !== null)
+          ? String(current[f.field]) : '';
+        var ro = el('div', {class: 'ui-form-readonly'}, [roVal]);
+        ro.style.cssText = 'white-space:pre-wrap;font-size:0.8rem;line-height:1.5;'
+          + 'color:var(--text-mute);background:var(--bg-sunk,rgba(127,127,127,0.06));'
+          + 'border:1px solid var(--border);border-radius:0.4rem;padding:0.5rem 0.6rem';
+        fieldWrap.appendChild(ro);
+        if (f.help) fieldWrap.appendChild(el('div', {class: 'ui-form-help'}, [f.help]));
+        // Not written back: a readonly field is output, and echoing it into
+        // the payload would let a stale render overwrite a computed value.
+        return fieldWrap;
+      }
+
       // Hidden field: contributes its default to the save payload but
       // renders no visible input. Use for context-derived values the
       // page knows up front (e.g. "this new record is owned by X")

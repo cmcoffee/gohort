@@ -480,8 +480,10 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapTranscribe: "Turn speech into text using this instance's STT model — audio files, voice notes, the audio track of a video.",
 		PeerCapSearch:     "Run web searches through this instance's search provider. Note this SPENDS a metered API key if one is configured here; it is rate-limited separately and more tightly than everything else.",
 		PeerCapBrowse:     "Render pages in this instance's headless browser. Public web only — a peer can never reach this machine's private network through it.",
-		PeerCapModels:     "Chat completions against this instance's configured models.",
-		PeerCapTranscode:  "Media transcoding and frame sampling.",
+		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model — the machine with the GPU does the thinking for the one without. " +
+			"The peer configures an ordinary llama.cpp provider pointed here and everything works as if the model were local: streaming, tool calls, images, thinking budgets. " +
+			"Only LOCAL backends are lent (llama.cpp and ollama). A hosted provider is never relayed, because that would spend this operator's API key on someone else's prompts.",
+		PeerCapTranscode: "Media transcoding and frame sampling.",
 		PeerCapInvestigate: "Let the peer ask questions about systems THIS instance can reach — for a machine on a network the peer has no route to. " +
 			"It sends a question; this instance runs the investigation itself, read-only, under its own approval rules, and returns prose. " +
 			"No command from the peer is ever executed, and no credential leaves here. " +
@@ -502,7 +504,7 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapTranscribe:  "Transcription (speech-to-text)",
 		PeerCapSearch:      "Web search",
 		PeerCapBrowse:      "Page rendering (browser)",
-		PeerCapModels:      "Models (chat)",
+		PeerCapModels:      "Run inference (the peer's turns execute on this machine's model)",
 		PeerCapTranscode:   "Transcoding",
 		PeerCapInvestigate: "Investigate systems (answers questions, runs no remote commands)",
 		PeerCapKnowledge:   "Share gathered knowledge (copies docs and facts to the peer)",
@@ -514,9 +516,17 @@ func peerCapOptions() []ui.SelectOption {
 		// Derived, not hand-written: a capability that ships stops being
 		// labelled unbuilt without anyone remembering to edit this copy, and one
 		// that has not shipped can never be advertised as working.
-		if PeerCapabilityServed(c) {
+		switch {
+		case PeerCapabilityServed(c):
 			h += " Available now."
-		} else {
+		case c == PeerCapModels:
+			// Not "unbuilt" — built, and idle because of how THIS instance is
+			// configured. Told apart because the operator can fix one of these
+			// and not the other.
+			h += " Nothing to lend right now: this instance's models are on a hosted provider, " +
+				"and only a local llama.cpp or ollama is lent. Granting it is harmless and starts " +
+				"working if a local model is configured here."
+		default:
 			h += " Not implemented yet — granting it now has no effect until it ships."
 		}
 		out = append(out, ui.SelectOption{Value: c, Label: label[c], Help: h})
@@ -756,6 +766,44 @@ func peerKeyScopeValues(k PeerKey) []string {
 	out := make([]string, 0, len(k.Appliances))
 	for _, id := range k.Appliances {
 		out = append(out, k.Owner+":"+id)
+	}
+	return out
+}
+
+// LLMProviderOptions builds the provider dropdown for a model tier: the local
+// and hosted providers, plus every peer that will actually run inference.
+//
+// Shared by both tiers so a peer appears in each. usePrimary adds the Lead
+// tier's "(use primary)" entry, which the Worker tier has no meaning for.
+func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
+	var out []ui.SelectOption
+	if usePrimary {
+		out = append(out, ui.SelectOption{Value: "", Label: "(use primary)",
+			Help: "Routes lead stages to the worker model."})
+	}
+	for _, o := range []ui.SelectOption{
+		{Value: "ollama", Label: "Ollama"},
+		{Value: "llama.cpp", Label: "llama.cpp"},
+		{Value: "anthropic", Label: "Anthropic"},
+		{Value: "openai", Label: "OpenAI"},
+		{Value: "gemini", Label: "Gemini"},
+		{Value: "bedrock", Label: "AWS Bedrock"},
+	} {
+		out = append(out, o)
+	}
+	for _, p := range PeersOffering(PeerCapModels) {
+		label := "Peer: " + p.Name
+		if p.Instance != "" {
+			label += " (" + p.Instance + ")"
+		}
+		help := "Run this tier's turns on " + p.BaseURL +
+			" — this machine sends the prompt and the peer's GPU does the work. " +
+			"Leave the endpoint, model and key below blank: they are read from the peer record every time the model is built, " +
+			"so rotating the peer's key takes effect without editing anything here."
+		if p.LastError != "" {
+			help += " Last check failed: " + p.LastError
+		}
+		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
 	return out
 }

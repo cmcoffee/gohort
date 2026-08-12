@@ -70,17 +70,25 @@ func TestPeerCapOptionsCoverEveryCapability(t *testing.T) {
 	}
 }
 
-// Capabilities that are not implemented yet must say so on their own option.
+// Capabilities this instance will not answer must say so on their own option.
 // Granting one silently does nothing, and an operator who checked a box is
 // entitled to know that before they go looking for why the peer is refused.
+//
+// Two distinct reasons qualify, and the copy has to name whichever applies:
+// NOT IMPLEMENTED (nothing the operator can do but wait) and NOTHING TO LEND
+// (implemented, idle because of how this instance is configured, and fixable
+// from the LLM settings page). Collapsing them into one message would tell an
+// operator to wait for a feature they already have.
 func TestUnservedCapabilitiesSaySoInTheUI(t *testing.T) {
 	for _, o := range peerCapOptions() {
-		unbuilt := strings.Contains(strings.ToLower(o.Help), "not implemented")
-		if PeerCapabilityServed(o.Value) && unbuilt {
+		lower := strings.ToLower(o.Help)
+		unbuilt := strings.Contains(lower, "not implemented")
+		idle := strings.Contains(lower, "nothing to lend")
+		if PeerCapabilityServed(o.Value) && (unbuilt || idle) {
 			t.Errorf("capability %q IS served but its help says otherwise: %q", o.Value, o.Help)
 		}
-		if !PeerCapabilityServed(o.Value) && !unbuilt {
-			t.Errorf("capability %q is not served yet but its help does not say so: %q", o.Value, o.Help)
+		if !PeerCapabilityServed(o.Value) && !unbuilt && !idle {
+			t.Errorf("capability %q will not be answered but its help does not say so: %q", o.Value, o.Help)
 		}
 	}
 }

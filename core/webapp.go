@@ -1076,6 +1076,15 @@ func ServeDashboard(addr string) error {
 	// Page rendering on this instance's headless browser.
 	RegisterPublicPath("/api/peer/v1/browse")
 	mux.HandleFunc("/api/peer/v1/browse", HandlePeerBrowse)
+	// Inference on this instance's local model, at the OpenAI chat path so the
+	// far side points an ordinary llama.cpp provider config at
+	// <base>/api/peer/v1 and every existing code path keeps working.
+	RegisterPublicPath("/api/peer/v1/chat/completions")
+	mux.HandleFunc("/api/peer/v1/chat/completions", HandlePeerChatCompletions)
+	// The model picker on the far side asks for this list before it can offer
+	// a choice.
+	RegisterPublicPath("/api/peer/v1/models")
+	mux.HandleFunc("/api/peer/v1/models", HandlePeerModels)
 
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.

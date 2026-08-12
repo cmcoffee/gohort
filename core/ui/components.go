@@ -833,6 +833,12 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 //     FormPanel into grouped chunks (Identity / Persona /
 //     Memory / Privacy / etc.) without breaking the
 //     single-save pattern. Field name is ignored.
+//   - "readonly" — displays the value from Source and contributes nothing
+//     to the save payload. For a form that must SHOW something
+//     computed — a derived status, a summary of what the
+//     current settings amount to — alongside the inputs that
+//     change it, without pretending it is editable. Line
+//     breaks in the value are preserved.
 //   - "hidden"   — contributes Default to the save payload but renders
 //     nothing. Use for context-derived values the page
 //     knows up front (e.g. "owned_by = <parent_id>" on a

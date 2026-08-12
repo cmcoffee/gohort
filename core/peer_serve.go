@@ -108,6 +108,11 @@ type PeerManifest struct {
 	// Browse is the page-rendering endpoint, present only when a browser is
 	// linked into this build.
 	Browse string `json:"browse,omitempty"`
+	// Models lists the local models this instance will run for the caller, one
+	// per tier. Named rather than counted: the far side configures a model id,
+	// and a peer offering both a fast worker and a slow lead is offering a
+	// choice the operator has to be able to see in order to make.
+	Models []PeerModelInfo `json:"models,omitempty"`
 }
 
 type PeerManifestEntry struct {
@@ -148,6 +153,10 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	for _, name := range PeerCapabilities() {
 		e := PeerManifestEntry{Name: name, Served: peerCapServed(name), Granted: k.Allows(name)}
 		switch {
+		case !e.Served && name == PeerCapModels:
+			// Distinguished from the generic case: this one is a configuration
+			// fact the operator can act on, not a missing feature.
+			e.Note = "this instance has no local model to lend — inference sharing serves llama.cpp and ollama only"
 		case !e.Served:
 			e.Note = "not implemented by this instance yet"
 		case e.Served && !e.Granted:
@@ -186,6 +195,9 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if k.Allows(PeerCapBrowse) && peerCapServed(PeerCapBrowse) && peerBrowseServed() {
 		m.Browse = "/api/peer/v1/browse"
+	}
+	if k.Allows(PeerCapModels) && peerCapServed(PeerCapModels) {
+		m.Models = peerModelsInfo("/api/peer/v1")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(m)

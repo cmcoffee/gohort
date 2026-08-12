@@ -290,10 +290,17 @@ func ListRemotePeers() []RemotePeer {
 	return out
 }
 
-// DeleteRemotePeer forgets a peer. Anything already configured FROM it keeps
-// working: the endpoint and key were resolved into the consuming config at save
-// time, so removing the peer record does not silently disable embeddings
-// mid-conversation. It only stops appearing as a choice.
+// DeleteRemotePeer forgets a peer.
+//
+// Embeddings, transcription, search and browse configured FROM it keep working:
+// those resolve the endpoint and key at SAVE time, so the consuming config is a
+// complete one that no longer mentions the peer.
+//
+// An LLM tier does not. It stores "peer:<name>" and resolves through this
+// lookup on every build (see NewLLMFromConfig), which is what lets a rotated
+// peer key take effect with no edit here — and means deleting a peer a tier
+// points at breaks that tier at the next reload, with an error naming the
+// missing peer.
 func DeleteRemotePeer(name string) bool {
 	if RootDB == nil {
 		return false

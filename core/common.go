@@ -60,7 +60,15 @@ type AppCore struct {
 	LLM          LLM  // Primary (worker) LLM — used for most calls.
 	LeadLLM      LLM  // Lead (judge) LLM — used for high-precision calls. Falls back to LLM if nil.
 	LeadFallback bool // Set to true if any lead LLM call fell back to the primary during this session.
-	NoLead       bool // HARD GUARD: when true, LeadChat() redirects to worker and RunAgentLoop ignores LEAD tier.
+	// NoLead marks this agent as handling material that must not reach a
+	// third-party model. When it BINDS, LeadChat() redirects to the worker and
+	// RunAgentLoop ignores the LEAD tier.
+	//
+	// Read it through LeadDenied(), never directly: the pin exists because the
+	// lead is normally remote, and a deployment where every model is local has
+	// no reason to keep the most sensitive agent on the weaker model. See
+	// llm_privacy.go.
+	NoLead bool
 
 	// MaxRounds limits how many LLM call rounds Run() will perform.
 	// Set this in Init() or Main(). Default is 10 if unset.
@@ -173,10 +181,25 @@ func (T *AppCore) RequireLLM() error {
 	return nil
 }
 
-// Private marks this AppCore as a private/worker-only agent.
-// Sets NoLead=true, which redirects LeadChat() to worker and blocks
-// RunAgentLoop from escalating to LEAD tier. Call once in Init() or Main().
+// Private marks this AppCore as handling material that must not reach a
+// third-party model. Call once in Init() or Main().
+//
+// It means "private-appropriate", not "worker forever" — see LeadDenied.
 func (T *AppCore) Private() { T.NoLead = true }
+
+// LeadDenied reports whether this agent's private pin currently BINDS.
+//
+// Two questions, deliberately separate. NoLead is what the app declared about
+// its own material and never changes at runtime. LeadDenied is whether that
+// declaration currently costs the agent the lead tier, and it does not when the
+// operator has declared every model private — at which point escalating keeps
+// the data on hardware they control and the pin is pure loss on exactly the
+// work that most needs a stronger reasoner.
+//
+// Every read of NoLead outside this method is a bug: it would enforce the pin
+// in a deployment that has explicitly lifted it, and the symptom is servitor
+// silently staying on the worker with nothing on screen to explain why.
+func (T *AppCore) LeadDenied() bool { return T.NoLead && !AllLLMsPrivate() }
 
 // PingLLM performs a connectivity check against the worker LLM.
 // Returns an error if the LLM is unreachable or the call fails.
@@ -216,7 +239,7 @@ func (T *AppCore) PingLLM(ctx context.Context) error {
 // If no lead LLM is configured, returns nil (the primary handles fallback).
 // Returns nil immediately when NoLead is set — no probe is sent.
 func (T *AppCore) PingLeadLLM(ctx context.Context) error {
-	if T.NoLead || T.LeadLLM == nil {
+	if T.LeadDenied() || T.LeadLLM == nil {
 		return nil
 	}
 	if p, ok := T.LeadLLM.(Pinger); ok {
@@ -241,7 +264,7 @@ func (T *AppCore) PingLeadLLM(ctx context.Context) error {
 // GetLeadLLM returns the lead LLM if configured, otherwise falls back to the primary LLM.
 // Returns nil when NoLead is set — the caller should never attempt lead escalation.
 func (T *AppCore) GetLeadLLM() LLM {
-	if T.NoLead {
+	if T.LeadDenied() {
 		return nil
 	}
 	if T.LeadLLM != nil {
@@ -256,7 +279,7 @@ func (T *AppCore) GetLeadLLM() LLM {
 // or no distinct lead tier is configured. UI uses this to gate the per-agent
 // "use lead model" option (no point offering an escalation that's a no-op).
 func (T *AppCore) HasDistinctLead() bool {
-	return !T.NoLead && T.LeadLLM != nil && LeadIsDistinct()
+	return !T.LeadDenied() && T.LeadLLM != nil && LeadIsDistinct()
 }
 
 // WorkerContextSize returns the worker LLM's context window size, or 0
@@ -353,7 +376,7 @@ func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOpti
 	opts = prependCaller(s.CallerID, opts)
 	var resp *Response
 	var err error
-	if s.Tier == LEAD && !s.agent.NoLead {
+	if s.Tier == LEAD && !s.agent.LeadDenied() {
 		resp, err = s.agent.LeadChat(ctx, messages, opts...)
 	} else {
 		resp, err = s.agent.WorkerChat(ctx, messages, opts...)
@@ -378,7 +401,7 @@ func (s *Session) ChatStream(ctx context.Context, messages []Message, handler St
 	// never appears in the [llm] debug log). LeadChat has its
 	// own fellBackToWorker flag for the non-streaming case; this
 	// is the streaming equivalent.
-	servedByLead := s.Tier == LEAD && !s.agent.NoLead && s.agent.LeadLLM != nil
+	servedByLead := s.Tier == LEAD && !s.agent.LeadDenied() && s.agent.LeadLLM != nil
 	var llm LLM
 	if servedByLead {
 		llm = s.agent.LeadLLM
@@ -496,8 +519,8 @@ func prependCaller(id string, opts []ChatOption) []ChatOption {
 // If the lead LLM fails and a separate primary LLM is available, it falls
 // back to the primary so the session can continue rather than aborting.
 func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	if T.NoLead {
-		// NoLead is set — redirect to worker instead of escalating.
+	if T.LeadDenied() {
+		// The private pin binds — redirect to worker instead of escalating.
 		return T.WorkerChat(ctx, messages, opts...)
 	}
 	// Honor routing config: if a route key was supplied via WithRouteKey
@@ -727,8 +750,12 @@ func ListRouteStages() []RouteStage {
 	return out
 }
 
-// IsPrivateStage reports whether the given stage key is registered as
-// private (locked to worker tier).
+// IsPrivateStage reports whether the given stage key is REGISTERED as private.
+//
+// Registration is a property of the app and never changes at runtime. Whether
+// the pin is currently ENFORCED is a separate question — see RouteToLead, which
+// lifts it when every configured model is private — so callers deciding what a
+// user may choose should ask PrivateStageEnforced instead.
 func IsPrivateStage(key string) bool {
 	routeRegistry.mu.RLock()
 	defer routeRegistry.mu.RUnlock()
@@ -738,6 +765,17 @@ func IsPrivateStage(key string) bool {
 		}
 	}
 	return false
+}
+
+// PrivateStageEnforced reports whether a stage's private pin is currently
+// binding: registered private AND not lifted by an all-private deployment.
+//
+// Separate from IsPrivateStage so a UI can offer the lead tier exactly when the
+// runtime would honor it. The admin write path previously refused a lead value
+// on any private stage; refusing one the runtime would now accept is a setting
+// that reads as broken.
+func PrivateStageEnforced(key string) bool {
+	return IsPrivateStage(key) && !AllLLMsPrivate()
 }
 
 // LookupRouteFunc is set by the application to read a route stage's
@@ -775,7 +813,16 @@ func routeEffectiveVal(key string) string {
 // value — used by apps (e.g. servitor) that handle sensitive data and
 // must not send it to a remote lead model.
 func RouteToLead(key string) bool {
-	if IsPrivateStage(key) {
+	// A private stage is pinned because escalating would send sensitive
+	// material to a REMOTE lead. When the operator has declared that no model
+	// this deployment uses leaves their control, that premise is false and the
+	// pin is pure cost: the app holding the most sensitive data becomes the
+	// only one permanently denied the better reasoner.
+	//
+	// The declaration is explicit (see AllLLMsPrivate) rather than inferred,
+	// because inferring it wrongly sends SSH credentials to a hosted provider
+	// and there is no un-sending them.
+	if IsPrivateStage(key) && !AllLLMsPrivate() {
 		return false
 	}
 	return RouteValueIsLead(routeEffectiveVal(key))

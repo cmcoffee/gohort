@@ -132,7 +132,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// converting a legacy allowlist into allow-all. Recomputed from rec below.
 	dispatchModeFirst := dispatchAll
 	// ForcePrivate agents can't escalate to the remote lead model (gate 2),
-	// so the "Use Lead model" toggle is hidden for them.
+	// so the "Use Lead model" toggle is hidden for them — unless the operator
+	// has declared every model private, in which case the lead is not remote
+	// and there is nothing for gate 2 to protect. Hiding a toggle the runtime
+	// would honor is a control that reads as broken.
 	leadModelLocked := false
 	if id != "" {
 		source = "../api/agents/" + id
@@ -144,7 +147,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
 			agentLocked = rec.Locked
-			leadModelLocked = rec.ForcePrivate
+			leadModelLocked = rec.ForcePrivate && !AllLLMsPrivate()
 			dispatchModeFirst = effectiveDispatchMode(rec)
 			if rec.OwnedBy != "" {
 				subAgent = true
@@ -856,7 +859,7 @@ func leadModelField(show bool) ui.FormField {
 	}
 	return ui.FormField{
 		Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
-		Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local.\n\nUsually you do not need this: an agent holding the `consult` tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning — not one hard question — is what needs the stronger model.",
+		Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local, unless Admin \u2192 LLMs \u2192 Model Privacy says every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this: an agent holding the `consult` tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning — not one hard question — is what needs the stronger model.",
 	}
 }
 
