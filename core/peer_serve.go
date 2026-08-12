@@ -56,8 +56,16 @@ func peerDeny(w http.ResponseWriter, status int, msg string) {
 // the capability is granted, and charge the rate limit. Returns false having
 // already written the response.
 func peerAuthorize(w http.ResponseWriter, r *http.Request, capability string) (PeerKey, bool) {
+	// Before the lookup, which reads every issued key: a source that keeps
+	// failing must not keep buying that work. See peerSourceThrottled.
+	if peerSourceThrottled(r) {
+		w.Header().Set("Retry-After", "60")
+		peerDeny(w, http.StatusTooManyRequests, "too many failed authentication attempts from this address")
+		return PeerKey{}, false
+	}
 	k, ok := peerFromRequest(r)
 	if !ok {
+		peerNoteAuthFailure(r)
 		peerDeny(w, http.StatusUnauthorized, "unrecognized or disabled peer key")
 		return PeerKey{}, false
 	}
@@ -136,8 +144,17 @@ type PeerEmbeddingsInfo struct {
 
 // HandlePeerManifest serves GET /api/peer/manifest.
 func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
+	// The manifest authenticates on its own rather than through peerAuthorize
+	// (it is not gated on one capability), so it needs the same throttle — an
+	// unthrottled endpoint here would simply be the one an attacker used.
+	if peerSourceThrottled(r) {
+		w.Header().Set("Retry-After", "60")
+		peerDeny(w, http.StatusTooManyRequests, "too many failed authentication attempts from this address")
+		return
+	}
 	k, ok := peerFromRequest(r)
 	if !ok {
+		peerNoteAuthFailure(r)
 		peerDeny(w, http.StatusUnauthorized, "unrecognized or disabled peer key")
 		return
 	}

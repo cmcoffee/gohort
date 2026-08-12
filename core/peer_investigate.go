@@ -432,9 +432,29 @@ func HandlePeerExec(w http.ResponseWriter, r *http.Request) {
 			"this key may not run commands on %q (granted: %s)", id, strings.Join(k.Appliances, ", ")))
 		return
 	}
+	// AUDIT. This is the widest grant in the system — a shell on a named
+	// appliance, run with no risk gate on this side by design — and until now it
+	// ran without leaving any record at all. Minting a key logs, an investigate
+	// question logs, a command actually EXECUTED did not, so after an incident
+	// there was nothing to read.
+	//
+	// Logged before the run, not after: a command that hangs or takes the
+	// process down with it is exactly the one worth having a line about, and an
+	// after-only log loses precisely those.
+	Log("[peer] %s EXEC on %s: %s", k.Label, id, truncateForAudit(cmd))
 	ctx, cancel := context.WithTimeout(r.Context(), peerExecTimeout)
 	defer cancel()
+	started := time.Now()
 	out, err := PeerExecFunc(ctx, k.Owner, id, cmd)
+	// The outcome, on its own line, so a grep for one key's activity shows what
+	// happened as well as what was asked.
+	if err != nil {
+		Log("[peer] %s EXEC on %s failed after %s: %v", k.Label, id,
+			time.Since(started).Round(time.Millisecond), err)
+	} else {
+		Log("[peer] %s EXEC on %s ok in %s (%d bytes)", k.Label, id,
+			time.Since(started).Round(time.Millisecond), len(out))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// A command that failed still has output worth returning: a non-zero
@@ -490,4 +510,24 @@ func PeerExec(ctx context.Context, p RemotePeer, applianceID, command string) (s
 		return out.Output, fmt.Errorf("%s", out.Error)
 	}
 	return out.Output, nil
+}
+
+// auditCommandMax bounds a command in the audit log. Long enough that a real
+// command survives whole; short enough that a peer cannot push the log around
+// by sending a megabyte of shell.
+const auditCommandMax = 400
+
+// truncateForAudit renders a command for the audit log on ONE line.
+//
+// Newlines are escaped rather than kept, because a multi-line command would
+// otherwise split the record across lines and a later line could be crafted to
+// look like a separate log entry — an audit trail an attacker can forge entries
+// into is worse than none.
+func truncateForAudit(cmd string) string {
+	cmd = strings.ReplaceAll(cmd, "\r", "")
+	cmd = strings.ReplaceAll(cmd, "\n", "\\n")
+	if len(cmd) > auditCommandMax {
+		return cmd[:auditCommandMax] + fmt.Sprintf("… (%d bytes total)", len(cmd))
+	}
+	return cmd
 }

@@ -27,6 +27,8 @@ package core
 import (
 	"crypto/subtle"
 	"fmt"
+	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -104,7 +106,6 @@ func peerCapServed(cap string) bool {
 		// against Anthropic can honestly say it serves no inference rather than
 		// advertising an endpoint that refuses every request.
 		return peerModelsServed()
-		return true
 	}
 	return false
 }
@@ -471,4 +472,108 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 	RootDB.Set(peerKeysTable, id, pk)
 	Log("[peer] key %q scope set: owner=%q appliances=%d", pk.Label, owner, len(clean))
 	return pk, nil
+}
+
+// --- pre-authentication throttle ---------------------------------------------
+//
+// LookupPeerKey scans every issued key and deserializes each record before it
+// can decide, and the per-key rate limit only starts applying once a key has
+// been RECOGNIZED. So an unauthenticated caller presenting nonsense paid
+// nothing and cost this instance a full table read, without limit.
+//
+// The throttle counts FAILURES per source rather than requests. A legitimate
+// peer can be making hundreds of calls a minute from one address and must not
+// be caught by this; a caller that cannot authenticate has no business making
+// hundreds of attempts from anywhere. That distinction is what lets the ceiling
+// be low enough to matter.
+//
+// It is not a defence against guessing the key — a 244-bit secret compared in
+// constant time does not need one. It bounds the WORK an unauthenticated
+// request can demand.
+
+const (
+	// peerAuthFailWindow is how long failures are remembered.
+	peerAuthFailWindow = time.Minute
+	// peerAuthFailMax is how many failures one source may produce in a window
+	// before it is refused without a lookup. Generous for a peer misconfigured
+	// with a stale key that retries; tight against anything systematic.
+	peerAuthFailMax = 20
+	// peerAuthFailSources caps the tracking map. Reached only under a
+	// distributed attempt, where the map itself would otherwise be the
+	// exhaustion vector this code exists to prevent.
+	peerAuthFailSources = 4096
+)
+
+var (
+	peerAuthFailMu sync.Mutex
+	peerAuthFails  = map[string]*peerFailWindow{}
+)
+
+type peerFailWindow struct {
+	start time.Time
+	n     int
+}
+
+// peerRequestSource identifies the caller for throttling: the TCP peer address,
+// never a header.
+//
+// X-Forwarded-For is deliberately ignored. It is caller-controlled, so honoring
+// it would let one source present a fresh identity per request and walk around
+// the very limit this imposes. Behind a reverse proxy every peer therefore
+// shares the proxy's address — which is the safe direction: it throttles
+// harder, never less.
+func peerRequestSource(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil || host == "" {
+		return strings.TrimSpace(r.RemoteAddr)
+	}
+	return host
+}
+
+// peerSourceThrottled reports whether this source has spent its failure
+// allowance. Cheap: one map lookup, no database read — which is the point.
+func peerSourceThrottled(r *http.Request) bool {
+	src := peerRequestSource(r)
+	if src == "" {
+		return false
+	}
+	peerAuthFailMu.Lock()
+	defer peerAuthFailMu.Unlock()
+	w := peerAuthFails[src]
+	if w == nil || time.Since(w.start) >= peerAuthFailWindow {
+		return false
+	}
+	return w.n >= peerAuthFailMax
+}
+
+// peerNoteAuthFailure records a failed authentication from this source.
+func peerNoteAuthFailure(r *http.Request) {
+	src := peerRequestSource(r)
+	if src == "" {
+		return
+	}
+	peerAuthFailMu.Lock()
+	defer peerAuthFailMu.Unlock()
+	w := peerAuthFails[src]
+	if w == nil || time.Since(w.start) >= peerAuthFailWindow {
+		// Sweep expired entries while we hold the lock. Bounded work, and it
+		// keeps the map proportional to ACTIVE sources rather than to every
+		// source that has ever failed.
+		if len(peerAuthFails) >= peerAuthFailSources {
+			for k, old := range peerAuthFails {
+				if time.Since(old.start) >= peerAuthFailWindow {
+					delete(peerAuthFails, k)
+				}
+			}
+		}
+		w = &peerFailWindow{start: time.Now()}
+		peerAuthFails[src] = w
+	}
+	w.n++
+	if w.n == peerAuthFailMax {
+		// Said once per window, not per attempt: a source that has started
+		// failing systematically is worth knowing about, a log line per attempt
+		// is the flood it is trying to cause.
+		Log("[peer] %s has failed authentication %d times in a minute — refusing further attempts without a lookup", src, w.n)
+	}
 }
