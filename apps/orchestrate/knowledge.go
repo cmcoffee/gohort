@@ -1427,8 +1427,16 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 					b.WriteString(" [derived]")
 				}
 				b.WriteString("\n")
-				// Line 2: doc_id (web_search's URL slot).
+				// Line 2: doc_id (web_search's URL slot), plus the section to
+				// pass back. Spelled out because the excerpt is a 300-char
+				// preview and the follow-up fetch reads a long document from
+				// the TOP unless told where to go — on a large reference that
+				// means the section a hit came from is unreachable while the
+				// hit itself looks like a success.
 				fmt.Fprintf(&b, "   doc_id: %s\n", h.ReportID)
+				if section != "" && section != docName {
+					fmt.Fprintf(&b, "   section: %s\n", stripChunkPartSuffix(section))
+				}
 				// Line 3: excerpt.
 				fmt.Fprintf(&b, "   %s", knowledgeSearchExcerpt(h.Text))
 			}
@@ -1472,11 +1480,15 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "fetch_knowledge_doc",
-			Description: "Read the full body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). Gated to your accessible corpus.",
+			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). Pass section to jump straight to one part of a long document instead of reading from the top — on a large reference the cap otherwise never reaches past the first few sections. Gated to your accessible corpus.",
 			Parameters: map[string]ToolParam{
 				"doc_id": {
 					Type:        "string",
 					Description: "doc_id from a knowledge_search hit.",
+				},
+				"section": {
+					Type:        "string",
+					Description: "Optional. Return only sections whose heading contains this text, case-insensitive (e.g. \"POST /rest/clients\"). Omit to read from the top; the reply then lists the available section headings.",
 				},
 				"max_chars": {
 					Type:        "number",
@@ -1492,6 +1504,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				return "", errors.New("doc_id is required")
 			}
 			t.noteRecallHintPull(docID) // recall telemetry: pull acted on a hinted doc?
+			wantSection := strings.TrimSpace(stringArg(args, "section"))
 			maxChars := fetchKnowledgeDocDefaultMax
 			if v, ok := args["max_chars"].(float64); ok && v > 0 {
 				maxChars = int(v)
@@ -1563,6 +1576,16 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			if docName == "" {
 				docName = "(unnamed document)"
 			}
+			// Computed before any filtering so a miss can say what DOES exist.
+			headings := sectionHeadings(chunks, docName)
+			if wantSection != "" {
+				kept := chunksInSection(chunks, wantSection)
+				if len(kept) == 0 {
+					return fmt.Sprintf("No section of %q matches %q.\n\nAvailable sections (%d):\n%s",
+						docName, wantSection, len(headings), headingList(headings)), nil
+				}
+				chunks = kept
+			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "# %s\n\n", docName)
 			lastSection := ""
@@ -1589,7 +1612,19 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				if idx := strings.LastIndex(truncated, "\n\n"); idx > maxChars/2 {
 					truncated = truncated[:idx]
 				}
-				out = truncated + fmt.Sprintf("\n\n[…truncated; full document is %d chars. Pass max_chars=%d to fetch more, or use %s with a tighter query to find the specific section you need.]", len(out), fetchKnowledgeDocCap, memKnowledgePhrase())
+				note := fmt.Sprintf("\n\n[…truncated; this document is %d chars and you have read the first %d.",
+					len(out), len(truncated))
+				// The old advice — raise max_chars, or search harder — is useless
+				// on a document bigger than the ceiling: both return the same
+				// opening slice. Name the sections instead, because that is the
+				// one parameter that can actually reach the rest.
+				if wantSection == "" && len(headings) > 1 {
+					note += fmt.Sprintf(" Reading from the top will not reach the rest. Call again with section=\"…\" to jump to one of these %d sections:\n%s",
+						len(headings), headingList(headings))
+				} else {
+					note += fmt.Sprintf(" Pass max_chars=%d to fetch more.", fetchKnowledgeDocCap)
+				}
+				out = truncated + note + "]"
 			}
 			return out, nil
 		},
@@ -1786,3 +1821,61 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 // the agent needs to clear everything under a topic, the admin
 // per-agent wipe button is the right path.
 const maxForgetK = 10
+
+// headingListMax bounds the section index in a fetch reply. A spec with
+// hundreds of operations would otherwise spend the whole budget listing them,
+// which is the problem the list exists to solve.
+const headingListMax = 120
+
+// headingList renders section headings one per line for a fetch reply.
+func headingList(headings []string) string {
+	var b strings.Builder
+	for i, h := range headings {
+		if i >= headingListMax {
+			fmt.Fprintf(&b, "  …and %d more.", len(headings)-headingListMax)
+			break
+		}
+		fmt.Fprintf(&b, "  %s\n", h)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// sectionHeadings lists a document's distinct section headings in assembly
+// order, with "(part N)" suffixes and the document's own title removed.
+//
+// The list is what makes a truncated fetch actionable: told only that a
+// document is 417,000 characters, a reader has no way to ask for the part they
+// need, and reading from the top will never reach it.
+func sectionHeadings(chunks []EmbeddedChunk, docName string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range chunks {
+		h := stripChunkPartSuffix(strings.TrimSpace(strings.TrimPrefix(c.Section, "## ")))
+		if h == "" || h == docName || seen[h] {
+			continue
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	return out
+}
+
+// chunksInSection keeps the chunks whose heading contains want, case-insensitively.
+//
+// A substring match rather than an exact one because the caller is quoting a
+// heading it read in a search hit or a section list, and those carry summaries
+// after the path ("## POST /rest/clients — Create a client"). Requiring the
+// whole heading would fail on the one thing a reader is most likely to type.
+func chunksInSection(chunks []EmbeddedChunk, want string) []EmbeddedChunk {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if want == "" {
+		return chunks
+	}
+	var out []EmbeddedChunk
+	for _, c := range chunks {
+		if strings.Contains(strings.ToLower(c.Section), want) {
+			out = append(out, c)
+		}
+	}
+	return out
+}

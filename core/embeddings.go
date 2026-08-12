@@ -27,11 +27,12 @@ type EmbeddingConfig struct {
 	// were typed in) or "peer:<name>" (they were resolved from a registered
 	// peer instance — see ResolveEmbeddingProvider).
 	//
-	// It is bookkeeping for the UI, not a branch in the embed path. Selecting a
-	// peer writes that peer's endpoint, model and key into the fields above at
-	// SAVE time, so Embed, EmbedVersion and the vector store keep working with
-	// no knowledge that peers exist. Blank means local, which is what every
-	// config stored before peers existed says.
+	// It is NOT bookkeeping only: GetEmbeddingConfig reads it and overlays the
+	// named peer's current endpoint, model and key, so the fields above are a
+	// last-known cache rather than the operative values. That indirection is
+	// what makes rotating a peer key take effect without editing this record.
+	// Blank means local, which is what every config stored before peers existed
+	// says.
 	Provider string `json:"provider,omitempty"`
 }
 
@@ -63,10 +64,16 @@ func SetEmbeddingConfig(cfg EmbeddingConfig) {
 }
 
 // GetEmbeddingConfig returns the current embedding config.
+//
+// When it names a peer, the endpoint, model and key are read from that peer's
+// CURRENT record rather than from whatever was copied in when the form was
+// saved. Every consumer — Embed, EmbedVersion, the peer manifest, the admin
+// test button — goes through here, so this is the one place that has to know.
 func GetEmbeddingConfig() EmbeddingConfig {
 	embedCfgMu.RLock()
-	defer embedCfgMu.RUnlock()
-	return embedCfg
+	cfg := embedCfg
+	embedCfgMu.RUnlock()
+	return resolveEmbeddingPeer(cfg)
 }
 
 // LoadEmbeddingConfigFromDB reads persisted embedding config from the

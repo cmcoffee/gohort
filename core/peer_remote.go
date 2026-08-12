@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -192,6 +193,10 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	// broken from the operator's side.
 	syncPeerImages(&p, m.Images)
 	RootDB.Set(remotePeersTable, name, p)
+	// Anything resolving through this peer picks the new record up now rather
+	// than at the end of the TTL — an operator who just pasted a rotated key
+	// should not have to wonder whether it took.
+	InvalidatePeerResolution()
 	Log("[peer] added remote %q at %s offering %s", name, p.BaseURL, strings.Join(caps, ", "))
 	return p, nil
 }
@@ -209,6 +214,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	if err != nil {
 		p.LastError = err.Error()
 		RootDB.Set(remotePeersTable, p.Name, p)
+		InvalidatePeerResolution()
 		return p, err
 	}
 	p.LastError = ""
@@ -232,6 +238,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	// next check, rather than leaving a backend in the picker that 403s.
 	syncPeerImages(&p, m.Images)
 	RootDB.Set(remotePeersTable, p.Name, p)
+	InvalidatePeerResolution()
 	return p, nil
 }
 
@@ -315,6 +322,7 @@ func DeleteRemotePeer(name string) bool {
 	// the credential holding its key would outlive the reason it existed.
 	teardownPeerImages(p)
 	RootDB.Unset(remotePeersTable, name)
+	InvalidatePeerResolution()
 	Log("[peer] removed remote %q", name)
 	return true
 }
@@ -352,10 +360,15 @@ func PeerFromProvider(provider string) (RemotePeer, bool) {
 }
 
 // ResolveEmbeddingProvider turns a submitted embedding config into the one to
-// store. When Provider names a peer, the endpoint, model and key come from that
-// peer's record rather than from whatever the (hidden) fields held — so the
-// stored config is a complete, ordinary one that Embed can use with no peer
-// awareness at all.
+// store, and validates the selection so the operator hears about a bad peer at
+// SAVE time rather than at the next search.
+//
+// The fields it fills in are a last-known cache, not the operative values:
+// GetEmbeddingConfig resolves the peer again on every read (see
+// resolveEmbeddingPeer), so a rotated key or a moved peer takes effect without
+// anyone editing this form. They are still written because a peer that is later
+// deleted leaves nothing to resolve, and the last endpoint that worked is a
+// better answer than a blank one.
 //
 // An unknown peer is an error rather than a silent fall back to local: falling
 // back would point the vector store at a DIFFERENT embedder than the operator
@@ -379,4 +392,115 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	cfg.Model = p.EmbedModel
 	cfg.APIKey = p.Key
 	return cfg, nil
+}
+
+// --- live peer resolution ----------------------------------------------------
+
+// peerResolveTTL bounds how stale a resolved peer record may be.
+//
+// GetEmbeddingConfig sits on the embed path and EmbedVersion is consulted per
+// cached vector, so hitting the store on every call would put a database read
+// inside a comparison loop. A second is short enough that a key rotation takes
+// effect while the operator is still looking at the screen, and long enough
+// that a bulk ingest does not re-read the same record thousands of times.
+const peerResolveTTL = time.Second
+
+var (
+	peerResolveMu    sync.Mutex
+	peerResolveCache = map[string]peerResolveEntry{}
+	// peerResolveWarned remembers which failures have already been logged, so a
+	// peer deleted mid-ingest produces one line rather than one per chunk.
+	peerResolveWarned = map[string]string{}
+)
+
+type peerResolveEntry struct {
+	peer RemotePeer
+	ok   bool
+	at   time.Time
+}
+
+// lookupPeerCached is GetRemotePeer with a short TTL.
+func lookupPeerCached(name string) (RemotePeer, bool) {
+	key := strings.TrimSpace(strings.ToLower(name))
+	peerResolveMu.Lock()
+	if e, hit := peerResolveCache[key]; hit && time.Since(e.at) < peerResolveTTL {
+		peerResolveMu.Unlock()
+		return e.peer, e.ok
+	}
+	peerResolveMu.Unlock()
+
+	p, ok := GetRemotePeer(key)
+	peerResolveMu.Lock()
+	peerResolveCache[key] = peerResolveEntry{peer: p, ok: ok, at: time.Now()}
+	peerResolveMu.Unlock()
+	return p, ok
+}
+
+// InvalidatePeerResolution drops the cached lookups. Called when a peer record
+// changes so an operator who just pasted a new key does not wait out the TTL.
+func InvalidatePeerResolution() {
+	peerResolveMu.Lock()
+	peerResolveCache = map[string]peerResolveEntry{}
+	peerResolveWarned = map[string]string{}
+	peerResolveMu.Unlock()
+}
+
+// warnPeerResolveOnce logs a resolution problem the first time it is seen, and
+// again only if the problem CHANGES.
+func warnPeerResolveOnce(name, msg string) {
+	peerResolveMu.Lock()
+	last, seen := peerResolveWarned[name]
+	if seen && last == msg {
+		peerResolveMu.Unlock()
+		return
+	}
+	peerResolveWarned[name] = msg
+	peerResolveMu.Unlock()
+	Log("[peer] %s", msg)
+}
+
+// resolveEmbeddingPeer overlays the CURRENT peer record onto a stored embedding
+// config whose Provider names a peer.
+//
+// This is the live half of peer embedding, and it exists because the save-time
+// resolution alone was wrong: it copied the peer's endpoint, model and key into
+// the stored config, so rotating the peer's key left a configuration that
+// looked correct and returned 401 with nothing on either screen to say which of
+// the two records had gone stale. Reading the peer here means the stored config
+// is a POINTER and there is only one place the key lives.
+//
+// A peer that has gone missing or stopped offering embeddings keeps the stored
+// fields — the last endpoint that worked — and logs once. The alternative,
+// blanking the config, turns every search into a silent no-result, which is the
+// failure mode this whole area is trying to avoid.
+func resolveEmbeddingPeer(cfg EmbeddingConfig) EmbeddingConfig {
+	provider := strings.TrimSpace(cfg.Provider)
+	if !strings.HasPrefix(provider, peerProviderPrefix) {
+		return cfg
+	}
+	name := strings.TrimPrefix(provider, peerProviderPrefix)
+	p, ok := lookupPeerCached(name)
+	if !ok {
+		warnPeerResolveOnce(name, fmt.Sprintf(
+			"embeddings are configured against peer %q, which is no longer registered — "+
+				"still using its last known endpoint %s", name, cfg.Endpoint))
+		return cfg
+	}
+	if !p.Offers(PeerCapEmbeddings) {
+		warnPeerResolveOnce(name, fmt.Sprintf(
+			"peer %q no longer offers embeddings (it offers: %s) — "+
+				"still using its last known endpoint %s", name, strings.Join(p.Caps, ", "), cfg.Endpoint))
+		return cfg
+	}
+	warnPeerResolveOnce(name, "") // clears the warning once the peer is healthy again
+	cfg.Endpoint = p.EmbeddingsURL()
+	cfg.APIKey = p.Key
+	// The MODEL is only overridden when the peer reports one. A peer serving a
+	// single-model backend advertises no model name, and overwriting a
+	// deliberately-set informational value with "" would change EmbedVersion
+	// and invalidate every cached vector for no reason.
+	if strings.TrimSpace(p.EmbedModel) != "" {
+		cfg.Model = p.EmbedModel
+	}
+	return cfg
 }

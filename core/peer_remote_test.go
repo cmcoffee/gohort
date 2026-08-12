@@ -301,3 +301,140 @@ func TestForgettingAPeerLeavesConfiguredEmbeddingsWorking(t *testing.T) {
 		t.Error("a forgotten peer is still offered as a choice")
 	}
 }
+
+// --- live resolution ---------------------------------------------------------
+
+// TestEmbeddingConfigResolvesThePeerOnEveryRead — the bug this exists to fix. A
+// rotated peer key used to leave a stored config that looked correct and
+// returned 401, with nothing on either screen to say which record was stale.
+func TestEmbeddingConfigResolvesThePeerOnEveryRead(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den.example", Key: "first-key",
+		EmbedModel: "nomic-embed-text", Caps: []string{PeerCapEmbeddings}})
+	InvalidatePeerResolution()
+
+	// The stored config is a POINTER: it names the peer and carries whatever
+	// was last known, and must never be the thing that decides.
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", Model: "nomic-embed-text", APIKey: "first-key"})
+
+	if got := GetEmbeddingConfig(); got.APIKey != "first-key" {
+		t.Fatalf("initial key resolved to %q", got.APIKey)
+	}
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den2.example", Key: "second-key",
+		EmbedModel: "nomic-embed-text", Caps: []string{PeerCapEmbeddings}})
+	InvalidatePeerResolution()
+
+	got := GetEmbeddingConfig()
+	if got.APIKey != "second-key" {
+		t.Errorf("after rotation the key is still %q — the config snapshotted it", got.APIKey)
+	}
+	if got.Endpoint != "https://den2.example/api/peer/v1" {
+		t.Errorf("after a move the endpoint is still %q", got.Endpoint)
+	}
+	// The STORED record must be untouched: resolution is a read-time overlay,
+	// and writing back would reintroduce the snapshot it replaces.
+	embedCfgMu.RLock()
+	stored := embedCfg
+	embedCfgMu.RUnlock()
+	if stored.APIKey != "first-key" {
+		t.Errorf("resolution wrote back into the stored config (key is now %q)", stored.APIKey)
+	}
+}
+
+// TestALocalEmbeddingConfigIsUntouched — the overlay must not reach configs
+// that never named a peer, which is every config stored before peers existed.
+func TestALocalEmbeddingConfigIsUntouched(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	for _, provider := range []string{"", EmbeddingProviderLocal} {
+		in := EmbeddingConfig{Enabled: true, Provider: provider,
+			Endpoint: "http://localhost:11434/api", Model: "nomic-embed-text", APIKey: "k"}
+		SetEmbeddingConfig(in)
+		if got := GetEmbeddingConfig(); got != in {
+			t.Errorf("provider %q: a local config was altered: %+v", provider, got)
+		}
+	}
+}
+
+// TestAMissingPeerKeepsTheLastKnownEndpoint — blanking the config would turn
+// every search into a silent no-result, which is worse than an endpoint that
+// fails with a diagnosable error.
+func TestAMissingPeerKeepsTheLastKnownEndpoint(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+	InvalidatePeerResolution()
+
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: PeerProviderValue("gone"),
+		Endpoint: "https://gone.example/api/peer/v1", Model: "nomic-embed-text", APIKey: "k"})
+
+	got := GetEmbeddingConfig()
+	if got.Endpoint != "https://gone.example/api/peer/v1" || got.APIKey != "k" {
+		t.Errorf("a deleted peer blanked the config: %+v", got)
+	}
+	if !got.Enabled {
+		t.Error("a deleted peer silently disabled embeddings")
+	}
+}
+
+// TestAPeerThatStoppedOfferingEmbeddingsDoesNotOverwrite — a peer whose grant
+// was revoked must not have its (now meaningless) fields adopted.
+func TestAPeerThatStoppedOfferingEmbeddingsDoesNotOverwrite(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://moved.example", Key: "new-key",
+		Caps: []string{PeerCapImages}})
+	InvalidatePeerResolution()
+
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", APIKey: "old-key"})
+
+	got := GetEmbeddingConfig()
+	if got.Endpoint != "https://den.example/api/peer/v1" || got.APIKey != "old-key" {
+		t.Errorf("a peer no longer offering embeddings was still adopted: %+v", got)
+	}
+}
+
+// TestASingleModelPeerDoesNotInvalidateCachedVectors — EmbedVersion is
+// model@endpoint, so overwriting a set model with the empty string a
+// single-model backend reports would silently re-embed the entire corpus.
+func TestASingleModelPeerDoesNotInvalidateCachedVectors(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den.example", Key: "k",
+		EmbedModel: "", Caps: []string{PeerCapEmbeddings}})
+	InvalidatePeerResolution()
+
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", Model: "bge-m3", APIKey: "k"})
+
+	if got := GetEmbeddingConfig(); got.Model != "bge-m3" {
+		t.Errorf("a single-model peer blanked the model to %q, which changes EmbedVersion "+
+			"and re-embeds the whole corpus", got.Model)
+	}
+}
+
+// scratchPeerStore swaps in an empty peer store and restores the embedding
+// config, which is process-wide.
+func scratchPeerStore(t *testing.T) func() {
+	t.Helper()
+	prevRoot := RootDB
+	prevCfg := GetEmbeddingConfig()
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	InvalidatePeerResolution()
+	return func() {
+		RootDB = prevRoot
+		SetEmbeddingConfig(prevCfg)
+		InvalidatePeerResolution()
+	}
+}
