@@ -85,7 +85,13 @@ func (T *OrchestrateApp) handleAgentNotes(w http.ResponseWriter, r *http.Request
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"text":    eff.Text,
 			"enabled": a.EnableNotes,
-			"cap":     OperatingNotesCap,
+			// Whether the READER can turn them on. An app agent's flags come
+			// from its code-registered spec and its record is hidden from the
+			// pickers, so there is no editor to send anyone to — telling them
+			// to go to one is the same unfollowable advice as pointing a macOS
+			// operator at a Linux package. The panel hides itself instead.
+			"can_enable": !isAppAgent(agentID),
+			"cap":        OperatingNotesCap,
 			// Distinguishes "the agent wrote this" from "nobody has written
 			// anything, you're looking at the configured seed" — clearing is
 			// meaningless in the second case, and the panel says which it is.

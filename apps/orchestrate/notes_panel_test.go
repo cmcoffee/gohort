@@ -9,6 +9,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -161,5 +162,49 @@ func TestTheModalWiresTheNotesPanel(t *testing.T) {
 		if !strings.Contains(js, want) {
 			t.Errorf("the modal must carry %q", want)
 		}
+	}
+}
+
+// TestCanEnableIsTrueForAnOwnedAgent — an ordinary agent has an editor its
+// owner can open, so the panel is right to explain the setting and point at it.
+func TestCanEnableIsTrueForAnOwnedAgent(t *testing.T) {
+	app, _, user := notesPanelApp(t)
+	udb := UserDB(app.DB, user)
+	rec, err := saveAgent(udb, AgentRecord{Name: "Mine", Owner: user, OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	if got := getNotes(t, app, user, rec.ID); got["can_enable"] != true {
+		t.Errorf("an owned agent reports can_enable=%v — the panel would hide a section "+
+			"its owner can actually turn on", got["can_enable"])
+	}
+}
+
+// TestAppAgentsCannotBeEnabledFromThePanel — the reason this field exists.
+//
+// An app agent's flags come from its code-registered spec and its record is
+// hidden from the pickers, so there is no editor to send anyone to. Servitor
+// surfaced exactly this: a Working Notes section on its investigator saying
+// "turned off — enable them in the agent editor", naming a place the reader
+// cannot get to for an agent they cannot see.
+func TestAppAgentsCannotBeEnabledFromThePanel(t *testing.T) {
+	app, _, user := notesPanelApp(t)
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-notes-probe", OwningApp: "Test", Name: "Probe", Prompt: "p", Hidden: true,
+	})
+	udb := UserDB(app.DB, user)
+	if _, err := saveAgent(udb, AgentRecord{ID: "app-notes-probe", Name: "Probe",
+		Owner: seedOwner, OrchestratorPrompt: "p"}); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	got := getNotes(t, app, user, "app-notes-probe")
+	if got["can_enable"] != false {
+		t.Errorf("an app agent reports can_enable=%v — the panel would tell the reader "+
+			"to go to an editor that does not exist for it", got["can_enable"])
+	}
+	// Reading must still work: a leftover note from before the flag existed is
+	// the owner's to see, whatever the panel decides to render.
+	if _, ok := got["text"]; !ok {
+		t.Error("the app agent's notes are not readable at all")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -425,5 +426,57 @@ func TestFactsAndGraphAlsoCountAsRemembering(t *testing.T) {
 	StoreMemoryFact(udb, "probe2", "we use get_top_stories_v2 now", nil)
 	if memoryMentionsTool(udb, "probe2", "get_top_stories") {
 		t.Error("must match whole names, not substrings")
+	}
+}
+
+// TestSystemScopedMemoryIsNotAuditedForToolNames — the audit's premise does not
+// hold everywhere it runs.
+//
+// The dead-tool scan reads every snake_case identifier as a tool name and
+// checks it against the reader's pool. For an agent's own memory that is right.
+// For an app agent working a per-system scope the memory describes a MACHINE,
+// where service names, config keys, unit files and package names are all
+// snake_case — so servitor's notes ("run systemctl_status", "check
+// max_connections") came back as a list of tools that no longer exist, under a
+// heading saying "Needs attention". The audit was confidently reporting
+// correctly-recorded system facts as broken references.
+func TestSystemScopedMemoryIsNotAuditedForToolNames(t *testing.T) {
+	app, udb, _, user := auditFixture(t)
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-audit-probe", OwningApp: "Test", Name: "Probe", Prompt: "p", Hidden: true,
+	})
+	rec := AgentRecord{ID: "app-audit-probe", Name: "Probe", Owner: seedOwner,
+		OrchestratorPrompt: "p", EnableNotes: true}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	// Prose about a SYSTEM, phrased the way an investigator records it.
+	SaveOperatingNotes(udb, factsNamespace(rec.ID),
+		"To check the pool, run max_connections and read log_rotate; call systemctl_status(nginx) after.")
+
+	for _, f := range auditOf(t, app, udb, rec, user) {
+		if f.Kind == "dead_tool" {
+			t.Errorf("a system fact was reported as a missing tool: %q — %s", f.Quote, f.Detail)
+		}
+	}
+}
+
+// TestAnOrdinaryAgentIsStillAuditedForToolNames — the mirror. Suppressing the
+// scan everywhere would have been the easy fix and would have thrown away the
+// finding the feature exists for.
+func TestAnOrdinaryAgentIsStillAuditedForToolNames(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	SaveOperatingNotes(udb, factsNamespace(rec.ID),
+		"Remember to call fetch_quarterly_report() each Monday.")
+
+	var sawDead bool
+	for _, f := range auditOf(t, app, udb, rec, user) {
+		if f.Kind == "dead_tool" {
+			sawDead = true
+		}
+	}
+	if !sawDead {
+		t.Error("an agent's own note naming a tool that does not exist was not flagged — " +
+			"the scope gate went too wide and the audit now finds nothing anywhere")
 	}
 }

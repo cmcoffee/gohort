@@ -71,6 +71,18 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 		return nil
 	}
 	known, orphaned := T.knownToolNames(udb, user)
+	// The dead-tool scan reads every snake_case identifier as a tool name and
+	// checks it against THIS USER's pool. That premise holds for an agent's own
+	// memory and collapses for an app agent working a per-system scope, where
+	// the memory describes a machine: service names, config keys, package
+	// names, unit files and paths are all snake_case, and servitor's notes are
+	// full of "run systemctl_status" and "check max_connections". Every one of
+	// those was reported as a tool that no longer exists — an audit confidently
+	// flagging correctly-recorded system facts as broken references.
+	//
+	// The other findings still apply: a parked call is wrong on its own terms
+	// and stale notes are stale whatever they describe.
+	scanTools := !isAppAgent(agentID)
 	var out []MemoryFinding
 
 	ns := factsNamespace(agentID)
@@ -84,7 +96,9 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 				Quote:  firstMatchingLine(notes, parkedCallRE),
 			})
 		}
-		out = append(out, deadToolFindings("Working notes", notes, known, orphaned)...)
+		if scanTools {
+			out = append(out, deadToolFindings("Working notes", notes, known, orphaned)...)
+		}
 		// Only stored notes have an age; a seed has never been rewritten and
 		// saying so would be a complaint about configuration, not memory.
 		if !stored.UpdatedAt.IsZero() && time.Since(stored.UpdatedAt) > staleNotesAfter {
@@ -98,7 +112,9 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 	}
 
 	for _, f := range ListMemoryFacts(udb, ns) {
-		out = append(out, deadToolFindings("Saved facts", f.Note, known, orphaned)...)
+		if scanTools {
+			out = append(out, deadToolFindings("Saved facts", f.Note, known, orphaned)...)
+		}
 		if parkedCallRE.MatchString(f.Note) {
 			out = append(out, MemoryFinding{
 				Layer: "Saved facts", Kind: "parked_call",
@@ -108,8 +124,14 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 		}
 	}
 
-	out = append(out, auditGraphMemory(udb, ns, known, orphaned)...)
-	out = append(out, auditReferenceMemory(user, agentID, known, orphaned)...)
+	// Both of these exist only to run the dead-tool scan, so on a per-system
+	// scope they are skipped outright rather than called and filtered — which
+	// also spares the Reference Memory sweep, the most expensive part of the
+	// audit, on the scopes where it could never say anything true.
+	if scanTools {
+		out = append(out, auditGraphMemory(udb, ns, known, orphaned)...)
+		out = append(out, auditReferenceMemory(user, agentID, known, orphaned)...)
+	}
 
 	// Orphan findings first — those name something known to be gone, where the
 	// others are judgements about shape.
