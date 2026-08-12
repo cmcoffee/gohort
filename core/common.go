@@ -650,6 +650,14 @@ type WebSearchConfig struct {
 	// "SearXNG" back to an operator who chose a peer, with nothing on screen
 	// admitting where the searches actually go.
 	Source string `json:"source,omitempty"`
+	// CostPerCall prices one search into the cost ledger. 0 = untracked.
+	//
+	// The operator is the only one who can supply it — what a provider charges
+	// is on their invoice, not in any response. Without it a metered key could
+	// be spent by a peer with nothing recorded anywhere: the peer surface
+	// already capped search separately BECAUSE it spends money
+	// (peerSearchRatePerMin), and then counted none of it.
+	CostPerCall float64 `json:"cost_per_call,omitempty"`
 }
 
 // OllamaBackendFunc returns the Ollama backend base URL, configured model name,

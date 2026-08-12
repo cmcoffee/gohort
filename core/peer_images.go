@@ -134,7 +134,13 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 	// peer rendering in a loop takes turns with local work instead of racing
 	// it. Unlabelled it would look local and there would be nothing to be fair
 	// between.
-	ctx, cancel := context.WithTimeout(WithRenderCaller(r.Context(), "peer:"+k.Label), peerImageBudget)
+	// Two labels, two jobs: the render caller is for FAIR QUEUEING, the cost
+	// attribution is for the BILL. A frontier image backend charges per picture,
+	// and without this a peer's renders price into the ledger indistinguishably
+	// from the operator's own.
+	ctx, cancel := context.WithTimeout(
+		WithCostAttribution(WithRenderCaller(r.Context(), "peer:"+k.Label), "peer:"+k.Label),
+		peerImageBudget)
 	defer cancel()
 
 	var (

@@ -198,6 +198,9 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 	}
 
 	result, err := SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+	// The operator's own searches are priced too. Recording only a peer's would
+	// make a shared key look like the peer was spending all of it.
+	recordSearchCost(cfg, provider)
 	if err == nil && result != "" && result != "No results found." {
 		Debug("[web_search] results:\n%s", result)
 	}
@@ -863,7 +866,19 @@ func CrossProviderSearch(query string) (string, error) {
 		provider = "duckduckgo"
 	}
 
-	return SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+	out, err := SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+	recordSearchCost(cfg, provider)
+	return out, err
+}
+
+// recordSearchCost prices one search into the ledger, sourced by provider so
+// "search:serper" sits beside the credential rows the chart already shows.
+//
+// A no-op until an operator sets a per-call price, which is the only way this
+// number can be right: what a provider charges is on their invoice, not in any
+// response.
+func recordSearchCost(cfg WebSearchConfig, provider string) {
+	RecordExternalCost("search:"+provider, "Web search ("+provider+")", cfg.CostPerCall)
 }
 
 // searchDuckDuckGo scrapes DuckDuckGo's lite HTML interface (no API key needed).

@@ -1883,7 +1883,10 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// Cost hook: the request reached the endpoint (any status code is
 		// billable), so price it into the per-source cost ledger. No-op when
 		// this credential's CostPerCall is 0.
-		RecordExternalCost("cred:"+c.Name, c.Name, c.CostPerCall)
+		// Attributed through the request's own context, so a render or an
+		// api-mode call a PEER triggered is priced to that peer instead of
+		// reading exactly like the operator's own spend.
+		RecordExternalCostFor(req.Context(), "cred:"+c.Name, c.Name, c.CostPerCall)
 	}
 	auditEntry := SecureAPIAuditEntry{
 		CredentialName: c.Name,

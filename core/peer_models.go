@@ -335,7 +335,8 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// OllamaSchedulerStats, which already counts in-flight and queued PER
 	// caller — so what is borrowing the GPU is a read of existing state rather
 	// than a second counter that could disagree with it.
-	release, err := acquirePeerModelSlot(r.Context(), tier.Provider, "peer:"+k.Label)
+	ctx := WithCostAttribution(r.Context(), "peer:"+k.Label)
+	release, err := acquirePeerModelSlot(ctx, tier.Provider, "peer:"+k.Label)
 	if err != nil {
 		// Queued and the caller went away, or the deadline passed while
 		// waiting. Not an upstream failure, and saying so keeps a busy GPU from
@@ -350,7 +351,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// the serialization fictional for exactly the requests that need it most.
 	defer release()
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(string(body)))
 	if err != nil {
 		peerDeny(w, http.StatusInternalServerError, "could not build the upstream request: "+err.Error())
 		return

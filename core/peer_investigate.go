@@ -108,6 +108,7 @@ func HandlePeerInvestigate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	touchPeerKey(k)
 	_ = json.NewEncoder(w).Encode(map[string]any{"answer": answer})
 }
 
@@ -305,6 +306,7 @@ func HandlePeerKnowledge(w http.ResponseWriter, r *http.Request) {
 	}
 	kn.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	w.Header().Set("Content-Type", "application/json")
+	touchPeerKey(k)
 	_ = json.NewEncoder(w).Encode(kn)
 }
 
@@ -455,6 +457,11 @@ func HandlePeerExec(w http.ResponseWriter, r *http.Request) {
 		Log("[peer] %s EXEC on %s ok in %s (%d bytes)", k.Label, id,
 			time.Since(started).Round(time.Millisecond), len(out))
 	}
+	// Counted like every other capability. These three handlers never touched
+	// the key, so investigate, knowledge and exec registered as zero activity
+	// forever — and exec is the widest grant in the system. A key that had run a
+	// hundred commands on somebody's lab box looked unused in the admin table.
+	touchPeerKey(k)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// A command that failed still has output worth returning: a non-zero
