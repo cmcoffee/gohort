@@ -204,13 +204,20 @@ type resolvedToolset struct {
 	Snapshot string
 }
 
-// resolveToolset loads an appliance's bound tools in the OWNER's context and
-// renders them as agent tools.
+// resolveToolset loads an appliance's bound tools and renders them as agent
+// tools.
 //
-// Owner context, not caller context: a shared appliance runs on the owner's
-// credentials and store everywhere else in servitor, and a bound tool is part of
-// the target's definition rather than something each user brings with them.
-func resolveToolset(ctx context.Context, owner string, a Appliance) resolvedToolset {
+// WHOSE credentials they use is the appliance's own setting (ToolsRunAs).
+// Owner by default, which is what sharing an appliance has always meant and
+// what the Shared toggle promises about stored credentials. Set to caller, the
+// session carries the ACTING user instead — and everything downstream resolves
+// on its own, because Secure().Resolve already prefers a user's own credential
+// over a global of the same name and loads a per-user secret keyed by the
+// session's username.
+//
+// The two identities are the same user on an unshared appliance, so this only
+// changes anything once the appliance is shared.
+func resolveToolset(ctx context.Context, owner, caller string, a Appliance) resolvedToolset {
 	var out resolvedToolset
 	if len(a.Toolset) == 0 {
 		return out
@@ -230,7 +237,11 @@ func resolveToolset(ctx context.Context, owner string, a Appliance) resolvedTool
 	// Servitor's private posture pins the route stage to the worker MODEL tier;
 	// it does not block outbound calls, and an api-mode tool bound to this
 	// appliance is an outbound call the owner explicitly sanctioned.
-	sess := &ToolSession{Username: owner, DB: authDBOrNil(), Ctx: ctx}
+	runAs := owner
+	if normalizeToolsRunAs(a.ToolsRunAs) == "caller" && strings.TrimSpace(caller) != "" {
+		runAs = caller
+	}
+	sess := &ToolSession{Username: runAs, DB: authDBOrNil(), Ctx: ctx}
 	// A bound tool must behave the same here as it does in the agent that
 	// authored it. An agent's session carries a workspace, so a tool that
 	// downloads a file, uses save_to, or takes an upload parameter works there
@@ -238,7 +249,7 @@ func resolveToolset(ctx context.Context, owner string, a Appliance) resolvedTool
 	// of "looks configured, fails at call time" gap the missing DB handle was.
 	// Same directory the user's agents write to; servitor gains no path of its
 	// own, it just stops being the odd caller out.
-	if ws, err := EnsureWorkspaceDir(owner); err == nil {
+	if ws, err := EnsureWorkspaceDir(runAs); err == nil {
 		sess.WorkspaceDir = ws
 	}
 	posture := map[string]string{}
@@ -277,6 +288,18 @@ func resolveToolset(ctx context.Context, owner string, a Appliance) resolvedTool
 			out.Withheld = append(out.Withheld,
 				fmt.Sprintf("%s (bound without a fingerprint — re-bind it)", name))
 			continue
+		}
+		// Run-as-caller can be unsatisfiable, and it has to say so rather than
+		// fail at call time. A tool bound to a credential living in the OWNER's
+		// namespace is reachable by nobody else — Resolve looks in the caller's
+		// namespace and then in the GLOBAL one, and never in another user's. The
+		// call would otherwise fail deep inside dispatch with a message about a
+		// missing credential, on an appliance that works perfectly for its owner.
+		if runAs != owner {
+			if why, blocked := callerCannotReachCredential(t, runAs, owner); blocked {
+				out.Withheld = append(out.Withheld, fmt.Sprintf("%s (%s)", name, why))
+				continue
+			}
 		}
 		copyTool := t
 		sess.TempTools = append(sess.TempTools, &copyTool)
@@ -518,4 +541,41 @@ func drillIsReadOnly(ctx context.Context) bool {
 	}
 	v, _ := ctx.Value(drillReadOnlyKey{}).(bool)
 	return v
+}
+
+// callerCannotReachCredential reports whether a bound tool's credential is out
+// of the caller's reach, and why in words they can act on.
+//
+// Only meaningful when the appliance runs tools as the CALLER. Three outcomes:
+//
+//   - no credential, or one the caller resolves → fine.
+//   - the owner's user-owned credential → unreachable by anyone else, ever. The
+//     appliance has to be switched back to run as its owner, or each user needs
+//     their own credential of that name.
+//   - a per-user credential the caller has not connected → reachable, once they
+//     do. A different sentence, because the remedy is theirs and takes a minute.
+func callerCannotReachCredential(t TempTool, caller, owner string) (string, bool) {
+	cred := strings.TrimSpace(t.Credential)
+	if cred == "" {
+		return "", false
+	}
+	sec := Secure()
+	if sec == nil {
+		return "", false
+	}
+	c, ok := sec.Resolve(cred, caller)
+	if !ok {
+		// Not in the caller's namespace and not global. If the OWNER has one of
+		// that name, it is theirs and no setting on this appliance can lend it.
+		if _, ownerHas := sec.LoadUser(owner, cred); ownerHas {
+			return fmt.Sprintf("this system runs tools as each user, and %q is %s's own credential — "+
+				"switch it to run as the owner, or give each user a credential named %q", cred, owner, cred), true
+		}
+		return fmt.Sprintf("credential %q is not available to you", cred), true
+	}
+	if c.IsPerUser() && !sec.HasUserSecret(c.Name, caller) {
+		return fmt.Sprintf("credential %q is per-user and you have not connected it yet — "+
+			"add your key on your Account page", cred), true
+	}
+	return "", false
 }

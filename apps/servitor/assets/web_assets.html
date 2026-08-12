@@ -1355,6 +1355,29 @@
         tierHint,
       ]);
 
+      // Whose credentials the bound tools use once this system is SHARED.
+      // Only meaningful for a toolset; SSH passwords and repo tokens are the
+      // appliance's own access and are always the owner's, which is what
+      // sharing an appliance means.
+      var runAsIn = el('select', {class: 'ui-form-input'});
+      [['owner', "The owner's credentials"], ['caller', "Each user's own credentials"]]
+        .forEach(function(o) {
+          var opt = el('option', {value: o[0]}, [o[1]]);
+          if ((rec.tools_run_as || 'owner') === o[0]) opt.selected = true;
+          runAsIn.appendChild(opt);
+        });
+      var runAsSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Tools run as']), runAsIn,
+        el('div', {class: 'ui-form-hint'}, [
+          "Applies to this system's bound tools when it is shared. The owner's: everyone " +
+          "uses your keys — right for a read-only service account. Each user's own: the caller " +
+          "supplies their own credential, so writes are attributable and permissions are theirs. " +
+          "A tool bound to a credential in your personal namespace cannot be used by anyone else, " +
+          "and is withheld with an explanation rather than failing at call time. SSH passwords and " +
+          "repository tokens are always the owner's."]),
+      ]);
+      if (rec.type !== 'toolset') { runAsSection.style.display = 'none'; }
+
       // Shared toggle — when on, every user can discover and use this
       // appliance/repo (owner's creds, one repo clone, shared accumulated
       // knowledge) while keeping their own chat sessions.
@@ -1374,6 +1397,7 @@
         personaNameIn, personaPromptIn,
         linkedRepoSection,
         knowledgeSection,
+        runAsSection,
         tierSection,
         peerShareSection,
         sharedRow, sharedHint,
@@ -1406,6 +1430,7 @@
             member_roles:   wsRoles,
             member_links:   wsLinks,
             collections:    kbSelected.slice(),
+            tools_run_as:      runAsIn.value,
             orchestrator_tier: orchTierIn.value,
             worker_tier:       workTierIn.value,
             linked_repos:   lrSelected.slice(),

@@ -133,7 +133,7 @@ func TestReadOnlyDrillWithholdsAskTools(t *testing.T) {
 	a := Appliance{Toolset: []ToolBinding{
 		{Name: "gitlab_close_mr", Posture: PostureAsk, BodyHash: "deadbeef"},
 	}}
-	rt := resolveToolset(WithReadOnlyDrill(context.Background()), "u", a)
+	rt := resolveToolset(WithReadOnlyDrill(context.Background()), "u", "u", a)
 	if len(rt.Withheld) != 1 {
 		t.Fatalf("withheld = %v, want the ask-posture tool held back", rt.Withheld)
 	}

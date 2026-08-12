@@ -193,6 +193,26 @@ type Appliance struct {
 	// Neither can escalate past the privacy pin: with "All LLMs are private"
 	// off, servitor stays on the worker whatever these say. See
 	// core/llm_privacy.go.
+	// ToolsRunAs decides WHOSE credentials a shared appliance's bound tools use:
+	// "" / "owner" (the default, and what sharing an appliance has always meant)
+	// or "caller" — each user's own.
+	//
+	// It exists because a credential's own cred_scope cannot answer this. A
+	// toolset is usually bound to a credential in the OWNER's "My API
+	// credentials", and a user-owned credential has no per-user axis at all — it
+	// IS one person's. So an appliance built on one can only lend the owner's
+	// access or refuse, and nothing on the credential can express which.
+	//
+	// It selects the IDENTITY the tool session carries, not what the credential
+	// means. The credential's own scope then applies underneath, so the two
+	// cannot contradict each other: run-as-caller with a shared credential is
+	// still the shared secret, and run-as-caller with a per-user one resolves
+	// that caller's secret.
+	//
+	// SSH passwords and repo tokens are deliberately NOT covered. Those are the
+	// appliance's own access rather than a third-party service, and lending them
+	// is what sharing an appliance means.
+	ToolsRunAs       string `json:"tools_run_as,omitempty"`
 	OrchestratorTier string `json:"orchestrator_tier,omitempty"`
 	WorkerTier       string `json:"worker_tier,omitempty"`
 	// LeadTierAvailable is COMPUTED for the edit form and never stored — the
@@ -772,6 +792,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// a gate: a saved record, an import, or a second tab open from before the
 		// setting changed would all carry a value the runtime then silently
 		// ignores. Refusing here means the stored record and the behavior agree.
+		req.ToolsRunAs = normalizeToolsRunAs(req.ToolsRunAs)
 		req.OrchestratorTier = normalizeApplianceTier(req.OrchestratorTier)
 		req.WorkerTier = normalizeApplianceTier(req.WorkerTier)
 		// Computed for the form, never stored — it would otherwise persist a
@@ -4102,7 +4123,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		// The bound tools ARE the target. Resolved in the owner's context, with
 		// every binding's fingerprint checked; anything that changed since it
 		// was approved is withheld and named rather than quietly handed over.
-		resolvedTools = resolveToolset(ctx, ownerUser, appliance)
+		// The acting user as well as the owner: which identity the bound tools
+		// run under is the appliance's own setting, and the two are the same
+		// user on an unshared appliance.
+		resolvedTools = resolveToolset(ctx, ownerUser, userID, appliance)
 		workerTools = append(resolvedTools.Defs,
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
@@ -5366,4 +5390,17 @@ func normalizeApplianceTier(pref string) string {
 		return "worker"
 	}
 	return ""
+}
+
+// normalizeToolsRunAs reduces the stored/submitted value to "owner" or "caller".
+//
+// Anything unrecognized becomes "owner" — the default and the behavior every
+// existing record has. Failing open toward the CALLER would silently widen who
+// must authenticate; failing toward the owner keeps what the appliance already
+// did.
+func normalizeToolsRunAs(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), "caller") {
+		return "caller"
+	}
+	return "owner"
 }

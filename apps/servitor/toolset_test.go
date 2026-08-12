@@ -200,7 +200,7 @@ func TestPosturePrefixMatchPrefersTheLongestBinding(t *testing.T) {
 // optional, which is the same as not having one.
 func TestResolveToolsetWithholdsUnpinned(t *testing.T) {
 	a := Appliance{Toolset: []ToolBinding{{Name: "nope_not_in_pool"}}}
-	rt := resolveToolset(context.Background(), "nobody-has-this-user", a)
+	rt := resolveToolset(context.Background(), "nobody-has-this-user", "nobody-has-this-user", a)
 	if len(rt.Defs) != 0 {
 		t.Errorf("resolved %d defs for a user with no pool", len(rt.Defs))
 	}
@@ -211,7 +211,7 @@ func TestResolveToolsetWithholdsUnpinned(t *testing.T) {
 
 // TestResolveToolsetEmpty — no bindings is not an error, just nothing.
 func TestResolveToolsetEmpty(t *testing.T) {
-	rt := resolveToolset(context.Background(), "u", Appliance{})
+	rt := resolveToolset(context.Background(), "u", "u", Appliance{})
 	if len(rt.Defs) != 0 || len(rt.Withheld) != 0 || rt.Snapshot != "" {
 		t.Errorf("empty toolset resolved to %+v", rt)
 	}
