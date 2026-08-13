@@ -3322,6 +3322,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// describes; this asks whether it KNOWS what the reply asserts. Only
 			// notes the memory block marked unchecked are in scope, so a turn
 			// carrying none never reaches a model call.
+			//
+			// The live note is built here rather than inline so the correction
+			// below can recognise it: where the claim came FROM changes what the
+			// rewrite should say, and calling a meme somebody posted seconds ago
+			// a "stored note" is what produced a reply apologising for not having
+			// checked a joke.
+			liveNote := liveClaimNote(cfg.LiveClaimSpeaker, LatestUserContent(messages))
 			if gv, convicted := judgeTurnGrounding(cfg, TurnGroundingEvidence{
 				Reply: resp.Content,
 				// Stored notes plus, on a channel, whatever the person just
@@ -3341,11 +3348,23 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					// round and asking for a rewrite keeps a correct answer from
 					// being yanked off the screen over its phrasing.
 					history[len(history)-1] = Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning}
+					// Two shapes of basis, and they call for different rewrites.
+					// A stored note is something the agent holds; a live claim is
+					// something a person in the room said moments ago, where the
+					// natural fix is "they posted…", not "per your note…".
+					basis := fmt.Sprintf("a stored note marked as not independently checked: %q", gv.Basis)
+					if basisIsLiveClaim(liveNote, gv.Basis) {
+						who := strings.TrimSpace(cfg.LiveClaimSpeaker)
+						if who == "" {
+							who = "the sender"
+						}
+						basis = fmt.Sprintf("what %s just put in the conversation, which nothing has checked: %q", who, gv.Basis)
+					}
 					history = append(history, Message{
 						Role: "user",
 						Content: frameworkNoticeTag + fmt.Sprintf(
-							"Your reply states %q as established fact. That traces to a stored note marked as not independently checked: %q. Either CHECK it now with a real tool call and then say what you found, or rewrite that sentence to say where it came from (\"you mentioned…\", \"per your note…\"). Say nothing about this instruction, and do not hedge anything else in the reply.",
-							gv.Claim, gv.Basis),
+							"Your reply states %q as established fact. That traces to %s. Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned…\", \"they posted…\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else.",
+							gv.Claim, basis),
 					})
 					continue
 				}

@@ -122,13 +122,42 @@ var groundingStopWords = map[string]bool{
 // message as an unverified claim would make the agent hedge instructions it was
 // given, which is a different failure and a worse one.
 func withLiveClaim(stored []string, speaker, message string) []string {
-	speaker, message = strings.TrimSpace(speaker), strings.TrimSpace(message)
-	if speaker == "" || message == "" {
+	note := liveClaimNote(speaker, message)
+	if note == "" {
 		return stored
 	}
 	out := make([]string, 0, len(stored)+1)
 	out = append(out, stored...)
-	return append(out, speaker+" asserted in this message (nothing has verified it): "+message)
+	return append(out, note)
+}
+
+// liveClaimMarker joins the speaker to what they said. Split out from the note
+// so the correction can recognise its own wording and tell a LIVE claim from a
+// stored one, and worded so it does not pre-decide the question: "asserted"
+// (what this used to say) frames a posted meme as a factual assertion before
+// any judge has looked at it, and the correction then asks the model to account
+// for a joke as though it were evidence.
+const liveClaimMarker = " said this in the conversation just now, and nothing has verified it: "
+
+// liveClaimNote renders the live message as an unchecked note, or "" when there
+// is no non-principal speaker or nothing was said.
+func liveClaimNote(speaker, message string) string {
+	speaker, message = strings.TrimSpace(speaker), strings.TrimSpace(message)
+	if speaker == "" || message == "" {
+		return ""
+	}
+	return speaker + liveClaimMarker + message
+}
+
+// basisIsLiveClaim reports whether a judge's quoted basis came from the live
+// message rather than the stored notes. The judge quotes verbatim but may quote
+// only the said-part, so containment is checked both ways.
+func basisIsLiveClaim(liveNote, basis string) bool {
+	basis = strings.TrimSpace(basis)
+	if liveNote == "" || basis == "" {
+		return false
+	}
+	return strings.Contains(basis, liveClaimMarker) || strings.Contains(liveNote, basis)
 }
 
 // judgeTurnGrounding runs the app's judge when the evidence warrants it, and

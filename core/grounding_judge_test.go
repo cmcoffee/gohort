@@ -123,8 +123,32 @@ func TestLiveClaimEntersScope(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("a participant's message should enter scope, got %v", got)
 	}
-	if !strings.Contains(got[0], "Dana asserted in this message") || !strings.Contains(got[0], "the invoice was already paid") {
+	if !strings.Contains(got[0], "Dana said this in the conversation just now") || !strings.Contains(got[0], "the invoice was already paid") {
 		t.Errorf("the entry should name the speaker and carry the claim, got %q", got[0])
+	}
+	// Deliberately not "asserted": a meme posted in a room is not an assertion,
+	// and framing it as one is what made the correction ask the model to
+	// account for a joke as though it were evidence.
+	if strings.Contains(got[0], "asserted") {
+		t.Errorf("the entry must not pre-decide that the message was a factual assertion, got %q", got[0])
+	}
+}
+
+// The correction wording depends on knowing which shape of note the judge
+// quoted, and the judge quotes verbatim but may quote only the said-part.
+func TestBasisIsLiveClaimMatchesEitherQuoteShape(t *testing.T) {
+	note := liveClaimNote("Dana", "the invoice was already paid")
+	if !basisIsLiveClaim(note, note) {
+		t.Error("the whole note should be recognised as the live claim")
+	}
+	if !basisIsLiveClaim(note, "the invoice was already paid") {
+		t.Error("a basis quoting only the said-part should still be recognised")
+	}
+	if basisIsLiveClaim(note, "the cluster has three nodes") {
+		t.Error("a stored note must not be mistaken for the live claim")
+	}
+	if basisIsLiveClaim("", "the invoice was already paid") {
+		t.Error("with no live claimant nothing traces to the live message")
 	}
 }
 
