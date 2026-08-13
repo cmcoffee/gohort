@@ -148,6 +148,82 @@ func TestSnapshotIsRetakenEachRound(t *testing.T) {
 	}
 }
 
+func TestABackgroundRenderDoesNotRenumberUnderTheModel(t *testing.T) {
+	// The between-rounds window: a detached render finishes while no round is
+	// running, so the next snapshot would otherwise pin a ring the model has
+	// never seen — its image#1 silently becomes the render, and every position
+	// it is holding moves down one.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("THE-PHOTO-SHE-SENT"), "a photo", ImageFromUser)
+
+	detached := freezeSession(t, "alice", "agent-wren")
+	detached.Detached = true
+	RecordRecentImage(detached, []byte("BACKGROUND-RENDER"), "generated: something", ImageFromGenerated)
+
+	// A new round begins. The model has read no list naming the render.
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	FreezeImageRefs(sess, args)
+	got, ok := ResolveRecentImage(sess, args["path"].(string))
+	if !ok || !bytes.Equal(got, []byte("THE-PHOTO-SHE-SENT")) {
+		t.Errorf("image#1 moved to the background render the model was never shown: %q", got)
+	}
+	// It is still reachable — by the id its result handed over.
+	all := RecentImages(sess)
+	if len(all) != 2 || !all[0].Unannounced {
+		t.Fatalf("expected the render to be present and unannounced, got %+v", all)
+	}
+	if data, ok := ResolveRecentImage(sess, all[0].ID); !ok || !bytes.Equal(data, []byte("BACKGROUND-RENDER")) {
+		t.Errorf("the stable id did not reach the background render: %q ok=%v", data, ok)
+	}
+}
+
+func TestListingTheRingGivesABackgroundRenderItsPosition(t *testing.T) {
+	// Being shown the list IS the announcement: from then on the model holds
+	// positions it actually read, so the render takes image#1 like anything
+	// else.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("THE-PHOTO-SHE-SENT"), "a photo", ImageFromUser)
+	detached := freezeSession(t, "alice", "agent-wren")
+	detached.Detached = true
+	RecordRecentImage(detached, []byte("BACKGROUND-RENDER"), "generated: something", ImageFromGenerated)
+
+	if m := RecentImageManifest(sess); m == "" {
+		t.Fatal("expected a manifest")
+	}
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	FreezeImageRefs(sess, args)
+	got, _ := ResolveRecentImage(sess, args["path"].(string))
+	if !bytes.Equal(got, []byte("BACKGROUND-RENDER")) {
+		t.Errorf("after the ring was listed, image#1 is still %q", got)
+	}
+	// And the flag is cleared on disk, not just for this read.
+	if all := RecentImages(sess); all[0].Unannounced {
+		t.Error("the announcement did not persist")
+	}
+}
+
+func TestAForegroundSaveIsAnnouncedImmediately(t *testing.T) {
+	// Only a BACKGROUND save is held back. A foreground one puts its position
+	// in a result the model reads on the very next round, so holding it back
+	// would make the ring disagree with what the model was just told.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("FIRST"), "a photo", ImageFromUser)
+	RecordRecentImage(sess, []byte("SECOND"), "generated", ImageFromGenerated)
+
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	FreezeImageRefs(sess, args)
+	got, _ := ResolveRecentImage(sess, args["path"].(string))
+	if !bytes.Equal(got, []byte("SECOND")) {
+		t.Errorf("a foreground save did not take image#1: %q", got)
+	}
+}
+
 func TestOutOfRangeRefIsLeftForTheNormalError(t *testing.T) {
 	attachmentTestDir(t)
 	sess := freezeSession(t, "alice", "agent-wren")

@@ -1973,7 +1973,20 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
 		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it — that would send it twice. Just say what it is.", len(data))
 		if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
-			msg += fmt.Sprintf(" It is %s right now — a POSITION, which moves when the next picture is saved.%s", ref, stableRefNote(stable))
+			// The STABLE id only, and deliberately no position. This render
+			// finished in the background, between rounds — naming a position
+			// here would be stating a number for a picture that was never in
+			// any list the model read, while every position it IS holding has
+			// silently moved down one to make room. The framework keeps this
+			// picture out of the numbering until the ring is listed again
+			// (see core.SnapshotImageRefs); the id is what works meanwhile,
+			// and it works afterwards too.
+			if stable != "" {
+				msg += fmt.Sprintf(" Refer to it as %s — that id always means this picture. It has no image#N position yet:"+
+					" it finished in the background, after the list you were last shown.", stable)
+			} else {
+				msg += fmt.Sprintf(" It is %s right now — a POSITION, which moves when the next picture is saved.%s", ref, stableRefNote(stable))
+			}
 		}
 		// Show it, on the round that writes the line about it.
 		//

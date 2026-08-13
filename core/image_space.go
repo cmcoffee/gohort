@@ -105,7 +105,12 @@ type RecentImage struct {
 	// Origin decides whether this picture may stand as a reference. See
 	// ImageOrigin: an agent's own output is not evidence of anything.
 	Origin ImageOrigin
-	path   string // absolute file path
+	// Unannounced is true while the model has never been shown this picture's
+	// position — a background render that landed between rounds. It holds no
+	// position in the model's view of the ring until it is listed. See
+	// SnapshotImageRefs and AnnounceRecentImages.
+	Unannounced bool
+	path        string // absolute file path
 }
 
 // recentImageMeta is the on-disk sidecar. Kept next to the image so the space
@@ -122,6 +127,17 @@ type recentImageMeta struct {
 	// no field and reads back as unknown — where originFromNote classifies it
 	// from the note the framework wrote.
 	Origin ImageOrigin `json:"origin,omitempty"`
+	// Unannounced marks a picture the model has not been shown a POSITION for.
+	// Only a background render sets it: that render finishes between rounds, so
+	// it renumbers the ring while the model is still holding positions from
+	// before it existed. Until the model is shown the ring again, this picture
+	// occupies no position as far as the model is concerned — it is addressed by
+	// its stable id, which is what its result hands over. See SnapshotImageRefs.
+	//
+	// Default false, so every sidecar written before this existed — and every
+	// foreground save, whose result the model reads on the very next round — is
+	// announced, which is what both were.
+	Unannounced bool `json:"unannounced,omitempty"`
 }
 
 // recentImageDir is where a user's ring lives. Empty when there's no session or
@@ -226,18 +242,69 @@ func TransientImageRefs(text string) []string {
 //
 // Sessions with no snapshot (a CLI path that never calls this) keep the old
 // behavior — positions resolve live.
+//
+// UNANNOUNCED pictures are skipped, which closes the other half of the same
+// window. A background render finishes BETWEEN rounds, so pinning the ring at
+// the start of the next round would pin a ring the model has still never seen —
+// the new picture is image#1 to the framework and does not exist to the model,
+// and every position the model does hold has quietly moved down one. Skipping
+// them numbers the ring as the model believes it to be. They are not lost:
+// their result hands over the stable id, and the moment the ring is listed for
+// the model (AnnounceRecentImages, from the manifest) they take their positions
+// like anything else.
 func SnapshotImageRefs(sess *ToolSession) {
 	if sess == nil {
 		return
 	}
-	all := RecentImages(sess)
-	frozen := make([]string, len(all))
-	for i, r := range all {
-		frozen[i] = strings.TrimSpace(r.ID) // "" for a picture with no stable id
+	var frozen []string
+	for _, r := range RecentImages(sess) {
+		if r.Unannounced {
+			continue
+		}
+		frozen = append(frozen, strings.TrimSpace(r.ID)) // "" for a picture with no stable id
 	}
 	sess.mu.Lock()
 	sess.imageRefsFrozen = frozen
 	sess.mu.Unlock()
+}
+
+// AnnounceRecentImages marks every picture in the ring as one the model has now
+// been shown, and returns how many changed.
+//
+// Called where the ring is LISTED for the model, because that listing is the
+// event: it states each picture's current position, so from then on a position
+// the model uses is one it actually read rather than one assigned to it while
+// it was not looking.
+func AnnounceRecentImages(sess *ToolSession) int {
+	n := 0
+	for _, r := range RecentImages(sess) {
+		if !r.Unannounced {
+			continue
+		}
+		base := strings.TrimSuffix(r.path, ".png")
+		var meta recentImageMeta
+		raw, err := os.ReadFile(base + ".json")
+		if err != nil {
+			continue
+		}
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			continue
+		}
+		meta.Unannounced = false
+		out, err := json.Marshal(meta)
+		if err != nil {
+			continue
+		}
+		// Read-modify-write, like the caption pass: a description may have
+		// landed since the entry was written, and rewriting the sidecar from
+		// scratch would drop it.
+		if err := os.WriteFile(base+".json", out, 0600); err != nil {
+			Debug("[image_space] announce write: %v", err)
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // FrozenImageRef returns the stable ref a positional one meant at snapshot
@@ -398,7 +465,13 @@ func recordRecentImage(sess *ToolSession, data []byte, note string, origin Image
 		Debug("[image_space] write: %v", err)
 		return ""
 	}
-	meta, _ := json.Marshal(recentImageMeta{Note: strings.TrimSpace(note), Mime: "image/png", Origin: origin})
+	// A DETACHED save is one the model has not been told about: the render was
+	// sent to the background and finishes between rounds, so announcing a
+	// position it never saw assigned is how the ring renumbers underneath it.
+	meta, _ := json.Marshal(recentImageMeta{
+		Note: strings.TrimSpace(note), Mime: "image/png", Origin: origin,
+		Unannounced: sess != nil && sess.Detached,
+	})
 	if err := os.WriteFile(filepath.Join(dir, base+".json"), meta, 0600); err != nil {
 		Debug("[image_space] write meta: %v", err)
 	}
@@ -520,7 +593,7 @@ func RecentImages(sess *ToolSession) []RecentImage {
 		if raw, err := os.ReadFile(strings.TrimSuffix(abs, ".png") + ".json"); err == nil {
 			_ = json.Unmarshal(raw, &meta)
 		}
-		r.Note, r.Caption, r.Description = meta.Note, meta.Caption, meta.Description
+		r.Note, r.Caption, r.Description, r.Unannounced = meta.Note, meta.Caption, meta.Description, meta.Unannounced
 		// An entry written before origins existed has no field; classify it
 		// from the note the framework wrote, so a library that predates this
 		// still knows which of its pictures the agent made.
@@ -665,6 +738,13 @@ func RecentImageManifest(sess *ToolSession) string {
 	if len(all) == 0 {
 		return ""
 	}
+	// Listing the ring IS the announcement — every line below states a position,
+	// so a background render the model was never told about stops being a
+	// picture with no position the moment this text reaches it. Marked before
+	// the text is built so the next round's snapshot agrees with what was said
+	// here; the snapshot is only retaken between rounds, so nothing mid-round
+	// shifts underneath the call that produced this.
+	AnnounceRecentImages(sess)
 	// SPLIT BY PROVENANCE, not listed flat.
 	//
 	// The kept-image manifest has marked the agent's own output for a while;
