@@ -374,6 +374,22 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			return out, err
 		}
 	}
+	// Freeze positional image refs, OUTSIDE every wrapper above — including the
+	// detach wrapper, which is the point. image#2 is a position in a ring that
+	// renumbers on every save, so a call that is queued to run later, or that
+	// runs after a sibling render in the same batch, resolves it against a ring
+	// the model never saw. Rewriting to the stable id here binds the ref to the
+	// picture the model was looking at when it wrote the call. See
+	// SnapshotImageRefs for what "when it wrote the call" means.
+	if sess != nil {
+		inner := handler
+		handler = func(args map[string]any) (string, error) {
+			if n := FreezeImageRefs(sess, args); n > 0 {
+				Debug("[image_space] froze %d positional image ref(s) to stable ids for %s", n, ct.Name())
+			}
+			return inner(args)
+		}
+	}
 	var caps []Capability
 	if c, ok := ct.(CapabilityTool); ok {
 		caps = c.Caps()

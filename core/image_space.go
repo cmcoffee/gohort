@@ -205,6 +205,110 @@ func TransientImageRefs(text string) []string {
 	return out
 }
 
+// SnapshotImageRefs freezes what image#1, image#2 … mean for the length of one
+// tool round, and is why a positional ref cannot come to mean a different
+// picture between the model writing it and the call running.
+//
+// The model chooses a ref from what it was last shown — the previous round's
+// results and manifest. Every save then renumbers the ring, INCLUDING a save
+// the same round performs on its own output: ask for a render and an attach in
+// one response and the render slides into image#1 before the attach resolves,
+// so the attach delivers the render instead of the picture the model meant.
+// Same for a detached call, which runs after the turn that wrote it has ended.
+// The symptom is a reply carrying two pictures, one of them from an earlier
+// request entirely.
+//
+// So the snapshot is taken BEFORE a round's tools run, and holds until the next
+// round is taken — which is exactly when the model has seen fresh results and
+// its idea of the positions is current again. Nothing here resolves bytes: it
+// rewrites the ref to the stable id that meant the same picture at snapshot
+// time, and normal resolution proceeds from there.
+//
+// Sessions with no snapshot (a CLI path that never calls this) keep the old
+// behavior — positions resolve live.
+func SnapshotImageRefs(sess *ToolSession) {
+	if sess == nil {
+		return
+	}
+	all := RecentImages(sess)
+	frozen := make([]string, len(all))
+	for i, r := range all {
+		frozen[i] = strings.TrimSpace(r.ID) // "" for a picture with no stable id
+	}
+	sess.mu.Lock()
+	sess.imageRefsFrozen = frozen
+	sess.mu.Unlock()
+}
+
+// FrozenImageRef returns the stable ref a positional one meant at snapshot
+// time. Reports false for anything else — a stable id, a kept name, an
+// out-of-range position, or a picture too old to have an id — so callers pass
+// the original through untouched.
+func FrozenImageRef(sess *ToolSession, ref string) (string, bool) {
+	if sess == nil {
+		return "", false
+	}
+	body := strings.TrimSpace(ref)
+	if !strings.HasPrefix(strings.ToLower(body), RecentImageRefPrefix) {
+		return "", false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(body[len(RecentImageRefPrefix):]))
+	if err != nil || n < 1 {
+		return "", false
+	}
+	sess.mu.Lock()
+	frozen := sess.imageRefsFrozen
+	sess.mu.Unlock()
+	if n > len(frozen) || frozen[n-1] == "" {
+		return "", false
+	}
+	return frozen[n-1], true
+}
+
+// FreezeImageRefs rewrites the positional image refs in one tool call's
+// arguments to the stable ids they named at snapshot time, and returns how many
+// it rewrote.
+//
+// Only a value that is ENTIRELY a ref is rewritten, in a string or in a list of
+// them — the two shapes an argument names a picture in. Prose is left alone: a
+// prompt that happens to mention image#2 is the model describing the picture,
+// not addressing it, and rewriting inside a sentence would put a machine id in
+// front of a user for no gain.
+func FreezeImageRefs(sess *ToolSession, args map[string]any) int {
+	if sess == nil || len(args) == 0 {
+		return 0
+	}
+	n := 0
+	swap := func(v any) (any, bool) {
+		s, ok := v.(string)
+		if !ok {
+			return nil, false
+		}
+		stable, ok := FrozenImageRef(sess, s)
+		if !ok || strings.EqualFold(stable, strings.TrimSpace(s)) {
+			return nil, false
+		}
+		n++
+		return stable, true
+	}
+	for k, v := range args {
+		if out, ok := swap(v); ok {
+			args[k] = out
+			continue
+		}
+		list, ok := v.([]any)
+		if !ok {
+			continue
+		}
+		for i, item := range list {
+			if out, ok := swap(item); ok {
+				list[i] = out
+			}
+		}
+	}
+	return n
+}
+
 // ImageOrigin says WHERE a picture came from, which decides whether it can
 // serve as a reference. An agent's own output is not evidence of anything: a
 // generated subject is invented, so treating it as a reference for that subject

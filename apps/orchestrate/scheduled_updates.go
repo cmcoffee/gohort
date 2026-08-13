@@ -572,6 +572,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
 		DrainViewImages:      subSess.DrainViewImages,
+		BeforeToolRound:      func() { SnapshotImageRefs(subSess) },
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),

@@ -7289,6 +7289,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.
 		DrainViewImages: sess.DrainViewImages,
+		BeforeToolRound: func() { SnapshotImageRefs(sess) },
 		// Hand over the recent-image ids when the user is talking about a
 		// picture. The space can't live in the tool schema (it changes on every
 		// image operation and would re-pay cold prefill), but the newest user

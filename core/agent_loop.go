@@ -893,6 +893,16 @@ type AgentLoopConfig struct {
 	// frames were silently dropped and the model "described" a video it never saw).
 	DrainViewImages func() []ViewImage
 
+	// BeforeToolRound, when set, is called once per round after the LLM has
+	// chosen its tool calls and before any of them run. It is the moment the
+	// round's arguments are fixed but nothing has acted on them yet, which is
+	// where per-round state that tool ARGUMENTS are interpreted against belongs
+	// — wire it to sess.SnapshotImageRefs so a positional image#N means the
+	// picture the model was looking at rather than whatever a sibling call in
+	// the same batch has since made newest. Optional; nil means such refs
+	// resolve live, the behavior before the hook existed.
+	BeforeToolRound func()
+
 	// Stream enables streaming mode. When set, LLM responses are streamed
 	// through this handler as they arrive. Optional.
 	Stream StreamHandler
@@ -3493,6 +3503,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// Execute tool calls and collect results.
 		// Independent calls run in parallel; confirmable tools are
 		// checked serially first to avoid concurrent prompts.
+		//
+		// Anything the round's ARGUMENTS are read against is pinned first: the
+		// calls are settled, none has run, and no sibling has yet changed the
+		// state a later one refers to.
+		if cfg.BeforeToolRound != nil {
+			cfg.BeforeToolRound()
+		}
 		results := make([]ToolResult, len(resp.ToolCalls))
 		toolErrors := 0
 		guardBlockedThisRound := false // set when the loop-guard blocks a repeat this round

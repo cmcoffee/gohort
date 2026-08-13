@@ -1499,6 +1499,7 @@ type ToolSession struct {
 	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
 	imgGenAttempts    int                // Tier-2 auto-retry CHAIN length for the current image (resets on a new subject); drives the retry budget. See NextImageAttempt.
 	imgGenTotal       int                // Tier-2 absolute generate_image calls this turn (never resets); the runaway hard cap. See NextImageAttempt.
+	imageRefsFrozen   []string           // what image#1, image#2 … meant when this round's tool calls were written; index i is the stable ref for image#(i+1), "" where the picture has no stable id. Positional refs in tool arguments resolve against THIS, not the live ring. See SnapshotImageRefs.
 	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	availableTools    map[string]bool    // names that actually resolved for this caller; see SetAvailableTools/HasTool. nil = unknown, which callers must treat as "name no tools"
 	LLM               LLM                // optional LLM made available to tools that need sub-calls

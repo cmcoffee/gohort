@@ -723,6 +723,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		// Feed view_video's sampled frames to the model on the next round so a
 		// channel agent (phantom) actually sees a reel it was asked to watch.
 		DrainViewImages: subSess.DrainViewImages,
+		BeforeToolRound: func() { SnapshotImageRefs(subSess) },
 		// Nothing here surfaces a non-final round's prose: only resp.Content is
 		// returned, no stream is wired, no round is settled into a transcript, and
 		// the telemetry above keeps len(info.Content) rather than the text. So the
@@ -1574,6 +1575,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Feed view_video's sampled frames to the model on the next round.
 	loopCfg.DrainViewImages = subSess.DrainViewImages
+	loopCfg.BeforeToolRound = func() { SnapshotImageRefs(subSess) }
 	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
 	// What this turn has run a deliverable producer for, tracked live so the
 	// phantom check below can tell an unattached caption from ordinary prose.
