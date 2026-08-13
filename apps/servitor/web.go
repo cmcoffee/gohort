@@ -2469,7 +2469,16 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 	a.AppCore = T.AppCore
 
 	var execFn func(string) (string, error)
-	if appliance.Type == "command" {
+	if strings.TrimSpace(appliance.PeerName) != "" {
+		// Peer first, exactly as in runSession: the command lives on the far
+		// side, so mapping it here would enumerate a CLI on the WRONG machine —
+		// silently, since a local `ls` of a path that only exists on the peer
+		// just comes back empty. The scratch setup below already routed through
+		// the peer; only this seam did not.
+		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+			"Mapping %s through %s.", appliance.Command, appliance.PeerName)})
+		execFn = peerExecFor(ctx, appliance)
+	} else if appliance.Type == "command" {
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
 		execFn = func(cmd string) (string, error) {
 			return a.exec_local_ctx(ctx, cmd, appliance.WorkDir, appliance.EnvVars)
@@ -2943,6 +2952,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// gate refuse the very cleanup that keeps the host clean.
 	if appliance.Type != "repo" && appliance.Type != "bundle" && appliance.Type != "toolset" {
 		rawExec := func(c context.Context, cmd string) (string, error) {
+			// Peer first, same as sshExec above: setup and teardown must land on
+			// the machine the session is actually working, or this run makes and
+			// removes a scratch directory on the wrong host while the worker's
+			// writes into it fail.
+			if strings.TrimSpace(appliance.PeerName) != "" {
+				return peerExecFor(c, appliance)(cmd)
+			}
 			if appliance.Type == "command" {
 				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
 			}

@@ -1306,15 +1306,18 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 		return result + notice, ctx.Err()
 	}
 	if runErr != nil {
-		exitCode := -1
 		var exitErr *ssh.ExitError
-		if errors.As(runErr, &exitErr) {
-			exitCode = exitErr.ExitStatus()
+		if !errors.As(runErr, &exitErr) {
+			// No exit status came back at all: the channel died, the remote
+			// sshd refused the exec, or the connection dropped mid-command.
+			// Same reasoning as the local path — an invented -1 reads as a
+			// verdict on the command instead of on the transport.
+			return start_failure_notice("COMMAND DID NOT COMPLETE — no exit status came back from the remote host", result, runErr), nil
 		}
 		if result == "" {
-			return fmt.Sprintf("[exit code %d — no output]", exitCode), nil
+			return fmt.Sprintf("[exit code %d — no output]", exitErr.ExitStatus()), nil
 		}
-		return result + fmt.Sprintf("\n[exit code %d]", exitCode), nil
+		return result + fmt.Sprintf("\n[exit code %d]", exitErr.ExitStatus()), nil
 	}
 	return result, nil
 }
@@ -1330,6 +1333,25 @@ func (T *Servitor) exec_local(cmd, workDir string, envVars []string) (string, er
 // command_timeout and aborting if ctx is cancelled. Same rationale as
 // exec_command_ctx — long-running commands would otherwise block the worker.
 func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envVars []string) (string, error) {
+	// A working directory that does not exist on THIS host fails inside
+	// fork/exec, before the shell ever runs: no output, no exit status, and
+	// every command against the system looks identically empty. Checked up
+	// front so the answer names the setting that has to change instead of
+	// leaving the caller to conclude the target binary is missing.
+	if workDir != "" {
+		reason := ""
+		if fi, err := os.Stat(workDir); err != nil {
+			reason = err.Error()
+		} else if !fi.IsDir() {
+			reason = workDir + " is not a directory"
+		}
+		if reason != "" {
+			return fmt.Sprintf("[COMMAND DID NOT RUN — this system's working directory is unusable: %s. "+
+				"Nothing was executed. Every command will fail the same way until the system's Work Dir "+
+				"setting is corrected or cleared; this says nothing about the command itself.]", reason), nil
+		}
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, command_timeout())
 	defer cancel()
 
@@ -1377,17 +1399,43 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 		return result + notice, ctx.Err()
 	}
 	if err != nil {
-		exitCode := -1
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
+		if !errors.As(err, &exitErr) {
+			// The shell never started — not on PATH, exec denied by a platform
+			// sandbox, an unusable working directory. Reporting that as "exit
+			// code -1 — no output" states the one thing that is NOT true (that
+			// the command ran and said nothing) and hides the only fact that
+			// matters. Observed: twenty consecutive commands, `echo` included,
+			// all coming back empty while the session hunted for a binary that
+			// was there the whole time.
+			return start_failure_notice("COMMAND DID NOT RUN — the shell could not be started on this host", result, err), nil
+		}
+		// A signal kill has no exit status of its own (ExitCode is -1), so the
+		// number alone would be indistinguishable from the case above.
+		if exitErr.ExitCode() < 0 {
+			if result == "" {
+				return fmt.Sprintf("[%s — no output]", exitErr.String()), nil
+			}
+			return result + fmt.Sprintf("\n[%s]", exitErr.String()), nil
 		}
 		if result == "" {
-			return fmt.Sprintf("[exit code %d — no output]", exitCode), nil
+			return fmt.Sprintf("[exit code %d — no output]", exitErr.ExitCode()), nil
 		}
-		return result + fmt.Sprintf("\n[exit code %d]", exitCode), nil
+		return result + fmt.Sprintf("\n[exit code %d]", exitErr.ExitCode()), nil
 	}
 	return result, nil
+}
+
+// start_failure_notice renders "no exit status ever came back" so it cannot be
+// read as a result about the command. Shared by the local and SSH exec paths,
+// which fail this way for different reasons and so supply their own headline.
+func start_failure_notice(headline, result string, err error) string {
+	notice := fmt.Sprintf("[%s: %v. This is a fault in the execution path, not a result about the "+
+		"command — re-running variations of it will produce exactly the same empty answer.]", headline, err)
+	if result == "" {
+		return notice
+	}
+	return result + "\n" + notice
 }
 
 func (T *Servitor) Main() error {

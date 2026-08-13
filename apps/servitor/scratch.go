@@ -67,8 +67,11 @@ func scratch_setup(ctx context.Context, run scratch_exec, dir string) error {
 		return fmt.Errorf("scratch: %w", err)
 	}
 	// mkdir is silent on success; any output means it failed to create the dir
-	// (read-only /tmp, quota, permissions) even though the shell exited 0.
-	if strings.Contains(out, "exit code") || strings.Contains(strings.ToLower(out), "denied") {
+	// (read-only /tmp, quota, permissions) even though the shell exited 0 — or
+	// that no shell ran at all, which the exec paths report as COMMAND DID NOT
+	// RUN/COMPLETE rather than as an exit code.
+	if strings.Contains(out, "exit code") || strings.Contains(out, "COMMAND DID NOT") ||
+		strings.Contains(strings.ToLower(out), "denied") {
 		return fmt.Errorf("scratch: %s", strings.TrimSpace(out))
 	}
 	return nil

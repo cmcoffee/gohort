@@ -9,6 +9,7 @@ package localexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -127,16 +128,23 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 
 	if runErr != nil {
-		exitCode := -1
 		var exitErr *exec.ExitError
-		if asExitErr, ok := runErr.(*exec.ExitError); ok {
-			exitErr = asExitErr
-			exitCode = exitErr.ExitCode()
+		if !errors.As(runErr, &exitErr) {
+			// Nothing ran: the sandbox helper is missing, exec was denied, the
+			// workspace dir is gone. "[exit code -1 — no output]" would claim
+			// the command ran and printed nothing, which sends the caller
+			// rewriting a command that never executed in the first place.
+			notice := fmt.Sprintf("[COMMAND DID NOT RUN — %v. This is a fault in the execution path, not a "+
+				"result about the command; re-running variations of it will fail identically.]", runErr)
+			if output == "" {
+				return notice, nil
+			}
+			return output + "\n" + notice, nil
 		}
 		if output == "" {
-			return fmt.Sprintf("[exit code %d — no output]", exitCode), nil
+			return fmt.Sprintf("[exit code %d — no output]", exitErr.ExitCode()), nil
 		}
-		return output + fmt.Sprintf("\n[exit code %d]", exitCode), nil
+		return output + fmt.Sprintf("\n[exit code %d]", exitErr.ExitCode()), nil
 	}
 	return output, nil
 }
