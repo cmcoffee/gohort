@@ -98,9 +98,26 @@ The shape people keep hand-rolling instead:
 > phase. It **stays** there for the rest of the conversation, unless a later question falls outside
 > what the router scoped, at which point it re-routes or re-decomposes.
 
-Builder's intake-to-build routing, debate's phase progression, and servitor's scout-then-cluster are
-all this pattern, built three times with three different ad-hoc state hacks (see
-`builder_shadow_state_test.go`).
+**A correction, made while attempting St4 (2026-08-13).** An earlier draft of this document claimed
+Builder's intake-to-build routing, debate's phase progression, and servitor's scout-then-cluster
+were three hand-rolled instances of this pattern. Checked properly, none of them is:
+
+- **Builder** deliberately has no intake phase. The lean rewrite (v0.5.535) made its persona
+  action-first — "act, don't interrogate. Understand the ask in a message or two, then BUILD it" —
+  and what looks like intake is a decision table (`WHAT TO BUILD — first match wins`) inside one
+  prompt, resolved per request rather than held as state. `AgentRecord.IntakeForm` is a form spec
+  for public surfaces, not a phase. `builder_shadow_state_test.go`, cited as evidence, is about
+  seed-record rebasing and has nothing to do with phases.
+- **debate** is `private/debate/pipeline.go` — 3000 lines of imperative Go behind `PipelineWork`,
+  the stages-are-code path. It has ordered sections, but it runs start to finish and returns. No
+  user turn lands inside it. It is a pipeline, correctly.
+- **servitor**'s `scoutWorkspace` is one function called once from `workspace_session.go:43` to
+  enrich a prompt before a turn. A pre-turn step, not a position the session holds.
+
+So the provenance argument was wrong and is withdrawn. What justifies this primitive is the case it
+was actually asked for: a conversation that decomposes once, routes once, and settles — which now
+runs live. Retrospective archaeology is not evidence, and it should not have been written as though
+it were.
 
 ## The model
 
@@ -414,7 +431,7 @@ have, and the runtime overlay is what turns the ⚠ trail into something you can
 | **St1** ✅ | `core/machine_def.go` + interpreter + `Validate` + session persistence. No UI. |
 | **St2** ✅ | `core/machine_guard.go` (guard evaluation) + `ChangePhase` + the `change_phase` tool. Breadcrumbs and the transition cap moved into St1 — the degradation paths needed them to be honest from the first line. **The phase pill moved to St3**, with the rest of the UI: the chat surface is a `ui.AgentLoopPanel` with no generic per-session badge, and inventing one for this would be exactly the core/ui leak CLAUDE.md forbids. Until then the phase is visible in the ⚠ trail (every transition breadcrumbs) and on `GET /api/sessions/{id}`. |
 | **St3** ✅ | The `machine` tool (authoring), the agent-editor picker, HTTP CRUD + export/import, and the phase pill via a generic `StatusURL`. No editor PAGE — see the St3 note under Surfaces. |
-| **St4** | Port Builder's intake-to-build routing to a machine and delete its shadow state. This is the proof the abstraction is real, and it is the one that should be allowed to send St1-St3 back for changes. |
+| **St4** | ~~Port Builder's intake-to-build routing.~~ Withdrawn — there was nothing to port; see the correction under Why. Replaced by a troubleshooting machine as the stress test: [troubleshooting-machine.md](troubleshooting-machine.md). Its success condition is a written-down change to St1-St3 that came from USE rather than design, or a defensible statement that none is needed. |
 
 ### What St1 left on the table, deliberately
 
