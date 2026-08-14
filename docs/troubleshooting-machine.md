@@ -1,6 +1,12 @@
 # St4 — a troubleshooting machine, as the test of the phase model
 
-Status: spec, pre-implementation. Replaces the withdrawn St4 in
+Status: **superseded** by [investigation.md](investigation.md) (v0.6.106). Kept for its predicted
+failures, which still stand and are still unmet — the investigation machine is the thing most likely
+to hit them.
+
+The Design A / Design B question below was settled by asking rather than by building: the real
+workflow turned out to have a shape neither sketch had, because a hunch and its verification are
+different jobs and neither design separated them. Replaces the withdrawn St4 in
 [agent-machines.md](agent-machines.md).
 
 ## Why this, and not a port
@@ -141,10 +147,10 @@ anyone saying so. `core/machine_extras_test.go` fails if that happens, and says 
 Install and attach:
 
 ```sh
-curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/machines \
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/machines \
   -H 'Content-Type: application/json' -d @extras/troubleshooting.machine.json
 
-curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/agents/<agentID> \
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/<agentID> \
   -H 'Content-Type: application/json' -d '{"machine": "<machineID>"}'
 ```
 

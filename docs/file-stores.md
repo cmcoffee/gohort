@@ -83,7 +83,7 @@ trust. Folding both onto one engine is a real lift-to-core candidate.
 
 ## The agent
 
-`extras/investigator.agent.json`, importable at `POST /api/agents/import`. Two config flags carry
+`extras/investigator.agent.json`, importable at `POST /orchestrate/api/agents/import`. Two config flags carry
 the memory requirement, and the prompt has to agree with both:
 
 - `memory_mode: "agent"` — the Lessons-learned directive rather than the personalization one.
@@ -110,7 +110,7 @@ curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/filestore/api/stores \
   -d '{"name":"Support bundles","path":"/var/log/bundles","description":"Customer support captures, one folder per ticket."}'
 
 # 2. Create the agent.
-curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/agents/import \
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/import \
   -H 'Content-Type: application/json' -d @extras/investigator.agent.json
 
 # 3. Attach the store to it: agent editor → Sources → File stores.

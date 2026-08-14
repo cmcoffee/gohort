@@ -5,7 +5,7 @@ a node/edge adapter, not a `MachineDef`**.
 
 Landed: `core/workflow_graph.go` (types, layered layout, SVG renderer), `core/machine_graph.go` (the
 machine adapter + `MachineCursor.Overlay`), `MachineCursor.Log` / `ChatSession.MachineLog` (the
-structural transition trail the overlay reads), `GET /api/machines/{id}/graph`, and the diagram in
+structural transition trail the overlay reads), `GET /orchestrate/api/machines/{id}/graph`, and the diagram in
 the Machines modal. Tests in `core/workflow_graph_test.go`.
 
 Two things the drawing got wrong until the output was actually looked at, both now fixed and pinned
@@ -119,7 +119,7 @@ Staging for why not the diagnostics prose):
 - A count on repeat-fired edges (a guard that has tripped four times is the shape of a machine whose
   resident phase is scoped too narrowly).
 
-Served as `GET /api/machines/{id}/graph?session=<id>` — no session gives the plain structure. This
+Served as `GET /orchestrate/api/machines/{id}/graph?session=<id>` — no session gives the plain structure. This
 is the piece that makes the graph a debugging surface rather than documentation, and it should ship
 in the same pass, not later: the structural render alone is a picture of something you could already
 read from the def.
@@ -129,7 +129,7 @@ read from the def.
 - **The Machines modal** — the machine's structure, next to its row. It already lists phase names as
   `a → b → c`, which is the lie this replaces.
 - **The chat toolbar** — the running session's graph, next to the ⚠ trail. Same modal shell.
-- **`GET /api/machines/{id}/graph`** — `image/svg+xml`, so it can be linked, saved, or dropped into
+- **`GET /orchestrate/api/machines/{id}/graph`** — `image/svg+xml`, so it can be linked, saved, or dropped into
   a doc.
 
 ## Staging

@@ -5,6 +5,9 @@ package core
 // of rendering server-side instead of handing a JS library some JSON.
 
 import (
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -217,6 +220,43 @@ func TestGraphSVG_StructureAndEscaping(t *testing.T) {
 	// Themed, not baked: the same image has to read on light and dark.
 	if !strings.Contains(svg, "var(--text") || !strings.Contains(svg, "var(--surface") {
 		t.Error("colors should reference CSS variables with fallbacks")
+	}
+}
+
+// A guard returning across the same rank gap a forward edge crosses put
+// both labels on one baseline, on top of each other. Found by rendering
+// a real machine and reading the coordinates — the only way this class
+// of fault shows up.
+func TestGraphSVG_EdgeLabelsDoNotCollide(t *testing.T) {
+	def := MachineDef{Name: "collide", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "x", NextFrom: "to", Next: "answer",
+			Output: []PipelineField{{Name: "to", Type: FieldString}}},
+		{Name: "verify", Prompt: "y", Resident: true, Guard: "moved on", GuardTo: "triage"},
+		{Name: "answer", Prompt: "z", Resident: true},
+	}}
+	svg := def.Graph().SVG(nil)
+
+	type placed struct {
+		x    int
+		text string
+	}
+	re := regexp.MustCompile(`<text x="(\d+)" y="(\d+)" font-size="9.5"[^>]*>([^<]*)</text>`)
+	byRow := map[int][]placed{}
+	for _, m := range re.FindAllStringSubmatch(svg, -1) {
+		x, _ := strconv.Atoi(m[1])
+		y, _ := strconv.Atoi(m[2])
+		byRow[y] = append(byRow[y], placed{x, m[3]})
+	}
+	for y, items := range byRow {
+		sort.Slice(items, func(i, j int) bool { return items[i].x < items[j].x })
+		for i := 1; i < len(items); i++ {
+			// ~5px per character at this size, the same approximation the
+			// renderer works in.
+			if end := items[i-1].x + len(items[i-1].text)*5; end > items[i].x {
+				t.Errorf("labels overlap on baseline y=%d: %q ends at %d, %q starts at %d",
+					y, items[i-1].text, end, items[i].text, items[i].x)
+			}
+		}
 	}
 }
 

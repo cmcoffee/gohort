@@ -29,7 +29,7 @@ have at least one machine — a select whose only option is None teaches nothing
 
 ```sh
 # 1. Create the machine. The response carries its id.
-curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/machines \
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/machines \
   -H 'Content-Type: application/json' -d '{
     "name": "Triage",
     "start": "decompose",
@@ -57,7 +57,7 @@ curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/machines \
   }'
 
 # 2. Point an agent at it (partial update — safe, touches nothing else).
-curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/agents/<agentID> \
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/<agentID> \
   -H 'Content-Type: application/json' -d '{"machine": "<machineID>"}'
 
 # Detach with {"machine": ""}.
@@ -69,7 +69,7 @@ runs decompose and route before replying; turns 2+ go straight to the resident p
 - The **phase pill** in the chat toolbar names the current phase; hover it for the phase's
   description and how much state is pinned.
 - The **⚠ diagnostics trail** carries every transition, guard verdict, and fallback.
-- `GET /api/sessions/{id}?agent_id=<agentID>` shows `Phase` and `MachineState`.
+- `GET /orchestrate/api/sessions/{id}?agent_id=<agentID>` shows `Phase` and `MachineState`.
 - Ask something unrelated to see the guard trip, or watch the model reach for `change_phase`.
 
 A machine cannot be edited into a session that is already parked in it — re-point the agent and

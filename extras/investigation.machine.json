@@ -1,0 +1,51 @@
+{
+  "name": "Investigation",
+  "description": "Explain something you are seeing. Forms one hypothesis from whatever the observation came from, then tests it against independent evidence. A question with no observation skips straight to answering.",
+  "start": "triage",
+  "phases": [
+    {
+      "name": "triage",
+      "desc": "Is there something to explain, or is this a question?",
+      "think": "on",
+      "prompt": "Work out what kind of turn this is, and nothing else.\n\nWhat the person said:\n{input}\n\nThere are two kinds.\n\nAn OBSERVATION is something they have SEEN and want explained: an error in a log, a symptom on a running system, output that is wrong, behaviour that changed. It has a source — a folder of logs, a live machine, the output of a command — and the job is to explain it.\n\nA QUESTION has no observation behind it: how does this work, where is this configured, what does this setting do, has anyone hit this before. The job is to answer it from what is already written down or from looking at a system.\n\nDo not investigate here. Do not guess at a cause. Do not read anything. Decide which of the two this is, say what the observation is if there is one, and name where it appears to have come from so the next step knows where to start.\n\nWhen it is genuinely both — an observation with a question attached — treat it as an observation. Explaining the thing usually answers the question, and the reverse is not true.",
+      "next_from": "next_phase",
+      "next": "answer",
+      "output": [
+        {"name": "next_phase", "type": "string", "required": true, "desc": "exactly one of: hunch (there is an observation to explain), answer (a question with no observation)"},
+        {"name": "observation", "type": "string", "desc": "what was seen, in their terms — empty when this is a question"},
+        {"name": "source", "type": "string", "desc": "where it came from: a log folder, a named system, a command's output, a screenshot they described"},
+        {"name": "asked", "type": "string", "required": true, "desc": "what they actually want to know, in one sentence"}
+      ]
+    },
+    {
+      "name": "hunch",
+      "desc": "Form one hypothesis, and say what would settle it.",
+      "think": "on",
+      "prompt": "Look at what was observed and form ONE hypothesis about why.\n\nWhat they saw: {state:triage.observation}\nWhere it came from: {state:triage.source}\nWhat they want to know: {state:triage.asked}\n\nGo and look. Use the sources that apply — search the log folders, run the command over them, ask the live system. Read enough to have a real hypothesis rather than a plausible one; a first ERROR line is usually the symptom of something that went wrong several lines earlier.\n\nThen commit to ONE hypothesis. Not three ranked possibilities: a single best explanation, stated so it could turn out to be wrong. Hedging here reads as thoroughness and costs the next step its target, because you cannot test \"it might be any of these\".\n\nThe hard part, and the reason this step exists: say what would CONFIRM it and what would REFUTE it, and name WHERE that evidence would be. Evidence that is independent of where the observation came from. A hypothesis formed by reading a log is not confirmed by reading more of that log — that is the same reading twice, and it feels like corroboration. If the observation came from logs, the confirming evidence is probably a deploy or a merge in GitLab, a documented behaviour in Confluence, a ticket somebody already filed, or the state of the running system. If the observation came from a live system, the logs may well be the independent evidence.\n\nIf you genuinely cannot form a hypothesis from what is there, say so and say what you would need to see. That is a real answer and it is much better than a confident guess that sends the next step looking for evidence of nothing.",
+      "next": "verify",
+      "output": [
+        {"name": "hypothesis", "type": "string", "required": true, "desc": "the single best explanation, stated so it could be wrong"},
+        {"name": "confirms_if", "type": "string", "required": true, "desc": "what would show this is right"},
+        {"name": "refutes_if", "type": "string", "required": true, "desc": "what would show this is wrong"},
+        {"name": "look_where", "type": "list", "required": true, "desc": "where to go for that evidence — sources independent of where the observation came from"},
+        {"name": "read_so_far", "type": "list", "desc": "what was actually read to get here, so the next step does not repeat it"}
+      ]
+    },
+    {
+      "name": "verify",
+      "desc": "Test the hypothesis against independent evidence.",
+      "resident": true,
+      "prompt": "Test the hypothesis below. You are not here to support it — you are here to find out whether it is true.\n\nGo where the hunch said to look. Search GitLab for the change that would explain the timing. Search Confluence and the tickets for whether this is known. Ask the live system what state it is actually in. Use the log tools too when the hypothesis did NOT come from logs — then they are independent evidence rather than the same reading twice.\n\nReport what you find in these terms:\n\nSUPPORTED — say what specifically supports it, and name the source. \"The deploy at 14:02 changed the connection pool size\" is evidence. \"This is consistent with a connection pool problem\" is a restatement of the hypothesis wearing evidence's clothes.\n\nREFUTED — say so plainly and immediately. A refuted hypothesis is the most useful turn in an investigation, because it removes a whole branch. Say what you now think, or say that you do not yet know. Do not quietly soften it into \"partially supported\".\n\nUNSETTLED — say what the evidence does show, what it does not, and the one thing that would settle it. This is the honest outcome more often than either of the others, and reporting it as a conclusion is the failure this whole workflow exists to prevent.\n\nA check that came back clean is a finding. \"No deploy that day, no matching ticket\" narrows the problem and stops the next person walking the same ground. Say it rather than only reporting hits.\n\nWhat is settled is below. Do not re-derive it, and do not re-ask the person what they already told you.",
+      "guard": "the person has moved to a different problem or a different system, rather than following up on this one",
+      "guard_to": "triage"
+    },
+    {
+      "name": "answer",
+      "desc": "Answer a question that has no observation behind it.",
+      "resident": true,
+      "prompt": "Answer the question below, working from what can actually be checked.\n\nSearch Confluence and the tickets for what is written down. Search GitLab for how it is actually implemented, which is often different from how it is documented. Ask the running system when the question is about how something is configured right now rather than how it is supposed to be.\n\nSay where each part of the answer came from. \"The retry limit is 5\" is worth much less than \"the retry limit is 5, set in config/app.yaml and unchanged since March\", because the second can be checked and the first has to be trusted.\n\nWhen the documented answer and the implemented answer disagree, say both and say which one is running. That disagreement is usually the most useful thing you will find, and collapsing it into one answer throws it away.\n\nWhen you cannot find it, say what you looked at and what you would need. A confident answer assembled from what is plausible is worse than an honest gap, because nobody knows to check it.",
+      "guard": "the person is now describing something they have SEEN and want explained, rather than asking a question",
+      "guard_to": "triage"
+    }
+  ]
+}

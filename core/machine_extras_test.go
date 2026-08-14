@@ -48,13 +48,14 @@ func TestExtrasMachineRecipesValidate(t *testing.T) {
 	}
 }
 
-// The troubleshooting recipe is St4's subject (docs/troubleshooting-machine.md),
-// and its shape IS the experiment: gathering happens in the resident
-// phase with the agent's own tools, NOT in a transient phase. If someone
-// "fixes" it into Design A later, the test that follows should be the
-// thing that makes them say so out loud.
-func TestTroubleshootingRecipeIsDesignB(t *testing.T) {
-	raw, err := os.ReadFile("../extras/troubleshooting.machine.json")
+// The investigation machine is the one with a real job (see
+// docs/investigation.md). Its shape IS the design: a hypothesis is formed
+// in one phase and TESTED in another, against evidence the first phase
+// had to name. Collapse those and you get an agent that confirms its own
+// hunch from the source that produced it — which reads as thorough and
+// is circular.
+func TestInvestigationRecipeSeparatesHunchFromVerification(t *testing.T) {
+	raw, err := os.ReadFile("../extras/investigation.machine.json")
 	if err != nil {
 		t.Skip("recipe not present")
 	}
@@ -63,45 +64,61 @@ func TestTroubleshootingRecipeIsDesignB(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	work, ok := def.Phase("work")
-	if !ok || !work.Resident {
-		t.Fatal("the phase that gathers must be the RESIDENT one — that is the whole hypothesis")
+	// The front router: not every turn has something to explain.
+	triage, ok := def.Phase("triage")
+	if !ok || triage.NextFrom == "" {
+		t.Fatal("triage must route — a question with no observation skips the hypothesis")
 	}
-	// Design B's claim is that a resident phase with the agent's full
-	// catalog can do the gathering, so the machine must not narrow it.
-	if len(work.Tools) != 0 {
-		t.Errorf("work must inherit the agent's whole catalog, got %v", work.Tools)
-	}
-	if strings.TrimSpace(work.Guard) == "" || work.GuardTo != "scope" {
-		t.Error("a long investigation needs a way back out to re-scoping")
+	if triage.Resident {
+		t.Error("triage decides and hands off; it does not hold the conversation")
 	}
 
-	// The transient phases decide; they do not fetch. If either grows a
-	// tool list, Design B has quietly become Design A.
-	for _, name := range []string{"scope", "plan"} {
-		p, ok := def.Phase(name)
-		if !ok {
-			t.Fatalf("missing phase %s", name)
-		}
-		if p.Resident {
-			t.Errorf("%s should be transient", name)
-		}
-		if len(p.Tools) != 0 {
-			t.Errorf("%s names tools, which transient phases cannot reach today (machineCatalog returns nil) — this is Design A wearing Design B's name", name)
-		}
-		if len(p.Output) == 0 {
-			t.Errorf("%s must hand something forward, or it has done nothing", name)
-		}
-		// Both do genuine judgment, which is the case the think default
-		// is wrong for. See the THINKING section in the machine tool help.
-		if p.Think != "on" {
-			t.Errorf("%s decides rather than transforms, so it should reason; got think=%q", name, p.Think)
+	// The hypothesis phase must hand forward what would SETTLE it, not
+	// just what it thinks. That is the field the verifying phase aims at,
+	// and without it verification has no target and drifts back to
+	// re-reading the observation.
+	hunch, ok := def.Phase("hunch")
+	if !ok {
+		t.Fatal("no hunch phase")
+	}
+	declared := map[string]bool{}
+	for _, f := range hunch.Output {
+		declared[f.Name] = true
+	}
+	for _, want := range []string{"hypothesis", "confirms_if", "refutes_if", "look_where"} {
+		if !declared[want] {
+			t.Errorf("hunch must declare %q — verification needs a target, not an opinion", want)
 		}
 	}
+	if hunch.Resident {
+		t.Error("hunch must be transient: forming a hypothesis is not where a turn ends")
+	}
+	if hunch.Think != "on" {
+		t.Error("committing to one explanation is judgment, not a transform")
+	}
 
-	// scope routes: not every question needs the full plan step.
-	scope, _ := def.Phase("scope")
-	if scope.NextFrom == "" {
-		t.Error("scope should be able to skip planning for a question that does not need it")
+	// And verification has to be where the conversation lives, because
+	// that is the part a person argues with.
+	verify, ok := def.Phase("verify")
+	if !ok || !verify.Resident {
+		t.Fatal("verify must be the resident phase")
+	}
+	if verify.GuardTo != "triage" {
+		t.Error("a new problem should re-triage rather than inherit this hypothesis")
+	}
+	// It must be told the honest third outcome exists. Supported and
+	// refuted are easy; "the evidence does not settle it" is the one an
+	// agent will otherwise round into a conclusion.
+	if !strings.Contains(verify.Prompt, "UNSETTLED") {
+		t.Error("verify must be able to report that the evidence settles nothing")
+	}
+	if !strings.Contains(verify.Prompt, "REFUTED") {
+		t.Error("verify must be told to say so plainly when the hunch is wrong")
+	}
+
+	// The no-observation path exists and is its own resident phase.
+	answer, ok := def.Phase("answer")
+	if !ok || !answer.Resident {
+		t.Fatal("answer must be a resident phase for questions with no observation")
 	}
 }

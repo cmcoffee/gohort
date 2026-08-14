@@ -380,7 +380,11 @@ func (g WorkflowGraph) edgeSVG(e WorkflowEdge, from, to point, overlay *Workflow
 		bow := maxInt(x1, x2) + 38
 		d = "M" + strconv.Itoa(x1) + " " + strconv.Itoa(y1) +
 			" C" + strconv.Itoa(bow) + " " + strconv.Itoa(y1) + " " + strconv.Itoa(bow) + " " + strconv.Itoa(y2) + " " + strconv.Itoa(x2) + " " + strconv.Itoa(y2)
-		lx, ly = bow-4, (y1+y2)/2
+		// Nudged off the rank boundary. A forward edge between the same
+		// two rows puts its label at exactly this midpoint, and on a
+		// machine where a guard returns across the same gap the two
+		// landed on top of each other — legible in neither direction.
+		lx, ly = bow-4, (y1+y2)/2+13
 	}
 
 	var b strings.Builder
