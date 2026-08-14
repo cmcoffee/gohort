@@ -1277,7 +1277,29 @@ if __name__ == "__main__":
 var (
 	gohortLibDirMu   sync.Mutex
 	gohortLibDirPath string
+	gohortLibWarned  bool // one loud line per process, not per dispatch
 )
+
+// gohortLibUnavailable reports that the helper could not be deployed,
+// once, at Log level.
+//
+// Everything here used to be best-effort and Debug-only, and one path
+// (no workspaces dir) said nothing at all. That makes the failure
+// invisible in exactly the way that matters: the only symptom reaching
+// anyone is ModuleNotFoundError on the first line of a script, which
+// names the SCRIPT's import rather than the deployment that never
+// happened. An agent reads that as "this tool is broken", reports an
+// environmental fault it cannot describe, and goes off to improvise an
+// answer some other way — which is how a missing directory becomes a
+// confidently wrong result three tool calls later.
+func gohortLibUnavailable(why string, args ...any) {
+	if gohortLibWarned {
+		return
+	}
+	gohortLibWarned = true
+	Log("[hook/helpers] the gohort python helper is NOT available to sandboxed tools: " + fmt.Sprintf(why, args...) +
+		". Scripts using `from gohort import fetch_url` will fail with ModuleNotFoundError, and the tool will look broken rather than unconfigured.")
+}
 
 // EnsureGohortLibDir writes the gohort helper package to a host-side
 // library directory (sibling of WorkspacesDir, prefixed with "_" so
@@ -1312,6 +1334,11 @@ func EnsureGohortLibDir() string {
 	}
 	base := WorkspacesDir()
 	if base == "" {
+		// The silent one: no log at any level lived here, so a
+		// deployment with no workspaces dir configured produced a
+		// helper that simply never existed, with nothing anywhere
+		// saying so.
+		gohortLibUnavailable("no workspaces directory is configured, so there is nowhere to deploy it")
 		return ""
 	}
 	// Sibling of the workspaces dir: same parent, name "_gohort_lib".
@@ -1321,7 +1348,7 @@ func EnsureGohortLibDir() string {
 	libBase := filepath.Join(filepath.Dir(base), "_gohort_lib")
 	pkgDir := filepath.Join(libBase, "gohort")
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
-		Debug("[hook/helpers] failed to mkdir %s: %v", pkgDir, err)
+		gohortLibUnavailable("cannot create %s (%v)", pkgDir, err)
 		return ""
 	}
 	path := filepath.Join(pkgDir, "__init__.py")
@@ -1333,7 +1360,7 @@ func EnsureGohortLibDir() string {
 	}
 	if needWrite {
 		if err := os.WriteFile(path, []byte(SandboxHookPythonShim), 0644); err != nil {
-			Debug("[hook/helpers] failed to write %s: %v", path, err)
+			gohortLibUnavailable("cannot write %s (%v)", path, err)
 			return ""
 		}
 		Debug("[hook/helpers] deployed gohort package (%dB) at %s (host) — mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxGohortLibMountPath)
