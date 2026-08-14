@@ -1291,6 +1291,65 @@ func actionToArgs(a TempToolAction) map[string]any {
 // tempToolToCreateArgs serializes a stored tool back into the create-arg shape
 // so update can patch it and re-run it through createGrouped (reusing all of
 // create's validation + persistence + active-overwrite semantics).
+// reconcileTemplateAliases makes the supplied spelling win for both keys.
+//
+// Whichever the caller passed is what they meant. When both are passed
+// and differ, the mode decides: an api or toolbox tool is addressed by
+// url_template, everything else by command_template.
+func reconcileTemplateAliases(merged map[string]any, existing TempTool, args map[string]any) {
+	newURL, hasURL := args["url_template"]
+	newCmd, hasCmd := args["command_template"]
+	win, any := newURL, hasURL || hasCmd
+	switch {
+	case hasURL && hasCmd:
+		if existing.Mode != TempToolModeAPI && existing.Mode != TempToolModeToolbox {
+			win = newCmd
+		}
+	case hasCmd:
+		win = newCmd
+	}
+	if !any {
+		return
+	}
+	merged["url_template"], merged["command_template"] = win, win
+}
+
+// unlandedUpdateWarning re-reads the tool and reports any explicitly
+// supplied scalar field whose value did not actually change. Empty when
+// everything landed.
+//
+// Deliberately narrow: only fields the caller PASSED, only string-valued
+// ones, and only when the record is still findable. A tool routed into an
+// approval queue reads back as its pending copy through the same lookup,
+// so this does not cry wolf over review — it fires when get would show
+// the caller something other than what they just wrote.
+func unlandedUpdateWarning(sess *ToolSession, name string, args map[string]any) string {
+	after, ok := loadExistingToolRecord(sess, name)
+	if !ok {
+		return ""
+	}
+	stored := tempToolToCreateArgs(after)
+	var stale []string
+	for _, f := range []string{"description", "url_template", "command_template", "method", "body_template", "content_type", "response_pipe", "response_extract", "category", "credential"} {
+		want, passed := args[f]
+		if !passed {
+			continue
+		}
+		wantStr, isStr := want.(string)
+		if !isStr || strings.TrimSpace(wantStr) == "" {
+			continue
+		}
+		if got, _ := stored[f].(string); got != wantStr {
+			stale = append(stale, fmt.Sprintf("%s is still %q", f, got))
+		}
+	}
+	if len(stale) == 0 {
+		return ""
+	}
+	return "Re-reading the tool shows " + strings.Join(stale, "; ") +
+		". Do NOT re-issue the same update expecting a different result, and do not report the tool as fixed — say what you tried and that the write did not take."
+}
+
 func tempToolToCreateArgs(tt TempTool) map[string]any {
 	mode := tt.Mode
 	if mode == "" {
@@ -1520,6 +1579,20 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if v, present := args["required"]; present {
 		merged["required"] = v
 	}
+	// url_template and command_template are ONE stored field
+	// (TempTool.CommandTemplate) under two names, and
+	// tempToolToCreateArgs seeds BOTH from it so either spelling works on
+	// the way in. That is exactly what made a patch silently revert:
+	// passing command_template alone left the STALE url_template sitting
+	// beside it, and api-mode create reads url_template — so the update
+	// reported success, echoed the new value, and persisted the old one.
+	// get and live dispatch then both showed the original template, which
+	// reads as a broken write path rather than a merge that preferred the
+	// wrong twin.
+	//
+	// Whichever the caller supplied now wins for both. When both are
+	// supplied and differ, the mode decides which is meant.
+	reconcileTemplateAliases(merged, existing, args)
 
 	// Toolbox: upsert the given actions by name, then apply remove_actions.
 	if existing.Mode == TempToolModeToolbox {
@@ -1612,6 +1685,19 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	stage = "create/persist (may syntax-check the script in a subprocess)"
 	Debug("[tool_def] update %q: entering create path after %s", name, time.Since(t0))
 	res, err := createGrouped(merged, sess)
+	if err == nil {
+		// An update that reports success while the record is unchanged is
+		// the single most expensive failure this path can have: the caller
+		// believes the fix landed, re-tests, sees the old behaviour, and
+		// goes looking for the bug somewhere else entirely. It cost an
+		// investigation most of a session.
+		//
+		// So the claim is checked rather than assumed, against the same
+		// lookup action="get" uses.
+		if warn := unlandedUpdateWarning(sess, name, args); warn != "" {
+			return "Updated " + name + ", BUT THE CHANGE DID NOT LAND. " + warn + " " + res, nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}

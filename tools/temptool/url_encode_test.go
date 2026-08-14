@@ -114,3 +114,56 @@ func TestOptionalQueryWithModifierStillDrops(t *testing.T) {
 		t.Errorf("the unprovided optional query param should have dropped: %q", got)
 	}
 }
+
+// An update that patches command_template on an API tool must land.
+// url_template and command_template are one stored field under two
+// names, and the round-trip seeds BOTH — so passing one left the stale
+// twin beside it and api-mode create read the twin. The update reported
+// success, echoed the new value, and persisted the old one, which reads
+// as a broken write path rather than a merge preferring the wrong key.
+func TestUpdateAliasedTemplateFieldsAgree(t *testing.T) {
+	existing := TempTool{
+		Name: "gitlab_read_file", Mode: TempToolModeAPI, Credential: "gitlab",
+		Description:     "Read a file.",
+		CommandTemplate: "/api/v4/projects/{id}/repository/files/{file_path}?ref={ref}",
+		Params:          map[string]ToolParam{"id": {Type: "string"}, "file_path": {Type: "string"}, "ref": {Type: "string"}},
+	}
+	const want = "/api/v4/projects/{id}/repository/files/{file_path:encoded}/raw?ref={ref}"
+
+	// The round trip seeds both keys from the one stored field — that is
+	// the setup for the bug, so pin it.
+	seeded := tempToolToCreateArgs(existing)
+	if seeded["url_template"] != existing.CommandTemplate || seeded["command_template"] != existing.CommandTemplate {
+		t.Fatalf("round trip should seed both spellings: %v / %v", seeded["url_template"], seeded["command_template"])
+	}
+
+	// Patch via command_template only: url_template must follow.
+	merged := tempToolToCreateArgs(existing)
+	reconcileTemplateAliases(merged, existing, map[string]any{"command_template": want})
+	if merged["url_template"] != want {
+		t.Errorf("url_template kept the stale value %q — api-mode create reads THIS key", merged["url_template"])
+	}
+	if merged["command_template"] != want {
+		t.Errorf("command_template did not take: %v", merged["command_template"])
+	}
+
+	// And the reverse spelling, for a shell tool patched via url_template.
+	shell := TempTool{Name: "x", Mode: TempToolModeShell, CommandTemplate: "old.py {a}"}
+	m2 := tempToolToCreateArgs(shell)
+	reconcileTemplateAliases(m2, shell, map[string]any{"url_template": "new.py {a}"})
+	if m2["command_template"] != "new.py {a}" {
+		t.Errorf("shell tool's command_template kept the stale value: %v", m2["command_template"])
+	}
+
+	// Both supplied and different: the mode decides.
+	m3 := tempToolToCreateArgs(existing)
+	reconcileTemplateAliases(m3, existing, map[string]any{"url_template": "/api-wins", "command_template": "/cmd-loses"})
+	if m3["url_template"] != "/api-wins" || m3["command_template"] != "/api-wins" {
+		t.Errorf("for an api tool url_template should win: %v", m3)
+	}
+	m4 := tempToolToCreateArgs(shell)
+	reconcileTemplateAliases(m4, shell, map[string]any{"url_template": "/url-loses", "command_template": "cmd-wins"})
+	if m4["command_template"] != "cmd-wins" {
+		t.Errorf("for a shell tool command_template should win: %v", m4)
+	}
+}
