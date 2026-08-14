@@ -952,7 +952,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Prices",
-				Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above. Worker = local LLM, Lead = remote LLM. Set to 0 for free tiers. Saved automatically as you edit.",
+				Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above. Worker = local LLM, Lead = remote LLM. Set to 0 for free tiers. Saved automatically as you edit. The two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures — with prompt caching on, most of a prompt is billed through them rather than at the full input rate.",
 				Body: ui.FormPanel{
 					Source: "api/cost-rates",
 					Method: "PUT",
@@ -972,6 +972,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Help: "Cost per web-search API call (Brave, Tavily, etc.)."},
 						{Field: "image_per_call", Label: "Image generation ($/call)",
 							Type: "number", Decimals: 6, Min: 0},
+						{Field: "cache_read_multiplier", Label: "Cached-read weight (× input rate)",
+							Type: "number", Decimals: 4, Min: 0,
+							Help: "What a token served FROM cache costs, as a fraction of the input rate above. Anthropic and OpenAI both bill this at 0.1 (a tenth). A long conversation is mostly cache reads, so this is the number that decides whether a 140,000-token prompt reads as expensive or nearly free."},
+						{Field: "cache_write_multiplier", Label: "Cache-write weight (× input rate)",
+							Type: "number", Decimals: 4, Min: 0,
+							Help: "What it costs to WRITE a token into the cache. Anthropic charges 1.25 for the 5-minute TTL and 2.0 for the 1-hour one — set 2.0 if this deployment uses 1-hour caching, or every write is under-reported by 37.5%. Writes are the premium side: a fresh long prompt is nearly all writes, so this drives the cost of first messages rather than follow-ups."},
 					},
 				},
 			},

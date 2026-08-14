@@ -5147,10 +5147,17 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 func (a *AdminApp) handleGetCostRates(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	rates := GetCostRates()
+	// The multipliers are returned as their EFFECTIVE values rather than
+	// the stored ones: both are omitempty, so an unset field would render
+	// as a blank box beside a cost that is plainly applying a multiplier.
+	// Outer fields shadow the embedded struct's, which is what makes this
+	// work without a second type.
 	json.NewEncoder(w).Encode(struct {
 		CostRates
-		Configured bool `json:"configured"`
-	}{rates, RatesConfigured()})
+		CacheReadMultiplier  float64 `json:"cache_read_multiplier"`
+		CacheWriteMultiplier float64 `json:"cache_write_multiplier"`
+		Configured           bool    `json:"configured"`
+	}{rates, rates.EffectiveCacheReadMultiplier(), rates.EffectiveCacheWriteMultiplier(), RatesConfigured()})
 }
 
 // handleUpdateCostRates accepts a partial or full CostRates JSON body
@@ -5166,6 +5173,10 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 		LeadOutputPer1K   *float64 `json:"lead_output_per_1k,omitempty"`
 		SearchPerCall     *float64 `json:"search_per_call,omitempty"`
 		ImagePerCall      *float64 `json:"image_per_call,omitempty"`
+		// Cached-prompt weights. Not rates in dollars — multipliers on the
+		// matching input rate, which is how both providers price them.
+		CacheReadMultiplier  *float64 `json:"cache_read_multiplier,omitempty"`
+		CacheWriteMultiplier *float64 `json:"cache_write_multiplier,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -5196,6 +5207,14 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 	if req.ImagePerCall != nil {
 		rates.ImagePerCall = *req.ImagePerCall
 		Log("[admin] user %q set image_per_call=%g", current, *req.ImagePerCall)
+	}
+	if req.CacheReadMultiplier != nil {
+		rates.CacheReadMultiplier = *req.CacheReadMultiplier
+		Log("[admin] user %q set cache_read_multiplier=%g", current, *req.CacheReadMultiplier)
+	}
+	if req.CacheWriteMultiplier != nil {
+		rates.CacheWriteMultiplier = *req.CacheWriteMultiplier
+		Log("[admin] user %q set cache_write_multiplier=%g", current, *req.CacheWriteMultiplier)
 	}
 	if err := SaveCostRatesToDB(a.db, rates); err != nil {
 		http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)

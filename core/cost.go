@@ -41,9 +41,24 @@ type CostRates struct {
 // Default cache multipliers, matching the published Anthropic ratios: a read is
 // a tenth of an input token, a write is a quarter dearer than one.
 const (
+	// Anthropic's published ratios, and the write figure depends on the
+	// cache LIFETIME: 1.25x base input for the 5-minute TTL, 2x for the
+	// 1-hour one. 1.25 is the safer default because it is the cheaper TTL
+	// and the more common one — but a deployment using 1-hour caching and
+	// leaving this alone under-reports every write by 37.5%, which on a
+	// write-heavy prompt is dollars per request, not rounding. Hence the
+	// admin field.
 	defaultCacheReadMultiplier  = 0.10
 	defaultCacheWriteMultiplier = 1.25
 )
+
+// EffectiveCacheReadMultiplier and EffectiveCacheWriteMultiplier expose
+// what is actually IN FORCE, including the default when the field was
+// never set. A settings form has to show the number being applied — a
+// blank box next to a cost that is demonstrably not zero is how an
+// operator concludes the setting does nothing.
+func (r CostRates) EffectiveCacheReadMultiplier() float64  { return r.cacheReadMultiplier() }
+func (r CostRates) EffectiveCacheWriteMultiplier() float64 { return r.cacheWriteMultiplier() }
 
 func (r CostRates) cacheReadMultiplier() float64 {
 	if r.CacheReadMultiplier > 0 {

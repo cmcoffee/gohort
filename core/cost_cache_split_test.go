@@ -55,3 +55,34 @@ func TestUsageReportShowsTheCacheSplit(t *testing.T) {
 		t.Errorf("no cache counters means no split:\n%s", plain)
 	}
 }
+
+// The multipliers are settable and their EFFECTIVE values are what a
+// settings form must show. They were reachable only by editing the
+// stored record — so a deployment on 1-hour caching had no way to
+// correct a 37.5% under-report of every cache write.
+func TestCacheMultipliersAreSettableAndReportEffectiveValues(t *testing.T) {
+	// Unset: the defaults are in force, and that is what a form shows.
+	var zero CostRates
+	if got := zero.EffectiveCacheReadMultiplier(); got != 0.10 {
+		t.Errorf("default read multiplier = %v, want 0.10", got)
+	}
+	if got := zero.EffectiveCacheWriteMultiplier(); got != 1.25 {
+		t.Errorf("default write multiplier = %v, want 1.25 (the 5-minute TTL figure)", got)
+	}
+
+	// Set: the override wins, and it actually changes the money.
+	fiveMin := CostRates{LeadInputPer1K: 3.0}
+	oneHour := CostRates{LeadInputPer1K: 3.0, CacheWriteMultiplier: 2.0}
+	if got := oneHour.EffectiveCacheWriteMultiplier(); got != 2.0 {
+		t.Fatalf("override ignored: %v", got)
+	}
+	d := UsageDiff{LeadCacheWrite: 100000}
+	cheap, dear := fiveMin.Estimate(d), oneHour.Estimate(d)
+	if dear <= cheap {
+		t.Fatalf("1-hour caching must cost more per write: %.4f vs %.4f", dear, cheap)
+	}
+	// 2.0/1.25 = 1.6x exactly — the size of the correction being offered.
+	if ratio := dear / cheap; ratio < 1.59 || ratio > 1.61 {
+		t.Errorf("expected a 1.6x difference between the two TTLs, got %.3f", ratio)
+	}
+}

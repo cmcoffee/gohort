@@ -525,6 +525,11 @@ func setup_fuzz() {
 	cost_worker_out := render_rate(stored_rates.WorkerOutputPer1K)
 	cost_lead_in := render_rate(stored_rates.LeadInputPer1K)
 	cost_lead_out := render_rate(stored_rates.LeadOutputPer1K)
+	// Effective values, not stored: both default when unset, and showing a
+	// blank for a multiplier that is being applied invites the operator to
+	// conclude it is not.
+	cost_cache_read := render_rate(stored_rates.EffectiveCacheReadMultiplier())
+	cost_cache_write := render_rate(stored_rates.EffectiveCacheWriteMultiplier())
 	cost_search := render_rate(stored_rates.SearchPerCall)
 	cost_image := render_rate(stored_rates.ImagePerCall)
 
@@ -533,6 +538,8 @@ func setup_fuzz() {
 	costs.StringVar(&cost_worker_out, "Worker Output $/1K tokens", cost_worker_out, "Dollar cost per 1,000 output tokens for the worker LLM. Example Gemini Flash 2.5: 0.30")
 	costs.StringVar(&cost_lead_in, "Lead Input $/1K tokens", cost_lead_in, "Dollar cost per 1,000 input tokens for the lead (precision) LLM. Example Claude Sonnet 5: 3.00")
 	costs.StringVar(&cost_lead_out, "Lead Output $/1K tokens", cost_lead_out, "Dollar cost per 1,000 output tokens for the lead LLM. Example Claude Sonnet 5: 15.00")
+	costs.StringVar(&cost_cache_read, "Cached-read weight (x input)", cost_cache_read, "What a token served FROM cache costs as a fraction of the input rate. Anthropic and OpenAI both bill 0.1. A long conversation is mostly cache reads.")
+	costs.StringVar(&cost_cache_write, "Cache-write weight (x input)", cost_cache_write, "What WRITING a token into the cache costs, times the input rate. Anthropic: 1.25 for the 5-minute TTL, 2.0 for the 1-hour one. Using 1-hour caching and leaving this at 1.25 under-reports every write by 37.5%.")
 	costs.StringVar(&cost_search, "Search $/call", cost_search, "Dollar cost per external search-API call. Example Serper: 0.0003")
 	costs.StringVar(&cost_image, "Image $/call", cost_image, "Dollar cost per image generation call. Example DALL-E 3 1792x1024 standard: 0.08; Gemini Imagen 16:9: 0.03")
 	setup.Options("Cost Rates (per-run telemetry)", costs, false)
@@ -640,12 +647,14 @@ func setup_fuzz() {
 	// in-memory rates so the change takes effect on any further runs
 	// started from this setup session (no restart required).
 	new_rates := CostRates{
-		WorkerInputPer1K:  parseDollarRate(cost_worker_in),
-		WorkerOutputPer1K: parseDollarRate(cost_worker_out),
-		LeadInputPer1K:    parseDollarRate(cost_lead_in),
-		LeadOutputPer1K:   parseDollarRate(cost_lead_out),
-		SearchPerCall:     parseDollarRate(cost_search),
-		ImagePerCall:      parseDollarRate(cost_image),
+		WorkerInputPer1K:     parseDollarRate(cost_worker_in),
+		WorkerOutputPer1K:    parseDollarRate(cost_worker_out),
+		CacheReadMultiplier:  parseDollarRate(cost_cache_read),
+		CacheWriteMultiplier: parseDollarRate(cost_cache_write),
+		LeadInputPer1K:       parseDollarRate(cost_lead_in),
+		LeadOutputPer1K:      parseDollarRate(cost_lead_out),
+		SearchPerCall:        parseDollarRate(cost_search),
+		ImagePerCall:         parseDollarRate(cost_image),
 	}
 	if err := SaveCostRatesToDB(global.db, new_rates); err != nil {
 		Err("Failed to save cost rates: %s", err)
