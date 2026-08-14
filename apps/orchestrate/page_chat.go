@@ -144,6 +144,18 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// A toolbar entry that opens onto nothing is worse than a missing
+	// one: it reads as a broken feature, and every user who has never
+	// registered a source would meet it that way. Sources is the only
+	// Configure entry whose subject can be entirely absent — an agent
+	// always has tools, memory, rules — so it is the only one that
+	// hides. Computed once here; the picker itself still says what to
+	// do when a source disappears while the modal is open.
+	hiddenActions := map[string]bool{}
+	if len(ReferenceGroups(user)) == 0 {
+		hiddenActions["orchestrate_sources_modal"] = true
+	}
+
 	page := ui.Page{
 		Title:         "Agents",
 		ShowTitle:     true,
@@ -407,7 +419,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// Edit stays a flat button (the one you reach for mid-chat);
 					// everything else collapses into Agent / Configure / Session
 					// overflow menus so the toolbar isn't a wall of 15 buttons.
-					Actions: []ui.ToolbarAction{
+					Actions: pruneToolbar(hiddenActions, []ui.ToolbarAction{
 						{Group: "Agent", Label: "Edit", Title: "Edit the active agent",
 							Method: "client", URL: "orchestrate_edit_agent"},
 						{Group: "Agent", Label: "Create", Title: "Create a new agent. When a parent agent is currently selected, asks whether to mint a top-level agent or a sub-agent owned by that parent (sub-agent layout masks public / intake / memory fields).",
@@ -426,6 +438,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_memory_modal"},
 						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
 							Method: "client", URL: "orchestrate_knowledge_modal"},
+						{Group: "Configure", Label: "Sources", Title: "Attach what this agent can reach INTO — file stores, servitor systems, connected document services. Each attachment adds its own named tools to the agent.",
+							Method: "client", URL: "orchestrate_sources_modal"},
 						{Group: "Configure", Label: "Rules", Title: "Review and edit the active agent's standing rules",
 							Method: "client", URL: "orchestrate_rules_modal"},
 						{Group: "Configure", Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
@@ -442,10 +456,29 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_export_session"},
 						{Group: "Session", Label: "Send to Builder", Title: "Had to correct this agent? Send the session to Builder so it can see where the agent went wrong and improve its prompt, rules, or tools.",
 							Method: "client", URL: "orchestrate_send_to_builder"},
-					},
+					}),
 				},
 			},
 		},
 	}
 	page.ServeHTTP(w, r)
+}
+
+// pruneToolbar drops the toolbar entries whose client action is in hide.
+// Written as a filter over the whole list rather than a conditional
+// append inside it, because the list is one long literal and splicing a
+// conditional entry into the middle of it is how the Configure group
+// ends up in a different order depending on what you have configured.
+func pruneToolbar(hide map[string]bool, in []ui.ToolbarAction) []ui.ToolbarAction {
+	if len(hide) == 0 {
+		return in
+	}
+	out := in[:0:0]
+	for _, a := range in {
+		if a.Method == "client" && hide[a.URL] {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }

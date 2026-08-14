@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -256,6 +257,92 @@ func RefToolSlug(name string) string {
 type ReferenceSelection struct {
 	Kind   string `json:"kind"`
 	ItemID string `json:"item_id"`
+}
+
+// Ref renders a selection as the "kind:item" handle the tools and the
+// picker both speak.
+func (r ReferenceSelection) Ref() string { return r.Kind + ":" + r.ItemID }
+
+// ParseReferenceRef splits a composite handle back into a selection.
+//
+// It takes BOTH separators because both are already in the wild: the
+// agent tool documents "<kind>:<item_id>" and guides' picker has always
+// written "<kind>::<item_id>". A kind never contains a colon, so the
+// single-colon form is unambiguous at the FIRST colon even when an item
+// id contains one; the double form is checked first so it is not read as
+// a kind plus an item id beginning with ":".
+func ParseReferenceRef(ref string) (ReferenceSelection, bool) {
+	ref = strings.TrimSpace(ref)
+	kind, item, found := strings.Cut(ref, "::")
+	if !found {
+		kind, item, found = strings.Cut(ref, ":")
+	}
+	kind, item = strings.TrimSpace(kind), strings.TrimSpace(item)
+	if !found || kind == "" || item == "" {
+		return ReferenceSelection{}, false
+	}
+	return ReferenceSelection{Kind: kind, ItemID: item}, true
+}
+
+// ReferenceSelections decodes from EITHER shape: the object form this
+// stores, or the "kind:item" strings every other surface uses.
+//
+// The two grew apart. The agent CRUD tool has always taken strings
+// (referenceSelectionsFromArgs), the stored record has always been
+// objects, and nothing ever posted the field over HTTP so the mismatch
+// went unnoticed — until a picker needed to, and a chip picker submits a
+// flat list of handles. Accepting both is the tolerant direction: a
+// caller that sends what the tool documents should not be told the
+// documentation is for a different door.
+//
+// Same posture as IntakeFormSpec, which accepts an array or a
+// JSON-string array for the same reason.
+type ReferenceSelections []ReferenceSelection
+
+func (rs *ReferenceSelections) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*rs = nil
+		return nil
+	}
+	// Object form first: it is what this stores, so it is the common case.
+	var objs []ReferenceSelection
+	if err := json.Unmarshal(data, &objs); err == nil {
+		*rs = clean_selections(objs)
+		return nil
+	}
+	var refs []string
+	if err := json.Unmarshal(data, &refs); err != nil {
+		return Error("attached_sources must be a list of \"kind:item_id\" strings or {kind,item_id} objects")
+	}
+	out := make([]ReferenceSelection, 0, len(refs))
+	for _, raw := range refs {
+		sel, ok := ParseReferenceRef(raw)
+		if !ok {
+			// Skipped rather than fatal, matching the tool path: one
+			// malformed entry should not reject an otherwise good save.
+			Log("[reference] ignoring attached source %q — expected \"<kind>:<item_id>\"", raw)
+			continue
+		}
+		out = append(out, sel)
+	}
+	*rs = clean_selections(out)
+	return nil
+}
+
+// clean_selections drops blanks and duplicates, preserving order.
+func clean_selections(in []ReferenceSelection) []ReferenceSelection {
+	out := in[:0:0]
+	seen := map[string]bool{}
+	for _, s := range in {
+		s.Kind, s.ItemID = strings.TrimSpace(s.Kind), strings.TrimSpace(s.ItemID)
+		if s.Kind == "" || s.ItemID == "" || seen[s.Ref()] {
+			continue
+		}
+		seen[s.Ref()] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 func FetchReferences(ctx context.Context, user, query string, sel []ReferenceSelection) string {

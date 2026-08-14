@@ -498,7 +498,7 @@ type AgentRecord struct {
 	// (core.ReferenceItemTools). Agents were the one consumer left out, which
 	// meant the only way to ask servitor a question from an agent was to not
 	// have one — the knowledge existed and nothing could reach it.
-	AttachedSources []ReferenceSelection `json:"attached_sources,omitempty"`
+	AttachedSources ReferenceSelections `json:"attached_sources,omitempty"`
 
 	// AttachedPipelines lists pipeline def IDs this agent can run as
 	// tools. Each attached pipeline surfaces as a callable tool on the

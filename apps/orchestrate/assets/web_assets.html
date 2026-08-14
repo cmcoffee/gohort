@@ -3968,6 +3968,117 @@
         }, pipesList);
       });
 
+      // --- Sources modal ---------------------------------------------
+      // Cross-app reference sources: file stores, servitor systems,
+      // connected document services. Each attachment mints its OWN named
+      // tools on the agent (search_<name>_knowledge, investigate_<name>,
+      // a file store's search/read pair), which is why the option rows
+      // name them — an attachment whose tools you cannot see is
+      // indistinguishable from one that did not take.
+      //
+      // Dedicated-endpoint picker mode (attached_field + save_key): the
+      // agent record stores {kind,item_id} objects and this component
+      // submits a flat list, so /api/reference-sources does the
+      // translation rather than the shared component learning the shape.
+      window.uiRegisterClientAction('orchestrate_sources_modal', function() {
+        var id = getAgentID();
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
+        var qp = 'agent=' + encodeURIComponent(id);
+        var m = openOrchModal('Sources');
+        var body = m.body;
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'What this agent can reach into. Attaching a source adds its own named tools to the agent — the "Adds:" line on each row is exactly what appears in its catalog, so you can ask for it by name.';
+        body.appendChild(help);
+
+        var list = document.createElement('div');
+        list.style.cssText = 'display:flex;flex-direction:column;gap:0.3rem';
+        body.appendChild(list);
+
+        window.uiMountComponent({
+          type: 'chip_picker', mode: 'attach',
+          options_source: 'api/reference-sources?' + qp,
+          records_field: 'items',
+          attached_field: 'attached',
+          save_key: 'references',
+          post_to: 'api/reference-sources?' + qp,
+          name_field: 'id', label_field: 'name', desc_field: 'desc',
+          group_by_field: 'group',
+          noun: 'Source',
+          empty_text: '(nothing to attach yet — file stores are assigned by an admin under Admin \u2192 Files, systems appear once you have appliances in servitor, and document services once connected)'
+        }, list);
+
+        // The same question from the SOURCE's side: which of my agents is
+        // this linked to. The picker above answers it for the open agent
+        // only, and checking four agents one at a time is how you come to
+        // believe an attachment took when it did not.
+        //
+        // Same pill control, same endpoint, as the Tools modal's Scope
+        // button — kind=source is the only difference (see
+        // admin_source_scope.go). No Global pill: a source has no
+        // user-wide scope, and the renderer simply omits the primary when
+        // load() returns none.
+        var linkWrap = document.createElement('div');
+        linkWrap.style.cssText = 'margin-top:0.9rem;padding-top:0.7rem;border-top:1px solid var(--border,#3a3a4a)';
+        var linkBtn = document.createElement('button');
+        linkBtn.className = 'ui-row-btn';
+        linkBtn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.55rem';
+        linkBtn.textContent = 'Linked agents…';
+        linkBtn.title = 'See and change which of your agents each source is linked to';
+        linkWrap.appendChild(linkBtn);
+        body.appendChild(linkWrap);
+
+        linkBtn.addEventListener('click', function() {
+          fetch('api/reference-sources?' + qp, {cache: 'no-store'})
+            .then(function(r){ return r.ok ? r.json() : {items: []}; })
+            .then(function(d) {
+              var items = (d && d.items) || [];
+              if (!items.length) { window.uiAlert('There are no sources to link.'); return; }
+              window.uiOpenSimpleModal({title: 'Linked agents', width: '560px', mount: function(mbody){
+                var pick = document.createElement('select');
+                pick.style.cssText = 'width:100%;margin-bottom:0.7rem;padding:0.35rem';
+                items.forEach(function(it){
+                  var o = document.createElement('option');
+                  o.value = it.id;
+                  o.textContent = (it.group ? it.group + ' — ' : '') + (it.name || it.id);
+                  pick.appendChild(o);
+                });
+                mbody.appendChild(pick);
+                var host = document.createElement('div');
+                mbody.appendChild(host);
+                function draw() {
+                  var qs = 'name=' + encodeURIComponent(pick.value) + '&kind=source';
+                  host.innerHTML = '';
+                  window.uiRenderScopePills(host, {
+                    load: function(){
+                      return fetch('api/tool-scope?' + qs, {cache:'no-store'}).then(function(res){
+                        if(!res.ok) return res.text().then(function(x){ throw new Error(x || ('HTTP ' + res.status)); });
+                        return res.json();
+                      }).then(function(st){
+                        return {
+                          items: (st.agents || []).map(function(a){ return {key: a.id, label: a.name, on: !!a.on}; }),
+                          note: 'Linked only to the agents shown. Each one gets this source\u2019s own tools; the rest cannot reach it at all. There is no all-agents option on purpose \u2014 a folder of logs is not something to grant everywhere in one click.'
+                        };
+                      });
+                    },
+                    toggle: function(key, on){
+                      return fetch('api/tool-scope?' + qs, {
+                        method: 'POST',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({target: key, on: on})
+                      }).then(function(res){
+                        if(!res.ok) return res.text().then(function(x){ throw new Error(x || ('HTTP ' + res.status)); });
+                      });
+                    }
+                  });
+                }
+                pick.addEventListener('change', draw);
+                draw();
+              }});
+            });
+        });
+      });
+
       // --- Machines modal --------------------------------------------
       // Phase machines (docs/agent-machines.md). Single-select, unlike
       // Pipelines: an agent runs at most ONE machine, so this is a radio

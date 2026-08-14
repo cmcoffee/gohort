@@ -76,6 +76,12 @@ The machine supplies the progression; the agent supplies the reach. Attach all o
 Nothing is per-investigation. A new folder appears in the store and is immediately searchable; a new
 question just gets asked.
 
+All four attach in one place: **Configure → Sources** in the chat toolbar. Each row names the tools
+that attachment adds to the agent — `search_prod_logs`, `investigate_<system>` — because that is what
+attaching actually does, and an attachment whose tools you cannot see is indistinguishable from one
+that did not take. If you have ever told an agent to "check the logs in the log folder" and had it
+answer that it has no such thing, that list is the fix: ask for the tool by the name on the row.
+
 ## Memory
 
 Point the agent's own memory at generalizations only: `memory_mode: "agent"` (the Lessons-learned

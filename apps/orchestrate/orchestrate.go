@@ -526,6 +526,11 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/session-status", g(T.handleSessionStatus))
 	T.HandleFunc("/api/machines/import", g(T.handleMachineImport))
 	T.HandleFunc("/api/machines/", g(T.handleMachineOne))
+	// The Sources picker (reference_picker.go) — cross-app reference
+	// sources attached to one agent. Its own endpoint rather than the
+	// agent record's field because the record stores objects and a chip
+	// picker submits scalars.
+	T.HandleFunc("/api/reference-sources", g(T.handleReferenceSources))
 	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
 	T.HandleFunc("/api/sessions", g(T.handleSessionList))
 	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))

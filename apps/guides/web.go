@@ -859,11 +859,12 @@ func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 		}
 		sel := make([]ReferenceSelection, 0, len(body.References))
 		for _, id := range body.References {
-			parts := strings.SplitN(id, "::", 2)
-			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-				continue
+			// Shared parser (core.ParseReferenceRef) rather than a local
+			// split, so this picker and orchestrate's cannot drift on what a
+			// composite handle is.
+			if s, ok := ParseReferenceRef(id); ok {
+				sel = append(sel, s)
 			}
-			sel = append(sel, ReferenceSelection{Kind: parts[0], ItemID: parts[1]})
 		}
 		g.References = sel
 		saveGuide(ownerUDB, g) // attachment is not a content change — no revision snapshot

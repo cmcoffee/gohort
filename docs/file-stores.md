@@ -37,6 +37,30 @@ the moment they were most sure they needed the whole file.
 A capped search **says so**, because "60 matches" and "the first 60 of many" are different answers,
 and acting on the first as though it were the second draws a conclusion from a truncated set.
 
+## Attaching one to an agent
+
+**Configure → Sources** in the chat toolbar. Stores appear grouped under their source label, each row
+carrying the tools it adds. Attaching commits immediately.
+
+The reverse view — which of your agents a given store is linked to — is behind **Linked agents…** in
+the same modal. It is the same pill control tools and credentials use, on the same endpoint
+(`api/tool-scope?kind=source`), because "where did this reach" is the question you ask about a folder
+of somebody's logs, and answering it by opening four agents in turn is how you come to believe an
+attachment took when it did not.
+
+There is **no all-agents option**, unlike tools. A tool can sensibly live in a user-wide pool;
+"every agent I own can read this folder" is a grant nobody should be able to make in one click, and
+the admin-side assignment already decides who may reach it at all.
+
+The Sources entry disappears entirely when you have no sources — an empty toolbar entry reads as a
+broken feature, and it is the only Configure entry whose subject can be absent (an agent always has
+tools, memory, rules).
+
+The `attached_sources` field behind it is also reachable through the agent tool (Builder), which was
+the ONLY door until v0.6.110 — a poor one for the field most likely to be wrong, since a missing
+attachment fails silently: the tools are simply absent and the agent says it does not know what you
+mean.
+
 ## Who may reach one
 
 Configuring a store is admin-only. **Reading one is controlled separately**, by the store's
