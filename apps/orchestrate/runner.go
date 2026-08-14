@@ -3177,6 +3177,14 @@ func toolCarriesNetworkCap(t Tool) bool {
 	return false
 }
 
+// toolHeartbeat is how long a tool call runs before the activity pane
+// starts saying so, and the interval between those lines afterwards.
+//
+// 15s because that is roughly where a person stops reading a pause as
+// latency and starts reading it as a failure. Short enough to answer the
+// question, long enough that an ordinary tool call never emits one.
+const toolHeartbeat = 15 * time.Second
+
 func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef, labelPrefix ...string) []AgentToolDef {
 	prefix := ""
 	if len(labelPrefix) > 0 {
@@ -3333,7 +3341,40 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				}
 			}
 			imgN, vidN, fileN := sessAttachmentCounts(sess)
+			// Heartbeat. A tool that runs for minutes is indistinguishable
+			// from a hung one: the last thing the log or the pane says is
+			// that the call started, and then nothing. A handler gets no
+			// context and no channel, so it cannot report progress itself
+			// — but the wrapper knows when the call began, and that is
+			// enough to say "still going" for ANY slow tool rather than
+			// teaching each one to.
+			//
+			// Deliberately not a timeout. Some work legitimately takes
+			// minutes (a regex over a multi-gigabyte support bundle), and
+			// cutting it short trades a slow answer for a wrong one.
+			stopBeat := make(chan struct{})
+			if !hidden {
+				go func(label string) {
+					began := time.Now()
+					tick := time.NewTicker(toolHeartbeat)
+					defer tick.Stop()
+					for {
+						select {
+						case <-stopBeat:
+							return
+						case <-tick.C:
+							t.sse.Send(map[string]any{
+								"kind": "activity",
+								"type": "cmd",
+								"id":   activityCheapID(),
+								"text": fmt.Sprintf("%s — still running (%s)", label, time.Since(began).Round(time.Second)),
+							})
+						}
+					}
+				}(prefix + name)
+			}
 			out, err := orig(args)
+			close(stopBeat)
 			// Spill-to-workspace guard. When a tool result is larger
 			// than the inline cap, write the full body to the session
 			// workspace and replace `out` with a small stub that points

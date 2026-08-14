@@ -91,15 +91,15 @@ func (s storeSource) Fetch(ctx context.Context, user, itemID, query string) stri
 	if err != nil {
 		return ""
 	}
-	matches, capped, err := Search(dir, SearchOpts{Pattern: regexpQuote(query), IgnoreCase: true, Context: 2, Max: 20})
-	if err != nil || len(matches) == 0 {
+	res, err := Search(dir, SearchOpts{Pattern: regexpQuote(query), IgnoreCase: true, Context: 2, Max: 20})
+	if err != nil || len(res.Matches) == 0 {
 		return ""
 	}
 	where := st.Name
 	if scope != "" {
 		where = "the most recent folder of " + st.Name + " (" + scope + ")"
 	}
-	return "Matches in " + where + ":\n" + renderMatches(matches, capped)
+	return "Matches in " + where + ":\n" + renderMatches(res)
 }
 
 // folderMenu is the "what is in here" answer: the store's subfolders,
@@ -226,7 +226,7 @@ func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 				if n, ok := numArg(args, "context"); ok {
 					ctxLines = n
 				}
-				matches, capped, err := Search(dir, SearchOpts{
+				res, err := Search(dir, SearchOpts{
 					Pattern:    stringArg(args, "pattern"),
 					Glob:       stringArg(args, "file_glob"),
 					IgnoreCase: boolArg(args, "ignore_case"),
@@ -235,10 +235,17 @@ func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 				if err != nil {
 					return "", err
 				}
-				if len(matches) == 0 {
+				if len(res.Matches) == 0 {
+					// A search that ran out of time and found nothing is
+					// NOT "nothing matched" — saying so would report an
+					// absence nobody established.
+					if res.Stopped != "" {
+						return "No matches in what was read, but the search did not finish: " + res.Stopped +
+							". Narrow it with `within` or `file_glob` and try again — do not conclude this pattern is absent.", nil
+					}
 					return "Nothing matched. The pattern is a regular expression over raw lines — check it appears literally, try ignore_case, widen file_glob, or drop `within` to search the whole store.", nil
 				}
-				return renderMatches(matches, capped), nil
+				return renderMatches(res), nil
 			},
 		},
 		{
@@ -281,10 +288,10 @@ func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 
 // renderMatches formats hits for a model: grouped by file, line-numbered,
 // and explicit about truncation.
-func renderMatches(matches []Match, capped bool) string {
+func renderMatches(res SearchResult) string {
 	var b strings.Builder
 	file := ""
-	for _, m := range matches {
+	for _, m := range res.Matches {
 		if m.File != file {
 			file = m.File
 			fmt.Fprintf(&b, "\n%s:\n", file)
@@ -297,8 +304,21 @@ func renderMatches(matches []Match, capped bool) string {
 			fmt.Fprintf(&b, "  %d- %s\n", m.Line+i+1, after)
 		}
 	}
-	if capped {
+	// What it cost, when it cost something. A search that took a minute
+	// and said nothing about why reads as a system that hangs at random;
+	// "3140 files, 12 GB, 71s" reads as a big bundle, which is what it
+	// is. Under five seconds this is noise, so it is omitted.
+	if res.Elapsed > 5*time.Second {
+		fmt.Fprintf(&b, "\n(read %d files, %d MB, in %s)\n", res.Scanned, res.Bytes>>20, res.Elapsed.Round(time.Second))
+	}
+	if res.Capped {
 		b.WriteString("\n(result cap reached — these are the first matches, not all of them. Narrow the pattern or the file_glob before concluding anything about how often this occurs.)\n")
+	}
+	// Different sentence from the cap, deliberately. The cap means there
+	// are more matches; this means part of the store was never read, so
+	// an absence here is not evidence of absence.
+	if res.Stopped != "" {
+		b.WriteString("\n(INCOMPLETE — " + res.Stopped + ". Files not read may contain matches. Narrow with `within` or `file_glob` rather than treating this as the whole picture.)\n")
 	}
 	return strings.TrimLeft(b.String(), "\n")
 }

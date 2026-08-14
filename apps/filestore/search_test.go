@@ -6,10 +6,13 @@ package filestore
 
 import (
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // folderFixture builds a store with one bundle in it.
@@ -50,7 +53,8 @@ func folderFixture(t *testing.T) (root, bundle string) {
 
 func TestSearchFindsMatchesWithContext(t *testing.T) {
 	_, bundle := folderFixture(t)
-	matches, capped, err := Search(bundle, SearchOpts{Pattern: "connection refused", Context: 1})
+	res, err := Search(bundle, SearchOpts{Pattern: "connection refused", Context: 1})
+	matches, capped := res.Matches, res.Capped
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -85,17 +89,18 @@ func TestSearchFindsMatchesWithContext(t *testing.T) {
 
 func TestSearchGlobNarrowsAndCaseFlagWidens(t *testing.T) {
 	_, bundle := folderFixture(t)
-	got, _, err := Search(bundle, SearchOpts{Pattern: "GET", Glob: "access.log"})
+	globbed, err := Search(bundle, SearchOpts{Pattern: "GET", Glob: "access.log"})
+	got := globbed.Matches
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	if len(got) != 2 {
 		t.Errorf("glob should have narrowed to one file, got %d matches", len(got))
 	}
-	if hits, _, _ := Search(bundle, SearchOpts{Pattern: "error connection"}); len(hits) != 0 {
-		t.Errorf("exact match is the default, got %d", len(hits))
+	if hits, _ := Search(bundle, SearchOpts{Pattern: "error connection"}); len(hits.Matches) != 0 {
+		t.Errorf("exact match is the default, got %d", len(hits.Matches))
 	}
-	if hits, _, _ := Search(bundle, SearchOpts{Pattern: "error connection", IgnoreCase: true}); len(hits) == 0 {
+	if hits, _ := Search(bundle, SearchOpts{Pattern: "error connection", IgnoreCase: true}); len(hits.Matches) == 0 {
 		t.Error("ignore_case should have matched")
 	}
 }
@@ -113,7 +118,8 @@ func TestSearchCapsAndSaysSo(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(bundle, "flood.log"), []byte(b.String()), 0o644)
 
-	matches, capped, err := Search(bundle, SearchOpts{Pattern: "ERROR"})
+	res, err := Search(bundle, SearchOpts{Pattern: "ERROR"})
+	matches, capped := res.Matches, res.Capped
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -135,7 +141,8 @@ func TestSearchTruncatesAMonstrousLine(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(bundle, "wide.log"),
 		[]byte("ERROR "+strings.Repeat("x", 50000)), 0o644)
 
-	matches, _, err := Search(bundle, SearchOpts{Pattern: "ERROR"})
+	res, err := Search(bundle, SearchOpts{Pattern: "ERROR"})
+	matches := res.Matches
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -245,7 +252,8 @@ func TestFlatStoreSearchesWithoutASubfolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flat store should resolve: %v", err)
 	}
-	matches, _, err := Search(dir, SearchOpts{Pattern: "ERROR"})
+	res, err := Search(dir, SearchOpts{Pattern: "ERROR"})
+	matches := res.Matches
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -363,5 +371,102 @@ func TestSaveUploadPartRefusesEscapingFilenames(t *testing.T) {
 	body, _ := os.ReadFile(filepath.Join(dest, "app.log"))
 	if string(body) != "hello\n" {
 		t.Errorf("content wrong: %q", body)
+	}
+}
+
+// A search with no bound on its WORK is the defect that presents as a
+// hung turn. A tool handler gets no context to cancel with, so nothing
+// upstream can stop it: not the agent loop, not a cancelled turn, not the
+// person watching. It came back eventually, which is the same bug with a
+// happier ending.
+func TestSearchStopsAtItsDeadlineAndSaysSo(t *testing.T) {
+	root := t.TempDir()
+	// Enough files that the between-files check has to be the one that
+	// fires: no single file here is slow.
+	var line strings.Builder
+	for i := 0; i < 2000; i++ {
+		line.WriteString("a line that does not match anything we look for\n")
+	}
+	for i := 0; i < 60; i++ {
+		p := filepath.Join(root, fmt.Sprintf("log-%02d.log", i))
+		if err := os.WriteFile(p, []byte(line.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := Search(root, SearchOpts{Pattern: "NOTHINGMATCHESTHIS", Deadline: time.Nanosecond})
+	if err != nil {
+		t.Fatalf("a search that runs out of time is not an error: %v", err)
+	}
+	if res.Stopped == "" {
+		t.Fatal("search finished without reporting that it gave up early")
+	}
+	// The two truncations mean different things and must not be
+	// conflated: Capped is "more matches exist", Stopped is "part of the
+	// store was never read". An investigator reading the second as the
+	// first concludes something is absent when nobody looked.
+	if res.Capped {
+		t.Error("running out of time is not the match cap")
+	}
+	if !strings.Contains(res.Stopped, "of 60 files") {
+		t.Errorf("the report should say how much was left: %q", res.Stopped)
+	}
+
+	// And with a real budget the same search completes and says nothing.
+	full, err := Search(root, SearchOpts{Pattern: "NOTHINGMATCHESTHIS"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Stopped != "" {
+		t.Errorf("a search that finished should not claim otherwise: %q", full.Stopped)
+	}
+	if full.Scanned != 60 {
+		t.Errorf("expected all 60 files read, got %d", full.Scanned)
+	}
+}
+
+// A FIFO blocks in os.Open until someone opens the other end. Nothing
+// downstream can time that out, and a captured filesystem tree contains
+// one without anybody putting it there deliberately.
+func TestSearchIgnoresWhatIsNotARegularFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "real.log"), []byte("ERROR here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(root, "a.pipe")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("no fifo on this platform: %v", err)
+	}
+
+	// Would block forever before this guard existed, so the test itself
+	// is the assertion — with a deadline as the backstop rather than a
+	// hung suite.
+	done := make(chan SearchResult, 1)
+	go func() {
+		res, _ := Search(root, SearchOpts{Pattern: "ERROR"})
+		done <- res
+	}()
+	select {
+	case res := <-done:
+		if len(res.Matches) != 1 {
+			t.Errorf("the real file should still be searched, got %d matches", len(res.Matches))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("search blocked on a fifo")
+	}
+
+	// The direct read path takes its filename from the model rather than
+	// from a walk, so it needs its own guard.
+	if _, err := open(fifo); err == nil {
+		t.Error("open() should refuse a fifo outright")
+	}
+	// And listing must not offer it as a file to read.
+	files, err := List(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Rel == "a.pipe" {
+			t.Error("a fifo was listed as a searchable file")
+		}
 	}
 }

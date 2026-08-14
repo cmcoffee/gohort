@@ -83,6 +83,28 @@ The admin table's **Agent tools** column prints the names in force, built from t
 To actually change the handle, make a new store and re-link it: the attachments and any `path_scope`
 declarations have to move deliberately, which is the point.
 
+## When a search takes a while
+
+A regex over a multi-gigabyte bundle takes the time it takes, and that is fine — what is not fine is
+being unable to tell it apart from a hang. Three things say so now:
+
+- **A heartbeat.** Any tool call running longer than 15s gets `search_x — still running (30s)` on the
+  activity pane, every 15s, until it returns. It lives in the framework's tool wrapper
+  (`wrapToolsForActivity`), not here, so every slow tool gets it. A handler has no context and no
+  channel of its own; the wrapper is the only thing that knows a call is in flight.
+- **A cost line.** A search that took over 5s appends `(read 3140 files, 12480 MB, in 1m11s)`. A slow
+  search that explains itself reads as a big bundle, which is what it is.
+- **Runaway guards, not deadlines** — 15 minutes and 64 GB. Set where "still working" stops being
+  plausible, not where patience runs out. A short clock would trade a slow answer for a wrong one:
+  the model gets a partial result and reports an absence nobody established. When one does fire the
+  result says `INCOMPLETE`, in different words from the match cap, because "there are more matches"
+  and "part of the store was never read" are different facts.
+
+**Non-regular files are skipped entirely** — FIFOs, device nodes, sockets. `os.Open` on a FIFO blocks
+until someone opens the other end, and `/dev/zero` reads without ever reaching EOF; either one hangs
+a search that nothing upstream can cancel. They turn up in a captured filesystem tree without anyone
+putting them there deliberately.
+
 ## Who may reach one
 
 Configuring a store is admin-only. **Reading one is controlled separately**, by the store's
