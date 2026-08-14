@@ -100,6 +100,17 @@ and they are separate on purpose:
    written and a drop folder is not.
 4. **The store is linked to that agent** under Configure → Sources.
 
+The agent then calls the tool with a folder NAME, never a path
+(`parse_bundle({"dir": "scan-2026-08-13"})`), and the names currently valid are listed in that
+parameter's description — read when the catalog is built, so a folder added mid-conversation still
+resolves even though it is not in the list. The description says so, because a model handed a list
+otherwise treats it as exhaustive and refuses the folder somebody just named.
+
+The appliance's **Work Dir is not a containment boundary** — it is the process cwd, and a template
+containing `../..` walks straight out of it. `path_scope` is the boundary: it resolves symlinks and
+refuses anything not strictly inside the root, and it substitutes an ABSOLUTE path, so the command
+works regardless of cwd. Set Work Dir for where relative output should land, not for safety.
+
 Check step 3 landed before approving: the approval row's Checks column shows `dir → files:<slug>`
 when the constraint is there, and flags a path-ish parameter that has none. That flag matters,
 because a tool minted WITHOUT the scope still works and looks completely normal at runtime — quoting

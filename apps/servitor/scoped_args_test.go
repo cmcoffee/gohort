@@ -7,6 +7,7 @@ package servitor
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -68,3 +69,74 @@ func (scopeTestSource) Kind() string                                         { r
 func (scopeTestSource) Label() string                                        { return "Test scope" }
 func (scopeTestSource) List(string) []ReferenceItem                          { return nil }
 func (scopeTestSource) Fetch(context.Context, string, string, string) string { return "" }
+
+// The constraint has to be visible to the model that has to satisfy it.
+// Without the names in the description the parameter reads "which bundle
+// to parse", the scope is enforced somewhere the model cannot see, and
+// the first call is a guess that gets refused.
+func TestScopedParamDescriptionCarriesTheFolders(t *testing.T) {
+	RegisterPathScope("listscope", PathScope{
+		Resolve: func(u, n, v string) (string, error) { return "/abs/" + v, nil },
+		Values:  func(u, n string) []string { return []string{"scan-b", "scan-a"} },
+	})
+	params := map[string]ToolParam{
+		"dir":   {Type: "string", Description: "Which bundle to parse.", PathScope: "listscope:bundles"},
+		"quiet": {Type: "boolean", Description: "Less output."},
+	}
+	got := describeScopedParams("u", params, map[string][]string{})
+
+	if got["dir"].Description == params["dir"].Description {
+		t.Fatal("the scoped parameter's description was not enriched")
+	}
+	for _, want := range []string{"Which bundle to parse", "scan-a", "scan-b"} {
+		if !strings.Contains(got["dir"].Description, want) {
+			t.Errorf("description missing %q: %s", want, got["dir"].Description)
+		}
+	}
+	// Sorted by PathScopeChoices, so the list does not reshuffle between
+	// turns and invalidate the prompt cache for no reason.
+	if strings.Index(got["dir"].Description, "scan-a") > strings.Index(got["dir"].Description, "scan-b") {
+		t.Error("folder list should be sorted")
+	}
+	// A snapshot that admits it is one. A model handed a list treats it as
+	// exhaustive otherwise, and refuses the folder somebody just named.
+	if !strings.Contains(got["dir"].Description, "still works") {
+		t.Error("description should say a newer folder still resolves")
+	}
+	if got["quiet"].Description != "Less output." {
+		t.Errorf("an unscoped parameter was rewritten: %q", got["quiet"].Description)
+	}
+	// The stored record must not be touched — it is the frozen tool, and
+	// this text is one moment's listing of a directory.
+	if params["dir"].Description != "Which bundle to parse." {
+		t.Errorf("the stored params were mutated: %q", params["dir"].Description)
+	}
+	// Second call for the same root reuses the memo rather than re-listing
+	// once per tool on the same machine.
+	memo := map[string][]string{"listscope:bundles": {"cached-only"}}
+	if d := describeScopedParams("u", params, memo)["dir"].Description; !strings.Contains(d, "cached-only") {
+		t.Errorf("memo not consulted: %s", d)
+	}
+}
+
+// An empty root is not "no valid values". A model told that concludes the
+// tool is broken and stops; told what is true, it can say so.
+func TestEmptyScopeSaysWhatIsActuallyTrue(t *testing.T) {
+	hint := scopeHint(nil)
+	if strings.Contains(strings.ToLower(hint), "no valid") {
+		t.Errorf("hint reads as a broken tool: %s", hint)
+	}
+	if !strings.Contains(hint, "until a folder appears") {
+		t.Errorf("hint should say what would change it: %s", hint)
+	}
+	// And a long list is capped, with the remainder acknowledged rather
+	// than silently dropped.
+	many := make([]string, maxListedFolders+7)
+	for i := range many {
+		many[i] = "f" + strconv.Itoa(i)
+	}
+	long := scopeHint(many)
+	if !strings.Contains(long, "7 more not listed") {
+		t.Errorf("truncation should say how many were dropped: %s", long)
+	}
+}

@@ -19,6 +19,7 @@ package servitor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -137,6 +138,10 @@ func riskRank(c RiskCategory) int {
 // grant lookup downstream cannot be fooled by anything the model passes.
 func ApplianceToolDefs(udb Database, userID, agentID string, appliance Appliance) []AgentToolDef {
 	var out []AgentToolDef
+	// One listing per root per catalog build, not per tool: several tools
+	// on the same machine usually scope to the same store, and this runs
+	// on every turn.
+	folders := map[string][]string{}
 	for _, t := range ListApplianceTools(udb, appliance.ID) {
 		if !t.Approved {
 			continue
@@ -146,7 +151,7 @@ func ApplianceToolDefs(udb Database, userID, agentID string, appliance Appliance
 			Tool: Tool{
 				Name:        tool.Name,
 				Description: applianceToolDescription(tool, app),
-				Parameters:  tool.Params,
+				Parameters:  describeScopedParams(userID, tool.Params, folders),
 				Required:    tool.Required,
 				Caps:        []Capability{CapWrite},
 			},
@@ -157,6 +162,80 @@ func ApplianceToolDefs(udb Database, userID, agentID string, appliance Appliance
 		})
 	}
 	return out
+}
+
+// maxListedFolders caps how many names go into one parameter
+// description. A drop directory with a folder per ticket runs to
+// hundreds, and a tool description is prompt on every turn.
+const maxListedFolders = 40
+
+// describeScopedParams returns a copy of params with each path-scoped
+// one's description carrying the folder names that are valid RIGHT NOW.
+//
+// Without this the constraint is invisible to the model: the parameter
+// says "which bundle to parse", the scope is enforced somewhere it
+// cannot see, and the first call is a guess that gets refused. The names
+// were always available (core.PathScopeChoices) and nothing asked for
+// them.
+//
+// A COPY, because tool.Params is the stored record and this text is a
+// per-turn snapshot of a directory — writing it back would persist one
+// moment's listing into the frozen tool.
+//
+// The snapshot is honest about being one: a folder that appears after
+// the catalog was built still resolves, because the check runs when the
+// tool runs. Saying so matters — otherwise a model that has been handed
+// a list treats it as exhaustive and refuses to try the folder somebody
+// just named.
+func describeScopedParams(userID string, params map[string]ToolParam, memo map[string][]string) map[string]ToolParam {
+	var out map[string]ToolParam
+	for name, p := range params {
+		ref := strings.TrimSpace(p.PathScope)
+		if ref == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]ToolParam, len(params))
+			for k, v := range params {
+				out[k] = v
+			}
+		}
+		choices, cached := memo[ref]
+		if !cached {
+			choices = PathScopeChoices(userID, ref)
+			memo[ref] = choices
+		}
+		p.Description = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(p.Description), ".")+". ") +
+			scopeHint(choices)
+		out[name] = p
+	}
+	if out == nil {
+		return params
+	}
+	return out
+}
+
+// scopeHint is the sentence appended to a scoped parameter.
+func scopeHint(choices []string) string {
+	if len(choices) == 0 {
+		// Not "nothing is valid" — the honest reading is that the folder
+		// this is scoped to has nothing in it yet, or cannot be read. A
+		// model told "no valid values" concludes the tool is broken and
+		// stops; told what is actually true, it can say so.
+		return "Name one folder in the store this is limited to. Nothing is in it right now, " +
+			"so nothing will resolve until a folder appears — say that rather than guessing a name."
+	}
+	shown := choices
+	extra := 0
+	if len(shown) > maxListedFolders {
+		extra = len(shown) - maxListedFolders
+		shown = shown[:maxListedFolders]
+	}
+	hint := "Name ONE folder, exactly as listed: " + strings.Join(shown, ", ") + "."
+	if extra > 0 {
+		hint += " (" + strconv.Itoa(extra) + " more not listed — the store's own list tool has all of them.)"
+	}
+	return hint + " Read when this turn started; a folder added since still works. A path is not accepted here — a name is."
 }
 
 // applianceToolDescription says what it does and WHERE, because an agent that
