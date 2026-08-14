@@ -127,14 +127,49 @@ func SplitPathScopeRef(ref string) (kind, name string) {
 	return ref, ""
 }
 
+// AgentHoldsReference, when set, reports whether agentID — belonging to
+// user — carries the reference source item (kind, itemID) as an
+// attachment. Wired by the app that owns agent records (orchestrate);
+// nil in a deployment without one.
+//
+// This is the seam that lets a path scope ask a question it otherwise
+// cannot: a producer app knows its own roots and knows nothing about
+// agents, and the consumer that knows about agents cannot be imported by
+// the producer without a cycle.
+var AgentHoldsReference func(user, agentID, kind, itemID string) bool
+
 // ResolvePathScope checks value against the root named by ref
 // ("kind:name") and returns the absolute path it resolves to.
 //
-// An UNKNOWN kind is an error rather than a pass. A parameter declaring
-// a constraint nobody implements has to fail closed: the alternative is
-// a tool that silently stops being constrained the day its app is
-// compiled out, which is exactly when nobody is looking.
-func ResolvePathScope(user, ref, value string) (string, error) {
+// agentID is the agent whose turn is running, or "" when no agent is in
+// play (a CLI path, a test). When the scope's kind is ALSO an attachable
+// reference source, the agent must carry that attachment — the scope is
+// then gated by the same link the Sources picker manages, rather than by
+// the user alone.
+//
+// That gate exists because the two halves had drifted apart. A file
+// store's own tools (search_<store>, read_<store>) appear only on an
+// agent it is attached to, but a servitor command tool declaring
+// path_scope resolved against the USER, so an agent nobody had linked
+// the store to could still run a command against it. One link, one
+// meaning: "this agent may reach this folder".
+//
+// Three ways this deliberately does NOT refuse:
+//
+//   - agentID == "": no agent context to check. The user gate still
+//     applies, and refusing here would break every non-agent caller.
+//   - AgentHoldsReference == nil: no app owns agent records in this
+//     deployment, so there is no attachment to have. Refusing would make
+//     the feature dead rather than ungated.
+//   - the kind is not a reference source: nothing to attach, so
+//     attachment cannot be required. A future scope kind with no picker
+//     behind it keeps working.
+//
+// An UNKNOWN kind is still an error rather than a pass. A parameter
+// declaring a constraint nobody implements has to fail closed: the
+// alternative is a tool that silently stops being constrained the day
+// its app is compiled out, which is exactly when nobody is looking.
+func ResolvePathScope(user, agentID, ref, value string) (string, error) {
 	kind, name := SplitPathScopeRef(ref)
 	pathScopeMu.RLock()
 	sc, ok := pathScopes[kind]
@@ -142,6 +177,17 @@ func ResolvePathScope(user, ref, value string) (string, error) {
 	if !ok {
 		return "", Error("this parameter is limited to " + strconv.Quote(kind) +
 			", and nothing here provides that. Nothing ran. Tell the person the constraint names a source their deployment does not have.")
+	}
+	if agentID != "" && AgentHoldsReference != nil && ReferenceSourceKnown(kind) {
+		if !AgentHoldsReference(user, agentID, kind, name) {
+			// Says what would change the answer. The model cannot attach
+			// anything itself, so the sentence is aimed at the person who
+			// will read the refusal — and a sub-agent needs its OWN link,
+			// which is the case most likely to surprise.
+			return "", Error("this agent is not linked to " + strconv.Quote(ref) +
+				", so nothing ran. Attach it to this agent under Configure → Sources. " +
+				"A sub-agent needs its own link; holding it on the parent is not enough.")
+		}
 	}
 	return sc.Resolve(user, name, value)
 }

@@ -86,6 +86,36 @@ Empty stays open deliberately. Closing by default would silently break every sto
 this existed, and a security change that presents as "the tools vanished" is one nobody diagnoses
 correctly.
 
+## Running a command against one
+
+A store answers "where does X appear". To RUN something over the same folder (unpack an archive, run
+an extractor), add a servitor appliance of type `command` and connect the agent to it. Three wires,
+and they are separate on purpose:
+
+1. **The store is assigned to you** (admin) — `AllowsUser`.
+2. **The agent is connected to the command appliance** in servitor — that is what mints the command
+   tools at all (`applianceEnabledForAgent`).
+3. **The folder parameter declares `path_scope: "files:<slug>"`** — the mint prompt is handed your
+   stores (`PathScopeRoots`) and told to prefer a scope over an enum, because an enum is frozen when
+   written and a drop folder is not.
+4. **The store is linked to that agent** under Configure → Sources.
+
+Check step 3 landed before approving: the approval row's Checks column shows `dir → files:<slug>`
+when the constraint is there, and flags a path-ish parameter that has none. That flag matters,
+because a tool minted WITHOUT the scope still works and looks completely normal at runtime — quoting
+stops a value contributing shell syntax and does nothing about `../../var/lib/something` being a
+well-formed single argument.
+
+Step 4 was added in v0.6.112. Before it, the two halves disagreed: a store's own tools appeared only
+on an agent it was attached to, while a command tool's `path_scope` resolved against the USER — so an
+agent nobody had linked the store to could still run a command against it. One link, one meaning.
+
+The gate does NOT refuse in three cases, all deliberate: no agent in play (a CLI path — the user gate
+still applies), no app owning agent records in the deployment (the feature would be dead rather than
+ungated), and a scope kind that is not an attachable source (nothing to attach). A sub-agent needs
+its OWN link; holding it on the parent is not enough, matching how a sub-agent must be connected to a
+machine in its own right before it gets that machine's tools.
+
 ## Getting files in
 
 Two routes, deliberately:

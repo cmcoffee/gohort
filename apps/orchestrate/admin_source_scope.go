@@ -35,6 +35,37 @@ import (
 
 func init() {
 	RegisterScopeProvider("source", ScopeProvider{State: sourceScopeState, Set: setSourceScope})
+	// The read side of the same fact, for callers that are not this app.
+	// A path-scoped parameter on a servitor command tool has to know
+	// whether the calling agent is linked to the root it names, and
+	// servitor cannot ask an agent record anything — only this package
+	// can. See core.ResolvePathScope.
+	AgentHoldsReference = agentHoldsReference
+}
+
+// agentHoldsReference reports whether one of user's agents carries an
+// attachment. Reads through RootDB rather than a passed-in store because
+// the caller is a tool dispatch several apps away and has no handle on
+// this app's data.
+//
+// Deliberately NO parent walk. A sub-agent is connected to a machine in
+// its own right before it gets that machine's command tools at all
+// (applianceEnabledForAgent), so requiring its own source link keeps the
+// two halves of one grant consistent. Inheriting the parent's reach
+// would mean a sub-agent could touch a folder nobody linked it to.
+func agentHoldsReference(user, agentID, kind, itemID string) bool {
+	if user == "" || agentID == "" || kind == "" || itemID == "" {
+		return false
+	}
+	udb := agentUserDB(RootDB, user)
+	if udb == nil {
+		return false
+	}
+	a, ok := loadAgent(udb, agentID)
+	if !ok {
+		return false
+	}
+	return agentHasSource(a, ReferenceSelection{Kind: kind, ItemID: itemID})
 }
 
 // sourceVisible reports whether owner can currently reach the item, and

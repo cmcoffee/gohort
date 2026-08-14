@@ -100,8 +100,54 @@ func TestScopeIsRegisteredUnderFiles(t *testing.T) {
 	}
 	// An unknown kind fails CLOSED: a parameter declaring a constraint
 	// nobody implements must not quietly become unconstrained.
-	if _, err := ResolvePathScope("u", "nosuchkind:x", "value"); err == nil {
+	if _, err := ResolvePathScope("u", "", "nosuchkind:x", "value"); err == nil {
 		t.Error("an unknown scope kind should refuse rather than pass")
+	}
+}
+
+// The link gate (core.ResolvePathScope): a scoped root that is ALSO an
+// attachable source has to be attached to the CALLING agent, not merely
+// reachable by its owner. Before this, a store's own search/read tools
+// appeared only on an agent it was attached to while a servitor command
+// tool declaring path_scope resolved against the user — so an agent
+// nobody had linked the store to could still run a command against it.
+func TestScopeRequiresTheCallingAgentToBeLinked(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	prevApp := registeredFileStoreApp
+	registeredFileStoreApp = app
+	t.Cleanup(func() { registeredFileStoreApp = prevApp })
+
+	prev := AgentHoldsReference
+	t.Cleanup(func() { AgentHoldsReference = prev })
+	AgentHoldsReference = func(user, agentID, kind, itemID string) bool {
+		return agentID == "linked" && kind == "files" && itemID == st.Slug
+	}
+
+	ref := "files:" + st.Slug
+	if _, err := ResolvePathScope("u", "linked", ref, "scan-2026-08-13"); err != nil {
+		t.Errorf("a linked agent should resolve: %v", err)
+	}
+	_, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13")
+	if err == nil {
+		t.Fatal("an unlinked agent reached a store nobody attached to it")
+	}
+	// The refusal has to say what would change the answer — the model
+	// cannot attach anything itself, so the sentence is for the person
+	// who reads it.
+	if !strings.Contains(err.Error(), "Sources") {
+		t.Errorf("refusal should name where to fix it, got %q", err)
+	}
+
+	// No agent in play (a CLI path, a test) is NOT a refusal: there is no
+	// attachment to check, and the user gate still applies.
+	if _, err := ResolvePathScope("u", "", ref, "scan-2026-08-13"); err != nil {
+		t.Errorf("a non-agent caller should still resolve: %v", err)
+	}
+	// Neither is a deployment with no app owning agent records — the
+	// feature would be dead rather than ungated.
+	AgentHoldsReference = nil
+	if _, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13"); err != nil {
+		t.Errorf("with no agent-record app wired this should resolve: %v", err)
 	}
 }
 
@@ -301,5 +347,35 @@ func TestUnassignedStoreStaysOpen(t *testing.T) {
 		if len(src.ItemTools(who, st.Slug)) == 0 && who != "" {
 			t.Errorf("%q lost tools on an unrestricted store", who)
 		}
+	}
+}
+
+// The agent editor's grant rows. A file store was the one grant with no
+// answer on the page where someone asks what an agent can reach:
+// servitor's machines were listed there, a folder of logs was not.
+func TestLinkedStoreShowsOnTheAgentGrantRow(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	prev := AgentHoldsReference
+	t.Cleanup(func() { AgentHoldsReference = prev })
+	AgentHoldsReference = func(user, agentID, kind, itemID string) bool {
+		return agentID == "linked" && kind == "files" && itemID == st.Slug
+	}
+
+	got := app.grantsFor("u", "linked")
+	if len(got) != 1 || got[0].Label != "Support bundles" {
+		t.Fatalf("a linked store should be listed, got %+v", got)
+	}
+	// Read-only is the posture worth restating on a row somebody reads
+	// while deciding whether to leave an attachment in place.
+	if !strings.Contains(got[0].Detail, "read-only") {
+		t.Errorf("the row should say it is read-only, got %q", got[0].Detail)
+	}
+	if len(app.grantsFor("u", "unlinked")) != 0 {
+		t.Error("an unlinked agent must report no stores — the row reads \"none\"")
+	}
+	// With no app owning agent records, nothing can hold a link.
+	AgentHoldsReference = nil
+	if len(app.grantsFor("u", "linked")) != 0 {
+		t.Error("with no agent-record app wired the row should be empty, not asserted")
 	}
 }

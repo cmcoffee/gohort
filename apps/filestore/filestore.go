@@ -38,6 +38,7 @@
 package filestore
 
 import (
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -57,6 +58,21 @@ func init() {
 	// section and servitor's source use.
 	RegisterReferenceSource(storeSource{app: app})
 	RegisterAdminSection(AdminSectionEntry{Section: app.adminSection(), Head: adminHeadHTML()})
+	// The visibility half. The reference source says what an agent CAN be
+	// given; this says what one HOLDS, on the agent editor where somebody
+	// asks "what can this thing reach". Without it a file store was the
+	// one grant with no answer on that page: servitor's machines were
+	// listed, and a folder of logs was not.
+	//
+	// EVERY grantor renders, including one granting nothing — a row
+	// reading "none" is what tells an owner the capability exists and
+	// this agent does not hold it.
+	RegisterAgentGrantor(AgentGrantor{
+		Name: "filestore", Label: "File stores",
+		Granted: func(user, agentID string) []AgentGrant {
+			return registeredFileStoreApp.grantsFor(user, agentID)
+		},
+	})
 	// A path scope lets ANOTHER app's tool take a subfolder of a store as
 	// a parameter and have it checked when the tool runs — the case a
 	// frozen enum cannot cover, because the whole point of a drop folder
@@ -127,6 +143,34 @@ func (T *FileStoreApp) listScope(user, storeSlug string) []string {
 	out := make([]string, 0, len(folders))
 	for _, f := range folders {
 		out = append(out, f.Name)
+	}
+	return out
+}
+
+// grantsFor lists the stores linked to one agent, for the editor's grant
+// rows.
+//
+// Asks the agent-record app through core.AgentHoldsReference rather than
+// reading an agent record — this package cannot see one, which is the
+// same wall the path-scope gate goes through. With no such app wired the
+// row honestly reads "none": nothing here can hold a link.
+func (T *FileStoreApp) grantsFor(user, agentID string) []AgentGrant {
+	if T == nil || T.DB == nil || AgentHoldsReference == nil {
+		return nil
+	}
+	var out []AgentGrant
+	for _, st := range StoresForUser(T.DB, user) {
+		if !AgentHoldsReference(user, agentID, "files", st.Slug) {
+			continue
+		}
+		// Read-only is the fact worth repeating here: it is the whole
+		// posture of a store, and the row is read by someone deciding
+		// whether an attachment is safe to leave in place.
+		detail := "read-only"
+		if folders, err := ListFolders(st.Path); err == nil {
+			detail = strconv.Itoa(len(folders)) + " folders, read-only"
+		}
+		out = append(out, AgentGrant{Label: st.Name, Detail: detail})
 	}
 	return out
 }

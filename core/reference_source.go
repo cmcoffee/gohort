@@ -144,6 +144,17 @@ func ReferenceGroups(user string) []ReferenceGroup {
 	return groups
 }
 
+// ReferenceSourceKnown reports whether kind names a registered reference
+// source — i.e. whether it is something an agent can be ATTACHED to. Used
+// by the path-scope gate to tell "you have not linked this" apart from
+// "there is nothing here to link".
+func ReferenceSourceKnown(kind string) bool {
+	refSourcesMu.RLock()
+	defer refSourcesMu.RUnlock()
+	_, ok := refSources[kind]
+	return ok
+}
+
 // FetchReference resolves (kind, itemID) to the owning source and returns its
 // reference text for query. Empty string when the kind is unknown or the
 // source has nothing to contribute.

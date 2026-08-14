@@ -60,7 +60,10 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 	// somewhere else. An enum is the usual answer and cannot express a
 	// set that changes, which is exactly the case here — the folders
 	// under a drop directory. See core/path_scope.go.
-	args, err := resolveScopedArgs(d.UserID, tool, d.Args)
+	// The CALLING agent is passed as well as the user: a scoped root that
+	// is also an attachable source has to be linked to this agent, not
+	// merely reachable by its owner. See core.ResolvePathScope.
+	args, err := resolveScopedArgs(d.UserID, d.AgentID, tool, d.Args)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", tool.Name, err)
 	}
@@ -174,7 +177,7 @@ func applianceToolDescription(t ApplianceTool, a Appliance) string {
 // Returns a COPY: the caller's map is what gets logged and echoed back,
 // and rewriting it in place would make the record disagree with what the
 // model actually asked for.
-func resolveScopedArgs(user string, tool ApplianceTool, args map[string]any) (map[string]any, error) {
+func resolveScopedArgs(user, agentID string, tool ApplianceTool, args map[string]any) (map[string]any, error) {
 	out := args
 	copied := false
 	for name, p := range tool.Params {
@@ -185,7 +188,7 @@ func resolveScopedArgs(user string, tool ApplianceTool, args map[string]any) (ma
 		if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
 			continue // absence is the required-check's business, not this one
 		}
-		abs, err := ResolvePathScope(user, p.PathScope, fmt.Sprint(raw))
+		abs, err := ResolvePathScope(user, agentID, p.PathScope, fmt.Sprint(raw))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
