@@ -17,6 +17,10 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// Every URL here is ABSOLUTE. The section renders on the ADMIN page, not
+// on this app's own, so a relative "api/stores" resolves against /admin
+// and 404s. Same reason apps/prompts writes /prompts/api/... in its
+// admin section.
 func (T *FileStoreApp) adminSection() ui.Section {
 	return ui.Section{
 		Group:    "Files",
@@ -25,7 +29,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 		Subtitle: "Folders on this server an agent can SEARCH and READ, never write. Attach a store to an agent (Sources) and it gets tools to list what is there, search it by regular expression, and read a window around a hit — never a whole file. Subfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps. To RUN commands against a folder (unpack an archive, run an extractor), add a servitor appliance of type \"command\" with its Work Dir set to the same path — that path already mints approved command tools, and this one deliberately does not duplicate it.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{
-				Source: "api/stores",
+				Source: "/filestore/api/stores",
 				RowKey: "slug",
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
@@ -38,13 +42,13 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				},
 				RowActions: []ui.RowAction{
 					ui.Expand("Edit", ui.FormPanel{
-						Source:      "api/stores?slug={slug}",
-						PostURL:     "api/stores",
+						Source:      "/filestore/api/stores?slug={slug}",
+						PostURL:     "/filestore/api/stores",
 						SubmitLabel: "Save changes",
 						Fields:      storeFormFields(),
 					}),
 					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "api/stores?slug={slug}",
+						PostTo:     "/filestore/api/stores?slug={slug}",
 						Variant:    "danger",
 						Confirm:    "Remove this file store? The folder and its files are left alone; agents attached to it lose their search tools.",
 						Optimistic: true},
@@ -58,7 +62,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				Variant:  "primary",
 				Width:    "560px",
 				Body: ui.FormPanel{
-					PostURL:     "api/stores",
+					PostURL:     "/filestore/api/stores",
 					SubmitLabel: "Add store",
 					Fields:      storeFormFields(),
 				},
@@ -102,8 +106,7 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !AuthIsAdmin(T.DB, r) {
-		http.Error(w, "admin only", http.StatusForbidden)
+	if !adminOnly(w, r) {
 		return
 	}
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
@@ -159,4 +162,24 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// adminOnly gates a handler on the caller being an admin, and answers
+// with what would change the answer rather than a bare status.
+//
+// core.RequestIsAdmin is the one correct implementation: it reads
+// AuthDB(), and treats a deployment with no users configured as open —
+// with no users there is no admin to be, and gating on a role nobody
+// holds locks the page for everyone.
+//
+// The trap it avoids: an app's T.DB is global.db.Bucket("<app>"), a
+// namespaced substore, so AuthIsAdmin(T.DB, r) finds no auth table and
+// refuses everyone. That is how this app failed the first time it was
+// clicked, and how the same call in apps/prompts silently did nothing.
+func adminOnly(w http.ResponseWriter, r *http.Request) bool {
+	if RequestIsAdmin(r) {
+		return true
+	}
+	http.Error(w, "File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.", http.StatusForbidden)
+	return false
 }

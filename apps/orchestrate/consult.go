@@ -59,7 +59,7 @@ No preamble, no restating the question, no offers of further help. Answer and st
 func consultTool(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "consult",
+			Name:        "consult",
 			Description: "Ask a stronger model ONE self-contained question and get its answer back. Call this when: you have hit the same API failure twice and varying the arguments isn't working; the docs are ambiguous about a request or response shape; or you are about to make your first authoring call against an API you have not built against before. Do NOT call it for anything you can settle by testing directly, and do not call it for general advice — it sees only what you paste, not your conversation. The answer is ADVICE: apply it, then VERIFY with a real call before telling the user anything works.",
 			Parameters: map[string]ToolParam{
 				"question": {

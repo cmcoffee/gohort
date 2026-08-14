@@ -57,7 +57,7 @@ func TestRecallLayerSetParam(t *testing.T) {
 		{"pinned", map[string]bool{"pinned": true}},
 		{"history", map[string]bool{"history": true}},
 		{"KNOWLEDGE", map[string]bool{"knowledge": true}}, // case-insensitive
-		{"nonsense", all},                                 // unknown → all, not empty
+		{"nonsense", all}, // unknown → all, not empty
 	}
 	for _, c := range cases {
 		got := ct.recallLayerSet(map[string]any{"layer": c.layer})

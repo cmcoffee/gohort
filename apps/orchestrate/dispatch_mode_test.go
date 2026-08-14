@@ -11,14 +11,14 @@ func TestEffectiveDispatchMode(t *testing.T) {
 		targets []string
 		want    string
 	}{
-		{"", nil, dispatchAll},                  // default
-		{"", []string{"a"}, dispatchOnly},       // legacy allowlist inference
-		{"all", []string{"a"}, dispatchAll},     // explicit all wins over a list
-		{"only", nil, dispatchOnly},             // explicit
+		{"", nil, dispatchAll},              // default
+		{"", []string{"a"}, dispatchOnly},   // legacy allowlist inference
+		{"all", []string{"a"}, dispatchAll}, // explicit all wins over a list
+		{"only", nil, dispatchOnly},         // explicit
 		{"except", []string{"a"}, dispatchExcept},
 		{"none", nil, dispatchNone},
-		{"bogus", []string{"a"}, dispatchOnly},  // unknown → fail-open, legacy infer
-		{"bogus", nil, dispatchAll},             // unknown, no list → all
+		{"bogus", []string{"a"}, dispatchOnly}, // unknown → fail-open, legacy infer
+		{"bogus", nil, dispatchAll},            // unknown, no list → all
 	}
 	for _, c := range cases {
 		got := effectiveDispatchMode(AgentRecord{DispatchMode: c.mode, AllowedDispatchTargets: c.targets})

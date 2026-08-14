@@ -33,8 +33,8 @@ import (
 
 // memSearchItem is one search hit, shaped for the Memory modal's list.
 type memSearchItem struct {
-	Layer     string `json:"layer"`          // pinned | finding | knowledge | history | cortex | notes
-	ID        string `json:"id"`             // kind:ref — pass back to DELETE when deletable
+	Layer     string `json:"layer"` // pinned | finding | knowledge | history | cortex | notes
+	ID        string `json:"id"`    // kind:ref — pass back to DELETE when deletable
 	Title     string `json:"title,omitempty"`
 	Text      string `json:"text"`
 	Date      string `json:"date,omitempty"`

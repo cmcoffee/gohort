@@ -382,8 +382,8 @@ const tuneExportGuardrailDetail = "tune_export_guardrail_detail"
 func init() {
 	RegisterTunable(TunableSpec{Key: tuneExportGuardrailDetail, Category: "Exports",
 		Label: "Include guardrail detail in session exports",
-		Help: "Add the full detail of each guardrail or correction event — the rule that fired, the check's reason, the claim that was retracted — to an exported transcript. Off by default: exports get forwarded, and the detail names the rules an agent enforces. Turn on when exporting your own sessions for debugging.",
-		Kind: KindBool, Default: 0, Min: 0, Max: 1})
+		Help:  "Add the full detail of each guardrail or correction event — the rule that fired, the check's reason, the claim that was retracted — to an exported transcript. Off by default: exports get forwarded, and the detail names the rules an agent enforces. Turn on when exporting your own sessions for debugging.",
+		Kind:  KindBool, Default: 0, Min: 0, Max: 1})
 }
 
 // guardrailExportEvent is one guardrail action, reduced to what is safe to put in

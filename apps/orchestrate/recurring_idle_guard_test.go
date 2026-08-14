@@ -11,7 +11,7 @@ import (
 // flat fire cap.
 func TestEffectiveMaxFiresIndefiniteEveryPattern(t *testing.T) {
 	for _, p := range []orchUpdatePayload{
-		{},                                          // fixed / interval
+		{}, // fixed / interval
 		{Pattern: RecurringRandom, TimesPerDay: 24}, // fixed-rate random (the Moltbook case)
 		{Pattern: RecurringRandom},                  // continuous random
 	} {

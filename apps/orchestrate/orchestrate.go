@@ -198,15 +198,16 @@ func (T *OrchestrateApp) WebFeatured() bool { return true }
 // memory pruning); end-users consume the agents an admin builds via
 // the per-agent exposed-app surface. Same pattern as the Admin app.
 func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
-	if T.DB == nil {
-		return true
-	}
-	if !AuthHasUsers(T.DB) {
-		// Single-user / auth-disabled deployment — no admin concept,
-		// so don't gate.
-		return false
-	}
-	return !AuthIsAdmin(T.DB, r)
+	// RequestIsAdmin, not AuthIsAdmin(T.DB, …). An app's T.DB is
+	// global.db.Bucket("orchestrate") — a namespaced substore with no
+	// auth table — so the old check found nothing and AuthHasUsers(T.DB)
+	// was false for the same reason, short-circuiting the condition
+	// before AuthIsAdmin was ever consulted. This gate had never fired.
+	//
+	// RequestIsAdmin reads AuthDB() and keeps the single-user /
+	// auth-disabled case open, which is the property that makes turning
+	// it on safe: with no users configured there is no admin to be.
+	return !RequestIsAdmin(r)
 }
 
 // Routes wires all of orchestrate's surfaces in one place. The chat
@@ -565,8 +566,12 @@ func (T *OrchestrateApp) Routes() {
 // access can't disagree.
 func (T *OrchestrateApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if T.DB != nil && AuthHasUsers(T.DB) && !AuthIsAdmin(T.DB, r) {
-			http.Error(w, "Agents is admin-only", http.StatusForbidden)
+		if !RequestIsAdmin(r) {
+			// End users are not losing their agents: the exposed-agent
+			// surface is apps/agents, on its own routes, and does not
+			// come through here. What this protects is the WORKBENCH —
+			// agent CRUD, prompts, tool allowlists, memory pruning.
+			http.Error(w, "Agents is admin-only. The agents themselves are at /agents/.", http.StatusForbidden)
 			return
 		}
 		h(w, r)

@@ -12,7 +12,7 @@ import (
 func TestRecallSourceHints(t *testing.T) {
 	kn := knowledgeHints([]SearchHit{
 		{ReportID: "doc-q3", Title: "Q3 pricing policy", Score: 0.88},
-		{Title: "Loose note", Score: 0.80}, // no ReportID → knowledge_search fallback
+		{Title: "Loose note", Score: 0.80},               // no ReportID → knowledge_search fallback
 		{ReportID: "doc-x", Title: "Below", Score: 0.40}, // sub-threshold → stops scan
 	}, 0.70, nil)
 	if len(kn) != 2 {
@@ -35,7 +35,7 @@ func TestRecallSourceHints(t *testing.T) {
 func TestMergeScoredHints(t *testing.T) {
 	in := []recallHint{
 		{source: "knowledge", score: 0.72, key: "doc:a"},
-		{source: "memory", score: 0.91, key: "mem:b"}, // highest → first
+		{source: "memory", score: 0.91, key: "mem:b"},    // highest → first
 		{source: "knowledge", score: 0.72, key: "doc:a"}, // dup key → dropped
 		{source: "memory", score: 0.80, key: "mem:c"},
 	}

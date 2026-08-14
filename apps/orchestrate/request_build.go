@@ -31,7 +31,7 @@ const buildAgentAction = "build_agent"
 func requestBuildTool(user, agentID, agentName string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "request_build",
+			Name:        "request_build",
 			Description: "Ask to have a SUB-AGENT built for you — the way to answer \"create an agent that…\" when you cannot author one yourself. You do NOT build it: this queues a request the user approves, and on approval Builder authors it as YOUR sub-agent. Give a complete spec in `brief` (what it does, its persona, the tools/sources it needs, any schedule). Use this instead of trying to dispatch, search, or write files. After calling it, tell the user you've queued the build for their approval.",
 			Parameters: map[string]ToolParam{
 				"brief": {

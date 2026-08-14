@@ -6,6 +6,9 @@ package filestore
 // the whole point of a drop folder.
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,5 +101,95 @@ func TestScopeIsRegisteredUnderFiles(t *testing.T) {
 	// nobody implements must not quietly become unconstrained.
 	if _, err := ResolvePathScope("u", "nosuchkind:x", "value"); err == nil {
 		t.Error("an unknown scope kind should refuse rather than pass")
+	}
+}
+
+// The admin section renders on the ADMIN page, not on this app's own, so
+// a relative URL resolves against /admin and 404s. That is exactly how it
+// failed the first time it was loaded, and the section is data rather
+// than code — nothing else would catch it.
+func TestAdminSectionUsesAbsoluteURLs(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	body, err := jsonOf(app.adminSection())
+	if err != nil {
+		t.Fatalf("marshal section: %v", err)
+	}
+	// Every URL this section talks to must be rooted at the app's mount.
+	for _, frag := range []string{`"/filestore/api/stores"`, `/filestore/api/stores?slug={slug}`} {
+		if !strings.Contains(body, frag) {
+			t.Errorf("expected an absolute URL %s in the section", frag)
+		}
+	}
+	// A bare "api/stores" anywhere means one got missed.
+	if strings.Contains(body, `"api/stores`) {
+		t.Error("a relative api/stores URL survives — it will 404 from the admin page")
+	}
+}
+
+func jsonOf(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+// The admin gate must read the AUTH store, not the app's.
+//
+// T.DB is global.db.Bucket("filestore") — a namespaced substore — so
+// asking it for the auth table finds nothing and refuses everyone,
+// including a real admin. That is how this failed the first time it was
+// clicked, and the symptom (admin_only for the admin) points at
+// permissions rather than at the wrong database.
+func TestAdminGateReadsTheAuthStoreNotTheAppStore(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	appDB := root.Bucket("filestore") // what an app actually gets
+
+	prev := AuthDB
+	AuthDB = func() Database { return root }
+	defer func() { AuthDB = prev }()
+
+	root.Set(AuthTable, "user:boss", AuthUser{Username: "boss", Admin: true})
+	token := AuthCreateSession(root, "boss")
+
+	req := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/filestore/api/stores", nil)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		return r
+	}
+
+	// The bug: checked against the app's bucket, an admin is refused.
+	if AuthIsAdmin(appDB, req()) {
+		t.Fatal("fixture wrong — the app bucket should not resolve the session")
+	}
+	// The fix: checked against the auth store, the admin passes.
+	w := httptest.NewRecorder()
+	if !adminOnly(w, req()) {
+		t.Errorf("a real admin was refused: %d %s", w.Code, w.Body.String())
+	}
+
+	// A non-admin is still refused, and told what would change it.
+	root.Set(AuthTable, "user:temp", AuthUser{Username: "temp"})
+	plain := AuthCreateSession(root, "temp")
+	r2 := httptest.NewRequest(http.MethodGet, "/filestore/api/stores", nil)
+	r2.AddCookie(&http.Cookie{Name: "gohort_session", Value: plain})
+	w2 := httptest.NewRecorder()
+	if adminOnly(w2, r2) {
+		t.Error("a non-admin was let through")
+	}
+	if !strings.Contains(w2.Body.String(), "admin-only") {
+		t.Errorf("the refusal should say why: %s", w2.Body.String())
+	}
+}
+
+// With no users configured there is no admin to be, and gating on a role
+// nobody holds locks the page for everyone.
+func TestAdminGateIsOpenWhenAuthIsNotConfigured(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return root }
+	defer func() { AuthDB = prev }()
+
+	w := httptest.NewRecorder()
+	if !adminOnly(w, httptest.NewRequest(http.MethodGet, "/x", nil)) {
+		t.Error("a deployment with no users should not be locked out of its own config")
 	}
 }

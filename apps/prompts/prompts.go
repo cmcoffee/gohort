@@ -73,7 +73,13 @@ func (T *PromptsApp) WebHidden() bool { return true }
 // WebRestricted hides the Prompts card from non-admins on the dashboard —
 // editing framework blocks is a deployment-wide operator action.
 func (T *PromptsApp) WebRestricted(r *http.Request) bool {
-	return T.DB != nil && AuthHasUsers(T.DB) && !AuthIsAdmin(T.DB, r)
+	// RequestIsAdmin, not AuthIsAdmin(T.DB, …): an app's T.DB is
+	// global.db.Bucket("<app>"), a namespaced substore, so asking it for
+	// the auth table finds nothing. AuthHasUsers(T.DB) was false for the
+	// same reason, which short-circuited the whole condition — this gate
+	// has never actually fired. RequestIsAdmin reads AuthDB() and keeps
+	// the no-users deployment open.
+	return !RequestIsAdmin(r)
 }
 
 // adminGated wraps a handler so only admins reach it. Single-user / auth-
@@ -81,8 +87,8 @@ func (T *PromptsApp) WebRestricted(r *http.Request) bool {
 // so a solo operator's own deployment still works.
 func (T *PromptsApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if T.DB != nil && AuthHasUsers(T.DB) && !AuthIsAdmin(T.DB, r) {
-			http.Error(w, "Prompts is admin-only", http.StatusForbidden)
+		if !RequestIsAdmin(r) {
+			http.Error(w, "Prompts is admin-only: editing framework prompt blocks changes what every agent receives on its next turn.", http.StatusForbidden)
 			return
 		}
 		h(w, r)

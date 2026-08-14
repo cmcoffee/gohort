@@ -120,8 +120,8 @@ func TestChannelsAccessibleViaDispatchChain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mk("chat", "")      // dispatching parent, bound to the team thread
-	mk("research", "")  // top-level specialist — NOT owned by chat
+	mk("chat", "")     // dispatching parent, bound to the team thread
+	mk("research", "") // top-level specialist — NOT owned by chat
 	mk("helper", "research")
 	mk("stranger", "")
 

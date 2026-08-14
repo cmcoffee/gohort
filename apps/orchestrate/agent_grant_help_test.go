@@ -25,8 +25,8 @@ func TestGrantHelpNamesWhatIsHeldAndWhereToChangeIt(t *testing.T) {
 	help := appGrantHelp("craig", "wren")
 
 	for _, want := range []string{
-		"GRANTED BY OTHER APPS", // the heading someone scans for
-		"Machines: Lab Box",     // what it holds
+		"GRANTED BY OTHER APPS",  // the heading someone scans for
+		"Machines: Lab Box",      // what it holds
 		"nothing without asking", // how much
 		"/servitor/manage",       // where to change it
 		"read-only here",         // why there are no controls

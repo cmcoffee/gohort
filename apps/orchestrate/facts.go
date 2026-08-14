@@ -55,8 +55,8 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 					Description: "The fact, as a concise self-contained sentence. Include enough context that the note makes sense out of context months later. Examples: \"User prefers Korean for casual chat, English for technical questions.\" / \"Current project is named Atlas; deadline mid-June.\" / \"Time zone is America/Los_Angeles.\"",
 				},
 				"domain": {
-					Type: "string",
-					Enum: []string{"self", "world"},
+					Type:        "string",
+					Enum:        []string{"self", "world"},
 					Description: "Whether the person telling you this SETTLES it. \"self\" = about them — a preference, their name, their goals, how they want you to work; they are the authority and there is nothing to check it against. \"world\" = true or false independently of who said it — a server, a library, a version, a price, how some system behaves; being told it is not the same as having checked it, and recall marks these so a passing remark is not quoted back later as established fact. When a note is both, ask what it ASSERTS: \"prefers the API to return JSON\" is a preference (self); \"the API returns JSON\" is a claim about the API (world).",
 				},
 			},

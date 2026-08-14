@@ -56,10 +56,12 @@ func cortexSessionID(agentID string) string {
 // home session — a monitor's WakeSession, a standing agent's ReportSessionID, or
 // a recurring task's SessionID. Shared by monitors / standing / recurring so all
 // three behave identically:
-//   "" / "session" → the home session (or the cortex home thread if home is
-//                    empty — the legacy fallback so a fire still surfaces).
-//   "cortex"       → the agent's cortex home thread.
-//   "background"   → record=false: NO agent visibility (external delivery only).
+//
+//	"" / "session" → the home session (or the cortex home thread if home is
+//	                 empty — the legacy fallback so a fire still surfaces).
+//	"cortex"       → the agent's cortex home thread.
+//	"background"   → record=false: NO agent visibility (external delivery only).
+//
 // The home is never overwritten by a move, so switching back to "session" works.
 func resolveSurface(surface, home, agentID string) (session string, record bool) {
 	switch strings.TrimSpace(surface) {

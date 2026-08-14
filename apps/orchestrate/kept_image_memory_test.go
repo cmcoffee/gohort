@@ -58,7 +58,7 @@ func TestRememberedTextTellsTheAgentHowToUseIt(t *testing.T) {
 		Note:    "use on every deck",
 	})
 	for _, want := range []string{
-		"image#brand_mark",                          // the ref, or recall is useless
+		"image#brand_mark",                           // the ref, or recall is useless
 		"a navy circular mark with a white wordmark", // the caption, so it can tell this from another saved image
 		"use on every deck",                          // why it was kept
 		"does not expire",                            // that the name stays valid

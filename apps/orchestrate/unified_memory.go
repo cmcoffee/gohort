@@ -212,7 +212,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 				// uses, so it takes the same declaration. Offering it on one and
 				// not the other would classify the identical note differently
 				// depending on which tool the model happened to reach for.
-				"domain": {Type: "string", Enum: []string{"self", "world"}, Description: "(pin=true) Whether the person telling you this SETTLES it. \"self\" = about them: a preference, their name, their goals — they are the authority. \"world\" = true or false independently of who said it: a server, a version, how some system behaves — being told is not having checked, and recall marks these so a remark is not later quoted as established fact."},
+				"domain":  {Type: "string", Enum: []string{"self", "world"}, Description: "(pin=true) Whether the person telling you this SETTLES it. \"self\" = about them: a preference, their name, their goals — they are the authority. \"world\" = true or false independently of who said it: a server, a version, how some system behaves — being told is not having checked, and recall marks these so a remark is not later quoted as established fact."},
 				"topic":   {Type: "string", Description: "(findings only) snake_case bucket slug, e.g. `acme_api`. Reuse one from the \"Known topics\" block when it fits, or mint a new one. Omit for `general`."},
 				"subject": {Type: "string", Description: "(findings only) short heading for THIS finding, e.g. \"Acme API rotates tokens every 24h\". Optional."},
 			},

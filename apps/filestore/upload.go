@@ -49,8 +49,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !AuthIsAdmin(T.DB, r) {
-		http.Error(w, "admin only", http.StatusForbidden)
+	if !adminOnly(w, r) {
 		return
 	}
 	if r.Method != http.MethodPost {
