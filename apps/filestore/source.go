@@ -140,6 +140,16 @@ func (s storeSource) folderMenu(st Store) string {
 // Three tools, and the shape is the same whether the store is flat or
 // grouped: `within` is optional everywhere, meaning "the whole store"
 // when omitted and one subfolder when given.
+// storeToolNames is the set of tools a store mints, in catalog order.
+//
+// One definition, used by ItemTools below and by the admin table, because
+// the table's whole job is to state the names in force — a column that
+// prints a name nothing answers to is worse than no column. (It printed
+// "read_<slug>_file" within a minute of being written.)
+func storeToolNames(slug string) []string {
+	return []string{"list_" + slug, "search_" + slug, "read_" + slug}
+}
+
 func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 	st, ok := LoadStore(s.app.DB, itemID)
 	// No tools at all for a store this user may not reach, so a stale

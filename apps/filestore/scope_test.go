@@ -379,3 +379,59 @@ func TestLinkedStoreShowsOnTheAgentGrantRow(t *testing.T) {
 		t.Error("with no agent-record app wired the row should be empty, not asserted")
 	}
 }
+
+// Renaming a store leaves its tool names alone — the handle is minted
+// once and is what attachments and frozen path_scope refs are keyed on.
+// That is correct and it looks broken, so the admin table has to show the
+// names actually in force.
+func TestRenameKeepsTheHandleAndTheTableSaysSo(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	if st.Slug != "support_bundles" {
+		t.Fatalf("unexpected handle %q", st.Slug)
+	}
+	renamed, err := SaveStore(app.DB, Store{Slug: st.Slug, Name: "Customer captures", Path: st.Path})
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if renamed.Slug != "support_bundles" {
+		t.Errorf("the handle moved on rename to %q — every attachment and every frozen path_scope ref keyed on it would break", renamed.Slug)
+	}
+	if renamed.Name != "Customer captures" {
+		t.Errorf("the label did not change: %q", renamed.Name)
+	}
+	// The tools keep their names, and the description picks up the new
+	// label so the model still reads the current one.
+	prev := AgentHoldsReference
+	t.Cleanup(func() { AgentHoldsReference = prev })
+	AgentHoldsReference = nil
+	tools := storeSource{app: app}.ItemTools("u", renamed.Slug)
+	var names []string
+	for _, tl := range tools {
+		names = append(names, tl.Tool.Name)
+	}
+	if !strings.Contains(strings.Join(names, " "), "search_support_bundles") {
+		t.Errorf("tool names should be unchanged by a rename, got %v", names)
+	}
+	// The table's names must BE the tools' names. Compared as sets rather
+	// than spot-checked, because the first version of that column printed
+	// "read_support_bundles_file" and nothing answers to it.
+	want := storeToolNames(renamed.Slug)
+	if len(names) != len(want) {
+		t.Fatalf("tool count drifted from storeToolNames: %v vs %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Errorf("storeToolNames says %q, the catalog says %q", want[i], names[i])
+		}
+	}
+	if !strings.Contains(tools[0].Tool.Description, "Customer captures") {
+		t.Error("the description should carry the CURRENT label even though the name is frozen")
+	}
+
+	// And the admin table must print them, or the only way to learn the
+	// tool is still called search_support_bundles is to ask an agent.
+	rows := app.storeRows()
+	if len(rows) != 1 || !strings.Contains(rows[0]["tools"].(string), "search_support_bundles") {
+		t.Errorf("the table should name the tools in force, got %+v", rows)
+	}
+}

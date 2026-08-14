@@ -61,6 +61,28 @@ the ONLY door until v0.6.110 — a poor one for the field most likely to be wron
 attachment fails silently: the tools are simply absent and the agent says it does not know what you
 mean.
 
+## Renaming one
+
+The tool names come from a **handle** minted from the name the first time a store is saved
+(`Support bundles` → `list_support_bundles`, `search_support_bundles`, `read_support_bundles`).
+The handle does not move afterwards. **Renaming a store changes the label, not the tool names.**
+
+It has to work that way: the handle is what agent attachments are keyed on (`attached_sources` stores
+`files:<slug>`) and what a minted command tool's FROZEN `path_scope` names. Moving it on rename would
+break every approved command tool pointed at the store, failing closed with "there is no file store
+called X you can reach" — an approved capability quietly dying because someone fixed a typo in a
+label.
+
+The new name is not wasted: it is what an agent READS. The tool descriptions carry the current label,
+so the model sees `Search the "Customer captures" file store` while the tool is still called
+`search_support_bundles`.
+
+The admin table's **Agent tools** column prints the names in force, built from the same definition
+`ItemTools` builds from, so the page cannot claim a name nothing answers to.
+
+To actually change the handle, make a new store and re-link it: the attachments and any `path_scope`
+declarations have to move deliberately, which is the point.
+
 ## Who may reach one
 
 Configuring a store is admin-only. **Reading one is controlled separately**, by the store's

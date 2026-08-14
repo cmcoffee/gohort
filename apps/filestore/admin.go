@@ -38,6 +38,12 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// right. A store reading "unreadable" here is a typo
 					// caught before an agent is attached to it.
 					{Field: "folders", Label: "Subfolders", Mute: true},
+					// The handle, because the tool names are built from it
+					// and NOT from the name above it. Renaming a store
+					// leaves search_<original> in place, which is correct
+					// (attachments and frozen path_scope refs are keyed on
+					// it) and looks broken unless the page says so.
+					{Field: "tools", Label: "Agent tools", Mute: true, Flex: 2},
 					{Field: "assigned", Label: "Assigned to", Mute: true},
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
 				},
@@ -75,7 +81,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 func storeFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "Support bundles",
-			Help: "Shown in the agent's Sources picker, and folded into the tool names an attached agent gets (a store named \"Support bundles\" produces search_support_bundles)."},
+			Help: "Shown in the agent's Sources picker and in the tool descriptions an attached agent reads. The tool NAMES come from a handle minted from this name the first time the store is saved (\"Support bundles\" → search_support_bundles), and that handle does not change afterwards: RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES. It has to work that way — the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
 		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/bundles",
 			Help: "Absolute path on this server. The folder itself is what an agent attaches to; its subfolders (if any) are what a search can be scoped to. Read-only: nothing here ever writes to it."},
 		{Field: "allowed_users", Type: "tags", Label: "Assigned to",
@@ -125,23 +131,7 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, st)
 			return
 		}
-		rows := make([]map[string]any, 0)
-		for _, st := range ListStores(T.DB) {
-			folders := "unreadable"
-			if list, err := ListFolders(st.Path); err == nil {
-				folders = strconv.Itoa(len(list))
-			}
-			assigned := "everyone"
-			if len(st.AllowedUsers) > 0 {
-				assigned = strings.Join(st.AllowedUsers, ", ")
-			}
-			rows = append(rows, map[string]any{
-				"slug": st.Slug, "name": st.Name, "path": st.Path,
-				"description": st.Description, "folders": folders,
-				"assigned": assigned, "allowed_users": st.AllowedUsers,
-			})
-		}
-		writeJSON(w, rows)
+		writeJSON(w, T.storeRows())
 	case http.MethodPost:
 		var st Store
 		if err := json.NewDecoder(r.Body).Decode(&st); err != nil {
@@ -165,6 +155,36 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// storeRows renders the admin table. Its own method because the row is
+// where two facts have to be stated that are nowhere else on the page:
+// who may reach a store, and what its tools are actually called.
+func (T *FileStoreApp) storeRows() []map[string]any {
+	rows := make([]map[string]any, 0)
+	for _, st := range ListStores(T.DB) {
+		// Folder count is the fact that says whether the path is right. A
+		// store reading "unreadable" here is a typo caught before an agent
+		// is attached to it.
+		folders := "unreadable"
+		if list, err := ListFolders(st.Path); err == nil {
+			folders = strconv.Itoa(len(list))
+		}
+		assigned := "everyone"
+		if len(st.AllowedUsers) > 0 {
+			assigned = strings.Join(st.AllowedUsers, ", ")
+		}
+		rows = append(rows, map[string]any{
+			"slug": st.Slug, "name": st.Name, "path": st.Path,
+			"description": st.Description, "folders": folders,
+			"assigned": assigned, "allowed_users": st.AllowedUsers,
+			// From the same definition ItemTools builds from. These are
+			// the names in force, which after a rename are not the names
+			// the Name column would suggest.
+			"tools": strings.Join(storeToolNames(st.Slug), ", "),
+		})
+	}
+	return rows
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
