@@ -167,3 +167,44 @@ func TestUpdateAliasedTemplateFieldsAgree(t *testing.T) {
 		t.Errorf("for a shell tool command_template should win: %v", m4)
 	}
 }
+
+// Every "is this param wired in?" check was an exact match for "{name}",
+// so {name:encoded} made them believe the param was referenced nowhere.
+// The tool worked and the VALIDATOR failed it, printing "live GET
+// returned 200" and "required param appears in neither template" in the
+// same report. A checker that contradicts itself is worse than one that
+// says nothing.
+func TestModifiedPlaceholderCountsAsAReference(t *testing.T) {
+	const url = "/api/v4/projects/{id}/repository/files/{file_path:encoded}/raw?ref={ref}"
+	for _, p := range []string{"id", "file_path", "ref"} {
+		if !templateReferences(url, p) {
+			t.Errorf("%q reads as unreferenced in %s", p, url)
+		}
+	}
+	if templateReferences(url, "nope") {
+		t.Error("a param that is genuinely absent must still read as absent")
+	}
+	// A prefix must not count: {file_path_extra} is a different param.
+	if templateReferences("/x/{file_path_extra}", "file_path") {
+		t.Error("a longer param name matched as if it were this one")
+	}
+
+	// The write-path gate agrees, so a POST with a modified placeholder is
+	// not rejected at authoring time.
+	if unsent := unsentWriteParams("POST", url, "", []string{"file_path"}); len(unsent) > 0 {
+		t.Errorf("write gate says %v is sent nowhere, but it is in the URL", unsent)
+	}
+	// And body scaffolding does not duplicate a param already in the path.
+	body := writeBodyParams(url, map[string]ToolParam{"file_path": {Type: "string"}, "content": {Type: "string"}})
+	for _, p := range body {
+		if p == "file_path" {
+			t.Error("a path param was scaffolded into the body as well")
+		}
+	}
+
+	// The path-placeholder regex must see it too — that check exists to
+	// stop a path param being declared optional, which dies at dispatch.
+	if got := pathPlaceholderParams(url, []string{"id", "ref"}); len(got) != 1 || got[0] != "file_path" {
+		t.Errorf("an OPTIONAL modified path placeholder should be caught, got %v", got)
+	}
+}

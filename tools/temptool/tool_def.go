@@ -923,7 +923,7 @@ func liveRequired(act TempToolAction) []string {
 func writeBodyParams(urlTpl string, params map[string]ToolParam) []string {
 	out := make([]string, 0, len(params))
 	for name := range params {
-		if !strings.Contains(urlTpl, "{"+name+"}") {
+		if !templateReferences(urlTpl, name) {
 			out = append(out, name)
 		}
 	}
@@ -1902,7 +1902,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		//    url_template nor the body_template never reaches the API.
 		var unref []string
 		for _, r := range ep.Required {
-			if !strings.Contains(ep.URLTemplate, "{"+r+"}") && !strings.Contains(ep.BodyTemplate, "{"+r+"}") {
+			if !templateReferences(ep.URLTemplate, r) && !templateReferences(ep.BodyTemplate, r) {
 				unref = append(unref, r)
 			}
 		}
@@ -2109,7 +2109,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	//    environment. Report the route rather than failing on it.
 	var envOnly []string
 	for _, r := range tt.Required {
-		if !strings.Contains(tt.CommandTemplate, "{"+r+"}") {
+		if !templateReferences(tt.CommandTemplate, r) {
 			envOnly = append(envOnly, r)
 		}
 	}
@@ -2475,7 +2475,27 @@ func runPipeAgainst(pipe, body string) string {
 const pathPlaceholderMsg = "param(s) %v are interpolated into the url_template's PATH but are not required — url substitution has nothing to put there when they're omitted, so the call dies at dispatch with `url template: missing arg \"%s\"`. Either add them to required, or move them to the query string (\"?key={%s}\"), where an omitted placeholder legitimately drops out of the URL"
 
 // placeholderRE matches a {param} interpolation in a URL or body template.
-var placeholderRE = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+// The optional ":modifier" tail is part of the placeholder syntax (see
+// urlEncodeModifiers), so it must be part of every pattern that looks for
+// one. Group 1 stays the bare name.
+var placeholderRE = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?::[A-Za-z_]+)?\}`)
+
+// templateReferences reports whether tmpl interpolates param — with or
+// without an encoding modifier.
+//
+// Every "is this param wired in?" check was an exact strings.Contains for
+// "{name}", so adding {name:encoded} made three of them believe the
+// param was referenced nowhere. The tool worked; the VALIDATOR failed it,
+// printing "live GET returned 200" and "required param appears in neither
+// template" in the same report. A checker that contradicts itself is
+// worse than one that says nothing, because the author has to work out
+// which half to trust.
+func templateReferences(tmpl, param string) bool {
+	if param == "" {
+		return false
+	}
+	return strings.Contains(tmpl, "{"+param+"}") || strings.Contains(tmpl, "{"+param+":")
+}
 
 // pathPlaceholderParams returns the params a url_template interpolates into its
 // PATH — the segment before any "?" — that are not in required.
@@ -2527,7 +2547,7 @@ func unsentWriteParams(method, urlTpl, bodyTpl string, required []string) []stri
 	}
 	var out []string
 	for _, r := range required {
-		if !strings.Contains(urlTpl, "{"+r+"}") && !strings.Contains(bodyTpl, "{"+r+"}") {
+		if !templateReferences(urlTpl, r) && !templateReferences(bodyTpl, r) {
 			out = append(out, r)
 		}
 	}
