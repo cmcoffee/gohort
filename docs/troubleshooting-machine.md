@@ -119,11 +119,78 @@ is two resident phases with a human-driven transition, and the only way between 
 `change_phase` — an LLM judgment call on every turn. That may be exactly where a user-facing
 "switch phase" affordance turns out to be needed, which is UI work nobody has specced.
 
+## The recipe
+
+Built as `extras/troubleshooting.machine.json` — Design B, three phases:
+
+```
+scope  (transient, thinks)  what is actually being asked; routes to plan or straight to work
+plan   (transient, thinks)  which sources, in what order, and whether they can go in parallel
+work   (resident)           gathers AND reasons, full catalog, guarded back to scope
+```
+
+`scope` routes with `next_from`, because not every question earns a planning step: "what does this
+error mean" goes straight to `work`, while "why is this slow" goes through `plan`. Both transient
+phases set `think: "on"` — they decide rather than transform, which is the case the default is
+wrong for.
+
+Neither transient phase names any tools, and that is load-bearing rather than incidental. The moment
+either one does, Design B has quietly become Design A and the experiment has been changed without
+anyone saying so. `core/machine_extras_test.go` fails if that happens, and says why.
+
+Install and attach:
+
+```sh
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/machines \
+  -H 'Content-Type: application/json' -d @extras/troubleshooting.machine.json
+
+curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/api/agents/<agentID> \
+  -H 'Content-Type: application/json' -d '{"machine": "<machineID>"}'
+```
+
+Attach it to an agent that has **real tools and at least one attached pipeline** — an agent with no
+way to fan out cannot exercise the parallel case, which is one of the three reasons this was chosen.
+
+## Finding 0, before a single turn was run
+
+**A machine only fires on orchestrate's interactive chat turn.** `enterMachine` has exactly one
+call site (`runner.go:6117`, inside `runPlan`). Servitor's investigations do not go through it:
+
+- `workspace_session.go:76`, `sysprobe.go:1505` and the panels in `web.go` call `RunAgentLoop`
+  directly with their own assembled prompt.
+- The scoped path (`RunScopedAgentRich` → `RunAgentSyncContinuingRich`) builds its own system
+  prompt via `prependAgentContext` and also calls `RunAgentLoop` directly.
+
+So attaching this machine to `app-servitor-investigator` would persist fine — the app-agent shadow
+keeps `Machine`, since only prompt-bearing fields refresh from the spec — and then do **nothing at
+all**. No phase would ever be entered.
+
+That was half-known: agent-machines.md's Open section already said dispatched sub-agents have no
+session to hold a cursor. What was not joined up is that **servitor's investigations are
+dispatch-shaped**, so the app that most wants a phased investigation is the one that structurally
+cannot have one.
+
+Whether that is a defect or the correct boundary is a real question, and it is now the first thing
+St4 has to answer rather than something to discover at turn nine. The honest framing: a machine is
+session-resident, a dispatch has no session, and inventing one for a dispatch would mean deciding
+what a "conversation" means for a caller that never comes back.
+
+### What to attach it to instead
+
+An ordinary orchestrate agent **connected to an appliance**. Servitor's tool provider
+(`apps/servitor/agent_provider.go`) offers `request_capability`, `ask_system`, and the approved
+minted tools to any agent with a connection — so a normal agent gets real investigative reach while
+still running through `runPlan`, where the machine lives. Connect it at `/servitor/manage`, then
+attach the machine to that agent.
+
+That also satisfies the spec's own requirement, which was an agent with real tools and a way to fan
+out, never specifically servitor.
+
 ## Staging
 
 | Stage | Scope |
 |---|---|
-| **T1** | Author the Design B machine and attach it to a real agent with real tools. No code changes. Run a genuine investigation of ten-plus turns. |
+| **T1** | ~~Author the machine.~~ Done: `extras/troubleshooting.machine.json`, validated and rendered in `core/machine_extras_test.go`. **Remaining: attach it to an agent with real tools and run a genuine investigation of ten-plus turns.** No code changes. |
 | **T2** | Record what broke against the five predictions above. Anything not on that list is the more interesting result. |
 | **T3** | Fix what T2 found, in core if it is a model problem, in the machine if it is an authoring problem. Telling those apart is the judgement this stage exists to exercise. |
 | **T4** | Only if T2 shows Design B genuinely cannot express the flow: attempt Design A, which means filling `machineCatalog` and moving the phase walk. |
