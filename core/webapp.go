@@ -464,7 +464,10 @@ const liveRibbonJS = `(function(){
 // served via ServeHTMLWithBase. Sources the SVG from webui.FaviconSVG so
 // legacy and migrated pages share a single definition — update the icon
 // in one place and both render paths pick it up.
-const faviconLinkTag = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,` + webui.FaviconSVG + `">`
+//
+// A var rather than a const because FaviconSVG is now derived from the icon
+// markup at package init rather than hand-maintained as a second literal.
+var faviconLinkTag = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,` + webui.FaviconSVG + `">`
 
 // ServeHTMLWithBase serves an HTML string, injecting a <base href> tag and
 // converting absolute API paths to relative when a prefix is set.

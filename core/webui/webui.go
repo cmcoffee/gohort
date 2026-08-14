@@ -179,45 +179,62 @@ func RenderPage(opts PageOpts) string {
 	return sb.String()
 }
 
-// RobotIconSVG is the raw inline SVG markup for gohort's default
-// AI-robot head icon. Used in dashboard cards (and any other surface
-// that wants the icon as inline HTML) so the favicon and the on-page
-// branding stay visually unified. Apps that want a different icon
-// override via WebIconer.WebIcon() in core; an empty return falls
-// back to this default.
+// IconSVG is the raw inline SVG markup for gohort's mark, and the single
+// source of truth for it. Used wherever a surface wants the icon as inline
+// HTML, so the favicon and the on-page branding cannot disagree. Apps that
+// want a different icon override via WebIconer.WebIcon() in core; an empty
+// return falls back to this default.
 //
-// Design notes: dark rounded square background; accent-blue silhouette
-// with antenna, two ear nubs, dark eye sockets, slim mouth slot.
-// The head silhouette dominates the canvas so the icon still reads
-// at small favicon sizes (16×16); fine details (mouth slot, antenna
-// ball) add character at larger renderings.
-const RobotIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-	`<rect width="64" height="64" rx="12" fill="#0d1117"/>` +
-	`<rect x="30.5" y="6" width="3" height="9" rx="1.5" fill="#58a6ff"/>` +
-	`<circle cx="32" cy="6" r="3" fill="#58a6ff"/>` +
-	`<rect x="12" y="16" width="40" height="38" rx="8" fill="#58a6ff"/>` +
-	`<rect x="8" y="28" width="4" height="12" rx="2" fill="#58a6ff"/>` +
-	`<rect x="52" y="28" width="4" height="12" rx="2" fill="#58a6ff"/>` +
-	`<circle cx="24" cy="30" r="4.5" fill="#0d1117"/>` +
-	`<circle cx="40" cy="30" r="4.5" fill="#0d1117"/>` +
-	`<rect x="22" y="42" width="20" height="3" rx="1.5" fill="#0d1117"/>` +
+// The mark is "Vanguard": one bright lead unit with the cohort behind it.
+// A cohort is what the name means, and a fleet rather than one assistant is
+// the thing that distinguishes the platform, so the mark argues that and not
+// "an AI product" (the robot head this replaces said the latter, in a palette
+// the dashboard had already left behind).
+//
+// Design notes: three solid squares on a dark rounded square, indigo #6366f1
+// leading and #4338ca behind, on the platform's own slate #0f1117. Deliberately
+// free of strokes and fine detail — a favicon is judged at 16×16, where that
+// budget buys about three shapes and the gaps here still hold four device
+// pixels of clear air. Anything finer turns into a coloured smudge.
+//
+// No background knockouts either: every shape is drawn, nothing is erased by
+// painting slate over it. That keeps the artwork correct with no chip behind
+// it, which is what a macOS menu-bar template image needs — so one drawing can
+// serve the favicon, the app icon, and the tray.
+const IconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+	`<rect width="64" height="64" rx="12" fill="#0f1117"/>` +
+	`<rect x="23" y="8" width="18" height="18" rx="5" fill="#6366f1"/>` +
+	`<rect x="6" y="34" width="18" height="18" rx="5" fill="#4338ca"/>` +
+	`<rect x="40" y="34" width="18" height="18" rx="5" fill="#4338ca"/>` +
 	`</svg>`
 
-// FaviconSVG is the URL-encoded form of the same robot icon, for use
-// in the <link rel="icon"> data: URI. Kept in lockstep with
-// RobotIconSVG — any edit to the icon should land in BOTH constants
-// so the favicon and inline-rendered icon stay identical.
-const FaviconSVG = "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E" +
-	"%3Crect width='64' height='64' rx='12' fill='%230d1117'/%3E" +
-	"%3Crect x='30.5' y='6' width='3' height='9' rx='1.5' fill='%2358a6ff'/%3E" +
-	"%3Ccircle cx='32' cy='6' r='3' fill='%2358a6ff'/%3E" +
-	"%3Crect x='12' y='16' width='40' height='38' rx='8' fill='%2358a6ff'/%3E" +
-	"%3Crect x='8' y='28' width='4' height='12' rx='2' fill='%2358a6ff'/%3E" +
-	"%3Crect x='52' y='28' width='4' height='12' rx='2' fill='%2358a6ff'/%3E" +
-	"%3Ccircle cx='24' cy='30' r='4.5' fill='%230d1117'/%3E" +
-	"%3Ccircle cx='40' cy='30' r='4.5' fill='%230d1117'/%3E" +
-	"%3Crect x='22' y='42' width='20' height='3' rx='1.5' fill='%230d1117'/%3E" +
-	"%3C/svg%3E"
+// FaviconSVG is IconSVG encoded for a data: URI, for the <link rel="icon">
+// href. DERIVED, never hand-written: this used to be a second constant kept
+// "in lockstep" with the markup by a comment asking whoever edited one to
+// remember the other, which is a drift waiting to happen and buys nothing —
+// the transform is mechanical.
+var FaviconSVG = svgDataURI(IconSVG)
+
+// svgDataURI renders raw SVG markup for use inside a data:image/svg+xml URI
+// that itself sits in a double-quoted HTML attribute.
+//
+// Attribute quotes are swapped to single so the markup can't terminate the
+// href, and the four characters a browser will not accept raw in that position
+// are percent-encoded. Spaces are left alone: they are legal inside a quoted
+// attribute and encoding them only makes the URI harder to read in a view-source.
+//
+// strings.Replacer matches against the INPUT in one pass and never rescans what
+// it emitted, so encoding "%" alongside the rest cannot double-encode the
+// escapes this produces.
+func svgDataURI(svg string) string {
+	return strings.NewReplacer(
+		"%", "%25",
+		`"`, "'",
+		"<", "%3C",
+		">", "%3E",
+		"#", "%23",
+	).Replace(svg)
+}
 
 // Floating back-to-dashboard button rendered when Prefix is set.
 const backChromeCSS = `

@@ -24,8 +24,30 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
+// appIcon is the full-colour mark. On macOS it is only the fallback argument
+// to SetTemplateIcon (which ignores it); on Linux and Windows it IS the tray
+// icon, since neither has the template concept.
+//
 //go:embed appicon.png
 var appIcon []byte
+
+// trayIcon is the macOS menu-bar TEMPLATE image: the same mark with no chip
+// and no colour, black pixels carrying nothing but alpha. macOS recolours a
+// template to suit the bar it is drawn on, so it stays legible on a light bar,
+// a dark bar, and while the menu is open and highlighted. Handing SetIcon a
+// full-colour chip (what this did before, with the robot) renders the chip
+// literally: a dark square that disappears into a dark bar and sits as a black
+// blob on a light one.
+//
+// Two details it depends on. The mark has no background knockouts, so removing
+// the chip leaves the artwork intact rather than punching holes in it. And it
+// is rendered at 64px because the darwin backend displays the image at 16pt,
+// which makes that an exact 4:1 downsample at 1x and 2:1 at 2x rather than a
+// fractional scale. Alpha carries the hierarchy that colour carries elsewhere:
+// the lead unit at full opacity, the cohort behind it at 55%.
+//
+//go:embed trayicon.png
+var trayIcon []byte
 
 // sidecarCfg is a live wsbridge.Config backed by the bridge-config
 // sidecar — re-read on every access so a config edit in the viewer
@@ -71,7 +93,7 @@ func Run() {
 	stopWS := wsbridge.StartClient(sidecarCfg{}, daemonApprover{}, daemonInstaller{})
 
 	onReady := func() {
-		systray.SetIcon(appIcon)
+		systray.SetTemplateIcon(trayIcon, appIcon)
 		systray.SetTooltip("Gohort bridge")
 
 		mOpen := systray.AddMenuItem("Open Gohort", "Open the Gohort window")
