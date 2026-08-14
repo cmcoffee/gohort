@@ -414,6 +414,44 @@ func (o ImageOrigin) AgentMade() bool {
 	return o == ImageFromGenerated || o == ImageFromEdited
 }
 
+// OriginForRef reports where the picture behind a reference came from, for
+// every form the model can write one in: a ring position, a stable ring id, or
+// a kept name.
+//
+// ImageOriginUnknown means the ref resolves to nothing, or to a picture whose
+// provenance was never recorded. Callers must read that as "nobody said", never
+// as "not the agent's" — the same direction AgentMade takes, so nothing is
+// treated as an invention on a guess.
+func OriginForRef(sess *ToolSession, ref string) ImageOrigin {
+	body := strings.TrimSpace(ref)
+	if sess == nil || body == "" {
+		return ImageOriginUnknown
+	}
+	body = strings.TrimPrefix(strings.ToLower(body), RecentImageRefPrefix)
+	if n, err := strconv.Atoi(body); err == nil {
+		all := RecentImages(sess)
+		if n < 1 || n > len(all) {
+			return ImageOriginUnknown
+		}
+		return all[n-1].Origin
+	}
+	if isRingID(body) {
+		want := RecentImageRefPrefix + body
+		for _, r := range RecentImages(sess) {
+			if strings.EqualFold(r.ID, want) {
+				return r.Origin
+			}
+		}
+		return ImageOriginUnknown
+	}
+	for _, k := range KeptImages(sess) {
+		if strings.EqualFold(k.Name, body) {
+			return k.Origin
+		}
+	}
+	return ImageOriginUnknown
+}
+
 // originFromNote classifies an entry written before Origin existed, from the
 // note the framework itself wrote. Only ring notes are framework-authored, so
 // this is never applied to a kept image's note.

@@ -188,7 +188,130 @@ func checkPromptSubjects(sess *ToolSession, prompt string, refs []string) (strin
 	if err := refuseUnpassedPeople(sess, out, attached); err != nil {
 		return prompt, "", err
 	}
+	// Second, because refuseUnpassedPeople has the better advice when both
+	// apply: "you have their picture, pass it" beats "you have no picture of
+	// anyone" for a caller who does.
+	if err := refuseInventedReference(sess, out, refs); err != nil {
+		return prompt, "", err
+	}
 	return out, scrubNote(replaced), nil
+}
+
+// referenceClaims are the phrases a prompt asserts a source picture with: that
+// it SHOWS someone, and that the render should carry that likeness across.
+//
+// The same two limits the name scrub documents, for the same reasons. This
+// cannot catch a paraphrase — "make him look like he does in the picture" is
+// the claim in words nothing here matches — and it is not trying to. It catches
+// the phrasing an agent reaches for when it believes it is holding a photograph
+// of somebody, which is the belief the check exists to interrupt. A miss costs
+// a bad render; a false positive costs a round, so the list stays short and the
+// escape is stated in the refusal.
+var referenceClaims = []string{
+	"reference photo",
+	"reference image",
+	"reference picture",
+	"reference shot",
+	"same person",
+	"their face",
+	"his face",
+	"her face",
+	"my face",
+	"the face",
+	"person's face",
+	"recognizable",
+	"likeness",
+	"looks like them",
+	"look like them",
+}
+
+// referenceClaim returns the phrase a prompt uses to assert its sources depict
+// a real person, "" when it makes no such claim.
+func referenceClaim(prompt string) string {
+	low := strings.ToLower(prompt)
+	for _, c := range referenceClaims {
+		if strings.Contains(low, c) {
+			return c
+		}
+	}
+	return ""
+}
+
+// refuseInventedReference stops a render that treats the agent's OWN output as
+// a photograph of a real person.
+//
+// The library already refuses to OFFER an agent-made picture as a reference —
+// keptRefsFor drops them, PeopleWithPictures drops them, and keeping one says
+// so in as many words. Nothing enforced it at the call, so the one path that
+// mattered was open: the ring lists the agent's own renders (it has to — "edit
+// the one you just made" is the common case), and a ref taken from there went
+// straight through as a source with no check of where it came from.
+//
+// Observed: an agent with no photograph of anyone rendered a portrait
+// unprompted, then on a later turn passed that render back in as "the reference
+// photo" and asked for the face to stay recognizable. Nothing was recognizable.
+// The face was invented in the first render and the second one inherited it,
+// which is the compounding ImageOrigin was written to describe.
+//
+// TWO CONDITIONS, and both are needed.
+//
+// EVERY source is agent-made. One real photograph in the set means the call has
+// something true to work from, and a composite that draws a likeness from the
+// real one and a background from a render is exactly right.
+//
+// And the prompt CLAIMS a likeness. Without that this is iteration — "make it
+// snowy", "warmer light", "lose the hat" — which is what the ring is for and
+// what the whole edit path is built around. Refusing that would break the
+// tool's most ordinary use to prevent its rarest.
+func refuseInventedReference(sess *ToolSession, prompt string, refs []string) error {
+	if len(refs) == 0 || strings.TrimSpace(prompt) == "" {
+		return nil
+	}
+	for _, r := range refs {
+		if !OriginForRef(sess, r).AgentMade() {
+			return nil // something real in the set — nothing to launder
+		}
+	}
+	claim := referenceClaim(prompt)
+	if claim == "" {
+		return nil // iterating on your own render, which is the point of the ring
+	}
+	fix := "If you meant to change a picture you made, say what should CHANGE and drop the likeness wording — it is your render, so there is no likeness to keep."
+	if given := givenRefsFor(sess); given != "" {
+		fix = "Pass a picture you were GIVEN instead: " + given + ". " + fix
+	} else {
+		fix = "You have not been given a picture of anyone, so there is no reference to pass — ask for one. " + fix
+	}
+	return fmt.Errorf("nothing was rendered. Your prompt says %q, but every picture you passed is one you MADE yourself. "+
+		"A generated face is not a photograph of anyone: it was invented, and using it as the reference for another render "+
+		"inherits the invention and drifts further from whoever it was meant to be. %s", claim, fix)
+}
+
+// givenRefsFor names the pictures in the ring that came from somewhere real, as
+// a short list for the refusal above. Empty when there are none — which is its
+// own answer, and gets a different sentence.
+//
+// Stable ids only. The refusal is telling the model what to pass on the retry,
+// and a position would be stale by the time it does: the entries are listed
+// newest-first and anything saved in between renumbers them.
+func givenRefsFor(sess *ToolSession) string {
+	const maxGiven = 4
+	var out []string
+	for _, r := range RecentImages(sess) {
+		if r.Origin.AgentMade() || strings.TrimSpace(r.ID) == "" {
+			continue
+		}
+		label := r.ID
+		if d := strings.TrimSpace(r.Caption); d != "" {
+			label += " (" + truncate(d, 60) + ")"
+		} else if d := strings.TrimSpace(r.Note); d != "" {
+			label += " (" + truncate(d, 60) + ")"
+		}
+		if out = append(out, label); len(out) == maxGiven {
+			break
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // refuseUnpassedPeople stops a render whose prompt names somebody this agent
