@@ -38,6 +38,8 @@
 package filestore
 
 import (
+	"strings"
+
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -49,6 +51,55 @@ func init() {
 	// section and servitor's source use.
 	RegisterReferenceSource(storeSource{app: app})
 	RegisterAdminSection(AdminSectionEntry{Section: app.adminSection(), Head: adminHeadHTML()})
+	// A path scope lets ANOTHER app's tool take a subfolder of a store as
+	// a parameter and have it checked when the tool runs — the case a
+	// frozen enum cannot cover, because the whole point of a drop folder
+	// is that new names appear without ceremony. See core/path_scope.go.
+	// The obvious caller is a servitor command tool pointed at a bundle.
+	RegisterPathScope("files", app.resolveScope, app.listScope)
+}
+
+// resolveScope proves a caller-supplied name is a subfolder of one store
+// and returns its absolute path.
+//
+// SubRoot does the work, which is the point of routing through here
+// rather than reimplementing it: it resolves symlinks rather than
+// trusting the textual path, and refuses anything not strictly inside
+// the root.
+func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, error) {
+	st, ok := LoadStore(T.DB, storeSlug)
+	if !ok {
+		return "", Error("there is no file store called " + storeSlug + " on this server")
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", Error("name a folder in " + st.Name)
+	}
+	dir, err := SubRoot(st.Path, value)
+	if err != nil {
+		// Worded for the model that supplied the value: what was refused
+		// and what would change the answer.
+		return "", Error(err.Error() + " — use one of the folders in " + st.Name +
+			", exactly as it was listed")
+	}
+	return dir, nil
+}
+
+// listScope names the folders currently in a store, so a tool
+// description can say what the valid values are right now.
+func (T *FileStoreApp) listScope(user, storeSlug string) []string {
+	st, ok := LoadStore(T.DB, storeSlug)
+	if !ok {
+		return nil
+	}
+	folders, err := ListFolders(st.Path)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(folders))
+	for _, f := range folders {
+		out = append(out, f.Name)
+	}
+	return out
 }
 
 // FileStoreApp is the entry point. There is no hub tab and no dashboard

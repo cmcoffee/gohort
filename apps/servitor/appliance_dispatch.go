@@ -51,7 +51,20 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 		return "", fmt.Errorf("%q exists for %s but the owner has not approved it yet. Nothing ran and nothing is queued — tell the person it is waiting on their approval, and do not look for another way to do it",
 			tool.Name, applianceLabel(d.Appliance.Name, d.Appliance.ID))
 	}
-	cmd, err := renderApplianceCommand(tool, d.Args)
+	// Path-scoped parameters are checked HERE, when the tool runs, and
+	// replaced by the absolute path they resolved to.
+	//
+	// Quoting is not containment: renderApplianceCommand single-quotes a
+	// value so it can never contribute syntax, which does nothing about
+	// "../../var/lib/something" being a well-formed argument pointing
+	// somewhere else. An enum is the usual answer and cannot express a
+	// set that changes, which is exactly the case here — the folders
+	// under a drop directory. See core/path_scope.go.
+	args, err := resolveScopedArgs(d.UserID, tool, d.Args)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", tool.Name, err)
+	}
+	cmd, err := renderApplianceCommand(tool, args)
 	if err != nil {
 		// An argument problem, not a permission one. Said plainly so the model
 		// fixes the call rather than concluding it lacks access.
@@ -153,4 +166,37 @@ func applianceToolDescription(t ApplianceTool, a Appliance) string {
 	}
 	return fmt.Sprintf("%s — on %s. Prepared and approved in advance; you supply values only, never the command.",
 		strings.TrimSuffix(desc, "."), applianceLabel(a.Name, a.ID))
+}
+
+// resolveScopedArgs replaces every path-scoped argument with the absolute
+// path it resolves to, refusing anything that lands outside its root.
+//
+// Returns a COPY: the caller's map is what gets logged and echoed back,
+// and rewriting it in place would make the record disagree with what the
+// model actually asked for.
+func resolveScopedArgs(user string, tool ApplianceTool, args map[string]any) (map[string]any, error) {
+	out := args
+	copied := false
+	for name, p := range tool.Params {
+		if strings.TrimSpace(p.PathScope) == "" {
+			continue
+		}
+		raw, present := args[name]
+		if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+			continue // absence is the required-check's business, not this one
+		}
+		abs, err := ResolvePathScope(user, p.PathScope, fmt.Sprint(raw))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if !copied {
+			out = make(map[string]any, len(args))
+			for k, v := range args {
+				out[k] = v
+			}
+			copied = true
+		}
+		out[name] = abs
+	}
+	return out, nil
 }

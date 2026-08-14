@@ -272,6 +272,17 @@ type ToolParam struct {
 	Items       *ToolParam           `json:"items,omitempty"`      // Element schema (when Type is "array").
 	Properties  map[string]ToolParam `json:"properties,omitempty"` // Nested params (when Type is "object").
 	Required    []string             `json:"required,omitempty"`   // Required nested params (when Type is "object").
+	// PathScope constrains a string parameter to a path inside a
+	// registered root, as "kind:name" (e.g. "files:support_bundles").
+	// Checked when the tool RUNS, and the value substituted is the
+	// absolute path it resolved to.
+	//
+	// The late-binding sibling of Enum. An enum is frozen when a tool is
+	// authored, which suits "--env production|staging" and cannot
+	// express a set that changes — the folders under a drop directory,
+	// where new ones appearing without ceremony is the whole point. See
+	// core/path_scope.go.
+	PathScope string `json:"path_scope,omitempty"`
 }
 
 // buildParamSchema converts a ToolParam into a JSON Schema map suitable for
