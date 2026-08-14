@@ -573,17 +573,29 @@ type stageOutput struct {
 // debuggable behavior — and the breadcrumb rule still holds: both the
 // repair attempt and the final failure land on the status line.
 func (T *AppCore) runDeclaredStage(ctx context.Context, stage PipelineStage, prompt string, call func(string) (string, error), status func(string)) (string, map[string]any, error) {
-	contract := renderOutputContract(stage.Output)
+	return T.runDeclaredOutput(ctx, "stage "+stage.Name, stage.Output, prompt, call, status)
+}
+
+// runDeclaredOutput is runDeclaredStage's body, with the stage removed.
+// A machine phase declares its handoff with the same PipelineField
+// vocabulary and wants the same contract → decode → one repair → fail
+// behavior (see AdvanceMachine), and the alternative to sharing this was
+// a second copy of the repair loop that would drift from this one.
+//
+// label identifies the caller in status text and reads as a noun phrase
+// ("stage plan", "phase route") because it lands mid-sentence.
+func (T *AppCore) runDeclaredOutput(ctx context.Context, label string, decl []PipelineField, prompt string, call func(string) (string, error), status func(string)) (string, map[string]any, error) {
+	contract := renderOutputContract(decl)
 	out, err := call(prompt + contract)
 	if err != nil {
 		return "", nil, err
 	}
-	fields, derr := decodeStageOutput(out, stage.Output)
+	fields, derr := decodeStageOutput(out, decl)
 	if derr == nil {
 		return out, fields, nil
 	}
 	if status != nil {
-		status("stage " + stage.Name + ": reply did not match the declared shape (" + derr.Error() + ") — retrying once")
+		status(label + ": reply did not match the declared shape (" + derr.Error() + ") — retrying once")
 	}
 	if ctx.Err() != nil {
 		return "", nil, ctx.Err()
@@ -596,7 +608,7 @@ func (T *AppCore) runDeclaredStage(ctx context.Context, stage PipelineStage, pro
 	if err != nil {
 		return "", nil, err
 	}
-	if fields, derr = decodeStageOutput(out, stage.Output); derr != nil {
+	if fields, derr = decodeStageOutput(out, decl); derr != nil {
 		return "", nil, Error("reply did not match the declared shape after one repair attempt: " + derr.Error())
 	}
 	return out, fields, nil

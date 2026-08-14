@@ -364,6 +364,14 @@ type chatTurn struct {
 	// guardrails caches this turn's enforcement set (see guardrailEnforcer).
 	guardrails *guardrailEnforcement
 
+	// machine is the phase this turn is running under, if the agent has a
+	// machine (machine.go). Lives on the turn because change_phase can
+	// move it MID-turn, and the end-of-turn handoff has to close over
+	// where the turn actually ended rather than where it started.
+	// phaseChanges caps that tool at maxPhaseChangesPerTurn.
+	machine      turnMachine
+	phaseChanges int
+
 	// Appeal state for contestable rules (guardrail_appeal.go). appealOffer is
 	// the block the agent is currently invited to dispute — nil when there is
 	// nothing to appeal, which is what makes the tool refuse rather than invite
@@ -5835,6 +5843,9 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))
 		}
 	}
+	if t.hasMachineExit() {
+		out = append(out, t.changePhaseToolDef()) // way out of a resident phase (machine.go)
+	}
 	out = append(out, t.loadToolToolDef(sess)) // gateway for the agent's lazy custom tools
 	out = append(out, t.skillToolDefs()...)    // read_skill / skill_knowledge_*; nil when skills off
 	if unifiedMemoryEnabled() {
@@ -6083,6 +6094,32 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if !isBuilderAgent(t.agent.ID) {
 		persona = roundShapePreamble(resolveMaxPlanSteps(t.agent)) + persona
 	}
+	// The newest user message, hoisted above the persona because the phase
+	// machine needs it: a decompose phase runs ON this message, before
+	// there is a persona to put its findings into. Also feeds the trigger
+	// hints further down, which is where it used to be computed.
+	triggerMsg := ""
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			triggerMsg = msgs[i].Content
+			break
+		}
+	}
+	// Session-resident phase machine (machine.go, docs/agent-machines.md).
+	// Walks any transient phases at the head of this turn and returns the
+	// phase that owns the reply. Inert — and free — for an agent with no
+	// machine, which is every agent unless its author picked one.
+	//
+	// The phase layer goes AFTER the persona for the same reason the
+	// round-shape preamble goes before it: recency weights, and the phase
+	// is the most authoritative instruction in the turn. It is also
+	// byte-stable across a resident run, so it costs no cache.
+	mach := t.enterMachine(triggerMsg)
+	persona += mach.Block()
+	// Closes over t.machine, not the local: change_phase may have moved
+	// the turn somewhere else since, and the handoff belongs to the phase
+	// that actually ended the turn.
+	defer func() { t.completeMachine(t.machine) }()
 	// Incognito (clean-room) session: inherit NOTHING — no memory facts and no
 	// cortex standing context. A one-off with no baggage. Connected sessions
 	// (the default) get both.
@@ -6137,13 +6174,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// Triggered skills: inject the instructions of any allowed skill whose
 	// triggers match this turn (deterministic — framework decides by
 	// trigger match, not the LLM). No-op when none match.
-	triggerMsg := ""
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			triggerMsg = msgs[i].Content
-			break
-		}
-	}
 	// Per-turn, MESSAGE-DEPENDENT content (triggered-skill instructions +
 	// skill/agent trigger hints) is collected into turnContext and appended
 	// to the LAST user message below — deliberately NOT spliced into the
@@ -6839,6 +6869,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	case "off":
 		think = false
 	}
+	// A machine phase is the most specific setting in that chain, so it
+	// goes last: a cheap classify phase can turn reasoning off inside an
+	// agent that otherwise always reasons.
+	think = mach.Think(think)
 
 	// Per-round bubbles: each agent-loop round that streams text gets
 	// its own assistant bubble, finalized at the round boundary by
@@ -7246,6 +7280,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// first is harmless — this just moves the dedupe upstream of the log spam.
 	allTools = dedupeToolDefsByName(allTools)
 
+	// Narrow the catalog to what the current machine phase may reach. A
+	// phase that names no tools (and every agent with no machine) gets
+	// the catalog back unchanged, so this can sit on the main path.
+	allTools = mach.Tools(allTools)
+
 	// pre_input guardrail: judge the incoming request before round 1 so a
 	// topical/disclosure rule ("never mention salary") is caught at the door,
 	// not after the model has already narrated the answer in an interim turn.
@@ -7262,10 +7301,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:       gDecline,
-		SendGuardKey:         sendGuardKey,
-		SystemPrompt:         sys,
-		Tools:                allTools,
+		PreEmptedReply: gDecline,
+		SendGuardKey:   sendGuardKey,
+		SystemPrompt:   sys,
+		Tools:          allTools,
+		// A machine phase may pin the tier for turns spent in it.
+		// TierUnset (no machine, or a phase that names no model) follows
+		// the route stage exactly as before.
+		TierOverride:         mach.Tier(),
 		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
 		DynamicTools:         t.dynamicNewTempTools(sess),
 		ToolFallbackResolver: t.lazyToolFallback,

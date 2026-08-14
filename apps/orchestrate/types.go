@@ -171,6 +171,22 @@ type AgentRecord struct {
 	// in by the framework.
 	OrchestratorPrompt string `json:"orchestrator_prompt"`
 
+	// Machine names the MachineDef (core, docs/agent-machines.md) that
+	// drives this agent's turns: a session-resident phase machine that
+	// decomposes once, routes once, and then sits in a resident phase
+	// instead of re-deciding its whole approach every turn.
+	//
+	// It DEMOTES the persona rather than replacing it. OrchestratorPrompt
+	// still supplies identity, voice, and standing rules; the machine
+	// supplies procedure, layered on top per phase. The agent is still
+	// who it is in every phase — what changes is what it's currently
+	// doing and what it can reach while doing it.
+	//
+	// Empty (the default, and every existing record) is today's behavior
+	// exactly: one prompt, one catalog, no phase state. The machine path
+	// short-circuits before it costs anything.
+	Machine string `json:"machine,omitempty"`
+
 	// PlanGuidance is appended to the orchestrator's system prompt and
 	// nudges decomposition style — "prefer 2-4 steps", "always start by
 	// restating the goal", etc. Optional.
@@ -886,6 +902,30 @@ type ChatSession struct {
 	// Persisted so the gate survives a restart between asking and
 	// answering.
 	AwaitingUserConfirm bool `json:"AwaitingUserConfirm,omitempty"`
+
+	// --- phase machine (docs/agent-machines.md) ---
+	//
+	// A session running a machine persists WHERE IT IS between turns.
+	// That is the whole difference between a machine and a pipeline, and
+	// it needs exactly as much room as AwaitingUserConfirm above: a gate
+	// that has to survive a restart to mean anything.
+	//
+	// MachineID is pinned at session creation rather than read live from
+	// the agent, so re-pointing an agent at a different machine reshapes
+	// NEW conversations and leaves ones already in flight alone. Phase
+	// and MachineState are the cursor (core.MachineCursor) split into
+	// two persisted fields; an unknown phase after an edit falls back to
+	// the machine's start and keeps the state (see MachineDef.resume).
+	MachineID    string       `json:"MachineID,omitempty"`
+	Phase        string       `json:"Phase,omitempty"`
+	MachineState MachineState `json:"MachineState,omitempty"`
+	// MachineLog is the bounded trail of transitions this conversation
+	// has taken. The ⚠ breadcrumbs narrate the same events as sentences;
+	// this is the structural copy the graph overlay reads, because
+	// "which edges has this conversation actually taken" cannot be
+	// answered by parsing prose without breaking the first time someone
+	// rewords a message.
+	MachineLog []PhaseHop `json:"MachineLog,omitempty"`
 
 	// AuthoringAgentID is set when create_agent fires successfully in
 	// this session — that agent becomes the implicit "authoring focus"

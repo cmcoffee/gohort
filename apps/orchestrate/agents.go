@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"sort"
@@ -1796,11 +1797,25 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		}
 		_ = json.NewEncoder(w).Encode(agents)
 	case http.MethodPost:
-		var req AgentRecord
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Read once, decode twice. The record decode is what saves; the
+		// key probe is what tells a field the caller OMITTED apart from a
+		// field they deliberately CLEARED. Go's zero values can't express
+		// that difference, and for `machine` it is the difference between
+		// "the Rules modal posted a record that never mentioned it" and
+		// "the user picked None in the dropdown".
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		var req AgentRecord
+		if err := json.Unmarshal(raw, &req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var sent map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &sent)
+		_, sentMachine := sent["machine"]
 		req.Owner = user
 		// Seed-IDs are saved in place as a per-user shadow record;
 		// the in-code seed stays untouched and surfaces back if the
@@ -1831,6 +1846,14 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
 				req.AuthorizedIdentities = existing.AuthorizedIdentities
 				req.GuardrailExceptions = existing.GuardrailExceptions
+				// The machine picker only renders when the user HAS
+				// machines (machineSelectField hides itself otherwise), and
+				// modals post records built from other forms entirely — so
+				// a body that never mentioned `machine` must not clear it,
+				// while one that sent "" must. Hence the key probe above.
+				if !sentMachine {
+					req.Machine = existing.Machine
+				}
 			}
 		} else if isSeedID(req.ID) {
 			// Seeds save as a per-user shadow. The form carries no `locked`
@@ -1845,6 +1868,9 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
 				req.AuthorizedIdentities = existing.AuthorizedIdentities
 				req.GuardrailExceptions = existing.GuardrailExceptions
+				if !sentMachine {
+					req.Machine = existing.Machine // see above
+				}
 			}
 		}
 		// Only the Tools modal may recompute tool curation. Its save is the only
