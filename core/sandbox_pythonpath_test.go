@@ -135,3 +135,41 @@ func TestSandboxPythonPathKeepsCallerEntries(t *testing.T) {
 		t.Errorf("caller entry precedes the framework helper, so it can shadow it: %q", got)
 	}
 }
+
+// A response pipe had no PYTHONPATH and no helper mounts, so `from
+// gohort import ...` and `import openpyxl` both raised
+// ModuleNotFoundError there while working in every other sandboxed
+// context. It is also the one context where that is completely silent:
+// a pipe has no workspace to inspect and nobody sitting next to it.
+func TestPipeArgvCarriesTheHelperMounts(t *testing.T) {
+	dir := t.TempDir()
+	prev := WorkspacesDir()
+	SetWorkspacesDir(filepath.Join(dir, "workspaces"))
+	gohortLibDirMu.Lock()
+	gohortLibDirPath, gohortLibWarned = "", false
+	gohortLibDirMu.Unlock()
+	t.Cleanup(func() {
+		SetWorkspacesDir(prev)
+		gohortLibDirMu.Lock()
+		gohortLibDirPath, gohortLibWarned = "", false
+		gohortLibDirMu.Unlock()
+	})
+
+	argv := strings.Join(bwrapPipeArgv("cat"), " ")
+	if !strings.Contains(argv, SandboxGohortLibMountPath) {
+		t.Errorf("pipe argv never mounts the gohort helper:\n%s", argv)
+	}
+	// The mount must land BEFORE the "--" separator, or bwrap tries to
+	// exec "--ro-bind" as a binary.
+	sep := strings.Index(argv, " -- ")
+	if sep < 0 {
+		t.Fatal("pipe argv lost its -- separator")
+	}
+	if strings.Index(argv, SandboxGohortLibMountPath) > sep {
+		t.Error("the mount landed after --, where bwrap reads it as the command")
+	}
+	// And the command itself is still the last thing on the line.
+	if !strings.HasSuffix(argv, "sh -c cat") {
+		t.Errorf("the pipe command is no longer last: %s", argv)
+	}
+}

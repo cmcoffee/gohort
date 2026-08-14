@@ -495,6 +495,17 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 	c := sb.build(ctx, sandboxRun{Kind: sandboxPipeRun, Command: command})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
+	// A pipe got NO PYTHONPATH at all, so `from gohort import ...` and
+	// `import openpyxl` both died with ModuleNotFoundError in a pipe while
+	// working in every other sandboxed context. Same value the shell path
+	// computes, so the two agree about where the helpers are.
+	//
+	// This does not make a pipe able to FETCH — it has no hook socket and
+	// --unshare-net — and it is not meant to. What it buys is that the
+	// import resolves and the failure becomes the helper's own sentence
+	// ("GOHORT_HOOK_PATH not set"), which says what is wrong, instead of a
+	// missing-module error that says the tool is broken.
+	c.Env = append(c.Env, "PYTHONPATH="+sandboxPythonPath(sb.remapsPaths(), ""))
 	c.Stdin = strings.NewReader(stdinData)
 
 	var buf bytes.Buffer
@@ -514,8 +525,15 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 // bwrapPipeArgv builds bwrap args for a response-pipe invocation.
 // Same shape as bwrapScriptArgv (no writable bind, no network) but
 // runs `sh -c command` so the LLM can chain pipes (jq | head, etc.).
+//
+// The helper mounts are here for the same reason they are on the shell
+// path: without them PYTHONPATH names two directories that exist only
+// inside a sandbox that never mounted them, and a pipe cannot import
+// anything the deployment provides. A pipe is the one place a missing
+// mount is completely silent — it has no workspace to look in and no
+// author sitting next to it.
 func bwrapPipeArgv(shellCmd string) []string {
-	return []string{
+	args := []string{
 		"--die-with-parent",
 		"--new-session",
 		"--unshare-pid",
@@ -534,9 +552,17 @@ func bwrapPipeArgv(shellCmd string) []string {
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
 		"--chdir", "/tmp",
-		"--",
-		"sh", "-c", shellCmd,
 	}
+	// Same two RO binds the shell path gets, and the same best-effort
+	// posture: a deployment that could not write them still runs, the
+	// imports just fail.
+	if libDir := EnsureGohortLibDir(); libDir != "" {
+		args = append(args, "--ro-bind", libDir, SandboxGohortLibMountPath)
+	}
+	if pyDir := EnsurePyDepsDir(); pyDir != "" {
+		args = append(args, "--ro-bind", pyDir, SandboxPyDepsMountPath)
+	}
+	return append(args, "--", "sh", "-c", shellCmd)
 }
 
 // SandboxedScriptResult is what RunSandboxedScript returns.
