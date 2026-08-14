@@ -83,7 +83,7 @@ func BuildToolDef() *GroupedTool {
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only — no pip. See action=\"help\"."},
 			"script_name":       {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\") — the extension drives interpreter selection when command_template is omitted."},
 			"credential":        {Type: "string", Description: "(api/toolbox, optional) Name of a registered secure credential; auth is injected server-side and never reaches you. Use \"no_auth\" for public APIs. See action=\"help\"."},
-			"url_template":      {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
+			"url_template":      {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch. A path placeholder keeps its slashes as real separators, which is right for /repos/{owner_repo} or a CalDAV path. When the API wants a NESTED PATH as one segment — GitLab's files endpoint is the common case — write {param:encoded} and the whole value is percent-encoded, slashes included. Pass NATURAL values either way: pre-encoding a value yourself yields %25 where you meant %."},
 			"method":            {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":     {Type: "string", Description: "(api) Request body with {param} placeholders, JSON-encoded and validated by default. See action=\"help\"."},
 			"headers":           {Type: "object", Description: "(api, optional) Extra request headers as {name: value}. See action=\"help\"."},
@@ -115,7 +115,7 @@ func BuildToolDef() *GroupedTool {
 					Properties: map[string]ToolParam{
 						"name":             {Type: "string", Description: "Sub-action name, unique within the toolbox."},
 						"description":      {Type: "string", Description: "What this sub-action does, in one sentence (cap 250 chars). The toolbox pays for this line once per action, on every turn."},
-						"url_template":     {Type: "string", Description: "Endpoint URL with {param} placeholders."},
+						"url_template":     {Type: "string", Description: "Endpoint URL with {param} placeholders. Use {param:encoded} when a nested path must arrive as ONE percent-encoded segment (GitLab files, and any API that takes a path as an id)."},
 						"method":           {Type: "string", Description: "HTTP method. Default GET."},
 						"params":           {Type: "object", Description: "Object of {param: {type, description}}. One line per description (cap 250 chars)."},
 						"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
@@ -2795,6 +2795,29 @@ Path segments work the same way:
   url_template:  https://api.example.com/users/{username}/repos
   with {username}="cmcoffee":
   → renders to: https://api.example.com/users/cmcoffee/repos
+
+A path placeholder KEEPS its slashes, so a value that spans
+segments substitutes as real separators:
+  url_template:  https://api.example.com/dav/{calendar_path}
+  with {calendar_path}="/195178399/calendars/home/":
+  → renders to: .../dav/195178399/calendars/home/
+
+When the API wants a NESTED PATH as ONE segment, add ":encoded"
+("segment" is a synonym) and the whole value is percent-encoded,
+slashes included. GitLab's files endpoint is the case this exists
+for — it takes the file path as an id:
+  url_template:  /projects/{id}/repository/files/{path:encoded}/raw?ref={ref}
+  with {path}="lib/python/sw_update/sw_update_lib.py":
+  → renders to: .../files/lib%2Fpython%2Fsw_update%2Fsw_update_lib.py/raw?ref=dev
+
+PASS NATURAL VALUES either way. Do NOT pre-encode: "%2F" arrives
+as "%252F", because the escaper encodes "%" as it must — a literal
+percent in a value is indistinguishable from an encoding you did
+by hand. Before this modifier existed there was no third thing to
+try: a raw "/" and a hand-written "%2F" both 404 on that endpoint.
+A modifier that is not "encoded" / "segment" is REFUSED, at
+authoring time and at dispatch, rather than left in the URL as a
+literal.
 
 Same rule for body_template — bare {placeholders}, no wrapping
 quotes. The framework JSON-encodes string values for you (the

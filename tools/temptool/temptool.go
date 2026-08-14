@@ -2210,7 +2210,10 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 			// objects.)
 			return nil
 		}
-		name := cmd[i+1 : i+1+end]
+		name, modifier := splitPlaceholder(cmd[i+1 : i+1+end])
+		if modifier != "" && isPlaceholderIdent(name) && !urlEncodeModifiers[modifier] {
+			return fmt.Errorf("unknown placeholder modifier %q in {%s:%s} — the only one is \"encoded\" (\"segment\" is a synonym)", modifier, name, modifier)
+		}
 		if !isPlaceholderIdent(name) {
 			// Not identifier-shaped — treat as a literal brace
 			// expression (JSON, shell parameter expansion, brace
@@ -2241,6 +2244,31 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 // it decides whether to honor a `{...}` as a placeholder. Empty
 // strings and JSON-shaped strings (containing spaces, quotes, colons,
 // commas, brackets) return false.
+// urlEncodeModifiers are the encodings a URL placeholder may ask for by
+// name, as "{path:encoded}".
+//
+// One exists, and it exists because without it a nested path could not
+// be expressed AT ALL for an API that wants the whole thing as a single
+// segment. GitLab's files endpoint is the case that found this: the
+// default keeps "/" raw (a CalDAV calendar path and a /repos/owner/name
+// must substitute as real separators), so the caller reaches for a
+// pre-encoded "%2F" — and the escaper turns the "%" into "%25", giving
+// "bin%252Fconfigmon.py". Both values 404, and the tool's description
+// suggests both. There was no third thing to try.
+//
+// Two spellings for the same encoding: an author reaching for this is
+// guessing, and both guesses are reasonable.
+var urlEncodeModifiers = map[string]bool{"encoded": true, "segment": true}
+
+// splitPlaceholder splits "name:modifier" into its parts. No colon means
+// no modifier, which is every placeholder written before this existed.
+func splitPlaceholder(s string) (name, modifier string) {
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
 func isPlaceholderIdent(s string) bool {
 	if s == "" {
 		return false
@@ -2275,13 +2303,17 @@ func substitute(cmd string, params map[string]ToolParam, args map[string]any) (s
 			b.WriteByte(cmd[i])
 			continue
 		}
-		name := cmd[i+1 : i+1+end]
+		name, _ := splitPlaceholder(cmd[i+1 : i+1+end])
 		if _, known := params[name]; !known {
 			// Not a placeholder we recognize — emit verbatim so the
 			// LLM can use literal braces in its command if needed.
 			b.WriteByte(cmd[i])
 			continue
 		}
+		// A modifier is URL-encoding syntax and means nothing to a
+		// shell. Honour the base name anyway: the alternative is a
+		// literal "{path:encoded}" reaching the command line, which is
+		// a worse outcome than ignoring a hint that does not apply.
 		val, ok := args[name]
 		if !ok {
 			return "", fmt.Errorf("missing arg %q", name)
@@ -3621,18 +3653,30 @@ func substituteURL(tmpl string, params map[string]ToolParam, required []string, 
 			b.WriteByte(tmpl[i])
 			continue
 		}
-		name := tmpl[i+1 : i+1+end]
+		name, modifier := splitPlaceholder(tmpl[i+1 : i+1+end])
 		if _, known := params[name]; !known {
 			b.WriteByte(tmpl[i])
 			continue
+		}
+		if modifier != "" && !urlEncodeModifiers[modifier] {
+			// Refused rather than emitted literally. A template that
+			// keeps "{path:enc}" in the URL produces a 404 from the
+			// far end, which is the hardest kind of wrong answer to
+			// trace back to a typo in a template.
+			return "", fmt.Errorf("unknown placeholder modifier %q in {%s:%s} — the only one is \"encoded\" (\"segment\" is a synonym), which percent-encodes the value WHOLE, slashes included, for an API that wants a nested path as one segment",
+				modifier, name, modifier)
 		}
 		val, ok := args[name]
 		if !ok {
 			return "", fmt.Errorf("missing arg %q", name)
 		}
-		if qpos >= 0 && i > qpos {
+		switch {
+		case modifier != "":
+			// Explicitly asked for: encode everything, "/" included.
 			b.WriteString(urlEscape(stringify(val)))
-		} else {
+		case qpos >= 0 && i > qpos:
+			b.WriteString(urlEscape(stringify(val)))
+		default:
 			b.WriteString(urlEscapePath(stringify(val)))
 		}
 		i = i + 1 + end
@@ -3659,7 +3703,7 @@ func dropAbsentOptionalQuery(tmpl string, params map[string]ToolParam, reqSet ma
 			val := seg[eq+1:]
 			if len(val) >= 2 && val[0] == '{' && val[len(val)-1] == '}' &&
 				strings.IndexByte(val, '}') == len(val)-1 {
-				name := val[1 : len(val)-1]
+				name, _ := splitPlaceholder(val[1 : len(val)-1])
 				if _, known := params[name]; known && !reqSet[name] {
 					if _, provided := args[name]; !provided {
 						continue // drop this optional, unprovided segment
