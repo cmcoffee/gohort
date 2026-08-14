@@ -37,6 +37,31 @@ the moment they were most sure they needed the whole file.
 A capped search **says so**, because "60 matches" and "the first 60 of many" are different answers,
 and acting on the first as though it were the second draws a conclusion from a truncated set.
 
+## Who may reach one
+
+Configuring a store is admin-only. **Reading one is controlled separately**, by the store's
+`allowed_users` — "Assigned to" on the admin form. Empty means every user.
+
+That split exists because the two halves were mismatched: registering a path was gated from the
+start, and reading whatever is under it was not gated at all. An admin points a store at
+`/data/customer-logs` and, before this, any account with an agent could attach it.
+
+Checked at every door, not just in the picker:
+
+- the Sources list (`List`) — filters to what the user may reach
+- `ItemTools` — a stale attachment yields no tools rather than tools that refuse on every call
+- `Fetch` — the generic pull path
+- the path scope (`resolveScope`) — the door a minted servitor command tool comes through, and the
+  one that would otherwise be missed
+- upload — **including for admins**: admin manages the list, membership decides reach
+
+A refusal on the path scope says "no file store called X **you can reach**" rather than "not yours",
+because confirming a store exists is a fact the caller can do nothing with and should not have.
+
+Empty stays open deliberately. Closing by default would silently break every store registered before
+this existed, and a security change that presents as "the tools vanished" is one nobody diagnoses
+correctly.
+
 ## Getting files in
 
 Two routes, deliberately:

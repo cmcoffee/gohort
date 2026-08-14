@@ -57,8 +57,11 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, found := LoadStore(T.DB, strings.TrimSpace(r.URL.Query().Get("slug")))
-	if !found {
-		http.Error(w, "no such file store", http.StatusNotFound)
+	if !found || !st.AllowsUser(user) {
+		// Admin-gated above, so an admin restricted OUT of a store still
+		// cannot upload into it. That is the setting meaning what it
+		// says: admin manages the list, membership decides reach.
+		http.Error(w, "no such file store you can reach", http.StatusNotFound)
 		return
 	}
 	dest, err := EnsureSub(st.Path, r.URL.Query().Get("within"))

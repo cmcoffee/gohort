@@ -80,8 +80,12 @@ func init() {
 // the root.
 func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, error) {
 	st, ok := LoadStore(T.DB, storeSlug)
-	if !ok {
-		return "", Error("there is no file store called " + storeSlug + " on this server")
+	// Same answer for "no such store" and "not yours": a path scope is
+	// reachable from a minted command tool, and telling a caller that a
+	// store exists but is not theirs is a fact they can do nothing with
+	// and should not have.
+	if !ok || !st.AllowsUser(user) {
+		return "", Error("there is no file store called " + storeSlug + " you can reach")
 	}
 	if strings.TrimSpace(value) == "" {
 		return "", Error("name a folder in " + st.Name)
@@ -101,7 +105,7 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 // exists, and an unadvertised constraint is one nobody uses.
 func (T *FileStoreApp) scopeRoots(user string) []PathScopeRoot {
 	var out []PathScopeRoot
-	for _, st := range ListStores(T.DB) {
+	for _, st := range StoresForUser(T.DB, user) {
 		out = append(out, PathScopeRoot{
 			Ref: "files:" + st.Slug, Label: st.Name, Detail: strings.TrimSpace(st.Description),
 		})
@@ -113,7 +117,7 @@ func (T *FileStoreApp) scopeRoots(user string) []PathScopeRoot {
 // description can say what the valid values are right now.
 func (T *FileStoreApp) listScope(user, storeSlug string) []string {
 	st, ok := LoadStore(T.DB, storeSlug)
-	if !ok {
+	if !ok || !st.AllowsUser(user) {
 		return nil
 	}
 	folders, err := ListFolders(st.Path)

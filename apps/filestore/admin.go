@@ -38,6 +38,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// right. A store reading "unreadable" here is a typo
 					// caught before an agent is attached to it.
 					{Field: "folders", Label: "Subfolders", Mute: true},
+					{Field: "assigned", Label: "Assigned to", Mute: true},
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
@@ -77,6 +78,8 @@ func storeFormFields() []ui.FormField {
 			Help: "Shown in the agent's Sources picker, and folded into the tool names an attached agent gets (a store named \"Support bundles\" produces search_support_bundles)."},
 		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/bundles",
 			Help: "Absolute path on this server. The folder itself is what an agent attaches to; its subfolders (if any) are what a search can be scoped to. Read-only: nothing here ever writes to it."},
+		{Field: "allowed_users", Type: "tags", Label: "Assigned to",
+			Help: "Usernames who may reach this store. Leave EMPTY for every user. A folder of customer captures is rarely something every account should hold, and configuring a store is already admin-only — without this the cheap half was gated and the reading was not. Applies to admins too: admin manages the list, membership decides reach."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
 			Help: "Optional, and worth writing: it is pasted into the agent's tool descriptions, so it is what tells the agent when to reach for THIS store rather than another. \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
 		{Field: "slug", Type: "hidden"},
@@ -128,9 +131,14 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			if list, err := ListFolders(st.Path); err == nil {
 				folders = strconv.Itoa(len(list))
 			}
+			assigned := "everyone"
+			if len(st.AllowedUsers) > 0 {
+				assigned = strings.Join(st.AllowedUsers, ", ")
+			}
 			rows = append(rows, map[string]any{
 				"slug": st.Slug, "name": st.Name, "path": st.Path,
 				"description": st.Description, "folders": folders,
+				"assigned": assigned, "allowed_users": st.AllowedUsers,
 			})
 		}
 		writeJSON(w, rows)

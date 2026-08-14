@@ -29,6 +29,43 @@ type Store struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	Description string `json:"description,omitempty"` // what lands here, for the agent's benefit
+
+	// AllowedUsers restricts who may reach this store. Empty = every
+	// user, matching FeatureAccessPolicy's shape so there is one answer
+	// in this codebase to "what does an empty allow-list mean".
+	//
+	// It matters more here than the default suggests. An admin registers
+	// a path once; everything under it is then readable by any agent
+	// that attaches the store, and a folder of customer log bundles is
+	// not something every account should hold. Configuring the store is
+	// already admin-only; WITHOUT this, reading it was not restricted at
+	// all, which is a strange pairing — the gate was on the cheap half.
+	//
+	// Empty stays open because closing it by default would silently
+	// break every store registered before this existed, and a security
+	// change that presents as "the tools vanished" is one nobody
+	// diagnoses correctly.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+}
+
+// AllowsUser reports whether user may see and reach this store.
+//
+// Admin is deliberately NOT special-cased here. An admin who wants a
+// store restricted to someone else has said so, and quietly reading it
+// anyway would make the setting mean something other than what it says.
+// Admin retains the thing admin should have: the ability to CHANGE the
+// list.
+func (s Store) AllowsUser(user string) bool {
+	if len(s.AllowedUsers) == 0 {
+		return true
+	}
+	user = strings.TrimSpace(user)
+	for _, u := range s.AllowedUsers {
+		if strings.EqualFold(strings.TrimSpace(u), user) {
+			return true
+		}
+	}
+	return false
 }
 
 // Valid reports whether a store is usable, and says why not when it
@@ -91,7 +128,9 @@ func LoadStore(db Database, slug string) (Store, bool) {
 	return s, true
 }
 
-// ListStores returns every registered store, by name.
+// ListStores returns every registered store, by name. ADMIN view: no
+// access filtering, because the admin table has to show what exists in
+// order to manage it.
 func ListStores(db Database) []Store {
 	if db == nil {
 		return nil
@@ -115,4 +154,22 @@ func DeleteStore(db Database, slug string) {
 		return
 	}
 	db.Unset(storesTable, slug)
+}
+
+// StoresForUser is ListStores filtered by access — the view every
+// non-admin surface must use.
+//
+// Separate function rather than a flag on ListStores: a filtered and an
+// unfiltered list are different enough that a boolean argument at the
+// call site tells the reader nothing, and the unfiltered one is only
+// ever right on the admin page.
+func StoresForUser(db Database, user string) []Store {
+	all := ListStores(db)
+	out := all[:0:0]
+	for _, s := range all {
+		if s.AllowsUser(user) {
+			out = append(out, s)
+		}
+	}
+	return out
 }

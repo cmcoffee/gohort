@@ -42,7 +42,7 @@ func (s storeSource) List(user string) []ReferenceItem {
 		return nil
 	}
 	var out []ReferenceItem
-	for _, st := range ListStores(s.app.DB) {
+	for _, st := range StoresForUser(s.app.DB, user) {
 		desc := strings.TrimSpace(st.Description)
 		if desc == "" {
 			desc = st.Path
@@ -68,7 +68,11 @@ func (s storeSource) List(user string) []ReferenceItem {
 // small enough to hand over whole.
 func (s storeSource) Fetch(ctx context.Context, user, itemID, query string) string {
 	st, ok := LoadStore(s.app.DB, itemID)
-	if !ok {
+	// Checked HERE, not only where the list is built. An agent record can
+	// carry a stale attachment from before the restriction, and an item
+	// id is a string somebody can supply — filtering the picker is a
+	// courtesy, this is the gate.
+	if !ok || !st.AllowsUser(user) {
 		return ""
 	}
 	if strings.TrimSpace(query) == "" {
@@ -138,7 +142,10 @@ func (s storeSource) folderMenu(st Store) string {
 // when omitted and one subfolder when given.
 func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 	st, ok := LoadStore(s.app.DB, itemID)
-	if !ok {
+	// No tools at all for a store this user may not reach, so a stale
+	// attachment degrades to the store simply not being there rather
+	// than to a set of tools that refuse on every call.
+	if !ok || !st.AllowsUser(user) {
 		return nil
 	}
 	slug := st.Slug

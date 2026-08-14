@@ -6,6 +6,7 @@ package filestore
 // the whole point of a drop folder.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -216,5 +217,89 @@ func TestStoresAreAdvertisedAsPathScopeRoots(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the store is not advertised as a path scope root")
+	}
+}
+
+// --- who may reach a store --------------------------------------------
+
+// Configuring a store was admin-only from the start; READING one was not
+// restricted at all. An admin registers /data/customer-logs once and any
+// account with an agent could attach it — the gate was on the cheap half.
+func TestAssignedStoreIsInvisibleToOthers(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	st.AllowedUsers = []string{"alice"}
+	if _, err := SaveStore(app.DB, st); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	src := storeSource{app: app}
+
+	// The picker shows it to alice and not to bob.
+	if items := src.List("alice"); len(items) != 1 {
+		t.Errorf("alice should see her store, got %v", items)
+	}
+	if items := src.List("bob"); len(items) != 0 {
+		t.Errorf("bob should not see it, got %v", items)
+	}
+
+	// And the picker is a courtesy, not the gate. An agent record can
+	// carry a stale attachment from before the restriction, and an item
+	// id is a string somebody can supply — so every resolve checks too.
+	if tools := src.ItemTools("bob", st.Slug); len(tools) != 0 {
+		t.Errorf("bob got %d tools for a store he cannot reach", len(tools))
+	}
+	if txt := src.Fetch(context.Background(), "bob", st.Slug, "anything"); txt != "" {
+		t.Errorf("bob fetched from a store he cannot reach: %q", txt)
+	}
+	if tools := src.ItemTools("alice", st.Slug); len(tools) == 0 {
+		t.Error("alice lost her tools")
+	}
+}
+
+// The path scope is reachable from a minted servitor command tool, which
+// is a different door into the same folder.
+func TestAssignedStoreIsNotReachableThroughAPathScope(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	st.AllowedUsers = []string{"alice"}
+	if _, err := SaveStore(app.DB, st); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if _, err := app.resolveScope("alice", st.Slug, "scan-2026-08-13"); err != nil {
+		t.Fatalf("alice should resolve: %v", err)
+	}
+	_, err := app.resolveScope("bob", st.Slug, "scan-2026-08-13")
+	if err == nil {
+		t.Fatal("bob resolved a folder in a store he cannot reach")
+	}
+	// The refusal must not confirm the store exists — that is a fact he
+	// can do nothing with and should not have.
+	if strings.Contains(err.Error(), "Support bundles") {
+		t.Errorf("the refusal leaks the store's existence: %v", err)
+	}
+	// It is not advertised to him as a constraint either.
+	for _, rt := range app.scopeRoots("bob") {
+		if rt.Ref == "files:"+st.Slug {
+			t.Error("a store bob cannot reach was advertised to him")
+		}
+	}
+}
+
+// Empty stays open: closing by default would silently break every store
+// registered before this existed, and a security change that presents as
+// "the tools vanished" is one nobody diagnoses correctly.
+func TestUnassignedStoreStaysOpen(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	if len(st.AllowedUsers) != 0 {
+		t.Fatal("fixture should be unrestricted")
+	}
+	src := storeSource{app: app}
+	for _, who := range []string{"alice", "bob", ""} {
+		if !st.AllowsUser(who) {
+			t.Errorf("an empty list should allow %q", who)
+		}
+		if len(src.ItemTools(who, st.Slug)) == 0 && who != "" {
+			t.Errorf("%q lost tools on an unrestricted store", who)
+		}
 	}
 }
