@@ -226,6 +226,9 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/api/agents/import         — POST: create a new agent from an uploaded recipe
 //	/api/agents/suggest        — POST: ✨ per-field AI suggestion for the editor
 //	/api/agents/wizard         — POST: guided create (drafts prompt from the brief)
+//	/api/machines              — list / create phase machines
+//	/api/machines/{id}         — read / replace / delete one (+ /export)
+//	/api/machines/import       — POST: create a machine from a recipe
 //	/api/sessions              — list (agent_id query param)
 //	/api/sessions/{sid}        — load / delete (agent_id query param)
 //	/api/send                  — SSE send (agent_id in body)
@@ -514,6 +517,14 @@ func (T *OrchestrateApp) Routes() {
 	// routes (get/put/delete/export/run) in handlePipelineOne.
 	T.HandleFunc("/api/pipelines/import", g(T.handlePipelineImport))
 	T.HandleFunc("/api/pipelines/", g(T.handlePipelineOne))
+	// Phase machines (machines_http.go, docs/agent-machines.md). Same
+	// route shape as pipelines, minus /run — a machine only runs inside a
+	// session, so there is nothing to invoke from here.
+	T.HandleFunc("/api/machines", g(T.handleMachines))
+	// Feeds the chat toolbar's status pill with the session's current phase.
+	T.HandleFunc("/api/session-status", g(T.handleSessionStatus))
+	T.HandleFunc("/api/machines/import", g(T.handleMachineImport))
+	T.HandleFunc("/api/machines/", g(T.handleMachineOne))
 	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
 	T.HandleFunc("/api/sessions", g(T.handleSessionList))
 	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))

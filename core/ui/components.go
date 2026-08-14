@@ -2124,6 +2124,22 @@ type AgentLoopPanel struct {
 	// behalf in THIS conversation — suppressed replies, discarded inputs,
 	// retries — which otherwise vanish into server logs. Empty = no affordance.
 	DiagnosticsURL string `json:"diagnostics_url,omitempty"`
+	// StatusURL — optional per-session status readout. When set, the toolbar
+	// shows a small pill whose text comes from this URL, refreshed when the
+	// active session changes and after each turn completes. {session} in the
+	// URL is substituted with the active session id.
+	//
+	//	GET → {label, title?, tone?}
+	//
+	// label is the pill's text; empty / absent renders NOTHING, which is how a
+	// session with nothing to report stays quiet. title is the hover text. tone
+	// is "mute" (default) or "active" for a stronger treatment.
+	//
+	// Deliberately generic: the panel knows a session can have a one-word state
+	// worth showing beside the composer, and nothing about what that state
+	// means. An app that wants to surface a workflow phase, a connection state,
+	// or a review stage serves this shape and names it in its own words.
+	StatusURL string `json:"status_url,omitempty"`
 	// Schedules rail section — optional. When SchedulesURL is set, the rail shows
 	// a single "Scheduler" entry carrying the TOTAL count; clicking it opens a
 	// modal that lists every entry grouped by category. This keeps a schedule

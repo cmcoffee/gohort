@@ -898,6 +898,33 @@
     }
 
     var actionsBar = el('div', {class: 'ui-agent-actions'});
+    // Per-session status pill — a one-word state the app wants beside the
+    // composer (a workflow phase, a connection state, a review stage). The
+    // panel knows only the shape: {label, title, tone}, empty label = render
+    // nothing, so a session with nothing to report stays quiet.
+    var statusPill = null;
+    function refreshStatusPill() {
+      if (!cfg.status_url || !statusPill) return;
+      var sid = activeSessionId || '';
+      if (!sid) { statusPill.style.display = 'none'; return; }
+      var url = substituteExtras(cfg.status_url).replace('{session}', encodeURIComponent(sid));
+      fetchJSON(url).then(function(s) {
+        var label = (s && s.label) || '';
+        if (!label) { statusPill.style.display = 'none'; return; }
+        statusPill.textContent = label;
+        statusPill.title = (s && s.title) || '';
+        statusPill.style.color = (s && s.tone === 'active') ? 'var(--accent)' : 'var(--text-mute)';
+        statusPill.style.display = '';
+      }).catch(function() {
+        // A status readout is decoration. It never gets to interrupt a
+        // conversation with an error toast.
+        statusPill.style.display = 'none';
+      });
+    }
+    if (cfg.status_url) {
+      statusPill = el('span', {class: 'ui-status-pill', style: 'display:none;font-size:0.72rem;padding:0.15rem 0.5rem;border:1px solid var(--border);border-radius:999px;white-space:nowrap;align-self:center'});
+      actionsBar.appendChild(statusPill);
+    }
     // Session diagnostics — the framework's decisions made on the user's
     // behalf in this conversation (suppressed replies, discarded inputs,
     // retries), which otherwise vanish into server logs. Generic: the app
@@ -3185,6 +3212,7 @@
         case 'session':
           activeSessionId = ev.id || '';
           if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, activeSessionId);
+          refreshStatusPill();
           // The server just told us which thread this is. Watch it — a
           // background task started by this very turn will post its result
           // here, and nothing else on the client is looking.
@@ -3389,6 +3417,8 @@
         case 'done':
           enableInput();
           setStatus('');
+          // A turn can move whatever the app's status pill reports.
+          refreshStatusPill();
           // Refresh side rail so the just-completed turn's timestamp
           // bumps to the top. Second delayed refresh catches the
           // async title summarizer that some apps fire as a
@@ -4782,6 +4812,7 @@
       }
       // SESSION mode — replay messages from the saved conversation.
       activeSessionId = sid || '';
+      refreshStatusPill();
       // Start every open as a plain session; the load below re-flags channel
       // rooms so transcript labels never leak from a previously-open channel.
       channelTranscript = null;

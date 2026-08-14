@@ -6657,6 +6657,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// centralizes authoring (no more pipeline-tool clutter +
 			// LLM oscillation on general agents).
 			t.pipelineGroupedToolDef(),
+			// machine (create / update / list / get / delete) — author
+			// session-resident phase machines. Builder-only for the same
+			// reason as pipeline: shaping how an agent's conversation
+			// runs is authoring work. Other agents don't manage machines;
+			// they RUN the one they're pointed at, and leave it with
+			// change_phase.
+			t.machineGroupedToolDef(),
 			// app_def (create / update / list / get / delete) — author
 			// data-driven gohort APPS (real in-dashboard surfaces served
 			// by customapps at /custom/<slug>/). Builder-only, same

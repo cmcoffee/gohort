@@ -3968,6 +3968,309 @@
         }, pipesList);
       });
 
+      // --- Machines modal --------------------------------------------
+      // Phase machines (docs/agent-machines.md). Single-select, unlike
+      // Pipelines: an agent runs at most ONE machine, so this is a radio
+      // list rather than the chip_picker's toggle set.
+      window.uiRegisterClientAction('orchestrate_machines_modal', function(ctx) {
+        var id = getAgentID();
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
+        // The open session, when there is one. Its machine's diagram is
+        // then drawn with the overlay — where this conversation is
+        // sitting and which edges it has actually taken — which is the
+        // whole reason the picture beats the list of phase names.
+        var activeSid = (ctx && ctx.sessionId) || '';
+        Promise.all([
+          fetch('api/machines').then(function(r) { return r.ok ? r.json() : {machines: []}; }),
+          fetchAgent(id)
+        ]).then(function(res) {
+          var machines = (res[0] && res[0].machines) || [];
+          var agent = res[1] || {};
+          var m = openOrchModal('Machines — ' + (agent.name || id));
+          var help = document.createElement('div');
+          help.className = 'ui-orch-modal-help';
+          help.textContent = 'A phase machine gives this agent a workflow it moves through and STAYS in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The agent keeps its persona — the machine supplies procedure. Author machines from chat with the machine tool.';
+          m.body.appendChild(help);
+
+          var picked = agent.machine || '';
+          var list = document.createElement('div');
+          list.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem';
+          m.body.appendChild(list);
+
+          if (!machines.length) {
+            var empty = document.createElement('div');
+            empty.style.cssText = 'color:var(--text-mute);font-size:0.82rem;line-height:1.5';
+            empty.textContent = 'No machines yet. Ask Builder for one — say what the conversation should work out first and what it should settle into doing. It can attach the result to this agent in the same step.';
+            list.appendChild(empty);
+          }
+
+          // Every row is one radio option; "None" is first so there is
+          // always a way back to a plain agent.
+          function row(value, title, subtitle, meta) {
+            var wrap = document.createElement('label');
+            wrap.style.cssText = 'display:flex;gap:0.55rem;align-items:flex-start;padding:0.5rem 0.6rem;border:1px solid var(--border);border-radius:6px;cursor:pointer';
+            var radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'orch-machine-pick';
+            radio.value = value;
+            radio.checked = (picked === value);
+            radio.style.cssText = 'margin-top:0.2rem;flex:0 0 auto';
+            radio.addEventListener('change', function() { if (radio.checked) picked = value; });
+            wrap.appendChild(radio);
+            var text = document.createElement('div');
+            text.style.cssText = 'flex:1 1 auto;min-width:0';
+            var t = document.createElement('div');
+            t.style.cssText = 'font-weight:600;color:var(--text);font-size:0.86rem';
+            t.textContent = title;
+            text.appendChild(t);
+            if (subtitle) {
+              var sub = document.createElement('div');
+              sub.style.cssText = 'color:var(--text-mute);font-size:0.76rem;line-height:1.45;margin-top:0.1rem';
+              sub.textContent = subtitle;
+              text.appendChild(sub);
+            }
+            if (meta) {
+              var mt = document.createElement('div');
+              mt.style.cssText = 'color:var(--text-mute);font-size:0.72rem;line-height:1.45;margin-top:0.2rem';
+              mt.textContent = meta;
+              text.appendChild(mt);
+            }
+            wrap.appendChild(text);
+            return wrap;
+          }
+
+          list.appendChild(row('', 'None', 'The persona governs every turn — the agent decides its approach fresh each time.', ''));
+
+          machines.forEach(function(mc) {
+            var names = (mc.phase_names || []).join(' → ');
+            var meta = names ? ('Phases: ' + names + '. Starts in ' + (mc.start || '?') + '.') : '';
+            if (mc.used_by && mc.used_by.length) {
+              meta += ' Used by: ' + mc.used_by.join(', ') + '.';
+            } else {
+              meta += ' Not attached to any agent.';
+            }
+            var r = row(mc.id, mc.name, mc.description || '', meta);
+            // The picture. A list of phase names implies an order a
+            // machine does not have — guards go backward, routers go
+            // sideways, resident phases loop. Fetched as text and
+            // injected inline (rather than an <img>) so the page's CSS
+            // variables theme it; the server escapes every dynamic
+            // string in the document for exactly that reason.
+            var figWrap = document.createElement('div');
+            figWrap.style.cssText = 'margin-top:0.5rem;overflow-x:auto;max-width:100%';
+            var figToggle = document.createElement('button');
+            figToggle.className = 'ui-orch-modal-btn';
+            figToggle.type = 'button';
+            figToggle.textContent = 'Show diagram';
+            figToggle.style.cssText = 'font-size:0.72rem;padding:0.15rem 0.5rem;margin-top:0.4rem';
+            var shown = false;
+            figToggle.onclick = function(ev) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              shown = !shown;
+              figToggle.textContent = shown ? 'Hide diagram' : 'Show diagram';
+              if (!shown) { figWrap.innerHTML = ''; return; }
+              var gURL = 'api/machines/' + encodeURIComponent(mc.id) + '/graph';
+              if (activeSid && agent.machine === mc.id) {
+                gURL += '?agent=' + encodeURIComponent(id) + '&session=' + encodeURIComponent(activeSid);
+              }
+              fetch(gURL)
+                .then(function(resp) { return resp.ok ? resp.text() : ''; })
+                .then(function(svg) {
+                  figWrap.innerHTML = svg || '';
+                  if (activeSid && agent.machine === mc.id) {
+                    var live = document.createElement('div');
+                    live.style.cssText = 'color:var(--accent,#6366f1);font-size:0.7rem;margin-top:0.3rem';
+                    live.textContent = 'Highlighted: where this conversation is now, and the transitions it has taken.';
+                    figWrap.appendChild(live);
+                  }
+                  if (mc.legend && mc.legend.length) {
+                    var lg = document.createElement('div');
+                    lg.style.cssText = 'color:var(--text-mute);font-size:0.7rem;line-height:1.5;margin-top:0.3rem';
+                    lg.textContent = mc.legend.join(' ');
+                    figWrap.appendChild(lg);
+                  }
+                })
+                .catch(function() { figWrap.textContent = 'Diagram unavailable.'; });
+            };
+            // Edit. A machine gets TUNED — guard wording, phase prompts,
+            // whether a phase should be resident — which is a different
+            // relationship from a pipeline's write-once-and-run. Until
+            // there is a per-phase form (which wants a live run and St4
+            // behind it first), the definition itself is the editor: the
+            // validator reports every problem at once, which is what
+            // makes raw JSON survivable.
+            var editBtn = document.createElement('button');
+            editBtn.className = 'ui-orch-modal-btn';
+            editBtn.type = 'button';
+            editBtn.textContent = 'Edit';
+            editBtn.style.cssText = 'font-size:0.72rem;padding:0.15rem 0.5rem;margin-top:0.4rem;margin-right:0.35rem';
+            editBtn.onclick = function(ev) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              m.close();
+              openMachineEditor(mc.id, mc.name);
+            };
+            r.querySelector('div').appendChild(editBtn);
+            r.querySelector('div').appendChild(figToggle);
+            r.querySelector('div').appendChild(figWrap);
+            // Delete lives on the row rather than in the footer: the
+            // footer's Save applies to the AGENT, and one button that
+            // sometimes means "save this agent" and sometimes "destroy a
+            // machine" is how someone deletes a workflow by accident.
+            var del = document.createElement('button');
+            del.className = 'ui-orch-list-del';
+            del.type = 'button';
+            del.textContent = '×';
+            del.title = 'Delete this machine everywhere';
+            del.style.cssText = 'flex:0 0 auto';
+            del.onclick = function(ev) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              var warn = 'Delete the machine "' + mc.name + '"?';
+              if (mc.used_by && mc.used_by.length) {
+                warn += ' It will be detached from ' + mc.used_by.join(', ') + '.';
+              }
+              warn += ' Conversations already running it keep their history and continue as ordinary agent turns.';
+              Promise.resolve(window.uiConfirm ? window.uiConfirm(warn) : confirm(warn)).then(function(ok) {
+                if (!ok) return;
+                fetch('api/machines/' + encodeURIComponent(mc.id), {method: 'DELETE'})
+                  .then(function(resp) {
+                    if (!resp.ok) return resp.text().then(function(t) { throw new Error(t); });
+                    m.close();
+                    window.UIClientActions['orchestrate_machines_modal']();
+                  })
+                  .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+              });
+            };
+            r.appendChild(del);
+            list.appendChild(r);
+          });
+
+          var note = document.createElement('div');
+          note.style.cssText = 'color:var(--text-mute);font-size:0.74rem;line-height:1.5;margin-top:0.7rem';
+          note.textContent = 'Conversations already open keep the machine they started with — this applies to new sessions.';
+          m.body.appendChild(note);
+
+          var cancelBtn = document.createElement('button');
+          cancelBtn.className = 'ui-orch-modal-btn';
+          cancelBtn.textContent = 'Cancel';
+          cancelBtn.onclick = m.close;
+          var saveBtn = document.createElement('button');
+          saveBtn.className = 'ui-orch-modal-btn primary';
+          saveBtn.textContent = 'Save';
+          saveBtn.onclick = function() {
+            saveBtn.disabled = true;
+            // Partial update: this posts ONLY the machine field, so
+            // nothing else on the agent can be clobbered by a stale read.
+            fetch('api/agents/' + encodeURIComponent(id), {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({machine: picked}),
+            }).then(function(resp) {
+              if (!resp.ok) return resp.text().then(function(t) { throw new Error(t); });
+              m.close();
+            }).catch(function(err) {
+              saveBtn.disabled = false;
+              window.uiAlert('Save failed: ' + (err && err.message || err));
+            });
+          };
+          m.footer.appendChild(cancelBtn);
+          m.footer.appendChild(saveBtn);
+        }).catch(function(err) {
+          window.uiAlert('Could not load machines: ' + (err && err.message || err));
+        });
+      });
+
+      // openMachineEditor edits one machine's definition as JSON.
+      //
+      // Deliberately the raw recipe rather than a form: the phase schema
+      // is still moving (St4 is allowed to change it), and a form built
+      // against a moving schema is the expensive thing to throw away.
+      // The server's validator is what makes this usable — it reports
+      // every problem in one response instead of one per round trip.
+      function openMachineEditor(machineID, machineName) {
+        fetch('api/machines/' + encodeURIComponent(machineID))
+          .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then(function(def) {
+            var m = openOrchModal('Edit machine — ' + (machineName || machineID));
+            var help = document.createElement('div');
+            help.className = 'ui-orch-modal-help';
+            help.textContent = 'The machine definition. Every phase needs a name and a prompt; at least one must be resident (user turns land there). Transient phases hand off with next or next_from. Ask Builder for machine(action="help") for the full spec — or just describe the change to it instead of editing here.';
+            m.body.appendChild(help);
+
+            // Storage metadata is the server's and is overwritten on save,
+            // so showing it invites edits that silently do nothing.
+            var recipe = {
+              name: def.name || '',
+              description: def.description || '',
+              start: def.start || '',
+              phases: def.phases || []
+            };
+
+            var errBox = document.createElement('div');
+            errBox.style.cssText = 'display:none;white-space:pre-wrap;color:var(--danger,#dc2626);background:var(--danger-soft,rgba(220,38,38,0.08));border:1px solid var(--danger,#dc2626);border-radius:6px;padding:0.5rem 0.6rem;font-size:0.78rem;line-height:1.5;margin-bottom:0.5rem';
+            m.body.appendChild(errBox);
+            function fail(msg) {
+              errBox.textContent = msg;
+              errBox.style.display = '';
+              errBox.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            }
+
+            var ta = document.createElement('textarea');
+            ta.value = JSON.stringify(recipe, null, 2);
+            ta.spellcheck = false;
+            ta.style.cssText = 'width:100%;min-height:22rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.78rem;line-height:1.5;padding:0.6rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical';
+            m.body.appendChild(ta);
+
+            function back() { m.close(); window.UIClientActions['orchestrate_machines_modal'](); }
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'ui-orch-modal-btn';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = back;
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'ui-orch-modal-btn primary';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = function() {
+              var body;
+              try {
+                body = JSON.parse(ta.value);
+              } catch (err) {
+                // Caught here rather than sent, so a stray comma reads as
+                // what it is instead of coming back as a generic 400.
+                fail('That is not valid JSON: ' + (err && err.message || err));
+                return;
+              }
+              saveBtn.disabled = true;
+              errBox.style.display = 'none';
+              fetch('api/machines/' + encodeURIComponent(machineID), {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+              }).then(function(resp) {
+                if (!resp.ok) {
+                  return resp.text().then(function(t) { throw new Error(t.trim()); });
+                }
+                back();
+              }).catch(function(err) {
+                // The edits stay in the box: a rejected save that also
+                // threw away the work is how someone stops editing here.
+                saveBtn.disabled = false;
+                fail(err && err.message || String(err));
+              });
+            };
+            m.footer.appendChild(cancelBtn);
+            m.footer.appendChild(saveBtn);
+          })
+          .catch(function(err) {
+            window.uiAlert('Could not load that machine: ' + (err && err.message || err));
+          });
+      }
+
       // --- Skills modal ----------------------------------------------
       // Active skills allowlist for this agent.
       window.uiRegisterClientAction('orchestrate_skills_modal', function() {

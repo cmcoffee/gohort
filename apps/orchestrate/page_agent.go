@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -201,6 +202,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "plan_guidance", Type: "textarea", Label: "Plan guidance", Rows: 3,
 			Help:       "Optional. Appended to the orchestrator prompt — nudges decomposition style.",
 			SuggestURL: "../api/agents/suggest"},
+		// Sits under Persona because that is what it changes: the persona
+		// above stays the agent's identity, and the machine supplies the
+		// procedure layered on top of it per phase.
+		machineSelectField(udb, user),
 		{Type: "header", Label: "Budgets", Collapsed: true,
 			Help: "How much compute the agent may spend per turn."},
 		{Field: "max_plan_steps", Type: "number", Label: "Max plan steps", Min: 1, Max: 12,
@@ -860,6 +865,39 @@ func leadModelField(show bool) ui.FormField {
 	return ui.FormField{
 		Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
 		Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local, unless Admin \u2192 LLMs \u2192 Model Privacy says every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this: an agent holding the `consult` tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning — not one hard question — is what needs the stronger model.",
+	}
+}
+
+// machineSelectField renders the phase-machine picker for the agent
+// editor (docs/agent-machines.md).
+//
+// Options are baked at render time from the user's saved machines rather
+// than fetched, because FormField has no options URL and this is a
+// short, rarely-changing list — the same choice every other select on
+// this page makes.
+//
+// A user with no machines gets a HIDDEN field rather than an empty
+// select. A control whose only option is "None" teaches nothing and
+// invites a support question; the tool that authors machines is where
+// someone learns they exist. Hidden with no Default contributes nothing
+// to the save payload, so an agent that already has a machine attached
+// (by tool or API) keeps it.
+func machineSelectField(udb Database, user string) ui.FormField {
+	defs := ListMachineDefs(udb, user)
+	if len(defs) == 0 {
+		return ui.FormField{Field: "machine", Type: "hidden"}
+	}
+	opts := []ui.SelectOption{{Value: "", Label: "None — the persona above governs every turn"}}
+	for _, d := range defs {
+		label := d.Name + " (" + strconv.Itoa(len(d.Phases)) + " phases)"
+		if desc := strings.TrimSpace(d.Description); desc != "" {
+			label += " — " + desc
+		}
+		opts = append(opts, ui.SelectOption{Value: d.ID, Label: label})
+	}
+	return ui.FormField{
+		Field: "machine", Type: "select", Label: "Phase machine", Options: opts,
+		Help: "Optional. A machine gives this agent PHASES it moves through and stays in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The persona above still supplies identity and voice — the machine supplies procedure. Sessions already open keep the machine they started with; this applies to new ones. Author machines from chat with the `machine` tool.",
 	}
 }
 

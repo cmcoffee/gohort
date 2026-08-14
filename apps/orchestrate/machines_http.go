@@ -1,0 +1,288 @@
+// HTTP surface for phase machines (core.MachineDef). Mirrors the
+// pipeline routes exactly — per-user CRUD plus the portable-recipe
+// export/import — because a machine is the same kind of object: a
+// serializable recipe with no runtime state in it.
+//
+//	GET    /api/machines              → {machines: [{id, name, description, phases, start}]}
+//	POST   /api/machines              → create (body: {name, description, start, phases})
+//	POST   /api/machines/import       → import a recipe (body: exported MachineDef)
+//	GET    /api/machines/{id}         → full def
+//	PUT    /api/machines/{id}         → replace the def's fields/phases
+//	DELETE /api/machines/{id}         → delete
+//	GET    /api/machines/{id}/export  → portable recipe (id/owner/timestamps stripped)
+//	GET    /api/machines/{id}/graph   → SVG of the phases and transitions;
+//	                                    ?agent=&session= overlays a live conversation
+//
+// There is no /run: a machine has nowhere to run OUTSIDE a session. It
+// runs when a chat turn on an agent that points at it comes in. That
+// asymmetry with pipelines is the whole difference between the two
+// primitives, and it is why this file is half the length of its twin.
+//
+// Pointing an agent at a machine happens in three places, all writing
+// the same AgentRecord.Machine field: the picker on the agent editor
+// (machineSelectField), the `machine` tool's attach_to_agents, and the
+// partial-update path POST /api/agents/{agentID} {"machine": "<id>"}
+// (`""` detaches). The picker hides itself when the user has no
+// machines, so handleAgentList distinguishes a body that OMITTED the
+// field from one that cleared it — see the key probe there.
+
+package orchestrate
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+// handleSessionStatus feeds the chat toolbar's status pill
+// (AgentLoopPanel.StatusURL) — for a session running a machine, which
+// phase it is sitting in.
+//
+//	GET /api/session-status?agent=<id>&session=<id> → {label, title, tone}
+//
+// An empty label renders nothing, which is every session that isn't
+// running a machine — i.e. all of them until someone attaches one. The
+// panel contract is generic on purpose; this is orchestrate's answer to
+// it, and another app's would say something else entirely.
+func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+	if agentID == "" || sessionID == "" {
+		writeJSON(w, map[string]any{})
+		return
+	}
+	sess, ok := loadChatSession(udb, agentID, sessionID)
+	if !ok || sess.Phase == "" || sess.MachineID == "" {
+		writeJSON(w, map[string]any{})
+		return
+	}
+	def, ok := LoadMachineDef(udb, user, sess.MachineID)
+	if !ok {
+		// The machine was deleted under a live session. Say so rather than
+		// showing a phase name from a workflow that no longer exists —
+		// the next turn will run as an ordinary agent turn, and the pill
+		// is where someone would look to understand why.
+		writeJSON(w, map[string]any{
+			"label": "phase: " + sess.Phase + " (machine gone)",
+			"title": "The machine this conversation was running has been deleted. Turns now run as ordinary agent turns.",
+		})
+		return
+	}
+	title := "Phase " + sess.Phase + " of " + def.Name + "."
+	if ph, found := def.Phase(sess.Phase); found && strings.TrimSpace(ph.Desc) != "" {
+		title += " " + strings.TrimSpace(ph.Desc)
+	}
+	if n := len(sess.MachineState); n > 0 {
+		title += " " + strconv.Itoa(n) + " earlier phase result(s) pinned to this conversation."
+	}
+	writeJSON(w, map[string]any{"label": sess.Phase, "title": title, "tone": "active"})
+}
+
+// machineRow is the trimmed list shape: enough for a picker and a list
+// view without shipping every phase's prompt on a list call.
+type machineRow struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Phases      int      `json:"phases"`
+	PhaseNames  []string `json:"phase_names,omitempty"`
+	Start       string   `json:"start,omitempty"`
+	// UsedBy names the agents pointing at this machine. Computed here
+	// rather than left to the client because it is the single most
+	// useful fact about a machine: an unattached one is inert, and
+	// "why is nothing happening" is the question this answers.
+	UsedBy []string `json:"used_by,omitempty"`
+	// Legend explains the graph the modal renders beside the row —
+	// chiefly what is deliberately NOT drawn. Comes from the same
+	// adapter as the picture so the two can never disagree.
+	Legend []string `json:"legend,omitempty"`
+}
+
+// handleMachines serves the collection routes: GET list, POST create.
+func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		defs := ListMachineDefs(udb, user)
+		users := map[string][]string{}
+		for _, ag := range listAgents(udb, user) {
+			if ag.Machine != "" {
+				users[ag.Machine] = append(users[ag.Machine], chFirst(ag.Name, ag.ID))
+			}
+		}
+		rows := make([]machineRow, 0, len(defs))
+		for _, d := range defs {
+			rows = append(rows, machineRow{
+				ID: d.ID, Name: d.Name, Description: d.Description,
+				Phases: len(d.Phases), PhaseNames: d.PhaseNames(),
+				Start: d.StartPhase(), UsedBy: users[d.ID],
+				Legend: d.Graph().Legend,
+			})
+		}
+		writeJSON(w, map[string]any{"machines": rows})
+	case http.MethodPost:
+		var def MachineDef
+		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// Force a fresh, user-owned record — the client doesn't get to
+		// assert id/owner on create.
+		def.ID = ""
+		def.Owner = user
+		if err := def.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		saved := SaveMachineDef(udb, def)
+		Log("[orchestrate.machines] user=%q created machine %q (id=%s, %d phases)", user, saved.Name, saved.ID, len(saved.Phases))
+		writeJSON(w, saved)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleMachineImport accepts a portable recipe and saves it as a new
+// user-owned machine. Registered as a more-specific route than
+// /api/machines/ so it wins the ServeMux longest-prefix match.
+func (T *OrchestrateApp) handleMachineImport(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var recipe MachineDef
+	if err := json.NewDecoder(r.Body).Decode(&recipe); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	saved, err := ImportMachine(udb, user, recipe)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	Log("[orchestrate.machines] user=%q imported machine %q (id=%s)", user, saved.Name, saved.ID)
+	writeJSON(w, saved)
+}
+
+// handleMachineOne serves per-machine routes: GET / PUT / DELETE plus
+// /export.
+func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/machines/")
+	if rest == "" {
+		http.NotFound(w, r)
+		return
+	}
+	var id, action string
+	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+		id, action = rest[:slash], rest[slash+1:]
+	} else {
+		id = rest
+	}
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	def, found := LoadMachineDef(udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch action {
+	case "":
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, def)
+		case http.MethodPut:
+			var body MachineDef
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			// Identity stays the server's: keep id/owner/created from the
+			// loaded record, take everything else from the body.
+			body.ID = def.ID
+			body.Owner = user
+			body.Created = def.Created
+			if err := body.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			saved := SaveMachineDef(udb, body)
+			Log("[orchestrate.machines] user=%q updated machine %q (id=%s)", user, saved.Name, saved.ID)
+			writeJSON(w, saved)
+		case http.MethodDelete:
+			// Detach from every agent first — same as the tool's delete,
+			// through the same function, so an agent is never left
+			// pointing at a machine that isn't there.
+			//
+			// Live SESSIONS are a different case and are deliberately
+			// left alone: they keep their pinned MachineID and cursor,
+			// and their next turn degrades to an ordinary agent turn with
+			// a machine_missing breadcrumb. Broken-dependency posture —
+			// surface the break, don't quietly rewrite a conversation
+			// somebody is in the middle of.
+			detached := detachMachineFromAgents(udb, user, def.ID)
+			DeleteMachineDef(udb, def.ID)
+			Log("[orchestrate.machines] user=%q deleted machine %q (id=%s, detached from %d agent(s))", user, def.Name, def.ID, len(detached))
+			writeJSON(w, map[string]any{"deleted": def.ID, "detached": detached})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case "graph":
+		// The picture (docs/workflow-graph.md). With ?session=<id> it
+		// carries the overlay: where that conversation is sitting and
+		// which edges it has actually taken. Without one it is the plain
+		// structure.
+		//
+		// Served as SVG so it can be linked, saved, or opened on its own;
+		// the modal fetches the text and injects it inline, which is what
+		// lets the page's CSS variables theme it. Every dynamic string in
+		// the document is escaped at the renderer (see xmlEscape) for
+		// exactly that reason.
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var overlay *WorkflowOverlay
+		if sid := strings.TrimSpace(r.URL.Query().Get("session")); sid != "" {
+			agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+			if sess, ok := loadChatSession(udb, agentID, sid); ok && sess.MachineID == def.ID {
+				cur := MachineCursor{Phase: sess.Phase, State: sess.MachineState, Log: sess.MachineLog}
+				overlay = cur.Overlay()
+			}
+		}
+		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(def.Graph().SVG(overlay)))
+	case "export":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		recipe := ExportMachine(def)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+SnakeFromDisplay(def.Name)+".machine.json\"")
+		_ = json.NewEncoder(w).Encode(recipe)
+	default:
+		http.NotFound(w, r)
+	}
+}
