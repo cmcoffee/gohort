@@ -37,18 +37,18 @@ func TestSafeJoinRefusesEscape(t *testing.T) {
 		"../etc/passwd", "../../etc/cron.d/x", "/etc/shadow", "",
 		"a/../../b", "./../out", `..\..\windows\system32`,
 	} {
-		if _, ok := safeJoin(root, bad); ok {
+		if _, ok := SafeJoin(root, bad); ok {
 			t.Errorf("safeJoin accepted %q — it escapes the staging root", bad)
 		}
 	}
 	for _, good := range []string{"var/log/messages", "./a/b.log", "x.log"} {
-		got, ok := safeJoin(root, good)
+		got, ok := SafeJoin(root, good)
 		if !ok {
 			t.Errorf("safeJoin refused %q, which stays inside the root", good)
 			continue
 		}
 		if !strings.HasPrefix(got, root) {
-			t.Errorf("safeJoin(%q) = %q, outside %q", good, got, root)
+			t.Errorf("SafeJoin(%q) = %q, outside %q", good, got, root)
 		}
 	}
 }

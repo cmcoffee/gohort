@@ -180,8 +180,8 @@ func capabilitiesSection() ui.Section {
 					Confirm: "Approve this capability?\n\nThe agent will be able to run this command on this system whenever it decides to, " +
 						"without asking again. Make sure you have read exactly what it runs."},
 				{Type: "button", Label: "Revoke", OnlyIf: "approved",
-					PostTo: "api/appliance-tool?appliance={appliance_id}&name={name}&approved=0",
-					Method: "POST",
+					PostTo:  "api/appliance-tool?appliance={appliance_id}&name={name}&approved=0",
+					Method:  "POST",
 					Confirm: "Revoke this capability? The agent keeps the request but can no longer run it."},
 				{Type: "button", Label: "Delete", Variant: "danger", Compact: true,
 					PostTo:  "api/appliance-tool?appliance={appliance_id}&name={name}",

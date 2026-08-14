@@ -12,11 +12,7 @@
 package servitor
 
 import (
-	"archive/tar"
-	"archive/zip"
 	"bufio"
-	"compress/bzip2"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -156,7 +152,7 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 	if relPath == "" {
 		return bf, false, fmt.Errorf("empty path")
 	}
-	if unopenedArchive(relPath) {
+	if UnopenedArchive(relPath) {
 		bf.Format = bundleFormatArchive
 		return bf, false, nil
 	}
@@ -318,272 +314,31 @@ func bundleYearFromInfo(info os.FileInfo) int {
 
 // unopenedArchive reports whether a path looks like an archive this pass has no
 // built-in expander for — the honest complement to expandArchives.
-func unopenedArchive(p string) bool {
-	l := strings.ToLower(p)
-	for _, ext := range []string{".xz", ".txz", ".tar.xz", ".7z", ".rar", ".zst", ".tar.zst", ".lz4", ".enc", ".gpg", ".pgp", ".aes"} {
-		if strings.HasSuffix(l, ext) {
-			return true
-		}
-	}
-	return false
-}
 
 // --- expansion ---
 
-// expandArchives repeatedly expands archives found under dir, in place, until
-// nothing is left to expand or the depth cap is reached. Each archive is
-// replaced by a directory of the same name, so the bundle path of an extracted
-// file records where it came from.
+// expandArchives expands everything under dir, in place, and folds the
+// result into the ingest stats.
+//
+// The expander itself lives in core (core/archive.go): it was lifted out
+// of here once the file store's upload path wanted the same thing, and
+// a second implementation would have been the expensive mistake — this
+// one knows an archive is untrusted input, and that knowledge is spread
+// across every function in it rather than sitting in one check somebody
+// could remember to copy.
 func expandArchives(ctx context.Context, dir string, depth int, st *bundleIngestStats) error {
-	if depth >= maxUnpackDepth {
-		return nil
-	}
-	var archives []string
-	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !d.Type().IsRegular() {
-			return nil
-		}
-		if expanderFor(p) != nil {
-			archives = append(archives, p)
-		}
-		return nil
+	res, err := ExpandArchives(ctx, dir, ExpandLimits{
+		// The bundle budget is the WHOLE bundle's, and bytes already
+		// ingested count against it, so the expander gets what is left
+		// rather than the full cap.
+		MaxBytes: maxBundleBytes - st.Bytes,
+		MaxDepth: maxUnpackDepth - depth,
 	})
-	if err != nil {
-		return err
-	}
-	if len(archives) == 0 {
-		return nil
-	}
-	for _, a := range archives {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		fn := expanderFor(a)
-		if fn == nil {
-			continue
-		}
-		if err := fn(a, st); err != nil {
-			// A corrupt member inside a dump is common and is not a reason
-			// to reject the dump. The archive stays in place and is
-			// reported as unopened.
-			Log("[servitor.bundle] expand %q: %v", filepath.Base(a), err)
-			st.Skipped++
-			continue
-		}
-		os.Remove(a)
-	}
-	return expandArchives(ctx, dir, depth+1, st)
-}
-
-// bundleExpander expands one archive next to itself.
-type bundleExpander func(path string, st *bundleIngestStats) error
-
-// expanderFor picks the expander for a path, or nil when it is not an archive
-// we open. Order matters: ".tar.gz" must be seen as a tar, not a gzip.
-func expanderFor(p string) bundleExpander {
-	l := strings.ToLower(p)
-	switch {
-	case strings.HasSuffix(l, ".tar.gz"), strings.HasSuffix(l, ".tgz"):
-		return expandTarGz
-	case strings.HasSuffix(l, ".tar.bz2"), strings.HasSuffix(l, ".tbz"), strings.HasSuffix(l, ".tbz2"):
-		return expandTarBz2
-	case strings.HasSuffix(l, ".tar"):
-		return expandTar
-	case strings.HasSuffix(l, ".zip"):
-		return expandZip
-	case strings.HasSuffix(l, ".gz"):
-		return expandGz
-	case strings.HasSuffix(l, ".bz2"):
-		return expandBz2
-	}
-	return nil
-}
-
-// expandDirFor returns the directory an archive expands into: the archive's
-// path with its extension replaced by ".d", so two archives whose names differ
-// only by extension cannot collide.
-func expandDirFor(archive string) string {
-	base := archive
-	for _, ext := range []string{".tar.gz", ".tar.bz2", ".tgz", ".tbz2", ".tbz", ".tar", ".zip"} {
-		if strings.HasSuffix(strings.ToLower(base), ext) {
-			base = base[:len(base)-len(ext)]
-			break
-		}
-	}
-	return base + ".d"
-}
-
-func expandTarGz(p string, st *bundleIngestStats) error {
-	f, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	zr, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	return untar(tar.NewReader(zr), expandDirFor(p), st)
-}
-
-func expandTarBz2(p string, st *bundleIngestStats) error {
-	f, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return untar(tar.NewReader(bzip2.NewReader(f)), expandDirFor(p), st)
-}
-
-func expandTar(p string, st *bundleIngestStats) error {
-	f, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return untar(tar.NewReader(f), expandDirFor(p), st)
-}
-
-// untar extracts a tar stream into dest. Every member is checked against the
-// destination root before anything is created: an archive is untrusted input,
-// and "../../etc/cron.d/x" inside a customer's dump has to fail as a refused
-// member rather than as a file written outside the staging tree.
-func untar(tr *tar.Reader, dest string, st *bundleIngestStats) error {
-	if err := os.MkdirAll(dest, 0700); err != nil {
-		return err
-	}
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		target, ok := safeJoin(dest, hdr.Name)
-		if !ok {
-			st.Skipped++
-			continue
-		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			os.MkdirAll(target, 0700)
-		case tar.TypeReg:
-			if err := writeExtracted(target, tr, hdr.Size, st); err != nil {
-				return err
-			}
-		default:
-			// Symlinks, hardlinks, devices, fifos: a bundle is read as data,
-			// never re-created as a filesystem, so a link that would point
-			// out of the tree simply is not made.
-			st.Skipped++
-		}
-	}
-}
-
-func expandZip(p string, st *bundleIngestStats) error {
-	zr, err := zip.OpenReader(p)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	dest := expandDirFor(p)
-	if err := os.MkdirAll(dest, 0700); err != nil {
-		return err
-	}
-	for _, f := range zr.File {
-		target, ok := safeJoin(dest, f.Name)
-		if !ok {
-			st.Skipped++
-			continue
-		}
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(target, 0700)
-			continue
-		}
-		if !f.Mode().IsRegular() {
-			st.Skipped++
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			st.Skipped++
-			continue
-		}
-		err = writeExtracted(target, rc, int64(f.UncompressedSize64), st)
-		rc.Close()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// expandGz decompresses a single gzip file to the same name without ".gz".
-func expandGz(p string, st *bundleIngestStats) error {
-	f, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	zr, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	return writeExtracted(strings.TrimSuffix(p, filepath.Ext(p)), zr, -1, st)
-}
-
-// expandBz2 decompresses a single bzip2 file to the same name without ".bz2".
-func expandBz2(p string, st *bundleIngestStats) error {
-	f, err := os.Open(p)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return writeExtracted(strings.TrimSuffix(p, filepath.Ext(p)), bzip2.NewReader(f), -1, st)
-}
-
-// writeExtracted copies one member out, enforcing the whole-bundle byte budget
-// as it goes. declared is the member's advertised size (-1 when unknown, as for
-// a raw compressed stream); the copy is capped regardless, because a declared
-// size is a claim made by the archive and the archive is the untrusted party.
-func writeExtracted(target string, src io.Reader, declared int64, st *bundleIngestStats) error {
-	if declared >= 0 && st.Bytes+declared > maxBundleBytes {
-		return fmt.Errorf("bundle exceeds the %s expanded-size cap", HumanSize(maxBundleBytes))
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-		return err
-	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	remaining := maxBundleBytes - st.Bytes
-	n, err := io.Copy(out, io.LimitReader(src, remaining+1))
-	st.Bytes += n
-	if err != nil {
-		return err
-	}
-	if n > remaining {
-		return fmt.Errorf("bundle exceeds the %s expanded-size cap", HumanSize(maxBundleBytes))
-	}
-	return nil
-}
-
-// safeJoin resolves an archive member name under root, refusing anything that
-// escapes it. Returns ok=false for absolute paths, traversal, and empty names.
-func safeJoin(root, name string) (string, bool) {
-	name = strings.ReplaceAll(strings.TrimSpace(name), "\\", "/")
-	if name == "" || strings.HasPrefix(name, "/") {
-		return "", false
-	}
-	clean := filepath.Clean(filepath.Join(root, name))
-	rootClean := filepath.Clean(root) + string(os.PathSeparator)
-	if !strings.HasPrefix(clean, rootClean) {
-		return "", false
-	}
-	return clean, true
+	st.Bytes += res.Bytes
+	st.Skipped += res.Skipped
+	// An archive we could not open is reported as unopened, the same as
+	// one we have no expander for: from the reader's side both mean
+	// "there is more in here that nobody has read".
+	st.Unopened += res.Unopened
+	return err
 }

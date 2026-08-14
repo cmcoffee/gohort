@@ -33,6 +33,7 @@ func TestDisconnectRemovesAccess(t *testing.T) {
 		t.Error("a disconnected agent must lose access to the machine")
 	}
 }
+
 // The grantable-targets picker hands the modal "agent:<id>" values, but the
 // runtime dispatches with the bare id. A grant saved under the wrapped form
 // used to be unfindable by the very run it was written for — the connection
