@@ -46,10 +46,31 @@ type PathScopeResolver func(user, name, value string) (string, error)
 // model just has to discover the names some other way.
 type PathScopeLister func(user, name string) []string
 
-type pathScope struct {
-	resolve PathScopeResolver
-	list    PathScopeLister
+// PathScopeRoot is one registered root, for a picker or a prompt that
+// has to name the choices.
+type PathScopeRoot struct {
+	Ref    string // "kind:name", what a parameter declares
+	Label  string // human name
+	Detail string // what lands there, if the owner said
 }
+
+// PathScopeRootsFunc enumerates the roots of one kind for a user.
+type PathScopeRootsFunc func(user string) []PathScopeRoot
+
+// PathScope is one kind's implementation.
+type PathScope struct {
+	// Resolve proves a value lands inside a named root and returns its
+	// absolute path. Required.
+	Resolve PathScopeResolver
+	// Values lists what is currently valid inside one root. Optional.
+	Values PathScopeLister
+	// Roots enumerates the roots of this kind. Optional, and what lets a
+	// tool AUTHOR discover that a constraint is available at all — an
+	// unadvertised constraint is one nobody declares.
+	Roots PathScopeRootsFunc
+}
+
+type pathScope = PathScope
 
 var (
 	pathScopeMu sync.RWMutex
@@ -59,13 +80,42 @@ var (
 // RegisterPathScope registers a resolver for one kind ("files"). Called
 // at startup by the app that owns those roots, the same way a reference
 // source or a tool provider registers.
-func RegisterPathScope(kind string, resolve PathScopeResolver, list PathScopeLister) {
-	if strings.TrimSpace(kind) == "" || resolve == nil {
+func RegisterPathScope(kind string, sc PathScope) {
+	if strings.TrimSpace(kind) == "" || sc.Resolve == nil {
 		return
 	}
 	pathScopeMu.Lock()
 	defer pathScopeMu.Unlock()
-	pathScopes[kind] = pathScope{resolve: resolve, list: list}
+	pathScopes[kind] = sc
+}
+
+// PathScopeRoots lists every registered root across every kind, for a
+// prompt or picker that has to say what constraints are available.
+//
+// Sorted, because it lands in a prompt: a list that reshuffles between
+// calls costs a prefix-cache miss for nothing.
+func PathScopeRoots(user string) []PathScopeRoot {
+	pathScopeMu.RLock()
+	kinds := make([]string, 0, len(pathScopes))
+	for k := range pathScopes {
+		kinds = append(kinds, k)
+	}
+	pathScopeMu.RUnlock()
+	sort.Strings(kinds)
+
+	var out []PathScopeRoot
+	for _, k := range kinds {
+		pathScopeMu.RLock()
+		sc := pathScopes[k]
+		pathScopeMu.RUnlock()
+		if sc.Roots == nil {
+			continue
+		}
+		roots := sc.Roots(user)
+		sort.Slice(roots, func(i, j int) bool { return roots[i].Ref < roots[j].Ref })
+		out = append(out, roots...)
+	}
+	return out
 }
 
 // SplitPathScopeRef splits a "kind:name" reference.
@@ -93,7 +143,7 @@ func ResolvePathScope(user, ref, value string) (string, error) {
 		return "", Error("this parameter is limited to " + strconv.Quote(kind) +
 			", and nothing here provides that. Nothing ran. Tell the person the constraint names a source their deployment does not have.")
 	}
-	return sc.resolve(user, name, value)
+	return sc.Resolve(user, name, value)
 }
 
 // PathScopeChoices lists the currently valid values for a scope, for a
@@ -104,10 +154,10 @@ func PathScopeChoices(user, ref string) []string {
 	pathScopeMu.RLock()
 	sc, ok := pathScopes[kind]
 	pathScopeMu.RUnlock()
-	if !ok || sc.list == nil {
+	if !ok || sc.Values == nil {
 		return nil
 	}
-	out := sc.list(user, name)
+	out := sc.Values(user, name)
 	sort.Strings(out)
 	return out
 }

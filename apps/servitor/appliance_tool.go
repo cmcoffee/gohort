@@ -302,17 +302,21 @@ Rules:
 - Put every flag, path, subcommand and sudo INSIDE the template. The template is frozen after this.
 - Use {placeholders} ONLY where a value genuinely varies between runs (a version, a filename, a service name). A request with nothing variable should have no parameters at all.
 - Declare every placeholder as a parameter with a type. Use an enum ONLY when the known facts list the allowed values.
+- When a placeholder is a FOLDER that belongs to one of the file stores listed below, declare "path_scope":"files:<slug>" on that parameter instead of an enum. The value is then checked against that store when the tool RUNS, and substituted as an absolute path. Use this rather than an enum whenever the set of folders can change, which it usually can — an enum is frozen when you write it and a drop folder is not.
 - Never put a placeholder where a flag or subcommand goes. Values are quoted at runtime, so a placeholder can never contribute syntax.
 - Name the tool for what it DOES on this machine, lowercase with underscores.
 
 Reply with ONLY JSON:
-{"name":"restart_nginx","description":"Restart the nginx service","template":"sudo systemctl restart nginx","params":{},"required":[]}`
+{"name":"restart_nginx","description":"Restart the nginx service","template":"sudo systemctl restart nginx","params":{},"required":[]}
+
+With a folder parameter it looks like this:
+{"name":"parse_bundle","description":"Run logparse over one bundle","template":"logparse --dir {dir}","params":{"dir":{"type":"string","description":"Which bundle to parse.","path_scope":"files:support_bundles"}},"required":["dir"]}`
 
 // MintApplianceTool maps an intent onto a concrete command for one system.
 //
 // Returns the tool UNSAVED and unapproved — the caller decides whether to keep
 // it, and the owner decides whether it may run. Minting is a proposal.
-func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Appliance, facts []SshFact, intent, agentID string) (ApplianceTool, error) {
+func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Appliance, facts []SshFact, intent, agentID, owner string) (ApplianceTool, error) {
 	if chat == nil {
 		return ApplianceTool{}, fmt.Errorf("no worker model available to map that request")
 	}
@@ -321,6 +325,20 @@ func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Applian
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "MACHINE: %s\n", applianceLabel(appliance.Name, appliance.ID))
+	// Advertise the path constraints available on this deployment. An
+	// unadvertised constraint is one nobody declares: the model cannot
+	// scope a parameter to a store it has never been told exists, and
+	// would reach for a free string or a frozen enum instead.
+	if roots := PathScopeRoots(owner); len(roots) > 0 {
+		b.WriteString("\nFILE STORES ON THIS SERVER (use path_scope for a folder parameter):\n")
+		for _, rt := range roots {
+			line := "- " + rt.Ref + " — " + rt.Label
+			if rt.Detail != "" {
+				line += ": " + rt.Detail
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 	if known := formatFacts(facts); strings.TrimSpace(known) != "" {
 		fmt.Fprintf(&b, "\nWHAT IS KNOWN ABOUT IT:\n%s\n", known)
 	} else {
@@ -371,4 +389,56 @@ func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Applian
 func ApplianceToolJSON(t ApplianceTool) string {
 	raw, _ := json.MarshalIndent(t, "", "  ")
 	return string(raw)
+}
+
+// --- unchecked path parameters ----------------------------------------
+
+// pathishParam matches a parameter name that almost certainly carries a
+// filesystem path. Deliberately generous: over-flagging costs a sentence
+// on an approval row, under-flagging costs the thing this exists to
+// catch.
+var pathishParam = regexp.MustCompile(`(?i)(^|_)(dir|directory|folder|path|file|filename|bundle|log|logs|target)($|_)`)
+
+// UncheckedPathParams names the parameters that look like a path and
+// carry no constraint at all — no path_scope, no enum.
+//
+// This is the SILENT failure of the whole arrangement. Rendering quotes
+// a value so it can never contribute shell syntax, which reads as safety
+// and is not: "../../var/lib/something" is a perfectly well-formed
+// single argument. A tool minted without a path_scope still WORKS, and
+// nothing about running it looks wrong, so the miss survives until
+// someone goes looking for it.
+//
+// The answer is not to refuse the tool — a path parameter that genuinely
+// has no store behind it is legitimate, and refusing would push authors
+// toward baking a fixed path into the template instead. The answer is to
+// say so on the row where the decision is made.
+func (t ApplianceTool) UncheckedPathParams() []string {
+	var out []string
+	for name, p := range t.Params {
+		if strings.TrimSpace(p.PathScope) != "" || len(p.Enum) > 0 {
+			continue
+		}
+		if !pathishParam.MatchString(name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ScopedPathParams names the parameters that ARE constrained to a
+// registered root, with the root they are constrained to. Shown for the
+// same reason: an approver should be able to see the check exists, not
+// just its absence.
+func (t ApplianceTool) ScopedPathParams() []string {
+	var out []string
+	for name, p := range t.Params {
+		if s := strings.TrimSpace(p.PathScope); s != "" {
+			out = append(out, name+" → "+s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

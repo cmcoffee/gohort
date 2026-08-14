@@ -39,6 +39,17 @@ type applianceToolRow struct {
 	// free to disagree with this one.
 	Approved bool   `json:"approved"`
 	Created  string `json:"created"`
+	// Checks describes what constrains this tool's PARAMETERS, on the row
+	// where the approval decision is made.
+	//
+	// Quoting is not containment, and the difference is invisible at run
+	// time: a tool whose folder parameter is unconstrained works exactly
+	// like one whose parameter is checked, right up until a value points
+	// somewhere it should not. Neither the command column nor the risk
+	// category says anything about it — Risk classifies the TEMPLATE,
+	// which is frozen and fine. So the row says it explicitly, in both
+	// directions: what is checked, and what is not.
+	Checks string `json:"checks,omitempty"`
 }
 
 // handleApplianceTools lists every proposal, pending first — the ones needing a
@@ -79,6 +90,7 @@ func (T *Servitor) handleApplianceTools(w http.ResponseWriter, r *http.Request) 
 			Command: t.Template, Risk: string(t.Risk), RequestedBy: by,
 			Status: status, Approved: t.Approved,
 			Created: t.Created.Format("2006-01-02 15:04"),
+			Checks:  toolChecksText(t),
 		})
 	}
 	// Pending first, then by machine and name, so the decisions are at the top
@@ -155,7 +167,10 @@ func capabilitiesSection() ui.Section {
 		Title: "Requested capabilities",
 		Subtitle: "Commands an agent asked to be able to run, and the ones you have already allowed. " +
 			"Read the command before approving: an approved capability runs whenever the agent decides to use it, " +
-			"without asking again, subject to the risk categories you have granted that agent.",
+			"without asking again, subject to the risk categories you have granted that agent. " +
+			"The Arguments column says what constrains each parameter — a value is always quoted, so it cannot " +
+			"add shell syntax, but quoting does not stop a path pointing somewhere it should not. A parameter " +
+			"marked UNCHECKED PATH accepts any value; scope it to a file store if it is meant to name a folder.",
 		Body: ui.Table{
 			Source:    "api/appliance-tools",
 			RowKey:    "id",
@@ -167,6 +182,11 @@ func capabilitiesSection() ui.Section {
 				// approved; everything else on the row is metadata about it.
 				{Field: "command", Label: "Runs", Flex: 5},
 				{Field: "risk", Label: "Risk", Flex: 1, Mute: true},
+				// Not muted when it carries a warning: this column is the
+				// only place the difference between a checked and an
+				// unchecked path parameter is visible, and it is invisible
+				// everywhere else including at run time.
+				{Field: "checks", Label: "Arguments", Flex: 3},
 				{Field: "requested_by", Label: "Asked by", Flex: 1, Mute: true},
 				{Field: "status", Label: "", Flex: 1, Type: "badge", Badges: []ui.BadgeMapping{
 					{Value: "pending", Label: "pending", Color: "warning"},
@@ -190,4 +210,24 @@ func capabilitiesSection() ui.Section {
 			},
 		},
 	}
+}
+
+// toolChecksText renders what constrains a tool's parameters, for the
+// approval row. Says the unchecked half FIRST: an approver skimming a
+// list needs the thing that wants a second look to be the thing they see.
+func toolChecksText(t ApplianceTool) string {
+	unchecked := t.UncheckedPathParams()
+	scoped := t.ScopedPathParams()
+	if len(unchecked) == 0 && len(scoped) == 0 {
+		return ""
+	}
+	var parts []string
+	if len(unchecked) > 0 {
+		parts = append(parts, "UNCHECKED PATH: "+strings.Join(unchecked, ", ")+
+			" — any value is accepted, including one pointing outside the intended folder")
+	}
+	if len(scoped) > 0 {
+		parts = append(parts, "checked: "+strings.Join(scoped, ", "))
+	}
+	return strings.Join(parts, " · ")
 }

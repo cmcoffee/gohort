@@ -133,7 +133,7 @@ type RequestCapabilityArgs struct {
 // then has to explain the situation to a person. It says what was proposed, the
 // exact command, and — the part that matters — that nothing will happen until
 // the owner approves.
-func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, agentID string, in RequestCapabilityArgs) (string, error) {
+func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, owner, agentID string, in RequestCapabilityArgs) (string, error) {
 	appliance, ok := findAppliance(udb, in.System)
 	if !ok {
 		return "", fmt.Errorf("no system called %q — list the systems first and use one of those names exactly", in.System)
@@ -145,7 +145,7 @@ func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, age
 		return "", fmt.Errorf("you are not enabled for %s. Nothing was requested — tell the person that the owner has to connect you to that system in Servitor before you can ask for capabilities on it",
 			applianceLabel(appliance.Name, appliance.ID))
 	}
-	tool, err := MintApplianceTool(ctx, chat, appliance, factsForAppliance(udb, appliance.ID), in.Intent, agentID)
+	tool, err := MintApplianceTool(ctx, chat, appliance, factsForAppliance(udb, appliance.ID), in.Intent, agentID, owner)
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +197,7 @@ func sortedParamNames(p map[string]ToolParam) []string {
 // answer "can you talk to lab-box?" — the connection was real but invisible,
 // and the model guessed no. The provider passes the list already sorted, so
 // the description is byte-stable across turns and the prompt prefix caches.
-func RequestCapabilityToolDef(udb Database, chat FactChatFunc, agentID string, connected []Appliance) AgentToolDef {
+func RequestCapabilityToolDef(udb Database, chat FactChatFunc, owner, agentID string, connected []Appliance) AgentToolDef {
 	desc := "Ask for a new ability on one of the owner's systems, described in plain words — \"restart the web server\", \"tail the app log\", \"deploy a given version\". " +
 		"Servitor works out the exact command for THAT machine and stores it as a proposal for the owner to approve. " +
 		"Nothing runs now, and nothing runs later without their approval. " +
@@ -218,7 +218,7 @@ func RequestCapabilityToolDef(udb Database, chat FactChatFunc, agentID string, c
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			return RequestCapability(context.Background(), udb, chat, agentID, RequestCapabilityArgs{
+			return RequestCapability(context.Background(), udb, chat, owner, agentID, RequestCapabilityArgs{
 				System: StringArg(args, "system"),
 				Intent: StringArg(args, "intent"),
 			})

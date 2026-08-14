@@ -154,7 +154,7 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 		chat = servitorRef.WorkerChat
 	}
 	out := []AgentToolDef{
-		RequestCapabilityToolDef(udb, chat, agentID, enabled),
+		RequestCapabilityToolDef(udb, chat, owner, agentID, enabled),
 	}
 	// The question route: open-ended "what's the state of X?" goes to the
 	// per-appliance investigator (read-only, via InvestigateSync) rather

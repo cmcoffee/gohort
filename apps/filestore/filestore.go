@@ -43,8 +43,14 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// registeredFileStoreApp is the instance the registrations below close
+// over. Held in a var so a test can point the path-scope registry at a
+// fixture rather than at the process-wide instance, which has no DB.
+var registeredFileStoreApp *FileStoreApp
+
 func init() {
 	app := new(FileStoreApp)
+	registeredFileStoreApp = app
 	RegisterApp(app)
 	// Registered against the same instance so the source reads T.DB at
 	// request time, after startup wires it — the same pattern the account
@@ -56,7 +62,13 @@ func init() {
 	// frozen enum cannot cover, because the whole point of a drop folder
 	// is that new names appear without ceremony. See core/path_scope.go.
 	// The obvious caller is a servitor command tool pointed at a bundle.
-	RegisterPathScope("files", app.resolveScope, app.listScope)
+	// Bound through the package var rather than the local, so the
+	// resolvers follow whichever instance is live.
+	RegisterPathScope("files", PathScope{
+		Resolve: func(u, n, v string) (string, error) { return registeredFileStoreApp.resolveScope(u, n, v) },
+		Values:  func(u, n string) []string { return registeredFileStoreApp.listScope(u, n) },
+		Roots:   func(u string) []PathScopeRoot { return registeredFileStoreApp.scopeRoots(u) },
+	})
 }
 
 // resolveScope proves a caller-supplied name is a subfolder of one store
@@ -82,6 +94,19 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 			", exactly as it was listed")
 	}
 	return dir, nil
+}
+
+// scopeRoots advertises each store as a constraint a tool parameter can
+// declare. Without this a tool author cannot discover the constraint
+// exists, and an unadvertised constraint is one nobody uses.
+func (T *FileStoreApp) scopeRoots(user string) []PathScopeRoot {
+	var out []PathScopeRoot
+	for _, st := range ListStores(T.DB) {
+		out = append(out, PathScopeRoot{
+			Ref: "files:" + st.Slug, Label: st.Name, Detail: strings.TrimSpace(st.Description),
+		})
+	}
+	return out
 }
 
 // listScope names the folders currently in a store, so a tool

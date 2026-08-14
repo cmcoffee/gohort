@@ -59,7 +59,7 @@ func TestAWorkspaceIsNotDescribedAsAMachine(t *testing.T) {
 // other does not.
 func TestBothToolsShareOneList(t *testing.T) {
 	ask := AskSystemToolDef(nil, "craig", "a1", vocabAppliances(), nil)
-	req := RequestCapabilityToolDef(nil, nil, "a1", vocabAppliances())
+	req := RequestCapabilityToolDef(nil, nil, "owner", "a1", vocabAppliances())
 	list := connectedSystemList(vocabAppliances(), nil)
 	for name, desc := range map[string]string{
 		"ask_system":         ask.Tool.Description,

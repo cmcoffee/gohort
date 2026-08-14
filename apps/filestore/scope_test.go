@@ -193,3 +193,28 @@ func TestAdminGateIsOpenWhenAuthIsNotConfigured(t *testing.T) {
 		t.Error("a deployment with no users should not be locked out of its own config")
 	}
 }
+
+// A constraint nobody can discover is a constraint nobody declares. The
+// mint prompt lists the available roots so a tool author can scope a
+// folder parameter to one; without this it reaches for a free string or
+// a frozen enum, and the frozen enum is exactly what cannot express a
+// drop folder.
+func TestStoresAreAdvertisedAsPathScopeRoots(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	prevApp := registeredFileStoreApp
+	registeredFileStoreApp = app
+	defer func() { registeredFileStoreApp = prevApp }()
+
+	var found bool
+	for _, rt := range PathScopeRoots("u") {
+		if rt.Ref == "files:"+st.Slug {
+			found = true
+			if rt.Label != st.Name {
+				t.Errorf("root should carry the store's name, got %q", rt.Label)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the store is not advertised as a path scope root")
+	}
+}
