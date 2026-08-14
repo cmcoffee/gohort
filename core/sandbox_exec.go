@@ -280,11 +280,48 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", err, timedOut, buf.Len(), dur)
 	return SandboxedShellResult{
-		Output:   buf.String(),
+		Output:   explainMissingGohortModule(buf.String(), sb.remapsPaths()),
 		Err:      err,
 		Sandbox:  sandbox,
 		TimedOut: timedOut,
 	}
+}
+
+// explainMissingGohortModule appends the real cause when a script died
+// because the helper package was not there.
+//
+// ModuleNotFoundError names the script's IMPORT, never the deployment
+// that failed, and the model reading it cannot tell those apart. What it
+// does instead is report an unspecified "environmental fault" and route
+// around the tool — which is the expensive half: an investigation that
+// stops one step short, or worse, an answer assembled from guesses
+// because one door was shut for a reason nobody could state.
+//
+// The bwrap argv already calls this outcome "the right shape" when it
+// skips the bind mount. It is the right shape for a human reading a
+// stack trace and the wrong one for the only reader it actually has.
+func explainMissingGohortModule(out string, remaps bool) string {
+	if !strings.Contains(out, "No module named 'gohort'") &&
+		!strings.Contains(out, "No module named \"gohort\"") {
+		return out
+	}
+	libDir := EnsureGohortLibDir()
+	note := "\n[gohort] The `gohort` helper package could not be deployed on this host, so it is " +
+		"not present in the sandbox. This is a DEPLOYMENT fault, not a problem with the arguments " +
+		"you passed, and no retry or different argument will get around it — say so plainly and do " +
+		"not work around it by guessing at what the tool would have returned. "
+	if libDir == "" {
+		note += "Nothing was written: the server log carries the reason under [hook/helpers]."
+	} else {
+		note += "The package is on disk at " + libDir + "/gohort/__init__.py"
+		if remaps {
+			note += " and should be mounted at " + SandboxGohortLibMountPath +
+				"; it is not, so the bind mount is the thing to check."
+		} else {
+			note += "; this host does not remap paths, so PYTHONPATH should name that directory directly."
+		}
+	}
+	return out + note + "\n"
 }
 
 // bwrapArgv builds the bwrap invocation. Workspace is bind-mounted as
