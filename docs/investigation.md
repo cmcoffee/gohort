@@ -92,6 +92,21 @@ Per-investigation specifics live in the session and go with it. The machine's ow
 the triage and the hunch for the length of the conversation and no longer, which is why nothing
 needs per-folder memory scoping.
 
+## What it learns
+
+`verify` and `answer` both end by asking for a lesson — and scoping it. The rule has to be about the
+SHAPE of the data ("connection resets appear in the gateway log, not the application log"), never
+about the bundle it came from ("the Acme capture had the errors in svc.log"). The second is read on
+every future investigation, and every future investigation is about somebody else's system.
+
+The ask has to be there or nothing accumulates: `store_fact` is a tool the agent calls when it
+notices something durable, and nothing else in these prompts ever mentions noticing.
+
+The test given is whether it would change where you START next time. "And then it worked" has no rule
+underneath it, and a wrong rule is worse than no rule — it is in the prompt forever and sends the next
+investigation to the wrong file with confidence. Read Configure → Memory after the first few real
+runs rather than after twenty.
+
 ## Open
 
 - **Loop or report on refutation.** `verify` stays put and reports rather than looping back for a

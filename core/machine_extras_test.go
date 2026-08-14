@@ -121,6 +121,24 @@ func TestInvestigationRecipeSeparatesHunchFromVerification(t *testing.T) {
 	if !ok || !answer.Resident {
 		t.Fatal("answer must be a resident phase for questions with no observation")
 	}
+
+	// Both ENDING phases must ask for a lesson, and must scope it to the
+	// shape of the data rather than the incident.
+	//
+	// Without the ask, the agent learns nothing across investigations:
+	// store_fact is a tool it calls when it notices something durable, and
+	// nothing else in these prompts ever mentions noticing. With the ask
+	// but no scoping, it learns the wrong thing — a fact about one
+	// customer's capture, injected into every future turn, aimed at
+	// somebody else's system.
+	for _, ph := range []MachinePhase{verify, answer} {
+		if !strings.Contains(ph.Prompt, "store_fact") {
+			t.Errorf("%s never asks for a lesson — nothing here accumulates across investigations", ph.Name)
+		}
+		if !strings.Contains(ph.Prompt, "never as a fact about this bundle") {
+			t.Errorf("%s asks for a lesson without scoping it away from the incident", ph.Name)
+		}
+	}
 }
 
 // The starter is what someone sees when they ask for a new machine. It
