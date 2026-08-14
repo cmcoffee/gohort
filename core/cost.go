@@ -215,10 +215,18 @@ func FormatUsage(d UsageDiff) string {
 //
 //	[my-op-e56fd6d0]
 //	  Worker tokens: in=1,666,688 out=169,033
-//	  Lead tokens:   in=161,010 out=14,921
+//	  Lead tokens:   in=161,010 out=14,921 (fresh=2 cached=110,672 written=50,336)
 //	  Searches:      157
 //	  Images:        0
 //	  Est. cost:     $0.2389
+//
+// The "in=" figures are the WHOLE prompt — fresh input plus cache reads
+// plus cache writes — because that is the prompt the model saw. The cache
+// split is printed beside it because those three are billed at wildly
+// different rates (a read at a tenth, a write at a premium), so the same
+// "in=961,041" can be worth thirty cents or three dollars and the number
+// alone cannot tell you which. Without the split, "is caching even being
+// counted?" is unanswerable from the report that exists to answer it.
 func FormatUsageReport(label string, d UsageDiff) string {
 	rates := GetCostRates()
 	var cost string
@@ -228,11 +236,21 @@ func FormatUsageReport(label string, d UsageDiff) string {
 		cost = fmt.Sprintf("$%.4f", rates.Estimate(d))
 	}
 	return fmt.Sprintf(
-		"[%s]\n  Worker tokens: in=%d out=%d\n  Lead tokens:   in=%d out=%d\n  Searches:      %d\n  Images:        %d\n  Est. cost:     %s",
+		"[%s]\n  Worker tokens: in=%d out=%d%s\n  Lead tokens:   in=%d out=%d%s\n  Searches:      %d\n  Images:        %d\n  Est. cost:     %s",
 		label,
-		d.WorkerPrompt(), d.WorkerOutput,
-		d.LeadPrompt(), d.LeadOutput,
+		d.WorkerPrompt(), d.WorkerOutput, cacheSplit(d.WorkerInput, d.WorkerCacheRead, d.WorkerCacheWrite),
+		d.LeadPrompt(), d.LeadOutput, cacheSplit(d.LeadInput, d.LeadCacheRead, d.LeadCacheWrite),
 		d.SearchCalls, d.ImageCalls, cost)
+}
+
+// cacheSplit renders the three components of a prompt, or nothing when
+// the provider reported no caching at all — a report about a provider
+// that does not cache should not grow a column of zeroes.
+func cacheSplit(fresh, read, written int64) string {
+	if read == 0 && written == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (fresh=%d cached=%d written=%d)", fresh, read, written)
 }
 
 // BuildDiff aggregates per-session token counts with search/image

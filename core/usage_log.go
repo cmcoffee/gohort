@@ -43,6 +43,7 @@ func dropLegacyUsageDaily() {
 var (
 	usageDailyMu       sync.Mutex
 	usageDailyDropOnce sync.Once
+	usageDropWarnOnce  sync.Once
 )
 
 // recordDailyUsage rolls a single call's UsageDiff into today's
@@ -51,6 +52,16 @@ var (
 // never fail a working call.
 func recordDailyUsage(diff UsageDiff) {
 	if RootDB == nil {
+		// Said once, because the alternative is what happened: a
+		// deployment reporting "Est. cost: $3.0001" per request from the
+		// in-process tracker while the admin cost history stayed empty,
+		// with nothing anywhere connecting the two. Cost logging still
+		// must not fail the call — this only makes the drop visible.
+		usageDropWarnOnce.Do(func() {
+			Log("[usage] no root database is wired, so per-day cost history is NOT being recorded. " +
+				"Per-request totals still add up in memory; the admin cost chart will stay empty. " +
+				"This means init_database() ran on a path that did not set RootDB.")
+		})
 		return
 	}
 	if diff == (UsageDiff{}) {

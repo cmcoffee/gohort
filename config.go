@@ -1285,6 +1285,16 @@ func init_database() {
 	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
+	// RootDB is set HERE, not by the caller. It used to be assigned on one
+	// line after init_database() in the serve path, and init_database has
+	// four callers — the CLI task runner, interactive chat, and setup left
+	// it nil. Everything keyed off RootDB then degraded quietly, cost
+	// persistence included: recordDailyUsage no-ops without it, so a
+	// deployment could report a per-request cost of $3.00 from the
+	// in-process tracker while the admin history recorded nothing at all.
+	// An invariant maintained by hand in four places and honoured in one is
+	// not an invariant.
+	RootDB = global.db
 	SetErrTable(global.db.Table("fuzz_errors"))
 	global.cache = global.db.Sub("cache")
 

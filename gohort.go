@@ -296,8 +296,7 @@ func main() {
 		}
 		Log("### %s v%s ###", APPNAME, VERSION)
 		go LogDependencyHealth() // probe external tools; warn on any missing or stale (e.g. an out-of-date yt-dlp)
-		init_database()
-		RootDB = global.db
+		init_database() // sets RootDB itself — see the note there
 		// Legacy chunk homes to fold into the dedicated VectorDB on the
 		// first boot after the split: RootDB root (deployment-collection
 		// chunks) and the orchestrate bucket (agent knowledge + user
