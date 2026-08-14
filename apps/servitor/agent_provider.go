@@ -90,10 +90,18 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	granted := map[string]bool{}
 	// member id -> the workspace label that reaches it, for the description.
 	viaWorkspace := map[string]string{}
+	// askableOwn is the connected set MINUS the targets marked ToolsOnly.
+	// Kept apart from `enabled` because the two answer different
+	// questions: enabled decides which approved tools an agent gets,
+	// askableOwn decides what it may ask open questions about.
+	var askableOwn []Appliance
 	for _, a := range all {
 		if applianceEnabledForAgent(udb, agentID, a.ID) {
 			enabled = append(enabled, a)
 			granted[strings.ToLower(a.ID)] = true
+			if !a.ToolsOnly {
+				askableOwn = append(askableOwn, a)
+			}
 		}
 	}
 	if len(enabled) == 0 {
@@ -114,7 +122,7 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	// and keys on a direct connection, while ask_system reads and keys on this.
 	// Handing both the same list would put a machine in one tool's description
 	// that the same tool then refuses by name.
-	askable := append([]Appliance{}, enabled...)
+	askable := append([]Appliance{}, askableOwn...)
 	for _, a := range enabled {
 		if a.Type != "workspace" {
 			continue
@@ -126,6 +134,12 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 				continue // unknown, or already connected in its own right
 			}
 			granted[key] = true
+			if m.ToolsOnly {
+				// Reaching a target through a workspace must not grant
+				// what a direct connection would have withheld, or the
+				// flag is bypassed by putting the target in a group.
+				continue
+			}
 			viaWorkspace[key] = applianceLabel(a.Name, a.ID)
 			askable = append(askable, m)
 		}
@@ -141,12 +155,18 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	}
 	out := []AgentToolDef{
 		RequestCapabilityToolDef(udb, chat, agentID, enabled),
-		// The question route: open-ended "what's the state of X?" goes to the
-		// per-appliance investigator (read-only, via InvestigateSync) rather
-		// than being something the calling agent needs a shell for. Gets the
-		// WIDE list — workspace members included — matching what its handler
-		// accepts.
-		AskSystemToolDef(udb, owner, agentID, askable, viaWorkspace),
+	}
+	// The question route: open-ended "what's the state of X?" goes to the
+	// per-appliance investigator (read-only, via InvestigateSync) rather
+	// than being something the calling agent needs a shell for. Gets the
+	// WIDE list — workspace members included — matching what its handler
+	// accepts.
+	//
+	// Omitted entirely when every reachable target is ToolsOnly: a tool
+	// whose only honest answer is "there is nothing you may ask about"
+	// teaches the model to stop reading its own catalog.
+	if len(askable) > 0 {
+		out = append(out, AskSystemToolDef(udb, owner, agentID, askable, viaWorkspace))
 	}
 	for _, a := range enabled {
 		// Only a machine the agent is connected to IN ITS OWN RIGHT contributes

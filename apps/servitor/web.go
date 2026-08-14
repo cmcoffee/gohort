@@ -109,6 +109,29 @@ type Appliance struct {
 	Port     int    `json:"port"`
 	User     string `json:"user"`
 	Password string `json:"password"`
+	// ToolsOnly withholds the ASKING tools for this target: a connected
+	// agent gets its approved minted tools and nothing else. Open
+	// questions (ask_system) route to the per-appliance investigator,
+	// and the investigator RECORDS what it learns into this appliance's
+	// memory scope (note_lesson / record_technique, see runSession).
+	//
+	// That is exactly right for a machine, where one box is one subject
+	// and accumulated technique is the point. It is exactly wrong for a
+	// target that stands in for MANY subjects — a command appliance
+	// whose WorkDir is a parent of many log bundles — because every
+	// bundle then shares one scope, and a technique learned on last
+	// week's incident is in view while reading this week's.
+	//
+	// The alternative was one appliance per bundle, which isolates
+	// correctly and reintroduces the per-bundle setup the arrangement
+	// exists to avoid. This makes the isolation a property instead of a
+	// discipline: with no asking route, nothing writes the scope, so
+	// there is nothing to contaminate.
+	//
+	// The minted tools are unaffected — executing one renders a template
+	// and runs it, and writes no memory at all.
+	ToolsOnly bool `json:"tools_only,omitempty"`
+
 	// Command fields (Type == "command")
 	Command string   `json:"command"`  // local command name or path
 	WorkDir string   `json:"work_dir"` // optional working directory

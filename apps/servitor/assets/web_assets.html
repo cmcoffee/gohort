@@ -767,6 +767,8 @@
         placeholder: 'e.g. /opt/myapp (optional)', value: rec.work_dir || ''});
       var envIn = el('textarea', {class: 'ui-form-input', rows: 3,
         placeholder: 'KEY=VALUE (one per line)'});
+      var toolsOnlyIn = el('input', {type: 'checkbox'});
+      toolsOnlyIn.checked = !!rec.tools_only;
       envIn.value = (rec.env_vars || []).join('\n');
       var cmdSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Command *']), cmdIn,
@@ -774,6 +776,13 @@
           ['The command the AI will invoke. Arguments can be included.']),
         el('label', {}, ['Working Directory']), workIn,
         el('label', {}, ['Environment Variables']), envIn,
+        el('label', {class: 'ui-servitor-inline'}, [toolsOnlyIn, ' Approved tools only']),
+        el('div', {class: 'ui-form-hint'},
+          ['Withholds the asking route: a connected agent gets this target\'s approved tools and nothing else. ' +
+           'Turn it ON when the target stands in for MANY subjects — a working directory holding many log bundles — ' +
+           'because asking runs the investigator, and what the investigator learns is recorded against THIS target. ' +
+           'One shared memory means a technique from last week\'s bundle is in view while reading this week\'s. ' +
+           'Leave it OFF for a real machine, where one box is one subject and accumulated technique is the point.']),
       ]);
 
       // Repository section — cloned + encrypted at rest; ask it questions
@@ -1417,6 +1426,7 @@
             password:       passIn.value,
             command:        cmdIn.value.trim(),
             work_dir:       workIn.value.trim(),
+            tools_only:     toolsOnlyIn.checked,
             env_vars:       envIn.value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
             repo_url:       repoUrlIn.value.trim(),
             repo_branch:    repoBranchIn.value.trim(),

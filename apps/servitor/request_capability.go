@@ -54,6 +54,16 @@ import (
 // the narrow one: inheriting a shell across a group is not something anyone
 // chose by putting two boxes in a workspace together.
 func applianceAskableForAgent(udb Database, agentID, applianceID string) bool {
+	// ToolsOnly withholds the asking route entirely, and it is checked
+	// HERE rather than only where the tool list is built.
+	//
+	// Filtering the description is not enforcement: a model that has
+	// seen the name once, or read it out of a log it was investigating,
+	// can name it directly. The gate the handler already calls is the
+	// only place the flag becomes a property rather than a suggestion.
+	if a, ok := findAppliance(udb, applianceID); ok && a.ToolsOnly {
+		return false
+	}
 	if applianceEnabledForAgent(udb, agentID, applianceID) {
 		return true
 	}
