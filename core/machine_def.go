@@ -570,3 +570,43 @@ func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, e
 	}
 	return SaveMachineDef(udb, recipe), nil
 }
+
+// StarterMachine is a blank machine that VALIDATES: the shape someone
+// gets when they ask for a new one.
+//
+// A working example rather than an empty object, because the rules a
+// machine has to satisfy — at least one resident phase, a transient
+// phase must hand off, a resident phase declares no output and cannot
+// template {input} — are easier to read off something correct than out
+// of a rejection. An editor that opens on a definition the server would
+// refuse teaches the wrong lesson about the feature in the first ten
+// seconds.
+//
+// Lives here rather than in the editor's JavaScript so there is one
+// copy and a test can prove the claim in this comment.
+func StarterMachine() MachineDef {
+	return MachineDef{
+		Name:        "New machine",
+		Description: "What this machine is for, and when to reach for it.",
+		Start:       "look",
+		Phases: []MachinePhase{
+			{
+				Name:   "look",
+				Desc:   "Work out what is actually being asked.",
+				Think:  "on",
+				Prompt: "Work out what is being asked, and hand it forward.\n\n{input}",
+				Next:   "reply",
+				Output: []PipelineField{
+					{Name: "summary", Type: FieldString, Required: true,
+						Desc: "what they are actually asking, in one sentence"},
+				},
+			},
+			{
+				Name:     "reply",
+				Desc:     "Answer, and keep answering.",
+				Resident: true,
+				Prompt:   "Answer plainly, working from what is settled below.",
+			},
+		},
+	}
+}

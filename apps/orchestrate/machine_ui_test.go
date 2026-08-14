@@ -44,8 +44,10 @@ func TestMachinesModal_ToolbarEntryAndHandlerAgree(t *testing.T) {
 	if !strings.Contains(string(assets), "function openMachineEditor(") {
 		t.Error("no machine editor — the modal can select and delete but not fix a typo")
 	}
-	if !strings.Contains(string(assets), `method: 'PUT'`) {
-		t.Error("the editor should PUT the definition")
+	// The verb is now conditional (create POSTs, edit PUTs); the create
+	// path is pinned in TestMachinesModalCanCreate.
+	if !strings.Contains(string(assets), `'PUT'`) {
+		t.Error("the editor should still PUT when editing an existing machine")
 	}
 }
 
@@ -71,5 +73,34 @@ func TestMachineSelectField_HidesItselfUntilThereIsSomethingToPick(t *testing.T)
 	}
 	if !strings.Contains(f.Options[1].Label, "Triage") || !strings.Contains(f.Options[1].Label, "decompose then answer") {
 		t.Errorf("the option should be identifiable: %q", f.Options[1].Label)
+	}
+}
+
+// The Machines modal could select, edit, diagram and delete — but not
+// create. "How do I load a machine" had no answer in the UI at all, and
+// an editor that can only edit what already exists is a strange shape
+// for the surface people are pointed at first.
+func TestMachinesModalCanCreate(t *testing.T) {
+	assets, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatalf("read assets: %v", err)
+	}
+	js := string(assets)
+
+	if !strings.Contains(js, "New machine") {
+		t.Error("no way to start a new machine from the modal")
+	}
+	// Create POSTs to the collection; edit PUTs to the item. One editor,
+	// two verbs — a second editor would drift from the first.
+	if !strings.Contains(js, "creating ? 'api/machines' : 'api/machines/'") {
+		t.Error("the editor should POST when creating and PUT when editing")
+	}
+	if !strings.Contains(js, "creating ? 'POST' : 'PUT'") {
+		t.Error("the method should follow the same switch as the URL")
+	}
+	// The starter comes from the server, so there is one copy of it and a
+	// Go test can prove it validates.
+	if !strings.Contains(js, "api/machines?starter=1") {
+		t.Error("the starter should be fetched, not written in the JavaScript")
 	}
 }

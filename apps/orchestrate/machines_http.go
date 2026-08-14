@@ -113,6 +113,16 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// ?starter=1 — a blank machine to edit, rather than an empty box.
+		//
+		// Served from Go rather than written in the editor's JavaScript so
+		// there is ONE copy and a test can prove it validates. A starter
+		// that gets rejected on first save teaches the wrong lesson about
+		// the whole feature.
+		if r.URL.Query().Get("starter") == "1" {
+			writeJSON(w, StarterMachine())
+			return
+		}
 		defs := ListMachineDefs(udb, user)
 		users := map[string][]string{}
 		for _, ag := range listAgents(udb, user) {

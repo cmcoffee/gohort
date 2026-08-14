@@ -3993,6 +3993,18 @@
           m.body.appendChild(help);
 
           var picked = agent.machine || '';
+
+          // Above the list: this acts on the COLLECTION, while the
+          // footer's Save acts on the agent. Two different subjects, so
+          // two different places.
+          var newBtn = document.createElement('button');
+          newBtn.className = 'ui-orch-modal-btn';
+          newBtn.type = 'button';
+          newBtn.textContent = 'New machine';
+          newBtn.style.cssText = 'margin-bottom:0.6rem';
+          newBtn.onclick = function() { m.close(); openMachineEditor('', ''); };
+          m.body.appendChild(newBtn);
+
           var list = document.createElement('div');
           list.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem';
           m.body.appendChild(list);
@@ -4000,7 +4012,7 @@
           if (!machines.length) {
             var empty = document.createElement('div');
             empty.style.cssText = 'color:var(--text-mute);font-size:0.82rem;line-height:1.5';
-            empty.textContent = 'No machines yet. Ask Builder for one — say what the conversation should work out first and what it should settle into doing. It can attach the result to this agent in the same step.';
+            empty.textContent = 'No machines yet. New machine above starts from a working example you can edit, or ask Builder for one — say what the conversation should work out first and what it should settle into doing, and it can attach the result to this agent in the same step.';
             list.appendChild(empty);
           }
 
@@ -4190,16 +4202,25 @@
       // The server's validator is what makes this usable — it reports
       // every problem in one response instead of one per round trip.
       function openMachineEditor(machineID, machineName) {
-        fetch('api/machines/' + encodeURIComponent(machineID))
-          .then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          })
+        var creating = !machineID;
+        // The starter comes from the SERVER, not from here. One copy, and
+        // a Go test proves it validates — an editor that opens on a
+        // definition the server would refuse teaches the wrong lesson
+        // about the whole feature in the first ten seconds.
+        var loaded = creating
+          ? fetch('api/machines?starter=1').then(function(r) { return r.json(); })
+          : fetch('api/machines/' + encodeURIComponent(machineID))
+              .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+              });
+        loaded
           .then(function(def) {
-            var m = openOrchModal('Edit machine — ' + (machineName || machineID));
+            var m = openOrchModal(creating ? 'New machine' : ('Edit machine — ' + (machineName || machineID)));
             var help = document.createElement('div');
             help.className = 'ui-orch-modal-help';
-            help.textContent = 'The machine definition. Every phase needs a name and a prompt; at least one must be resident (user turns land there). Transient phases hand off with next or next_from. Ask Builder for machine(action="help") for the full spec — or just describe the change to it instead of editing here.';
+            help.textContent = (creating ? 'A starting point you can replace entirely. ' : '') +
+              'The machine definition. Every phase needs a name and a prompt; at least one must be resident (user turns land there). Transient phases hand off with next or next_from. Ask Builder for machine(action="help") for the full spec — or just describe the change to it instead of editing here.';
             m.body.appendChild(help);
 
             // Storage metadata is the server's and is overwritten on save,
@@ -4247,8 +4268,8 @@
               }
               saveBtn.disabled = true;
               errBox.style.display = 'none';
-              fetch('api/machines/' + encodeURIComponent(machineID), {
-                method: 'PUT',
+              fetch(creating ? 'api/machines' : 'api/machines/' + encodeURIComponent(machineID), {
+                method: creating ? 'POST' : 'PUT',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(body),
               }).then(function(resp) {

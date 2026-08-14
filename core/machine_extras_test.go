@@ -122,3 +122,38 @@ func TestInvestigationRecipeSeparatesHunchFromVerification(t *testing.T) {
 		t.Fatal("answer must be a resident phase for questions with no observation")
 	}
 }
+
+// The starter is what someone sees when they ask for a new machine. It
+// must be a machine the server would accept — an editor that opens on a
+// definition the save path rejects teaches the wrong lesson about the
+// whole feature in the first ten seconds.
+func TestStarterMachineValidatesAndTeachesTheShape(t *testing.T) {
+	st := StarterMachine()
+	if err := st.Validate(); err != nil {
+		t.Fatalf("the starter does not validate:\n%v", err)
+	}
+	// It has to demonstrate the distinction, or it teaches nothing: one
+	// phase that hands off, one the conversation lives in.
+	var transient, resident int
+	for _, p := range st.Phases {
+		if p.Resident {
+			resident++
+			continue
+		}
+		transient++
+		if p.Next == "" && p.NextFrom == "" {
+			t.Errorf("starter phase %q is transient and hands off nowhere", p.Name)
+		}
+		if len(p.Output) == 0 {
+			t.Errorf("starter phase %q should show what a handoff looks like", p.Name)
+		}
+	}
+	if transient == 0 || resident == 0 {
+		t.Errorf("the starter should show both kinds of phase, got %d transient %d resident", transient, resident)
+	}
+	// And it should draw, since the first thing someone may do is look at
+	// it rather than read it.
+	if svg := st.Graph().SVG(nil); !strings.HasPrefix(svg, "<svg ") {
+		t.Error("the starter does not render")
+	}
+}
