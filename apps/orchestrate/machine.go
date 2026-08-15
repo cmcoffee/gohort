@@ -50,7 +50,7 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 		return turnMachine{}
 	}
 	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
-	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, userMsg, t.app.PhaseWorker(t.machineCatalog()), t.turnDiag)
+	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, userMsg, t.phaseRunner(), t.turnDiag)
 	if err != nil {
 		// A machine that cannot produce a phase must not cost the user
 		// the turn. Fall back to an ordinary agent turn, loudly: the
@@ -213,7 +213,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			t.phaseChanges++
 
 			cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
-			ph, err := t.app.ChangePhase(t.ctx, m.def, cur, to, why, t.app.PhaseWorker(t.machineCatalog()), t.turnDiag)
+			ph, err := t.app.ChangePhase(t.ctx, m.def, cur, to, why, t.phaseRunner(), t.turnDiag)
 			if err != nil {
 				return "", err
 			}

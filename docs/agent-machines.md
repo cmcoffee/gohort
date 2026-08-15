@@ -448,6 +448,44 @@ have, and the runtime overlay is what turns the ⚠ trail into something you can
   and have no session to hold a cursor, so they run exactly as they always did. See Open.
 
 
+## Delegating a step
+
+A transient phase can name another agent:
+
+```json
+{"name": "verify", "agent": "Log analyst", "prompt": "Test the hypothesis…", "next": "report"}
+```
+
+The other two ways a phase differs from the agent running the conversation — a narrowed tool
+catalog, a different tier — are configurations of the SAME agent. This one is not: a delegate has
+its own persona, tools and memory. It is the shape servitor uses, where something conducts and
+something with different reach does the work.
+
+The seam is `PhaseRunner`, which already meant "run this phase's prompt, hand me its declared
+fields". Delegation is a different runner, not different machinery.
+
+**Two calls when the phase declares fields.** The delegate is a whole agent and answers in prose —
+it plans, uses tools, reports. Asking it for JSON as well would put a decoder's constraints on the
+thing whose value is that it is not a decoder. So it reports, and the phase's own worker shapes that
+report into the declared fields through the same path a non-delegating phase uses, told to take the
+findings as given rather than re-do the work. A phase declaring nothing costs one call.
+
+**One continuing thread per (conversation, phase)**, keyed `machine:<session>:<phase>`. Continuing,
+so a re-entered phase builds on what the delegate already established here; per-conversation, so two
+investigations never share a delegate's context.
+
+**Transient phases only.** A resident phase is where the conversation lives, and delegating it would
+mean the person is talking to something they did not open. `Problems()` reports it.
+
+**A name that does not resolve runs the phase inline and says so** (`phase_delegate_missing` in the
+session diagnostics). A machine is portable and the agent it names may not exist in this deployment;
+failing the turn would be worse, and failing silently would be worse still — a machine that quietly
+stops delegating has quietly stopped being what its author built. Delegating to yourself does the
+same, since that is a second turn of the same agent with all of the cost and none of the benefit.
+
+**A delegate that errors fails the phase.** It does not fall back: answering the question with the
+wrong thing wearing the right name is the one outcome worse than an error.
+
 ## Editing one
 
 **Configure → Machines → Edit** opens the structured editor: the machine's name and

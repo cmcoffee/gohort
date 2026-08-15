@@ -165,6 +165,29 @@ type MachinePhase struct {
 	// silently wipes the decomposition is the expensive mistake, not the
 	// other way round.
 	Keep []string `json:"keep,omitempty"`
+
+	// Agent delegates this phase to another agent by name or id: the
+	// step's work is done by something with its own persona, tools and
+	// memory, and what comes back is shaped into this phase's declared
+	// fields.
+	//
+	// This is the third way a phase can differ from the agent running the
+	// conversation, alongside a narrowed catalog and a different tier —
+	// and the strongest, because a delegate is not a configuration of the
+	// caller. It is the shape servitor uses: something conducts, and
+	// something else with different reach does the work.
+	//
+	// TRANSIENT phases only. A resident phase is where the conversation
+	// LIVES, and handing that to a delegate would mean the person is
+	// talking to something other than the agent they opened — so
+	// Problems() reports it rather than quietly doing something
+	// surprising.
+	//
+	// A name that does not resolve is a RUNTIME breadcrumb, not a save
+	// refusal: a machine is portable between deployments, and the agent
+	// it delegates to may simply not exist here yet. The phase falls back
+	// to running inline, and says so.
+	Agent string `json:"agent,omitempty"`
 }
 
 // Phase looks a phase up by name.
@@ -353,6 +376,12 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		// instead of an answer, so structure belongs on the transient
 		// phases that feed this one.
 		probs = append(probs, "phase "+name+": output is not valid on a resident phase — its reply goes to the user, not to a decoder. Declare the structure on the transient phase that feeds it.")
+	}
+	if strings.TrimSpace(p.Agent) != "" && p.Resident {
+		// A resident phase is where the conversation lives. Delegating it
+		// would mean the person is talking to something other than the
+		// agent they opened, without being told.
+		probs = append(probs, "phase "+name+": agent is not valid on a resident phase — this is where the conversation lives, and handing it to a delegate means the person is talking to something they did not open. Delegate the transient step that does the work, and let this phase report what came back.")
 	}
 	if from := strings.TrimSpace(p.NextFrom); from != "" && p.Resident {
 		probs = append(probs, "phase "+name+": next_from is not valid on a resident phase (it routes off a declared output field, and a resident phase has none). Use next for a one-turn handoff, or a guard to leave on a condition.")

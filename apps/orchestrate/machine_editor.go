@@ -154,6 +154,10 @@ func phaseFormFields(def MachineDef) []ui.FormField {
 		{Field: "next_from", Type: "select", Label: "…unless this step decides", Options: outputFieldOptions(def),
 			Help: "Let the step choose its own next phase by writing a phase NAME into one of the fields it hands on (below). Pick that field here. It must be a field THIS phase declares — anything else is reported as a problem. \"Then go to\" becomes the fallback when the value does not name a real phase."},
 
+		{Field: "agent", Type: "text", Label: "Or hand this step to another agent",
+			Placeholder: "Log analyst",
+			Help: "Name or id of an agent that should do this step instead — one with its own persona, tools and memory. It gets the instructions above, works, and reports back; what it reports is then recorded in the fields below. Use it when the work needs different REACH rather than different wording. Only on steps that hand on: a step the conversation waits in cannot be delegated, because the person would be talking to something they did not open."},
+
 		{Type: "header", Label: "What it hands on", Collapsed: true,
 			Help: "Fields this step writes for later phases to read as {state:<phase>.<field>}. A step that decides something should hand on WHAT it decided, or the next step has to guess."},
 		{Field: "output", Type: "rows", Label: "", AddLabel: "+ Add field",
@@ -350,6 +354,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if v, ok := str("next_from"); ok {
 		ph.NextFrom = v
 	}
+	if v, ok := str("agent"); ok {
+		ph.Agent = v
+	}
 	if v, ok := str("guard"); ok {
 		ph.Guard = v
 	}
@@ -412,7 +419,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 	}
 	return map[string]any{
 		"name": p.Name, "desc": p.Desc, "prompt": p.Prompt,
-		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom,
+		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
 	}
