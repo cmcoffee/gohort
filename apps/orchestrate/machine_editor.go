@@ -47,6 +47,9 @@ func machineEditorSpec(def MachineDef) map[string]any {
 		// refusal. Same function behind both, so the list can never
 		// disagree with what a save will accept.
 		"checklist": def.Problems(),
+		// Kept separate from the checklist: advice is a guess about
+		// intent and must never read as "this is broken".
+		"advice": def.Advice(),
 		"components": []any{
 			ui.FormPanel{
 				Source:  base + "/meta",
@@ -55,6 +58,8 @@ func machineEditorSpec(def MachineDef) map[string]any {
 					{Field: "name", Type: "text", Label: "Name"},
 					{Field: "description", Type: "textarea", Rows: 2, Label: "When to use this",
 						Help: "Shown wherever someone picks a machine. Say what kind of conversation it is for, not how it works."},
+					{Field: "global", Type: "toggle", Label: "Offer to every agent",
+						Help: "On: this machine appears for all of your agents. Off: only the ones you point at it. A machine is a whole workflow, so this is a bigger grant than it looks — leave it off unless the workflow genuinely suits everything you run."},
 					{Field: "start", Type: "select", Label: "Starts at", Options: phaseOptions(def, false),
 						Help: "The phase a new conversation begins in. Usually the one that decides what kind of turn this is."},
 				},
@@ -144,7 +149,8 @@ func phaseFormFields(def MachineDef) []ui.FormField {
 			Placeholder: "Work out whether there is something to explain",
 			Help: "One line, for whoever reads the machine later. Not shown to the agent."},
 		{Field: "prompt", Type: "textarea", Rows: 12, Label: "Instructions for this step",
-			Help: "What the agent should be doing HERE, layered on top of its own persona. Write the job, not the identity. {input} is the person's message; {state:phase.field} is something an earlier phase handed on."},
+			Help: "What the agent should be doing HERE, layered on top of its own persona. Write the JOB, not the identity, and write it to a person — \"work out whether there is something to explain, and say where it came from\" beats a specification. {input} is the person's message; {state:phase.field} is something an earlier phase handed on. " +
+				"Do NOT ask for JSON or describe an output format: declare the fields below and the framework encodes and validates them for you. Format instructions here fight the ones it already has."},
 
 		{Type: "header", Label: "Where the turn ends"},
 		{Field: "resident", Type: "toggle", Label: "The conversation waits here",
@@ -190,6 +196,14 @@ func phaseFormFields(def MachineDef) []ui.FormField {
 			{Value: "off", Label: "Off — this step is a transform"},
 		},
 			Help: "Turn it on where the step commits to something that could be wrong. Off for steps that reshape what they were given."},
+		{Field: "model", Type: "select", Label: "Which model", Options: []ui.SelectOption{
+			{Value: "", Label: "Inherit the agent's routing"},
+			{Value: "worker", Label: "Worker — the cheap, local one"},
+			{Value: "lead", Label: "Lead — the precise, remote one"},
+		},
+			Help: "Pin the tier for this step. A routing decision or a transform is worker work; a step that commits to an explanation is usually lead. Left inherited, the agent's own routing decides."},
+		{Field: "keep", Type: "tags", Label: "On re-entry, keep only",
+			Help: "Phase names whose findings survive RE-ENTERING this step (arriving at it a second time in one conversation). Empty keeps everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake. Name phases here only when coming back should mean starting that part over."},
 		{Field: "tools", Type: "tags", Label: "Only these tools",
 			Help: "Narrow the agent's catalog while it is in this phase. Empty = everything it normally has. Narrowing is how a step is kept from doing the next step's job — but note it changes the tool list mid-conversation, which re-writes the cached prompt prefix."},
 	}
@@ -218,7 +232,8 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
-			"name": def.Name, "description": def.Description, "start": def.StartPhase(),
+			"name": def.Name, "description": def.Description,
+			"start": def.StartPhase(), "global": def.Global,
 		})
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -234,6 +249,9 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		}
 		if v, ok := body["start"]; ok {
 			def.Start = strings.TrimSpace(fmt.Sprint(v))
+		}
+		if _, ok := body["global"]; ok {
+			def.Global = BoolArg(body, "global")
 		}
 		// Saved even when it does not validate. This is an editor: a
 		// machine half-built is the normal state while somebody is
@@ -366,6 +384,12 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if v, ok := str("think"); ok {
 		ph.Think = normalizePhaseThink(v)
 	}
+	if v, ok := str("model"); ok {
+		ph.Model = v
+	}
+	if _, ok := body["keep"]; ok {
+		ph.Keep = stringSliceFromArgs(body, "keep")
+	}
 	if _, ok := body["resident"]; ok {
 		ph.Resident = BoolArg(body, "resident")
 	}
@@ -422,6 +446,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
+		"model": p.Model, "keep": p.Keep,
 	}
 }
 

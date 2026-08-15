@@ -103,6 +103,11 @@ resident   true = user turns land here and a turn ENDS here. At least one per ma
 next       where control goes when this phase finishes
 next_from  (transient) one of THIS phase's declared string fields, whose value names the next phase
 output     [{name, type, desc, required}] — validated JSON. Transient phases only.
+           DECLARING these IS the structured-output mechanism. Never ask for JSON in the prompt,
+           never describe a shape, never give an example object: the framework encodes the fields
+           and validates what comes back. A prompt that also specifies a format is two sets of
+           formatting rules, and the usual result is a JSON string nested inside a JSON field.
+           Write the prompt to a person — say what to find, and let the fields say what to return.
 guard      (resident) plain-language condition that moves the conversation out
 guard_to   (resident) where a tripped guard goes; defaults to the start phase
 keep       [phase names] whose state survives RE-ENTRY into this phase; empty keeps everything

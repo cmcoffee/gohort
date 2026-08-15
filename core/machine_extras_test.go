@@ -157,3 +157,51 @@ func TestStarterMachineValidatesAndTeachesTheShape(t *testing.T) {
 		t.Error("the starter does not render")
 	}
 }
+
+// Advice is for what is worth fixing but must not block a save. The rule
+// that prompted it: a phase declaring fields AND telling the model to
+// emit JSON — the author hand-rolling the mechanism the fields already
+// are, in a prompt that then reads like a schema instead of a job.
+func TestAdviceCatchesAHandRolledJSONPrompt(t *testing.T) {
+	def := MachineDef{
+		Name: "x", Start: "split",
+		Phases: []MachinePhase{
+			{Name: "split", Next: "answer",
+				Prompt: "Analyze the user's input '{input}' and identify its core components. " +
+					"Present them as a JSON object with two fields. Do not include any other text in your response.",
+				Output: []PipelineField{{Name: "question_parts", Type: "list"}}},
+			{Name: "answer", Prompt: "answer", Resident: true},
+		},
+	}
+	adv := def.Advice()
+	if len(adv) != 1 {
+		t.Fatalf("expected one piece of advice, got %v", adv)
+	}
+	if !strings.Contains(adv[0], "declares") || !strings.Contains(adv[0], "say what to FIND") {
+		t.Errorf("advice should explain what to do instead: %s", adv[0])
+	}
+	// It must NOT be a problem: a heuristic that reads wording has no
+	// business refusing somebody's save.
+	if err := def.Validate(); err != nil {
+		t.Errorf("advice must not block a save: %v", err)
+	}
+
+	// A phase whose SUBJECT is JSON but which declares nothing is left
+	// alone — the instruction is unusual there, not redundant.
+	plain := MachineDef{Name: "y", Start: "read", Phases: []MachinePhase{
+		{Name: "read", Resident: true, Prompt: "Explain this JSON object to the user in plain words."},
+	}}
+	if adv := plain.Advice(); len(adv) != 0 {
+		t.Errorf("a phase declaring no fields should not be advised: %v", adv)
+	}
+
+	// And a well-written phase gets nothing.
+	good := MachineDef{Name: "z", Start: "split", Phases: []MachinePhase{
+		{Name: "split", Next: "answer", Prompt: "Work out what the person is actually asking, and say where it came from.",
+			Output: []PipelineField{{Name: "asked", Type: "string"}}},
+		{Name: "answer", Prompt: "answer", Resident: true},
+	}}
+	if adv := good.Advice(); len(adv) != 0 {
+		t.Errorf("a clean phase should draw no advice: %v", adv)
+	}
+}

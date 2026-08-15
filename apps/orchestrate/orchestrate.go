@@ -521,6 +521,10 @@ func (T *OrchestrateApp) Routes() {
 	// Phase machines (machines_http.go, docs/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
 	// session, so there is nothing to invoke from here.
+	// The machine editor as a page (machine_page.go). Registered before
+	// the /api routes for readability only — the mux matches on longest
+	// prefix, not on order.
+	T.HandleFunc("/machine", g(T.handleMachinePage))
 	T.HandleFunc("/api/machines", g(T.handleMachines))
 	// Feeds the chat toolbar's status pill with the session's current phase.
 	T.HandleFunc("/api/session-status", g(T.handleSessionStatus))

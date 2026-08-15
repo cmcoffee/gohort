@@ -4226,13 +4226,16 @@
             var editBtn = document.createElement('button');
             editBtn.className = 'ui-orch-modal-btn';
             editBtn.type = 'button';
-            editBtn.textContent = 'Edit';
+            editBtn.textContent = 'Open editor ↗';
             editBtn.style.cssText = 'font-size:0.72rem;padding:0.15rem 0.5rem;margin-top:0.4rem;margin-right:0.35rem';
+            // Authoring lives on its own page now (Extensions → Machines):
+            // a machine with four phases does not fit a dialog, and this
+            // modal's job is picking one for THIS agent. Opening in a new
+            // tab keeps the conversation where it was.
             editBtn.onclick = function(ev) {
               ev.preventDefault();
               ev.stopPropagation();
-              m.close();
-              openMachineBuilder(mc.id, mc.name);
+              window.open('/orchestrate/machine?id=' + encodeURIComponent(mc.id), '_blank');
             };
             r.querySelector('div').appendChild(editBtn);
             r.querySelector('div').appendChild(figToggle);
@@ -4358,6 +4361,16 @@
               ]));
             }
             drawChecklist(spec.checklist);
+            // Advice sits under the checklist and reads differently on
+            // purpose: it is a guess about intent, not a defect, and one
+            // dressed as the other sends people rewriting what works.
+            if (spec.advice && spec.advice.length) {
+              var adv = el('ul', {style: 'margin:0 0 0.9rem 1.1rem;padding:0;font-size:0.82rem;line-height:1.6;color:var(--text-mute)'});
+              spec.advice.forEach(function(a) { adv.appendChild(el('li', {text: a})); });
+              m.body.appendChild(el('div', {class: 'ui-orch-modal-help'}, [
+                el('strong', {text: 'Worth a look'}), adv,
+              ]));
+            }
 
             (spec.components || []).forEach(function(c) {
               var host = document.createElement('div');

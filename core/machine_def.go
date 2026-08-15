@@ -287,6 +287,57 @@ func (d MachineDef) Validate() error {
 	return Error("this machine has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
+// Advice is what is worth fixing but does not stop a machine running —
+// kept apart from Problems for a reason that matters at the call site:
+// Problems REFUSES a save, and a heuristic must never do that. A rule
+// that reads prompt wording is a guess about intent, and a guess with
+// the power to reject somebody's work is worse than no rule.
+//
+// Shown beside the checklist in the editor, where it reads as "you
+// probably meant something else" rather than "this is broken".
+func (d MachineDef) Advice() []string {
+	var out []string
+	for _, p := range d.Phases {
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			continue
+		}
+		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
+			out = append(out, "phase "+name+": the prompt asks for JSON, but this phase already declares "+
+				"fields — the framework encodes them for you and validates what comes back. Delete the "+
+				"format instructions and the example, and say what to FIND instead. Two sets of "+
+				"formatting rules is how a model ends up returning a JSON string inside a JSON field.")
+		}
+	}
+	return out
+}
+
+// asksForRawJSON spots a prompt hand-rolling the structured output the
+// declared fields already provide.
+//
+// Deliberately narrow: it only fires on a phase that ALREADY declares
+// fields, which is the only case where the instruction is redundant
+// rather than merely unusual. A phase whose subject happens to be JSON —
+// explain this config, read this payload — declares nothing and is left
+// alone.
+func asksForRawJSON(prompt string) bool {
+	l := strings.ToLower(prompt)
+	for _, sign := range []string{
+		"json object",
+		"as json",
+		"valid json",
+		"in json format",
+		"do not include any other text",
+		"respond only with",
+		"reply only with",
+	} {
+		if strings.Contains(l, sign) {
+			return true
+		}
+	}
+	return false
+}
+
 // Problems is Validate's findings as a LIST rather than one error.
 //
 // The editor renders these as a running checklist while somebody builds

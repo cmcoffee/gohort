@@ -323,7 +323,8 @@ var (
 
 type (
 	AdminSectionEntry   = sections.AdminSectionEntry
-	AccountSectionEntry = sections.AccountSectionEntry
+	AccountSectionEntry   = sections.AccountSectionEntry
+	ExtensionSectionEntry = sections.ExtensionSectionEntry
 )
 
 var (
@@ -331,6 +332,9 @@ var (
 	AdminSectionEntries    = sections.AdminSectionEntries
 	RegisterAccountSection = sections.RegisterAccountSection
 	AccountSectionEntries  = sections.AccountSectionEntries
+
+	RegisterExtensionSection = sections.RegisterExtensionSection
+	ExtensionSectionEntries  = sections.ExtensionSectionEntries
 )
 
 // --- toolrules (what a tool may be named, and how much prose it may cost) ----

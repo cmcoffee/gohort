@@ -99,6 +99,13 @@ type machineRow struct {
 	// useful fact about a machine: an unattached one is inert, and
 	// "why is nothing happening" is the question this answers.
 	UsedBy []string `json:"used_by,omitempty"`
+	// Rendered forms for the Extensions table. Computed here rather than
+	// in the page because a row should say the same thing wherever it is
+	// shown, and "used by nothing" is the single most useful fact about a
+	// machine — an unattached one is inert.
+	UsedByText string `json:"used_by_text,omitempty"`
+	Status     string `json:"status,omitempty"`
+	EditURL    string `json:"edit_url,omitempty"`
 	// Legend explains the graph the modal renders beside the row —
 	// chiefly what is deliberately NOT drawn. Comes from the same
 	// adapter as the picture so the two can never disagree.
@@ -136,7 +143,10 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 				ID: d.ID, Name: d.Name, Description: d.Description,
 				Phases: len(d.Phases), PhaseNames: d.PhaseNames(),
 				Start: d.StartPhase(), UsedBy: users[d.ID],
-				Legend: d.Graph().Legend,
+				Legend:     d.Graph().Legend,
+				UsedByText: usedByText(users[d.ID]),
+				Status:     machineStatusText(d),
+				EditURL:    "/orchestrate/machine?id=" + d.ID,
 			})
 		}
 		writeJSON(w, map[string]any{"machines": rows})
@@ -303,4 +313,28 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// usedByText says who runs a machine, or says plainly that nobody does.
+// An unattached machine is inert, and "why is nothing happening" is the
+// question this answers before it gets asked.
+func usedByText(agents []string) string {
+	if len(agents) == 0 {
+		return "nobody yet"
+	}
+	return strings.Join(agents, ", ")
+}
+
+// machineStatusText is the checklist in one phrase: ready, or how much is
+// left. The detail lives on the editor page; this is the reason to open
+// it.
+func machineStatusText(d MachineDef) string {
+	probs := d.Problems()
+	switch len(probs) {
+	case 0:
+		return "ready"
+	case 1:
+		return "1 thing to fix"
+	}
+	return strconv.Itoa(len(probs)) + " things to fix"
 }

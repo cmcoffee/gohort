@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -195,9 +196,11 @@ func TestBuilderIsWiredIntoTheModal(t *testing.T) {
 	if !strings.Contains(src, "function openMachineBuilder(") {
 		t.Fatal("the structured editor is never defined")
 	}
-	// Edit on a row opens the structured editor, not the JSON one.
-	if !strings.Contains(src, "openMachineBuilder(mc.id, mc.name)") {
-		t.Error("the Edit button should open the structured editor")
+	// The row opens the EDITOR PAGE. Authoring outgrew the dialog — a
+	// machine with four phases does not fit one — and this modal's job is
+	// picking a machine for the open agent.
+	if !strings.Contains(src, "window.open('/orchestrate/machine?id=") {
+		t.Error("the row should open the full editor page")
 	}
 	// The JSON path stays reachable — it is what the machine tool writes.
 	if !strings.Contains(src, "text: 'Edit as JSON'") {
@@ -207,5 +210,106 @@ func TestBuilderIsWiredIntoTheModal(t *testing.T) {
 	// handler, where nobody sees it.
 	if !strings.Contains(src, "var el = window.uiEl;\n        fetch(") {
 		t.Error("the builder must bind uiEl locally")
+	}
+}
+
+// The Extensions section is the index into the editor. Its value is the
+// two facts a row carries — is it finished, and does anything use it.
+func TestMachinesSectionSaysWhatIsInertAndWhatIsUnfinished(t *testing.T) {
+	if got := usedByText(nil); got != "nobody yet" {
+		t.Errorf("an unattached machine should say so plainly, got %q", got)
+	}
+	if got := usedByText([]string{"Investigator", "Chat"}); got != "Investigator, Chat" {
+		t.Errorf("used_by = %q", got)
+	}
+	ready := MachineDef{Name: "ok", Start: "here", Phases: []MachinePhase{
+		{Name: "here", Prompt: "talk", Resident: true},
+	}}
+	if got := machineStatusText(ready); got != "ready" {
+		t.Errorf("a complete machine should read as ready, got %q", got)
+	}
+	half := MachineDef{Name: "half", Phases: []MachinePhase{{Name: "a", Prompt: "x"}}}
+	if got := machineStatusText(half); !strings.Contains(got, "to fix") {
+		t.Errorf("an unfinished machine should say how much is left, got %q", got)
+	}
+}
+
+// The page renders the same component spec the modal mounts — that is
+// the payoff for building the spec server-side, and the thing that would
+// silently rot if the page grew its own copy.
+func TestEditorPageUsesTheSharedSpec(t *testing.T) {
+	src, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "machineEditorSpec(def)") {
+		t.Error("the page should render the shared editor spec, not a second copy of it")
+	}
+	if !strings.Contains(string(src), "checklistText(def)") {
+		t.Error("the page should show what is still missing")
+	}
+}
+
+// EVERY field a machine can hold must have a control, or an imported
+// machine has settings the editor cannot show. That is worse than it
+// sounds: a phase pinned to the lead model, or one that wipes state on
+// re-entry, behaves differently for a reason nothing on screen explains.
+//
+// Reflection rather than a hand-kept list, because the failure this
+// guards against IS somebody adding a field and forgetting the form —
+// and a hand-kept list is a second thing to forget.
+func TestEditorCoversEveryMachineField(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	raw, _ := json.Marshal(machineEditorSpec(def))
+	spec := string(raw)
+
+	// Storage identity and audit stamps are the server's; showing them
+	// invites edits that silently do nothing.
+	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true, "phases": true}
+
+	check := func(what string, typ reflect.Type) {
+		for i := 0; i < typ.NumField(); i++ {
+			tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+			if tag == "" || tag == "-" || skip[tag] {
+				continue
+			}
+			if !strings.Contains(spec, `"field":"`+tag+`"`) {
+				t.Errorf("%s.%s has no control in the editor — an imported machine using it would be invisible and uneditable",
+					what, tag)
+			}
+		}
+	}
+	check("MachineDef", reflect.TypeOf(MachineDef{}))
+	check("MachinePhase", reflect.TypeOf(MachinePhase{}))
+}
+
+// And a field the form does not send must survive a save of the ones it
+// does — the merge is what makes a partial form safe on a record that
+// came from somewhere else.
+func TestImportedFieldsSurviveAFormSave(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{
+		Owner: user, Name: "Imported", Start: "work",
+		Phases: []MachinePhase{
+			{Name: "work", Prompt: "do", Next: "talk", Model: "lead", Keep: []string{"work"},
+				Output: []PipelineField{{Name: "found", Type: "string"}}},
+			{Name: "talk", Prompt: "reply", Resident: true},
+		},
+	})
+	// Save ONLY the prompt, as the form does when somebody edits that box.
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=work",
+		strings.NewReader(`{"prompt":"do it carefully"}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	after, _ := LoadMachineDef(udb, user, def.ID)
+	ph, _ := after.Phase("work")
+	if ph.Prompt != "do it carefully" {
+		t.Fatalf("prompt did not save: %q", ph.Prompt)
+	}
+	if ph.Model != "lead" || len(ph.Keep) != 1 || len(ph.Output) != 1 || ph.Next != "talk" {
+		t.Errorf("a partial save dropped fields the form did not send: %+v", ph)
 	}
 }

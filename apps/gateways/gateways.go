@@ -1570,6 +1570,23 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
+	// App-contributed sections (core/sections). Extensions is where a
+	// user's own reusable things live, and the things they build are not
+	// all this app's to know about — a machine belongs to orchestrate and
+	// renders here without this file learning what one is.
+	head := ui.NewHead().ClientAction("tool_access_pills", toolAccessPillsJS)
+	for _, e := range ExtensionSectionEntries() {
+		if e.Build == nil {
+			continue
+		}
+		if sec, ok := e.Build(r, user); ok {
+			sections = append(sections, sec)
+			if strings.TrimSpace(e.Head) != "" {
+				head = head.HTML(e.Head)
+			}
+		}
+	}
+
 	ui.Page{
 		Title:     "Extensions",
 		ShowTitle: true,
@@ -1588,7 +1605,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		// App-specific behavior stays in the app: core/ui supplies the generic
 		// pill renderer (uiRenderScopePills), this supplies the endpoint it
 		// talks to. No copy of the renderer lives here.
-		Head: ui.NewHead().ClientAction("tool_access_pills", toolAccessPillsJS),
+		Head: head,
 	}.ServeHTTP(w, r)
 }
 
