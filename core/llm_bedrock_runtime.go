@@ -66,6 +66,10 @@ type bedrockInvokeRequest struct {
 	// body verbatim, so thinking crosses unchanged. See anthThinkingFor.
 	Thinking     *anthThinking     `json:"thinking,omitempty"`
 	OutputConfig *anthOutputConfig `json:"output_config,omitempty"`
+	// AnthropicBeta is how a beta is declared on InvokeModel: there is no
+	// place for the header the direct API uses, so the body carries it.
+	// Only populated when the extended cache TTL is actually on.
+	AnthropicBeta []string `json:"anthropic_beta,omitempty"`
 }
 
 // bedrockRuntimeClient implements LLM against bedrock-runtime InvokeModel.
@@ -228,6 +232,7 @@ func (c *bedrockRuntimeClient) buildBody(messages []Message, cfg ChatConfig) ([]
 		OutputConfig:     outCfg,
 		System:           buildSystemBlocks(systemPrompt),
 		Tools:            buildAnthTools(cfg.Tools),
+		AnthropicBeta:    promptCacheBetas(),
 	})
 }
 

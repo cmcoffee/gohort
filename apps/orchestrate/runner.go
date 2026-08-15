@@ -5004,6 +5004,12 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		_ = agent.ForcePrivate
 	}
 
+	// Label every LLM call this turn makes, so the prefix watch can tell
+	// consecutive calls of ONE turn apart from two turns that happen to
+	// overlap. Silent unless something in the cached prefix moves between
+	// calls — see core/prompt_prefix_watch.go.
+	ctx = WithPromptTurn(ctx, "agent="+agent.ID+" session="+sess.ID)
+
 	turn := &chatTurn{
 		app:         T,
 		ctx:         ctx,

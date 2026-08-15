@@ -88,10 +88,50 @@ func newAnthropicLLM(apiKey string, model string, api *apiclient.APIClient) LLM 
 // opt-in per content block; without it every request is billed as a full
 // uncached prefill regardless of how stable the prefix is.
 type cacheControl struct {
-	Type string `json:"type"` // always "ephemeral"
+	Type string `json:"type"`          // always "ephemeral"
+	TTL  string `json:"ttl,omitempty"` // "1h" for the extended cache; absent = the 5-minute default
 }
 
-func ephemeralCache() *cacheControl { return &cacheControl{Type: "ephemeral"} }
+// extendedCacheTTL is the beta this deployment declares when the long
+// cache is on. Sent as a header on the direct API and inside the body on
+// Bedrock, which passes the Anthropic request through.
+const extendedCacheTTL = "extended-cache-ttl-2025-04-11"
+
+// ephemeralCache stamps a cache breakpoint, at whichever lifetime the
+// deployment asked for.
+//
+// The two lifetimes are not a preference, they are an economic choice
+// with a clear break-even. A 5-minute cache is written at 1.25x input
+// and expires between a person reading a reply and typing the next one —
+// so an interactive session re-writes its whole prefix nearly every
+// turn. A 1-hour cache is written at 2x and survives the gap, so the
+// prefix is written once and read at 0.1x thereafter. Over ten turns of
+// a 200k prefix that is 2.5M billable-equivalent tokens against 0.58M.
+//
+// The 5-minute default stands because it is what a batch workload with
+// no human pauses actually wants, and because changing what a deployment
+// is billed is not a thing to do silently on upgrade.
+func ephemeralCache() *cacheControl {
+	if TuneBool("tune_prompt_cache_1h") {
+		return &cacheControl{Type: "ephemeral", TTL: "1h"}
+	}
+	return &cacheControl{Type: "ephemeral"}
+}
+
+// PromptCache1hOn reports whether the extended cache is enabled, for the
+// providers that must declare the beta and for the cost model, which
+// prices a write differently under it.
+func PromptCache1hOn() bool { return TuneBool("tune_prompt_cache_1h") }
+
+// promptCacheBetas is the body-carried beta list for providers with no
+// header to put it in. Nil when nothing needs declaring, so the field
+// stays absent rather than empty.
+func promptCacheBetas() []string {
+	if PromptCache1hOn() {
+		return []string{extendedCacheTTL}
+	}
+	return nil
+}
 
 // anthRequest carries no sampling params: temperature/top_p/top_k are rejected
 // with a 400 on current Claude models (Opus 4.7/4.8, Sonnet 5).
@@ -361,6 +401,12 @@ func (c *anthropicClient) doRequest(ctx context.Context, body []byte, stream boo
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// The extended cache TTL is behind a beta on the direct API. Declared
+	// only when it is actually in use, so a deployment on the default
+	// lifetime never sends a header naming a feature it is not asking for.
+	if PromptCache1hOn() {
+		req.Header.Set("anthropic-beta", extendedCacheTTL)
+	}
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}

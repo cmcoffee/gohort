@@ -244,6 +244,12 @@ func init() {
 		Help: "Max characters per embedded chunk. Applies to NEW ingestions only — existing documents keep their chunking until re-ingested.", Kind: KindInt, Default: 1000, Min: 200, Max: 8000})
 	RegisterTunable(TunableSpec{Key: TunableLLMMaxRetries, Category: "Limits", Label: "LLM retry attempts",
 		Help: "Retries for a failed LLM call before giving up (per-call override still applies).", Kind: KindInt, Default: 5, Min: 0, Max: 20})
+	RegisterTunable(TunableSpec{Key: "tune_prompt_cache_1h", Category: "LLM", Label: "Extended prompt cache (1 hour)",
+		Help: "Keep the cached prompt prefix alive for an HOUR instead of the 5-minute default. A toggle rather than a number because those are the only two lifetimes the API has. " +
+			"Off, a cache expires while somebody reads a reply, so an interactive session re-writes its whole prefix on nearly every turn — writes are billed at 1.25x input, reads at 0.1x. " +
+			"On, the write costs 2x but happens once. Over ten turns of a 200k prefix that is roughly 2.5M billable-equivalent tokens against 0.58M. " +
+			"Leave it OFF for batch work with no human pauses, where the cache never had time to expire anyway. " +
+			"The cost model follows this setting: with it on, a cache write is priced at 2x unless an operator set the multiplier by hand.", Kind: KindBool, Default: 0})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintThreshold, Category: "Retrieval", Label: "Recall-hint threshold",
 		Help: "Cosine floor a knowledge hit must clear to be surfaced as a per-turn recall hint (for agents with recall hints on). Higher = fewer, more-confident hints.", Kind: KindFloat, Default: 0.7, Min: 0, Max: 1, Decimals: 2})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintMax, Category: "Retrieval", Label: "Recall-hint max count",

@@ -1193,6 +1193,12 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 		}
 	}
 
+	// What the cached prefix looks like going in, compared against the
+	// previous call of this turn. Silent unless a caller labelled the turn
+	// (WithPromptTurn), and silent when nothing moved.
+	watchCfg := applyOpts("", 0, opts)
+	WatchPromptPrefix(ctx, watchCfg.SystemPrompt, watchCfg.Tools)
+
 	start := time.Now()
 	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
 	elapsed := time.Since(start)

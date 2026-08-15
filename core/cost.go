@@ -50,6 +50,9 @@ const (
 	// admin field.
 	defaultCacheReadMultiplier  = 0.10
 	defaultCacheWriteMultiplier = 1.25
+	// What a write costs under the 1-hour cache. Applied automatically
+	// when that is on, so the two settings cannot disagree by neglect.
+	extendedCacheWriteMultiplier = 2.0
 )
 
 // EffectiveCacheReadMultiplier and EffectiveCacheWriteMultiplier expose
@@ -67,9 +70,17 @@ func (r CostRates) cacheReadMultiplier() float64 {
 	return defaultCacheReadMultiplier
 }
 
+// cacheWriteMultiplier follows the cache LIFETIME when the operator has
+// not set one by hand: 1.25x base input for the 5-minute cache, 2x for
+// the 1-hour one. Turning on the long cache without this would
+// under-report every write by 37.5%, silently, at the exact moment the
+// deployment started writing bigger caches on purpose.
 func (r CostRates) cacheWriteMultiplier() float64 {
 	if r.CacheWriteMultiplier > 0 {
-		return r.CacheWriteMultiplier
+		return r.CacheWriteMultiplier // an explicit setting always wins
+	}
+	if PromptCache1hOn() {
+		return extendedCacheWriteMultiplier
 	}
 	return defaultCacheWriteMultiplier
 }
