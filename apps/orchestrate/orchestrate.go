@@ -533,6 +533,9 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/reference-sources", g(T.handleReferenceSources))
 	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
 	T.HandleFunc("/api/sessions", g(T.handleSessionList))
+	// More specific than /api/sessions/, so it wins the mux's longest-prefix
+	// match and never reaches handleSessionOne as a session id.
+	T.HandleFunc("/api/sessions/start", g(T.handleSessionStart))
 	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))
 	// Staged improvement-brief retrieval for the "Send to Builder"
 	// handoff (see send_to_builder.go). The brief is created by the

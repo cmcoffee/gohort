@@ -220,6 +220,12 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 type servedSession struct {
 	ChatSession
 	MessageOffset int `json:"message_offset"`
+	// OpeningPrompt is served only while the session is still EMPTY. The
+	// panel sends it as the first user message, and once that lands the
+	// session has messages and this stops being served — which is the
+	// whole idempotency guard. No extra state, no window where a reload
+	// sends it twice.
+	OpeningPrompt string `json:"opening_prompt,omitempty"`
 }
 
 func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request) {
@@ -411,7 +417,11 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		var off int
 		s.Messages, off = tailMessages(s.Messages, resolveTailLimit(r.URL.Query().Get("limit")))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(servedSession{ChatSession: s, MessageOffset: off})
+		out := servedSession{ChatSession: s, MessageOffset: off}
+		if len(s.Messages) == 0 {
+			out.OpeningPrompt = s.OpeningPrompt
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodDelete:
 		// Tear down any persistent shells the session opened
 		// (psql/redis-cli/ssh/etc.) so the bwrap processes don't

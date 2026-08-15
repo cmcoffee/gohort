@@ -927,6 +927,20 @@ type ChatSession struct {
 	// rewords a message.
 	MachineLog []PhaseHop `json:"MachineLog,omitempty"`
 
+	// OpeningPrompt is a first message the session was created WITH but
+	// has not sent yet — the handoff from a surface that knows what the
+	// conversation is about (an app that just processed a bundle) into a
+	// conversation that does not exist yet.
+	//
+	// Stored rather than passed as a URL parameter because the chat page
+	// is opened by a plain link, and a question long enough to be worth
+	// pre-filling is too long to be worth putting in a query string.
+	//
+	// json:"-" because it is served DELIBERATELY, and only while the
+	// session is still empty: see servedSession. Persisting is gob, which
+	// ignores json tags, so the field survives regardless.
+	OpeningPrompt string `json:"-"`
+
 	// AuthoringAgentID is set when create_agent fires successfully in
 	// this session — that agent becomes the implicit "authoring focus"
 	// for the rest of the session. create_pipeline_tool /

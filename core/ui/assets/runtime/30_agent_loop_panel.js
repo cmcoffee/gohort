@@ -5017,9 +5017,36 @@
         // queued. Subscribing here picks up live where the prior
         // client left off.
         tryResumeRun(sid);
+        sendOpeningPrompt(rec);
       }).catch(function(err) {
         addActivity('error', '', err.message || String(err));
       });
+    }
+
+    // sendOpeningPrompt fires the first message a session was CREATED
+    // with, for a handoff from a surface that already knew what the
+    // conversation was about (an app that just processed something and
+    // opened a thread to ask about it).
+    //
+    // Routed through the normal composer + sendMessage rather than a
+    // side channel, so streaming, cancellation, approval cards and any
+    // phase machinery all behave exactly as they do when a person types
+    // it — there is no second path through a turn to keep in step.
+    //
+    // The server serves opening_prompt ONLY while the session is still
+    // empty, so the send itself is what stops it firing again: once the
+    // user message lands the session has messages and the field stops
+    // arriving. No flag to clear, and no window where a reload sends it
+    // twice.
+    function sendOpeningPrompt(rec) {
+      var text = rec && rec.opening_prompt;
+      if (!text || !inputArea) return;
+      // Never clobber something the person has already started typing —
+      // they beat us to the box, and their words win.
+      if (String(inputArea.value || '').trim()) return;
+      inputArea.value = text;
+      autosizeInput();
+      sendMessage();
     }
 
     // tryResumeRun queries /api/runs/active for the session; if an

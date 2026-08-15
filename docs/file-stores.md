@@ -178,6 +178,31 @@ the server will execute. That is the same decision as registering the directory 
 neither is a user's to make. Running one takes the WRITE grant (`Let assigned users upload`), because
 it rewrites the folder.
 
+## Handing off to a conversation
+
+Once a folder is ready, `POST /orchestrate/api/sessions/start` opens a **new** session on an agent
+with a first message already in it:
+
+```
+POST /orchestrate/api/sessions/start
+     {"agent":"Investigator", "message":"What failed in scan-2026-08-14?", "title":"scan-2026-08-14"}
+  → {"session":"s…", "agent":"ag-1", "url":"/orchestrate/?agent=ag-1&session=s…"}
+```
+
+A new session every time, deliberately: two bundles in one thread is the cross-contamination the
+investigation workflow's memory settings exist to prevent, since a machine's blackboard holds the
+triage and the hypothesis for the life of a session.
+
+The message is **stored, not sent**. Sending server-side would run a turn with nobody watching,
+streaming into a page that is not open yet, with a failure nobody sees. Instead the session carries
+the prompt, and the chat panel sends it as the user's first message on open — through the normal
+composer, so streaming, cancel, approval prompts and the machine's first phase behave exactly as they
+do when a person types it.
+
+It is served only while the session is still **empty**, which is the whole idempotency guard: once
+the message lands the session has messages and the field stops arriving, so a reload cannot re-send
+it. A half-typed message in the composer wins over the pre-filled one.
+
 ## Who may reach one
 
 Configuring a store is admin-only. **Reading one is controlled separately**, by the store's

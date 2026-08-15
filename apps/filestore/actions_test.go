@@ -182,3 +182,70 @@ func TestActionRegistrationRules(t *testing.T) {
 		t.Error("a blank label should default to something readable rather than an empty button")
 	}
 }
+
+// A page has to know which buttons a store offers, and the answer is a
+// name and a label — the same thing the user is about to click. Reading
+// the list is therefore not an admin act; registering one is.
+func TestActionListIsReadableByAnAssignedUser(t *testing.T) {
+	app, st, _, bin := actionFixture(t, true)
+	// A second store the user cannot reach, with its own action.
+	other, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), AllowedUsers: []string{"someone_else"}})
+	if _, err := SaveStoreAction(app.DB, StoreAction{Slug: other.Slug, Name: "secret", Command: bin}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/api/actions", nil)
+	w := httptest.NewRecorder()
+	app.handleActions(w, asAdmin(t, r, "alice"))
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, row := range rows {
+		names = append(names, row["name"].(string))
+	}
+	if len(names) != 1 || names[0] != "decrypt" {
+		t.Fatalf("expected only the reachable store's action, got %v", names)
+	}
+	// Filtering to one store is what a page actually asks for.
+	r = httptest.NewRequest("GET", "/api/actions?slug="+st.Slug, nil)
+	w = httptest.NewRecorder()
+	app.handleActions(w, asAdmin(t, r, "alice"))
+	rows = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 1 {
+		t.Errorf("slug filter returned %d rows", len(rows))
+	}
+	// The label the button needs, and whether it will ask for something.
+	if rows[0]["label"] == "" || rows[0]["phases"] != "Response key" {
+		t.Errorf("row should carry the button label and the input prompt: %+v", rows[0])
+	}
+}
+
+func TestFolderListing(t *testing.T) {
+	app, st, _, _ := actionFixture(t, false)
+	r := httptest.NewRequest("GET", "/api/folders?slug="+st.Slug, nil)
+	w := httptest.NewRecorder()
+	app.handleFolders(w, asAdmin(t, r, "alice"))
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var rows []map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 1 || rows[0]["name"] != "bundle-1" {
+		t.Fatalf("expected the one bundle folder, got %+v", rows)
+	}
+	// A store the caller cannot reach answers the same way a missing one
+	// does — its existence is not a fact they are owed.
+	priv, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), AllowedUsers: []string{"nobody"}})
+	r = httptest.NewRequest("GET", "/api/folders?slug="+priv.Slug, nil)
+	w = httptest.NewRecorder()
+	app.handleFolders(w, asAdmin(t, r, "alice"))
+	if w.Code != 404 {
+		t.Errorf("expected 404 for an unreachable store, got %d", w.Code)
+	}
+}

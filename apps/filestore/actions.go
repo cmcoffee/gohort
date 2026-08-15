@@ -267,3 +267,39 @@ func chFirstNonEmpty(ss ...string) string {
 	}
 	return "the command failed and said nothing"
 }
+
+// handleFolders lists a store's subfolders, newest first — what a page
+// offers as "which bundle", and the same order the agent's list tool
+// uses, for the same reason: whoever is asking is almost always asking
+// about the thing that just landed.
+//
+//	GET /filestore/api/folders?slug=<store> → [{name, files, bytes, modified}]
+//
+// Reading, so it takes the read grant. The counts come from a shallow
+// read of each folder rather than a walk: this is a picker, and a picker
+// that stats ten thousand files to draw a row is a picker nobody waits
+// for.
+func (T *FileStoreApp) handleFolders(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	st, found := LoadStore(T.DB, strings.TrimSpace(r.URL.Query().Get("slug")))
+	if !found || !st.AllowsUser(user) {
+		http.Error(w, "no such file store you can reach", http.StatusNotFound)
+		return
+	}
+	folders, err := ListFolders(st.Path)
+	if err != nil {
+		http.Error(w, "that store's folder is unreadable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	rows := make([]map[string]any, 0, len(folders))
+	for _, f := range folders {
+		rows = append(rows, map[string]any{
+			"name": f.Name, "files": f.Files, "bytes": f.Bytes,
+			"size": HumanSize(f.Bytes), "modified": f.Modified,
+		})
+	}
+	writeJSON(w, rows)
+}

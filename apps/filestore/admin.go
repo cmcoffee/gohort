@@ -159,6 +159,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/action", T.handleAction)
 	T.HandleFunc("/api/actions", T.handleActions)
+	T.HandleFunc("/api/folders", T.handleFolders)
 }
 
 // handleStores serves the table (GET), the editor (GET with slug),
@@ -270,19 +271,30 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !adminOnly(w, r) {
+	// READING the list is not an admin act. A page that offers a user the
+	// buttons for a store has to know which buttons exist, and the answer
+	// is a name and a label — the same thing they are about to click.
+	// WRITING one names a binary the server will execute, which is.
+	if r.Method != http.MethodGet && !adminOnly(w, r) {
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// Filtered to what the caller can reach, and to one store when
+		// asked. An admin listing everything is the same call with no
+		// filter, because being an admin already means reaching every
+		// store they are assigned to.
+		only := strings.TrimSpace(r.URL.Query().Get("slug"))
 		rows := make([]map[string]any, 0)
 		for _, a := range ListStoreActions(T.DB) {
-			store := a.Slug
-			if st, found := LoadStore(T.DB, a.Slug); found {
-				store = st.Name
-			} else {
-				store = a.Slug + " (missing)"
+			if only != "" && a.Slug != only {
+				continue
 			}
+			st, found := LoadStore(T.DB, a.Slug)
+			if !found || !st.AllowsUser(user) {
+				continue
+			}
+			store := st.Name
 			phases := "no"
 			if a.TwoPhase {
 				phases = chFirstNonEmpty(a.InputLabel, "yes")
