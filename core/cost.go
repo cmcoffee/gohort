@@ -447,14 +447,12 @@ func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 		for i := days - 1; i >= 0; i-- {
 			day := today.AddDate(0, 0, -i).Format("2006-01-02")
 			if d, ok := daily[day]; ok {
-				d.Cost = rates.Estimate(UsageDiff{
-					WorkerInput:  d.WorkerInput,
-					WorkerOutput: d.WorkerOutput,
-					LeadInput:    d.LeadInput,
-					LeadOutput:   d.LeadOutput,
-					SearchCalls:  d.SearchCalls,
-					ImageCalls:   d.ImageCalls,
-				})
+				// dailyCostUsage, NOT a literal: the literal that used to be
+				// here omitted the four cache counters, so a day whose spend
+				// was almost entirely cached priced at a rounding error. The
+				// tokens were aggregated correctly ten lines up and then
+				// dropped on the way into Estimate.
+				d.Cost = rates.Estimate(dailyCostUsage(*d))
 				out = append(out, *d)
 			} else {
 				out = append(out, DailyCost{Date: day})
@@ -464,14 +462,7 @@ func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 	}
 	out := make([]DailyCost, 0, len(daily))
 	for _, d := range daily {
-		d.Cost = rates.Estimate(UsageDiff{
-			WorkerInput:  d.WorkerInput,
-			WorkerOutput: d.WorkerOutput,
-			LeadInput:    d.LeadInput,
-			LeadOutput:   d.LeadOutput,
-			SearchCalls:  d.SearchCalls,
-			ImageCalls:   d.ImageCalls,
-		})
+		d.Cost = rates.Estimate(dailyCostUsage(*d))
 		out = append(out, *d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })

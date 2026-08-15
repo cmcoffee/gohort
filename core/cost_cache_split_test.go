@@ -9,6 +9,7 @@ package core
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUsageReportShowsTheCacheSplit(t *testing.T) {
@@ -84,5 +85,59 @@ func TestCacheMultipliersAreSettableAndReportEffectiveValues(t *testing.T) {
 	// 2.0/1.25 = 1.6x exactly — the size of the correction being offered.
 	if ratio := dear / cheap; ratio < 1.59 || ratio > 1.61 {
 		t.Errorf("expected a 1.6x difference between the two TTLs, got %.3f", ratio)
+	}
+}
+
+// The chart's own arithmetic. AggregateDailyCost summed the four cache
+// counters correctly and then built a UsageDiff literal WITHOUT them on
+// the way into Estimate — so a day whose spend was almost entirely
+// cached priced at a rounding error while the per-request line said
+// $11.45. That is the exact shape of "the costs I see in orchestrate
+// don't show up in the admin UI".
+//
+// dailyCostUsage exists because two copies of this projection had to be
+// kept in step by hand; this was a third copy nobody updated.
+func TestChartPricesTheCachedShareOfADay(t *testing.T) {
+	prev, prevSet := GetCostRates(), RatesConfigured()
+	SetCostRates(CostRates{LeadInputPer1K: 0.003, LeadOutputPer1K: 0.015})
+	t.Cleanup(func() {
+		if prevSet {
+			SetCostRates(prev)
+		}
+	})
+
+	// One real request: almost nothing fresh, millions cached, a big write.
+	day := time.Now().Format("2006-01-02")
+	rec := DatedUsage{Date: day, Usage: UsageDiff{
+		LeadInput: 17, LeadCacheRead: 5059849, LeadCacheWrite: 1387657, LeadOutput: 9773,
+	}}
+
+	got := AggregateDailyCost([]DatedUsage{rec}, 7)
+	var today DailyCost
+	for _, d := range got {
+		if d.Date == day {
+			today = d
+		}
+	}
+	if today.Date == "" {
+		t.Fatal("today is missing from the window")
+	}
+	// The counters must survive aggregation...
+	if today.LeadCacheRead != 5059849 || today.LeadCacheWrite != 1387657 {
+		t.Fatalf("cache counters lost in aggregation: %+v", today)
+	}
+	// ...and reach the price. Fresh alone would be 17 tokens ≈ $0.00005.
+	if today.Cost < 5 {
+		t.Errorf("the day priced at $%.5f — the cached share was dropped on the way into Estimate", today.Cost)
+	}
+	// It must equal what the per-request report would say for the same usage.
+	perRequest := GetCostRates().Estimate(rec.Usage)
+	if diff := today.Cost - perRequest; diff > 0.0001 || diff < -0.0001 {
+		t.Errorf("chart says $%.4f, the request report says $%.4f — the two must agree", today.Cost, perRequest)
+	}
+
+	// The windowless branch is a second copy of the same arithmetic.
+	if all := AggregateDailyCost([]DatedUsage{rec}, 0); len(all) != 1 || all[0].Cost < 5 {
+		t.Errorf("the windowless path dropped the cached share: %+v", all)
 	}
 }
