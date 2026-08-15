@@ -82,13 +82,13 @@ func TestAnEmptySectionReturnsEverything(t *testing.T) {
 // not sections a reader can ask for.
 func TestSectionHeadingsAreListedInOrderWithoutNoise(t *testing.T) {
 	chunks := []EmbeddedChunk{
-		{Section: "## Kiteworks API"}, // the doc title, repeated as a chunk section
+		{Section: "## Acme API"}, // the doc title, repeated as a chunk section
 		{Section: "## GET /rest/clients"},
 		{Section: "## POST /rest/clients (part 1/2)"},
 		{Section: "## POST /rest/clients (part 2/2)"},
 		{Section: "## GET /rest/clients"}, // a duplicate
 	}
-	got := sectionHeadings(chunks, "Kiteworks API")
+	got := sectionHeadings(chunks, "Acme API")
 	want := []string{"GET /rest/clients", "POST /rest/clients"}
 	if len(got) != len(want) {
 		t.Fatalf("headings = %v, want %v", got, want)

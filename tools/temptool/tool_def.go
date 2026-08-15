@@ -2913,8 +2913,8 @@ When the API wants a NESTED PATH as ONE segment, add ":encoded"
 slashes included. GitLab's files endpoint is the case this exists
 for — it takes the file path as an id:
   url_template:  /projects/{id}/repository/files/{path:encoded}/raw?ref={ref}
-  with {path}="lib/python/sw_update/sw_update_lib.py":
-  → renders to: .../files/lib%2Fpython%2Fsw_update%2Fsw_update_lib.py/raw?ref=dev
+  with {path}="src/handlers/webhook_retry.py":
+  → renders to: .../files/src%2Fhandlers%2Fwebhook_retry.py/raw?ref=dev
 
 PASS NATURAL VALUES either way. Do NOT pre-encode: "%2F" arrives
 as "%252F", because the escaper encodes "%" as it must — a literal

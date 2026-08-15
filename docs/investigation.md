@@ -94,18 +94,29 @@ needs per-folder memory scoping.
 
 ## What it learns
 
-`verify` and `answer` both end by asking for a lesson — and scoping it. The rule has to be about the
-SHAPE of the data ("connection resets appear in the gateway log, not the application log"), never
-about the bundle it came from ("the Acme capture had the errors in svc.log"). The second is read on
-every future investigation, and every future investigation is about somebody else's system.
+Nothing, by itself — and that is deliberate. Memory policy belongs to the AGENT, not to this recipe.
 
-The ask has to be there or nothing accumulates: `store_fact` is a tool the agent calls when it
-notices something durable, and nothing else in these prompts ever mentions noticing.
+An investigator that remembers the wrong thing is worse than one that remembers nothing: memory is
+shared across every investigation the agent runs, and `recall_about` surfaces an entity's neighbours
+automatically, so anything tied to one incident arrives unbidden in an unrelated one later. What may
+be remembered is also deployment-specific — where the line falls between "the product" and "this
+customer's system" depends on what you work on, which is not something a shipped recipe can know.
 
-The test given is whether it would change where you START next time. "And then it worked" has no rule
-underneath it, and a wrong rule is worse than no rule — it is in the prompt forever and sends the next
-investigation to the wrong file with confidence. Read Configure → Memory after the first few real
-runs rather than after twenty.
+So put it in the agent's **Rules** (Configure → Rules), where it is stated once, applies in every
+phase and with no machine at all, and can be edited without re-importing anything:
+
+> **Memory scope.** Record two kinds of thing and nothing else. Durable rules about the SHAPE of the
+> data — where a class of evidence lives, which file to start from — via `store_fact`. Structure of
+> the product itself — what calls what, what emits what, where a component lives — via
+> `link_entities` as subject-relation-object, with paths and config keys in `subject_attrs`.
+>
+> The product, never the instance. Not this host, not this cluster, not this ticket, not this
+> customer's deployment, not today's timestamps. If you cannot name the thing without naming the
+> customer, it does not get recorded — say it in the answer instead.
+
+The graph tools are already in the catalog whether or not you write that rule: they gate on Explicit
+memory (`!explicitOff()`), not Reference memory, so `disable_inferred` never hid them. What was
+missing was ever asking — a model does not volunteer memory writes.
 
 ## Open
 

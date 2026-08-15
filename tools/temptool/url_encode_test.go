@@ -18,20 +18,20 @@ func TestURLEncodedModifierMakesANestedPathOneSegment(t *testing.T) {
 		"path": {Type: "string"},
 		"ref":  {Type: "string"},
 	}
-	args := map[string]any{"path": "lib/python/sw_update/sw_update_lib.py", "ref": "dev"}
+	args := map[string]any{"path": "src/handlers/webhook_retry.py", "ref": "dev"}
 
-	got, err := substituteURL("/projects/160/repository/files/{path:encoded}/raw?ref={ref}", params, nil, args)
+	got, err := substituteURL("/projects/42/repository/files/{path:encoded}/raw?ref={ref}", params, nil, args)
 	if err != nil {
 		t.Fatalf("substitute: %v", err)
 	}
-	const want = "/projects/160/repository/files/lib%2Fpython%2Fsw_update%2Fsw_update_lib.py/raw?ref=dev"
+	const want = "/projects/42/repository/files/src%2Fhandlers%2Fwebhook_retry.py/raw?ref=dev"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 	// "segment" is the same thing: an author reaching for this is
 	// guessing, and both guesses are reasonable.
 	alt, err := substituteURL("/files/{path:segment}", params, nil, args)
-	if err != nil || !strings.Contains(alt, "lib%2Fpython") {
+	if err != nil || !strings.Contains(alt, "src%2Fhandlers") {
 		t.Errorf("segment should be a synonym for encoded: %q (%v)", alt, err)
 	}
 
@@ -41,7 +41,7 @@ func TestURLEncodedModifierMakesANestedPathOneSegment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plain, "lib/python/sw_update") {
+	if !strings.Contains(plain, "src/handlers/webhook_retry") {
 		t.Errorf("an unmodified path placeholder must keep its slashes: %q", plain)
 	}
 }
@@ -52,7 +52,7 @@ func TestURLEncodedModifierMakesANestedPathOneSegment(t *testing.T) {
 // indistinguishable from an encoding the caller did by hand.
 func TestPreEncodedValueStillDoubleEncodes(t *testing.T) {
 	params := map[string]ToolParam{"path": {Type: "string"}}
-	got, err := substituteURL("/files/{path:encoded}", params, nil, map[string]any{"path": "bin%2Fconfigmon.py"})
+	got, err := substituteURL("/files/{path:encoded}", params, nil, map[string]any{"path": "src%2Fhandlers%2Fwebhook_retry.py"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestOptionalQueryWithModifierStillDrops(t *testing.T) {
 // as a broken write path rather than a merge preferring the wrong key.
 func TestUpdateAliasedTemplateFieldsAgree(t *testing.T) {
 	existing := TempTool{
-		Name: "gitlab_read_file", Mode: TempToolModeAPI, Credential: "gitlab",
+		Name: "repo_read_file", Mode: TempToolModeAPI, Credential: "repo_api",
 		Description:     "Read a file.",
 		CommandTemplate: "/api/v4/projects/{id}/repository/files/{file_path}?ref={ref}",
 		Params:          map[string]ToolParam{"id": {Type: "string"}, "file_path": {Type: "string"}, "ref": {Type: "string"}},

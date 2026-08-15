@@ -2253,8 +2253,8 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 // default keeps "/" raw (a CalDAV calendar path and a /repos/owner/name
 // must substitute as real separators), so the caller reaches for a
 // pre-encoded "%2F" — and the escaper turns the "%" into "%25", giving
-// "bin%252Fconfigmon.py". Both values 404, and the tool's description
-// suggests both. There was no third thing to try.
+// "src%252Fhandlers%252Fwebhook_retry.py". Both values 404, and the
+// tool's description suggests both. There was no third thing to try.
 //
 // Two spellings for the same encoding: an author reaching for this is
 // guessing, and both guesses are reasonable.

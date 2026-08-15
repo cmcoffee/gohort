@@ -22,8 +22,8 @@ func TestToolCallBriefCarriesTheSalientArgument(t *testing.T) {
 			"shell(systemctl status gohort)",
 		},
 		"search shows the query": {
-			ToolCall{Name: "web_search", Args: map[string]any{"query": "kiteworks release notes"}},
-			"web_search(kiteworks release notes)",
+			ToolCall{Name: "web_search", Args: map[string]any{"query": "acme release notes"}},
+			"web_search(acme release notes)",
 		},
 		"grouped tool shows the action": {
 			ToolCall{Name: "archetype", Args: map[string]any{"action": "read", "slug": "kb"}},
@@ -62,7 +62,7 @@ func TestToolCallBriefClipsAndFlattens(t *testing.T) {
 // With arguments present the card goes one per line; three name(arg) briefs
 // comma-joined are unreadable.
 func TestToolsUsedNoteFormatting(t *testing.T) {
-	out := toolsUsedNote([]string{"shell(uptime)", "web_search(kiteworks)"})
+	out := toolsUsedNote([]string{"shell(uptime)", "web_search(acme)"})
 	if !strings.Contains(out, "↳ ran:") || !strings.Contains(out, "\n   • shell(uptime)") {
 		t.Errorf("expected a per-line list:\n%s", out)
 	}
