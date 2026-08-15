@@ -257,6 +257,14 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	case "editor":
+		// The structured editor's spec (machine_editor.go): a checklist of
+		// what is still missing plus the components that edit it.
+		T.handleMachineEditor(w, r, def)
+	case "meta":
+		T.handleMachineMeta(w, r, udb, user, def)
+	case "phases":
+		T.handleMachinePhases(w, r, udb, user, def)
 	case "graph":
 		// The picture (docs/workflow-graph.md). With ?session=<id> it
 		// carries the overlay: where that conversation is sitting and

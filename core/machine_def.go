@@ -264,6 +264,15 @@ func (d MachineDef) Validate() error {
 	return Error("this machine has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
+// Problems is Validate's findings as a LIST rather than one error.
+//
+// The editor renders these as a running checklist while somebody builds
+// a machine out, which is a different job from refusing a save: an
+// unfinished machine has problems by definition, and showing them as
+// work remaining beats showing them as failure. Same function behind
+// both, so the checklist can never disagree with what the save will do.
+func (d MachineDef) Problems() []string { return d.problems() }
+
 func (d MachineDef) problems() []string {
 	if len(d.Phases) == 0 {
 		return []string{"machine has no phases"}

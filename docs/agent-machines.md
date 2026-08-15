@@ -447,6 +447,41 @@ have, and the runtime overlay is what turns the ⚠ trail into something you can
 - **Dispatch is unchanged.** Dispatched sub-agents and channel turns reach the loop by other paths
   and have no session to hold a cursor, so they run exactly as they always did. See Open.
 
+
+## Editing one
+
+**Configure → Machines → Edit** opens the structured editor: the machine's name and
+starting phase, a table of phases, and a form per phase.
+
+The form asks questions rather than naming fields. *"The conversation waits here"* is
+`resident`, with the consequence spelled out where the choice is made. *"Then go to"* is a
+select of phases that actually exist, so a typo is not something the form can produce.
+*"…unless this step decides"* lists the output fields declared in the machine, because
+`next_from` names one of them and a free-text box invites a name that does not.
+
+The spec is built server-side (`machine_editor.go`) for two reasons: the selects need the
+machine's own phase names and declared fields, and the help text is the part that carries
+the concepts — it belongs where it can be reviewed and tested, not in a string inside a
+browser file.
+
+**The checklist is `Validate`'s own findings**, shown as work remaining rather than as a
+refusal. `Problems()` is the same function the save path uses, so the list can never
+disagree with what a save will accept. A half-built machine has problems by definition;
+an editor that reported them as failure would be arguing with somebody mid-thought.
+
+**Partial saves are safe.** The meta form holds three fields and the record has phases;
+a phase form holds one section and the phase has others. Both merge rather than replace —
+the same failure `patchAgent` exists to prevent on the agent record.
+
+**An incomplete machine still saves.** Refusing to store the third field until the tenth
+exists is how an editor becomes a puzzle. `enterMachine` already degrades to an ordinary
+agent turn with a breadcrumb rather than breaking a conversation, so a half-built machine
+attached to an agent is a visible no-op, not a failure.
+
+**The JSON editor stays**, behind *Edit as JSON*. It is what the `machine` tool writes,
+what `extras/` ships, and the fastest path for someone who already knows the shape. Two
+doors, not a replacement.
+
 ## Open
 
 - Does a phase get its own memory scope, or does memory stay agent-wide? Agent-wide for St1. A
