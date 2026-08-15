@@ -296,6 +296,13 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	seed.GuardrailsDisabled = shadow.GuardrailsDisabled
 	seed.GuardrailExceptions = shadow.GuardrailExceptions
 	seed.AuthorizedIdentities = shadow.AuthorizedIdentities
+	// Reachability over the inbound MCP server. Deployment state by the same
+	// argument as LeadModel above: the editor RENDERS this toggle on Builder,
+	// so leaving it off this list made it save and read back false every
+	// time — the toggle looked like it refused to stay on. Worse than the
+	// LeadModel case, because migrateBuilderShadows writes the rebuilt record
+	// back over the shadow at boot, so a restart made the loss permanent.
+	seed.MCPExposed = shadow.MCPExposed
 }
 
 func (T *OrchestrateApp) migrateBuilderShadows() {
