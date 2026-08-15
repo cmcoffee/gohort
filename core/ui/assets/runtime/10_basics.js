@@ -1482,6 +1482,128 @@
           fieldWrap.appendChild(hdr);
         }
         toggleHandled = true;
+      } else if (t === 'rows') {
+        // Repeating rows — the shape every structured editor needs and
+        // nothing here had: a list of small records, each with the same
+        // declared sub-fields. Phase outputs, pipeline stage outputs,
+        // action parameters, intake form fields: all of them were a JSON
+        // textarea because this did not exist.
+        //
+        // Deliberately NOT a table component. A table renders records the
+        // server owns; this edits an array that lives inside ONE field of
+        // one record, and saves with it. The value is a plain array of
+        // objects, so an endpoint keeps its natural shape.
+        //
+        // No drag-to-reorder. Order matters here (it is the order the
+        // fields are declared in) but ↑↓ is keyboard-reachable, works on
+        // a phone, and cannot drop a row somewhere nobody meant.
+        var cols = Array.isArray(f.columns) ? f.columns : [];
+        var rowsVal = Array.isArray(initial) ? initial.map(function(r) {
+          return (r && typeof r === 'object') ? JSON.parse(JSON.stringify(r)) : {};
+        }) : [];
+        input = el('div', {class: 'ui-rows'});
+        var body = el('div', {});
+        input.appendChild(body);
+
+        function persistRows() {
+          // Drop rows where every declared column is blank. A row someone
+          // added and walked away from is not data, and saving it makes
+          // the next validation complain about a field nobody filled in.
+          var clean = rowsVal.filter(function(r) {
+            return cols.some(function(c) {
+              var v = r[c.field];
+              return v !== undefined && v !== null && String(v).trim() !== '' && v !== false;
+            });
+          });
+          save(f.field, clean);
+        }
+
+        function drawRows() {
+          body.innerHTML = '';
+          if (rowsVal.length === 0) {
+            body.appendChild(el('div', {
+              style: 'color:var(--text-mute);font-style:italic;font-size:0.78rem;padding:0.3rem 0',
+              text: f.placeholder || '(none yet)',
+            }));
+          }
+          rowsVal.forEach(function(row, idx) {
+            var cells = [];
+            cols.forEach(function(c) {
+              var ctl;
+              if (c.type === 'select') {
+                ctl = el('select', {class: 'ui-input'});
+                (c.options || []).forEach(function(o) {
+                  var val = (o && typeof o === 'object') ? o.value : o;
+                  var lab = (o && typeof o === 'object') ? (o.label || o.value) : o;
+                  var opt = el('option', {value: String(val), text: String(lab)});
+                  if (String(row[c.field] || '') === String(val)) opt.selected = true;
+                  ctl.appendChild(opt);
+                });
+                ctl.addEventListener('change', function() {
+                  row[c.field] = ctl.value;
+                  persistRows();
+                });
+              } else if (c.type === 'toggle' || c.type === 'checkbox') {
+                ctl = el('input', {type: 'checkbox'});
+                ctl.checked = !!row[c.field];
+                ctl.addEventListener('change', function() {
+                  row[c.field] = ctl.checked;
+                  persistRows();
+                });
+              } else {
+                ctl = el('input', {
+                  type: c.type === 'number' ? 'number' : 'text',
+                  class: 'ui-input',
+                  placeholder: c.placeholder || c.label || c.field,
+                });
+                ctl.value = row[c.field] === undefined || row[c.field] === null ? '' : String(row[c.field]);
+                ctl.addEventListener('input', function() {
+                  row[c.field] = c.type === 'number' ? Number(ctl.value) : ctl.value;
+                });
+                // Commit on blur rather than per keystroke: a row edit is
+                // a whole-array save, and one POST per character would be
+                // both noisy and a race with the next keystroke.
+                ctl.addEventListener('blur', persistRows);
+              }
+              ctl.title = c.help || c.label || c.field;
+              cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'}, [ctl]));
+            });
+            var move = function(to) {
+              return function() {
+                if (to < 0 || to >= rowsVal.length) return;
+                var moved = rowsVal.splice(idx, 1)[0];
+                rowsVal.splice(to, 0, moved);
+                drawRows();
+                persistRows();
+              };
+            };
+            cells.push(el('div', {style: 'display:flex;gap:0.15rem;flex:0 0 auto'}, [
+              el('button', {type: 'button', class: 'ui-row-btn', title: 'Move up', onclick: move(idx - 1)}, ['↑']),
+              el('button', {type: 'button', class: 'ui-row-btn', title: 'Move down', onclick: move(idx + 1)}, ['↓']),
+              el('button', {
+                type: 'button', class: 'ui-row-btn', title: 'Remove this row',
+                onclick: function() { rowsVal.splice(idx, 1); drawRows(); persistRows(); },
+              }, ['✕']),
+            ]));
+            body.appendChild(el('div', {
+              style: 'display:flex;gap:0.35rem;align-items:center;margin-bottom:0.3rem',
+            }, cells));
+          });
+        }
+        drawRows();
+        input.appendChild(el('button', {
+          type: 'button', class: 'ui-row-btn',
+          style: 'margin-top:0.2rem',
+          onclick: function() {
+            var blank = {};
+            cols.forEach(function(c) { blank[c.field] = c.type === 'toggle' || c.type === 'checkbox' ? false : ''; });
+            rowsVal.push(blank);
+            drawRows();
+            // No save here: an empty row is not data yet, and persisting
+            // it would make validation complain about a field the person
+            // has not reached.
+          },
+        }, [f.add_label || '+ Add']));
       } else if (t === 'tags') {
         // Tag-style array editor — values render as compact chips
         // with × removers, plus an inline input that accepts new

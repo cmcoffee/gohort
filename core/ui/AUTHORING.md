@@ -232,6 +232,44 @@ ui.FormPanel{
 
 ---
 
+### Repeating rows
+
+A `rows` field edits a LIST of small records inside one field of one record:
+
+```go
+{Field: "output", Type: "rows", Label: "What this step hands on",
+ AddLabel: "+ Add output",
+ Columns: []ui.FormField{
+   {Field: "name", Label: "Field", Type: "text", Width: 2},
+   {Field: "type", Label: "Type", Type: "select", Options: …},
+   {Field: "required", Label: "Required", Type: "toggle"},
+ }}
+```
+
+The value is a plain array of objects keyed by the columns' `Field` names, so an
+endpoint keeps its natural shape (`output: [{name, type, required}]`).
+
+Reach for it wherever a structured editor would otherwise be a JSON textarea —
+phase outputs, pipeline stage outputs, an action's parameters, an intake form's
+fields. That is what every one of those was before this existed.
+
+A column is itself a `FormField`, so cells use the same vocabulary as the rest of
+the form (`text` / `number` / `select` / `toggle`). `Width` is a flex weight, so a
+description can be wider than a type.
+
+Order is preserved and editable (↑↓ per row), because in most of these the order
+IS meaning. There is no drag-to-reorder: the buttons are keyboard-reachable, work
+on a phone, and cannot drop a row somewhere nobody meant.
+
+Two behaviours worth knowing before you design around it: adding a blank row does
+NOT save (an empty row is not data, and persisting it makes validation complain
+about a field nobody has reached yet), and a text cell commits on blur rather than
+per keystroke, because the whole array is one save.
+
+**Not a `Table`.** A table renders records the server owns, with its own source
+and row actions. This edits an array that lives inside one field and saves with
+it.
+
 ## The four common app shapes
 
 ### 1. Admin-style CRUD app

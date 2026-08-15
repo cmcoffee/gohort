@@ -845,6 +845,29 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 //     new sub-agent form). Default is seeded into the
 //     form state immediately so the first save POSTs it.
 type FormField struct {
+	// Columns declares the sub-fields of a "rows" field — the repeating
+	// list editor. Each column is itself a FormField, so a row cell is
+	// text / number / select / toggle with the same vocabulary the rest
+	// of a form uses.
+	//
+	// The value of a "rows" field is a plain array of objects keyed by
+	// the columns' Field names, so an endpoint keeps its natural shape
+	// (`output: [{name, type, required}]`) instead of round-tripping
+	// through a JSON textarea — which is what every structured editor
+	// here did before this existed, because the toolkit had no repeating
+	// shape at all.
+	//
+	// Order is preserved and editable (↑↓ per row), because in most of
+	// these the order IS meaning: the sequence fields are declared in,
+	// the order steps run.
+	Columns []FormField `json:"columns,omitempty"`
+	// AddLabel overrides the "+ Add" button's text on a "rows" field.
+	// Name the THING being added ("+ Add output"), not the act.
+	AddLabel string `json:"add_label,omitempty"`
+	// Width is a flex weight for a column inside a "rows" field, so a
+	// description can be wider than a type. Ignored elsewhere.
+	Width int `json:"width,omitempty"`
+
 	Field       string `json:"field"`
 	Label       string `json:"label,omitempty"`
 	Type        string `json:"type,omitempty"`
