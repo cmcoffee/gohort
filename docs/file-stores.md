@@ -105,6 +105,79 @@ until someone opens the other end, and `/dev/zero` reads without ever reaching E
 a search that nothing upstream can cancel. They turn up in a captured filesystem tree without anyone
 putting them there deliberately.
 
+## Uploading, and deleting
+
+Reaching a store and WRITING into it are separate grants. **Let assigned users upload** is off by
+default: the common store is a directory something else fills, and registering `/var/log` should not
+let every account with an agent add files to it. An admin can upload either way, still bounded by
+the assignment — membership decides reach, and reach gates upload.
+
+**Delete folders older than (days)** is 0 by default, which keeps everything forever. That is the
+only safe default for a store that may hold the only copy of an incident's evidence.
+
+Nothing deletes on a timer. The window makes a folder ELIGIBLE; an admin runs the sweep from
+Maintenance, where a dry run lists exactly what the delete would remove — the same walk behind both,
+so what was read is what goes.
+
+What the sweep will touch, and nothing else: a **directory** that is a **direct child** of a store
+root, in a store with a window set, whose newest content is past it. Not the root, not loose files at
+the root, not anything nested, and not a symlinked folder pointing outside the store (resolution goes
+through `SubRoot`, so an escape is skipped and logged rather than followed). The allowlist names what
+may GO, never what may stay — the same argument as `core/workspace_reap.go`, for the same reason: a
+missed case here costs unreclaimed disk, while the inverse costs somebody's evidence.
+
+Age is read from the folder and its immediate contents rather than a full walk, because a bundle
+expands to tens of thousands of files and this runs over every folder of every store. A write buried
+deep may not refresh it, so leave headroom rather than setting the window to the exact age you care
+about.
+
+## Actions on a folder
+
+`ExpandArchives` deliberately refuses `.enc` / `.gpg` / `.pgp` / `.aes` and reports them as
+**unopened** rather than pretending — a store that looks thin because half of it is still encrypted
+is a different problem from one that is thin because nothing was captured.
+
+What happens next is an **action**: an admin-registered command that runs against ONE folder.
+Decrypting is the first one, and the reason this is a list rather than a `decrypt_command` field.
+Redacting before anyone reads it, unpacking a proprietary container, running an extractor that turns
+a binary dump into text, building an index — all of them are "run a registered binary against this
+folder, then the files are ready". A field named after the first instance makes the second one a
+second field, a second endpoint and a second UI.
+
+```
+<cmd> <folder>            one phase: run it, the folder is ready
+<cmd> <folder>            two phases, first call: prints a challenge
+<cmd> <folder> <input>    two phases, second call: the response
+```
+
+```
+POST /filestore/api/action?slug=<store>&within=<folder>&action=<name>
+     {}              → one phase: {"output": …} · two phases: {"challenge": …, "input_label": …}
+     {"input":"…"}   → two phases, second call: {"output": …}
+```
+
+Two phases exist for the case that prompted this: the answer to the challenge is looked up
+out-of-band by a person, so nothing here can obtain it and nothing here should try. An action needing
+no input declares one phase and just runs.
+
+Output is passed through **verbatim** in both directions, combined stdout and stderr. Nothing parses
+it: the format belongs to a binary this code does not own, and a parser guessing at it is how the
+first real bundle breaks. Reading only stdout is how a challenge printed to stderr becomes "it
+printed nothing".
+
+**No shell.** Command, folder and input are exec'd as separate arguments, so quoting, word-splitting
+and metacharacters have nowhere to happen — the test proves an input containing `$` and `;rm -rf /`
+arrives intact as one argument. The folder is resolved by `SubRoot`, so a traversal is refused before
+anything runs.
+
+**The input is never logged.** On a two-phase action it is the secret half of an out-of-band
+exchange, and a log line is the one place it would outlive the request.
+
+Registering an action is admin-only, and for a sharper reason than the store list: it names a binary
+the server will execute. That is the same decision as registering the directory it runs against, and
+neither is a user's to make. Running one takes the WRITE grant (`Let assigned users upload`), because
+it rewrites the folder.
+
 ## Who may reach one
 
 Configuring a store is admin-only. **Reading one is controlled separately**, by the store's

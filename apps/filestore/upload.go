@@ -49,19 +49,26 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !adminOnly(w, r) {
-		return
-	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	st, found := LoadStore(T.DB, strings.TrimSpace(r.URL.Query().Get("slug")))
 	if !found || !st.AllowsUser(user) {
-		// Admin-gated above, so an admin restricted OUT of a store still
-		// cannot upload into it. That is the setting meaning what it
-		// says: admin manages the list, membership decides reach.
+		// Same answer for "no such store" and "not yours", and it applies
+		// to admins too: admin manages the list, membership decides
+		// reach.
 		http.Error(w, "no such file store you can reach", http.StatusNotFound)
+		return
+	}
+	// Uploading is a WRITE, gated separately from reaching the store.
+	// This endpoint used to be admin-only outright, which made the
+	// obvious workflow — a user drops a bundle and asks about it —
+	// impossible without handing out admin.
+	if !st.UploadsAllowedFor(user, RequestIsAdmin(r)) {
+		http.Error(w, "uploads are turned off for "+st.Name+
+			". An admin can enable them for assigned users on the store's settings (Admin \u2192 Files).",
+			http.StatusForbidden)
 		return
 	}
 	dest, err := EnsureSub(st.Path, r.URL.Query().Get("within"))

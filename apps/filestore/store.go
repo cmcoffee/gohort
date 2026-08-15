@@ -46,6 +46,42 @@ type Store struct {
 	// change that presents as "the tools vanished" is one nobody
 	// diagnoses correctly.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+
+	// AllowUploads lets an assigned NON-ADMIN user write into this store
+	// through the upload endpoint. Off by default, and separate from
+	// AllowedUsers on purpose: reading a folder and writing into it are
+	// different grants, and the common store is a log directory somebody
+	// else fills — pointing at /var/log and having any account with an
+	// agent able to add files to it is not what registering a path meant.
+	//
+	// An admin can always upload (subject to AllowedUsers, like every
+	// other reach), so turning this on is about widening the door, never
+	// about opening one that was shut.
+	AllowUploads bool `json:"allow_uploads,omitempty"`
+
+	// RetentionDays deletes bundle subfolders older than this many days.
+	// Zero — the default — keeps everything forever, which is the only
+	// safe default for a store that may hold the only copy of something.
+	//
+	// Nothing deletes on a timer. The window makes a folder ELIGIBLE; an
+	// admin still runs the sweep from Maintenance, and the dry run there
+	// lists exactly what the delete would remove. Evidence is not the
+	// kind of thing to reclaim automatically at 3am.
+	RetentionDays int `json:"retention_days,omitempty"`
+
+}
+
+// UploadsAllowedFor reports whether user may upload into this store.
+//
+// Two conditions, and they answer different questions: AllowsUser is
+// "may this person reach the store at all", AllowUploads is "may
+// non-admins write into it". An admin passes the second by identity —
+// they are the one who would have flipped the toggle.
+func (s Store) UploadsAllowedFor(user string, isAdmin bool) bool {
+	if !s.AllowsUser(user) {
+		return false
+	}
+	return isAdmin || s.AllowUploads
 }
 
 // AllowsUser reports whether user may see and reach this store.

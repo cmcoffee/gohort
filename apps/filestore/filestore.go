@@ -30,7 +30,14 @@
 //     different mount and different trust. Folding the two onto one
 //     engine is a real lift-to-core candidate; it was not worth doing
 //     mid-build against a tool that already works.
-//   - Running COMMANDS is servitor's. A local command appliance
+//   - Running COMMANDS is servitor's, with ONE exception: the optional
+//     per-store decryptor (decrypt.go). That rule is about MODEL-invoked
+//     commands — minting a template from an intent, classifying its
+//     risk, holding it for approval. None of it applies to a binary an
+//     admin registers beside the directory it operates on, called by a
+//     person clicking a button. It is also exec'd with no shell, which
+//     is stricter than the path it declines to reuse.
+//   - Everything else a command might do is servitor's. A local command appliance
 //     (Type=="command", WorkDir on the folder) already mints frozen
 //     command templates behind an owner approval gate. A second command
 //     path here would be a weaker copy. The two compose: this answers
@@ -67,6 +74,9 @@ func init() {
 	// EVERY grantor renders, including one granting nothing — a row
 	// reading "none" is what tells an owner the capability exists and
 	// this agent does not hold it.
+	// Retention: a dry run and a delete, both driven by the per-store
+	// window. Nothing fires on a timer — see retention.go.
+	registerRetentionMaintenance(app)
 	RegisterAgentGrantor(AgentGrantor{
 		Name: "filestore", Label: "File stores",
 		Granted: func(user, agentID string) []AgentGrant {

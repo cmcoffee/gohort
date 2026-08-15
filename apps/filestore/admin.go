@@ -45,6 +45,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// it) and looks broken unless the page says so.
 					{Field: "tools", Label: "Agent tools", Mute: true, Flex: 2},
 					{Field: "assigned", Label: "Assigned to", Mute: true},
+					{Field: "retention", Label: "Retention", Mute: true},
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
@@ -62,6 +63,35 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				},
 				EmptyText: "No file stores yet. Add a folder on this server for an agent to search.",
 			},
+			ui.Table{
+				Source: "/filestore/api/actions",
+				RowKey: "id",
+				Columns: []ui.Col{
+					{Field: "store", Label: "Store", Flex: 1},
+					{Field: "label", Label: "Action", Flex: 1},
+					{Field: "command", Mute: true, Flex: 2},
+					{Field: "phases", Label: "Asks for input", Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Delete", Method: "DELETE",
+						PostTo:     "/filestore/api/actions?id={id}",
+						Variant:    "danger",
+						Confirm:    "Remove this action? The binary is left alone; the button for it disappears.",
+						Optimistic: true},
+				},
+				EmptyText: "No actions yet. An action is a command that runs against ONE folder — decrypt it, redact it, unpack a proprietary container, build an index — after which the files are ready to read.",
+			},
+			ui.ModalButton{
+				Label:    "Add action",
+				Title:    "Add a file action",
+				Subtitle: "A command that runs against one folder of a store. It receives the folder as its first argument, and (for a two-phase action) whatever the person supplies as its second. No shell: nothing in either argument can become syntax.",
+				Width:    "560px",
+				Body: ui.FormPanel{
+					PostURL:     "/filestore/api/actions",
+					SubmitLabel: "Add action",
+					Fields:      actionFormFields(),
+				},
+			},
 			ui.ModalButton{
 				Label:    "Add file store",
 				Title:    "Add a file store",
@@ -78,6 +108,26 @@ func (T *FileStoreApp) adminSection() ui.Section {
 	}
 }
 
+// actionFormFields is the add form for a store action.
+func actionFormFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "slug", Type: "text", Label: "Store (handle)", Placeholder: "support_bundles",
+			Help: "The store's handle, from the Agent tools column above — not its display name."},
+		{Field: "name", Type: "text", Label: "Name", Placeholder: "decrypt",
+			Help: "Short handle for the action, snake_case. It is how the endpoint names it."},
+		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Decrypt bundle",
+			Help: "What the button says. Name it for what it DOES to the folder, since that is what the person clicking it is deciding."},
+		{Field: "command", Type: "text", Label: "Command", Placeholder: "/opt/bin/diag_decrypt",
+			Help: "Absolute path. It is called as `<command> <folder>`, and for a two-phase action a second time as `<command> <folder> <input>`. Run with NO shell, so quoting and metacharacters have nowhere to happen."},
+		{Field: "two_phase", Type: "toggle", Label: "Two phases (asks for input)",
+			Help: "On: the first run prints something — a challenge, a summary, a prompt — which is shown to the person, who supplies a value; the command then runs again with it. Off: one call and the folder is ready. Use two phases when a value has to come from OUTSIDE this system and nothing here can obtain it."},
+		{Field: "input_label", Type: "text", Label: "Input label", Placeholder: "Response key",
+			Help: "What the box asks for on the second phase. Only used when two phases is on."},
+		{Field: "help", Type: "textarea", Label: "Note", Rows: 2,
+			Help: "Optional. Shown beside the button — say what it does and when to reach for it."},
+	}
+}
+
 func storeFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "Support bundles",
@@ -86,6 +136,10 @@ func storeFormFields() []ui.FormField {
 			Help: "Absolute path on this server. The folder itself is what an agent attaches to; its subfolders (if any) are what a search can be scoped to. Read-only: nothing here ever writes to it."},
 		{Field: "allowed_users", Type: "tags", Label: "Assigned to",
 			Help: "Usernames who may reach this store. Leave EMPTY for every user. A folder of customer captures is rarely something every account should hold, and configuring a store is already admin-only — without this the cheap half was gated and the reading was not. Applies to admins too: admin manages the list, membership decides reach."},
+		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
+			Help: "Off by default. Reaching a store and WRITING into it are different grants: the common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
+		{Field: "retention_days", Type: "number", Label: "Delete folders older than (days)", Min: 0,
+			Help: "0 keeps everything forever, which is the default. A number makes a subfolder ELIGIBLE for deletion once nothing in it has changed for that long — nothing is deleted on a timer. An admin runs the sweep from Maintenance, where a dry run lists exactly what the delete would remove. Age is read from the folder and its immediate contents, so a write buried deep inside may not refresh it: leave headroom rather than setting this to the exact age you care about."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
 			Help: "Optional, and worth writing: it is pasted into the agent's tool descriptions, so it is what tells the agent when to reach for THIS store rather than another. \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
 		{Field: "slug", Type: "hidden"},
@@ -103,6 +157,8 @@ func adminHeadHTML() string { return "" }
 func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/stores", T.handleStores)
 	T.HandleFunc("/api/upload", T.handleUpload)
+	T.HandleFunc("/api/action", T.handleAction)
+	T.HandleFunc("/api/actions", T.handleActions)
 }
 
 // handleStores serves the table (GET), the editor (GET with slug),
@@ -182,9 +238,85 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			// the names in force, which after a rename are not the names
 			// the Name column would suggest.
 			"tools": strings.Join(storeToolNames(st.Slug), ", "),
+			// Stated on the row because it is the one setting whose effect
+			// is destructive and whose default (forever) is invisible.
+			"retention": retentionLabel(st),
 		})
 	}
 	return rows
+}
+
+// retentionLabel says what the store's window means in words, including
+// the upload posture, since both live on the same row.
+func retentionLabel(st Store) string {
+	window := "keep forever"
+	if st.RetentionDays > 0 {
+		window = "delete after " + strconv.Itoa(st.RetentionDays) + "d"
+	}
+	if st.AllowUploads {
+		return window + ", uploads on"
+	}
+	return window
+}
+
+// handleActions is the admin CRUD behind the actions table.
+//
+// Admin-only, and for a sharper reason than the store list: this names a
+// BINARY the server will execute. Registering one is the same decision
+// as registering the directory it runs against, and neither is a user's
+// to make.
+func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if !adminOnly(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rows := make([]map[string]any, 0)
+		for _, a := range ListStoreActions(T.DB) {
+			store := a.Slug
+			if st, found := LoadStore(T.DB, a.Slug); found {
+				store = st.Name
+			} else {
+				store = a.Slug + " (missing)"
+			}
+			phases := "no"
+			if a.TwoPhase {
+				phases = chFirstNonEmpty(a.InputLabel, "yes")
+			}
+			rows = append(rows, map[string]any{
+				"id": actionKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
+				"name": a.Name, "label": a.Label, "command": a.Command,
+				"phases": phases, "two_phase": a.TwoPhase,
+				"input_label": a.InputLabel, "help": a.Help,
+			})
+		}
+		writeJSON(w, rows)
+	case http.MethodPost:
+		var a StoreAction
+		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		saved, err := SaveStoreAction(T.DB, a)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		Log("[filestore] %s registered action %q on %s → %s", user, saved.Name, saved.Slug, saved.Command)
+		writeJSON(w, saved)
+	case http.MethodDelete:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		slug, name, _ := strings.Cut(id, "/")
+		DeleteStoreAction(T.DB, slug, name)
+		Log("[filestore] %s removed action %q from %s", user, name, slug)
+		writeJSON(w, map[string]any{"deleted": id})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
