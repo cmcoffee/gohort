@@ -434,3 +434,59 @@ func TestAResidentPromptResolvesTheStableVariablesOnly(t *testing.T) {
 		}
 	}
 }
+
+// A rename is one edit. Every reference the definition holds — routing,
+// keep lists, guard targets, the start step, {state:…} in prompts and
+// fills — follows the new name, because the definition knows both names
+// and the author should not be sent hunting through the checklist for
+// the places it forgot.
+func TestRenamingAStepRewritesEveryReference(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "decide", Choices: []string{"hunch", "answer", "triage_two"}, Next: "answer",
+			Output: []PipelineField{{Name: "observation", Type: FieldString}}},
+		{Name: "triage_two", Prompt: "unrelated", Next: "answer",
+			Output: []PipelineField{{Name: "x", Type: FieldString}}},
+		{Name: "hunch", Prompt: "explain {state:triage.observation} but not {state:triage_two.x}",
+			Next: "answer",
+			Output: []PipelineField{
+				{Name: "asked", Type: FieldString, From: "{state:triage.observation}"},
+				{Name: "lane", Type: FieldString, Enum: []string{"triage", "answer"}},
+			}},
+		{Name: "answer", Prompt: "answer", Resident: true,
+			Guard: "they moved on from {state:triage}", GuardTo: "triage",
+			Keep:  []string{"triage"}},
+	}}
+	def.RenameStep("triage", "intake")
+
+	if def.Start != "intake" {
+		t.Errorf("start should follow the rename, got %q", def.Start)
+	}
+	hunch, _ := def.Phase("hunch")
+	if !strings.Contains(hunch.Prompt, "{state:intake.observation}") {
+		t.Errorf("prompt refs should follow: %q", hunch.Prompt)
+	}
+	if !strings.Contains(hunch.Prompt, "{state:triage_two.x}") {
+		t.Errorf("a step whose name merely starts the same must be untouched: %q", hunch.Prompt)
+	}
+	if hunch.Output[0].From != "{state:intake.observation}" {
+		t.Errorf("fills should follow: %q", hunch.Output[0].From)
+	}
+	if strings.Join(hunch.Output[1].Enum, ",") != "intake,answer" {
+		t.Errorf("routing targets should follow: %v", hunch.Output[1].Enum)
+	}
+	intake, ok := def.Phase("intake")
+	if !ok || strings.Join(intake.Choices, ",") != "hunch,answer,triage_two" {
+		t.Fatalf("the step itself should be renamed with choices intact: %+v", intake)
+	}
+	ans, _ := def.Phase("answer")
+	if ans.GuardTo != "intake" || strings.Join(ans.Keep, ",") != "intake" {
+		t.Errorf("guard_to and keep should follow: %+v", ans)
+	}
+	if !strings.Contains(ans.Guard, "{state:intake}") {
+		t.Errorf("whole-step refs in guards should follow: %q", ans.Guard)
+	}
+	// And the result still validates — the whole point.
+	if probs := def.Problems(); len(probs) > 0 {
+		t.Errorf("a rename must not create problems: %v", probs)
+	}
+}

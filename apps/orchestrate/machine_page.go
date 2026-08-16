@@ -60,6 +60,27 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				Method:  "GET",
 				Variant: "primary",
 			}}},
+			// The other door: say what you want and review a draft,
+			// instead of building from a blank. The editor's checklist
+			// carries anything the draft got wrong, so an imperfect
+			// draft is still a better starting point than an empty one.
+			ui.ModalButton{
+				Label:    "Describe one…",
+				Title:    "Draft a machine from a description",
+				Subtitle: "Say what the conversation should do — what it works out first, what it decides between, where it settles. A draft machine opens in the editor for you to adjust.",
+				Width:    "560px",
+				Body: ui.FormPanel{
+					PostURL:     "/orchestrate/api/machines/draft",
+					SubmitLabel: "Draft it",
+					RedirectURL: "/orchestrate/machine?id={id}",
+					Fields: []ui.FormField{{
+						Field: "description", Type: "textarea", Rows: 6,
+						Label:       "What should it do?",
+						Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
+						Help:        "Plain words. Say what kinds of turns arrive and what should happen to each; the draft picks the steps.",
+					}},
+				},
+			},
 			ui.Table{
 				Source: "/orchestrate/api/machines",
 				RowKey: "id",
@@ -73,6 +94,10 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					{Field: "used_by_text", Label: "Used by", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Duplicate", Method: "POST",
+						PostTo:         "/orchestrate/api/machines/{id}/duplicate",
+						RedirectURL:    "/orchestrate/machine?id={id}",
+						RedirectTarget: "_self"},
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/orchestrate/api/machines/{id}",
 						Variant:    "danger",
@@ -139,7 +164,9 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		SectionNav: true,
 		Head: ui.NewHead().
 			ClientAction("machine_remove_step", machineRemoveStepJS).
+			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).
+			ClientAction("machine_try_reset", machineTryResetJS).
 			JS(machineTryEnterJS),
 		Sections: []ui.Section{
 			{
@@ -181,7 +208,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		{
 			Title:    "Try it",
 			Wide:     true,
-			Subtitle: "Send a message through it and watch where it goes. It runs the real driver, with no tools and without running the step it lands in, so it shows the PATH rather than the answer.",
+			Subtitle: "Hold a rehearsal conversation with it: send a message, watch where it goes, then keep sending — later turns resume the parked step, so you can watch a guard fire or a handoff happen. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 			Body:     machineTryPanel(def),
 		},
 		{
@@ -191,6 +218,30 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Body: ui.Card{HTML: `<div style="overflow-x:auto">` +
 				`<img src="/orchestrate/api/machines/` + HTMLEscape(def.ID) + `/graph" alt="` +
 				HTMLEscape(def.Name) + ` diagram" style="max-width:100%"></div>`},
+		},
+		{
+			// Derived, not written: the definition knows exactly which
+			// steps cost a model call and which turns pay a guard check,
+			// and the person choosing between one step and three should
+			// see the price where they are choosing.
+			Title:    "What a turn costs",
+			Wide:     true,
+			Subtitle: costText(def),
+		},
+		{
+			Title: "Who runs it",
+			Wide:  true,
+			Subtitle: "An unattached machine does nothing — an agent has to carry it into its conversations. " +
+				"Checking an agent points it at this machine; an agent can only run one at a time, so checking one that runs another moves it.",
+			Body: ui.FormPanel{
+				Source:  machineAPIBase(def) + "/agents",
+				PostURL: machineAPIBase(def) + "/agents",
+				Fields: []ui.FormField{{
+					Field: "agents", Type: "checklist",
+					Placeholder: "(no agents yet — create one in the chat sidebar first)",
+					Options:     attachAgentOptions(udb, user, def),
+				}},
+			},
 		},
 		// The criticism goes AFTER the work. Landing on two lists of
 		// what is wrong before seeing the thing you are building reads
@@ -242,6 +293,27 @@ const machineRemoveStepJS = `function(ctx) {
     });
 }`
 
+// machineMoveStepJS reorders one step and reloads — the rail, the
+// sections and every "then go to" summary are ordered by the list this
+// changes, so a stale page would disagree with the machine.
+const machineMoveStepJS = `function(ctx) {
+  var data = ctx && ctx.action && ctx.action.data;
+  var id = new URLSearchParams(window.location.search).get('id');
+  if (!data || !id) return;
+  var cut = data.lastIndexOf('|');
+  var step = data.slice(0, cut), dir = data.slice(cut + 1);
+  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/move', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: step, dir: dir})
+  }).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+    window.location.reload();
+  }).catch(function(err) {
+    window.uiAlert && window.uiAlert('Could not move it: ' + (err && err.message || err));
+  });
+}`
+
 // phaseSubtitle says what a step is and where it goes, in the rail and
 // above its form — so the shape of the machine is legible without
 // opening every section.
@@ -290,4 +362,38 @@ func checklistText(def MachineDef) string {
 		return "✓ Nothing outstanding — this machine will run as written."
 	}
 	return strconv.Itoa(len(probs)) + " to fix: • " + strings.Join(probs, " • ")
+}
+
+// costText derives the machine's price in model calls. Per PIECE rather
+// than per turn, because a deciding step makes the turn-1 path dynamic
+// and a guessed total would be a lie some of the time — each piece's
+// price is exact.
+func costText(def MachineDef) string {
+	var passing, pinned, guarded []string
+	for _, p := range def.Phases {
+		switch {
+		case p.Resident:
+			if strings.TrimSpace(p.Guard) != "" {
+				guarded = append(guarded, p.Name)
+			}
+		case len(p.ModelOutput()) == 0 && strings.TrimSpace(p.Prompt) == "" && len(p.StaticFields()) > 0:
+			pinned = append(pinned, p.Name)
+		default:
+			passing = append(passing, p.Name)
+		}
+	}
+	var parts []string
+	if len(passing) > 0 {
+		parts = append(parts, strings.Join(passing, ", ")+" each cost one model call when they run (a reply that fails to decode costs one repair retry)")
+	}
+	if len(pinned) > 0 {
+		parts = append(parts, strings.Join(pinned, ", ")+" only pin values and are free")
+	}
+	if len(guarded) > 0 {
+		parts = append(parts, "every new turn arriving in "+strings.Join(guarded, " or ")+" pays one extra check (its guard)")
+	}
+	if len(parts) == 0 {
+		return "Nothing beyond the reply itself — no step runs before it and no guard checks it."
+	}
+	return "Beyond the reply itself: " + strings.Join(parts, "; ") + ". The reply step is the turn you were paying for anyway."
 }

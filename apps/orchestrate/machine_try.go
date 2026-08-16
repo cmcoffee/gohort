@@ -53,6 +53,14 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	}
 	var body struct {
 		Message string `json:"message"`
+		// Cursor is the previous try's position, round-tripped through
+		// the browser. This is what makes the rehearsal MULTI-TURN — a
+		// second message resumes the parked step, which is the only way
+		// a guard, a re-entry or a one-turn handoff can ever be watched:
+		// all of them exist only across turns. Client-held rather than
+		// stored because a rehearsal should die with the page, and the
+		// cursor is the user's own data about their own machine.
+		Cursor *MachineCursor `json:"cursor"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -77,11 +85,19 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), tryTimeout)
 	defer cancel()
 
-	cur := &MachineCursor{}
+	cur := body.Cursor
+	if cur == nil {
+		cur = &MachineCursor{}
+	}
+	priorHops := len(cur.Log)
 	var notes []string
 	// No catalog: a dry run has no agent, so there are no tools to offer.
 	// Said in the reply rather than hidden, because a step that would
 	// have searched will look thin and the reason should not be a mystery.
+	// The real driver, resumed cursor and all — so on a second message a
+	// resident step's guard is judged exactly as a live turn would judge
+	// it. The one honest difference from live: the guard runs on the
+	// same tool-less worker the transient steps use.
 	landed, err := T.AdvanceMachine(ctx, def, cur, MachineTurn{
 		Input: msg,
 		User:  user,
@@ -91,8 +107,9 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeJSON(w, map[string]any{
 			"failed": err.Error(),
-			"path":   tryPath(cur),
+			"path":   tryPath(cur, priorHops),
 			"notes":  notes,
+			"cursor": cur,
 		})
 		return
 	}
@@ -102,19 +119,26 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{
 		"landed":      landed.Name,
 		"landed_desc": strings.TrimSpace(landed.Desc),
-		"path":        tryPath(cur),
+		"path":        tryPath(cur, priorHops),
 		"handed_on":   tryState(cur),
 		"notes":       notes,
+		"cursor":      cur,
 		// Stated every time. Somebody reading a thin answer should know
 		// which of the two reasons it is.
 		"caveat": "A dry run has no tools and does not run the step it lands in — it shows where a turn would GO, not what it would say.",
 	})
 }
 
-// tryPath renders the traversal in the words the editor uses.
-func tryPath(cur *MachineCursor) []map[string]any {
-	out := make([]map[string]any, 0, len(cur.Log))
-	for _, h := range cur.Log {
+// tryPath renders the traversal in the words the editor uses — only the
+// hops THIS message caused, because earlier turns already reported
+// theirs. prior is clamped: the log is capped (maxPhaseLog) and an
+// index taken before a trim would otherwise reach past it.
+func tryPath(cur *MachineCursor, prior int) []map[string]any {
+	if prior > len(cur.Log) {
+		prior = len(cur.Log)
+	}
+	out := make([]map[string]any, 0, len(cur.Log)-prior)
+	for _, h := range cur.Log[prior:] {
 		out = append(out, map[string]any{"from": h.From, "to": h.To, "why": h.Why})
 	}
 	return out
@@ -215,74 +239,98 @@ const machineTryJS = `function(ctx) {
     return ul;
   }
 
-  function render(d) {
-    out.textContent = '';
+  function render(d, turn) {
+    if (d.cursor) out.dataset.cursor = JSON.stringify(d.cursor);
+    turn.textContent = '';
+    turn.appendChild(el('div', 'Turn ' + turnNo + ' — “' + msg + '”',
+      'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem'));
     if (d.blocked) {
-      out.appendChild(el('div', d.note, 'font-weight:600'));
-      out.appendChild(list(d.checklist || []));
+      turn.appendChild(el('div', d.note, 'font-weight:600'));
+      turn.appendChild(list(d.checklist || []));
       return;
     }
     if (d.failed) {
-      out.appendChild(el('div', 'It stopped: ' + d.failed, 'font-weight:600;color:var(--danger)'));
+      turn.appendChild(el('div', 'It stopped: ' + d.failed, 'font-weight:600;color:var(--danger)'));
     } else {
       var where = 'It ended in ' + d.landed;
       if (d.landed_desc) where += ' — ' + d.landed_desc;
-      out.appendChild(el('div', where, 'font-weight:600'));
+      turn.appendChild(el('div', where, 'font-weight:600'));
     }
 
     var path = d.path || [];
     if (path.length) {
-      out.appendChild(el('div', 'The path it took', HEAD));
-      out.appendChild(list(path.map(function(h) {
+      turn.appendChild(el('div', 'The path it took', HEAD));
+      turn.appendChild(list(path.map(function(h) {
         return h.from + ' → ' + h.to + (h.why ? '  (' + h.why + ')' : '');
       })));
     } else if (!d.failed) {
-      out.appendChild(el('div', 'It went nowhere: the machine starts in a step the conversation waits in, so the first turn lands there directly.', MUTE + ';margin-top:0.5rem'));
+      turn.appendChild(el('div', turnNo > 1
+        ? 'It stayed where it was parked — nothing judged this message as a new job.'
+        : 'It went nowhere: the machine starts in a step the conversation waits in, so the first turn lands there directly.',
+        MUTE + ';margin-top:0.5rem'));
     }
 
     var state = d.handed_on || {};
     var steps = Object.keys(state);
     if (steps.length) {
-      out.appendChild(el('div', 'What each step handed on', HEAD));
+      turn.appendChild(el('div', 'The blackboard now holds', HEAD));
       steps.forEach(function(name) {
-        out.appendChild(el('div', name, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
+        turn.appendChild(el('div', name, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
         var fields = state[name] || {};
         var rows = Object.keys(fields).map(function(k) {
           var v = fields[k];
           if (v && typeof v === 'object') v = JSON.stringify(v);
           return k + ': ' + v;
         });
-        out.appendChild(rows.length ? list(rows, 'font-size:0.85rem')
-                                    : el('div', '(nothing)', MUTE));
+        turn.appendChild(rows.length ? list(rows, 'font-size:0.85rem')
+                                     : el('div', '(nothing)', MUTE));
       });
     }
 
     if ((d.notes || []).length) {
-      out.appendChild(el('div', 'Decisions the framework took for you', HEAD));
-      out.appendChild(list(d.notes, 'font-size:0.85rem'));
+      turn.appendChild(el('div', 'Decisions the framework took for you', HEAD));
+      turn.appendChild(list(d.notes, 'font-size:0.85rem'));
     }
-    if (d.caveat) out.appendChild(el('div', d.caveat, MUTE + ';margin-top:0.75rem'));
+    if (d.caveat) turn.appendChild(el('div', d.caveat, MUTE + ';margin-top:0.75rem'));
   }
 
   var btn = ctx && ctx.button, label = btn && btn.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
-  out.textContent = '';
-  out.appendChild(el('div', 'Running it. Each step it passes through is a model call, so this takes a moment.', MUTE));
+  // Each message gets its own block, appended — the rehearsal reads as
+  // the conversation it is, and turn 4 firing a guard sits under the
+  // three turns that led to it.
+  var turn = el('div', null, 'margin-top:0.9rem;padding-top:0.6rem;border-top:1px solid var(--border)');
+  turn.setAttribute('data-try-turn', String(turnNo));
+  turn.appendChild(el('div', 'Running it. Each step it passes through is a model call, so this takes a moment.', MUTE));
+  out.appendChild(turn);
+  box.value = '';
 
   fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/try', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message: msg})
+    body: JSON.stringify({message: msg, cursor: cursor})
   }).then(function(r) {
     if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
     return r.json();
-  }).then(render).catch(function(err) {
-    out.textContent = '';
-    out.appendChild(el('div', 'It could not run: ' + (err && err.message || err),
+  }).then(function(d) { render(d, turn); }).catch(function(err) {
+    turn.textContent = '';
+    turn.appendChild(el('div', 'It could not run: ' + (err && err.message || err),
                        'font-weight:600;color:var(--danger)'));
   }).then(function() {
-    if (btn) { btn.disabled = false; btn.textContent = label || 'Run it'; }
+    if (btn) { btn.disabled = false; btn.textContent = label || 'Send'; }
+    box.focus();
   });
+}`
+
+// machineTryResetJS forgets the rehearsal: cursor and transcript both,
+// so the next message is turn one of a fresh conversation.
+const machineTryResetJS = `function(ctx) {
+  var out = document.getElementById('machine-try-out');
+  if (!out) return;
+  delete out.dataset.cursor;
+  out.textContent = '';
+  var box = document.getElementById('machine-try-msg');
+  if (box) box.focus();
 }`
 
 // machineTryEnterJS makes Return in the box do what the button does.

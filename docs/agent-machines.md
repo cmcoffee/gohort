@@ -666,6 +666,21 @@ wrong thing wearing the right name is the one outcome worse than an error.
 
 ## Editing one
 
+**Or describe one.** "Describe one…" next to New machine takes a paragraph — what kinds of turns
+arrive, what should happen to each — and drafts a complete machine, landing you in the editor to
+adjust it. The drafter reads the machine tool's own spec (`machineHelpText`) and its output goes
+through the tool's own decoder, so a drafted machine cannot be a third dialect. A draft with
+problems still saves: the checklist phrases them as work remaining, and an imperfect draft beats an
+empty editor.
+
+**Renaming a step is one edit.** `RenameStep` rewrites every reference the definition holds —
+`next`, `choices`, `keep`, `guard_to`, routing targets, `start`, and `{state:old.…}` in prompts,
+guards and fills — so a rename never sends you hunting through the checklist. A rename onto an
+existing step is refused (its references would silently re-point), the name field reloads the
+editor (everything on the page carries the old name until it does), and a form still addressing
+the old name 404s rather than resurrecting the step. Live sessions parked in the old name heal
+through `resume()` with a breadcrumb, untouched by the editor.
+
 **Configure → Machines → Edit** opens the structured editor: the machine's name and
 starting phase, a table of phases, and a form per phase.
 
@@ -686,13 +701,26 @@ what `Problems()` would reject, so there is nothing to explain and nothing to un
 The steps are also the page's left rail (`SectionNav`), so a machine is navigated the way it is read:
 one step at a time, in order.
 
-**Try it** sits with the picture: type a message, see which steps ran, why it moved, what each one
-handed on, and where it stopped. The editor could otherwise only ever show a machine's
-CONFIGURATION, and every concept in it — a step that waits versus one that hands on, routing on a
-decision, what a step passes forward — is about what happens across turns. It runs the real driver
-(`AdvanceMachine`), with two differences stated in the reply every time: no tools, and it stops AT
-the resident step rather than running it. Where a turn GOES is the question here; what it would say
-is the agent's job.
+**Steps reorder** (↑↓ on each step's toolbar — the order is the rail and the reading order),
+machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
+the working one in place is how the working one stops working), and **What a turn costs** is derived
+from the definition: which steps cost a model call when they run, which only pin values and are
+free, and which turns pay a guard check. Per piece rather than per turn, because a deciding step
+makes the path dynamic and a guessed total would sometimes lie.
+
+**Who runs it** is on the page too: a checklist of your agents, checked = attached. An unattached
+machine does nothing, and the only place to attach one used to be a different surface (the chat
+toolbar's Configure → Machines — still there, still works). An agent runs one machine at a time, so
+an agent already running another is labelled with what checking it would move.
+
+**Try it** sits with the picture, and it holds a CONVERSATION: send a message, see which steps ran
+and what each handed on, then keep sending — the cursor rides back through the browser, so a later
+turn resumes the parked step exactly as a live turn would. That is the only way a guard, a
+re-entry, or a one-turn handoff can ever be watched, because all of them exist only across turns.
+Each message appends its own block (turn 4 firing a guard sits under the three turns that led to
+it); Start over forgets the rehearsal. It runs the real driver (`AdvanceMachine`), with two
+differences stated in the reply every time: no tools, and it stops AT the resident step rather
+than running it. Where a turn GOES is the question here; what it would say is the agent's job.
 
 The form asks questions rather than naming fields. *"The conversation waits here"* is
 `resident`, with the consequence spelled out where the choice is made. *"Then go to"* is a

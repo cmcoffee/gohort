@@ -820,3 +820,72 @@ func TestKeptToolNamesDoNotLeakBetweenSteps(t *testing.T) {
 		t.Errorf("step B options wrong: %v", got(b))
 	}
 }
+
+// Renaming a step from the form is one edit: every reference the
+// definition holds follows, and a rename onto an EXISTING step is
+// refused — the references would silently re-point at the other step.
+func TestRenamingAStepFromTheFormRewritesReferences(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+
+	r := httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=triage",
+		strings.NewReader(`{"name": "intake"}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("rename failed: %d %s", w.Code, w.Body.String())
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	if saved.Start != "intake" {
+		t.Errorf("start should follow the rename, got %q", saved.Start)
+	}
+	if _, stale := saved.Phase("triage"); stale {
+		t.Error("the old name should be gone")
+	}
+	if probs := saved.Problems(); len(probs) > 0 {
+		t.Errorf("a rename must not leave dangling references: %v", probs)
+	}
+
+	// Renaming answer onto intake would re-point everything at intake.
+	r = httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=answer",
+		strings.NewReader(`{"name": "intake"}`))
+	w = httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, saved)
+	if w.Code != 400 {
+		t.Fatalf("a rename onto an existing step should be refused, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "already exists") {
+		t.Errorf("the refusal should say why: %s", w.Body.String())
+	}
+}
+
+// A form still addressing a renamed step must fail loudly, not recreate
+// it. And the rename field reloads the page, because every control on it
+// carries the old name until it does.
+func TestAStaleFormCannotResurrectARenamedStep(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+
+	r := httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=triage",
+		strings.NewReader(`{"name": "intake"}`))
+	app.handleMachinePhases(httptest.NewRecorder(), asUser(r, user), udb, user, def)
+	renamed, _ := LoadMachineDef(udb, user, def.ID)
+
+	// The stale section saves another field against the OLD address.
+	r = httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=triage",
+		strings.NewReader(`{"desc": "typed into a stale form"}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, renamed)
+	if w.Code != 404 {
+		t.Fatalf("a stale save should 404, got %d: %s", w.Code, w.Body.String())
+	}
+	after, _ := LoadMachineDef(udb, user, def.ID)
+	if _, ghost := after.Phase("triage"); ghost {
+		t.Error("the stale save resurrected the renamed step")
+	}
+
+	// And the form declares the reload, so the common path never gets here.
+	tri, _ := after.Phase("intake")
+	raw, _ := json.Marshal(phaseFieldsFor(after, tri, editorCatalog{}))
+	if !strings.Contains(string(raw), `"reload_on_change":true`) {
+		t.Error("the name field should reload the editor after a rename")
+	}
+}

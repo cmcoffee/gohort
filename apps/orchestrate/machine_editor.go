@@ -200,6 +200,21 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 			// the toolbar fires the request and does not refresh, so the
 			// removed step would sit on screen looking removed-but-not.
 			ui.Toolbar{Actions: []ui.ToolbarAction{{
+				// Order is the rail and the reading order — without these,
+				// add-step appends forever and the machine reads in the
+				// order somebody happened to think of its parts.
+				Label:  "↑ Move up",
+				Title:  "Move " + p.Name + " one place earlier",
+				Method: "client",
+				URL:    "machine_move_step",
+				Data:   p.Name + "|up",
+			}, {
+				Label:  "↓ Move down",
+				Title:  "Move " + p.Name + " one place later",
+				Method: "client",
+				URL:    "machine_move_step",
+				Data:   p.Name + "|down",
+			}, {
 				Label:   "Remove this step",
 				Title:   "Delete " + p.Name + " from this machine",
 				Method:  "client",
@@ -356,6 +371,33 @@ func otherPhaseOptions(def MachineDef, self string) []ui.SelectOption {
 	return out
 }
 
+// attachAgentOptions lists the user's agents for the "Who runs it"
+// checklist, each labelled with what it runs TODAY when that is some
+// other machine — moving an agent should be a choice made while looking
+// at what it costs, not a discovery.
+func attachAgentOptions(udb Database, user string, def MachineDef) []ui.SelectOption {
+	names := map[string]string{}
+	for _, m := range ListMachineDefs(udb, user) {
+		names[m.ID] = m.Name
+	}
+	var out []ui.SelectOption
+	for _, a := range listAgents(udb, user) {
+		if isAppAgent(a.ID) || a.Hidden {
+			continue
+		}
+		opt := ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID)}
+		if a.Machine != "" && a.Machine != def.ID {
+			if n := names[a.Machine]; n != "" {
+				opt.Help = "runs “" + n + "” today — checking this moves it here"
+			} else {
+				opt.Help = "points at a machine that no longer exists — checking this repairs it"
+			}
+		}
+		out = append(out, opt)
+	}
+	return out
+}
+
 // agentOptions lists the user's agents, so delegation is a choice rather
 // than a remembered name.
 func agentOptions(udb Database, user string) []ui.SelectOption {
@@ -399,7 +441,11 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 	}
 
 	fields := []ui.FormField{
-		{Field: "name", Type: "text", Label: "Name", Help: "Short handle, lowercase. It is how other steps point here."},
+		// Renaming rewrites every reference machine-wide (RenameStep) and
+		// reloads the page: the rail, the other steps' selects and this
+		// form's own post URL all carry the old name until it does.
+		{Field: "name", Type: "text", Label: "Name", ReloadOnChange: true,
+			Help: "Short handle, lowercase. It is how other steps point here. Renaming updates every step that refers to this one."},
 		{Field: "desc", Type: "text", Label: "What this step does",
 			Help: "One line, for whoever reads the machine later. Not shown to the agent."},
 		// The ✨ opens the shared assist workbench: a draft beside a
@@ -648,6 +694,15 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 				break
 			}
 		}
+		// A CREATE names the step in its body and posts to the bare
+		// collection. A form still addressing ?name=X after X was renamed
+		// or removed is stale, and treating its save as a create would
+		// resurrect the old step next to the new one — the kind of ghost
+		// nobody notices until the router starts offering both.
+		if idx < 0 && name != "" {
+			http.Error(w, "no step called "+strconv.Quote(name)+" — it was renamed or removed; reload the editor", http.StatusNotFound)
+			return
+		}
 		var ph MachinePhase
 		if idx >= 0 {
 			ph = def.Phases[idx]
@@ -656,6 +711,20 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		}
 		applyPhaseEdit(&ph, body)
 		if idx >= 0 {
+			// A rename. Two names are in play, and both need care: the
+			// new one must not collide with another step (references
+			// would silently re-point at it), and every reference to the
+			// old one is rewritten so a rename is one edit rather than a
+			// scavenger hunt through the checklist.
+			if ph.Name != target {
+				if _, taken := def.Phase(ph.Name); taken {
+					http.Error(w, "a step called "+strconv.Quote(ph.Name)+" already exists — renaming this one onto it would point its references somewhere else", http.StatusBadRequest)
+					return
+				}
+				def.Phases[idx] = ph
+				def.RenameStep(target, ph.Name)
+				Log("[orchestrate.machines] user=%q renamed step %q to %q in %q (references rewritten)", user, target, ph.Name, def.Name)
+			}
 			def.Phases[idx] = ph
 		} else {
 			def.Phases = append(def.Phases, ph)

@@ -867,6 +867,14 @@ type FormField struct {
 	// these the order IS meaning: the sequence fields are declared in,
 	// the order steps run.
 	Columns []FormField `json:"columns,omitempty"`
+	// ReloadOnChange reloads the page after this field's save succeeds.
+	// For fields that are part of the record's ADDRESS: renaming the
+	// thing the form posts to leaves every sibling control on the page —
+	// including this form's own post URL — pointing at a name that no
+	// longer exists, and a reload is the honest way to catch them all
+	// up. Auto-save fields only; a submit-mode form redirects instead.
+	ReloadOnChange bool `json:"reload_on_change,omitempty"`
+
 	// HideWhen and LockWhen are ROW-SCOPED conditions on a "rows"
 	// column, written in the same grammar as ShowWhen ("field:value",
 	// "field:a|b", "!field", chained with ";") but evaluated against the

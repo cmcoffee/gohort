@@ -230,6 +230,7 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/api/machines              — list / create phase machines
 //	/api/machines/{id}         — read / replace / delete one (+ /export)
 //	/api/machines/import       — POST: create a machine from a recipe
+//	/api/machines/draft        — POST: author one from a plain-language description
 //	/api/sessions              — list (agent_id query param)
 //	/api/sessions/{sid}        — load / delete (agent_id query param)
 //	/api/send                  — SSE send (agent_id in body)
@@ -529,6 +530,7 @@ func (T *OrchestrateApp) Routes() {
 	// Feeds the chat toolbar's status pill with the session's current phase.
 	T.HandleFunc("/api/session-status", g(T.handleSessionStatus))
 	T.HandleFunc("/api/machines/import", g(T.handleMachineImport))
+	T.HandleFunc("/api/machines/draft", g(T.handleMachineDraft))
 	T.HandleFunc("/api/machines/", g(T.handleMachineOne))
 	// The Sources picker (reference_picker.go) — cross-app reference
 	// sources attached to one agent. Its own endpoint rather than the

@@ -277,6 +277,60 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		T.handleMachinePhases(w, r, udb, user, def)
 	case "try":
 		T.handleMachineTry(w, r, udb, user, def)
+	case "duplicate":
+		// Iterating on a working machine in place is how the working one
+		// stops working. A copy makes the experiment safe, and landing in
+		// the copy's editor is the reason anybody clicked.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		dup := def
+		dup.ID, dup.Global = "", false
+		dup.Name = copyName(def.Name, ListMachineDefs(udb, user))
+		saved := SaveMachineDef(udb, dup)
+		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
+		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
+	case "move":
+		// Reordering is cosmetic to the DRIVER (routing is by name) but
+		// not to the person: the order is the rail, the reading order,
+		// and the first-resident fallback.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var mv struct {
+			Name string `json:"name"`
+			Dir  string `json:"dir"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&mv); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		idx := -1
+		for i, p := range def.Phases {
+			if p.Name == strings.TrimSpace(mv.Name) {
+				idx = i
+			}
+		}
+		to := idx - 1
+		if mv.Dir == "down" {
+			to = idx + 1
+		}
+		if idx < 0 || to < 0 || to >= len(def.Phases) {
+			http.Error(w, "nowhere to move it", http.StatusBadRequest)
+			return
+		}
+		def.Phases[idx], def.Phases[to] = def.Phases[to], def.Phases[idx]
+		SaveMachineDef(udb, def)
+		writeJSON(w, map[string]any{"ok": true})
+	case "agents":
+		// Who runs this machine — readable and settable from the editor,
+		// which is where you are standing when the question comes up. An
+		// unattached machine does nothing, and the only place to attach
+		// one used to be a different surface (the chat toolbar's
+		// Configure → Machines).
+		T.handleMachineAgents(w, r, udb, user, def)
 	case "suggest":
 		// Drafting one step's instructions, grounded in the machine
 		// around it (machine_suggest.go).
@@ -343,4 +397,76 @@ func machineStatusText(d MachineDef) string {
 		return "1 thing to fix"
 	}
 	return strconv.Itoa(len(probs)) + " things to fix"
+}
+
+// handleMachineAgents reads and writes the set of agents running this
+// machine.
+//
+//	GET  → {"agents": [ids]}
+//	POST {"agents": [ids]} → attach those, detach the rest
+//
+// The POST is the whole set, matching what a checklist saves: an agent
+// in the list gets this machine (moving it off another one is legal and
+// the form warns per option), an agent that WAS on this machine and is
+// not in the list is detached. Agents on other machines that were never
+// in the set are left alone.
+func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
+	switch r.Method {
+	case http.MethodGet:
+		var ids []string
+		for _, ag := range listAgents(udb, user) {
+			if ag.Machine == def.ID {
+				ids = append(ids, ag.ID)
+			}
+		}
+		writeJSON(w, map[string]any{"agents": ids})
+	case http.MethodPost, http.MethodPut:
+		var body struct {
+			Agents []string `json:"agents"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		want := make(map[string]bool, len(body.Agents))
+		for _, id := range body.Agents {
+			want[strings.TrimSpace(id)] = true
+		}
+		var attached, detached []string
+		for _, ag := range listAgents(udb, user) {
+			switch {
+			case want[ag.ID] && ag.Machine != def.ID:
+				ag.Machine = def.ID
+				if _, err := saveAgent(udb, ag); err == nil {
+					attached = append(attached, chFirst(ag.Name, ag.ID))
+				}
+			case !want[ag.ID] && ag.Machine == def.ID:
+				ag.Machine = ""
+				if _, err := saveAgent(udb, ag); err == nil {
+					detached = append(detached, chFirst(ag.Name, ag.ID))
+				}
+			}
+		}
+		if len(attached)+len(detached) > 0 {
+			Log("[orchestrate.machines] user=%q machine %q attached=%v detached=%v", user, def.Name, attached, detached)
+		}
+		writeJSON(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// copyName picks the duplicate's name: "X (copy)", counting up until it
+// is not already taken — two unlabelled "X"s in a list is a coin flip
+// every time somebody attaches one.
+func copyName(base string, existing []MachineDef) string {
+	taken := make(map[string]bool, len(existing))
+	for _, m := range existing {
+		taken[m.Name] = true
+	}
+	name := base + " (copy)"
+	for n := 2; taken[name]; n++ {
+		name = base + " (copy " + strconv.Itoa(n) + ")"
+	}
+	return name
 }

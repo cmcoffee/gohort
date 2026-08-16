@@ -247,6 +247,68 @@ func (d MachineDef) StartPhase() string {
 	return ""
 }
 
+// RenameStep renames a step and rewrites every reference to it, so a
+// rename is one edit rather than one edit plus a scavenger hunt.
+//
+// Without this, renaming triage left next, choices, keep, guard_to, the
+// routing targets and every {state:triage.…} reference pointing at a
+// name that no longer exists — the checklist then reported three or four
+// problems the author caused by fixing a typo. The definition knows both
+// names; propagating them is its job, not the author's.
+//
+// The one thing it deliberately does NOT touch is live sessions: a
+// conversation parked in the old name heals through resume() with a
+// breadcrumb, and its blackboard entry under the old key simply ages
+// out. Rewriting stored cursors from an editor save would be action at
+// a distance into conversations someone may be in the middle of.
+func (d *MachineDef) RenameStep(from, to string) {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" || to == "" || from == to {
+		return
+	}
+	if strings.TrimSpace(d.Start) == from {
+		d.Start = to
+	}
+	for i := range d.Phases {
+		p := &d.Phases[i]
+		if p.Name == from {
+			p.Name = to
+		}
+		if strings.TrimSpace(p.Next) == from {
+			p.Next = to
+		}
+		if strings.TrimSpace(p.GuardTo) == from {
+			p.GuardTo = to
+		}
+		renameInList(p.Keep, from, to)
+		renameInList(p.Choices, from, to)
+		for fi := range p.Output {
+			f := &p.Output[fi]
+			renameInList(f.Enum, from, to)
+			f.From = renameStateRefs(f.From, from, to)
+		}
+		p.Prompt = renameStateRefs(p.Prompt, from, to)
+		p.Guard = renameStateRefs(p.Guard, from, to)
+	}
+}
+
+func renameInList(list []string, from, to string) {
+	for i, v := range list {
+		if strings.TrimSpace(v) == from {
+			list[i] = to
+		}
+	}
+}
+
+// renameStateRefs rewrites {state:from.…} and {state:from} without
+// touching a step whose name merely starts the same way — the closing
+// brace / dot is part of the match, so "triage" cannot catch
+// "triage_two".
+func renameStateRefs(s, from, to string) string {
+	s = strings.ReplaceAll(s, "{state:"+from+".", "{state:"+to+".")
+	return strings.ReplaceAll(s, "{state:"+from+"}", "{state:"+to+"}")
+}
+
 // NextPhase resolves where control goes after ph produced fields.
 //
 // Returns the target phase name and, when the resolution was not the

@@ -1144,6 +1144,11 @@
       }).then(function(){
         setTimeout(function(){ savingIndicator.classList.remove('show'); }, 300);
         window.uiInvalidateSaved(cfg);
+        // A field marked reload_on_change is part of the record's
+        // address (a rename): every control on the page is stale the
+        // moment it saves, this form's own post URL included.
+        var fdef = (cfg.fields || []).find(function(x) { return x.field === field; });
+        if (fdef && fdef.reload_on_change) window.location.reload();
       }).catch(function(err){
         savingIndicator.classList.remove('show');
         showToast('Save failed: ' + err.message);
