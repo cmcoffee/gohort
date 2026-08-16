@@ -856,6 +856,19 @@ func renderFieldValue(v any) string {
 // the prompt contract, DecodeJSON's tolerance, and the repair retry to
 // fall back on — three softer mechanisms beat one that may 400.
 func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []AgentToolDef, think, jsonMode bool, tier LLMTier) (string, error) {
+	return T.runWorkerStageConfirm(ctx, prompt, tools, think, jsonMode, tier, nil)
+}
+
+// runWorkerStageConfirm is runWorkerStage with the caller's approval
+// hook. nil keeps the unattended default (every call allowed), which is
+// what a pipeline stage wants: it runs with nobody watching, so a
+// prompt for approval would hang forever.
+//
+// A caller with somebody watching MUST pass its own. A machine's step
+// runs inside a live turn, and a step reaching a tool the turn itself
+// would have stopped to ask about is a hole under the approval card,
+// not a shortcut.
+func (T *AppCore) runWorkerStageConfirm(ctx context.Context, prompt string, tools []AgentToolDef, think, jsonMode bool, tier LLMTier, confirm func(name, args string) bool) (string, error) {
 	if len(tools) == 0 {
 		// Cheap path — pure LLM transform.
 		opts := []ChatOption{WithThink(think)}
@@ -879,13 +892,17 @@ func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []Age
 	}
 	// Tool-equipped path — short focused agent loop. No persona
 	// (just the stage's prompt as the user turn), small round budget
-	// since pipeline stages are scoped tasks, no confirm prompt for
-	// tool calls since pipelines run un-attended.
+	// since stages are scoped tasks, and the caller's approval hook —
+	// nil for an unattended pipeline, the turn's own card for a machine
+	// step somebody is waiting on.
+	if confirm == nil {
+		confirm = func(name, args string) bool { return true }
+	}
 	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: prompt}}, AgentLoopConfig{
 		Tools:     tools,
 		Tier:      tier,
 		MaxRounds: pipelineStageMaxRounds,
-		Confirm:   func(name, args string) bool { return true },
+		Confirm:   confirm,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),

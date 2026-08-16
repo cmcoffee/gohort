@@ -13,6 +13,7 @@ package orchestrate
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -435,4 +436,50 @@ func TestAStepThatNamesToolsGetsThem(t *testing.T) {
 	if len(narrowed) != 1 || narrowed[0].Tool.Name != "read_file" {
 		t.Errorf("the step should reach exactly what it named, got %+v", narrowed)
 	}
+}
+
+// Giving steps tools opened a hole under the approval card: the turn's
+// own tool loop stops for a credential marked RequiresConfirm, while a
+// worker stage auto-approves because pipelines run with nobody
+// watching. A machine step runs with somebody waiting, so it takes the
+// turn's gate.
+func TestAStepsToolsGoThroughTheTurnsApprovalGate(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+
+	// No tools named: nothing to gate, and no session built to gate with.
+	if turn.machineCatalog(MachinePhase{Name: "triage"}) != nil || turn.machineConfirm() != nil {
+		t.Error("a step with no tools should need no gate")
+	}
+
+	// Tools named: the gate exists and is built against the SAME session
+	// the tools were resolved against — which credential a call rides on
+	// is session state.
+	turn.machineCatalog(MachinePhase{Name: "hunch", Tools: []string{"read_file"}})
+	if turn.machineSess == nil {
+		t.Fatal("the session the tools came from should be kept")
+	}
+	gate := turn.machineConfirm()
+	if gate == nil {
+		t.Fatal("a step with tools must carry the turn's approval gate")
+	}
+	// A tool riding no credential is allowed without a card, same as the
+	// turn's own path.
+	if !gate("read_file", "{}") {
+		t.Error("an ungated tool should not stop for approval")
+	}
+
+	// And the core seam defaults to allow ONLY for callers with nobody
+	// to ask: a nil hook is the unattended pipeline's, not a machine's.
+	if !strings.Contains(readFileForTest(t, "../../core/machine.go"), "PhaseWorkerConfirm") {
+		t.Error("the host needs a way to supply its own hook")
+	}
+}
+
+func readFileForTest(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

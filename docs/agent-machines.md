@@ -695,6 +695,13 @@ It now builds a session of its own the way a pipeline's sub-run does (shared cac
 counts, staged files folded back into the turn), and only when a step actually names tools — a step
 that names none pays nothing.
 
+**A step's tools go through the turn's approval gate.** The turn's own loop stops for a tool whose
+credential is marked RequiresConfirm and renders the approval card; a worker stage auto-approves,
+because a pipeline runs with nobody watching and a prompt would hang forever. A machine step runs
+with somebody waiting, so it takes the turn's hook (`PhaseWorkerConfirm` — the host seam the
+PhaseRunner doc always promised). Giving steps tools without this would have been a hole underneath
+the card rather than a feature.
+
 `Advice()` catches the mismatch that motivated this: a step whose instructions send it looking, with
 no tools named and no delegate. The shipped investigation recipe has exactly that shape, on purpose,
 and says so in its description — its `hunch` step is meant to be given whatever search tools the

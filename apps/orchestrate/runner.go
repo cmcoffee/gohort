@@ -327,6 +327,10 @@ type chatTurn struct {
 	// when a step runs, so this is a session of the step's own — the
 	// same shape a pipeline sub-run uses.
 	machineTools []AgentToolDef
+	// machineSess is the session those tools were resolved against —
+	// held because the approval hook reads session state to find which
+	// credential a call rides on.
+	machineSess *ToolSession
 	// detach is this TURN's background-job ledger, shared by every session the
 	// turn mints. It has to live here rather than on a session because a plan
 	// runs each step on its OWN session (runWorkerStep), so a per-session cap

@@ -193,8 +193,22 @@ func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
 		// Prefixed so the activity pane reads as what it is: work done
 		// inside a step, before the turn's own answer began.
 		t.machineTools = t.wrapToolsForActivity(sess, pool, "↳ [step] ")
+		// Kept because the approval hook reads it: which credential a
+		// call rides on is session state, so the gate has to be built
+		// against the SAME session the tools were.
+		t.machineSess = sess
 	}
 	return t.machineTools
+}
+
+// machineConfirm is the approval gate a step's tools go through: the
+// turn's own. A step that could reach a tool the turn itself would have
+// stopped to ask about would be a hole under the approval card.
+func (t *chatTurn) machineConfirm() func(name, args string) bool {
+	if t.machineSess == nil {
+		return nil
+	}
+	return t.confirmFuncFor(t.machineSess)
 }
 
 // completeMachine closes the turn: a resident phase that names a Next

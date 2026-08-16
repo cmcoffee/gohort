@@ -246,13 +246,24 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 // history. A transient phase does one bounded job against the prompt the
 // driver resolved for it, and its product is state, not conversation.
 func (T *AppCore) PhaseWorker(catalog []AgentToolDef) PhaseRunner {
+	return T.PhaseWorkerConfirm(catalog, nil)
+}
+
+// PhaseWorkerConfirm is PhaseWorker with the host's approval hook, for a
+// host running steps where somebody is watching.
+//
+// The hook is the turn's own: a step must not reach a tool the turn
+// itself would have stopped to ask about. nil means allow (the dry run
+// and any unattended host), which is safe only because those have no
+// person to ask and no live catalog to reach.
+func (T *AppCore) PhaseWorkerConfirm(catalog []AgentToolDef, confirm func(name, args string) bool) PhaseRunner {
 	return func(ctx context.Context, ph MachinePhase, prompt string) (string, error) {
 		// A transient phase defaults to NOT reasoning: it is a bounded
 		// transform (split this up, pick a lane) sitting in front of the
 		// user's actual turn, and the latency it adds is paid before
 		// anyone sees a word. Authors opt in per phase.
 		think := PhaseThink(ph, false)
-		return T.runWorkerStage(ctx, prompt, PhaseTools(ph, catalog), think, len(ph.ModelOutput()) > 0, PhaseTier(ph))
+		return T.runWorkerStageConfirm(ctx, prompt, PhaseTools(ph, catalog), think, len(ph.ModelOutput()) > 0, PhaseTier(ph), confirm)
 	}
 }
 

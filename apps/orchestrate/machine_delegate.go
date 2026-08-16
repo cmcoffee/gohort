@@ -37,7 +37,7 @@ func (t *chatTurn) phaseRunner() PhaseRunner {
 		// pays nothing, and one that names some gets exactly those
 		// (PhaseWorker narrows by ph.Tools). A delegate brings its own,
 		// so it is handed none of this.
-		base := t.app.PhaseWorker(t.machineCatalog(ph))
+		base := t.app.PhaseWorkerConfirm(t.machineCatalog(ph), t.machineConfirm())
 		// Say what is happening BEFORE it happens. These calls run at the
 		// head of the turn, before the persona is even assembled, so
 		// until the first one returns the person is looking at nothing —
