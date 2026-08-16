@@ -25,7 +25,7 @@ func TestResidentPhaseCannotDelegate(t *testing.T) {
 	probs := def.Problems()
 	var found bool
 	for _, p := range probs {
-		if strings.Contains(p, "agent is not valid on a resident phase") {
+		if strings.Contains(p, "agent is not valid on a step the conversation waits in") {
 			found = true
 			// It must say WHY, not just refuse: the reason is what stops
 			// somebody working around it.
@@ -125,7 +125,7 @@ func TestEditorOffersDelegation(t *testing.T) {
 		if !ok {
 			t.Fatalf("no phase %q", name)
 		}
-		b, _ := json.Marshal(phaseFieldsFor(def, p, agents))
+		b, _ := json.Marshal(phaseFieldsFor(def, p, editorCatalog{agents: agents}))
 		return string(b)
 	}
 	// A transient step offers delegation, as a PICK from real agents

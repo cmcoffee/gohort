@@ -1413,53 +1413,6 @@
           current[f.field] = f.options[0].value;
         }
         input.addEventListener('change', function(){ save(f.field, input.value); });
-      } else if (t === 'checklist') {
-        // Multi-select checkbox list bound to a string array. Same
-        // shape as "select" (uses f.options as the choice set) but
-        // multi-pick — for "allowlist N items from this fixed set"
-        // configs where the operator checks the ones to include and the
-        // saved value is the list of checked option Values.
-        // Saves immediately on each toggle (no debounce — discrete).
-        // Empty value renders as no boxes checked.
-        input = el('div', {class: 'ui-form-checklist'});
-        input.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem';
-        var initialList = Array.isArray(initial) ? initial.slice() : [];
-        var checkedSet = {};
-        initialList.forEach(function(v){ checkedSet[String(v)] = true; });
-        (f.options || []).forEach(function(o) {
-          var item = el('label', {class: 'ui-form-checklist-item'});
-          item.style.cssText = 'display:flex;align-items:flex-start;gap:0.5rem;padding:0.2rem 0;cursor:pointer';
-          var box = document.createElement('input');
-          box.type = 'checkbox';
-          box.value = o.value;
-          box.style.marginTop = '0.2rem';
-          if (checkedSet[String(o.value)]) box.checked = true;
-          var lbl = document.createElement('div');
-          lbl.style.cssText = 'flex:1;font-size:0.88rem;color:var(--text)';
-          lbl.textContent = o.label || o.value;
-          if (o.help) {
-            var sub = document.createElement('div');
-            sub.style.cssText = 'font-size:0.74rem;color:var(--text-mute);margin-top:0.1rem';
-            sub.textContent = o.help;
-            lbl.appendChild(sub);
-          }
-          item.appendChild(box);
-          item.appendChild(lbl);
-          input.appendChild(item);
-          box.addEventListener('change', function(){
-            var picked = [];
-            input.querySelectorAll('input[type=checkbox]:checked').forEach(function(b){
-              picked.push(b.value);
-            });
-            save(f.field, picked);
-          });
-        });
-        if (!f.options || f.options.length === 0) {
-          var emp = document.createElement('div');
-          emp.style.cssText = 'color:var(--text-mute);font-style:italic;font-size:0.78rem;padding:0.3rem 0';
-          emp.textContent = f.placeholder || '(no options available)';
-          input.appendChild(emp);
-        }
       } else if (t === 'toggle') {
         // iOS-style switch as a form field. Saves immediately on
         // change (no debounce) since toggles are discrete decisions.
@@ -2020,7 +1973,6 @@
         var initialArr = Array.isArray(initial) ? initial.slice() : [];
         var selected = {};
         initialArr.forEach(function(v) { selected[String(v)] = true; });
-        var checkboxes = [];
         var countEl = el('span', {class: 'ui-checklist-count'});
         function refreshCount() {
           var n = 0, total = (f.options || []).length;
@@ -2038,38 +1990,73 @@
           save(f.field, out);
         }
         var toolbar = el('div', {class: 'ui-checklist-toolbar'});
+        // A filter, once the list is too long to scan. Matching is
+        // against the value, the label and the help line, so "search"
+        // finds search_web by either its name or what it says it does.
+        // Checked state is untouched by filtering — hiding a row must
+        // never uncheck it, or narrowing the view would edit the data.
+        var rowIndex = []; // {row, header, text}
+        var filterBox = null;
+        if ((f.options || []).length > 15) {
+          filterBox = el('input', {type: 'text', class: 'ui-input ui-checklist-filter',
+            placeholder: 'Filter…', 'aria-label': 'Filter the list'});
+          filterBox.style.cssText = 'flex:1;min-width:8rem;font-size:0.8rem;padding:0.2rem 0.5rem';
+          filterBox.addEventListener('input', function() {
+            var q = filterBox.value.trim().toLowerCase();
+            var visibleByHeader = new Map();
+            rowIndex.forEach(function(e) {
+              var show = !q || e.text.indexOf(q) >= 0;
+              e.row.style.display = show ? '' : 'none';
+              if (e.header) visibleByHeader.set(e.header, (visibleByHeader.get(e.header) || false) || show);
+            });
+            // A header with nothing under it is noise, not orientation.
+            visibleByHeader.forEach(function(any, h) { h.style.display = any ? '' : 'none'; });
+          });
+        }
         var allBtn = el('button', {type: 'button', class: 'ui-checklist-toolbtn'}, ['Select all']);
         var noneBtn = el('button', {type: 'button', class: 'ui-checklist-toolbtn'}, ['Clear']);
+        // Both act on the rows you can SEE. With no filter that is all
+        // of them, the old behaviour; with one, "Select all" must not
+        // check a hundred hidden rows the person never looked at.
+        function eachVisible(fn) {
+          rowIndex.forEach(function(e) {
+            if (e.row.style.display !== 'none') fn(e);
+          });
+        }
         allBtn.addEventListener('click', function() {
-          (f.options || []).forEach(function(o) { selected[String(o.value)] = true; });
-          checkboxes.forEach(function(cb) { cb.checked = true; });
+          eachVisible(function(e) { selected[e.value] = true; e.cb.checked = true; });
           persist();
         });
         noneBtn.addEventListener('click', function() {
-          selected = {};
-          checkboxes.forEach(function(cb) { cb.checked = false; });
+          eachVisible(function(e) { selected[e.value] = false; e.cb.checked = false; });
           persist();
         });
         toolbar.appendChild(allBtn);
         toolbar.appendChild(noneBtn);
+        if (filterBox) toolbar.appendChild(filterBox);
         toolbar.appendChild(countEl);
         input.appendChild(toolbar);
 
         var lastGroup = '__init__';
+        var lastHeader = null;
         (f.options || []).forEach(function(o) {
           var grp = o.group || '';
           if (grp !== lastGroup) {
-            if (grp) input.appendChild(el('div', {class: 'ui-checklist-group'}, [grp]));
+            lastHeader = grp ? el('div', {class: 'ui-checklist-group'}, [grp]) : null;
+            if (lastHeader) input.appendChild(lastHeader);
             lastGroup = grp;
           }
           var row = el('label', {class: 'ui-checklist-row'});
+          var entry = {row: row, header: lastHeader, value: String(o.value), cb: null,
+            text: String((o.value || '') + ' ' + (o.label || '') + ' ' + (o.help || '')).toLowerCase()};
+          rowIndex.push(entry);
           var cb = el('input', {type: 'checkbox', class: 'ui-checklist-cb'});
+          entry.cb = cb;
           cb.checked = !!selected[String(o.value)];
           cb.addEventListener('change', function() {
             selected[String(o.value)] = cb.checked;
             persist();
           });
-          checkboxes.push(cb);
           row.appendChild(cb);
           var lbl = el('div', {class: 'ui-checklist-lbl'});
           lbl.appendChild(el('span', {class: 'ui-checklist-name'}, [o.label || o.value]));

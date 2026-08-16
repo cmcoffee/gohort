@@ -86,23 +86,23 @@ func TestMachineValidate_Rejects(t *testing.T) {
 		def  MachineDef
 		want string
 	}{
-		"no phases": {
+		"machine has no steps": {
 			MachineDef{Name: "empty"},
-			"no phases",
+			"machine has no steps",
 		},
 		"no resident phase": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", Next: "b"},
 				{Name: "b", Prompt: "y", Next: "a"},
 			}},
-			"no phase is resident",
+			"no step waits for the person",
 		},
 		"duplicate name": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", Resident: true},
 				{Name: "a", Prompt: "y", Resident: true},
 			}},
-			"duplicate phase name",
+			"duplicate step name",
 		},
 		"dotted name": {
 			MachineDef{Phases: []MachinePhase{{Name: "a.b", Prompt: "x", Resident: true}}},
@@ -110,28 +110,28 @@ func TestMachineValidate_Rejects(t *testing.T) {
 		},
 		"unknown start": {
 			MachineDef{Start: "nope", Phases: []MachinePhase{{Name: "a", Prompt: "x", Resident: true}}},
-			"start names unknown phase",
+			"start names unknown step",
 		},
 		"unknown next": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", Next: "ghost"},
 				{Name: "b", Prompt: "y", Resident: true},
 			}},
-			"next names unknown phase",
+			"next names unknown step",
 		},
 		"transient dead end": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x"},
 				{Name: "b", Prompt: "y", Resident: true},
 			}},
-			"names neither next nor next_from",
+			"passes on but goes nowhere",
 		},
 		"next_from undeclared": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", NextFrom: "target", Next: "b"},
 				{Name: "b", Prompt: "y", Resident: true},
 			}},
-			"not one of this phase's declared output fields",
+			"not one of this step's declared output fields",
 		},
 		"next_from wrong type": {
 			MachineDef{Phases: []MachinePhase{
@@ -139,14 +139,14 @@ func TestMachineValidate_Rejects(t *testing.T) {
 					Output: []PipelineField{{Name: "target", Type: FieldList}}},
 				{Name: "b", Prompt: "y", Resident: true},
 			}},
-			"must be a string field holding a phase name",
+			"must be a string field holding a step name",
 		},
 		"guard on transient phase": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", Next: "b", Guard: "is this still the same job?"},
 				{Name: "b", Prompt: "y", Resident: true},
 			}},
-			"guard is only valid on a resident phase",
+			"guard is only valid on a step the conversation waits in",
 		},
 		"guard_to without guard": {
 			MachineDef{Phases: []MachinePhase{
@@ -159,25 +159,25 @@ func TestMachineValidate_Rejects(t *testing.T) {
 				{Name: "a", Prompt: "x", Resident: true,
 					Output: []PipelineField{{Name: "reply", Type: FieldString}}},
 			}},
-			"output is not valid on a resident phase",
+			"output is not valid on a step the conversation waits in",
 		},
 		"next_from on resident phase": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", Resident: true, NextFrom: "target"},
 			}},
-			"next_from is not valid on a resident phase",
+			"next_from is not valid on a step the conversation waits in",
 		},
 		"turn-local token in resident prompt": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "answer {input} well", Resident: true},
 			}},
-			"is not available in a resident phase",
+			"is not available in a step the conversation waits in",
 		},
 		"unknown state phase ref": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "see {state:ghost.x}", Resident: true},
 			}},
-			"references unknown phase",
+			"references unknown step",
 		},
 		"unknown state field ref": {
 			MachineDef{Phases: []MachinePhase{
@@ -185,13 +185,13 @@ func TestMachineValidate_Rejects(t *testing.T) {
 					Output: []PipelineField{{Name: "notes", Type: FieldString}}},
 				{Name: "a", Prompt: "see {state:scan.missing}", Resident: true},
 			}},
-			"references a field phase scan does not declare",
+			"references a field step scan does not declare",
 		},
-		"keep names unknown phase": {
+		"keep names unknown step": {
 			MachineDef{Phases: []MachinePhase{
 				{Name: "a", Prompt: "x", Resident: true, Keep: []string{"ghost"}},
 			}},
-			"keep names unknown phase",
+			"keep names unknown step",
 		},
 		"bad model": {
 			MachineDef{Phases: []MachinePhase{
@@ -237,7 +237,7 @@ func TestMachineValidate_ReportsEveryIndependentProblem(t *testing.T) {
 	if !strings.Contains(msg, "3 problems") {
 		t.Errorf("expected all three problems in one error, got: %v", err)
 	}
-	for _, want := range []string{"next names unknown phase", "model must be", "keep names unknown phase"} {
+	for _, want := range []string{"next names unknown step", "model must be", "keep names unknown step"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing %q in: %v", want, err)
 		}
@@ -787,7 +787,7 @@ func TestPhaseBlock_PinsEarlierFindingsAndIsByteStable(t *testing.T) {
 		"route":     {Fields: map[string]any{"target": "deep"}},
 	}
 	ph, _ := def.Phase("deep")
-	got := def.PhaseBlock(ph, st)
+	got := def.PhaseBlock(ph, st, PhaseVars{})
 
 	if !strings.Contains(got, "Current phase: deep") {
 		t.Errorf("block should name the current phase: %s", got)
@@ -804,7 +804,7 @@ func TestPhaseBlock_PinsEarlierFindingsAndIsByteStable(t *testing.T) {
 	// sits in the cacheable system prefix. Map iteration order must not
 	// reach it.
 	for i := 0; i < 20; i++ {
-		if again := def.PhaseBlock(ph, st); again != got {
+		if again := def.PhaseBlock(ph, st, PhaseVars{}); again != got {
 			t.Fatalf("PhaseBlock is not byte-stable across renders:\n%s\n---\n%s", got, again)
 		}
 	}
@@ -813,7 +813,7 @@ func TestPhaseBlock_PinsEarlierFindingsAndIsByteStable(t *testing.T) {
 func TestPhaseBlock_EmptyStateRendersJustTheDirective(t *testing.T) {
 	def := triageMachine()
 	ph, _ := def.Phase("answer")
-	got := def.PhaseBlock(ph, nil)
+	got := def.PhaseBlock(ph, nil, PhaseVars{})
 	if strings.Contains(got, "Established earlier") {
 		t.Errorf("nothing established yet, so the section should be absent: %s", got)
 	}

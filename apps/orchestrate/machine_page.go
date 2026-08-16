@@ -120,7 +120,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// that list is how every phase's form ended up under the first phase
 	// and the second phase's section showed the "add" button: the menu
 	// and the diagram were right, and the bodies under them were not.
-	spec := machineEditorSpec(def, agentOptions(udb, user))
+	spec := machineEditorSpec(def, editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})
 	meta, _ := spec["meta"].(ui.FormPanel)
 	panels, _ := spec["phases"].([]ui.Component)
 	add, _ := spec["add"].(ui.ModalButton)
@@ -257,6 +257,8 @@ func phaseSubtitle(p MachinePhase) string {
 		}
 	} else {
 		switch {
+		case len(p.RoutingChoices()) > 0:
+			b.WriteString("then chooses between " + strings.Join(p.RoutingChoices(), ", "))
 		case p.NextFrom != "":
 			b.WriteString("then goes to whichever step it names in " + p.NextFrom)
 		case p.Next != "":

@@ -37,7 +37,7 @@ func TestPreviewIsTheRealComposedBlock(t *testing.T) {
 
 	// It must contain what PhaseBlock actually produces — the same
 	// function a live turn calls — not a paraphrase of it.
-	want := def.PhaseBlock(verify, sampleStateFor(def, verify))
+	want := def.PhaseBlock(verify, sampleStateFor(def, verify), PhaseVars{})
 	for _, line := range []string{"Established earlier in this conversation", "Other phases in this workflow", "Go and look."} {
 		if !strings.Contains(want, line) {
 			t.Fatalf("fixture does not exercise %q — the test would prove nothing", line)
@@ -61,7 +61,7 @@ func TestPreviewIsTheRealComposedBlock(t *testing.T) {
 	// read what it is about to write.
 	if strings.Contains(want, "‹where to go›") && strings.Contains(want, "### triage") {
 		tri, _ := def.Phase("triage")
-		own := def.PhaseBlock(tri, sampleStateFor(def, tri))
+		own := def.PhaseBlock(tri, sampleStateFor(def, tri), PhaseVars{})
 		if strings.Contains(own, "### triage") {
 			t.Error("a step was shown its own findings as established")
 		}

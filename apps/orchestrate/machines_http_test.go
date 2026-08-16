@@ -336,7 +336,7 @@ func TestMachinesHTTP_EditKeepsIdentityAndExplainsRejections(t *testing.T) {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 	msg := w.Body.String()
-	for _, want := range []string{"3 problems", "start names unknown phase", "next names unknown phase", "model must be"} {
+	for _, want := range []string{"3 problems", "start names unknown step", "next names unknown step", "model must be"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the rejection should name %q; got: %s", want, msg)
 		}

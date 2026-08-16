@@ -170,8 +170,10 @@ fields cannot say:
 symptom of something that went wrong several lines earlier" is the shape. "Return a hypothesis field"
 is not — declaring the field already said that.
 
-NEVER: ask for JSON, describe an output format, give an example object, or paste in what an earlier
-step found. All of that is composed by the framework, and a second copy fights it.
+NEVER: ask for JSON, describe an output format, give an example object, paste in what an earlier
+step found, or place {input}-style variables to "receive" the message. The person's message and
+everything earlier steps established arrive automatically; all of that is composed by the
+framework, and a second copy fights it.
 
 Write to a person, in plain sentences. Short is better than complete. Reply with the instructions
 only — no preamble, no explanation of what you wrote.`)

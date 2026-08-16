@@ -38,7 +38,16 @@ import (
 
 // machineEditorSpec is what the modal mounts: a checklist of what is
 // still missing, then the components to render in order.
-func machineEditorSpec(def MachineDef, agents []ui.SelectOption) map[string]any {
+// editorCatalog is everything the editor offers that comes from outside
+// the machine: the user's agents (for delegation) and their tool pool
+// (for narrowing a step). Bundled so the next externally-sourced list is
+// a field, not a fourth positional slice at twelve call sites.
+type editorCatalog struct {
+	agents []ui.SelectOption
+	tools  []ui.SelectOption
+}
+
+func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 	base := machineAPIBase(def)
 	return map[string]any{
 		"id":   def.ID,
@@ -61,11 +70,11 @@ func machineEditorSpec(def MachineDef, agents []ui.SelectOption) map[string]any 
 		// under them were not, which is a worse failure than either being
 		// wrong on its own — it teaches that the structure means nothing.
 		"meta":   metaPanel(def, base),
-		"phases": phasePanels(def, base, agents),
+		"phases": phasePanels(def, base, cat),
 		"add":    addPanel(def, base),
 		"components": []any{
 			metaPanel(def, base),
-			ui.Stack{Children: phasePanels(def, base, agents)},
+			ui.Stack{Children: phasePanels(def, base, cat)},
 			addPanel(def, base),
 		},
 	}
@@ -142,15 +151,43 @@ func routingTargetsOf(p MachinePhase) []string {
 // all address the same machine.
 func machineAPIBase(def MachineDef) string { return "api/machines/" + url_(def.ID) }
 
+// toolChecklistOptions is the user's tool pool, plus any tool this step
+// already names that the pool does not offer.
+//
+// The extras matter on an imported machine: its steps can name tools
+// this deployment simply does not have, and a checklist only persists
+// what it can show — so a name left off the list would be silently
+// dropped by the next save. Broken-dependency posture: keep it, label
+// it, and let the person uncheck it on purpose.
+func toolChecklistOptions(offered []ui.SelectOption, current []string) []ui.SelectOption {
+	known := make(map[string]bool, len(offered))
+	for _, o := range offered {
+		known[o.Value] = true
+	}
+	out := offered
+	for _, name := range current {
+		if name = strings.TrimSpace(name); name == "" || known[name] {
+			continue
+		}
+		known[name] = true
+		out = append(out[:len(out):len(out)], ui.SelectOption{
+			Value: name, Label: name,
+			Group: "Named by this machine, not available here",
+			Help:  "kept so a save does not lose it; uncheck to drop it",
+		})
+	}
+	return out
+}
+
 // phasePanels builds one editing panel per phase, each carrying the
 // choices computed for THAT phase. Order follows the machine's own,
 // which is the order somebody reads them in.
-func phasePanels(def MachineDef, base string, agents []ui.SelectOption) []ui.Component {
+func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component {
 	out := make([]ui.Component, 0, len(def.Phases))
 	for _, p := range def.Phases {
 		q := base + "/phases?name=" + url_(p.Name)
 		out = append(out, ui.Stack{Children: []ui.Component{
-			ui.FormPanel{Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, agents)},
+			ui.FormPanel{Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
 			// What the framework adds around the author's text, rendered
 			// from the function a live turn calls. Collapsed, greyed, and
 			// underneath: it is reference, not input.
@@ -335,7 +372,7 @@ func agentOptions(udb Database, user string) []ui.SelectOption {
 // phaseFieldsFor builds the form for ONE phase, with every choice
 // computed for it: the fields it declares, the phases it can reach, the
 // state it can read. Nothing here is typed from memory.
-func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []ui.FormField {
+func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.FormField {
 	refs := stateRefsAvailableTo(def, p.Name)
 	promptLabel := "How to go about it"
 	promptHelp := "The METHOD, not the output. What each field below should contain is already an instruction — the framework sends every field you declare, with the description you gave it — so this is for what a list of fields cannot say: where to look first, what a good answer requires, and the mistake this step tends to make. " +
@@ -351,7 +388,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []
 			"once you add fields below, each one becomes an instruction of its own and this can shrink to the method: where to look, what a good answer requires, what usually goes wrong."
 	}
 	if p.Resident {
-		promptHelp += " This prompt is pinned across turns, so the turn-local variables are not available here — the person's message is already in the conversation, and what earlier steps established is composed for you."
+		promptHelp += " This prompt is pinned across turns, so {input}, {prev} and {now} do not exist here — the person's message is already in the conversation, and what earlier steps established is composed for you. The stable variables work: {original_input}, {user}, {agent}, {step}, {machine}."
 	} else {
 		promptHelp += " You do not have to ask for the person's message or for what earlier steps worked out: both are handed to this step whether you mention them or not. " +
 			"Place a variable only when you want the value INSIDE a sentence. " + builtinVarHelp()
@@ -385,8 +422,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []
 		// goes — it is a property of the step itself, and the answer
 		// changes how the instructions above should read.
 		fields = append(fields,
-			ui.FormField{Field: "agent", Type: "select", Label: "Who runs this step", Options: agents,
-				Help: "Leave it with this agent, or give it to another one — with its own persona, tools and memory. A delegate gets the instructions above, works, and reports back; what it reports is recorded below. Use it when the work needs different REACH, not different wording."},
+			ui.FormField{Field: "agent", Type: "select", Label: "Who runs this step", Options: cat.agents,
+				Help: "Leave it with this agent, or give it to another one — with its own persona, tools and memory. A delegate gets the instructions above, works, and reports back; what it reports is recorded below. Use it when the work needs different REACH, not different wording. How the step runs — model, reasoning, tools — becomes the delegate's own configuration."},
 		)
 	}
 	if p.Resident {
@@ -468,21 +505,30 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []
 	}
 	fields = append(fields,
 		ui.FormField{Type: "header", Label: "How this step runs", Collapsed: true},
-		ui.FormField{Field: "model", Type: "select", Label: "Which model", Options: []ui.SelectOption{
+		// Hidden the moment the step is delegated: a delegate runs on its
+		// OWN model, reasoning and tools, so these would be controls
+		// somebody can change and be ignored for. The same rule the
+		// built-in field rows follow.
+		ui.FormField{Field: "model", Type: "select", Label: "Which model", ShowWhen: "!agent", Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's routing"},
 			{Value: "worker", Label: "Worker — the cheap, local one"},
 			{Value: "lead", Label: "Lead — the precise, remote one"},
 		},
 			Help: "A routing decision or a transform is worker work; a step that commits to an explanation is usually lead."},
-		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", Options: []ui.SelectOption{
+		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", ShowWhen: "!agent", Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's setting"},
 			{Value: "on", Label: "On — this step is a judgement"},
 			{Value: "off", Label: "Off — this step is a transform"},
 		}},
 		ui.FormField{Field: "keep", Type: "checklist", Label: "On re-entry, keep only", Options: otherPhaseOptions(def, p.Name),
 			Help: "Steps whose findings survive coming BACK here a second time. Choose none to keep everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake."},
-		ui.FormField{Field: "tools", Type: "tags", Label: "Only these tools",
-			Help: "Narrow the agent's catalog while it is in this step. Empty = everything it normally has. Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."},
+		// The user's real tool pool, not a box to type names into — the
+		// last thing in this editor that was typed from memory. Checked
+		// none = no narrowing, which is the common case.
+		ui.FormField{Field: "tools", Type: "checklist", Label: "Only these tools", ShowWhen: "!agent",
+			Options:     toolChecklistOptions(cat.tools, p.Tools),
+			Placeholder: "(no tools to offer)",
+			Help: "Check tools to narrow the agent's catalog while it is in this step; none checked = everything it normally has. A step only routes or decides? Narrow it hard. Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."},
 	)
 	return fields
 }
@@ -513,7 +559,7 @@ func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, machineEditorSpec(def, agentOptions(udb, user)))
+	writeJSON(w, machineEditorSpec(def, editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)}))
 }
 
 // handleMachineMeta reads and merges the machine-level fields.

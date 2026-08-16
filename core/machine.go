@@ -173,7 +173,7 @@ func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineC
 		return target, nil
 	}
 	cur.moveTo(from, target, chooseStr(strings.TrimSpace(turn.Input), "changed mid-turn"), note)
-	note("machine_phase_changed", "moved from phase "+from+" to "+target.Name+" mid-turn")
+	note("machine_phase_changed", "moved from step "+from+" to "+target.Name+" mid-turn")
 	return T.walk(ctx, def, cur, target, turn, run, note)
 }
 
@@ -200,7 +200,7 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			// return has not been run this iteration, so the host
 			// running it as the reply is the first time it fires, not a
 			// second.
-			note("machine_transition_cap", "machine "+def.Name+" made "+strconv.Itoa(hops)+" phase transitions without reaching a resident phase; replying from "+ph.Name)
+			note("machine_transition_cap", "machine "+def.Name+" made "+strconv.Itoa(hops)+" step transitions without reaching a step the conversation waits in; replying from "+ph.Name)
 			return ph, nil
 		}
 
@@ -223,9 +223,9 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			// turn to the phase that exists to reply.
 			nph, ok = def.firstResident()
 			if !ok {
-				return MachinePhase{}, Error("machine " + def.Name + ": phase " + ph.Name + " handed off nowhere and the machine has no resident phase")
+				return MachinePhase{}, Error("machine " + def.Name + ": step " + ph.Name + " handed off nowhere and no step waits for the person")
 			}
-			note("machine_dead_end", "phase "+ph.Name+" handed off nowhere; replying from "+nph.Name)
+			note("machine_dead_end", "step "+ph.Name+" handed off nowhere; replying from "+nph.Name)
 		}
 		cur.moveTo(ph.Name, nph, chooseStr(why, "routed by "+ph.Name), note)
 		ph = nph
@@ -284,11 +284,11 @@ func (d MachineDef) CompleteTurn(cur *MachineCursor, ph MachinePhase, note func(
 	}
 	nph, ok := d.Phase(next)
 	if !ok {
-		note("machine_dead_end", "phase "+ph.Name+" hands off to unknown phase "+next+"; staying put")
+		note("machine_dead_end", "step "+ph.Name+" hands off to unknown step "+next+"; staying put")
 		return
 	}
 	cur.moveTo(ph.Name, nph, "handed off after one turn", note)
-	note("machine_phase_advance", "phase "+ph.Name+" has had its turn; moving to "+nph.Name)
+	note("machine_phase_advance", "step "+ph.Name+" has had its turn; moving to "+nph.Name)
 }
 
 // PhaseInstructions returns EXACTLY what one step is sent, for a caller
@@ -311,7 +311,7 @@ func (d MachineDef) CompleteTurn(cur *MachineCursor, ph MachinePhase, note func(
 // into describing something the model never sees.
 func (d MachineDef) PhaseInstructions(ph MachinePhase, st MachineState, v PhaseVars) string {
 	if ph.Resident {
-		return d.PhaseBlock(ph, st)
+		return d.PhaseBlock(ph, st, v)
 	}
 	out := d.phasePrompt(ph, st, v)
 	if fields := ph.ModelOutput(); len(fields) > 0 {
@@ -404,7 +404,7 @@ func (d MachineDef) fillStatic(ph MachinePhase, fields map[string]any, v PhaseVa
 			// The field the author expected to be free is empty, and
 			// nothing downstream will say why. {original_input} on a turn
 			// that arrived as an image and no words is the real case.
-			note("machine_static_empty", "phase "+ph.Name+": "+f.Name+" is filled from "+f.From+
+			note("machine_static_empty", "step "+ph.Name+": "+f.Name+" is filled from "+f.From+
 				", which resolved to nothing this turn; the field is empty")
 		}
 		fields[f.Name] = val
@@ -433,7 +433,7 @@ func (d MachineDef) resume(cur *MachineCursor, note func(kind, detail string)) (
 		return MachinePhase{}, false, Error("machine " + d.Name + " has no phase " + start)
 	}
 	if strings.TrimSpace(cur.Phase) != "" {
-		note("machine_phase_reset", "phase "+cur.Phase+" is no longer part of machine "+d.Name+"; resuming at "+ph.Name+" with state kept")
+		note("machine_phase_reset", "step "+cur.Phase+" is no longer part of machine "+d.Name+"; resuming at "+ph.Name+" with state kept")
 	}
 	cur.Phase = ph.Name
 	return ph, false, nil
@@ -541,14 +541,25 @@ func ResolvePhaseTemplate(tmpl string, v PhaseVars, st MachineState) string {
 //
 // Byte-stability is a requirement, not a nicety. The block sits in the
 // cacheable system prefix, so it renders phases and fields in DECLARED
-// order (never map order) and resolves only {state:...}, which changes
-// solely when a transient phase writes. Across a resident run of N turns
-// the prefix is identical and the prompt cache holds; render one map
-// iteration in here and every turn re-pays cold prefill.
+// order (never map order) and resolves only values that hold still:
+// {state:...}, which changes solely when a transient phase writes, and
+// the SESSION-STABLE variables — {original_input} (written once, on the
+// first walk), {user} and {agent} (fixed for the session), {step} and
+// {machine} (fixed by the definition). The volatile three — {input},
+// {prev}, {now} — are zeroed HERE, not trusted to the caller: one call
+// site passing a clock in would silently re-pay cold prefill on every
+// turn, which is the kind of regression nobody sees in a diff. Validate
+// rejects them in a resident prompt so an author finds out at save time
+// rather than by a blank.
 //
 // The current phase's own prior result is left out: it is the phase
 // talking, and handing it its own last answer invites it to repeat it.
-func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
+func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) string {
+	v.Input, v.Prev, v.Now = "", "", ""
+	v.Step = ph.Name
+	v.Machine = chooseStr(v.Machine, d.Name)
+	v.Established = d.establishedBlock(ph, st)
+
 	var b strings.Builder
 	b.WriteString("\n\n## Current phase: ")
 	b.WriteString(ph.Name)
@@ -557,7 +568,7 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}
-	if p := strings.TrimSpace(ResolvePhaseTemplate(ph.Prompt, PhaseVars{}, st)); p != "" {
+	if p := strings.TrimSpace(ResolvePhaseTemplate(ph.Prompt, v, st)); p != "" {
 		b.WriteString("\n")
 		b.WriteString(p)
 		b.WriteString("\n")
@@ -571,7 +582,10 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
 		b.WriteString(r)
 	}
 
-	if est := d.establishedBlock(ph, st); est != "" {
+	// Unless the prompt placed {established} itself — then the author
+	// chose where it goes, and a second copy would argue with them. The
+	// same rule a transient step follows.
+	if est := v.Established; est != "" && !mentionsEstablished(ph.Prompt) {
 		b.WriteString("\n## Established earlier in this conversation\n")
 		b.WriteString("Settled. Work from it rather than re-deriving it, and do not re-ask what it already answers.\n")
 		b.WriteString(est)

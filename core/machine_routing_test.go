@@ -25,7 +25,7 @@ func routingFixture(targets []string) MachineDef {
 func TestRoutingInstructionIsGeneratedFromTheDeclaration(t *testing.T) {
 	def := routingFixture([]string{"hunch", "answer"})
 	tri, _ := def.Phase("triage")
-	block := def.PhaseBlock(tri, MachineState{})
+	block := def.PhaseBlock(tri, MachineState{}, PhaseVars{})
 
 	if !strings.Contains(block, `Put exactly one of these in "next_phase"`) {
 		t.Fatalf("no generated routing instruction:\n%s", block)
@@ -48,7 +48,7 @@ func TestRoutingInstructionIsGeneratedFromTheDeclaration(t *testing.T) {
 	// author's prose still governs.
 	plain := routingFixture(nil)
 	p, _ := plain.Phase("triage")
-	if strings.Contains(plain.PhaseBlock(p, MachineState{}), "Where this goes next") {
+	if strings.Contains(plain.PhaseBlock(p, MachineState{}, PhaseVars{}), "Where this goes next") {
 		t.Error("a phase declaring no targets should not get a generated block")
 	}
 }
@@ -61,7 +61,7 @@ func TestUnknownTargetIsRefusedAtSave(t *testing.T) {
 	if err == nil {
 		t.Fatal("a target naming no phase should be refused")
 	}
-	if !strings.Contains(err.Error(), "typo_phase") || !strings.Contains(err.Error(), "not a phase") {
+	if !strings.Contains(err.Error(), "typo_phase") || !strings.Contains(err.Error(), "not a step") {
 		t.Errorf("the refusal should name the offender: %v", err)
 	}
 	if strings.Contains(err.Error(), "\"hunch\"") {

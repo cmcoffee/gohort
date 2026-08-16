@@ -129,8 +129,9 @@ model      "worker" | "lead"    think   "on" | "off"
 Transient = runs and hands off inside one turn; the user never takes a turn in it. Decompose, route,
 classify, plan. It MUST hand off (next or next_from).
 Resident = the conversation lives here. Answer, converse, execute. It may NOT declare output (its
-reply goes to the person, not a decoder) and may not use {input} or {prev} in its prompt (that
-prompt is pinned across turns; the user's message is already in the conversation).
+reply goes to the person, not a decoder) and may not use {input}, {prev} or {now} in its prompt
+(pinned across turns; the message is already in the conversation). The stable variables —
+{original_input}, {user}, {agent}, {step}, {machine} — work there.
 A resident phase with "next" gets exactly ONE turn and then hands off — that is how you write an
 intake beat that asks its questions and moves on.
 
@@ -168,7 +169,7 @@ Every reference is checked when the machine is saved.
 === A WORKED EXAMPLE ===
 phases: [
   {name: "decompose", desc: "Work out what is being asked.",
-   prompt: "Break this request into its parts.\n\n{input}", next: "route",
+   prompt: "Break this request into its parts.", next: "route",
    output: [{name: "parts", type: "list", desc: "the distinct questions"}]},
   {name: "route", desc: "Pick an approach.",
    prompt: "Pick the phase that should answer.",

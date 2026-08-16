@@ -33,7 +33,12 @@ type turnMachine struct {
 	def   MachineDef
 	phase MachinePhase
 	state MachineState
-	on    bool
+	// vars is the session-stable subset a resident block may resolve —
+	// who is talking, which agent, what opened the conversation.
+	// PhaseBlock zeroes the volatile fields itself, so carrying a full
+	// MachineTurn here is safe.
+	vars PhaseVars
+	on   bool
 }
 
 // machineTurn is the facts about THIS turn that only the host has: who
@@ -77,7 +82,8 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 		return turnMachine{}
 	}
 	t.persistCursor(cur)
-	t.machine = turnMachine{def: def, phase: ph, state: cur.State, on: true}
+	t.machine = turnMachine{def: def, phase: ph, state: cur.State, on: true,
+		vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
 	return t.machine
 }
 
@@ -240,10 +246,11 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			t.saveSession()
 			// Keep the rest of the turn (and the end-of-turn handoff)
 			// pointed at where we actually are.
-			t.machine = turnMachine{def: m.def, phase: ph, state: cur.State, on: true}
+			t.machine = turnMachine{def: m.def, phase: ph, state: cur.State, on: true,
+				vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
 
 			return "Phase changed to " + ph.Name + ". The current-phase block in your system prompt is now out of date — these instructions replace it for the rest of this turn:\n" +
-				m.def.PhaseBlock(ph, cur.State), nil
+				m.def.PhaseBlock(ph, cur.State, t.machine.vars), nil
 		},
 	}
 }
@@ -258,7 +265,7 @@ func (m turnMachine) Block() string {
 	if !m.on {
 		return ""
 	}
-	return m.def.PhaseBlock(m.phase, m.currentState())
+	return m.def.PhaseBlock(m.phase, m.currentState(), m.vars)
 }
 
 // currentState is the blackboard as of this turn. Held on the turn

@@ -260,15 +260,15 @@ func (d MachineDef) NextPhase(ph MachinePhase, fields map[string]any) (string, s
 	}
 	raw, present := fields[from]
 	if !present {
-		return ph.Next, "phase " + ph.Name + " was to choose its next step in " + from + " but the reply carried no such field; falling back to " + fallbackLabel(ph.Next)
+		return ph.Next, "step " + ph.Name + " was to choose its next step in " + from + " but the reply carried no such field; falling back to " + fallbackLabel(ph.Next)
 	}
 	want, _ := raw.(string)
 	want = strings.TrimSpace(want)
 	if want == "" {
-		return ph.Next, "phase " + ph.Name + " routed to an empty phase name; falling back to " + fallbackLabel(ph.Next)
+		return ph.Next, "step " + ph.Name + " routed to an empty step name; falling back to " + fallbackLabel(ph.Next)
 	}
 	if _, ok := d.Phase(want); !ok {
-		return ph.Next, "phase " + ph.Name + " routed to unknown phase " + strconv.Quote(want) + "; falling back to " + fallbackLabel(ph.Next)
+		return ph.Next, "step " + ph.Name + " routed to unknown step " + strconv.Quote(want) + "; falling back to " + fallbackLabel(ph.Next)
 	}
 	return want, ""
 }
@@ -334,13 +334,13 @@ func (d MachineDef) Advice() []string {
 			// treats it as text rather than storing a lie — so say so
 			// here instead of refusing a machine that runs correctly.
 			if strings.TrimSpace(f.From) != "" && f.Type != "" && f.Type != FieldString {
-				out = append(out, "phase "+name+": "+f.Name+" is filled from "+f.From+
+				out = append(out, "step "+name+": "+f.Name+" is filled from "+f.From+
 					" and declared "+string(f.Type)+". Everything a variable holds is text, so it will hold text. "+
 					"If you need it as a "+string(f.Type)+", let the step work it out instead of filling it.")
 			}
 		}
 		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
-			out = append(out, "phase "+name+": the prompt asks for JSON, but this phase already declares "+
+			out = append(out, "step "+name+": the prompt asks for JSON, but this step already declares "+
 				"fields — the framework encodes them for you and validates what comes back. Delete the "+
 				"format instructions and the example, and say what to FIND instead. Two sets of "+
 				"formatting rules is how a model ends up returning a JSON string inside a JSON field.")
@@ -386,7 +386,7 @@ func (d MachineDef) Problems() []string { return d.problems() }
 
 func (d MachineDef) problems() []string {
 	if len(d.Phases) == 0 {
-		return []string{"machine has no phases"}
+		return []string{"machine has no steps"}
 	}
 	var probs []string
 
@@ -398,13 +398,13 @@ func (d MachineDef) problems() []string {
 	for i, p := range d.Phases {
 		switch {
 		case strings.TrimSpace(p.Name) == "":
-			probs = append(probs, "phase "+strconv.Itoa(i+1)+" has no name")
+			probs = append(probs, "step "+strconv.Itoa(i+1)+" has no name")
 			continue
 		case seen[p.Name]:
-			probs = append(probs, "duplicate phase name: "+p.Name)
+			probs = append(probs, "duplicate step name: "+p.Name)
 			continue
 		case strings.Contains(p.Name, "."):
-			probs = append(probs, "phase name may not contain a dot: "+p.Name)
+			probs = append(probs, "step name may not contain a dot: "+p.Name)
 			continue
 		}
 		seen[p.Name] = true
@@ -419,10 +419,10 @@ func (d MachineDef) problems() []string {
 		declared[p.Name] = fields
 	}
 	if resident == 0 {
-		probs = append(probs, "no phase is resident — a machine with nowhere for a user turn to land is a pipeline, not a machine (set resident on the phase that replies)")
+		probs = append(probs, "no step waits for the person — a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies.")
 	}
 	if s := d.StartPhase(); s != "" && !seen[s] {
-		probs = append(probs, "start names unknown phase "+strconv.Quote(s))
+		probs = append(probs, "start names unknown step "+strconv.Quote(s))
 	}
 
 	// Pass 2: per-phase wiring, now that every name is known.
@@ -442,34 +442,34 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	name := p.Name
 
 	if tier := strings.ToLower(strings.TrimSpace(p.Model)); tier != "" && tier != "worker" && tier != "lead" {
-		probs = append(probs, "phase "+name+": model must be \"worker\" or \"lead\", got "+strconv.Quote(p.Model))
+		probs = append(probs, "step "+name+": model must be \"worker\" or \"lead\", got "+strconv.Quote(p.Model))
 	}
 	switch strings.ToLower(strings.TrimSpace(p.Think)) {
 	case "", "on", "off":
 	default:
-		probs = append(probs, "phase "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
+		probs = append(probs, "step "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
 	}
 	if t := strings.TrimSpace(p.Next); t != "" && !seen[t] {
-		probs = append(probs, "phase "+name+": next names unknown phase "+strconv.Quote(t))
+		probs = append(probs, "step "+name+": next names unknown step "+strconv.Quote(t))
 	}
 	if !p.Resident && strings.TrimSpace(p.Next) == "" && p.RoutesBy() == "" {
 		// A transient phase that hands off nowhere would run and then
 		// strand the turn with no reply. Catch it here rather than
 		// letting the driver degrade at run time.
-		probs = append(probs, "phase "+name+" is transient but names neither next nor next_from — a phase the user never takes a turn in has to hand off somewhere")
+		probs = append(probs, "step "+name+" passes on but goes nowhere — a step the person never takes a turn in has to hand off somewhere. Set next, or list choices for it to decide between.")
 	}
 	if p.Resident && len(p.Output) > 0 {
 		// A resident phase's reply IS the user-facing message. Wrapping
 		// it in a JSON contract would hand the person a decoded envelope
 		// instead of an answer, so structure belongs on the transient
 		// phases that feed this one.
-		probs = append(probs, "phase "+name+": output is not valid on a resident phase — its reply goes to the user, not to a decoder. Declare the structure on the transient phase that feeds it.")
+		probs = append(probs, "step "+name+": output is not valid on a step the conversation waits in — its reply goes to the person, not to a decoder. Declare the structure on the step that feeds it.")
 	}
 	if strings.TrimSpace(p.Agent) != "" && p.Resident {
 		// A resident phase is where the conversation lives. Delegating it
 		// would mean the person is talking to something other than the
 		// agent they opened, without being told.
-		probs = append(probs, "phase "+name+": agent is not valid on a resident phase — this is where the conversation lives, and handing it to a delegate means the person is talking to something they did not open. Delegate the transient step that does the work, and let this phase report what came back.")
+		probs = append(probs, "step "+name+": agent is not valid on a step the conversation waits in — this is where the conversation lives, and handing it to a delegate means the person is talking to something they did not open. Delegate the step that does the work, and let this one report what came back.")
 	}
 	// The steps a deciding phase may choose between must be real, and the
 	// framework's own routing field must not collide with one the author
@@ -478,23 +478,23 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	if len(p.Choices) > 0 {
 		switch {
 		case p.Resident:
-			probs = append(probs, "phase "+name+": a step the conversation waits in cannot choose its next step by deciding — its reply goes to the person, not to a decoder. It leaves through change_phase or a guard.")
+			probs = append(probs, "step "+name+": a step the conversation waits in cannot choose its next step by deciding — its reply goes to the person, not to a decoder. It leaves through change_phase or a guard.")
 		case strings.TrimSpace(p.NextFrom) != "":
-			probs = append(probs, "phase "+name+": it both routes on the field "+p.NextFrom+" and lists steps to choose between. Keep one — the field wins today, so the list is doing nothing.")
+			probs = append(probs, "step "+name+": it both routes on the field "+p.NextFrom+" and lists steps to choose between. Keep one — the field wins today, so the list is doing nothing.")
 		}
 		for _, t := range p.Choices {
 			if t = strings.TrimSpace(t); t != "" && !seen[t] {
-				probs = append(probs, "phase "+name+": it may choose "+strconv.Quote(t)+", which is not a step in this machine. Either add that step or remove it from the choices.")
+				probs = append(probs, "step "+name+": it may choose "+strconv.Quote(t)+", which is not a step in this machine. Either add that step or remove it from the choices.")
 			}
 		}
 		for _, f := range p.Output {
 			if f.Name == BuiltinNextStep {
-				probs = append(probs, "phase "+name+": "+BuiltinNextStep+" is the field the framework declares for a step that chooses where to go, so declaring one of your own leaves two. Remove the field, or clear the choices and point next_from at it.")
+				probs = append(probs, "step "+name+": "+BuiltinNextStep+" is the field the framework declares for a step that chooses where to go, so declaring one of your own leaves two. Remove the field, or clear the choices and point next_from at it.")
 			}
 		}
 	}
 	if from := strings.TrimSpace(p.NextFrom); from != "" && p.Resident {
-		probs = append(probs, "phase "+name+": next_from is not valid on a resident phase (it routes off a declared output field, and a resident phase has none). Use next for a one-turn handoff, or a guard to leave on a condition.")
+		probs = append(probs, "step "+name+": next_from is not valid on a step the conversation waits in (it routes off a declared output field, and a waiting step has none). Use next for a one-turn handoff, or a guard to leave on a condition.")
 	} else if from != "" {
 		// A declared set of targets must name real phases. Checked at
 		// SAVE time, which is the whole point of declaring them: the
@@ -507,51 +507,58 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 				}
 				for _, target := range f.Enum {
 					if _, real := d.Phase(strings.TrimSpace(target)); !real {
-						probs = append(probs, "phase "+name+": "+from+" may return "+strconv.Quote(target)+
-							", which is not a phase in this machine. Either add that phase or remove it from the choices.")
+						probs = append(probs, "step "+name+": "+from+" may return "+strconv.Quote(target)+
+							", which is not a step in this machine. Either add that step or remove it from the choices.")
 					}
 				}
 			}
 		}
 		switch t, ok := declared[name][from]; {
 		case !ok:
-			probs = append(probs, "phase "+name+": next_from "+strconv.Quote(from)+" is not one of this phase's declared output fields")
+			probs = append(probs, "step "+name+": next_from "+strconv.Quote(from)+" is not one of this step's declared output fields")
 		case t != FieldString:
-			probs = append(probs, "phase "+name+": next_from "+from+" must be a string field holding a phase name, but it is declared "+string(t))
+			probs = append(probs, "step "+name+": next_from "+from+" must be a string field holding a step name, but it is declared "+string(t))
 		}
 	}
 	if g := strings.TrimSpace(p.Guard); g != "" && !p.Resident {
 		// A guard runs when a USER TURN arrives at a phase. A transient
 		// phase never sees one, so a guard there is config that can
 		// never fire — silent dead weight the author would keep editing.
-		probs = append(probs, "phase "+name+": guard is only valid on a resident phase (a transient phase never receives a user turn for a guard to judge)")
+		probs = append(probs, "step "+name+": guard is only valid on a step the conversation waits in (a step that passes on never receives a user turn for a guard to judge)")
 	}
 	if t := strings.TrimSpace(p.GuardTo); t != "" {
 		if !seen[t] {
-			probs = append(probs, "phase "+name+": guard_to names unknown phase "+strconv.Quote(t))
+			probs = append(probs, "step "+name+": guard_to names unknown step "+strconv.Quote(t))
 		}
 		if strings.TrimSpace(p.Guard) == "" {
-			probs = append(probs, "phase "+name+": guard_to is set but there is no guard to trip it")
+			probs = append(probs, "step "+name+": guard_to is set but there is no guard to trip it")
 		}
 	}
 	for _, k := range p.Keep {
 		if k = strings.TrimSpace(k); k != "" && !seen[k] {
-			probs = append(probs, "phase "+name+": keep names unknown phase "+strconv.Quote(k))
+			probs = append(probs, "step "+name+": keep names unknown step "+strconv.Quote(k))
 		}
 	}
 	if err := doubleBraceProblem(name, "prompt", p.Prompt); err != nil {
 		probs = append(probs, err.Error())
 	}
 	if p.Resident {
-		// {input} / {prev} are TURN-LOCAL, and a resident phase's prompt
-		// renders into the system prefix (PhaseBlock) where it is
-		// supposed to stay byte-identical from one turn to the next.
-		// Interpolating the current message there would re-pay cold
-		// prefill every turn to tell the model something the
-		// conversation already carries.
-		for _, tok := range []string{"{input}", "{prev}"} {
-			if strings.Contains(p.Prompt, tok) {
-				probs = append(probs, "phase "+name+": "+tok+" is not available in a resident phase — its prompt is pinned in the system prompt across turns, and the user's message is already in the conversation. Use {state:...} for what earlier phases established.")
+		// A resident step's prompt renders into the system prefix
+		// (PhaseBlock), which must stay byte-identical from one turn to
+		// the next or every turn re-pays cold prefill. So the VOLATILE
+		// variables are refused here — each for its own reason — while
+		// the session-stable ones ({original_input}, {user}, {agent},
+		// {step}, {machine}) resolve fine. PhaseBlock zeroes the
+		// volatile three regardless; this check is what turns a silent
+		// blank into a save-time answer.
+		for _, v := range []struct{ tok, why string }{
+			{"{input}", "the person's message is already in the conversation, and pinning it would rewrite the cached prompt every turn"},
+			{"{prev}", "it means the step run just before, within one turn — a step the conversation waits in IS the turn"},
+			{"{now}", "a clock in a pinned prompt rewrites the cached prompt every turn; the framework already stamps the time on the turn itself"},
+			{"{established}", "what earlier steps established is already composed into this step's block"},
+		} {
+			if strings.Contains(p.Prompt, v.tok) {
+				probs = append(probs, "step "+name+": "+v.tok+" is not available in a step the conversation waits in — "+v.why+". The stable variables ({original_input}, {user}, {agent}, {step}, {machine}) work here.")
 			}
 		}
 	}
@@ -567,7 +574,7 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		}
 		probs = append(probs, stateRefProblems(name, ref, seen, declared)...)
 		if !strings.Contains(ref, "{state:") && !isBuiltinVarRef(ref) {
-			probs = append(probs, "phase "+name+": "+f.Name+" is filled from "+strconv.Quote(ref)+
+			probs = append(probs, "step "+name+": "+f.Name+" is filled from "+strconv.Quote(ref)+
 				", which is not one of the built-in variables or a {state:PHASE.field} reference")
 		}
 	}
@@ -585,14 +592,14 @@ func stateRefProblems(where, tmpl string, seen map[string]bool, declared map[str
 	for _, ref := range stateRefs(tmpl) {
 		name, field := SplitStageRef(ref)
 		if !seen[name] {
-			probs = append(probs, "phase "+where+": {state:"+ref+"} references unknown phase "+strconv.Quote(name))
+			probs = append(probs, "step "+where+": {state:"+ref+"} references unknown step "+strconv.Quote(name))
 			continue
 		}
 		if field == "" {
 			continue
 		}
 		if _, ok := declared[name][field]; !ok {
-			probs = append(probs, "phase "+where+": {state:"+ref+"} references a field phase "+name+" does not declare")
+			probs = append(probs, "step "+where+": {state:"+ref+"} references a field step "+name+" does not declare")
 		}
 	}
 	return probs
@@ -618,7 +625,7 @@ func (d MachineDef) cycleProblems(seen map[string]bool) []string {
 			return nil
 		}
 		if visited[name] {
-			return []string{"phases starting at " + start + " loop back on themselves without ever reaching a resident phase, so a turn could never produce a reply"}
+			return []string{"steps starting at " + start + " loop back on themselves without ever reaching a step the conversation can wait in, so a turn could never produce a reply"}
 		}
 		visited[name] = true
 		next := strings.TrimSpace(p.Next)
@@ -755,10 +762,11 @@ func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, e
 // gets when they ask for a new one.
 //
 // A working example rather than an empty object, because the rules a
-// machine has to satisfy — at least one resident phase, a transient
-// phase must hand off, a resident phase declares no output and cannot
-// template {input} — are easier to read off something correct than out
-// of a rejection. An editor that opens on a definition the server would
+// machine has to satisfy — at least one resident step, a step that
+// passes on must hand off, a step the conversation waits in declares no
+// output — are easier to read off something correct than out of a
+// rejection. It models the current idiom: the prompt never places
+// {input}, because the framework hands the message over anyway. An editor that opens on a definition the server would
 // refuse teaches the wrong lesson about the feature in the first ten
 // seconds.
 //
@@ -774,7 +782,7 @@ func StarterMachine() MachineDef {
 				Name:   "look",
 				Desc:   "Work out what is actually being asked.",
 				Think:  "on",
-				Prompt: "Work out what is being asked, and hand it forward.\n\n{input}",
+				Prompt: "Work out what is being asked, and hand it forward.",
 				Next:   "reply",
 				Output: []PipelineField{
 					{Name: "summary", Type: FieldString, Required: true,

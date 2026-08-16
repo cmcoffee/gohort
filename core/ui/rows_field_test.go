@@ -201,3 +201,33 @@ func TestRowsColumnsCanHideAndLockPerRow(t *testing.T) {
 		t.Error("changing a cell should redraw the row when a column's condition depends on it")
 	}
 }
+
+// The checklist had two implementations in one if-chain: a flat one that
+// always won, and a grouped one (headers, select-all, count) that was
+// unreachable from the day it was written — its CSS shipped, its code
+// never ran. This pins the survivor, and the filter that makes a long
+// list (a tool pool is ~100 entries) scannable.
+func TestChecklistIsTheGroupedRendererWithAFilter(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+
+	if n := strings.Count(src, "else if (t === 'checklist')"); n != 1 {
+		t.Fatalf("expected exactly one checklist branch, found %d — a second one shadows the first", n)
+	}
+	for _, want := range []string{"ui-checklist-group", "ui-checklist-toolbar", "ui-checklist-count"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the grouped renderer should be the live one; missing %q", want)
+		}
+	}
+	// The filter appears once the list is too long to scan, matches
+	// name/label/help, and hides headers left with nothing under them.
+	for _, want := range []string{"ui-checklist-filter", ".length > 15", "e.text.indexOf(q)"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("long checklists need the filter; missing %q", want)
+		}
+	}
+	// Select all / Clear act on VISIBLE rows, so a filtered "Select all"
+	// cannot check a hundred rows the person never saw.
+	if !strings.Contains(src, "function eachVisible") {
+		t.Error("select-all/clear should act on the filtered view, not the whole set")
+	}
+}

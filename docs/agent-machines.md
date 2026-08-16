@@ -618,6 +618,14 @@ clock at all.
 against "what they actually asked" needs the original, and a value that quietly became the latest
 message would answer a different question under the same name.
 
+**A resident step's prompt resolves the stable subset.** Its prompt is pinned in the cacheable
+prefix, so only values that hold still may appear there: `{original_input}`, `{user}`, `{agent}`,
+`{step}`, `{machine}` all resolve (they are fixed for the session), while the volatile three —
+`{input}`, `{prev}`, `{now}` — are refused at save time, each with its reason, and zeroed inside
+`PhaseBlock` regardless so no call site can break the cache by passing a clock in. `{established}`
+is refused there too: the block already composes it. Before this, a resident prompt containing
+`{user}` silently rendered a blank.
+
 ## Delegating a step
 
 A transient phase can name another agent:
@@ -664,8 +672,13 @@ starting phase, a table of phases, and a form per phase.
 **One panel per step, not one form behind a table.** Every choice is computed from the step it
 belongs to: `next_from` offers only that step's own TEXT fields (a list cannot name a phase, and
 another step's field is not readable there), `keep` offers the other steps by name, the delegate is
-picked from your agents, and the prompt's help SPELLS OUT the `{state:…}` references available —
-which is the one thing an author otherwise types from memory and finds out about after saving.
+picked from your agents, `tools` is a checklist of the user's actual pool (the same list the agent
+editor's Tools modal shows, grouped and filterable), and the prompt's help SPELLS OUT the
+`{state:…}` references available. Nothing in the editor is typed from memory.
+
+A tool an imported machine names that this deployment does not have stays on the list, labelled —
+a checklist only persists what it can show, so a name left off would be silently dropped by the
+next save. Broken-dependency posture: keep it visible, let the person uncheck it on purpose.
 
 A resident step is not offered `output`, `next_from` or a delegate at all. The form cannot express
 what `Problems()` would reject, so there is nothing to explain and nothing to undo.

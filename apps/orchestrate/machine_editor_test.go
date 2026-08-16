@@ -34,7 +34,7 @@ func editorFixture(t *testing.T) (*OrchestrateApp, Database, string, MachineDef)
 
 func TestEditorAsksQuestionsRatherThanNamingFields(t *testing.T) {
 	_, _, _, def := editorFixture(t)
-	raw, err := json.Marshal(machineEditorSpec(def, nil))
+	raw, err := json.Marshal(machineEditorSpec(def, editorCatalog{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestChecklistIsTheValidatorsOwnFindings(t *testing.T) {
 		Owner: user, Name: "Half built",
 		Phases: []MachinePhase{{Name: "one", Prompt: "do a thing"}},
 	})
-	spec := machineEditorSpec(broken, nil)
+	spec := machineEditorSpec(broken, editorCatalog{})
 	list, _ := spec["checklist"].([]string)
 	if len(list) == 0 {
 		t.Fatal("a machine with no resident phase should report work remaining")
@@ -85,7 +85,7 @@ func TestChecklistIsTheValidatorsOwnFindings(t *testing.T) {
 		t.Errorf("checklist and Validate disagree: %v vs %v", list, broken.Problems())
 	}
 	// And a complete machine says so rather than showing an empty list.
-	if done := machineEditorSpec(mustValid(t, udb, user), nil); len(done["checklist"].([]string)) != 0 {
+	if done := machineEditorSpec(mustValid(t, udb, user), editorCatalog{}); len(done["checklist"].([]string)) != 0 {
 		t.Errorf("a valid machine should have nothing outstanding: %v", done["checklist"])
 	}
 }
@@ -262,7 +262,7 @@ func TestEditorPageUsesTheSharedSpec(t *testing.T) {
 // and a hand-kept list is a second thing to forget.
 func TestEditorCoversEveryMachineField(t *testing.T) {
 	_, _, _, def := editorFixture(t)
-	raw, _ := json.Marshal(machineEditorSpec(def, nil))
+	raw, _ := json.Marshal(machineEditorSpec(def, editorCatalog{}))
 	spec := string(raw)
 
 	// Storage identity and audit stamps are the server's; showing them
@@ -415,7 +415,7 @@ func TestEachPhaseGetsItsOwnComputedChoices(t *testing.T) {
 		if !ok {
 			t.Fatalf("no phase %q", phase)
 		}
-		b, _ := json.Marshal(phaseFieldsFor(def, p, agents))
+		b, _ := json.Marshal(phaseFieldsFor(def, p, editorCatalog{agents: agents}))
 		return string(b)
 	}
 
@@ -488,7 +488,7 @@ func TestEachStepSectionHoldsItsOwnForm(t *testing.T) {
 			{Name: "answer_directly", Prompt: "answer", Resident: true},
 		},
 	}
-	spec := machineEditorSpec(def, nil)
+	spec := machineEditorSpec(def, editorCatalog{})
 
 	panels, ok := spec["phases"].([]ui.Component)
 	if !ok {
@@ -542,7 +542,7 @@ func TestEachStepCanBeRemoved(t *testing.T) {
 			{Name: "answer", Prompt: "reply", Resident: true, GuardTo: "triage", Guard: "new subject"},
 		},
 	}
-	panels, _ := machineEditorSpec(def, nil)["phases"].([]ui.Component)
+	panels, _ := machineEditorSpec(def, editorCatalog{})["phases"].([]ui.Component)
 	if len(panels) != 2 {
 		t.Fatalf("expected two panels, got %d", len(panels))
 	}
@@ -607,7 +607,7 @@ func TestRemoveStepIsWiredOnThePage(t *testing.T) {
 func TestPhaseFormReadsInTheOrderTheStepRuns(t *testing.T) {
 	def := previewFixture()
 	tri, _ := def.Phase("triage")
-	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	body := string(raw)
 
 	order := []string{
@@ -646,7 +646,7 @@ func TestPhaseFormReadsInTheOrderTheStepRuns(t *testing.T) {
 func TestTheFormListsTheBuiltInVariables(t *testing.T) {
 	_, _, _, def := editorFixture(t)
 	tri, _ := def.Phase("triage")
-	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	form := string(raw)
 
 	for _, v := range MachineVars() {
@@ -667,7 +667,7 @@ func TestTheFormListsTheBuiltInVariables(t *testing.T) {
 func TestTheValueWheelOffersTheBuiltIns(t *testing.T) {
 	_, _, _, def := editorFixture(t)
 	tri, _ := def.Phase("triage")
-	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	form := string(raw)
 
 	if !strings.Contains(form, `"combo"`) {
@@ -741,7 +741,7 @@ func TestTheValueWheelRoundTrips(t *testing.T) {
 func TestABuiltInFieldSettlesWhenItIsPicked(t *testing.T) {
 	_, _, _, def := editorFixture(t)
 	tri, _ := def.Phase("triage")
-	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	form := string(raw)
 
 	if !strings.Contains(form, `"lock_when":"name:`) {
@@ -760,5 +760,63 @@ func TestABuiltInFieldSettlesWhenItIsPicked(t *testing.T) {
 		if !strings.Contains(builtinNameExpr(), name) {
 			t.Errorf("%s is a built-in the row condition never mentions", name)
 		}
+	}
+}
+
+// The tools box was the last thing in this editor typed from memory: a
+// tags field into which somebody spelled tool names and found out later.
+// It is a checklist of the user's actual pool now — and a name an
+// imported machine uses that this deployment does not have is KEPT as a
+// labelled option, because a checklist only persists what it can show,
+// and a save that silently drops a tool is how a machine quietly stops
+// being what its author built.
+func TestToolNarrowingIsPickedNotTyped(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	def.Phases[0].Tools = []string{"search_web", "ghost_tool"}
+	tri := def.Phases[0]
+
+	cat := editorCatalog{tools: []ui.SelectOption{
+		{Value: "search_web", Label: "search_web", Group: "Network", Help: "Search the web"},
+		{Value: "read_file", Label: "read_file", Group: "Read"},
+	}}
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, cat))
+	form := string(raw)
+
+	if strings.Contains(form, `"type":"tags"`) {
+		t.Fatal("the tools field is still typed from memory")
+	}
+	for _, want := range []string{`"value":"search_web"`, `"value":"read_file"`} {
+		if !strings.Contains(form, want) {
+			t.Errorf("the pool should be offered: missing %s", want)
+		}
+	}
+	if !strings.Contains(form, `"value":"ghost_tool"`) {
+		t.Error("a tool the machine names but the pool lacks must stay visible, or the next save drops it silently")
+	}
+	if !strings.Contains(form, "not available here") {
+		t.Error("the kept name should say what it is, not blend into the pool")
+	}
+}
+
+// And offering must not mutate the shared pool slice: two steps with
+// different unknown tools would otherwise leak each other's extras.
+func TestKeptToolNamesDoNotLeakBetweenSteps(t *testing.T) {
+	pool := []ui.SelectOption{{Value: "search_web"}}
+	a := toolChecklistOptions(pool, []string{"only_in_a"})
+	b := toolChecklistOptions(pool, []string{"only_in_b"})
+	if len(pool) != 1 {
+		t.Fatalf("the shared pool was mutated: %+v", pool)
+	}
+	got := func(opts []ui.SelectOption) (names []string) {
+		for _, o := range opts {
+			names = append(names, o.Value)
+		}
+		return
+	}
+	if strings.Join(got(a), ",") != "search_web,only_in_a" {
+		t.Errorf("step A options wrong: %v", got(a))
+	}
+	if strings.Join(got(b), ",") != "search_web,only_in_b" {
+		t.Errorf("step B options wrong: %v", got(b))
 	}
 }

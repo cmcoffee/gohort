@@ -299,7 +299,7 @@ func TestAFieldFilledFromNonsenseIsRefused(t *testing.T) {
 	// A {state:…} reference is allowed, and checked the same way a
 	// prompt's is.
 	def.Phases[0].Output[0].From = "{state:ghost.field}"
-	if !strings.Contains(strings.Join(def.Problems(), "\n"), "unknown phase") {
+	if !strings.Contains(strings.Join(def.Problems(), "\n"), "unknown step") {
 		t.Errorf("expected the state reference to be checked, got %v", def.Problems())
 	}
 }
@@ -392,5 +392,45 @@ func TestAFieldNamedAfterABuiltinIsFilledWhoeverWroteIt(t *testing.T) {
 	}
 	if got := cur.State["triage"].Fields["original_input"]; got != "why is it slow?" {
 		t.Errorf("the field should hold the opening message, got %#v", got)
+	}
+}
+
+// A resident step's prompt is pinned in the cacheable prefix, so only
+// values that hold still may resolve there. The stable ones do; the
+// volatile ones are refused at save time — the alternative was a prompt
+// that said {user} and got a blank.
+func TestAResidentPromptResolvesTheStableVariablesOnly(t *testing.T) {
+	def := MachineDef{Name: "helpdesk", Start: "reply", Phases: []MachinePhase{
+		{Name: "reply", Resident: true,
+			Prompt: "You are talking to {user} through {agent}. They opened with: {original_input}. This is step {step} of {machine}."},
+	}}
+	if probs := def.Problems(); len(probs) > 0 {
+		t.Fatalf("stable variables should be valid in a resident prompt: %v", probs)
+	}
+	got := def.PhaseBlock(def.Phases[0], MachineState{}, PhaseVars{
+		MachineTurn: MachineTurn{User: "craig", Agent: "Wren",
+			Input: "MUST-NOT-APPEAR", Now: "MUST-NOT-APPEAR"},
+		Opening: "why is the export failing?",
+		Prev:    "MUST-NOT-APPEAR",
+	})
+	for _, want := range []string{"craig", "Wren", "why is the export failing?", "step reply of helpdesk"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in the resident block:\n%s", want, got)
+		}
+	}
+	// The volatile fields are zeroed by PhaseBlock itself, not trusted to
+	// the caller — one call site passing a clock in would silently break
+	// the prompt cache every turn.
+	if strings.Contains(got, "MUST-NOT-APPEAR") {
+		t.Errorf("a volatile value leaked into the pinned block:\n%s", got)
+	}
+
+	// And each volatile token is a save-time answer, with its own reason.
+	for _, tok := range []string{"{input}", "{prev}", "{now}", "{established}"} {
+		bad := def
+		bad.Phases = []MachinePhase{{Name: "reply", Resident: true, Prompt: "use " + tok + " here"}}
+		if probs := bad.Problems(); len(probs) == 0 {
+			t.Errorf("%s in a resident prompt should be refused", tok)
+		}
 	}
 }

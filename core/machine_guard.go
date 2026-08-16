@@ -98,7 +98,7 @@ func (T *AppCore) checkGuard(ctx context.Context, def MachineDef, ph MachinePhas
 		note("machine_guard_unresolved", "the guard on phase "+ph.Name+" wanted to move ("+why+") but resolved back to the phase it is already in; staying put")
 		return ph, false
 	}
-	note("machine_guard_tripped", "moving from phase "+ph.Name+" to "+target.Name+": "+why)
+	note("machine_guard_tripped", "moving from step "+ph.Name+" to "+target.Name+": "+why)
 	cur.moveTo(ph.Name, target, "guard: "+why, note)
 	return target, true
 }
