@@ -11,6 +11,7 @@ package orchestrate
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,48 @@ func appendSessionDiag(udb Database, agentID, sessionID, kind, detail string) {
 		list = list[len(list)-sessionDiagCap:]
 	}
 	udb.Set(sessionDiagTable, key, list)
+}
+
+// beginDispatchDiag opens a DISPATCHED turn's diagnostics trail, and
+// records the one thing a dispatch silently costs.
+//
+// The ids have to come from the caller: a dispatched turn has no
+// *session of its own, and the record it should be filed against lives
+// with whoever asked for the run. Every dispatch path wired these two
+// fields by hand, which is also why this is the right place for the
+// note below — a fourth path that wires diagnostics gets it for free,
+// and one that does not was never going to record anything anyway.
+//
+// The note: a machine-driven agent dispatched (scheduled fire,
+// delegation, phantom, sub-agent) runs WITHOUT its machine. That path
+// assembles its own system prompt and there is no conversation to hold
+// a position in, so there is no phase directive, no blackboard and no
+// routing. It may be the right trade for a one-shot, but an agent whose
+// whole procedure is its machine is not itself here, and a difference
+// that large must not be silent.
+func (t *chatTurn) beginDispatchDiag(agentID, sessionID string) {
+	if t == nil {
+		return
+	}
+	t.diagAgentID = agentID
+	t.diagSessionID = sessionID
+	m := strings.TrimSpace(t.agent.Machine)
+	if m == "" {
+		return
+	}
+	// The machine belongs to whoever authored the agent, not to the
+	// runtime user a dispatch happens to run as (a phantom chat, a
+	// scheduled job's account).
+	db, owner := t.ownerDB, t.ownerUser
+	if db == nil {
+		db, owner = t.udb, t.user
+	}
+	name := m
+	if def, ok := LoadMachineDef(db, owner, m); ok && strings.TrimSpace(def.Name) != "" {
+		name = def.Name
+	}
+	t.turnDiag("machine_not_on_dispatch", "this agent runs the machine "+strconv.Quote(name)+
+		", which needs a conversation to hold its position; a dispatched turn has none, so this one ran on the agent's persona alone")
 }
 
 // turnDiag is appendSessionDiag bound to a chatTurn — the convenient form

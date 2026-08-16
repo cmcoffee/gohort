@@ -483,3 +483,54 @@ func readFileForTest(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// A machine-driven agent, DISPATCHED (scheduled fire, delegation,
+// phantom, sub-agent), runs without its machine: that path assembles
+// its own system prompt and there is no conversation to hold a position
+// in. It may be the right trade for a one-shot, but an agent that is
+// not itself must not be silent about it — every dispatch entry point
+// comes through one builder, so the breadcrumb is written once.
+func TestADispatchedMachineAgentSaysItRanWithoutIt(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Investigation", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
+	agent, err := saveAgent(udb, AgentRecord{Name: "Wren", Owner: user,
+		OrchestratorPrompt: "hi", Machine: def.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The trail is opened where every dispatch path opens it, which is
+	// what makes the note impossible to forget on a new path.
+	subTurn := &chatTurn{app: app, agent: agent, user: user, udb: udb,
+		ownerUser: user, ownerDB: udb, ctx: context.Background()}
+	subTurn.beginDispatchDiag(agent.ID, "sub-1")
+
+	var list []SessionDiag
+	udb.Get("session_diag", agent.ID+":sub-1", &list)
+	found := false
+	for _, d := range list {
+		if d.Kind == "machine_not_on_dispatch" {
+			found = true
+			// Named, not merely reported: "your agent ran without
+			// something" is only actionable if it says WHICH something.
+			if !strings.Contains(d.Detail, "Investigation") {
+				t.Errorf("the breadcrumb should name the machine: %q", d.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("a dispatched machine agent should say it ran without its machine, got %+v", list)
+	}
+
+	// An agent with no machine has nothing to report, and should not
+	// spend a line saying so.
+	plain, _ := saveAgent(udb, AgentRecord{Name: "Crow", Owner: user, OrchestratorPrompt: "hi"})
+	quiet := &chatTurn{app: app, agent: plain, user: user, udb: udb, ctx: context.Background()}
+	quiet.beginDispatchDiag(plain.ID, "sub-2")
+	var none []SessionDiag
+	udb.Get("session_diag", plain.ID+":sub-2", &none)
+	if len(none) != 0 {
+		t.Errorf("an agent with no machine should leave no note: %+v", none)
+	}
+}

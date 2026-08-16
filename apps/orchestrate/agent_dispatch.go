@@ -649,8 +649,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// Same reason as the continuing-dispatch path below: no *session on a
 	// dispatched turn means no trail, and a guard that leaves no breadcrumb is
 	// a guard nobody can account for after the fact.
-	subTurn.diagAgentID = target.ID
-	subTurn.diagSessionID = subSessID
+	subTurn.beginDispatchDiag(target.ID, subSessID)
 	tools = append(tools, extraTools...)
 	// ForcePrivate enforcement — drop network tools + attach blocked
 	// connector. Done AFTER tools are fully assembled (allowlist +
@@ -1330,8 +1329,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// way to find out what stopped it. Same reasoning as the scheduled-fire path
 	// (scheduled_updates.go), which was given a trail for exactly this reason;
 	// this is the other half of it.
-	subTurn.diagAgentID = target.ID
-	subTurn.diagSessionID = subSessionID
+	subTurn.beginDispatchDiag(target.ID, subSessionID)
 	// The owner texting their own agent runs as phantom:<chatID> exactly like a
 	// stranger does, so without this they are an "outside party" on their own
 	// phone and their own carve-outs shut them out. Decided on the TRANSPORT

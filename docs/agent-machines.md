@@ -854,8 +854,11 @@ doors, not a replacement.
   research machine wanting per-phase facts is a real request but it is a second feature.
 - Should a resident phase be able to run a machine (nesting)? No for St1. Reject in `Validate` so
   the answer is explicit rather than accidental.
-- Dispatched sub-agents and channel turns hit `AgentLoopConfig` through other paths
-  (`agent_dispatch.go`, `scheduled_updates.go`). A dispatch has no session, so it has nowhere to
-  persist a phase. St1 runs dispatched turns at `Start` as a one-shot with no persistence, which
-  degrades to pipeline behavior. Whether that is right, or whether a dispatch should get a synthetic
-  session, is a St3 question.
+- Dispatched turns (scheduled fires, delegations, phantom, sub-agent calls) run WITHOUT the
+  machine. Those paths assemble their own system prompt in `agent_dispatch.go` /
+  `scheduled_updates.go` and never enter one, and a dispatch has no session to hold a position in
+  anyway. Since v0.6.174 that is at least VISIBLE: `beginDispatchDiag` — the wiring every dispatch
+  path already did by hand — records a `machine_not_on_dispatch` breadcrumb naming the machine the
+  turn ran without. Whether a dispatch should instead run the machine one-shot from `Start` with an
+  ephemeral cursor (the same shape a rehearsal uses) is the open question; it is a real change to
+  the most delicate path in the app, so it wants a live test rather than a confident patch.

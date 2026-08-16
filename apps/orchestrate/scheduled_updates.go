@@ -511,8 +511,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// guard breadcrumbs — which guardrail stopped this fire, and why — land in
 	// the same trail the rest of this function writes to, instead of being
 	// dropped for want of a session pointer.
-	subTurn.diagAgentID = p.AgentID
-	subTurn.diagSessionID = p.SessionID
+	subTurn.beginDispatchDiag(p.AgentID, p.SessionID)
 
 	gate := app.newAutonomousGate(p.Username, agent.ID, subSess)
 	// Live-activity registration: a recurring fire runs with no HTTP client
