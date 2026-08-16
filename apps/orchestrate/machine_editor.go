@@ -213,13 +213,13 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 				// add-step appends forever and the machine reads in the
 				// order somebody happened to think of its parts.
 				Label:  "↑ Move up",
-				Title:  "Move " + p.Name + " one place earlier",
+				Title:  "Move " + p.Name + " one place earlier. Order is the reading order, the map's arrangement, and which waiting step catches a step that hands off nowhere.",
 				Method: "client",
 				URL:    "machine_move_step",
 				Data:   p.Name + "|up",
 			}, {
 				Label:  "↓ Move down",
-				Title:  "Move " + p.Name + " one place later",
+				Title:  "Move " + p.Name + " one place later. Order is the reading order, the map's arrangement, and which waiting step catches a step that hands off nowhere.",
 				Method: "client",
 				URL:    "machine_move_step",
 				Data:   p.Name + "|down",

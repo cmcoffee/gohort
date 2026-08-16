@@ -252,3 +252,43 @@ func TestAgentsSaveLeavesHiddenAgentsAlone(t *testing.T) {
 		t.Errorf("the checked agent should still attach, got %q", got.Machine)
 	}
 }
+
+// Reordering must not move where a conversation BEGINS. An unset start
+// resolves to the first step, and the editor shows that resolved value
+// — so a machine that never chose one looks settled while actually
+// being positional. Moving a step would then change the entry point
+// with nobody touching the control that claims to say so.
+func TestReorderingDoesNotMoveTheEntryPoint(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	// No start: the shape an imported or drafted machine can arrive in
+	// (the field is optional in the tool's spec).
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "decide", Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}})
+	if def.Start != "" {
+		t.Fatal("fixture should have no explicit start")
+	}
+	if def.StartPhase() != "triage" {
+		t.Fatalf("an unset start resolves to the first step, got %q", def.StartPhase())
+	}
+
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/move",
+		strings.NewReader(`{"name": "answer", "dir": "up"}`))
+	w := httptest.NewRecorder()
+	app.handleMachineOne(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("move failed: %d %s", w.Code, w.Body.String())
+	}
+
+	moved, _ := LoadMachineDef(udb, user, def.ID)
+	if got := strings.Join(moved.PhaseNames(), ","); got != "answer,triage" {
+		t.Fatalf("the move should have happened: %s", got)
+	}
+	if moved.Start != "triage" {
+		t.Errorf("the entry point should have been pinned before the move, got %q", moved.Start)
+	}
+	if moved.StartPhase() != "triage" {
+		t.Errorf("a conversation should still begin where it did, got %q", moved.StartPhase())
+	}
+}

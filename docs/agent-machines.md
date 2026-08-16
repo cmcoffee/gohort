@@ -826,7 +826,13 @@ loop (one call per round, up to `StageToolRounds`), a delegated step spends anot
 turn, a step that only pins values is free, and a guarded step charges a check on every turn spent
 in it.
 
-**Steps reorder** (↑↓ on each step's toolbar — the order is the rail and the reading order),
+**Steps reorder** (↑↓ on each step's toolbar). The order is not cosmetic: it is the rail and the
+reading order, the tie-break that arranges the map, the order earlier findings are pinned into a
+prompt (`establishedBlock` renders in declared order, deliberately, so the cacheable prefix holds),
+and which waiting step catches a step that hands off nowhere (`firstResident`). It is ALSO the entry
+point when `start` was never set — so a move pins `start` to whatever it currently resolves to
+before reordering, because the editor shows the resolved value and a machine that never chose one
+would otherwise have its beginning moved by a button that says nothing about beginnings.
 machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
 the working one in place is how the working one stops working), and **What a turn costs** is derived
 from the definition: which steps cost a model call when they run, which only pin values and are

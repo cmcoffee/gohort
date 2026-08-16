@@ -321,9 +321,19 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			http.Error(w, "nowhere to move it", http.StatusBadRequest)
 			return
 		}
+		// Pin the entry point before moving anything. An unset start
+		// RESOLVES to the first step (StartPhase), and the editor shows
+		// that resolved value — so a machine that never chose one looks
+		// settled while actually being positional, and reordering would
+		// move where conversations begin without anyone touching the
+		// control that claims to say so. Writing it down first makes the
+		// displayed answer the stored one and this move a no-op for it.
+		if strings.TrimSpace(def.Start) == "" {
+			def.Start = def.StartPhase()
+		}
 		def.Phases[idx], def.Phases[to] = def.Phases[to], def.Phases[idx]
 		SaveMachineDef(udb, def)
-		writeJSON(w, map[string]any{"ok": true})
+		writeJSON(w, map[string]any{"ok": true, "start": def.Start})
 	case "agents":
 		// Who runs this machine — readable and settable from the editor,
 		// which is where you are standing when the question comes up. An
