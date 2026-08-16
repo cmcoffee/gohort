@@ -703,6 +703,14 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 			http.Error(w, "no step called "+strconv.Quote(name)+" — it was renamed or removed; reload the editor", http.StatusNotFound)
 			return
 		}
+		// And the mirror image: the ADD form naming a step that already
+		// exists must not quietly merge onto it — the rename path refuses
+		// this exact collision, and a create that half-overwrites a step
+		// someone built is worse than either.
+		if idx >= 0 && name == "" {
+			http.Error(w, "a step called "+strconv.Quote(target)+" already exists — edit it in its own section, or pick another name", http.StatusBadRequest)
+			return
+		}
 		var ph MachinePhase
 		if idx >= 0 {
 			ph = def.Phases[idx]
@@ -716,6 +724,13 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 			// would silently re-point at it), and every reference to the
 			// old one is rewritten so a rename is one edit rather than a
 			// scavenger hunt through the checklist.
+			//
+			// The edited copy is placed FIRST and RenameStep runs on the
+			// slice after — never the other way round: RenameStep also
+			// rewrites the renamed step's OWN references (a guard_to
+			// pointing at itself, its old name in its own guard), and a
+			// stale copy assigned afterwards would quietly undo exactly
+			// those.
 			if ph.Name != target {
 				if _, taken := def.Phase(ph.Name); taken {
 					http.Error(w, "a step called "+strconv.Quote(ph.Name)+" already exists — renaming this one onto it would point its references somewhere else", http.StatusBadRequest)
@@ -724,8 +739,9 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 				def.Phases[idx] = ph
 				def.RenameStep(target, ph.Name)
 				Log("[orchestrate.machines] user=%q renamed step %q to %q in %q (references rewritten)", user, target, ph.Name, def.Name)
+			} else {
+				def.Phases[idx] = ph
 			}
-			def.Phases[idx] = ph
 		} else {
 			def.Phases = append(def.Phases, ph)
 			// The first phase added to an empty machine is where it
@@ -781,13 +797,7 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if v, ok := str("next_from"); ok {
 		ph.NextFrom = v
 	}
-	// "targets" is not a phase field of its own: it is the allowed-value
-	// set of the field next_from points at. Kept flat in the form because
-	// that is where the choice is made — a person picking where a step can
-	// go should not have to know it is stored on the field.
-	if _, ok := body["targets"]; ok {
-		setRoutingTargets(ph, stringSliceFromArgs(body, "targets"))
-	}
+
 	if _, ok := body["choices"]; ok {
 		ph.Choices = stringSliceFromArgs(body, "choices")
 	}
@@ -817,6 +827,18 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	}
 	if v, ok := body["output"]; ok {
 		ph.Output = outputsFromAny(v)
+	}
+	// "targets" is not a phase field of its own: it is the allowed-value
+	// set of the field next_from points at. Kept flat in the form because
+	// that is where the choice is made — a person picking where a step can
+	// go should not have to know it is stored on the field.
+	//
+	// Applied AFTER output, necessarily: the rows the form posts carry no
+	// enum (outputsFromAny never reads one), so writing targets onto the
+	// OLD rows and then replacing them wiped the routing set on every
+	// full-record save.
+	if _, ok := body["targets"]; ok {
+		setRoutingTargets(ph, stringSliceFromArgs(body, "targets"))
 	}
 }
 

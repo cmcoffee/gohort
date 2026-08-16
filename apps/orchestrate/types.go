@@ -926,6 +926,15 @@ type ChatSession struct {
 	// answered by parsing prose without breaking the first time someone
 	// rewords a message.
 	MachineLog []PhaseHop `json:"MachineLog,omitempty"`
+	// MachineOpening is the cursor's Opening — the words that opened the
+	// conversation, written once by the first walk. Without a persisted
+	// home the cursor was rebuilt empty every turn and the "written
+	// once" guard re-latched onto the CURRENT message, so
+	// {original_input} quietly meant "latest input" on every live
+	// session — the exact lie its documentation warns about — and a
+	// resident prompt placing it changed bytes every turn, re-paying
+	// cold prefill.
+	MachineOpening string `json:"MachineOpening,omitempty"`
 
 	// OpeningPrompt is a first message the session was created WITH but
 	// has not sent yet — the handoff from a surface that knows what the

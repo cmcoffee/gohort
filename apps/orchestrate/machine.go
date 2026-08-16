@@ -71,7 +71,7 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 	if !ok {
 		return turnMachine{}
 	}
-	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
+	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog, Opening: t.session.MachineOpening}
 	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, t.machineTurn(userMsg), t.phaseRunner(), t.turnDiag)
 	if err != nil {
 		// A machine that cannot produce a phase must not cost the user
@@ -127,13 +127,34 @@ func (t *chatTurn) sessionMachine() (MachineDef, bool) {
 // save when nothing moved, so an ordinary resident turn (the common
 // case, and the one that runs no phases at all) doesn't touch the store.
 func (t *chatTurn) persistCursor(cur *MachineCursor) {
-	if t.session.Phase == cur.Phase && len(t.session.MachineState) == len(cur.State) && len(t.session.MachineLog) == len(cur.Log) {
+	if !cursorDiffers(t.session, cur) {
 		return
 	}
 	t.session.Phase = cur.Phase
 	t.session.MachineState = cur.State
 	t.session.MachineLog = cur.Log
+	t.session.MachineOpening = cur.Opening
 	t.saveSession()
+}
+
+// cursorDiffers is the save gate. Length comparison alone was a trap
+// with the log at its cap (maxPhaseLog): a guard trip that circles back
+// to the same phase appends hops, the trim holds the length at the cap,
+// and phase + lengths all compare equal — the exact turn that most
+// needs recording skipped its save. The last hop is the tell: any
+// transition this turn changes it.
+func cursorDiffers(sess *ChatSession, cur *MachineCursor) bool {
+	if sess.Phase != cur.Phase || len(sess.MachineState) != len(cur.State) ||
+		len(sess.MachineLog) != len(cur.Log) || sess.MachineOpening != cur.Opening {
+		return true
+	}
+	if n := len(cur.Log); n > 0 {
+		a, b := sess.MachineLog[n-1], cur.Log[n-1]
+		if a.From != b.From || a.To != b.To || !a.At.Equal(b.At) {
+			return true
+		}
+	}
+	return false
 }
 
 // machineCatalog is the tool pool a transient phase draws from.
@@ -160,7 +181,7 @@ func (t *chatTurn) completeMachine(m turnMachine) {
 	if !m.on || t.session == nil {
 		return
 	}
-	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
+	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog, Opening: t.session.MachineOpening}
 	before := cur.Phase
 	m.def.CompleteTurn(cur, m.phase, t.turnDiag)
 	if cur.Phase == before {
@@ -235,7 +256,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			}
 			t.phaseChanges++
 
-			cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
+			cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog, Opening: t.session.MachineOpening}
 			ph, err := t.app.ChangePhase(t.ctx, m.def, cur, to, t.machineTurn(why), t.phaseRunner(), t.turnDiag)
 			if err != nil {
 				return "", err

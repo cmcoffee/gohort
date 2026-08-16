@@ -134,3 +134,37 @@ func TestMachineArtifact_ImportSkipRules(t *testing.T) {
 		t.Fatalf("a same-named machine should skip: %q %v", skip, err)
 	}
 }
+
+// A stored draft with outstanding problems exports; it must also come
+// BACK. The import door refusing what the editor legally keeps meant an
+// agent bundled with its half-built machine landed pointing at a
+// machine the refusal threw away.
+func TestAnImperfectDraftRoundTripsThroughImport(t *testing.T) {
+	app := machineArtifactApp(t)
+	m := &machineArtifact{app: app}
+	// One problem: a transient step that goes nowhere. Stored fine by
+	// the editor; the checklist reports it as work remaining.
+	recipe, _ := json.Marshal(MachineDef{ID: "mach-9", Name: "Half-built", Phases: []MachinePhase{
+		{Name: "route", Prompt: "decide"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}})
+	name, skip, err := m.ImportArtifact(nil, recipe, "alice")
+	if err != nil || skip != "" {
+		t.Fatalf("an imperfect draft must land, got %q %q %v", name, skip, err)
+	}
+	udb := UserDB(app.DB, "alice")
+	saved, ok := LoadMachineDef(udb, "alice", "mach-9")
+	if !ok {
+		t.Fatal("the draft was not stored")
+	}
+	if len(saved.Problems()) == 0 {
+		t.Error("the problem should survive too — the checklist is where it belongs")
+	}
+
+	// Structural emptiness is still refused: that is a decode accident,
+	// not a draft.
+	empty, _ := json.Marshal(MachineDef{Name: "Nothing"})
+	if _, _, err := m.ImportArtifact(nil, empty, "alice"); err == nil {
+		t.Error("a recipe with no steps should be refused")
+	}
+}

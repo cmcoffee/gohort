@@ -96,10 +96,15 @@ func EdgeKey(from, to string) string { return from + "\x00" + to }
 // Layout constants. Fixed rather than measured: a server has no font
 // metrics, and a stable box size is what keeps the output deterministic.
 const (
-	gNodeW  = 210
-	gNodeH  = 58
-	gHGap   = 26
-	gVGap   = 66
+	gNodeW = 210
+	gNodeH = 58
+	gHGap  = 26
+	// gVGap is the row PITCH (top of one row to top of the next), so the
+	// visible gap between rows is gVGap−gNodeH. At the old 66 that gap
+	// was 8px: a forward hop rendered as a stub shorter than its own
+	// 10px arrowhead, and an edge label had no lane of its own. 96
+	// leaves 38px — an arrow that reads as an arrow.
+	gVGap   = 96
 	gPad    = 20
 	gCharW  = 6.1 // approximate advance at the label font size, for truncation
 	gLabelC = 30  // characters before a label is truncated

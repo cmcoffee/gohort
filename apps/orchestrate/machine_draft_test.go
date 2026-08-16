@@ -230,3 +230,25 @@ func TestDuplicateAndMoveAndCost(t *testing.T) {
 		}
 	}
 }
+
+// The checklist never shows hidden or app agents, so its whole-set save
+// must never touch them — without this, a hidden agent legitimately
+// running the machine is silently unplugged by every save.
+func TestAgentsSaveLeavesHiddenAgentsAlone(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
+	ghost, _ := saveAgent(udb, AgentRecord{Name: "Ghost", Owner: user,
+		OrchestratorPrompt: "hi", Hidden: true, Machine: def.ID})
+	wren, _ := saveAgent(udb, AgentRecord{Name: "Wren", Owner: user, OrchestratorPrompt: "hi"})
+
+	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"agents": ["`+wren.ID+`"]}`))
+	app.handleMachineAgents(httptest.NewRecorder(), asUser(r, user), udb, user, def)
+
+	if got, _ := loadAgent(udb, ghost.ID); got.Machine != def.ID {
+		t.Errorf("a hidden agent the checklist never showed must keep its machine, got %q", got.Machine)
+	}
+	if got, _ := loadAgent(udb, wren.ID); got.Machine != def.ID {
+		t.Errorf("the checked agent should still attach, got %q", got.Machine)
+	}
+}

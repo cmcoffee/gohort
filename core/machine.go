@@ -522,10 +522,27 @@ func (d MachineDef) firstResident() (MachinePhase, bool) {
 // prompt artifact instead of silently dropping context.
 func ResolvePhaseTemplate(tmpl string, v PhaseVars, st MachineState) string {
 	s := v.resolve(tmpl)
-	for name, res := range st {
+	// Sorted, never map order. Substitution is sequential ReplaceAll, so
+	// if one value happens to CONTAIN template syntax (a model echoing
+	// "{state:x}" back), whether a later pass re-expands it depends on
+	// iteration order — and map order changes per call, which would make
+	// the same state render different bytes on different turns. Sorted
+	// keys make the outcome fixed either way.
+	names := make([]string, 0, len(st))
+	for name := range st {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		res := st[name]
 		s = strings.ReplaceAll(s, "{state:"+name+"}", res.Text)
-		for field, v := range res.Fields {
-			s = strings.ReplaceAll(s, "{state:"+name+"."+field+"}", renderFieldValue(v))
+		fields := make([]string, 0, len(res.Fields))
+		for field := range res.Fields {
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		for _, field := range fields {
+			s = strings.ReplaceAll(s, "{state:"+name+"."+field+"}", renderFieldValue(res.Fields[field]))
 		}
 	}
 	return s

@@ -51,6 +51,13 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Same guard the draft endpoint carries: every transient hop is a
+	// worker call, and a nil LLM would surface as a panic three layers
+	// down instead of a sentence here.
+	if T.LLM == nil {
+		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+		return
+	}
 	var body struct {
 		Message string `json:"message"`
 		// Cursor is the previous try's position, round-tripped through
@@ -223,6 +230,12 @@ const machineTryJS = `function(ctx) {
   if (!id || !box || !out) return;
   var msg = (box.value || '').trim();
   if (!msg) { box.focus(); return; }
+  // The rehearsal's position rides on the element, so a second message
+  // CONTINUES the conversation — which is the only way to watch a guard
+  // fire or a re-entry keep its state. Start over clears it.
+  var cursor = null;
+  try { cursor = out.dataset.cursor ? JSON.parse(out.dataset.cursor) : null; } catch (e) {}
+  var turnNo = 1 + out.querySelectorAll('[data-try-turn]').length;
 
   function el(tag, text, style) {
     var e = document.createElement(tag);

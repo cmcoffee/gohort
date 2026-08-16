@@ -316,3 +316,27 @@ func TestCompleteMachine_OneBeatPhaseHandsOffAfterItsTurn(t *testing.T) {
 		t.Errorf("a phase with no next must stay put, got %q", turn.session.Phase)
 	}
 }
+
+// {original_input} on a LIVE session: the cursor is rebuilt from the
+// session every turn, so without a persisted home the "written once"
+// guard re-latched onto the CURRENT message — the exact lie the
+// variable's documentation warns about, and a cache-buster for any
+// resident prompt placing it.
+func TestOpeningSurvivesAcrossLiveTurns(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.enterMachine("why is the export failing?")
+	if turn.session.MachineOpening != "why is the export failing?" {
+		t.Fatalf("the opening should persist on the session, got %q", turn.session.MachineOpening)
+	}
+
+	// A later turn on the SAME session rebuilds the cursor from the
+	// session fields; the opening must ride back rather than re-latch.
+	turn.machine = turnMachine{}
+	turn.enterMachine("any update?")
+	if turn.session.MachineOpening != "why is the export failing?" {
+		t.Errorf("the opening drifted to the latest message: %q", turn.session.MachineOpening)
+	}
+	if turn.machine.vars.Opening != "why is the export failing?" {
+		t.Errorf("the resident block should see the ORIGINAL opening, got %q", turn.machine.vars.Opening)
+	}
+}

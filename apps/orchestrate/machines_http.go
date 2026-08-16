@@ -434,6 +434,14 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 		}
 		var attached, detached []string
 		for _, ag := range listAgents(udb, user) {
+			// The checklist never shows app agents or hidden ones, so
+			// this save must never touch them either — a whole-set POST
+			// detaches whatever is unchecked, and an agent that was
+			// never ON the list would be silently unplugged by every
+			// save of the agents that are.
+			if isAppAgent(ag.ID) || ag.Hidden {
+				continue
+			}
 			switch {
 			case want[ag.ID] && ag.Machine != def.ID:
 				ag.Machine = def.ID

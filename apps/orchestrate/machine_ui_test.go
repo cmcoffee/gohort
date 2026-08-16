@@ -8,6 +8,8 @@ package orchestrate
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -202,5 +204,44 @@ func TestThePictureNavigatesTheRail(t *testing.T) {
 		if got := ui.SectionSlug(in); got != want {
 			t.Errorf("SectionSlug(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The panel test above pins strings; this one RUNS the handler. The
+// review found machineTryJS referencing cursor/turnNo that a botched
+// edit had left undeclared — a synchronous ReferenceError on the first
+// click, invisible to every string check. Executes under node with a
+// stub DOM up to the fetch; skips where node is not installed.
+func TestMachineTryJSActuallyExecutes(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	harness := `
+var calledFetch = false;
+var stubEl = function() { return {
+  textContent: '', value: 'why is it slow?', dataset: {}, style: {},
+  setAttribute: function() {}, appendChild: function() {}, focus: function() {},
+  querySelectorAll: function() { return []; },
+}; };
+var document = {
+  getElementById: function() { return stubEl(); },
+  createElement: function() { return stubEl(); },
+  createTextNode: function(t) { return {text: t}; },
+};
+var window = {location: {search: '?id=m1'}};
+var URLSearchParams = function() { return {get: function() { return 'm1'; }}; };
+var fetch = function() { calledFetch = true; return {then: function() { return this; }, catch: function() { return this; }}; };
+var fn = ` + machineTryJS + `;
+fn({button: null});
+if (!calledFetch) { throw new Error('never reached the fetch — something threw or returned early'); }
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "try.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("machineTryJS threw before the fetch:\n%s", out)
 	}
 }

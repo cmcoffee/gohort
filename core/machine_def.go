@@ -802,10 +802,25 @@ func ExportMachine(d MachineDef) MachineDef {
 	return d
 }
 
-// ImportMachine assigns a recipe to owner, validates it, and saves it.
-// The traveled ID is kept when free and reminted when it would collide,
-// so importing the same recipe twice makes a copy instead of clobbering.
+// ImportMachine assigns a recipe to owner and saves it. The traveled ID
+// is kept when free and reminted when it would collide, so importing the
+// same recipe twice makes a copy instead of clobbering.
+//
+// It does NOT demand the machine be runnable. Every storage door —
+// the editor, the draft endpoint — deliberately keeps machines with
+// outstanding problems, because the editor's checklist is where
+// problems belong; an import door that refused them meant a legally
+// stored draft could export and then never come back, and an agent
+// bundled with it landed pointing at a machine the refusal threw away.
+// Only structural emptiness is refused: a nameless recipe or one with
+// no steps is not a draft, it is a decode accident.
 func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, error) {
+	if strings.TrimSpace(recipe.Name) == "" {
+		return MachineDef{}, Error("machine recipe has no name")
+	}
+	if len(recipe.Phases) == 0 {
+		return MachineDef{}, Error("machine recipe has no steps")
+	}
 	if recipe.ID != "" {
 		if _, exists := LoadMachineDef(udb, "", recipe.ID); exists {
 			recipe.ID = ""
@@ -814,9 +829,6 @@ func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, e
 	recipe.Owner = owner
 	recipe.Created = time.Time{}
 	recipe.Updated = time.Time{}
-	if err := recipe.Validate(); err != nil {
-		return MachineDef{}, err
-	}
 	return SaveMachineDef(udb, recipe), nil
 }
 

@@ -889,3 +889,71 @@ func TestAStaleFormCannotResurrectARenamedStep(t *testing.T) {
 		t.Error("the name field should reload the editor after a rename")
 	}
 }
+
+// The review's three editor catches, each proven here.
+//
+// Rename clobber: RenameStep rewrites the renamed step's OWN references
+// too (a guard_to naming itself), and a stale copy assigned after it
+// quietly undid exactly those.
+func TestRenamingASelfReferencingStepKeepsItsRewrites(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Loop", Start: "answer",
+		Phases: []MachinePhase{
+			{Name: "answer", Prompt: "a", Resident: true,
+				Guard: "they moved on", GuardTo: "answer"},
+		}})
+	r := httptest.NewRequest("POST", "/x?name=answer", strings.NewReader(`{"name": "reply"}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("rename failed: %d %s", w.Code, w.Body.String())
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	ph, _ := saved.Phase("reply")
+	if ph.GuardTo != "reply" {
+		t.Errorf("the step's own self-reference must survive the rename, got guard_to=%q", ph.GuardTo)
+	}
+	if probs := saved.Problems(); len(probs) > 0 {
+		t.Errorf("a self-referencing rename must not leave danglers: %v", probs)
+	}
+}
+
+// Enum wipe: the form posts the whole record — output rows (which carry
+// no enum) AND targets together — so targets must be applied onto the
+// NEW rows, not onto rows about to be replaced.
+func TestRoutingTargetsSurviveAFullRecordSave(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+	r := httptest.NewRequest("POST", "/x?name=triage", strings.NewReader(`{
+		"prompt": "decide",
+		"output": [{"name": "next_phase", "type": "string", "required": true}],
+		"next_from": "next_phase",
+		"targets": ["answer"]
+	}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	tri, _ := saved.Phase("triage")
+	if got := strings.Join(tri.RoutingChoices(), ","); got != "answer" {
+		t.Errorf("the routing set was wiped by its own save, got %v", tri.RoutingChoices())
+	}
+}
+
+// Create clobber: the ADD form naming an existing step must refuse, not
+// quietly merge onto the step somebody already built.
+func TestAddingAStepUnderAnExistingNameIsRefused(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"name": "triage", "desc": "typed into the add form"}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 400 {
+		t.Fatalf("a create onto an existing name should refuse, got %d: %s", w.Code, w.Body.String())
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	tri, _ := saved.Phase("triage")
+	if tri.Desc == "typed into the add form" {
+		t.Error("the existing step was clobbered by the add form")
+	}
+}

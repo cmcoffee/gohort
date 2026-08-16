@@ -382,7 +382,7 @@
       // button walking earlier sections.
       function activateHash() {
         var want = window.location.hash.replace(/^#/, '');
-        if (!want) return;
+        if (!want) { activate(0); return; }
         var si = slugs.indexOf(secnavSlug(want));
         if (si >= 0) activate(si);
       }
