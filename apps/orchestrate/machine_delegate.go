@@ -34,12 +34,38 @@ import (
 func (t *chatTurn) phaseRunner() PhaseRunner {
 	base := t.app.PhaseWorker(t.machineCatalog())
 	return func(ctx context.Context, ph MachinePhase, prompt string) (string, error) {
+		// Say what is happening BEFORE it happens. These calls run at the
+		// head of the turn, before the persona is even assembled, so
+		// until the first one returns the person is looking at nothing —
+		// and a machine that decomposes and routes spends two model calls
+		// there. Silence during work somebody is waiting on reads as
+		// hung, whatever the reason for it.
+		t.emitStatus(phaseStatusLine(ph))
 		ref := strings.TrimSpace(ph.Agent)
 		if ref == "" {
 			return base(ctx, ph, prompt)
 		}
 		return t.runDelegatedPhase(ctx, ph, ref, prompt, base)
 	}
+}
+
+// phaseStatusLine narrates one step in the author's own words.
+//
+// The step's description is written for a person (it is what the rail
+// and the routing instruction show), so it is the right sentence here
+// too — no second copy to keep in sync. A guard arrives as a synthetic
+// phase named "guard:<step>", and saying so matters: it is a call the
+// person pays for on EVERY turn spent in that step, and "checking
+// whether this is still the same job" is the only honest description of
+// where that second went.
+func phaseStatusLine(ph MachinePhase) string {
+	if guarded := strings.TrimPrefix(ph.Name, "guard:"); guarded != ph.Name {
+		return "Checking whether this is still the same job…"
+	}
+	if d := strings.TrimSpace(ph.Desc); d != "" {
+		return ph.Name + ": " + strings.TrimRight(d, ".") + "…"
+	}
+	return "Working through " + ph.Name + "…"
 }
 
 // runDelegatedPhase dispatches one phase to another agent.

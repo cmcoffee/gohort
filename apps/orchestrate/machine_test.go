@@ -11,6 +11,7 @@ package orchestrate
 // what turns 2..N of every machine conversation actually do.
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -338,5 +339,59 @@ func TestOpeningSurvivesAcrossLiveTurns(t *testing.T) {
 	}
 	if turn.machine.vars.Opening != "why is the export failing?" {
 		t.Errorf("the resident block should see the ORIGINAL opening, got %q", turn.machine.vars.Opening)
+	}
+}
+
+// A machine's steps run at the HEAD of a turn, before the persona is
+// assembled and before a single word reaches the person — two model
+// calls of silence for a decompose-then-route machine. Each one says
+// what it is doing first, in the author's own words.
+func TestEveryStepSaysWhatItIsDoing(t *testing.T) {
+	cases := map[string]struct {
+		in   MachinePhase
+		want string
+	}{
+		"the author's description": {
+			MachinePhase{Name: "triage", Desc: "Work out what kind of turn this is."},
+			"triage: Work out what kind of turn this is…",
+		},
+		"a step that never got one": {
+			MachinePhase{Name: "hunch"},
+			"Working through hunch…",
+		},
+		// A guard is a call paid on EVERY turn spent in a step, and it
+		// arrives as a synthetic phase. Naming it is the only honest
+		// account of where that second went.
+		"a guard": {
+			MachinePhase{Name: "guard:answer", Desc: "unused"},
+			"Checking whether this is still the same job…",
+		},
+	}
+	for name, c := range cases {
+		if got := phaseStatusLine(c.in); got != c.want {
+			t.Errorf("%s: got %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+// And the runner actually emits it — before the call, not after, or the
+// line arrives with the answer it was meant to cover for.
+func TestPhaseRunnerAnnouncesBeforeItRuns(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	var buf bytes.Buffer
+	turn.sse = &sseWriter{live: &buf}
+	turn.app.LLM = &stubLLM{reply: "worked it out"}
+
+	run := turn.phaseRunner()
+	if _, err := run(context.Background(),
+		MachinePhase{Name: "triage", Desc: "Work out what kind of turn this is."}, "do it"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "triage: Work out what kind of turn this is") {
+		t.Errorf("the step should announce itself:\n%s", got)
+	}
+	if !strings.Contains(got, `"type":"status"`) {
+		t.Errorf("it should ride the activity surface's status channel:\n%s", got)
 	}
 }

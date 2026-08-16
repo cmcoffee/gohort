@@ -679,6 +679,19 @@ same, since that is a second turn of the same agent with all of the cost and non
 **A delegate that errors fails the phase.** It does not fall back: answering the question with the
 wrong thing wearing the right name is the one outcome worse than an error.
 
+## What the person sees while it runs
+
+A machine's transient steps run at the HEAD of a turn — before the persona is assembled, before a
+single token reaches the browser. A decompose-then-route machine spends two model calls there, and
+a guarded step pays a third on every turn. That was silence, and silence during work somebody is
+waiting on reads as hung whatever the reason for it.
+
+Each step now announces itself on the activity surface before it runs, in the AUTHOR's words: the
+step's own `desc` is what the rail and the routing instruction already show, so there is no second
+copy to keep in sync. A guard says what it is ("checking whether this is still the same job") —
+that call is paid on every turn spent in the step, and naming it is the only honest account of
+where the second went.
+
 ## Editing one
 
 **Or describe one.** "Describe one…" next to New machine takes a paragraph — what kinds of turns
