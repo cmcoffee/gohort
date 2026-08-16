@@ -190,6 +190,7 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 			Wide:      s.Wide,
 			MaxWidth:  s.MaxWidth,
 			Group:     s.Group,
+			Indent:    s.Indent,
 		})
 	}
 	blob, err := json.Marshal(cfg)
@@ -314,6 +315,16 @@ type Section struct {
 	// tabs ordered by first appearance. Empty = "General". No effect when
 	// Page.Tabbed is false.
 	Group string
+	// Indent nests this section under the one above it in a SectionNav
+	// rail — one step of indentation per level.
+	//
+	// For a rail whose sections are not a flat list: alternatives that
+	// belong to the same fork, sub-parts of a thing above them. A flat
+	// rail draws two steps that are ALTERNATIVES exactly like two steps
+	// in sequence, which is the one distinction such a list most needs
+	// to make. Affects the rail only; the section itself renders the
+	// same wherever it sits.
+	Indent int
 }
 
 // --- internal: serialization shape consumed by ui.js ----------------------
@@ -358,6 +369,7 @@ type sectionConfig struct {
 	Wide      bool            `json:"wide,omitempty"`
 	MaxWidth  string          `json:"max_width,omitempty"`
 	Group     string          `json:"group,omitempty"`
+	Indent    int             `json:"indent,omitempty"`
 }
 
 // marshalComponent serializes a Component as JSON with a "type" tag the

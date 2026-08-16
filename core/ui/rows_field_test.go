@@ -6,6 +6,7 @@ package ui
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -404,5 +405,39 @@ func TestShowWhenTreatsAnEmptyListAsUnanswered(t *testing.T) {
 		if !strings.Contains(src, form) {
 			t.Errorf("presence check bypassed: %q", form)
 		}
+	}
+}
+
+// A SectionNav rail can nest. Without it every rail is a flat list, and
+// two sections that are ALTERNATIVES look exactly like two that follow
+// one another — the distinction a rail over a branching thing most
+// needs to make.
+func TestSectionsCanNestInTheRail(t *testing.T) {
+	// The wire shape is what the PAGE writes, not what a Section
+	// marshals to on its own — that is the copy the runtime reads.
+	w := httptest.NewRecorder()
+	Page{Title: "m", SectionNav: true, Sections: []Section{
+		{Title: "triage"},
+		{Title: "dig", Indent: 1},
+	}}.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	if !strings.Contains(body, `"indent":1`) {
+		t.Error("the nesting should reach the runtime")
+	}
+	// A flat section must not carry the key at all — every existing rail
+	// in the product renders exactly as before.
+	if strings.Count(body, `"indent"`) != 1 {
+		t.Errorf("only the nested section should carry it, found %d", strings.Count(body, `"indent"`))
+	}
+
+	src := readRuntimeFile(t, "99_epilogue.js")
+	if !strings.Contains(src, "if (s.indent > 0)") {
+		t.Error("the rail does not read the nesting")
+	}
+	if !strings.Contains(src, "classList.add('nested')") {
+		t.Error("nesting needs a class of its own — indentation alone reads as a typo")
+	}
+	if css := readRuntimeCSSForTest(t); !strings.Contains(css, ".ui-secnav-item.nested") {
+		t.Error("nested rail entries have no styling to distinguish them")
 	}
 }

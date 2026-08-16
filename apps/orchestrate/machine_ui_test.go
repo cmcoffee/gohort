@@ -511,3 +511,47 @@ func TestTheMapIsPinnedAboveTheSteps(t *testing.T) {
 		t.Error("the map should be collapsible, and open by default")
 	}
 }
+
+// A branch has to be visible in the STEPS, not only in the map. A flat
+// rail draws two steps a decision picks between exactly like two steps
+// that run one after the other, which is the one distinction that list
+// most needs to make.
+func TestTheStepListShowsABranch(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide", Choices: []string{"dig", "answer"}, Next: "answer"},
+			{Name: "dig", Prompt: "look", Next: "answer"},
+			{Name: "answer", Prompt: "reply", Resident: true},
+		}})
+
+	// The two destinations are alternatives; the decider is not.
+	forks := branchAlternatives(def)
+	if len(forks["dig"]) != 1 || forks["dig"][0] != "triage" {
+		t.Errorf("dig is one of triage's ways: %v", forks)
+	}
+	if len(forks["triage"]) != 0 {
+		t.Errorf("the step doing the choosing is not an alternative to itself: %v", forks)
+	}
+
+	r := httptest.NewRequest("GET", "/orchestrate/machine?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	body := w.Body.String()
+	if !strings.Contains(body, `"indent":1`) {
+		t.Error("the alternatives should be nested under the step that chooses them")
+	}
+	if !strings.Contains(body, "one of the ways triage can go") {
+		t.Error("and the step itself should say what it is an alternative to")
+	}
+
+	// A chain must NOT look forked: one destination is a sequence.
+	chain := SaveMachineDef(udb, MachineDef{Owner: user, Name: "C", Start: "one",
+		Phases: []MachinePhase{
+			{Name: "one", Prompt: "p", Next: "two"},
+			{Name: "two", Prompt: "p", Resident: true},
+		}})
+	if got := branchAlternatives(chain); len(got) != 0 {
+		t.Errorf("a step that hands off to one place is a sequence, not a branch: %v", got)
+	}
+}

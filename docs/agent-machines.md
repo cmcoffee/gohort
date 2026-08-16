@@ -826,6 +826,13 @@ loop (one call per round, up to `StageToolRounds`), a delegated step spends anot
 turn, a step that only pins values is free, and a guarded step charges a check on every turn spent
 in it.
 
+**A branch shows up in the STEPS too, not only in the map.** The steps a decision picks between are
+nested under it in the rail (`Section.Indent`, a generic one-level nesting for any SectionNav page)
+and each says what it is an alternative to in its own heading: "one of the ways triage can go". A
+flat rail draws two steps that are alternatives exactly like two that run one after the other, which
+is the distinction such a list most needs to make. Only a real fork nests — a step that hands off to
+exactly one place is a sequence, and drawing it as a branch would make every machine look forked.
+
 **The map's shape comes from the ARROWS, not the step list.** `layout()` ranks steps by distance
 from the entry over forward edges, so a step sits below whatever leads to it and the declared order
 only decides which side same-depth steps sit on. Reordering a chain therefore changes nothing in the

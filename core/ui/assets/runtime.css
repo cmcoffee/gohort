@@ -354,6 +354,15 @@ select:-webkit-autofill {
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 .ui-secnav-item:hover { color: var(--text); background: var(--bg-1); }
+/* A nested rail entry belongs to the one above it. The rule is what
+   carries that at a glance — indentation alone reads as a typo. */
+.ui-secnav-item.nested { position: relative; }
+.ui-secnav-item.nested::before {
+  content: "";
+  position: absolute;
+  left: 0.55rem; top: 0.35rem; bottom: 0.35rem;
+  border-left: 2px solid var(--border);
+}
 .ui-secnav-item.active {
   background: var(--accent-soft, rgba(74,158,255,0.16));
   border-color: var(--accent, #4a9eff); color: var(--text);

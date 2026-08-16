@@ -214,6 +214,12 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// One section per step, each with ITS OWN panel. Aligned by index
 	// against the same slice the spec built from def.Phases, so the
 	// section titled "verify" holds verify's form and nothing else.
+	// Which steps are ALTERNATIVES, and to what. A flat rail draws two
+	// steps that a decision picks between exactly like two steps that
+	// run one after the other — the one distinction this list most needs
+	// to make, and the reason a branch was hard to see anywhere but the
+	// map.
+	forks := branchAlternatives(def)
 	for i, p := range def.Phases {
 		if i >= len(panels) {
 			break
@@ -221,7 +227,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		page.Sections = append(page.Sections, ui.Section{
 			Title:    p.Name,
 			Wide:     true,
-			Subtitle: phaseSubtitle(p),
+			Indent:   len(forks[p.Name]),
+			Subtitle: phaseSubtitle(p) + forkNote(forks[p.Name]),
 			Body:     panels[i],
 		})
 	}
@@ -394,6 +401,36 @@ const machineMoveStepJS = `function(ctx) {
     window.uiAlert && window.uiAlert('Could not move it: ' + (err && err.message || err));
   });
 }`
+
+// branchAlternatives maps each step to the steps that CHOOSE it — but
+// only where the choosing is a real fork (two or more destinations).
+// A step that hands off to exactly one place is a sequence, not a
+// branch, and drawing it as one would make every machine look forked.
+func branchAlternatives(def MachineDef) map[string][]string {
+	out := map[string][]string{}
+	for _, p := range def.Phases {
+		choices := p.RoutingChoices()
+		if len(choices) < 2 {
+			continue
+		}
+		for _, c := range choices {
+			c = strings.TrimSpace(c)
+			if _, real := def.Phase(c); real {
+				out[c] = append(out[c], p.Name)
+			}
+		}
+	}
+	return out
+}
+
+// forkNote says what a step is an alternative TO, in the step's own
+// heading — the rail shows the shape, this says what the shape means.
+func forkNote(deciders []string) string {
+	if len(deciders) == 0 {
+		return ""
+	}
+	return " · one of the ways " + strings.Join(deciders, " and ") + " can go"
+}
 
 // phaseSubtitle says what a step is and where it goes, in the rail and
 // above its form — so the shape of the machine is legible without

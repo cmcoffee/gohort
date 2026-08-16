@@ -366,6 +366,14 @@
         subPanels.push(sp);
         slugs.push(secnavSlug(s.title));
         var ib = el('button', {type: 'button', class: 'ui-secnav-item' + (si === 0 ? ' active' : '')}, [s.title || ('Section ' + (si + 1))]);
+        // Nesting: a rail whose sections are not a flat list says so.
+        // Two entries that are ALTERNATIVES read exactly like two in
+        // sequence otherwise, which is the distinction such a list most
+        // needs to make.
+        if (s.indent > 0) {
+          ib.classList.add('nested');
+          ib.style.paddingLeft = (0.75 + s.indent * 0.85) + 'rem';
+        }
         ib.addEventListener('click', function() {
           activate(si);
           // The hash is the address of the open section, so a link can
