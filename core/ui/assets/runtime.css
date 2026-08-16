@@ -1408,6 +1408,14 @@ select:-webkit-autofill {
    reading as one row. Without the rule, a three-line row and the next
    row's first line sit the same distance apart and nothing says where
    one ends. */
+.ui-rows {
+  /* The per-row controls (↑ ↓ ✕) are three tap targets plus their gaps.
+     The header has to reserve exactly the same width or every column
+     under it sits narrower than its label — an error that accumulates
+     left to right, so the headings drift further off the further right
+     you read. */
+  --rows-actions: calc(3 * var(--tap) + 0.3rem);
+}
 .ui-rows-head {
   display: flex;
   gap: 0.35rem;
@@ -1418,6 +1426,13 @@ select:-webkit-autofill {
   text-transform: uppercase;
   color: var(--text-mute);
 }
+.ui-rows-actions {
+  display: flex;
+  gap: 0.15rem;
+  justify-content: flex-end;
+  flex: 0 0 var(--rows-actions);
+}
+.ui-rows-head-spacer { flex: 0 0 var(--rows-actions); }
 .ui-rows-row {
   padding: 0.45rem 0.5rem;
   margin-bottom: 0.45rem;
@@ -1425,7 +1440,16 @@ select:-webkit-autofill {
   border-radius: 6px;
   background: var(--bg-1, transparent);
 }
+/* A control on its own line fills it. An input or textarea keeps its
+   intrinsic width in a plain block, so without this the instruction box
+   sits in a narrow column on the left of the space it was given. */
 .ui-rows-wide { margin-top: 0.45rem; }
+.ui-rows-wide > input,
+.ui-rows-wide > textarea,
+.ui-rows-wide > select {
+  width: 100%;
+  box-sizing: border-box;
+}
 .ui-rows-wide-label {
   font-size: 0.7rem;
   letter-spacing: 0.04em;

@@ -1487,6 +1487,10 @@
               text: c.label || '',
             }));
           });
+          // The row's own controls sit in a fixed-width cell at the end;
+          // the header reserves the same, or every column under it is
+          // narrower than its label by a share of that width.
+          headRow.appendChild(el('div', {class: 'ui-rows-head-spacer'}));
           input.appendChild(headRow);
         }
         var body = el('div', {});
@@ -1678,7 +1682,7 @@
                 persistRows();
               };
             };
-            cells.push(el('div', {style: 'display:flex;gap:0.15rem;flex:0 0 auto'}, [
+            cells.push(el('div', {class: 'ui-rows-actions'}, [
               el('button', {type: 'button', class: 'ui-row-btn', title: 'Move up', onclick: move(idx - 1)}, ['↑']),
               el('button', {type: 'button', class: 'ui-row-btn', title: 'Move down', onclick: move(idx + 1)}, ['↓']),
               el('button', {

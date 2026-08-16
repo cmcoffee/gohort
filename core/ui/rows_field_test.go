@@ -347,3 +347,37 @@ func readRuntimeCSSForTest(t *testing.T) string {
 	}
 	return string(b)
 }
+
+// Two ways a rows editor comes out crooked, both geometry rather than
+// wiring, and both invisible to a test that only reads the spec.
+func TestRowsGeometryLinesUp(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	css := readRuntimeCSSForTest(t)
+
+	// 1. The header must reserve the width of the row's own controls.
+	// Without it every column sits narrower than its label by a share of
+	// that width — an error that accumulates left to right, so the
+	// headings drift further off the further right you read.
+	if !strings.Contains(src, "ui-rows-head-spacer") {
+		t.Error("the header does not reserve room for the per-row controls, so it cannot line up")
+	}
+	if !strings.Contains(src, `el('div', {class: 'ui-rows-actions'}`) {
+		t.Error("the controls cell should take its width from the same variable the header does")
+	}
+	if !strings.Contains(css, "--rows-actions:") {
+		t.Error("the two widths should come from ONE definition, or they drift apart")
+	}
+	for _, sel := range []string{".ui-rows-actions", ".ui-rows-head-spacer"} {
+		if !strings.Contains(css, sel+" { flex: 0 0 var(--rows-actions)") &&
+			!strings.Contains(css, "flex: 0 0 var(--rows-actions);") {
+			t.Errorf("%s should be pinned to the shared width", sel)
+		}
+	}
+
+	// 2. A control given its own line has to fill it. An input keeps its
+	// intrinsic width in a plain block, so the instruction box otherwise
+	// sits in a narrow column on the left of the space it was given.
+	if !strings.Contains(css, ".ui-rows-wide > textarea") || !strings.Contains(css, "width: 100%") {
+		t.Error("an own_line control should fill its line")
+	}
+}
