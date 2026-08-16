@@ -6,6 +6,8 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -135,5 +137,66 @@ func TestPreviewMatchesHowEachKindIsActuallyComposed(t *testing.T) {
 	}
 	if strings.Contains(res, "Reply with a single JSON object") {
 		t.Error("a resident step must not be handed an output contract")
+	}
+}
+
+// The preview is the surface that teaches what the framework composes,
+// so it must not show the pre-edit composition after a save. It
+// refreshes in place (never a page reload — the prompt saves on a
+// typing debounce, and reloading would yank the page out from under
+// somebody mid-sentence), driven by the framework's own invalidation
+// broadcast.
+func TestThePreviewRefreshesAfterASave(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "look",
+		Phases: []MachinePhase{
+			{Name: "look", Prompt: "Original instruction.", Next: "reply"},
+			{Name: "reply", Prompt: "Answer.", Resident: true},
+		}})
+
+	// The endpoint the refresh calls, and the page render, come from one
+	// function — so what a save re-fetches cannot drift from what was
+	// drawn.
+	r := httptest.NewRequest("GET", "/x?name=look&preview=1", nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("preview fetch failed: %d %s", w.Code, w.Body.String())
+	}
+	var got struct{ Block, Note string }
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Block, "Original instruction.") {
+		t.Errorf("the block should be the composed step: %q", got.Block)
+	}
+	if got.Note == "" {
+		t.Error("the framing sentence should come with it — it changes with the step's shape")
+	}
+	block, note := phasePreviewParts(def, def.Phases[0])
+	if block != got.Block || note != got.Note {
+		t.Error("the endpoint and the page render must be the same function")
+	}
+
+	// The rendered card carries the step name the broadcast will match.
+	raw, _ := json.Marshal(phasePreview(def, def.Phases[0]))
+	if !strings.Contains(string(raw), `data-preview-step=\"look\"`) {
+		t.Errorf("the preview must be findable by step name: %s", raw)
+	}
+	for _, want := range []string{"data-preview-body", "data-preview-note"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("the refresh writes into %s, which the card does not have", want)
+		}
+	}
+	// And the listener keys off the same endpoint a phase form writes to.
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), "'/phases?name='") {
+		t.Error("the refresh should key off the save endpoint the framework broadcasts")
+	}
+	if !strings.Contains(string(page), "JS(machinePreviewRefreshJS)") {
+		t.Error("the listener is written but never installed")
 	}
 }

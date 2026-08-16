@@ -728,6 +728,13 @@ page is rebuilt — the add dialog used to close and appear to do nothing. The a
 the editor carrying the new step's section anchor, so it reopens with that step's form already
 open.
 
+**The preview refreshes itself.** "What this step actually receives" is the surface that teaches
+what the framework composes, so showing the pre-edit composition after a save is the same lie as an
+added step that never appears. It refreshes in place rather than reloading: the prompt box saves on
+a typing debounce, and a reload would yank the page out from under someone mid-sentence. It rides
+the framework's own invalidation broadcast — a phase form writes to `…/phases?name=<step>`, so the
+stale step is named in the event — and re-fetches from the same function that drew it.
+
 **Changing a step's KIND rebuilds the form.** The sections under "What kind of step is this?" are
 built from that answer server-side, so toggling it without a rebuild left a step showing controls
 its new kind cannot use — an output contract on a step that now waits, a guard on one that no

@@ -168,7 +168,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_try", machineTryJS).
 			ClientAction("machine_try_reset", machineTryResetJS).
 			ClientAction("machine_duplicate", machineDuplicateJS).
-			JS(machineTryEnterJS),
+			JS(machineTryEnterJS).
+			JS(machinePreviewRefreshJS),
 		Sections: []ui.Section{
 			{
 				Title:    "The machine",
@@ -316,6 +317,36 @@ const machineRemoveStepJS = `function(ctx) {
       window.uiAlert && window.uiAlert('Could not remove it: ' + (err && err.message || err));
     });
 }`
+
+// machinePreviewRefreshJS keeps "What this step actually receives"
+// honest without reloading the page.
+//
+// The framework already broadcasts ui-data-changed with the endpoint a
+// form just wrote to (uiInvalidateSaved), and a phase form writes to
+// .../phases?name=<step> — so the step whose preview went stale is
+// named in the event. A page reload would be the other way to do this,
+// and the wrong one: the prompt textarea saves on a typing debounce, so
+// reloading would yank the page out from under somebody mid-sentence.
+const machinePreviewRefreshJS = `window.addEventListener('ui-data-changed', function(ev) {
+  var sources = (ev.detail && ev.detail.sources) || [];
+  sources.forEach(function(src) {
+    var at = String(src).indexOf('/phases?name=');
+    if (at < 0) return;
+    var step = decodeURIComponent(String(src).slice(at + '/phases?name='.length));
+    var box = document.querySelector('[data-preview-step="' + (window.CSS && CSS.escape ? CSS.escape(step) : step) + '"]');
+    if (!box) return;
+    fetch(src + '&preview=1')
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d) return;
+        var body = box.querySelector('[data-preview-body]');
+        var note = box.querySelector('[data-preview-note]');
+        if (body) body.textContent = d.block || '';
+        if (note && d.note) note.textContent = d.note;
+      })
+      .catch(function() {});
+  });
+});`
 
 // machineDuplicateJS copies the machine and opens the copy — the point
 // of duplicating is to work on the copy, so staying on the original

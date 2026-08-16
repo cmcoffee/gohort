@@ -681,6 +681,14 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 				http.NotFound(w, r)
 				return
 			}
+			// ?preview=1 — just the composed block and its framing, for
+			// the in-place refresh after a save. Same function the page
+			// renders from, so the two cannot drift.
+			if r.URL.Query().Get("preview") == "1" {
+				block, note := phasePreviewParts(def, ph)
+				writeJSON(w, map[string]any{"block": block, "note": note})
+				return
+			}
 			writeJSON(w, phaseRecord(ph))
 			return
 		}

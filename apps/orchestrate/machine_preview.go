@@ -75,11 +75,12 @@ func samplePhaseVars() PhaseVars {
 	}
 }
 
-// phasePreview renders the composed block for one step, greyed, under
-// its form.
-func phasePreview(def MachineDef, p MachinePhase) ui.Component {
-	block := strings.TrimSpace(def.PhaseInstructions(p, sampleStateFor(def, p), samplePhaseVars()))
-	note := "This is what the step is actually told, composed by the framework — your instructions, plus everything the definition already knows. You do not need to repeat any of it."
+// phasePreviewParts is the composed block and the sentence that frames
+// it, for both the page render and the refresh endpoint — one function,
+// so what a save re-fetches cannot drift from what the page first drew.
+func phasePreviewParts(def MachineDef, p MachinePhase) (block, note string) {
+	block = strings.TrimSpace(def.PhaseInstructions(p, sampleStateFor(def, p), samplePhaseVars()))
+	note = "This is what the step is actually told, composed by the framework — your instructions, plus everything the definition already knows. You do not need to repeat any of it."
 	// A filled field is deliberately absent below, and absent without a
 	// word reads as a bug rather than as the saving it is.
 	if static := p.StaticFields(); len(static) > 0 {
@@ -95,9 +96,23 @@ func phasePreview(def MachineDef, p MachinePhase) ui.Component {
 	} else {
 		note += " Notice that the fields you declare arrive as instructions in their own right, each with the description you gave it — that is why the prompt should say HOW to go about the work rather than restating what to produce."
 	}
-	return ui.Card{HTML: `<details class="ui-card" style="opacity:0.75">` +
+	return block, note
+}
+
+// phasePreview renders the composed block for one step, greyed, under
+// its form.
+//
+// Tagged with the step's name so a save can refresh it in place
+// (machinePreviewRefreshJS): this is the surface that TEACHES what the
+// framework composes, and a teaching surface showing the pre-edit
+// composition is the same lie as an added step that never appears. It
+// refreshes rather than reloading the page, because the alternative
+// would fire while somebody is still writing the prompt it describes.
+func phasePreview(def MachineDef, p MachinePhase) ui.Component {
+	block, note := phasePreviewParts(def, p)
+	return ui.Card{HTML: `<details class="ui-card" style="opacity:0.75" data-preview-step="` + HTMLEscape(p.Name) + `">` +
 		`<summary style="cursor:pointer;font-weight:600">What this step actually receives</summary>` +
-		`<p style="font-size:0.8rem;color:var(--text-mute);margin:0.5rem 0">` + HTMLEscape(note) + `</p>` +
-		`<pre style="white-space:pre-wrap;font-size:0.76rem;line-height:1.5;overflow-x:auto;color:var(--text-mute)">` +
+		`<p data-preview-note style="font-size:0.8rem;color:var(--text-mute);margin:0.5rem 0">` + HTMLEscape(note) + `</p>` +
+		`<pre data-preview-body style="white-space:pre-wrap;font-size:0.76rem;line-height:1.5;overflow-x:auto;color:var(--text-mute)">` +
 		HTMLEscape(block) + `</pre></details>`}
 }
