@@ -342,26 +342,52 @@
     // (s.__host) so hostForSection routes to the right sub-panel. Used both
     // inside a tab (a group's sections) and at page level on a non-tabbed page
     // (all sections form a single rail).
+    // secnavSlug names a section for the URL: "Try it" → "try-it". The
+    // same transform any server code linking INTO a page must apply
+    // (see Go's ui.SectionSlug), which is what makes a graph node or a
+    // shared link able to say "#verify" and land on the verify section.
+    function secnavSlug(title) {
+      return String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
     function buildSecNav(mountEl, secs) {
       var rail = el('div', {class: 'ui-secnav-rail'});
       var content = el('div', {class: 'ui-secnav-content'});
       mountEl.appendChild(el('div', {class: 'ui-secnav'}, [rail, content]));
-      var subPanels = [];
+      var subPanels = [], items = [], slugs = [];
+      function activate(si) {
+        for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
+        for (var m = 0; m < items.length; m++) items[m].classList.toggle('active', m === si);
+      }
       secs.forEach(function(s, si) {
         var sp = el('div', {class: 'ui-secnav-panel' + (si === 0 ? '' : ' ui-tab-hidden')});
         if (inGrid) { var sg = el('div', {class: 'ui-section-grid'}); sp.appendChild(sg); s.__host = sg; }
         else { s.__host = sp; }
         content.appendChild(sp);
         subPanels.push(sp);
+        slugs.push(secnavSlug(s.title));
         var ib = el('button', {type: 'button', class: 'ui-secnav-item' + (si === 0 ? ' active' : '')}, [s.title || ('Section ' + (si + 1))]);
         ib.addEventListener('click', function() {
-          for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
-          var items = rail.querySelectorAll('.ui-secnav-item');
-          for (var m = 0; m < items.length; m++) items[m].classList.remove('active');
-          ib.classList.add('active');
+          activate(si);
+          // The hash is the address of the open section, so a link can
+          // carry someone to it and Back walks the trail. replaceState
+          // when clearing to the first section would be nicer still, but
+          // a plain hash set keeps the behaviour observable.
+          if (slugs[si]) window.location.hash = slugs[si];
         });
+        items.push(ib);
         rail.appendChild(ib);
       });
+      // Deep-linking: land on (or be sent to) #<slug>. hashchange covers
+      // both a link clicked INSIDE the page (a graph node) and the back
+      // button walking earlier sections.
+      function activateHash() {
+        var want = window.location.hash.replace(/^#/, '');
+        if (!want) return;
+        var si = slugs.indexOf(secnavSlug(want));
+        if (si >= 0) activate(si);
+      }
+      window.addEventListener('hashchange', activateHash);
+      activateHash();
     }
     if (tabbed) {
       var order = [], seenG = {}, secByGroup = {};

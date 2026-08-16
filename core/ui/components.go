@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,29 @@ func (p PanicBar) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		alias
 	}{"panic_bar", alias(p)})
+}
+
+// SectionSlug names a section for a URL fragment, exactly as the
+// section rail does client-side (secnavSlug in 99_epilogue.js): "Try
+// it" → "try-it". Server code building a link INTO a sectioned page —
+// a diagram node, a shared deep link — must use this, or the two
+// transforms drift and the link lands nowhere.
+func SectionSlug(title string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(title) {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash && b.Len() > 0 {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 // ToggleGroup renders a list of iOS-style switches bound to fields

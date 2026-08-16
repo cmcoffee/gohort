@@ -214,10 +214,13 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		{
 			Title:    "Picture",
 			Wide:     true,
-			Subtitle: "Rendered from the steps above. Reload after a change to see it move.",
-			Body: ui.Card{HTML: `<div style="overflow-x:auto">` +
-				`<img src="/orchestrate/api/machines/` + HTMLEscape(def.ID) + `/graph" alt="` +
-				HTMLEscape(def.Name) + ` diagram" style="max-width:100%"></div>`},
+			Subtitle: "Rendered from the steps above — click a step to open its section. Reload after a change to see it move.",
+			// Inline rather than an <img>: links inside an imaged SVG are
+			// inert, and the whole point of drawing the steps is that
+			// they are the same steps the rail navigates. Every dynamic
+			// string in the document is escaped at the renderer
+			// (xmlEscape), which is what makes inlining safe.
+			Body: ui.Card{HTML: `<div style="overflow-x:auto">` + machineGraphSVG(def) + `</div>`},
 		},
 		{
 			// Derived, not written: the definition knows exactly which
@@ -362,6 +365,18 @@ func checklistText(def MachineDef) string {
 		return "✓ Nothing outstanding — this machine will run as written."
 	}
 	return strconv.Itoa(len(probs)) + " to fix: • " + strings.Join(probs, " • ")
+}
+
+// machineGraphSVG renders the picture with each step linking to its own
+// section — the graph is the rail, drawn. The anchors use the SAME slug
+// the section nav computes from its titles (SectionSlug ↔ secnavSlug),
+// which is the contract that makes a drawn box a working door.
+func machineGraphSVG(def MachineDef) string {
+	g := def.Graph()
+	for i := range g.Nodes {
+		g.Nodes[i].Href = "#" + ui.SectionSlug(g.Nodes[i].ID)
+	}
+	return g.SVG(nil)
 }
 
 // costText derives the machine's price in model calls. Per PIECE rather

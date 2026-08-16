@@ -47,6 +47,13 @@ type WorkflowNode struct {
 	Note  string   `json:"note,omitempty"` // one line under the label
 	Kind  string   `json:"kind,omitempty"`
 	Tags  []string `json:"tags,omitempty"` // small annotations: "lead", "guarded"
+
+	// Href, when set, wraps the node in a link. The graph stays a data
+	// structure about shape — WHERE a node links is the caller's
+	// knowledge (an editor's section anchor, a detail page), so the
+	// adapter that builds the graph does not set this; the surface that
+	// renders it does.
+	Href string `json:"href,omitempty"`
 }
 
 // WorkflowEdge is one arrow.
@@ -309,6 +316,12 @@ func nodeSVG(n WorkflowNode, p point, overlay *WorkflowOverlay) string {
 			xmlEscape(gTrunc(strings.Join(n.Tags, " · "), gNoteC)) + `</text>`)
 	}
 	b.WriteString(`</g>`)
+	if n.Href != "" {
+		// A plain SVG2 <a>: works inline in a page and in a standalone
+		// SVG document alike, and inherits nothing surprising. The
+		// cursor style is what tells a person the box is a door.
+		return `<a href="` + xmlEscape(n.Href) + `" style="cursor:pointer">` + b.String() + `</a>`
+	}
 	return b.String()
 }
 

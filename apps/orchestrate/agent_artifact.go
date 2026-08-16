@@ -190,6 +190,17 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 			out = append(out, ArtifactSel{Type: "pipeline", Name: pid, Owner: owner})
 		}
 	}
+	// The machine the agent runs — its whole procedure. An agent whose
+	// Machine pointer travels without the machine walks and talks on the
+	// other side while quietly not being what its author built.
+	machine := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen["machine\x00"+id] {
+			return
+		}
+		seen["machine\x00"+id] = true
+		out = append(out, ArtifactSel{Type: "machine", Name: id, Owner: owner})
+	}
 	skills := func(ids []string) {
 		for _, sid := range ids {
 			sid = strings.TrimSpace(sid)
@@ -204,11 +215,13 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 	collections(exp.AttachedCollections)
 	pipelines(exp.AttachedPipelines)
 	skills(exp.AllowedSkills)
+	machine(exp.Machine)
 	for _, s := range exp.SubAgents {
 		consider(s.AllowedTools)
 		collections(s.AttachedCollections)
 		pipelines(s.AttachedPipelines)
 		skills(s.AllowedSkills)
+		machine(s.Machine)
 	}
 	return out
 }

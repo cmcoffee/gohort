@@ -259,6 +259,7 @@ func (T *OrchestrateApp) Routes() {
 	// agent's AttachedPipelines closure needs the pipeline type, a pipeline's
 	// agent stages need the agent type.
 	RegisterPipelineArtifactType(T)
+	RegisterMachineArtifactType(T)
 
 	// Agent-name resolution seam for core-side artifact types: the custom-app
 	// recipe normalizes its bound AgentID to the agent's NAME on export (an

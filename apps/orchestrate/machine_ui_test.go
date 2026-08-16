@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -158,5 +159,48 @@ func TestMachineTryPanel_ButtonMarkupAndRouteAgree(t *testing.T) {
 	}
 	if !strings.Contains(string(routes), `case "try":`) {
 		t.Error("nothing serves /try")
+	}
+}
+
+// The picture's boxes are doors. Three parts have to agree: the SVG is
+// INLINE (links inside an <img> SVG are inert), each node links to a
+// section anchor, and the anchor is the same slug the section rail
+// computes from its titles — SectionSlug and secnavSlug are one
+// transform in two languages, and this is where they are held together.
+func TestThePictureNavigatesTheRail(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "p", Next: "log check"},
+		{Name: "log check", Prompt: "p", Resident: true},
+	}}
+	svg := machineGraphSVG(def)
+	for _, want := range []string{`href="#triage"`, `href="#log-check"`} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("each step should link to its section, missing %s:\n%s", want, svg)
+		}
+	}
+
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(page), `<img src="/orchestrate/api/machines/`) {
+		t.Error("the picture is an <img> again — its links are inert there")
+	}
+
+	// The two slug transforms must be the same function or a link lands
+	// nowhere. The JS side is pinned by string; the Go side by value.
+	runtime, err := os.ReadFile("../../core/ui/assets/runtime/99_epilogue.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtime), "replace(/[^a-z0-9]+/g, '-')") {
+		t.Error("secnavSlug changed shape — keep it matching ui.SectionSlug")
+	}
+	for in, want := range map[string]string{
+		"Try it": "try-it", "log check": "log-check", "The machine": "the-machine", "  odd--name  ": "odd-name",
+	} {
+		if got := ui.SectionSlug(in); got != want {
+			t.Errorf("SectionSlug(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

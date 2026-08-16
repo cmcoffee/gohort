@@ -626,6 +626,21 @@ prefix, so only values that hold still may appear there: `{original_input}`, `{u
 is refused there too: the block already composes it. Before this, a resident prompt containing
 `{user}` silently rendered a blank.
 
+## Travelling
+
+Machines are a bundle artifact type ("machine", `machine_artifact.go`), so they ride the unified
+export/import surface next to agents, pipelines, tools and the rest. The recipe keeps its ID — an
+agent's `Machine` pointer is an ID, and the pointer travels in the agent's own recipe — which is
+what lets an agent+machine bundle land wired. The agent's dependency walk names its machine, so
+exporting an agent folds the machine in automatically; before this, an exported agent arrived
+pointing at a machine that was never in the box, and walked and talked while quietly not being what
+its author built.
+
+Delegate references normalize to agent NAMES on export (an imported agent is reborn under a fresh
+ID), a machine's own walk folds in the agents its steps delegate to and the exportable tools its
+steps narrow to, and bundle import SKIPS a same-ID or same-named machine rather than copying — the
+existing one already serves the pointer the traveled ID exists for.
+
 ## Delegating a step
 
 A transient phase can name another agent:
@@ -700,6 +715,12 @@ what `Problems()` would reject, so there is nothing to explain and nothing to un
 
 The steps are also the page's left rail (`SectionNav`), so a machine is navigated the way it is read:
 one step at a time, in order.
+
+**The picture navigates.** The graph is inlined into the editor (links inside an `<img>` SVG are
+inert) and every node links to its step's section — the graph is the rail, drawn. The anchors ride
+the section nav's new hash support: each section has a URL (`#verify`, `#try-it`, same slug
+transform in Go and JS, pinned together by a test), so a deep link or the back button lands on a
+section, on any `SectionNav` page in the product.
 
 **Steps reorder** (↑↓ on each step's toolbar — the order is the rail and the reading order),
 machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
