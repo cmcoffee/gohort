@@ -43,7 +43,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"full":        {Type: "boolean", Description: "(get) When true, return every phase's full prompt. Default false previews them to save context."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or route with \"next_from\" (naming one of their own declared STRING fields whose value is the next phase's name). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"tools\" (subset of the agent's catalog), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template {input}/{prev} (transient only) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"tools\" (subset of the agent's catalog), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -101,8 +101,19 @@ desc       one line: what this phase is for. Shown to the guard and in the phase
 prompt     the directive, layered on top of the agent's persona (it does not replace it)
 resident   true = user turns land here and a turn ENDS here. At least one per machine.
 next       where control goes when this phase finishes
-next_from  (transient) one of THIS phase's declared string fields, whose value names the next phase
-output     [{name, type, desc, required}] — validated JSON. Transient phases only.
+choices    (transient) [phase names] this phase may hand to; it DECIDES between them at run time.
+           Prefer this over next_from: the framework declares the routing field (next_step) and
+           writes the instruction naming each destination, so there is nothing to keep in sync.
+next_from  (transient) one of THIS phase's declared string fields, whose value names the next phase.
+           Only when the routing value is ALSO a finding worth naming. Overrides choices.
+agent      (transient) delegate this phase to another agent by name or id
+output     [{name, type, desc, required, from}] — validated JSON. Transient phases only.
+           A field NAMED after a built-in (original_input, now, user, agent, prev, step, machine)
+           IS that built-in: it is filled from what the framework already holds and never asked
+           of the model. Do not spend a prompt or a description on one — a value already known is
+           not a judgement. Use "from" only to give such a value your OWN field name:
+           {"name": "asked", "from": "{original_input}"}. Filled fields hold TEXT and are left out
+           of the contract entirely.
            DECLARING these IS the structured-output mechanism. Never ask for JSON in the prompt,
            never describe a shape, never give an example object: the framework encodes the fields
            and validates what comes back. A prompt that also specifies a format is two sets of
@@ -125,10 +136,13 @@ intake beat that asks its questions and moves on.
 
 === ROUTING ===
 Static: "next": "answer".
-Dynamic: declare a string field and point "next_from" at it. The phase returns the NAME of the next
-phase in that field. Checked when the machine is SAVED, so a typo is an authoring error. If the
-model returns a name that does not exist at run time, the machine falls back to "next" and leaves a
-breadcrumb rather than stranding the turn.
+Deciding: "choices": ["hunch", "answer"] — the phase picks one at run time. Do NOT declare a field
+for it and do NOT list the options in a prompt or a description: the framework declares next_step
+with those values, writes the instruction naming each destination and what it is for, and rejects a
+choice that is not a phase when the machine is SAVED. Keep "next" as the fallback.
+By hand: declare a string field and point "next_from" at it, when the value is also a finding worth
+naming. If the model returns a name that does not exist at run time, the machine falls back to
+"next" and leaves a breadcrumb rather than stranding the turn.
 
 === LEAVING A PHASE ===
 Two ways out, and they do the same thing:
@@ -140,7 +154,14 @@ Write guards as a condition for LEAVING, not for staying: "the user has moved on
 earlier breakdown does not cover".
 
 === TEMPLATING ===
-{input} the user's message · {prev} the phase run just before, this turn — transient phases only.
+A fixed vocabulary of primitives — no declaring, no naming, same meaning in every machine:
+{input} the person's message this turn · {original_input} the message that opened the conversation ·
+{established} everything earlier phases worked out · {prev} the phase run just before, this turn ·
+{now} the date and time where the person is · {user} · {agent} · {step} · {machine}.
+Transient phases only (a resident phase's prompt is pinned across turns).
+You do not have to place {input} or {established}: a transient phase is handed the message when its
+prompt mentions none, and the blackboard when it places no {state:…} reference of its own. Reach for
+{state:PHASE.field} only when you need ONE value inside a sentence.
 {state:NAME} a phase's reply · {state:NAME.field} one declared field — anywhere, any turn.
 Every reference is checked when the machine is saved.
 
@@ -150,9 +171,8 @@ phases: [
    prompt: "Break this request into its parts.\n\n{input}", next: "route",
    output: [{name: "parts", type: "list", desc: "the distinct questions"}]},
   {name: "route", desc: "Pick an approach.",
-   prompt: "Given {state:decompose.parts}, pick the phase that should answer.",
-   next_from: "target", next: "answer",
-   output: [{name: "target", type: "string", desc: "answer or deep"}]},
+   prompt: "Pick the phase that should answer.",
+   choices: ["answer", "deep"], next: "answer"},
   {name: "answer", desc: "Reply directly.", resident: true,
    prompt: "Answer plainly, working from what is settled.",
    guard: "the user has moved on to a subject the breakdown does not cover", guard_to: "decompose"},
@@ -462,6 +482,11 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			Resident: mapBool(m, "resident"),
 			Next:     strings.TrimSpace(mapStr(m, "next")),
 			NextFrom: strings.TrimSpace(mapStr(m, "next_from")),
+			Choices:  mapStrList(m, "choices"),
+			// Agent was missing here, so a machine written through this
+			// tool could never delegate a step and an existing one lost
+			// its delegate on the next update.
+			Agent: strings.TrimSpace(mapStr(m, "agent")),
 			Guard:    strings.TrimSpace(mapStr(m, "guard")),
 			GuardTo:  strings.TrimSpace(mapStr(m, "guard_to")),
 			Keep:     mapStrList(m, "keep"),

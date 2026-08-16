@@ -125,3 +125,79 @@ func readRuntimeFile(t *testing.T, name string) string {
 	}
 	return string(raw)
 }
+
+// A combo cell is a text box with a wheel: pick one of the caller's
+// values or type your own. It exists because a "select" fences the set
+// and a bare "text" hides it, and the common case is neither — a name
+// that is USUALLY one of a known few.
+func TestRowsSupportsAComboColumn(t *testing.T) {
+	f := FormField{
+		Field: "output", Type: "rows",
+		Columns: []FormField{
+			{Field: "name", Type: "combo", Label: "Field",
+				Options: []SelectOption{{Value: "now", Label: "the date and time"}}},
+		},
+	}
+	raw, _ := json.Marshal(f)
+	if !strings.Contains(string(raw), `"type":"combo"`) {
+		t.Errorf("a combo column should survive to the wire:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"value":"now"`) {
+		t.Errorf("its suggestions should too:\n%s", raw)
+	}
+
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "c.type === 'combo'") {
+		t.Fatal("the runtime does not render a combo cell — the Go side would describe a control that does not exist")
+	}
+	// Native datalist, so there is no popup of ours to get wrong: no
+	// outside-click handling, no keyboard navigation, no z-index.
+	for _, want := range []string{"datalist", "list: listId"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("combo should be a native datalist; missing %q", want)
+		}
+	}
+	// Ids are document-global — two rows sharing one would put the first
+	// row's suggestions on every later cell.
+	if !strings.Contains(src, "++comboSeq") {
+		t.Error("each combo cell needs its own datalist id")
+	}
+}
+
+// Row-scoped conditions. A row that has settled into a kind where the
+// other columns do not apply should not keep offering them: a control
+// somebody can change and be ignored for is worse than one that is not
+// there.
+func TestRowsColumnsCanHideAndLockPerRow(t *testing.T) {
+	f := FormField{
+		Field: "output", Type: "rows",
+		Columns: []FormField{
+			{Field: "name", Type: "combo", LockWhen: "name:now|user"},
+			{Field: "type", Type: "select", HideWhen: "name:now|user"},
+		},
+	}
+	raw, _ := json.Marshal(f)
+	for _, want := range []string{`"lock_when":"name:now|user"`, `"hide_when":"name:now|user"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("the condition should survive to the wire (%s):\n%s", want, raw)
+		}
+	}
+
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "c.hide_when && matchesWhen(c.hide_when, row)") {
+		t.Error("hide_when is not evaluated against the ROW")
+	}
+	if !strings.Contains(src, "c.lock_when && matchesWhen(c.lock_when, row)") {
+		t.Error("lock_when is not evaluated against the ROW")
+	}
+	// Same grammar as the form's own show_when, or an author has two
+	// things to learn for one idea.
+	if !strings.Contains(src, "function matchesShowWhen(expr) { return matchesWhen(expr, current); }") {
+		t.Error("the row condition should reuse the show_when evaluator, not a second one")
+	}
+	// A row that changes kind has to redraw, or it keeps the controls it
+	// just stopped having.
+	if !strings.Contains(src, "if (rowConditions) drawRows()") {
+		t.Error("changing a cell should redraw the row when a column's condition depends on it")
+	}
+}

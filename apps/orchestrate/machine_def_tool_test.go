@@ -370,3 +370,45 @@ func TestMachineGraphEndpoint_StructureAndOverlay(t *testing.T) {
 		t.Error("a session running another machine must not mark this graph")
 	}
 }
+
+// Every field the tool documents has to survive the trip through it.
+// Two did not: "choices" was new, and "agent" had never been decoded at
+// all — so a machine authored here could not delegate a step, and an
+// existing one lost its delegate the next time the tool updated it.
+func TestMachineTool_RoundTripsChoicesAndDelegation(t *testing.T) {
+	turn := machineToolFixture(t)
+	if _, err := saveAgent(turn.udb, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "hi"}); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{
+		"name": "Deciding",
+		"phases": []any{
+			map[string]any{"name": "route", "desc": "pick", "prompt": "decide",
+				"choices": []any{"answer", "deep"}, "next": "answer", "agent": "Wren"},
+			map[string]any{"name": "answer", "desc": "reply", "prompt": "answer", "resident": true},
+			map[string]any{"name": "deep", "desc": "dig", "prompt": "dig", "resident": true},
+		},
+	}, false); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var def MachineDef
+	for _, m := range ListMachineDefs(turn.udb, "u") {
+		if m.Name == "Deciding" {
+			def = m
+		}
+	}
+	route, ok := def.Phase("route")
+	if !ok {
+		t.Fatal("no route phase stored")
+	}
+	if strings.Join(route.Choices, ",") != "answer,deep" {
+		t.Errorf("choices did not survive: %v", route.Choices)
+	}
+	if route.Agent == "" {
+		t.Errorf("the delegate did not survive: %+v", route)
+	}
+	if route.RoutesBy() != BuiltinNextStep {
+		t.Errorf("a phase with choices should route on %s, got %q", BuiltinNextStep, route.RoutesBy())
+	}
+}

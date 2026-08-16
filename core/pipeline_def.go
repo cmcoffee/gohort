@@ -290,6 +290,26 @@ type PipelineField struct {
 	// one list generates the instruction, gets checked at save time, and
 	// can be drawn.
 	Enum []string `json:"enum,omitempty"`
+
+	// From fills the field from a VARIABLE instead of asking the model
+	// for it: "{original_input}", "{now}", "{state:triage.observation}".
+	//
+	// The value is already known, so asking a model to copy it across is
+	// three ways worse than taking it — it costs tokens, it can be
+	// paraphrased, and it can be left out. A field whose answer is "what
+	// they originally asked" is not a judgement, and nothing that is not
+	// a judgement should be a prompt.
+	//
+	// Filled AFTER the step runs and merged into its result, so it lands
+	// on the blackboard exactly like a field the model answered and
+	// everything downstream reads it the same way. It is left out of the
+	// output contract entirely: the model is never shown a field it is
+	// not being asked for.
+	//
+	// Honoured by machines today. A pipeline stage would want the same
+	// thing with {stage:…} references, which is why this lives on the
+	// shared field rather than on MachinePhase.
+	From string `json:"from,omitempty"`
 }
 
 // resolved returns the field's effective type, defaulting empty to

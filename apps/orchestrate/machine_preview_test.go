@@ -105,21 +105,31 @@ func TestPreviewMatchesHowEachKindIsActuallyComposed(t *testing.T) {
 	def := previewFixture()
 
 	tri, _ := def.Phase("triage")
-	trans := def.PhaseInstructions(tri, sampleStateFor(def, tri), "‹msg›", "")
+	trans := def.PhaseInstructions(tri, sampleStateFor(def, tri), PhaseVars{MachineTurn: MachineTurn{Input: "‹msg›"}})
 	// A transient step gets the CONTRACT — its declared fields, each with
 	// the description the author wrote. That is the interlink between the
 	// fields and the instruction, and it was invisible.
 	if !strings.Contains(trans, `"observation"`) || !strings.Contains(trans, "what was seen") {
 		t.Errorf("a transient step should receive its fields as instructions:\n%s", trans)
 	}
-	if strings.Contains(trans, "Established earlier in this conversation") {
-		t.Error("a transient step does not receive the established block — showing it is a lie about the run")
+	// And what earlier steps established, which it did NOT used to get —
+	// the asymmetry that had authors hand-copying {state:…} references
+	// for values the definition already knows.
+	if !strings.Contains(trans, "Established earlier in this conversation") {
+		t.Errorf("a transient step should be handed what earlier steps worked out:\n%s", trans)
+	}
+	// Unless it reaches for them itself, in which case a second copy
+	// would be the framework arguing with the author.
+	tri.Prompt = "Explain {state:hunch.hypothesis} in one line."
+	own := def.PhaseInstructions(tri, sampleStateFor(def, tri), PhaseVars{MachineTurn: MachineTurn{Input: "‹msg›"}})
+	if strings.Contains(own, "Established earlier in this conversation") {
+		t.Errorf("a prompt that places its own references should not also get the block:\n%s", own)
 	}
 
 	// A resident step gets the block and NOT a contract: its reply goes to
 	// the person, not to a decoder.
 	ver, _ := def.Phase("verify")
-	res := def.PhaseInstructions(ver, sampleStateFor(def, ver), "‹msg›", "")
+	res := def.PhaseInstructions(ver, sampleStateFor(def, ver), PhaseVars{MachineTurn: MachineTurn{Input: "‹msg›"}})
 	if !strings.Contains(res, "Established earlier in this conversation") {
 		t.Errorf("a resident step should receive what earlier steps established:\n%s", res)
 	}

@@ -522,7 +522,101 @@ Capitalisation is not an error: a model answering "Answer" for "answer" has chos
 
 Leaving it undeclared keeps the old behaviour exactly, so nothing existing changes.
 
-What is NOT generated yet: the routing instruction. `next_from` points at a field, and what may go in it is still hand-written into that field's description ("exactly one of: hunch, answer"). That is derivable from the machine's shape, and it is the same declaration an editable diagram needs to draw those edges.
+## What the framework supplies
+
+The routing above began as three settings and a variable for one idea, and a step that forgot to
+place `{input}` in its prompt ran against no message at all. Both are things the definition already
+knows, so the framework provides them (`core/machine_builtins.go`).
+
+**A step that decides just names the steps it may choose between:**
+
+```json
+{"name": "triage", "prompt": "Work out what kind of turn this is.",
+ "choices": ["hunch", "answer"], "next": "answer"}
+```
+
+No field to declare, no field to point at, no list of legal values kept in sync by hand. From
+`choices` the framework derives the routing field (`next_step`, a required string whose enum is the
+choices), the instruction naming each destination and what that step is for, the arrows in the
+diagram, and a save-time error when a name stops resolving. `next` stays the fallback.
+
+`next_from` is unchanged and still wins where it is set: a routing value that is ALSO a real finding
+("severity", say) is worth naming yourself.
+
+**The person's message arrives whether the prompt asks for it or not.** A transient step's prompt is
+a template, so one that never says `{input}` used to be sent without the message — the model
+answering confidently about nothing, which reads as it ignoring instructions. Now the framework
+prepends the message when the prompt is silent about it, and stays out of the way when the author
+placed it themselves.
+
+**What earlier steps established arrives the same way.** A resident step has always been handed the
+whole blackboard, composed into its block; a transient step was handed nothing, so its author
+hand-copied `{state:triage.observation}`, `{state:triage.source}`, `{state:triage.asked}` one
+reference at a time — three chances to typo a name the definition already knows, and three lines to
+fix after a rename. Now it is prepended unless the prompt places a `{state:…}` reference of its own.
+
+The vocabulary is FIXED, and that is what makes it a built-in: no name to choose, nothing to
+declare, the same meaning in every machine. It lives in one table (`MachineVars`), which the
+resolver, the editor's help and the `machine` tool's spec all read — a variable documented in one
+place and implemented in another is how one of them silently stops being true.
+
+| | | |
+|---|---|---|
+| `{input}` | what the person said this turn | supplied when the prompt places none |
+| `{original_input}` | the message that opened the CONVERSATION, unchanged on turn nine | |
+| `{established}` | everything earlier steps worked out, with their names | supplied when the prompt places no `{state:…}` |
+| `{prev}` | what the step before produced, this turn | |
+| `{now}` | the date and time where the PERSON is | |
+| `{user}` · `{agent}` | who is talking, and which agent they opened | |
+| `{step}` · `{machine}` | where the prompt is, by name | |
+| `{state:NAME.field}` | one field another step established | not a built-in: it names a step |
+
+**A field can take its value from one of these instead of being asked for it.** Name it after a
+built-in — `original_input`, `now`, `user`, `agent`, `prev`, `step`, `machine` — and it is filled
+from that built-in. The name IS the choice: `original_input` cannot mean anything else, and a
+machine where it did would be one where the same field name means the opening message here and
+whatever a model wrote there.
+
+That rule lives in core (`MachinePhase.normalized`), not in the editor that offers the wheel,
+because the editor is one of four doors: the `machine` tool writes these, `extras/` ships them,
+imports carry them. A rule enforced at one door is a rule that is not true.
+
+An explicit `from` still wins, for the case the name rule cannot express — a field with its own name
+taking a built-in's value: `{"name": "asked", "from": "{original_input}"}`. The value is already known, so asking a model to copy it across is three ways worse than
+taking it: it costs tokens, it can be paraphrased, and it can be left out. Filled fields are left
+out of the output contract entirely (the model is never shown a field it is not being asked for)
+and merged into the result afterwards, so the blackboard carries them exactly like answered ones. A
+step that asks for nothing and says nothing does not call a model at all.
+
+**All of them are text.** That is not an accident of the current set: a variable holds what the
+framework can hand a prompt, and a prompt takes words. So a filled field is normalized to a string —
+declaring it a list describes something that cannot happen — and `Advice()` says so rather than
+`Problems()` refusing a machine that runs correctly. If you need a list, let the step work it out.
+
+`{input}` and `{original_input}` are the WORDS of a message. Images and files attached to a turn are
+not in them, so a turn that arrived as a photo and nothing else resolves to nothing; the driver
+leaves a `machine_static_empty` breadcrumb rather than a silently empty field.
+
+The wheel is on the field NAME rather than beside it, because "which field is this" and "where does
+its value come from" are the same question at the moment you name it. It is a `combo` cell — the
+generic core/ui column added for this: a text box with a native `datalist`, so you either pick one
+of the built-ins or type your own name and the step works it out.
+
+**Picked when the field is added, settled after that.** The moment a row names a built-in it has
+nothing left to configure — the name is the choice, the value comes from the framework, the type is
+text — so the name locks and the type, required and instruction cells go away. That uses two more
+generic row conditions (`LockWhen` / `HideWhen` on a rows column, the ShowWhen grammar evaluated
+against the row), because the alternative was three controls somebody could change and be ignored
+for. A setting that silently does nothing is worse than one that is not offered.
+
+The last three of the turn facts come from the host (`MachineTurn`), because the driver has no idea
+who is talking or what timezone they are in. `{now}` is stamped where the PERSON is: a machine
+triaging "this started about an hour ago" against a server-zone clock is worse than one with no
+clock at all.
+
+`{original_input}` is kept on the cursor, written once on the first walk. A step judging its work
+against "what they actually asked" needs the original, and a value that quietly became the latest
+message would answer a different question under the same name.
 
 ## Delegating a step
 
@@ -579,11 +673,26 @@ what `Problems()` would reject, so there is nothing to explain and nothing to un
 The steps are also the page's left rail (`SectionNav`), so a machine is navigated the way it is read:
 one step at a time, in order.
 
+**Try it** sits with the picture: type a message, see which steps ran, why it moved, what each one
+handed on, and where it stopped. The editor could otherwise only ever show a machine's
+CONFIGURATION, and every concept in it — a step that waits versus one that hands on, routing on a
+decision, what a step passes forward — is about what happens across turns. It runs the real driver
+(`AdvanceMachine`), with two differences stated in the reply every time: no tools, and it stops AT
+the resident step rather than running it. Where a turn GOES is the question here; what it would say
+is the agent's job.
+
 The form asks questions rather than naming fields. *"The conversation waits here"* is
 `resident`, with the consequence spelled out where the choice is made. *"Then go to"* is a
 select of phases that actually exist, so a typo is not something the form can produce.
-*"…unless this step decides"* lists the output fields declared in the machine, because
-`next_from` names one of them and a free-text box invites a name that does not.
+*"…or let this step choose between"* is a checklist of the machine's real steps, because picking
+the destinations IS the routing decision; the field that carries it is the framework's problem.
+Hand-wiring a field lives under *Routing by hand*, collapsed unless it is in use.
+
+The step's instructions box carries a **✨** that opens the shared assist workbench
+(`machine_suggest.go`). It is the one box in the app whose right answer depends on parts the author
+cannot see — what the framework composes around it, and what the other steps already establish — so
+the drafter is given all of it, plus the rules the help text spends its words on (write the method,
+not the output; never ask for JSON).
 
 The spec is built server-side (`machine_editor.go`) for two reasons: the selects need the
 machine's own phase names and declared fields, and the help text is the part that carries

@@ -147,7 +147,31 @@ type MachinePhase struct {
 	// the field is declared and of type string, and an unknown phase
 	// name at run time falls back to Next with a breadcrumb rather than
 	// stranding the turn.
+	//
+	// Prefer Choices. NextFrom is the hand-wired form, kept because
+	// machines that use it exist and because a routing value that is
+	// ALSO a meaningful finding ("severity", say) is worth naming
+	// yourself. Setting it wins over Choices.
 	NextFrom string `json:"next_from,omitempty"`
+
+	// Choices lists the steps this one may hand the turn to, when the
+	// step decides at run time which. Non-empty means the framework
+	// declares the routing field itself (BuiltinNextStep) — no field to
+	// invent, no field to point at, no list of allowed values to keep in
+	// sync with the phase names.
+	//
+	// It exists because routing was three settings and a variable for
+	// one idea, and the two wrong answers (a field of the wrong type, a
+	// target that is not a phase) were both things the definition
+	// already knew. Declaring the destinations is the whole decision;
+	// everything else is derived from it — the contract the step
+	// receives, the instruction naming each destination and what it is
+	// for, the arrows in the diagram, and a save-time error when a name
+	// stops resolving.
+	//
+	// TRANSIENT phases only: a resident phase leaves through change_phase
+	// or a guard, not through a decoded field.
+	Choices []string `json:"choices,omitempty"`
 
 	// Guard is the re-entry condition for a resident phase, judged once
 	// per user turn. Prose, because the question it asks ("is this still
@@ -230,12 +254,13 @@ func (d MachineDef) StartPhase() string {
 // choice didn't resolve is exactly the kind of framework decision that
 // must not vanish into a debug log.
 func (d MachineDef) NextPhase(ph MachinePhase, fields map[string]any) (string, string) {
-	if ph.NextFrom == "" {
+	from := ph.RoutesBy()
+	if from == "" {
 		return ph.Next, ""
 	}
-	raw, present := fields[ph.NextFrom]
+	raw, present := fields[from]
 	if !present {
-		return ph.Next, "phase " + ph.Name + " declared next_from " + ph.NextFrom + " but the reply carried no such field; falling back to " + fallbackLabel(ph.Next)
+		return ph.Next, "phase " + ph.Name + " was to choose its next step in " + from + " but the reply carried no such field; falling back to " + fallbackLabel(ph.Next)
 	}
 	want, _ := raw.(string)
 	want = strings.TrimSpace(want)
@@ -301,6 +326,18 @@ func (d MachineDef) Advice() []string {
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
 			continue
+		}
+		for _, f := range p.Output {
+			// Every built-in is TEXT: a message, a name, a rendered clock.
+			// Declaring a filled field as a list or a number describes
+			// something that cannot happen, and DeclaredOutput quietly
+			// treats it as text rather than storing a lie — so say so
+			// here instead of refusing a machine that runs correctly.
+			if strings.TrimSpace(f.From) != "" && f.Type != "" && f.Type != FieldString {
+				out = append(out, "phase "+name+": "+f.Name+" is filled from "+f.From+
+					" and declared "+string(f.Type)+". Everything a variable holds is text, so it will hold text. "+
+					"If you need it as a "+string(f.Type)+", let the step work it out instead of filling it.")
+			}
 		}
 		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
 			out = append(out, "phase "+name+": the prompt asks for JSON, but this phase already declares "+
@@ -415,7 +452,7 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	if t := strings.TrimSpace(p.Next); t != "" && !seen[t] {
 		probs = append(probs, "phase "+name+": next names unknown phase "+strconv.Quote(t))
 	}
-	if !p.Resident && strings.TrimSpace(p.Next) == "" && strings.TrimSpace(p.NextFrom) == "" {
+	if !p.Resident && strings.TrimSpace(p.Next) == "" && p.RoutesBy() == "" {
 		// A transient phase that hands off nowhere would run and then
 		// strand the turn with no reply. Catch it here rather than
 		// letting the driver degrade at run time.
@@ -433,6 +470,28 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		// would mean the person is talking to something other than the
 		// agent they opened, without being told.
 		probs = append(probs, "phase "+name+": agent is not valid on a resident phase — this is where the conversation lives, and handing it to a delegate means the person is talking to something they did not open. Delegate the transient step that does the work, and let this phase report what came back.")
+	}
+	// The steps a deciding phase may choose between must be real, and the
+	// framework's own routing field must not collide with one the author
+	// declared. Both are save-time questions: the alternative is a name
+	// that resolves to nothing at run time and falls back silently.
+	if len(p.Choices) > 0 {
+		switch {
+		case p.Resident:
+			probs = append(probs, "phase "+name+": a step the conversation waits in cannot choose its next step by deciding — its reply goes to the person, not to a decoder. It leaves through change_phase or a guard.")
+		case strings.TrimSpace(p.NextFrom) != "":
+			probs = append(probs, "phase "+name+": it both routes on the field "+p.NextFrom+" and lists steps to choose between. Keep one — the field wins today, so the list is doing nothing.")
+		}
+		for _, t := range p.Choices {
+			if t = strings.TrimSpace(t); t != "" && !seen[t] {
+				probs = append(probs, "phase "+name+": it may choose "+strconv.Quote(t)+", which is not a step in this machine. Either add that step or remove it from the choices.")
+			}
+		}
+		for _, f := range p.Output {
+			if f.Name == BuiltinNextStep {
+				probs = append(probs, "phase "+name+": "+BuiltinNextStep+" is the field the framework declares for a step that chooses where to go, so declaring one of your own leaves two. Remove the field, or clear the choices and point next_from at it.")
+			}
+		}
 	}
 	if from := strings.TrimSpace(p.NextFrom); from != "" && p.Resident {
 		probs = append(probs, "phase "+name+": next_from is not valid on a resident phase (it routes off a declared output field, and a resident phase has none). Use next for a one-turn handoff, or a guard to leave on a condition.")
@@ -497,6 +556,21 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		}
 	}
 	probs = append(probs, stateRefProblems(name, p.Prompt, seen, declared)...)
+	// A field filled from a variable is only as good as the variable. A
+	// reference that resolves to nothing would leave the field silently
+	// empty, which is the failure mode that makes a value nobody can see
+	// worse than one nobody set.
+	for _, f := range p.Output {
+		ref := strings.TrimSpace(f.From)
+		if ref == "" {
+			continue
+		}
+		probs = append(probs, stateRefProblems(name, ref, seen, declared)...)
+		if !strings.Contains(ref, "{state:") && !isBuiltinVarRef(ref) {
+			probs = append(probs, "phase "+name+": "+f.Name+" is filled from "+strconv.Quote(ref)+
+				", which is not one of the built-in variables or a {state:PHASE.field} reference")
+		}
+	}
 	if p.Guard != "" {
 		probs = append(probs, stateRefProblems(name, p.Guard, seen, declared)...)
 	}
@@ -540,7 +614,7 @@ func (d MachineDef) cycleProblems(seen map[string]bool) []string {
 	name := start
 	for {
 		p, ok := d.Phase(name)
-		if !ok || p.Resident || strings.TrimSpace(p.NextFrom) != "" {
+		if !ok || p.Resident || p.RoutesBy() != "" {
 			return nil
 		}
 		if visited[name] {

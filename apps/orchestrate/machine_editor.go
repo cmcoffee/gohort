@@ -39,7 +39,7 @@ import (
 // machineEditorSpec is what the modal mounts: a checklist of what is
 // still missing, then the components to render in order.
 func machineEditorSpec(def MachineDef, agents []ui.SelectOption) map[string]any {
-	base := "api/machines/" + url_(def.ID)
+	base := machineAPIBase(def)
 	return map[string]any{
 		"id":   def.ID,
 		"name": def.Name,
@@ -137,6 +137,11 @@ func routingTargetsOf(p MachinePhase) []string {
 	return nil
 }
 
+// machineAPIBase is where this machine's endpoints live, relative to the
+// page. One definition, because the panels, the preview and the assist
+// all address the same machine.
+func machineAPIBase(def MachineDef) string { return "api/machines/" + url_(def.ID) }
+
 // phasePanels builds one editing panel per phase, each carrying the
 // choices computed for THAT phase. Order follows the machine's own,
 // which is the order somebody reads them in.
@@ -206,6 +211,61 @@ func phaseOptions(def MachineDef, withNone bool) []ui.SelectOption {
 	return out
 }
 
+// staticValueOptions is the wheel on the field NAME: the built-ins, by
+// the name a field takes when it holds one.
+//
+// Built from the same table everything else reads, so a variable added
+// to the vocabulary is selectable here without anybody remembering to
+// come back. {state:…} is deliberately NOT offered — those name another
+// step and its field, which is a picker with two dependent levels rather
+// than a wheel, and typing one into "from" stays available.
+func staticValueOptions() []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, v := range MachineVars() {
+		if v.Ref == "{established}" {
+			continue // a whole block is not one field's value
+		}
+		out = append(out, ui.SelectOption{Value: BuiltinFieldName(v.Ref), Label: v.Means})
+	}
+	return out
+}
+
+// builtinNameExpr is the row condition "this field IS a built-in",
+// written in the form's own show_when grammar and built from the same
+// table the resolver reads.
+//
+// Once a row is one of these there is nothing left to decide about it:
+// the name is the choice, the value comes from the framework, and the
+// type is text. So the name locks and the rest of the row goes away —
+// picked once when the field is added, never edited into something it
+// cannot be.
+func builtinNameExpr() string {
+	var names []string
+	for _, o := range staticValueOptions() {
+		names = append(names, o.Value)
+	}
+	return "name:" + strings.Join(names, "|")
+}
+
+// builtinVarHelp writes the fixed vocabulary out, from the table core
+// resolves against (MachineVars).
+//
+// Generated rather than described, for the reason everything else on
+// this page is: a variable documented in one file and implemented in
+// another is how one of them silently stops being true. These need no
+// declaring and mean the same thing in every machine, which is exactly
+// what makes them worth listing at the point somebody is writing.
+func builtinVarHelp() string {
+	var parts []string
+	for _, v := range MachineVars() {
+		part := v.Ref + " — " + v.Means
+		if v.Auto != "" {
+			part += " (" + v.Auto + ")"
+		}
+		parts = append(parts, part)
+	}
+	return "Always available: " + strings.Join(parts, "; ") + "."
+}
 
 // stateRefsAvailableTo lists the {state:...} references a phase can
 // actually use — every field declared by every OTHER phase, spelled the
@@ -291,12 +351,13 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []
 			"once you add fields below, each one becomes an instruction of its own and this can shrink to the method: where to look, what a good answer requires, what usually goes wrong."
 	}
 	if p.Resident {
-		promptHelp += " This prompt is pinned across turns, so {input} is not available — the person's message is already in the conversation."
+		promptHelp += " This prompt is pinned across turns, so the turn-local variables are not available here — the person's message is already in the conversation, and what earlier steps established is composed for you."
 	} else {
-		promptHelp += " {input} is the person's message."
+		promptHelp += " You do not have to ask for the person's message or for what earlier steps worked out: both are handed to this step whether you mention them or not. " +
+			"Place a variable only when you want the value INSIDE a sentence. " + builtinVarHelp()
 	}
 	if len(refs) > 0 {
-		promptHelp += " If you need a value INSIDE a sentence, the references are " + strings.Join(refs, "  ") +
+		promptHelp += " One field at a time, if you need it that way: " + strings.Join(refs, "  ") +
 			" — but the same values already arrive pinned, so reach for one only when the phrasing genuinely matters."
 	}
 
@@ -304,7 +365,15 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []
 		{Field: "name", Type: "text", Label: "Name", Help: "Short handle, lowercase. It is how other steps point here."},
 		{Field: "desc", Type: "text", Label: "What this step does",
 			Help: "One line, for whoever reads the machine later. Not shown to the agent."},
-		{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp},
+		// The ✨ opens the shared assist workbench: a draft beside a
+		// conversation about it. Worth having HERE more than anywhere
+		// else in the app, because this is the one box whose right answer
+		// depends on parts the author cannot see — what the framework
+		// composes around it, and what the other steps already establish.
+		// The endpoint knows all of that (machine_suggest.go).
+		{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp,
+			SuggestURL:   machineAPIBase(def) + "/suggest",
+			AssistPrompt: "Draft the method for this step: how to go about the work, in plain sentences written to a person. Not the output shape, which the declared fields already carry."},
 
 		{Type: "header", Label: "What kind of step is this?",
 			Help: "The one answer everything below depends on. A step the conversation WAITS in replies to the person and cannot record fields — its reply goes to them, not to a decoder. A step that passes through records what it worked out and hands to the next one."},
@@ -335,37 +404,67 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, agents []ui.SelectOption) []
 		fields = append(fields,
 			ui.FormField{Type: "header", Label: "What this step establishes",
 				Help: "The things it works out — and, between them, most of the instruction. Each field is sent to the model with the description you write here, so a description is a directive: \"the single best explanation, stated so it could be wrong\" does more work than \"the hypothesis\". " +
-					"Each one is validated on its own and arrives in every later step under \"Established earlier in this conversation\", labelled with this step's name. A step that decides something should record WHAT it decided, or the next step has to guess."},
+					"Each one is validated on its own and arrives in every later step under \"Established earlier in this conversation\", labelled with this step's name. A step that decides something should record WHAT it decided, or the next step has to guess. " +
+					"Name a field after a built-in and it is FILLED instead of asked for: the model never sees it, its description goes unused, and it holds text — everything a variable carries is words."},
 			ui.FormField{Field: "output", Type: "rows", Label: "", AddLabel: "+ Add field",
 				Placeholder: "(nothing yet)",
 				Columns: []ui.FormField{
-					{Field: "name", Type: "text", Label: "Field", Width: 2},
-					{Field: "type", Type: "select", Label: "Type", Options: []ui.SelectOption{
+					// The wheel is ON THE NAME. Type your own and the step
+					// works it out; pick a built-in and the field is FILLED
+					// from what the framework already holds — it never
+					// reaches the model at all. One control, because
+					// "which field is this" and "where does its value come
+					// from" are the same question at the moment you name it.
+					{Field: "name", Type: "combo", Label: "Field", Width: 2, Options: staticValueOptions(),
+						LockWhen: builtinNameExpr(),
+						Help:     "Your own name, or one of the built-ins to have it filled for you."},
+					// The columns below are the STEP's work to configure. A
+					// field filled from a built-in has none of it: its type
+					// is text, it is always present, and there is nothing
+					// to instruct. Leaving them on screen would be three
+					// controls that quietly do nothing.
+					{Field: "type", Type: "select", Label: "Type", HideWhen: builtinNameExpr(), Options: []ui.SelectOption{
 						{Value: "string", Label: "text"},
 						{Value: "list", Label: "list"},
 						{Value: "number", Label: "number"},
 						{Value: "bool", Label: "yes/no"},
 						{Value: "object", Label: "object"},
 					}},
-					{Field: "required", Type: "toggle", Label: "Required"},
+					{Field: "required", Type: "toggle", Label: "Required", HideWhen: builtinNameExpr()},
 					// The instruction, and the widest thing on the row. A
 					// single-line cell taught people to write three words;
 					// this is where the work of the step is actually
 					// specified, so it has to look like somewhere you
 					// write.
-					{Field: "desc", Type: "textarea", Rows: 3, Width: 6,
+					{Field: "desc", Type: "textarea", Rows: 3, Width: 6, HideWhen: builtinNameExpr(),
 						Label:       "What to work out — write it as the instruction for this field",
 						Placeholder: "the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
 				}},
 
 			ui.FormField{Type: "header", Label: "Where it goes next"},
 			ui.FormField{Field: "next", Type: "select", Label: "Then go to", Options: phaseOptions(def, true),
-				Help: "Where this step hands off."},
-			ui.FormField{Field: "next_from", Type: "select", Label: "…unless this step decides", Options: ownFieldOptions(p),
-				Help: "Let the step choose where to go by writing a step NAME into one of the text fields it establishes. Only this step's own text fields are offered, because only those can carry it. \"Then go to\" becomes the fallback."},
-			ui.FormField{Field: "targets", Type: "checklist", Label: "…and it may choose", Options: otherPhaseOptions(def, p.Name),
-				Help: "The steps that field is allowed to name. Declaring them writes the instruction for you (each step's own description becomes its explanation), lets the diagram draw those arrows instead of every possible one, and makes a name that does not exist a save-time error rather than a silent fallback. Leave empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
+				Help: "Where this step hands off when it does not choose."},
+			// Picking the destinations IS the whole routing decision. The
+			// field that carries the choice, its type, and the list of
+			// legal values are all derivable from this, so the framework
+			// derives them (core: MachinePhase.Choices → next_step).
+			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", Options: otherPhaseOptions(def, p.Name),
+				Help: "Tick the steps it may send the conversation to and it decides at run time. You do not declare a field for the decision: the framework adds next_step to what this step returns, writes the instruction naming each destination and what that step is for, draws those arrows, and refuses to save a name that is not a step. \"Then go to\" is the fallback if the choice does not resolve."},
 		)
+		// The hand-wired form, kept because machines that use it exist and
+		// because a routing value that is ALSO a real finding is worth
+		// naming yourself. Collapsed, and shown open only when it is in
+		// use, so it stops being the first thing anybody meets.
+		if strings.TrimSpace(p.NextFrom) != "" || len(p.Choices) == 0 && len(ownFieldOptions(p)) > 1 {
+			fields = append(fields,
+				ui.FormField{Type: "header", Label: "Routing by hand", Collapsed: strings.TrimSpace(p.NextFrom) == "",
+					Help: "Only if the destination is also a finding worth naming — \"severity\", say, where the value routes AND means something. Otherwise use the list above."},
+				ui.FormField{Field: "next_from", Type: "select", Label: "Route on the field", Options: ownFieldOptions(p),
+					Help: "One of this step's own text fields, whose value is a step NAME. Setting this overrides the choices above."},
+				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", Options: otherPhaseOptions(def, p.Name),
+					Help: "The steps that field is allowed to name. Leave empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
+			)
+		}
 	}
 	fields = append(fields,
 		ui.FormField{Type: "header", Label: "How this step runs", Collapsed: true},
@@ -574,6 +673,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if _, ok := body["targets"]; ok {
 		setRoutingTargets(ph, stringSliceFromArgs(body, "targets"))
 	}
+	if _, ok := body["choices"]; ok {
+		ph.Choices = stringSliceFromArgs(body, "choices")
+	}
 	if v, ok := str("agent"); ok {
 		ph.Agent = v
 	}
@@ -629,6 +731,12 @@ func outputsFromAny(v any) []PipelineField {
 		if d := strings.TrimSpace(fmt.Sprint(m["desc"])); d != "" && d != "<nil>" {
 			f.Desc = d
 		}
+		// A "from" written by hand survives; a field NAMED after a
+		// built-in needs nothing here, because that rule lives in core
+		// where every door passes through it (MachinePhase.normalized).
+		if from := strings.TrimSpace(fmt.Sprint(m["from"])); from != "" && from != "<nil>" {
+			f.From = from
+		}
 		f.Required = BoolArg(m, "required")
 		out = append(out, f)
 	}
@@ -640,7 +748,8 @@ func phaseRecord(p MachinePhase) map[string]any {
 	rows := make([]map[string]any, 0, len(p.Output))
 	for _, f := range p.Output {
 		rows = append(rows, map[string]any{
-			"name": f.Name, "type": string(f.Type), "required": f.Required, "desc": f.Desc,
+			"name": f.Name, "type": string(f.Type), "required": f.Required,
+			"desc": f.Desc, "from": f.From,
 		})
 	}
 	return map[string]any{
@@ -649,6 +758,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p),
+		"choices": p.Choices,
 	}
 }
 
@@ -661,6 +771,11 @@ func phaseRow(p MachinePhase) map[string]any {
 	}
 	goes := p.Next
 	switch {
+	case p.RoutesBy() != "" && len(p.RoutingChoices()) > 0:
+		goes = "chooses: " + strings.Join(p.RoutingChoices(), ", ")
+		if p.Next != "" {
+			goes += " (else " + p.Next + ")"
+		}
 	case p.NextFrom != "" && p.Next != "":
 		goes = "decided by " + p.NextFrom + " (else " + p.Next + ")"
 	case p.NextFrom != "":

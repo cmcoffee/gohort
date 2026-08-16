@@ -1,3 +1,8 @@
+  // comboSeq gives each combo cell's <datalist> a unique id. Ids are
+  // document-global, so two rows sharing one would put the first row's
+  // suggestions on every later cell.
+  var comboSeq = 0;
+
   components.panic_bar = function(cfg) {
     var status = el('span', {class: 'ui-panic-status'});
     var btn = el('button', {
@@ -1154,7 +1159,13 @@
     //   "field:v1|v2"          — show when current[field] ∈ {v1, v2}
     // Multiple conditions can be chained with ";" and ALL must match.
     // Backward compatible: a plain "field" still works.
-    function matchesShowWhen(expr) {
+    function matchesShowWhen(expr) { return matchesWhen(expr, current); }
+
+    // matchesWhen is matchesShowWhen against ANY record — the form's own
+    // values, or one row of a "rows" field. Same grammar either way, so
+    // a row-scoped condition is something an author already knows how to
+    // write.
+    function matchesWhen(expr, current) {
       if (!expr) return true;
       var clauses = expr.split(';');
       for (var i = 0; i < clauses.length; i++) {
@@ -1518,6 +1529,15 @@
           save(f.field, clean);
         }
 
+        // rowConditions: whether any column's visibility or lockedness
+        // depends on the row's own values, in which case editing a cell
+        // has to redraw the row rather than leave a stale one on screen.
+        var rowConditions = cols.some(function(c) { return c.hide_when || c.lock_when; });
+        function commitRow() {
+          persistRows();
+          if (rowConditions) drawRows();
+        }
+
         function drawRows() {
           body.innerHTML = '';
           if (rowsVal.length === 0) {
@@ -1529,8 +1549,59 @@
           rowsVal.forEach(function(row, idx) {
             var cells = [];
             cols.forEach(function(c) {
-              var ctl;
-              if (c.type === 'select') {
+              var ctl, extra = null;
+              // Row-scoped conditions. A cell that cannot apply to THIS
+              // row should not be a control somebody can change and be
+              // ignored for — the setting that silently does nothing is
+              // worse than the setting that is not offered.
+              if (c.hide_when && matchesWhen(c.hide_when, row)) {
+                cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'}));
+                return;
+              }
+              if (c.lock_when && matchesWhen(c.lock_when, row)) {
+                // Settled: shown as what it is, with the caller's own
+                // label for it when there is one, and no way to edit it
+                // into something else.
+                var shown = String(row[c.field] === undefined || row[c.field] === null ? '' : row[c.field]);
+                (c.options || []).forEach(function(o) {
+                  if (o && typeof o === 'object' && String(o.value) === shown && o.label) {
+                    shown += ' · ' + o.label;
+                  }
+                });
+                ctl = el('div', {
+                  style: 'padding:0.35rem 0.1rem;font-size:0.85rem;color:var(--text-mute)',
+                  text: shown,
+                });
+                ctl.title = c.help || c.label || c.field;
+                cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'}, [ctl]));
+                return;
+              }
+              if (c.type === 'combo') {
+                // A text box with a wheel on it: type your own value, or
+                // pick one the caller already knows about. Native
+                // <datalist>, so it behaves like the browser's own
+                // autofill and needs no popup, no outside-click handling
+                // and no keyboard nav of ours.
+                var listId = 'ui-combo-' + (++comboSeq);
+                ctl = el('input', {
+                  type: 'text', class: 'ui-input', list: listId,
+                  placeholder: c.placeholder || c.label || c.field,
+                });
+                extra = el('datalist', {id: listId});
+                (c.options || []).forEach(function(o) {
+                  var val = (o && typeof o === 'object') ? o.value : o;
+                  var lab = (o && typeof o === 'object') ? (o.label || o.value) : o;
+                  var opt = el('option', {value: String(val)});
+                  // The label is the hint beside the value, which is the
+                  // whole reason to offer a wheel rather than a bare list.
+                  if (String(lab) !== String(val)) opt.setAttribute('label', String(lab));
+                  extra.appendChild(opt);
+                });
+                ctl.value = row[c.field] === undefined || row[c.field] === null ? '' : String(row[c.field]);
+                ctl.addEventListener('input', function() { row[c.field] = ctl.value; });
+                ctl.addEventListener('change', function() { row[c.field] = ctl.value; commitRow(); });
+                ctl.addEventListener('blur', commitRow);
+              } else if (c.type === 'select') {
                 ctl = el('select', {class: 'ui-input'});
                 (c.options || []).forEach(function(o) {
                   var val = (o && typeof o === 'object') ? o.value : o;
@@ -1586,7 +1657,8 @@
                 ctl.addEventListener('blur', persistRows);
               }
               ctl.title = c.help || c.label || c.field;
-              cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'}, [ctl]));
+              cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'},
+                           extra ? [ctl, extra] : [ctl]));
             });
             var move = function(to) {
               return function() {

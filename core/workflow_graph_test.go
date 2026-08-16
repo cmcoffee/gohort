@@ -315,7 +315,7 @@ func TestPhaseLog_RecordsEveryTransitionBounded(t *testing.T) {
 		"route":     `{"target":"deep"}`,
 	})
 	cur := &MachineCursor{}
-	if _, err := (&AppCore{}).AdvanceMachine(nil, def, cur, "q", run, nil); err != nil {
+	if _, err := (&AppCore{}).AdvanceMachine(nil, def, cur, MachineTurn{Input: "q"}, run, nil); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if len(cur.Log) != 2 {

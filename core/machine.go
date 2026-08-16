@@ -65,6 +65,14 @@ type MachineCursor struct {
 	Phase string       `json:"phase,omitempty"`
 	State MachineState `json:"state,omitempty"`
 	Log   []PhaseHop   `json:"log,omitempty"`
+
+	// Opening is the message that started the conversation, kept so
+	// {original_input} means something on turn nine. Written once, on
+	// the first walk, and never again — a step judging its work against
+	// "what they originally asked" needs the ORIGINAL, and a value that
+	// quietly became the latest message would answer a different
+	// question with the same name.
+	Opening string `json:"opening,omitempty"`
 }
 
 // PhaseRunner executes ONE phase's LLM call on the host's behalf and
@@ -98,7 +106,7 @@ type PhaseRunner func(ctx context.Context, ph MachinePhase, prompt string) (stri
 // Errors are returned only when the machine cannot produce a reply at
 // all. Everything else degrades toward "answer the user from somewhere
 // sensible", because the user is waiting on a turn.
-func (T *AppCore) AdvanceMachine(ctx context.Context, def MachineDef, cur *MachineCursor, input string, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
+func (T *AppCore) AdvanceMachine(ctx context.Context, def MachineDef, cur *MachineCursor, turn MachineTurn, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
 	if cur == nil {
 		return MachinePhase{}, Error("machine " + def.Name + ": nil cursor")
 	}
@@ -122,12 +130,12 @@ func (T *AppCore) AdvanceMachine(ctx context.Context, def MachineDef, cur *Machi
 	// machine reached one line ago, and guarding it would ask a model
 	// whether to undo the routing decision made moments earlier.
 	if resumed && ph.Resident {
-		if moved, tripped := T.checkGuard(ctx, def, ph, cur, input, run, note); tripped {
+		if moved, tripped := T.checkGuard(ctx, def, ph, cur, turn.Input, run, note); tripped {
 			ph = moved
 		}
 	}
 
-	return T.walk(ctx, def, cur, ph, input, run, note)
+	return T.walk(ctx, def, cur, ph, turn, run, note)
 }
 
 // ChangePhase moves a session to a named phase MID-TURN and returns the
@@ -146,7 +154,7 @@ func (T *AppCore) AdvanceMachine(ctx context.Context, def MachineDef, cur *Machi
 // host is expected to hand the returned phase's block back to the model
 // as the tool result, so the new directive arrives as the most recent
 // thing in the context; the rest catches up on the next turn.
-func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineCursor, to, input string, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
+func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineCursor, to string, turn MachineTurn, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
 	if cur == nil {
 		return MachinePhase{}, Error("machine " + def.Name + ": nil cursor")
 	}
@@ -164,17 +172,24 @@ func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineC
 	if from == target.Name {
 		return target, nil
 	}
-	cur.moveTo(from, target, chooseStr(strings.TrimSpace(input), "changed mid-turn"), note)
+	cur.moveTo(from, target, chooseStr(strings.TrimSpace(turn.Input), "changed mid-turn"), note)
 	note("machine_phase_changed", "moved from phase "+from+" to "+target.Name+" mid-turn")
-	return T.walk(ctx, def, cur, target, input, run, note)
+	return T.walk(ctx, def, cur, target, turn, run, note)
 }
 
 // walk runs transient phases until control reaches one that can reply.
 // Shared by the head-of-turn entry (AdvanceMachine) and a mid-turn move
 // (ChangePhase) so there is exactly one implementation of what a
 // transition costs and where it stops.
-func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, ph MachinePhase, input string, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
-	var prev string // the text of the phase run just before this one, THIS turn
+func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, ph MachinePhase, turn MachineTurn, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
+	// The opening message is remembered once and then never changes, so
+	// a step five turns in can still ask what the person originally
+	// wanted. Recorded here rather than at the call site because every
+	// entry into the machine passes through this walk.
+	if strings.TrimSpace(cur.Opening) == "" {
+		cur.Opening = turn.Input
+	}
+	vars := PhaseVars{MachineTurn: turn, Opening: cur.Opening, Machine: def.Name}
 	for hops := 0; ; hops++ {
 		if ph.Resident {
 			return ph, nil
@@ -189,12 +204,12 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			return ph, nil
 		}
 
-		text, fields, err := T.runPhase(ctx, def, ph, input, prev, cur.State, run, note)
+		text, fields, err := T.runPhase(ctx, def, ph, vars, cur.State, run, note)
 		if err != nil {
 			return MachinePhase{}, err
 		}
 		cur.State[ph.Name] = PhaseResult{Text: text, Fields: fields}
-		prev = text
+		vars.Prev = text
 
 		next, why := def.NextPhase(ph, fields)
 		if why != "" {
@@ -237,7 +252,7 @@ func (T *AppCore) PhaseWorker(catalog []AgentToolDef) PhaseRunner {
 		// user's actual turn, and the latency it adds is paid before
 		// anyone sees a word. Authors opt in per phase.
 		think := PhaseThink(ph, false)
-		return T.runWorkerStage(ctx, prompt, PhaseTools(ph, catalog), think, len(ph.Output) > 0, PhaseTier(ph))
+		return T.runWorkerStage(ctx, prompt, PhaseTools(ph, catalog), think, len(ph.ModelOutput()) > 0, PhaseTier(ph))
 	}
 }
 
@@ -294,13 +309,44 @@ func (d MachineDef) CompleteTurn(cur *MachineCursor, ph MachinePhase, note func(
 //
 // Built from the same functions the run path uses, so it cannot drift
 // into describing something the model never sees.
-func (d MachineDef) PhaseInstructions(ph MachinePhase, st MachineState, input, prev string) string {
+func (d MachineDef) PhaseInstructions(ph MachinePhase, st MachineState, v PhaseVars) string {
 	if ph.Resident {
 		return d.PhaseBlock(ph, st)
 	}
-	out := ResolvePhaseTemplate(ph.Prompt, input, prev, st)
-	if len(ph.Output) > 0 {
-		out += renderOutputContract(ph.Output)
+	out := d.phasePrompt(ph, st, v)
+	if fields := ph.ModelOutput(); len(fields) > 0 {
+		out += renderOutputContract(fields)
+	}
+	return out
+}
+
+// phasePrompt composes a transient step's directive: its own prompt with
+// the vocabulary resolved, preceded by the person's message when the
+// prompt never placed it itself.
+//
+// Split from PhaseInstructions because the run path adds the output
+// contract itself (runDeclaredOutput renders it, and again on the repair
+// retry), so this is the part both share and neither duplicates.
+func (d MachineDef) phasePrompt(ph MachinePhase, st MachineState, v PhaseVars) string {
+	// The two that depend on WHICH step is asking, filled in here so no
+	// caller has to remember to.
+	v.Step = ph.Name
+	v.Machine = chooseStr(v.Machine, d.Name)
+	v.Established = d.establishedBlock(ph, st)
+
+	out := ResolvePhaseTemplate(ph.Prompt, v, st)
+	// A step that runs against no message at all is the most expensive
+	// thing an author can forget, and it fails silently: the model
+	// answers confidently about nothing.
+	if !mentionsInput(ph.Prompt) {
+		out = v.inputBlock() + out
+	}
+	// And what earlier steps worked out, unless the prompt reaches for it
+	// itself. A resident step has always been handed this; a transient
+	// one was left to hand-copy {state:…} references for values the
+	// definition already knows.
+	if !mentionsEstablished(ph.Prompt) {
+		out = v.establishedBlock() + out
 	}
 	return out
 }
@@ -308,23 +354,62 @@ func (d MachineDef) PhaseInstructions(ph MachinePhase, st MachineState, input, p
 // runPhase resolves one transient phase's prompt and calls it, decoding
 // a declared Output through the same contract → decode → one repair path
 // pipeline stages use.
-func (T *AppCore) runPhase(ctx context.Context, def MachineDef, ph MachinePhase, input, prev string, st MachineState, run PhaseRunner, note func(kind, detail string)) (string, map[string]any, error) {
-	prompt := ResolvePhaseTemplate(ph.Prompt, input, prev, st)
+func (T *AppCore) runPhase(ctx context.Context, def MachineDef, ph MachinePhase, v PhaseVars, st MachineState, run PhaseRunner, note func(kind, detail string)) (string, map[string]any, error) {
+	// One composition, shared with the editor's preview, so what an
+	// author is shown is what the model is sent.
+	prompt := def.phasePrompt(ph, st, v)
+	out := ph.ModelOutput()
 	call := func(p string) (string, error) { return run(ctx, ph, p) }
 
-	if len(ph.Output) == 0 {
+	// A step that asks the model for nothing and says nothing is a step
+	// that pins values. Calling anyway would buy a paragraph nobody
+	// reads and a bill nobody expected.
+	if len(out) == 0 && strings.TrimSpace(ph.Prompt) == "" && len(ph.StaticFields()) > 0 {
+		return "", def.fillStatic(ph, nil, v, st, note), nil
+	}
+	if len(out) == 0 {
 		text, err := call(prompt)
 		if err != nil {
 			return "", nil, Error("machine " + def.Name + ", phase " + ph.Name + ": " + err.Error())
 		}
-		return text, nil, nil
+		return text, def.fillStatic(ph, nil, v, st, note), nil
 	}
 	status := func(s string) { note("machine_output_repair", s) }
-	text, fields, err := T.runDeclaredOutput(ctx, "phase "+ph.Name, ph.Output, prompt, call, status)
+	text, fields, err := T.runDeclaredOutput(ctx, "phase "+ph.Name, out, prompt, call, status)
 	if err != nil {
 		return "", nil, Error("machine " + def.Name + ", phase " + ph.Name + ": " + err.Error())
 	}
-	return text, fields, nil
+	return text, def.fillStatic(ph, fields, v, st, note), nil
+}
+
+// fillStatic merges the fields taken from variables into a step's
+// result, so the blackboard carries them exactly like the answered ones.
+//
+// Filled AFTER the model, and it overwrites: a model that answered a
+// field it was never shown has guessed, and the known value wins.
+func (d MachineDef) fillStatic(ph MachinePhase, fields map[string]any, v PhaseVars, st MachineState, note func(kind, detail string)) map[string]any {
+	static := ph.StaticFields()
+	if len(static) == 0 {
+		return fields
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	v.Step = ph.Name
+	v.Machine = chooseStr(v.Machine, d.Name)
+	v.Established = d.establishedBlock(ph, st)
+	for _, f := range static {
+		val := strings.TrimSpace(ResolvePhaseTemplate(f.From, v, st))
+		if val == "" && note != nil {
+			// The field the author expected to be free is empty, and
+			// nothing downstream will say why. {original_input} on a turn
+			// that arrived as an image and no words is the real case.
+			note("machine_static_empty", "phase "+ph.Name+": "+f.Name+" is filled from "+f.From+
+				", which resolved to nothing this turn; the field is empty")
+		}
+		fields[f.Name] = val
+	}
+	return fields
 }
 
 // resume resolves the phase a turn opens on, healing a cursor that no
@@ -421,11 +506,12 @@ func (d MachineDef) firstResident() (MachinePhase, bool) {
 // into a phase prompt:
 //
 //	{input}             — the user message that opened this turn
+//	{original_input}    — the message that opened the CONVERSATION
 //	{prev}              — the phase run immediately before, THIS turn
 //	{state:NAME}        — a phase's reply text, from any earlier turn
 //	{state:NAME.field}  — one declared field of a phase's result
 //
-// {input} and {prev} are turn-local and belong to transient phases; a
+// The PhaseVars three are turn-local and belong to transient phases; a
 // resident phase's prompt lands in the cacheable system prefix and
 // Validate rejects both there (see phaseProblems).
 //
@@ -434,9 +520,8 @@ func (d MachineDef) firstResident() (MachinePhase, bool) {
 // closing brace is part of the literal. Unknown placeholders are left
 // untouched rather than blanked, so a mistake degrades to a visible
 // prompt artifact instead of silently dropping context.
-func ResolvePhaseTemplate(tmpl, input, prev string, st MachineState) string {
-	s := strings.ReplaceAll(tmpl, "{input}", input)
-	s = strings.ReplaceAll(s, "{prev}", prev)
+func ResolvePhaseTemplate(tmpl string, v PhaseVars, st MachineState) string {
+	s := v.resolve(tmpl)
 	for name, res := range st {
 		s = strings.ReplaceAll(s, "{state:"+name+"}", res.Text)
 		for field, v := range res.Fields {
@@ -472,7 +557,7 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}
-	if p := strings.TrimSpace(ResolvePhaseTemplate(ph.Prompt, "", "", st)); p != "" {
+	if p := strings.TrimSpace(ResolvePhaseTemplate(ph.Prompt, PhaseVars{}, st)); p != "" {
 		b.WriteString("\n")
 		b.WriteString(p)
 		b.WriteString("\n")
@@ -522,16 +607,11 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
 // targets — an undeclared routing field keeps its old behaviour, where
 // anything the model returns is tried and an unknown name falls back.
 func (d MachineDef) routingBlock(ph MachinePhase) string {
-	from := strings.TrimSpace(ph.NextFrom)
+	from := ph.RoutesBy()
 	if from == "" {
 		return ""
 	}
-	var targets []string
-	for _, f := range ph.Output {
-		if f.Name == from {
-			targets = f.Enum
-		}
-	}
+	targets := ph.RoutingChoices()
 	if len(targets) == 0 {
 		return ""
 	}
@@ -555,12 +635,13 @@ func (d MachineDef) routingBlock(ph MachinePhase) string {
 // its declared fields in declared order, or its reply text when it
 // declared none.
 func renderPhaseFindings(p MachinePhase, res PhaseResult) string {
-	if len(p.Output) == 0 {
+	decl := p.DeclaredOutput()
+	if len(decl) == 0 {
 		return strings.TrimSpace(res.Text)
 	}
 	var b strings.Builder
-	single := len(p.Output) == 1
-	for _, f := range p.Output {
+	single := len(decl) == 1
+	for _, f := range decl {
 		v, ok := res.Fields[f.Name]
 		if !ok {
 			continue
@@ -571,6 +652,13 @@ func renderPhaseFindings(p MachinePhase, res PhaseResult) string {
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n")
+		}
+		if f.Name == BuiltinNextStep {
+			// Always labelled, even when it is the only field: bare
+			// "verify" under a heading reads as a finding rather than as
+			// where the conversation went.
+			b.WriteString("went to: " + body)
+			continue
 		}
 		// One field carries the whole phase, and the phase is already
 		// named on the heading above, so a label would say it twice.

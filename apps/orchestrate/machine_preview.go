@@ -60,11 +60,36 @@ func sampleStateFor(def MachineDef, self MachinePhase) MachineState {
 	return st
 }
 
+// samplePhaseVars stands in for the turn: placeholders in the shape of
+// the real values, so the preview shows WHERE each one lands without
+// pretending to know what somebody will type.
+func samplePhaseVars() PhaseVars {
+	return PhaseVars{
+		MachineTurn: MachineTurn{
+			Input: "‹what the person just said›",
+			User:  "‹the person›",
+			Agent: "‹the agent they opened›",
+			Now:   "‹the date and time where they are›",
+		},
+		Opening: "‹the message that opened the conversation›",
+	}
+}
+
 // phasePreview renders the composed block for one step, greyed, under
 // its form.
 func phasePreview(def MachineDef, p MachinePhase) ui.Component {
-	block := strings.TrimSpace(def.PhaseInstructions(p, sampleStateFor(def, p), "‹what the person just said›", ""))
+	block := strings.TrimSpace(def.PhaseInstructions(p, sampleStateFor(def, p), samplePhaseVars()))
 	note := "This is what the step is actually told, composed by the framework — your instructions, plus everything the definition already knows. You do not need to repeat any of it."
+	// A filled field is deliberately absent below, and absent without a
+	// word reads as a bug rather than as the saving it is.
+	if static := p.StaticFields(); len(static) > 0 {
+		var names []string
+		for _, f := range static {
+			names = append(names, f.Name+" ← "+f.From)
+		}
+		note += " Not shown, because the model is never asked for them: " + strings.Join(names, ", ") +
+			" are filled from what the framework already holds, after the step runs."
+	}
 	if p.Resident {
 		note += " A step the conversation waits in receives what earlier steps established, and where else it can go."
 	} else {

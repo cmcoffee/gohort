@@ -17,6 +17,7 @@ package orchestrate
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -35,6 +36,22 @@ type turnMachine struct {
 	on    bool
 }
 
+// machineTurn is the facts about THIS turn that only the host has: who
+// is talking, which agent they opened, and what time it is where they
+// are. A step's prompt reaches them as {user}, {agent} and {now}.
+//
+// The time is stamped in the PERSON's zone, not the server's. A machine
+// triaging "this started about an hour ago" against a timestamp in
+// another timezone is worse than one with no clock at all.
+func (t *chatTurn) machineTurn(msg string) MachineTurn {
+	return MachineTurn{
+		Input: msg,
+		User:  t.user,
+		Agent: chFirst(t.agent.Name, t.agent.ID),
+		Now:   time.Now().In(UserLocation(t.user)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
+	}
+}
+
 // enterMachine resolves the session's machine, walks any transient
 // phases at the head of this turn, and persists the cursor it lands on.
 //
@@ -50,7 +67,7 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 		return turnMachine{}
 	}
 	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
-	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, userMsg, t.phaseRunner(), t.turnDiag)
+	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, t.machineTurn(userMsg), t.phaseRunner(), t.turnDiag)
 	if err != nil {
 		// A machine that cannot produce a phase must not cost the user
 		// the turn. Fall back to an ordinary agent turn, loudly: the
@@ -213,7 +230,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			t.phaseChanges++
 
 			cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog}
-			ph, err := t.app.ChangePhase(t.ctx, m.def, cur, to, why, t.phaseRunner(), t.turnDiag)
+			ph, err := t.app.ChangePhase(t.ctx, m.def, cur, to, t.machineTurn(why), t.phaseRunner(), t.turnDiag)
 			if err != nil {
 				return "", err
 			}

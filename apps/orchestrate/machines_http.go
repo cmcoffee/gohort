@@ -277,6 +277,10 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		T.handleMachinePhases(w, r, udb, user, def)
 	case "try":
 		T.handleMachineTry(w, r, udb, user, def)
+	case "suggest":
+		// Drafting one step's instructions, grounded in the machine
+		// around it (machine_suggest.go).
+		T.handleMachineSuggest(w, r, udb, user, def)
 	case "graph":
 		// The picture (docs/workflow-graph.md). With ?session=<id> it
 		// carries the overlay: where that conversation is sitting and

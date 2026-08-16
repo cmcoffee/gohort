@@ -14,18 +14,7 @@ import (
 // Graph compiles a machine into its picture.
 // routingTargets returns the declared destinations of a phase's routing
 // field, or nil when it declares none.
-func routingTargets(p MachinePhase) []string {
-	from := strings.TrimSpace(p.NextFrom)
-	if from == "" {
-		return nil
-	}
-	for _, f := range p.Output {
-		if f.Name == from {
-			return f.Enum
-		}
-	}
-	return nil
-}
+func routingTargets(p MachinePhase) []string { return p.RoutingChoices() }
 
 func (d MachineDef) Graph() WorkflowGraph {
 	g := WorkflowGraph{Title: d.Name, Entry: d.StartPhase()}

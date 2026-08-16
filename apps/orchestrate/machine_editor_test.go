@@ -45,7 +45,7 @@ func TestEditorAsksQuestionsRatherThanNamingFields(t *testing.T) {
 	for _, want := range []string{
 		"The conversation waits here",
 		"a turn ENDS here",
-		"unless this step decides",
+		"or let this step choose between",
 		"Then go to",
 	} {
 		if !strings.Contains(body, want) {
@@ -637,5 +637,128 @@ func TestPhaseFormReadsInTheOrderTheStepRuns(t *testing.T) {
 	// the same screen.
 	if strings.Contains(body, "hands on") {
 		t.Error(`"hands on" is ambiguous here — it read as both the data and the movement`)
+	}
+}
+
+// The built-ins are only useful if somebody knows they exist. The list
+// is generated from core's own table, so a variable added there shows up
+// here without anybody remembering to write a sentence about it.
+func TestTheFormListsTheBuiltInVariables(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	form := string(raw)
+
+	for _, v := range MachineVars() {
+		if !strings.Contains(form, v.Ref) {
+			t.Errorf("%s is a built-in but the form never mentions it — nobody would know to use it", v.Ref)
+		}
+	}
+	// And the two the framework supplies unasked say so, because
+	// "do I have to place this?" is the question that follows.
+	if !strings.Contains(form, "handed to the step anyway") {
+		t.Error("the form should say which variables arrive without being placed")
+	}
+}
+
+// The wheel sits on the field NAME: pick a built-in and the field is
+// filled from it. If the options are not there, the feature exists only
+// for whoever edits the JSON.
+func TestTheValueWheelOffersTheBuiltIns(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	form := string(raw)
+
+	if !strings.Contains(form, `"combo"`) {
+		t.Fatal("the name column is not a combo — there is no wheel to pick a built-in from")
+	}
+	for _, want := range []string{"original_input", "now", "user"} {
+		if !strings.Contains(form, `"value":"`+want+`"`) {
+			t.Errorf("%s is a built-in but not offered on the wheel", want)
+		}
+	}
+	// Names, not template syntax: the braces are how a value is
+	// referenced in a prompt, not part of what a field is called.
+	if strings.Contains(form, `"value":"{now}"`) {
+		t.Error("the wheel should offer field NAMES, not {braced} references")
+	}
+	// A whole block is not one field's value.
+	if strings.Contains(form, `"value":"established"`) {
+		t.Error("{established} is a block, not something a single field can hold")
+	}
+}
+
+// Picking one has to mean something on the way back, or the wheel names
+// a field and leaves the model guessing a value the framework holds.
+//
+// The form stores what somebody typed and nothing more — the rule that
+// a field named after a built-in IS that built-in lives in core, so it
+// is true for the machine tool and an imported file as well.
+func TestTheValueWheelRoundTrips(t *testing.T) {
+	out := outputsFromAny([]any{
+		map[string]any{"name": "original_input", "type": "string"},
+		map[string]any{"name": "kind", "type": "string"},
+		map[string]any{"name": "asked", "type": "string", "from": "{original_input}"},
+	})
+	if len(out) != 3 {
+		t.Fatalf("expected three fields, got %+v", out)
+	}
+	// A hand-authored from on a field with its own name survives an
+	// editor save — the JSON door and the form door agree.
+	if out[2].From != "{original_input}" {
+		t.Errorf("an explicit from should be kept as written: %+v", out[2])
+	}
+
+	// And what the STEP establishes reflects both.
+	ph := MachinePhase{Name: "triage", Output: out}
+	filled := map[string]string{}
+	for _, f := range ph.StaticFields() {
+		filled[f.Name] = f.From
+	}
+	if filled["original_input"] != "{original_input}" {
+		t.Errorf("a field named after a built-in should be filled from it: %+v", filled)
+	}
+	if filled["asked"] != "{original_input}" {
+		t.Errorf("an explicit from should fill too: %+v", filled)
+	}
+	if _, isFilled := filled["kind"]; isFilled {
+		t.Errorf("a field nobody named after a built-in stays the step's work: %+v", filled)
+	}
+
+	rec := phaseRecord(ph)
+	rows, _ := rec["output"].([]map[string]any)
+	if len(rows) == 0 || rows[0]["name"] != "original_input" {
+		t.Errorf("the record should carry the fields back to the form: %+v", rows)
+	}
+}
+
+// Picked when the field is added, and settled after that. A built-in
+// field has nothing left to configure — its name is the choice, its
+// value comes from the framework, its type is text — so the name locks
+// and the rest of the row goes away rather than sitting there offering
+// changes that would be ignored.
+func TestABuiltInFieldSettlesWhenItIsPicked(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, nil))
+	form := string(raw)
+
+	if !strings.Contains(form, `"lock_when":"name:`) {
+		t.Error("the name column should lock once it names a built-in")
+	}
+	if !strings.Contains(form, `"hide_when":"name:`) {
+		t.Error("type/required/instruction should go away for a built-in field")
+	}
+	// The condition has to list every built-in, or the ones it misses
+	// keep a type control that does nothing.
+	for _, v := range MachineVars() {
+		name := BuiltinFieldName(v.Ref)
+		if name == "established" {
+			continue
+		}
+		if !strings.Contains(builtinNameExpr(), name) {
+			t.Errorf("%s is a built-in the row condition never mentions", name)
+		}
 	}
 }

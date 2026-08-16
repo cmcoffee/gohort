@@ -269,7 +269,7 @@ func TestAdvanceMachine_FirstTurnWalksToTheResidentPhase(t *testing.T) {
 	note, _, _ := collectNotes()
 	cur := &MachineCursor{}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "how much and how long?", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "how much and how long?"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestAdvanceMachine_LaterTurnsRunNothing(t *testing.T) {
 		"decompose": {Fields: map[string]any{"parts": []any{"cost"}}},
 	}}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "follow-up question", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "follow-up question"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestAdvanceMachine_UnknownRouteFallsBackAndLeavesABreadcrumb(t *testing.T) 
 	note, kinds, details := collectNotes()
 	cur := &MachineCursor{}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "q", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "q"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestAdvanceMachine_DeadEndRoutesToTheFirstResidentPhase(t *testing.T) {
 	note, kinds, _ := collectNotes()
 	cur := &MachineCursor{}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "q", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "q"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestAdvanceMachine_TransitionCapStopsADynamicCycle(t *testing.T) {
 	note, kinds, _ := collectNotes()
 	cur := &MachineCursor{}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "q", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "q"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestAdvanceMachine_ResumeHealsAStalePhaseAndKeepsState(t *testing.T) {
 		"earlier": {Text: "something the session established"},
 	}}
 
-	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "q", run, note); err != nil {
+	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "q"}, run, note); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if !hasNote(*kinds, "machine_phase_reset") {
@@ -440,7 +440,7 @@ func TestAdvanceMachine_PhaseErrorFailsTheTurn(t *testing.T) {
 	note, _, _ := collectNotes()
 	cur := &MachineCursor{}
 
-	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "q", run, note); err == nil {
+	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "q"}, run, note); err == nil {
 		t.Fatal("expected an error when a phase can't produce its declared shape")
 	} else if !strings.Contains(err.Error(), "decompose") {
 		t.Errorf("the error should name the phase that failed, got: %v", err)
@@ -505,7 +505,7 @@ func TestMoveTo_KeepTrimsOnlyOnReEntry(t *testing.T) {
 	app := &AppCore{}
 
 	// Turn 1: scan → plan → reply.
-	if _, err := app.AdvanceMachine(context.Background(), def, cur, "q", run, note); err != nil {
+	if _, err := app.AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "q"}, run, note); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if _, ok := cur.State["plan"]; !ok {
@@ -566,7 +566,7 @@ func TestGuard_StayIsTheDefaultAndCostsNoTransition(t *testing.T) {
 	note, kinds, _ := collectNotes()
 	cur := &MachineCursor{Phase: "answer"}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "and what about the timeline?", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "and what about the timeline?"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestGuard_TripMovesAndRunsTheTargetChain(t *testing.T) {
 	note, kinds, details := collectNotes()
 	cur := &MachineCursor{Phase: "answer"}
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "actually, unrelated: how do I renew a passport?", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "actually, unrelated: how do I renew a passport?"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -633,7 +633,7 @@ func TestGuard_FailsOpen(t *testing.T) {
 			note, kinds, _ := collectNotes()
 			cur := &MachineCursor{Phase: "answer"}
 
-			ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "hello again", run, note)
+			ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "hello again"}, run, note)
 			if err != nil {
 				t.Fatalf("a failing guard must not fail the turn: %v", err)
 			}
@@ -658,7 +658,7 @@ func TestGuard_UnresolvedTargetFallsBackToGuardTo(t *testing.T) {
 	note, kinds, _ := collectNotes()
 	cur := &MachineCursor{Phase: "answer"}
 
-	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "new subject", run, note); err != nil {
+	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "new subject"}, run, note); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if !hasNote(*kinds, "machine_guard_tripped") {
@@ -679,7 +679,7 @@ func TestGuard_OnlyRunsOnAResumedResidentPhase(t *testing.T) {
 	note, _, _ := collectNotes()
 	cur := &MachineCursor{} // fresh session
 
-	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "first message", run, note)
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "first message"}, run, note)
 	if err != nil {
 		t.Fatalf("advance: %v", err)
 	}
@@ -699,7 +699,7 @@ func TestGuard_NotConsultedWithoutOne(t *testing.T) {
 	note, _, _ := collectNotes()
 	cur := &MachineCursor{Phase: "answer"}
 
-	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, "follow-up", run, note); err != nil {
+	if _, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "follow-up"}, run, note); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if len(*calls) != 0 {
@@ -715,7 +715,7 @@ func TestChangePhase_MovesAndWalksToAReply(t *testing.T) {
 	note, kinds, _ := collectNotes()
 	cur := &MachineCursor{Phase: "answer", State: MachineState{}}
 
-	ph, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "decompose", "user pivoted", run, note)
+	ph, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "decompose", MachineTurn{Input: "user pivoted"}, run, note)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -735,7 +735,7 @@ func TestChangePhase_RejectsAnUnknownPhase(t *testing.T) {
 	run, _, _ := scriptedRunner(nil)
 	cur := &MachineCursor{Phase: "answer"}
 
-	if _, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "nowhere", "x", run, nil); err == nil {
+	if _, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "nowhere", MachineTurn{Input: "x"}, run, nil); err == nil {
 		t.Fatal("expected an error naming the unknown phase")
 	}
 	if cur.Phase != "answer" {
@@ -748,7 +748,7 @@ func TestChangePhase_MovingToTheCurrentPhaseIsANoOp(t *testing.T) {
 	run, calls, _ := scriptedRunner(nil)
 	cur := &MachineCursor{Phase: "answer"}
 
-	ph, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "answer", "x", run, nil)
+	ph, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "answer", MachineTurn{Input: "x"}, run, nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -765,10 +765,10 @@ func TestResolvePhaseTemplate(t *testing.T) {
 		"decompose": {Fields: map[string]any{"parts": []any{"a", "b"}}},
 	}
 	got := ResolvePhaseTemplate(
-		"in={input} prev={prev} whole={state:route} one={state:route.target} n={state:route.confidence} list={state:decompose.parts} miss={state:ghost}",
-		"USER", "PREV", st)
+		"in={input} first={original_input} prev={prev} whole={state:route} one={state:route.target} n={state:route.confidence} list={state:decompose.parts} miss={state:ghost}",
+		PhaseVars{MachineTurn: MachineTurn{Input: "USER"}, Prev: "PREV", Opening: "FIRST"}, st)
 
-	for _, want := range []string{"in=USER", "prev=PREV", "whole=raw reply", "one=deep", "n=0.75", `list=["a","b"]`} {
+	for _, want := range []string{"in=USER", "first=FIRST", "prev=PREV", "whole=raw reply", "one=deep", "n=0.75", `list=["a","b"]`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected %q in: %s", want, got)
 		}

@@ -66,7 +66,7 @@ func TestInvestigationRecipeSeparatesHunchFromVerification(t *testing.T) {
 
 	// The front router: not every turn has something to explain.
 	triage, ok := def.Phase("triage")
-	if !ok || triage.NextFrom == "" {
+	if !ok || triage.RoutesBy() == "" {
 		t.Fatal("triage must route — a question with no observation skips the hypothesis")
 	}
 	if triage.Resident {

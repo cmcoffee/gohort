@@ -6,6 +6,7 @@ package orchestrate
 // the kind of thing that half-lands and looks fine.
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -102,5 +103,60 @@ func TestMachinesModalCanCreate(t *testing.T) {
 	// Go test can prove it validates.
 	if !strings.Contains(js, "api/machines?starter=1") {
 		t.Error("the starter should be fetched, not written in the JavaScript")
+	}
+}
+
+// The try panel spans four places that know nothing about each other:
+// the panel's markup, the client action the button names, the JS that
+// registers under that name, and the route that answers it. Any one of
+// them missing leaves a button that looks fine and does nothing.
+func TestMachineTryPanel_ButtonMarkupAndRouteAgree(t *testing.T) {
+	body, err := json.Marshal(machineTryPanel(MachineDef{ID: "m1", Name: "Investigation",
+		Description: "Explain something you are seeing. Then test it."}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel := string(body)
+
+	if !strings.Contains(panel, `"url":"machine_try"`) || !strings.Contains(panel, `"method":"client"`) {
+		t.Errorf("the button does not name the client action: %s", panel)
+	}
+	// The JS looks these up by id. A renamed element is a panel that
+	// renders and a button that quietly finds nothing.
+	for _, id := range []string{"machine-try-msg", "machine-try-out"} {
+		if !strings.Contains(panel, `id=\"`+id+`\"`) {
+			t.Errorf("the panel has no #%s, which the handler reads", id)
+		}
+		if !strings.Contains(machineTryJS, "'"+id+"'") {
+			t.Errorf("the handler never looks up #%s", id)
+		}
+	}
+	// The placeholder speaks in the machine's own terms rather than
+	// asking somebody to guess what the box wants.
+	if !strings.Contains(panel, "Explain something you are seeing.") {
+		t.Errorf("the box should suggest something from the machine's description: %s", panel)
+	}
+
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), `ClientAction("machine_try", machineTryJS)`) {
+		t.Error("machine_try is named by the button but never registered on the page")
+	}
+	if !strings.Contains(string(page), "machineTryPanel(def)") {
+		t.Error("the panel is built but never placed on the page")
+	}
+
+	// And the endpoint it posts to is one the router actually serves.
+	if !strings.Contains(machineTryJS, "/try'") {
+		t.Error("the handler does not post to the try endpoint")
+	}
+	routes, err := os.ReadFile("machines_http.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(routes), `case "try":`) {
+		t.Error("nothing serves /try")
 	}
 }

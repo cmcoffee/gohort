@@ -847,8 +847,14 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 type FormField struct {
 	// Columns declares the sub-fields of a "rows" field — the repeating
 	// list editor. Each column is itself a FormField, so a row cell is
-	// text / number / select / toggle with the same vocabulary the rest
-	// of a form uses.
+	// text / number / select / toggle / textarea / combo with the same
+	// vocabulary the rest of a form uses.
+	//
+	// "combo" is a text cell with a wheel: the caller supplies Options
+	// as suggestions (a native <datalist>), and the person either picks
+	// one or types their own. Use it where a value is usually one of a
+	// known set but the set is not a fence — a name that may be one of
+	// the framework's built-ins, or anything the author invents.
 	//
 	// The value of a "rows" field is a plain array of objects keyed by
 	// the columns' Field names, so an endpoint keeps its natural shape
@@ -861,6 +867,24 @@ type FormField struct {
 	// these the order IS meaning: the sequence fields are declared in,
 	// the order steps run.
 	Columns []FormField `json:"columns,omitempty"`
+	// HideWhen and LockWhen are ROW-SCOPED conditions on a "rows"
+	// column, written in the same grammar as ShowWhen ("field:value",
+	// "field:a|b", "!field", chained with ";") but evaluated against the
+	// ROW rather than the whole record.
+	//
+	// HideWhen removes the cell; LockWhen renders the value as text with
+	// no way to edit it, labelled from the column's own Options when one
+	// matches. Together they express "this row has settled into a kind
+	// where the rest of these controls do not apply" — which is the
+	// alternative to leaving a control somebody can change and be
+	// ignored for. A setting that silently does nothing is worse than a
+	// setting that is not offered.
+	//
+	// Changing a cell redraws the row when any column declares one, so
+	// the row reflects what it has become rather than what it was.
+	HideWhen string `json:"hide_when,omitempty"`
+	LockWhen string `json:"lock_when,omitempty"`
+
 	// AddLabel overrides the "+ Add" button's text on a "rows" field.
 	// Name the THING being added ("+ Add output"), not the act.
 	AddLabel string `json:"add_label,omitempty"`

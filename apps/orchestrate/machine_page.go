@@ -137,7 +137,10 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		// navigation: a machine IS a list of steps, so the page's index
 		// should be that list rather than a scroll position.
 		SectionNav: true,
-		Head:       ui.NewHead().ClientAction("machine_remove_step", machineRemoveStepJS),
+		Head: ui.NewHead().
+			ClientAction("machine_remove_step", machineRemoveStepJS).
+			ClientAction("machine_try", machineTryJS).
+			JS(machineTryEnterJS),
 		Sections: []ui.Section{
 			{
 				Title:    "The machine",
@@ -171,36 +174,46 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: "Name it and say what it does; wire it up in its own section afterwards, where every option is real.",
 			Body:     add,
 		},
-			{
-				Title:    "Picture",
-				Wide:     true,
-				Subtitle: "Rendered from the steps above. Reload after a change to see it move.",
-				Body: ui.Card{HTML: `<div style="overflow-x:auto">` +
-					`<img src="/orchestrate/api/machines/` + HTMLEscape(def.ID) + `/graph" alt="` +
-					HTMLEscape(def.Name) + ` diagram" style="max-width:100%"></div>`},
-			},
-			// The criticism goes AFTER the work. Landing on two lists of
-			// what is wrong before seeing the thing you are building reads
-			// as a rebuke; the list is still one scroll away, and the
-			// Extensions row already said how much was outstanding before
-			// you opened it.
-			{
-				Title: "Worth a look",
-				// Separate from the checklist above, and phrased as a
-				// suggestion: this reads prompt wording, which is a guess
-				// about intent. A guess that looked like a defect would
-				// send somebody rewriting something that works.
-				Subtitle: adviceText(def),
-				Wide:     true,
-			},
-			{
-				Title: "What is still missing",
-				// Validate's own findings, phrased as work remaining. A
-				// machine mid-build has problems by definition; reporting
-				// them as failure argues with somebody who is not finished.
-				Subtitle: checklistText(def),
-				Wide:     true,
-			},
+		// Behaviour, next to shape. Everything a machine is about
+		// happens ACROSS turns, and until this the editor could only
+		// ever show its configuration — you authored twelve fields per
+		// step and then opened a chat and hoped.
+		{
+			Title:    "Try it",
+			Wide:     true,
+			Subtitle: "Send a message through it and watch where it goes. It runs the real driver, with no tools and without running the step it lands in, so it shows the PATH rather than the answer.",
+			Body:     machineTryPanel(def),
+		},
+		{
+			Title:    "Picture",
+			Wide:     true,
+			Subtitle: "Rendered from the steps above. Reload after a change to see it move.",
+			Body: ui.Card{HTML: `<div style="overflow-x:auto">` +
+				`<img src="/orchestrate/api/machines/` + HTMLEscape(def.ID) + `/graph" alt="` +
+				HTMLEscape(def.Name) + ` diagram" style="max-width:100%"></div>`},
+		},
+		// The criticism goes AFTER the work. Landing on two lists of
+		// what is wrong before seeing the thing you are building reads
+		// as a rebuke; the list is still one scroll away, and the
+		// Extensions row already said how much was outstanding before
+		// you opened it.
+		{
+			Title: "Worth a look",
+			// Separate from the checklist above, and phrased as a
+			// suggestion: this reads prompt wording, which is a guess
+			// about intent. A guess that looked like a defect would
+			// send somebody rewriting something that works.
+			Subtitle: adviceText(def),
+			Wide:     true,
+		},
+		{
+			Title: "What is still missing",
+			// Validate's own findings, phrased as work remaining. A
+			// machine mid-build has problems by definition; reporting
+			// them as failure argues with somebody who is not finished.
+			Subtitle: checklistText(def),
+			Wide:     true,
+		},
 	}...)
 	page.ServeHTTP(w, r)
 }
