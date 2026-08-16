@@ -955,7 +955,7 @@ type LLMProviderConfig struct {
 	Region              string        // AWS region (bedrock only); blank falls back to AWS_REGION, then us-east-1. Part of both the hostname and the SigV4 signature.
 	Profile             string        // AWS profile (bedrock only); blank falls back to AWS_PROFILE. Selects which credentials/SSO session to use — the credentials themselves are never stored here.
 	BedrockAPI          string        // Which Bedrock API to speak: "" / "messages" = the Messages-API endpoint (needs bedrock-mantle:CreateInference); "invoke" = legacy bedrock-runtime InvokeModel (needs bedrock:InvokeModel). Whichever one the account's IAM policy actually grants.
-	ContextSize         int           // Context window size (Ollama only); 0 uses default.
+	ContextSize         int           // Working context window (tokens). Ollama/llama.cpp: sent as num_ctx. Anthropic/Bedrock: the cap agent-loop history compaction keys on (0 = 200K default — deliberately under the 1M API window; see anthropicDefaultContextSize).
 	ConnectTimeout      time.Duration // Dial timeout; defaults to 10s if zero.
 	RequestTimeout      time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
 	StreamIdleTimeout   time.Duration // Idle-read deadline applied ONLY to streaming chat calls — if no bytes arrive for this long the body is closed and the error reads as transient so the retry layer can take another shot. Defaults to DefaultStreamIdleTimeout (60s) if zero. Tune up if the model legitimately stalls between tokens (heavy thinking budgets, cold prefills on a busy server).
@@ -1413,7 +1413,9 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		if model == "" {
 			model = "claude-sonnet-5"
 		}
-		inner = newAnthropicLLM(cfg.APIKey, model, api)
+		ac := newAnthropicLLM(cfg.APIKey, model, api).(*anthropicClient)
+		ac.contextSize = cfg.ContextSize
+		inner = ac
 	case "bedrock":
 		// Claude via AWS Bedrock. No key check: an empty APIKey is the normal
 		// case (it means "sign with AWS credentials"), and newBedrockLLM
@@ -1430,6 +1432,14 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		// Both Bedrock paths serve the same Claude models; carry the working
+		// context cap so ContextSize() reflects the operator's setting.
+		switch c := inner.(type) {
+		case *anthropicClient:
+			c.contextSize = cfg.ContextSize
+		case *bedrockRuntimeClient:
+			c.contextSize = cfg.ContextSize
 		}
 	case "openai":
 		if cfg.APIKey == "" {

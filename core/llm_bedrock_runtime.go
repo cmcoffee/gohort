@@ -78,6 +78,19 @@ type bedrockRuntimeClient struct {
 	region string
 	api    *apiclient.APIClient
 	creds  *bedrockCreds
+	// contextSize is the operator-configured working context cap (tokens);
+	// 0 falls back to anthropicDefaultContextSize (same Claude models, same
+	// economics — see the const in llm_anthropic.go).
+	contextSize int
+}
+
+// ContextSize implements ContextSizer — see anthropicClient.ContextSize for
+// why this is a working cap rather than the model's true 1M window.
+func (c *bedrockRuntimeClient) ContextSize() int {
+	if c.contextSize > 0 {
+		return c.contextSize
+	}
+	return anthropicDefaultContextSize
 }
 
 // newBedrockRuntimeLLM builds a client for the legacy InvokeModel endpoint.

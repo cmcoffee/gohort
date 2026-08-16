@@ -54,6 +54,37 @@ type anthropicClient struct {
 	// current models and gohort relies on that — so this is opt-in per client
 	// rather than a change to the shared builder.
 	hoistSystem bool
+	// contextSize is the operator-configured working context cap (tokens);
+	// 0 falls back to anthropicDefaultContextSize. See ContextSize.
+	contextSize int
+}
+
+// anthropicDefaultContextSize is the working context cap reported when the
+// operator hasn't set one. Current Claude models accept a 1M-token window,
+// but this is deliberately NOT that number: it's the budget the agent loop's
+// compactHistory keys on, and the reasons to stay well under the true window
+// are cost (input tokens bill per turn — a history that crawls toward 1M is
+// dollars of input on every round even with cache reads at 0.1x), prompt-cache
+// economics (a growing prefix re-writes at 1.25-2x), and prefill latency.
+// 200K leaves the compactor's 50% steady-state cap targeting ~100K of
+// history — roomy for any real session, cheap enough to run all day.
+// Operators who genuinely want long-context work raise context_size in the
+// admin LLM form; the true API ceiling is the model's max_input_tokens (1M
+// on current Opus/Sonnet/Fable, 200K on Haiku 4.5).
+const anthropicDefaultContextSize = 200_000
+
+// ContextSize implements ContextSizer. Before this existed, the Anthropic
+// client silently failed the ContextSizer assertion: LeadContextSize() then
+// fell back to the WORKER's window (so lead agent loops compacted against the
+// local llama.cpp num_ctx — an arbitrary number belonging to a different
+// model), and with no sized worker it returned 0, which disables compaction
+// entirely and lets a runaway session grow until the API 400s — after
+// billing its way there.
+func (c *anthropicClient) ContextSize() int {
+	if c.contextSize > 0 {
+		return c.contextSize
+	}
+	return anthropicDefaultContextSize
 }
 
 // NewAnthropicLLM creates an LLM client for Anthropic (Claude) using the default HTTP client.

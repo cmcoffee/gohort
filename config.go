@@ -67,6 +67,7 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	global.db.Get(LeadLLMTable, "aws_region", &c.Region)
 	global.db.Get(LeadLLMTable, "aws_profile", &c.Profile)
 	global.db.Get(LeadLLMTable, "bedrock_api", &c.BedrockAPI)
+	global.db.Get(LeadLLMTable, "context_size", &c.ContextSize)
 	global.db.Get(LeadLLMTable, "disable_thinking", &c.DisableThinking)
 	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
 	global.db.Get(LeadLLMTable, "thinking_budget", &c.ThinkingBudget)

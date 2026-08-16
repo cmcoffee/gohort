@@ -4724,7 +4724,7 @@ func vectorKindLabel(kind string) string {
 
 // handleLLMConfig is the shared GET/POST handler for the Worker (llm_config) and
 // Lead (lead_llm_config) LLM sections. worker=true includes the worker-only
-// fields (context size, request timeout). The API key is CryptSet only when a
+// fields (request timeout). The API key is CryptSet only when a
 // new value is supplied (blank on the form = keep the existing key) and is
 // masked — never returned — on GET. Mirrors the --setup save in config.go.
 func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table string, worker bool) {
@@ -4771,8 +4771,10 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		a.db.Set(table, "no_think_budget", req.NoThinkBudget)
 		a.db.Set(table, "no_think_prepend_system", req.NoThinkPrependSystem)
 		a.db.Set(table, "no_think_prepend_user", req.NoThinkPrependUser)
+		// context_size applies to both tiers: num_ctx for local providers,
+		// the compaction working cap for Anthropic/Bedrock leads.
+		a.db.Set(table, "context_size", req.ContextSize)
 		if worker {
-			a.db.Set(table, "context_size", req.ContextSize)
 			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
 		}
 		if req.APIKey != "" {
@@ -4829,10 +4831,10 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		"no_think_prepend_user":   ntPrependUser,
 		"api_key":                 "", // masked; blank on the form means "keep existing"
 	}
+	a.db.Get(table, "context_size", &contextSize)
+	out["context_size"] = contextSize
 	if worker {
-		a.db.Get(table, "context_size", &contextSize)
 		a.db.Get(table, "request_timeout_seconds", &reqTimeout)
-		out["context_size"] = contextSize
 		out["request_timeout_seconds"] = reqTimeout
 	}
 	w.Header().Set("Content-Type", "application/json")
