@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -398,4 +399,67 @@ func TestEveryMachineScriptParses(t *testing.T) {
 			t.Errorf("%s does not parse:\n%s", name, out)
 		}
 	}
+}
+
+// Parsing proves a script is JavaScript; it proves nothing about the
+// names it calls. An app's script reaches the framework through
+// window.<something>, and a misspelling there (window.uiClientActions
+// for window.UIClientActions — a real one, caught by hand this time) is
+// a button that parses, registers, runs, and does nothing.
+//
+// So: every window.* an app script names must be either a browser
+// global or something the runtime actually defines.
+func TestMachineScriptsOnlyCallFrameworkNamesThatExist(t *testing.T) {
+	browserGlobals := map[string]bool{
+		"location": true, "addEventListener": true, "removeEventListener": true,
+		"CSS": true, "open": true, "document": true, "console": true,
+		"setTimeout": true, "clearTimeout": true, "fetch": true, "alert": true,
+		"URLSearchParams": true, "getComputedStyle": true, "scrollTo": true,
+	}
+	runtime := assembledRuntimeForTest(t)
+	scripts := map[string]string{
+		"machineTryJS": machineTryJS, "machineTryResetJS": machineTryResetJS,
+		"machineRemoveStepJS": machineRemoveStepJS, "machineMoveStepJS": machineMoveStepJS,
+		"machineDuplicateJS": machineDuplicateJS, "machineTryEnterJS": machineTryEnterJS,
+		"machinePreviewRefreshJS": machinePreviewRefreshJS,
+	}
+	ref := regexp.MustCompile(`window\.([A-Za-z_][A-Za-z0-9_]*)`)
+	for name, src := range scripts {
+		for _, m := range ref.FindAllStringSubmatch(src, -1) {
+			called := m[1]
+			if browserGlobals[called] {
+				continue
+			}
+			// The runtime defines its exports as window.X = …
+			if !strings.Contains(runtime, "window."+called+" =") &&
+				!strings.Contains(runtime, "window."+called+"=") {
+				t.Errorf("%s calls window.%s, which the runtime never defines — a button that runs and does nothing", name, called)
+			}
+		}
+	}
+}
+
+// assembledRuntimeForTest concatenates the runtime the browser gets.
+// Read from disk rather than imported: the assembled string is
+// unexported in core/ui, and a test that reads what actually ships is
+// the more honest of the two anyway.
+func assembledRuntimeForTest(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join("..", "..", "core", "ui", "assets", "runtime")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".js") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(data)
+	}
+	return b.String()
 }
