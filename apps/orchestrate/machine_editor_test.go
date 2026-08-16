@@ -1318,3 +1318,39 @@ func TestTheFieldRowIsLaidOutToBeRead(t *testing.T) {
 		}
 	}
 }
+
+// Flipping a step to "the conversation waits here" removes the whole
+// establishes section, which reads as a bug unless something says why.
+// The section keeps its place in the reading order and explains the
+// absence in the same words the validator would use.
+func TestAWaitingStepSaysWhyItEstablishesNothing(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	ans, ok := def.Phase("answer")
+	if !ok || !ans.Resident {
+		t.Fatal("fixture needs a step the conversation waits in")
+	}
+	raw, _ := json.Marshal(phaseFieldsFor(def, ans, editorCatalog{}))
+	form := string(raw)
+
+	if !strings.Contains(form, "What this step establishes") {
+		t.Error("the section should keep its place, so its absence is explained rather than silent")
+	}
+	if !strings.Contains(form, "replies to the PERSON") {
+		t.Error("the note should say WHY: the reply goes to a person, not a decoder")
+	}
+	// And it stays a note — offering the controls would contradict the
+	// validator, which refuses output on a step that waits.
+	if strings.Contains(form, `"field":"output"`) {
+		t.Error("a waiting step must not be offered fields it cannot declare")
+	}
+	// The reason given here and the reason Validate gives must agree.
+	bad := def
+	for i := range bad.Phases {
+		if bad.Phases[i].Name == "answer" {
+			bad.Phases[i].Output = []PipelineField{{Name: "x", Type: FieldString}}
+		}
+	}
+	if !strings.Contains(strings.Join(bad.Problems(), " "), "not to a decoder") {
+		t.Errorf("the form and the validator should give the same reason: %v", bad.Problems())
+	}
+}

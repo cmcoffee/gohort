@@ -786,6 +786,13 @@ a typing debounce, and a reload would yank the page out from under someone mid-s
 the framework's own invalidation broadcast — a phase form writes to `…/phases?name=<step>`, so the
 stale step is named in the event — and re-fetches from the same function that drew it.
 
+A step the conversation waits in establishes NOTHING, and the form says so where the section would
+be rather than removing it silently: its reply goes to the person, so there is no decoder to hand
+fields to, and `CompleteTurn` never pins that reply to the blackboard (it would paste it into every
+later step's prompt, forever). Anything later steps need is worked out by the step that FEEDS the
+waiting one — which is why the shipped recipe establishes in `triage` and `hunch`, and only talks in
+`verify` and `answer`.
+
 **Changing a step's KIND rebuilds the form.** The sections under "What kind of step is this?" are
 built from that answer server-side, so toggling it without a rebuild left a step showing controls
 its new kind cannot use — an output contract on a step that now waits, a guard on one that no

@@ -551,6 +551,15 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 	}
 	if p.Resident {
 		fields = append(fields,
+			// The section keeps its place in the reading order even
+			// though it has no controls. Flipping a step to "waits here"
+			// used to make "What this step establishes" vanish without a
+			// word, which reads as a bug — the rule is worth a sentence
+			// exactly where the thing it removed used to be.
+			ui.FormField{Type: "header", Label: "What this step establishes",
+				Help: "Nothing, and that is the rule rather than an omission. A step the conversation waits in replies to the PERSON, " +
+					"so there is no decoder to hand fields to, and its reply is never pinned to the blackboard — that would paste it into every later step's prompt, forever. " +
+					"Anything later steps need has to be worked out by the step that feeds this one."},
 			ui.FormField{Field: "next", Type: "select", Label: "After one turn, go to", Options: phaseOptions(def, true),
 				Help: "Leave empty for the usual case — the conversation stays here. Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
 			ui.FormField{Type: "header", Label: "Leaving early"},
