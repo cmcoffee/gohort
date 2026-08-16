@@ -291,20 +291,28 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		// you opened it.
 		{
 			Title: "Worth a look",
-			// Separate from the checklist above, and phrased as a
+			// Separate from the checklist below, and phrased as a
 			// suggestion: this reads prompt wording, which is a guess
 			// about intent. A guess that looked like a defect would
 			// send somebody rewriting something that works.
-			Subtitle: adviceText(def),
+			Subtitle: "Nothing here refuses a save. It is what the machine looks like it might not have meant.",
 			Wide:     true,
+			Body:     ui.Card{HTML: `<div data-machine-advice>` + HTMLEscape(adviceText(def)) + `</div>`},
 		},
 		{
 			Title: "What is still missing",
 			// Validate's own findings, phrased as work remaining. A
 			// machine mid-build has problems by definition; reporting
 			// them as failure argues with somebody who is not finished.
-			Subtitle: checklistText(def),
+			//
+			// In the BODY rather than the heading so it can be kept
+			// true: this is the list somebody works against, fixing one
+			// thing at a time, and a list that still says "3 to fix"
+			// after the third fix is the one place staleness actually
+			// costs something.
+			Subtitle: "The same findings a save is checked against, as work remaining.",
 			Wide:     true,
+			Body:     ui.Card{HTML: `<div data-machine-checklist>` + HTMLEscape(checklistText(def)) + `</div>`},
 		},
 	}...)
 	page.ServeHTTP(w, r)
@@ -523,6 +531,19 @@ const machineMapCSS = `
 // on" is a question the URL answers — on arrival, on every click, and
 // on the back button.
 const machineMapHereJS = `(function() {
+  // The two derived lists, worded HERE as well as on the server —
+  // deliberately, and pinned by a test, because a refresh that phrased
+  // them differently would read as the page changing its mind rather
+  // than as the same list one item shorter.
+  function checklistLine(items) {
+    if (!items.length) return '\u2713 Nothing outstanding — this machine will run as written.';
+    return items.length + ' to fix: • ' + items.join(' • ');
+  }
+  function adviceLine(items) {
+    if (!items.length) return 'Nothing — the steps read as instructions rather than specifications.';
+    return '• ' + items.join(' • ');
+  }
+
   function mark() {
     var want = (window.location.hash || '').replace(/^#/, '');
     var nodes = document.querySelectorAll('.machine-map [data-node]');
@@ -565,6 +586,20 @@ const machineMapHereJS = `(function() {
           if (!svg) return;
           body.innerHTML = svg;
           mark();
+        })
+        .catch(function() {});
+      // The two derived lists, from the endpoint that already computes
+      // both. This is the one place staleness costs something: it is
+      // the list you work against, fixing one thing at a time, and it
+      // said "3 to fix" until a reload however many you had fixed.
+      fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/editor')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(spec) {
+          if (!spec) return;
+          var c = document.querySelector('[data-machine-checklist]');
+          var a = document.querySelector('[data-machine-advice]');
+          if (c) c.textContent = checklistLine(spec.checklist || []);
+          if (a) a.textContent = adviceLine(spec.advice || []);
         })
         .catch(function() {});
     }, 250);

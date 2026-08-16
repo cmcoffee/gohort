@@ -653,3 +653,57 @@ func TestTheMachinesOwnFieldsKeepThePageTrue(t *testing.T) {
 		t.Error("changing where a machine starts should change its map")
 	}
 }
+
+// The checklist is the list somebody works against, fixing one thing at
+// a time — the one place staleness actually costs something, because it
+// said "3 to fix" until a reload however many had been fixed. It lives
+// in the section BODY now so it can be kept true, and the browser words
+// it exactly as the server does.
+func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide"}, // goes nowhere: one problem
+			{Name: "answer", Prompt: "reply", Resident: true},
+		}})
+
+	r := httptest.NewRequest("GET", "/orchestrate/machine?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	body := w.Body.String()
+	for _, want := range []string{"data-machine-checklist", "data-machine-advice"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the %s should be addressable, or it can never be refreshed", want)
+		}
+	}
+	if !strings.Contains(body, "1 to fix") {
+		t.Error("the page should show the outstanding work it found")
+	}
+
+	// The refresh reads the endpoint that already computes both lists.
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(page)
+	if !strings.Contains(src, "/editor'") {
+		t.Error("nothing refetches the lists")
+	}
+
+	// Both wordings exist twice — Go and JS — so they are pinned
+	// together: a refresh phrased differently reads as the page changing
+	// its mind rather than as the same list one item shorter.
+	clean := MachineDef{Name: "ok", Start: "s", Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}}
+	goneClean := checklistText(clean)
+	if !strings.Contains(src, "Nothing outstanding — this machine will run as written.") ||
+		!strings.Contains(goneClean, "Nothing outstanding — this machine will run as written.") {
+		t.Error("the empty-checklist sentence should be the same on both sides")
+	}
+	if !strings.Contains(src, "' to fix: • '") || !strings.Contains(checklistText(def), " to fix: • ") {
+		t.Error("the counted form should be the same on both sides")
+	}
+	if !strings.Contains(src, "the steps read as instructions rather than specifications.") ||
+		!strings.Contains(adviceText(clean), "the steps read as instructions rather than specifications.") {
+		t.Error("the empty-advice sentence should be the same on both sides")
+	}
+}

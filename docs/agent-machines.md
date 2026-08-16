@@ -917,6 +917,13 @@ machine's own phase names and declared fields, and the help text is the part tha
 the concepts — it belongs where it can be reviewed and tested, not in a string inside a
 browser file.
 
+**The checklist stays true while you fix things.** It lives in the section body rather than its
+heading so it can be refreshed, and it refetches on the same broadcast the map and the preview use.
+This is the one place staleness actually cost something: it is the list somebody works against, one
+fix at a time, and it said "3 to fix" until a reload however many had been fixed. Both wordings
+exist in Go and in the browser and are pinned together by a test — a refresh phrased differently
+reads as the page changing its mind rather than as the same list one item shorter.
+
 **The checklist is `Validate`'s own findings**, shown as work remaining rather than as a
 refusal. `Problems()` is the same function the save path uses, so the list can never
 disagree with what a save will accept. A half-built machine has problems by definition;
