@@ -168,6 +168,15 @@ func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineC
 	if !ok {
 		return MachinePhase{}, Error("machine " + def.Name + " has no phase named " + strconv.Quote(strings.TrimSpace(to)))
 	}
+	// The step's own restriction, enforced in the DRIVER rather than in
+	// the tool: a host with its own change_phase, a future surface, and
+	// the tool all move a turn through here, and a rule that lives in
+	// one caller is a rule the others do not have.
+	if here, found := def.Phase(cur.Phase); found && !here.MayExitTo(target.Name) {
+		note("machine_exit_refused", "step "+cur.Phase+" may not move to "+target.Name+"; it allows "+strings.Join(exitNames(def, here), ", "))
+		return MachinePhase{}, Error("step " + cur.Phase + " cannot move to " + target.Name +
+			". From here the conversation may go to: " + strings.Join(exitNames(def, here), ", "))
+	}
 	from := cur.Phase
 	if from == target.Name {
 		return target, nil
@@ -175,6 +184,20 @@ func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineC
 	cur.moveTo(from, target, chooseStr(strings.TrimSpace(turn.Input), "changed mid-turn"), note)
 	note("machine_phase_changed", "moved from step "+from+" to "+target.Name+" mid-turn")
 	return T.walk(ctx, def, cur, target, turn, run, note)
+}
+
+// exitNames is where a step may be moved, for a message that has to say
+// what was allowed instead of what was refused.
+func exitNames(def MachineDef, from MachinePhase) []string {
+	opts := def.ExitOptions(from)
+	out := make([]string, 0, len(opts))
+	for _, p := range opts {
+		out = append(out, p.Name)
+	}
+	if len(out) == 0 {
+		return []string{"nowhere — this step is where the conversation stays"}
+	}
+	return out
 }
 
 // walk runs transient phases until control reaches one that can reply.
@@ -624,13 +647,14 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 	// names, and a guessed name is a refused call.
 	//
 	// Static per machine, so it costs the cache nothing.
-	if len(d.Phases) > 1 {
+	// Only the exits this step actually allows. Listing a phase the tool
+	// would refuse teaches the model to call it and be told no, which is
+	// a worse failure than not offering it: it spends a round and reads
+	// as the framework contradicting itself.
+	if exits := d.ExitOptions(ph); len(exits) > 0 {
 		b.WriteString("\n## Other phases in this workflow\n")
 		b.WriteString("Reachable with change_phase, and only when the request has genuinely moved on. A follow-up or a clarification is the same job: stay here.\n")
-		for _, p := range d.Phases {
-			if p.Name == ph.Name {
-				continue
-			}
+		for _, p := range exits {
 			b.WriteString("- " + p.Name)
 			if desc := strings.TrimSpace(p.Desc); desc != "" {
 				b.WriteString(": " + desc)

@@ -662,6 +662,21 @@ ID), a machine's own walk folds in the agents its steps delegate to and the expo
 steps narrow to, and bundle import SKIPS a same-ID or same-named machine rather than copying — the
 existing one already serves the pointer the traveled ID exists for.
 
+## Keeping the arms of a branch apart
+
+A machine is a graph, and every waiting step offers every other step to `change_phase` — which is
+right for a conversation that genuinely changed subject, and wrong for a machine that BRANCHES,
+where the model can cross from one arm to the other because it judged the request close enough.
+
+`exits_to` on a step names where the conversation may be moved FROM it. Empty means anywhere (the
+default, and the right one for most machines). It bounds what the AGENT decides on its own: a step's
+own `next` and its guard's target are the author's wiring and stay legal whatever the list says.
+
+Enforced in the driver (`ChangePhase`), not in the tool, so every path that moves a turn obeys it;
+refused with the list of where the conversation MAY go, because "no" without an alternative just
+gets tried again; and `PhaseBlock` offers exactly the legal exits, since listing one the tool would
+refuse teaches the model to spend a round being told no.
+
 ## Delegating a step
 
 A transient phase can name another agent:

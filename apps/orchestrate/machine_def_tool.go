@@ -121,6 +121,11 @@ output     [{name, type, desc, required, from}] — validated JSON. Transient ph
            Write the prompt to a person — say what to find, and let the fields say what to return.
 guard      (resident) plain-language condition that moves the conversation out
 guard_to   (resident) where a tripped guard goes; defaults to the start phase
+exits_to   [phase names] this phase may be MOVED to by change_phase (the agent deciding mid-turn
+           that the request moved on). Empty = anywhere, which is right for most machines. Use it
+           when the machine BRANCHES and the arms must stay separate: without it every resident
+           phase offers every other phase, so a conversation can cross from one arm to the other.
+           Bounds the agent only — this phase's own next, and its guard's target, are always allowed.
 keep       [phase names] whose state survives RE-ENTRY into this phase; empty keeps everything
 tools      what this phase may use. A RESIDENT phase runs as the turn itself, so this NARROWS the
            agent's catalog and empty inherits all. A TRANSIENT phase runs before the turn has a
@@ -495,6 +500,7 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			Guard:    strings.TrimSpace(mapStr(m, "guard")),
 			GuardTo:  strings.TrimSpace(mapStr(m, "guard_to")),
 			Keep:     mapStrList(m, "keep"),
+			ExitsTo:  mapStrList(m, "exits_to"),
 		})
 	}
 	return out, nil

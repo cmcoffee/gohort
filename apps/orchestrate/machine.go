@@ -286,6 +286,21 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			if _, ok := m.def.Phase(to); !ok {
 				return "", Error("there is no phase named " + to + " in this workflow. Available: " + strings.Join(m.def.PhaseNames(), ", "))
 			}
+			// Refused here as well as in the driver, so the model gets the
+			// answer as a tool result it can act on rather than a failed
+			// turn — and the message names where it MAY go, because "no"
+			// without an alternative just gets tried again.
+			if !m.phase.MayExitTo(to) {
+				var allowed []string
+				for _, p := range m.def.ExitOptions(m.phase) {
+					allowed = append(allowed, p.Name)
+				}
+				t.turnDiag("machine_exit_refused", "the model tried to move from "+m.phase.Name+" to "+to+", which this step does not allow")
+				if len(allowed) == 0 {
+					return "", Error("this step is where the conversation stays; it has no other phase to move to. Answer from here.")
+				}
+				return "", Error(m.phase.Name + " cannot move to " + to + ". From here you may go to: " + strings.Join(allowed, ", "))
+			}
 			if t.phaseChanges >= maxPhaseChangesPerTurn {
 				t.turnDiag("machine_change_capped", "refused a further phase change to "+to+" this turn (limit "+strconv.Itoa(maxPhaseChangesPerTurn)+")")
 				return "", Error("you have already changed phase " + strconv.Itoa(t.phaseChanges) + " times this turn. Answer from where you are; you can move again on the next turn.")

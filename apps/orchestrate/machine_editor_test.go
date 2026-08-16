@@ -1401,3 +1401,35 @@ func TestTheTwoWaysOfRoutingHideEachOther(t *testing.T) {
 		t.Errorf("the validator should still refuse both at once: %v", both.Problems())
 	}
 }
+
+// The control for it, and the round trip — a restriction that the
+// editor cannot show is one only a JSON author can use.
+func TestTheEditorOffersBoundedExits(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+	ans, _ := def.Phase("answer")
+	raw, _ := json.Marshal(phaseFieldsFor(def, ans, editorCatalog{}))
+	form := string(raw)
+	if !strings.Contains(form, `"field":"exits_to"`) {
+		t.Fatal("no control for bounding where the agent may move the conversation")
+	}
+	// Empty is the default and has to stay obviously available: a
+	// conversation that changed subject must not be trapped by accident.
+	if !strings.Contains(form, "Leave every box empty and the conversation can be moved to any step") {
+		t.Error("the default should be stated where the choice is made")
+	}
+
+	r := httptest.NewRequest("POST", "/x?name=answer", strings.NewReader(`{"exits_to": ["triage"]}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	got, _ := saved.Phase("answer")
+	if strings.Join(got.ExitsTo, ",") != "triage" {
+		t.Errorf("the restriction did not survive the save: %+v", got.ExitsTo)
+	}
+	if rec := phaseRecord(got); rec["exits_to"] == nil {
+		t.Error("and the form should read it back")
+	}
+}

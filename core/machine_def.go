@@ -183,6 +183,24 @@ type MachinePhase struct {
 	Guard   string `json:"guard,omitempty"`
 	GuardTo string `json:"guard_to,omitempty"` // where a tripped guard goes; empty = Start
 
+	// ExitsTo restricts where a conversation may be MOVED from this step
+	// by change_phase — the model deciding mid-turn that the request has
+	// moved on. Empty means anywhere, which is the right default: a
+	// conversation that genuinely changed subject must not be trapped.
+	//
+	// It exists for the shape a list of steps cannot express: a machine
+	// that BRANCHES, where the left side should stay left. Every waiting
+	// step otherwise offers every other step as a destination, so a
+	// conversation in one arm can cross into the other because the model
+	// judged it close enough. Naming the legal exits is how an author
+	// says the arms are separate.
+	//
+	// It bounds change_phase ONLY. A guard's target, a step's own next,
+	// and the routing a step decides are the author's own wiring and are
+	// not second-guessed — this restricts what the MODEL may do on its
+	// own initiative, which is the only transition nobody wrote down.
+	ExitsTo []string `json:"exits_to,omitempty"`
+
 	// Keep lists the MachineState keys that survive RE-ENTRY into this
 	// phase (entering it when it has already run once this session).
 	// Empty keeps everything, which is the safe default: a re-route that
@@ -212,6 +230,40 @@ type MachinePhase struct {
 	// it delegates to may simply not exist here yet. The phase falls back
 	// to running inline, and says so.
 	Agent string `json:"agent,omitempty"`
+}
+
+// MayExitTo reports whether change_phase may move a conversation from
+// this step to the named one.
+//
+// Empty ExitsTo means anywhere. A step that lists its exits allows
+// exactly those — plus, always, the step it already hands off to
+// statically and the target of its own guard: refusing a move to a
+// place the author's own wiring already sends the turn would be the
+// restriction contradicting the machine it is part of.
+func (p MachinePhase) MayExitTo(name string) bool {
+	name = strings.TrimSpace(name)
+	if len(p.ExitsTo) == 0 || name == "" {
+		return true
+	}
+	for _, allowed := range append(append([]string{}, p.ExitsTo...), p.Next, p.GuardTo) {
+		if strings.TrimSpace(allowed) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ExitOptions is where this step may be moved to, in the machine's own
+// order — for the prompt block that tells a model its choices, and for
+// an error that has to say what was allowed instead.
+func (d MachineDef) ExitOptions(p MachinePhase) []MachinePhase {
+	var out []MachinePhase
+	for _, other := range d.Phases {
+		if other.Name != p.Name && p.MayExitTo(other.Name) {
+			out = append(out, other)
+		}
+	}
+	return out
 }
 
 // Phase looks a phase up by name.
@@ -631,6 +683,11 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		}
 		if strings.TrimSpace(p.Guard) == "" {
 			probs = append(probs, "step "+name+": guard_to is set but there is no guard to trip it")
+		}
+	}
+	for _, t := range p.ExitsTo {
+		if t = strings.TrimSpace(t); t != "" && !seen[t] {
+			probs = append(probs, "step "+name+": exits_to names unknown step "+strconv.Quote(t))
 		}
 	}
 	for _, k := range p.Keep {

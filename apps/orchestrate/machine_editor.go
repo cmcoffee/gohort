@@ -682,6 +682,14 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			{Value: "on", Label: "On — this step is a judgement"},
 			{Value: "off", Label: "Off — this step is a transform"},
 		}},
+		// Where the MODEL may take the conversation on its own. Empty is
+		// the right default (a conversation that changed subject must not
+		// be trapped), so this is the control for the one shape a list of
+		// steps cannot express: a machine that branches, where each arm
+		// should stay in its own arm.
+		ui.FormField{Field: "exits_to", Type: "checklist", Label: "It may move the conversation to", Options: otherPhaseOptions(def, p.Name),
+			Help: "Leave every box empty and the conversation can be moved to any step — right for most machines. Tick some and the agent may only move it to those, which is how the two arms of a branch stay separate. " +
+				"This bounds what the AGENT decides mid-turn; where this step hands off itself, and where its guard sends it, are your wiring and always allowed."},
 		ui.FormField{Field: "keep", Type: "checklist", Label: "On re-entry, keep only", Options: otherPhaseOptions(def, p.Name),
 			Help: "Steps whose findings survive coming BACK here a second time. Choose none to keep everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake."},
 		// The user's real tool pool, not a box to type names into — the
@@ -949,6 +957,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if _, ok := body["keep"]; ok {
 		ph.Keep = stringSliceFromArgs(body, "keep")
 	}
+	if _, ok := body["exits_to"]; ok {
+		ph.ExitsTo = stringSliceFromArgs(body, "exits_to")
+	}
 	if _, ok := body["resident"]; ok {
 		ph.Resident = BoolArg(body, "resident")
 	}
@@ -1049,7 +1060,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
-		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p),
+		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,
 		"choices": p.Choices,
 	}
 }

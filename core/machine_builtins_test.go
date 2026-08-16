@@ -518,3 +518,67 @@ func TestAdviceOnToolsThatCannotApply(t *testing.T) {
 		t.Errorf("a step told to look with nothing to look with should be flagged: %v", def.Advice())
 	}
 }
+
+// A machine that BRANCHES has a shape a list of steps cannot express:
+// the left arm should stay left. Every waiting step otherwise offers
+// every other step to change_phase, so a conversation can cross arms
+// because the model judged it close enough.
+func TestAStepCanBoundWhereTheModelMovesIt(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "decide", Choices: []string{"left", "right"}, Next: "right"},
+		{Name: "left", Prompt: "l", Resident: true, ExitsTo: []string{"left_more"}, Guard: "moved on", GuardTo: "triage"},
+		{Name: "left_more", Prompt: "l2", Resident: true},
+		{Name: "right", Prompt: "r", Resident: true},
+	}}
+	if probs := def.Problems(); len(probs) > 0 {
+		t.Fatalf("bounded exits should be valid: %v", probs)
+	}
+
+	left, _ := def.Phase("left")
+	if !left.MayExitTo("left_more") {
+		t.Error("a named exit should be allowed")
+	}
+	if left.MayExitTo("right") {
+		t.Error("the other arm should not be reachable")
+	}
+	// The author's OWN wiring is never second-guessed: a guard's target
+	// stays legal even when it is not in the list.
+	if !left.MayExitTo("triage") {
+		t.Error("where this step's own guard sends it must stay allowed")
+	}
+	// And a step that names nothing keeps today's behaviour.
+	right, _ := def.Phase("right")
+	if !right.MayExitTo("left") || !right.MayExitTo("triage") {
+		t.Error("an unrestricted step should still reach anywhere")
+	}
+
+	// The prompt block offers exactly what the tool would accept —
+	// listing a step the tool refuses teaches the model to spend a round
+	// being told no.
+	block := def.PhaseBlock(left, MachineState{}, PhaseVars{})
+	if !strings.Contains(block, "- left_more") || !strings.Contains(block, "- triage") {
+		t.Errorf("the block should offer the legal exits:\n%s", block)
+	}
+	if strings.Contains(block, "- right") {
+		t.Errorf("the block must not offer an exit that would be refused:\n%s", block)
+	}
+
+	// The driver refuses the crossing wherever it is asked from, and the
+	// refusal says where the conversation MAY go.
+	cur := &MachineCursor{Phase: "left"}
+	run, _, _ := scriptedRunner(map[string]string{})
+	note, kinds, _ := collectNotes()
+	_, err := (&AppCore{}).ChangePhase(context.Background(), def, cur, "right", MachineTurn{Input: "x"}, run, note)
+	if err == nil {
+		t.Fatal("crossing arms should be refused")
+	}
+	if !strings.Contains(err.Error(), "left_more") {
+		t.Errorf("the refusal should name where it may go instead: %v", err)
+	}
+	if !hasNote(*kinds, "machine_exit_refused") {
+		t.Errorf("a refused move is a framework decision and should leave a breadcrumb: %v", *kinds)
+	}
+	if cur.Phase != "left" {
+		t.Errorf("a refused move must not move anything, got %q", cur.Phase)
+	}
+}
