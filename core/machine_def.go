@@ -344,6 +344,100 @@ func (d *MachineDef) RenameStep(from, to string) {
 	}
 }
 
+// RemoveStep deletes a step and takes every reference to it with it,
+// reporting the steps it had to edit.
+//
+// Without this, removing a step left the machine full of names that no
+// longer resolve — and the checklist then reported them as work to do,
+// blaming the author for a deletion they meant. A reference to
+// something deleted is not a mistake to fix; it is part of the
+// deletion, and the definition knows every place it appears.
+//
+// Two references are deliberately NOT rewritten, because only a person
+// can answer them: a step whose `next` pointed here is left with
+// nowhere to go (it must be told where it goes now), and a prompt that
+// reads {state:gone.field} keeps its text (it asks for a value nothing
+// produces, which is a real thing to fix). Both surface in the
+// checklist as questions, rather than as damage.
+func (d *MachineDef) RemoveStep(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	touched := map[string]bool{}
+	out := d.Phases[:0:0]
+	for _, p := range d.Phases {
+		if p.Name == name {
+			continue
+		}
+		if strings.TrimSpace(p.Next) == name {
+			p.Next = ""
+			touched[p.Name] = true
+		}
+		// A guard sending the turn to a step that is gone falls back to
+		// the machine's start, which is what an empty guard_to means and
+		// the least surprising place for a conversation to land.
+		if strings.TrimSpace(p.GuardTo) == name {
+			p.GuardTo = ""
+			touched[p.Name] = true
+		}
+		if dropped := dropFromList(&p.Choices, name); dropped {
+			touched[p.Name] = true
+		}
+		if dropped := dropFromList(&p.Keep, name); dropped {
+			touched[p.Name] = true
+		}
+		if dropped := dropFromList(&p.ExitsTo, name); dropped {
+			touched[p.Name] = true
+		}
+		fields := append([]PipelineField(nil), p.Output...)
+		for i := range fields {
+			if dropFromList(&fields[i].Enum, name) {
+				touched[p.Name] = true
+			}
+		}
+		p.Output = fields
+		out = append(out, p)
+	}
+	d.Phases = out
+	// The entry point, if that is what was removed: an empty Start
+	// RESOLVES to the first step, which would make the beginning
+	// positional again — so it is written down rather than left implied.
+	if strings.TrimSpace(d.Start) == name {
+		d.Start = ""
+		if s := d.StartPhase(); s != "" {
+			d.Start = s
+			touched["start"] = true
+		}
+	}
+	names := make([]string, 0, len(touched))
+	for n := range touched {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// dropFromList removes a name from a slice in place, reporting whether
+// it was there. The slice is COPIED before writing: phases are values
+// but their slices are not, and rewriting one in place would reach the
+// caller's copy of the machine.
+func dropFromList(list *[]string, name string) bool {
+	found := false
+	out := make([]string, 0, len(*list))
+	for _, v := range *list {
+		if strings.TrimSpace(v) == name {
+			found = true
+			continue
+		}
+		out = append(out, v)
+	}
+	if found {
+		*list = out
+	}
+	return found
+}
+
 func renameInList(list []string, from, to string) {
 	for i, v := range list {
 		if strings.TrimSpace(v) == from {

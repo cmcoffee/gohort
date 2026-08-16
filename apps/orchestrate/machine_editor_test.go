@@ -1441,3 +1441,49 @@ func TestTheEditorOffersBoundedExits(t *testing.T) {
 		t.Error("and the form should read it back")
 	}
 }
+
+// End to end: the editor's delete leaves a machine that is not
+// complaining about the deletion, and the confirm says beforehand
+// exactly what the removal will do — computed by the same walk that
+// will do it, so the warning cannot promise something else.
+func TestRemovingAStepFromTheEditorLeavesNoComplaint(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide", Choices: []string{"dig", "answer"}, Next: "answer"},
+			{Name: "dig", Prompt: "look", Next: "answer"},
+			{Name: "answer", Prompt: "reply", Resident: true, ExitsTo: []string{"dig"}},
+		}})
+
+	confirm := removeStepConfirm(def, "dig")
+	if !strings.Contains(confirm, "References to it in") || !strings.Contains(confirm, "answer") {
+		t.Errorf("the confirm should say what else it touches: %q", confirm)
+	}
+
+	r := httptest.NewRequest("DELETE", "/x?name=dig", nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("remove failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Rewritten []string
+		Checklist []string
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range resp.Checklist {
+		if strings.Contains(c, "dig") {
+			t.Errorf("a removal should not be reported back as work to do: %q", c)
+		}
+	}
+	if len(resp.Rewritten) == 0 {
+		t.Error("the response should say which steps it edited")
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	tri, _ := saved.Phase("triage")
+	if strings.Join(tri.Choices, ",") != "answer" {
+		t.Errorf("the stored machine should have lost the reference: %v", tri.Choices)
+	}
+}

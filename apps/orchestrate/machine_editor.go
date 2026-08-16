@@ -245,23 +245,45 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 // removeStepConfirm names what ELSE breaks, because the answer is
 // knowable and the person deciding cannot see it from here.
 func removeStepConfirm(def MachineDef, name string) string {
-	var refs []string
-	for _, p := range def.Phases {
-		if p.Name == name {
-			continue
-		}
-		if p.Next == name || p.GuardTo == name {
-			refs = append(refs, p.Name)
-		}
-	}
+	// What ELSE this touches, worked out from the same walk that will do
+	// the touching — so the warning cannot promise something the removal
+	// does not do.
+	preview := def
+	preview.Phases = append([]MachinePhase(nil), def.Phases...)
+	rewritten := preview.RemoveStep(name)
+
 	msg := "Remove the step \"" + name + "\"?"
 	if def.StartPhase() == name {
-		msg += " This is where a conversation STARTS, so the machine will not run until another step is chosen as the start."
+		msg += " This is where a conversation STARTS, so whichever step is first becomes the new beginning."
 	}
-	if len(refs) > 0 {
-		msg += " " + strings.Join(refs, " and ") + " routes here and will be left pointing at nothing."
+	// A step whose ONLY way onward was this one is the case worth
+	// spelling out: it is the one thing the removal cannot decide for
+	// somebody, and it will sit in the checklist until they do.
+	var stranded []string
+	for _, p := range def.Phases {
+		if p.Name != name && !p.Resident && strings.TrimSpace(p.Next) == name && len(p.RoutingChoices()) == 0 {
+			stranded = append(stranded, p.Name)
+		}
+	}
+	if others := withoutName(rewritten, "start"); len(others) > 0 {
+		msg += " References to it in " + strings.Join(others, ", ") + " are removed with it."
+	}
+	if len(stranded) > 0 {
+		msg += " " + strings.Join(stranded, " and ") + " then has nowhere to go, and you will need to say where."
 	}
 	return msg + " This cannot be undone."
+}
+
+// withoutName drops one entry from a list of step names — the pseudo
+// entry RemoveStep uses to report that it moved the machine's start.
+func withoutName(names []string, drop string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if n != drop {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // phaseOptions lists the machine's phases for a select. withNone adds an
@@ -900,16 +922,14 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		})
 
 	case http.MethodDelete:
-		out := def.Phases[:0:0]
-		for _, p := range def.Phases {
-			if p.Name != name {
-				out = append(out, p)
-			}
-		}
-		def.Phases = out
+		// The references go with it. A name left pointing at a deleted
+		// step is not work the author forgot — it is part of the
+		// deletion, and reporting it as something to fix blames somebody
+		// for doing what they meant.
+		rewritten := def.RemoveStep(name)
 		saved := SaveMachineDef(udb, def)
-		Log("[orchestrate.machines] user=%q removed phase %q from %q", user, name, def.Name)
-		writeJSON(w, map[string]any{"deleted": name, "checklist": saved.Problems()})
+		Log("[orchestrate.machines] user=%q removed phase %q from %q (rewrote %v)", user, name, def.Name, rewritten)
+		writeJSON(w, map[string]any{"deleted": name, "rewritten": rewritten, "checklist": saved.Problems()})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

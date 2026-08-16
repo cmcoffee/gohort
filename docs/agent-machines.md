@@ -770,6 +770,18 @@ through the tool's own decoder, so a drafted machine cannot be a third dialect. 
 problems still saves: the checklist phrases them as work remaining, and an imperfect draft beats an
 empty editor.
 
+**Removing a step takes its references with it.** `RemoveStep` drops the deleted name from every
+`choices`, `keep`, `exits_to` and routing-target list, clears a `guard_to` that pointed at it (an
+empty one means "back to the start", the least surprising landing), and writes down the new start if
+the deleted step was the beginning. Leaving those behind made the checklist report a deletion as
+work to do — blaming the author for doing what they meant.
+
+Two references are deliberately NOT rewritten, because only a person can answer them: a step whose
+`next` pointed there is left with nowhere to go, and a prompt reading `{state:gone.field}` keeps its
+text. Both surface in the checklist as questions rather than as damage, and the removal's confirm
+names them beforehand — computed by the same walk that will do the removing, so the warning cannot
+promise something else.
+
 **Renaming a step is one edit.** `RenameStep` rewrites every reference the definition holds —
 `next`, `choices`, `keep`, `guard_to`, routing targets, `start`, and `{state:old.…}` in prompts,
 guards and fills — so a rename never sends you hunting through the checklist. A rename onto an

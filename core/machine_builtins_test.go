@@ -618,3 +618,75 @@ func TestABoundedStepIsBoundedAtTheGuardToo(t *testing.T) {
 		t.Errorf("an unbounded step should keep today's behaviour, got %q", got.Name)
 	}
 }
+
+// Removing a step takes its references with it. Leaving them behind
+// made the checklist report a deletion as work to do — blaming the
+// author for doing what they meant, on every surface that reads
+// Problems().
+func TestRemovingAStepTakesItsReferencesWithIt(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "decide", Choices: []string{"dig", "answer"}, Next: "answer",
+			Output: []PipelineField{{Name: "lane", Type: FieldString, Enum: []string{"dig", "answer"}}}},
+		{Name: "dig", Prompt: "look", Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true,
+			Guard: "moved on", GuardTo: "dig", Keep: []string{"dig", "triage"}, ExitsTo: []string{"dig", "triage"}},
+	}}
+	rewritten := def.RemoveStep("dig")
+
+	if _, gone := def.Phase("dig"); gone {
+		t.Fatal("the step should be gone")
+	}
+	tri, _ := def.Phase("triage")
+	if strings.Join(tri.Choices, ",") != "answer" {
+		t.Errorf("a choice pointing at it should go with it: %v", tri.Choices)
+	}
+	if strings.Join(tri.Output[0].Enum, ",") != "answer" {
+		t.Errorf("so should a routing target: %v", tri.Output[0].Enum)
+	}
+	ans, _ := def.Phase("answer")
+	if ans.GuardTo != "" {
+		t.Errorf("a guard sent there should fall back to the start: %q", ans.GuardTo)
+	}
+	if strings.Join(ans.Keep, ",") != "triage" || strings.Join(ans.ExitsTo, ",") != "triage" {
+		t.Errorf("keep and exits_to should lose the entry, not the rest: %+v %+v", ans.Keep, ans.ExitsTo)
+	}
+	if strings.Join(rewritten, ",") != "answer,triage" {
+		t.Errorf("the removal should report what it touched: %v", rewritten)
+	}
+	// Nothing dangles, so nothing is reported as work to do.
+	for _, p := range def.Problems() {
+		if strings.Contains(p, "dig") {
+			t.Errorf("the deletion should not appear as a problem: %q", p)
+		}
+	}
+
+	// The one thing it will NOT decide: a step whose only way onward was
+	// the deleted one is left with nowhere to go, on purpose, because
+	// only a person can say where it goes now.
+	chain := MachineDef{Name: "m", Start: "one", Phases: []MachinePhase{
+		{Name: "one", Prompt: "p", Next: "two"},
+		{Name: "two", Prompt: "p", Next: "three"},
+		{Name: "three", Prompt: "p", Resident: true},
+	}}
+	chain.RemoveStep("two")
+	if !strings.Contains(strings.Join(chain.Problems(), " "), "goes nowhere") {
+		t.Errorf("a stranded step should be asked about, not guessed at: %v", chain.Problems())
+	}
+}
+
+// And removing the step a machine STARTS in writes the new beginning
+// down rather than leaving it implied — an empty start resolves to
+// whatever is first, which would make the entry point positional again.
+func TestRemovingTheStartWritesTheNewOne(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "p", Next: "answer"},
+		{Name: "answer", Prompt: "p", Resident: true},
+	}}
+	rewritten := def.RemoveStep("triage")
+	if def.Start != "answer" {
+		t.Errorf("the new beginning should be recorded, got %q", def.Start)
+	}
+	if strings.Join(rewritten, ",") != "start" {
+		t.Errorf("and reported: %v", rewritten)
+	}
+}
