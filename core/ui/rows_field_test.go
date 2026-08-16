@@ -381,3 +381,28 @@ func TestRowsGeometryLinesUp(t *testing.T) {
 		t.Error("an own_line control should fill its line")
 	}
 }
+
+// What "the field is filled in" means to a show_when. Plain truthiness
+// gets one case badly wrong: an empty ARRAY is truthy in JavaScript, so
+// a checklist with nothing checked read as present and "!field" never
+// fired for one — which is the whole mechanism for "hide this while the
+// other way of doing it is in use".
+func TestShowWhenTreatsAnEmptyListAsUnanswered(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "function hasValue(v)") {
+		t.Fatal("show_when should ask one question about presence, in one place")
+	}
+	if !strings.Contains(src, "if (Array.isArray(v)) return v.length > 0;") {
+		t.Error("an empty checklist should read as unanswered, like an empty string")
+	}
+	// Both forms of the presence test go through it, or "field" and
+	// "!field" disagree about the same value.
+	for _, form := range []string{
+		"if (hasValue(current[c.substring(1).trim()])) return false;",
+		"if (!hasValue(current[c])) return false;",
+	} {
+		if !strings.Contains(src, form) {
+			t.Errorf("presence check bypassed: %q", form)
+		}
+	}
+}

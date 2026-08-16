@@ -1166,6 +1166,19 @@
     // Backward compatible: a plain "field" still works.
     function matchesShowWhen(expr) { return matchesWhen(expr, current); }
 
+    // hasValue is what "the field is filled in" means to a show_when.
+    // Plain truthiness gets one case badly wrong: an EMPTY ARRAY is
+    // truthy in JavaScript, so a checklist with nothing checked read as
+    // present and "!field" never fired for one — which is the whole
+    // mechanism for "hide this while the other way of doing it is in
+    // use". An empty string, an empty list and an absent key all mean
+    // the same thing to somebody filling in a form.
+    function hasValue(v) {
+      if (v == null || v === false || v === '') return false;
+      if (Array.isArray(v)) return v.length > 0;
+      return !!v;
+    }
+
     // matchesWhen is matchesShowWhen against ANY record — the form's own
     // values, or one row of a "rows" field. Same grammar either way, so
     // a row-scoped condition is something an author already knows how to
@@ -1177,12 +1190,12 @@
         var c = clauses[i].trim();
         if (!c) continue;
         if (c.charAt(0) === '!') {
-          if (current[c.substring(1).trim()]) return false;
+          if (hasValue(current[c.substring(1).trim()])) return false;
           continue;
         }
         var colon = c.indexOf(':');
         if (colon < 0) {
-          if (!current[c]) return false;
+          if (!hasValue(current[c])) return false;
           continue;
         }
         var fld = c.substring(0, colon);

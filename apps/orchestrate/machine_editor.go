@@ -631,21 +631,37 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// field that carries the choice, its type, and the list of
 			// legal values are all derivable from this, so the framework
 			// derives them (core: MachinePhase.Choices → next_step).
-			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", Options: otherPhaseOptions(def, p.Name),
+			// Hidden while the step routes by hand. The two mechanisms are
+			// mutually exclusive — the field wins, and Problems() says so
+			// — but saying it AFTER somebody has ticked five boxes is the
+			// worst way to enforce it. Live, because show_when reads the
+			// form rather than the stored record: pick a field to route
+			// on and this goes away under your hand.
+			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", ShowWhen: "!next_from",
+				Options: otherPhaseOptions(def, p.Name),
 				Help: "Tick the steps it may send the conversation to and it decides at run time. You do not declare a field for the decision: the framework adds next_step to what this step returns, writes the instruction naming each destination and what that step is for, draws those arrows, and refuses to save a name that is not a step. \"Then go to\" is the fallback if the choice does not resolve."},
 		)
 		// The hand-wired form, kept because machines that use it exist and
 		// because a routing value that is ALSO a real finding is worth
 		// naming yourself. Collapsed, and shown open only when it is in
 		// use, so it stops being the first thing anybody meets.
-		if strings.TrimSpace(p.NextFrom) != "" || len(p.Choices) == 0 && len(ownFieldOptions(p)) > 1 {
+		if strings.TrimSpace(p.NextFrom) != "" || len(ownFieldOptions(p)) > 1 {
+			// And the mirror image: while the step has choices ticked,
+			// the hand-wired controls are the ones that would be ignored.
+			// "!choices" is live too — an empty checklist counts as
+			// unanswered (core/ui: hasValue), which is what makes the two
+			// halves of this exclusivity symmetrical instead of one
+			// server-side and one not.
 			fields = append(fields,
-				ui.FormField{Type: "header", Label: "Routing by hand", Collapsed: strings.TrimSpace(p.NextFrom) == "",
-					Help: "Only if the destination is also a finding worth naming — \"severity\", say, where the value routes AND means something. Otherwise use the list above."},
-				ui.FormField{Field: "next_from", Type: "select", Label: "Route on the field", Options: ownFieldOptions(p),
-					Help: "One of this step's own text fields, whose value is a step NAME. Setting this overrides the choices above."},
-				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", Options: otherPhaseOptions(def, p.Name),
-					Help: "The steps that field is allowed to name. Leave empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
+				ui.FormField{Type: "header", Label: "Routing by hand", ShowWhen: "!choices",
+					Collapsed: strings.TrimSpace(p.NextFrom) == "",
+					Help:      "Only if the destination is also a finding worth naming — \"severity\", say, where the value routes AND means something. Otherwise use the list above."},
+				ui.FormField{Field: "next_from", Type: "select", Label: "Route on the field", ShowWhen: "!choices",
+					Options: ownFieldOptions(p),
+					Help:    "One of this step's own text fields, whose value is a step NAME. A step can route ONE way: picking a field here hides the list above, and ticking that list hides this."},
+				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", ShowWhen: "!choices",
+					Options: otherPhaseOptions(def, p.Name),
+					Help:    "The steps that field is allowed to name. Leave empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
 			)
 		}
 	}

@@ -543,6 +543,17 @@ diagram, and a save-time error when a name stops resolving. `next` stays the fal
 `next_from` is unchanged and still wins where it is set: a routing value that is ALSO a real finding
 ("severity", say) is worth naming yourself.
 
+**A step routes ONE way, and the form now says so before the fact.** The two mechanisms hide each
+other live — pick a field to route on and the choices list goes away under your hand; tick a choice
+and the hand-wired controls do. `Problems()` remains the backstop for the JSON door and the tool,
+which can still write both and should still be told which wins. Neither door ever silently clears
+the other's setting: hide, refuse, explain.
+
+That symmetry needed one generic fix in core/ui: `show_when: "!field"` used plain JavaScript
+truthiness, and an empty ARRAY is truthy — so a checklist with nothing ticked read as answered and
+"!choices" could never fire. An empty list, an empty string and an absent key now all mean the same
+thing to a form.
+
 **The person's message arrives whether the prompt asks for it or not.** A transient step's prompt is
 a template, so one that never says `{input}` used to be sent without the message — the model
 answering confidently about nothing, which reads as it ignoring instructions. Now the framework

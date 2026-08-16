@@ -1354,3 +1354,50 @@ func TestAWaitingStepSaysWhyItEstablishesNothing(t *testing.T) {
 		t.Errorf("the form and the validator should give the same reason: %v", bad.Problems())
 	}
 }
+
+// A step routes ONE way. The validator has always refused both at once
+// and the runtime gives the field precedence, but the form still
+// offered the losing control — so somebody could tick five boxes and
+// learn on the next reload that none of them counted. Each mechanism
+// now hides the other, live.
+func TestTheTwoWaysOfRoutingHideEachOther(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
+
+	var fields []map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, f := range fields {
+		if name, ok := f["field"].(string); ok {
+			show, _ := f["show_when"].(string)
+			seen[name] = show
+		}
+	}
+	if seen["choices"] != "!next_from" {
+		t.Errorf("the choices list should disappear while the step routes by hand, got %q", seen["choices"])
+	}
+	for _, f := range []string{"next_from", "targets"} {
+		if seen[f] != "!choices" {
+			t.Errorf("%s should disappear while the step has choices, got %q", f, seen[f])
+		}
+	}
+	// The static fallback belongs to BOTH, so it stays put.
+	if seen["next"] != "" {
+		t.Errorf("\"then go to\" is the fallback either way and should always show, got %q", seen["next"])
+	}
+
+	// And the validator stays the backstop: the JSON door and the
+	// machine tool can still write both, and must still be told which
+	// one wins.
+	both := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "route", Prompt: "p", NextFrom: "lane", Choices: []string{"answer"}, Next: "answer",
+			Output: []PipelineField{{Name: "lane", Type: FieldString}}},
+		{Name: "answer", Prompt: "a", Resident: true},
+	}}
+	if !strings.Contains(strings.Join(both.Problems(), " "), "Keep one") {
+		t.Errorf("the validator should still refuse both at once: %v", both.Problems())
+	}
+}
