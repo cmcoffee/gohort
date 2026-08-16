@@ -300,7 +300,10 @@ func nodeSVG(n WorkflowNode, p point, overlay *WorkflowOverlay) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(`<g>`)
+	// Tagged with the node's own id so a surface rendering this INLINE
+	// can mark which one the reader is on — a map is worth much more
+	// when it says "you are here". Inert in a standalone document.
+	b.WriteString(`<g data-node="` + xmlEscape(n.ID) + `">`)
 	b.WriteString(`<rect x="` + strconv.Itoa(p.X) + `" y="` + strconv.Itoa(p.Y) + `" width="` + strconv.Itoa(gNodeW) +
 		`" height="` + strconv.Itoa(gNodeH) + `" rx="7" fill="` + fill + `" stroke="` + stroke + `" stroke-width="` + strokeW + `"/>`)
 	if n.Note != "" || len(n.Tags) > 0 {

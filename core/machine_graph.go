@@ -35,7 +35,13 @@ func (d MachineDef) Graph() WorkflowGraph {
 
 	for _, p := range d.Phases {
 		switch {
-		case p.NextFrom != "":
+		case p.RoutesBy() != "":
+			// A step that DECIDES, by either mechanism — the choices it
+			// lists, or a field it routes on. Gating this on next_from
+			// alone drew every machine written the recommended way as a
+			// straight line to its fallback: the split, which is the one
+			// thing a picture of a decision exists to show, was missing.
+			//
 			// DECLARED targets are drawn exactly. Undeclared, the target
 			// is a run-time value and the honest drawing is an edge to
 			// every phase it could pick — guessing a subset from the
@@ -58,7 +64,7 @@ func (d MachineDef) Graph() WorkflowGraph {
 				}
 				e := WorkflowEdge{
 					From: p.Name, To: t.Name, Style: EdgeDashed,
-					Label: "?", Note: "routed at run time by " + p.Name + "." + p.NextFrom,
+					Label: "?", Note: "routed at run time by " + p.Name + "." + p.RoutesBy(),
 				}
 				// The static fallback usually names one of the same
 				// targets. Two edges between one pair land on identical
@@ -66,7 +72,7 @@ func (d MachineDef) Graph() WorkflowGraph {
 				// so the two facts merge into one arrow that states both.
 				if t.Name == p.Next {
 					e.Label = "? · fallback"
-					e.Note += "; also where it goes when " + p.NextFrom + " names no phase that exists"
+					e.Note += "; also where it goes when " + p.RoutesBy() + " names no phase that exists"
 				}
 				g.Edges = append(g.Edges, e)
 			}

@@ -7,6 +7,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -462,4 +463,51 @@ func assembledRuntimeForTest(t *testing.T) string {
 		b.Write(data)
 	}
 	return b.String()
+}
+
+// The map is pinned above the steps, not parked in a section of its
+// own: SectionNav shows ONE section at a time, so a picture in a
+// section can never be on screen with the step being edited — and a
+// split is exactly what a step's own form cannot show, since it lists
+// the names it may choose between while the shape lives in the arrows.
+func TestTheMapIsPinnedAboveTheSteps(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide", Choices: []string{"dig", "answer"}, Next: "answer"},
+			{Name: "dig", Prompt: "look", Next: "answer"},
+			{Name: "answer", Prompt: "reply", Resident: true},
+		}})
+
+	r := httptest.NewRequest("GET", "/orchestrate/machine?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	body := w.Body.String()
+
+	if !strings.Contains(body, `"sticky"`) {
+		t.Fatal("the map should be pinned, not parked in a section")
+	}
+	if !strings.Contains(body, "machine-map") {
+		t.Error("no map on the page")
+	}
+	// Every box is a door, and every box can be lit.
+	for _, want := range []string{`data-node=\"triage\"`, `href=\"#dig\"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the map is missing %s", want)
+		}
+	}
+	// The split itself: a deciding step leaves by more than one arrow.
+	if n := strings.Count(body, "stroke-dasharray"); n < 2 {
+		t.Errorf("a step choosing between two should show two run-time arrows, found %d dashed", n)
+	}
+	// You-are-here is driven by the URL, which is the same thing the
+	// section rail navigates by — one source of truth for "where am I".
+	if !strings.Contains(body, "hashchange") || !strings.Contains(body, "classList.toggle('here'") {
+		t.Error("the map should light the step whose section is open")
+	}
+	// And it can be got out of the way: a four-step machine is nearly
+	// 300px of permanent screen.
+	if !strings.Contains(body, "details class=\\\"machine-map\\\" open") {
+		t.Error("the map should be collapsible, and open by default")
+	}
 }

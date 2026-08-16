@@ -767,6 +767,13 @@ what `Problems()` would reject, so there is nothing to explain and nothing to un
 The steps are also the page's left rail (`SectionNav`), so a machine is navigated the way it is read:
 one step at a time, in order.
 
+**The map is pinned above the steps** (`Page.Sticky`), because `SectionNav` shows one section at a
+time — a picture in a section of its own could never be on screen with the step being edited, which
+is exactly when you need it: a step's form lists the names it may choose between, while the SHAPE of
+that choice lives in the arrows. The step whose section is open is lit ("you are here"), driven by
+the same URL hash the rail navigates by, so there is one answer to "where am I". Collapsible,
+because a four-step machine is nearly 300px of permanent screen.
+
 **The picture navigates.** The graph is inlined into the editor (links inside an `<img>` SVG are
 inert) and every node links to its step's section — the graph is the rail, drawn. The anchors ride
 the section nav's new hash support: each section has a URL (`#verify`, `#try-it`, same slug

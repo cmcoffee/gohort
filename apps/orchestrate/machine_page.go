@@ -162,12 +162,21 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		// navigation: a machine IS a list of steps, so the page's index
 		// should be that list rather than a scroll position.
 		SectionNav: true,
+		// The map, above every step rather than parked in a section of
+		// its own. SectionNav shows ONE section at a time, so the picture
+		// and the step you are editing could never be on screen together
+		// — and a split is exactly what a step's own form cannot show
+		// you: it lists the names it may choose between, while the SHAPE
+		// of that choice lives in the arrows.
+		Sticky: machineMapCard(def),
 		Head: ui.NewHead().
 			ClientAction("machine_remove_step", machineRemoveStepJS).
 			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).
 			ClientAction("machine_try_reset", machineTryResetJS).
 			ClientAction("machine_duplicate", machineDuplicateJS).
+			CSS(machineMapCSS).
+			JS(machineMapHereJS).
 			JS(machineTryEnterJS).
 			JS(machinePreviewRefreshJS),
 		Sections: []ui.Section{
@@ -236,7 +245,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		{
 			Title:    "Picture",
 			Wide:     true,
-			Subtitle: "Rendered from the steps above — click a step to open its section. Reload after a change to see it move.",
+			Subtitle: "The same map as the one pinned above, full size — click a step to open its section. Reload after a change to see it move.",
 			// Inline rather than an <img>: links inside an imaged SVG are
 			// inert, and the whole point of drawing the steps is that
 			// they are the same steps the rail navigates. Every dynamic
@@ -435,6 +444,60 @@ func checklistText(def MachineDef) string {
 	}
 	return strconv.Itoa(len(probs)) + " to fix: • " + strings.Join(probs, " • ")
 }
+
+// machineMapCard is the sticky map: the whole machine, the step you are
+// on lit up, every box a door into that step's form.
+//
+// Collapsible, and that is not decoration — a four-step machine is
+// nearly 300px of permanent screen, which is a real price to pay while
+// writing a long prompt. Open by default because the reason it exists
+// is to be seen; <details> so the browser remembers nothing and the
+// page has no state to get wrong.
+func machineMapCard(def MachineDef) ui.Component {
+	return ui.Card{HTML: `<details class="machine-map" open>` +
+		`<summary>Map — click a step to open it</summary>` +
+		`<div class="machine-map-body">` + machineGraphSVG(def) + `</div>` +
+		`</details>`}
+}
+
+// machineMapCSS keeps the map from eating the page, and lights the step
+// the reader is on.
+const machineMapCSS = `
+.machine-map { padding: 0.3rem 0.5rem; }
+.machine-map > summary {
+  cursor: pointer; font-size: 0.72rem; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-mute);
+}
+.machine-map-body { overflow: auto; max-height: 42vh; padding-top: 0.35rem; }
+.machine-map svg a { text-decoration: none; }
+/* You are here. The fill is what carries it — a border alone is lost
+   among the boxes that are already drawn heavier for holding a turn. */
+.machine-map [data-node].here rect {
+  fill: var(--accent-soft, rgba(99,102,241,0.16));
+  stroke: var(--accent, #6366f1);
+  stroke-width: 2.5;
+}
+`
+
+// machineMapHereJS lights the step whose section is open.
+//
+// The section rail already addresses sections by hash (#step-slug) and
+// the map's boxes already link to those anchors, so "which step am I
+// on" is a question the URL answers — on arrival, on every click, and
+// on the back button.
+const machineMapHereJS = `(function() {
+  function mark() {
+    var want = (window.location.hash || '').replace(/^#/, '');
+    var nodes = document.querySelectorAll('.machine-map [data-node]');
+    for (var i = 0; i < nodes.length; i++) {
+      var slug = String(nodes[i].getAttribute('data-node') || '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      nodes[i].classList.toggle('here', !!want && slug === want);
+    }
+  }
+  window.addEventListener('hashchange', mark);
+  mark();
+})();`
 
 // machineGraphSVG renders the picture with each step linking to its own
 // section — the graph is the rail, drawn. The anchors use the SAME slug

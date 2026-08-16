@@ -157,3 +157,41 @@ func TestMultiLineFieldInstructionRendersAsABlock(t *testing.T) {
 		t.Errorf("the field header was lost:\n%s", got)
 	}
 }
+
+// A step that DECIDES has to be drawn deciding. The graph's branch for
+// this was gated on next_from — the hand-wired mechanism — so a machine
+// written the recommended way (choices) drew as a straight line to its
+// fallback, and the split, which is the one thing a picture of a
+// decision exists to show, was missing from every one of them.
+func TestTheDiagramDrawsASplit(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "decide", Choices: []string{"dig", "answer"}, Next: "answer"},
+		{Name: "dig", Prompt: "look", Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	var out []string
+	for _, e := range def.Graph().Edges {
+		if e.From == "triage" {
+			out = append(out, e.To+"/"+e.Style+"/"+e.Label)
+		}
+	}
+	if len(out) != 2 {
+		t.Fatalf("a step choosing between two should leave by two arrows, got %v", out)
+	}
+	// Both are run-time choices, so both are dashed; the one that is
+	// also the static fallback says so rather than being drawn twice.
+	joined := strings.Join(out, " ")
+	if !strings.Contains(joined, "dig/dashed/?") {
+		t.Errorf("the chosen-at-run-time arrow is missing: %v", out)
+	}
+	if !strings.Contains(joined, "answer/dashed/? · fallback") {
+		t.Errorf("the fallback should be one arrow stating both facts: %v", out)
+	}
+	// And the note names the field the decision actually lands in, which
+	// for a choices step is the one the framework declares.
+	for _, e := range def.Graph().Edges {
+		if e.From == "triage" && !strings.Contains(e.Note, "triage.next_step") {
+			t.Errorf("the arrow should name where the decision is written: %q", e.Note)
+		}
+	}
+}
