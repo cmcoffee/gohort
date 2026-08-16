@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1029,5 +1030,29 @@ func TestTheKindToggleRebuildsTheForm(t *testing.T) {
 	// And the promise it makes is the one being kept.
 	if !strings.Contains(form, "the sections below change to match") {
 		t.Error("the help text that motivates the reload went missing")
+	}
+}
+
+// The cost line is derived, so it has to keep up with what a step can
+// now do: a step with tools is a short agent loop rather than one call,
+// and a delegated step spends another agent's whole turn.
+func TestCostLineCountsToolsAndDelegates(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "route", Phases: []MachinePhase{
+		{Name: "route", Prompt: "decide", Next: "dig"},
+		{Name: "dig", Prompt: "look", Next: "ask", Tools: []string{"read_file"}},
+		{Name: "ask", Prompt: "delegate", Next: "reply", Agent: "Log analyst"},
+		{Name: "reply", Prompt: "answer", Resident: true, Guard: "moved on"},
+	}}
+	got := costText(def)
+	for _, want := range []string{
+		"route each cost one model call",
+		"dig may use tools",
+		"up to " + strconv.Itoa(StageToolRounds),
+		"ask hand their work to another agent",
+		"arriving in reply",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the cost line should mention %q:\n%s", want, got)
+		}
 	}
 }

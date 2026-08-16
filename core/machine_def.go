@@ -401,6 +401,10 @@ func (d MachineDef) Advice() []string {
 					"If you need it as a "+string(f.Type)+", let the step work it out instead of filling it.")
 			}
 		}
+		if len(p.Tools) > 0 && strings.TrimSpace(p.Agent) != "" {
+			out = append(out, "step "+name+": it names tools AND delegates. A delegate works from its own catalog, "+
+				"so the list here does nothing — narrow the delegate itself, or drop the delegate and let this step do the work.")
+		}
 		if !p.Resident && len(p.Tools) == 0 && strings.TrimSpace(p.Agent) == "" && wantsToLook(p.Prompt) {
 			out = append(out, "step "+name+": the instructions send it looking, but it names no tools and it is not delegated — "+
 				"a step that passes on runs before the turn has a catalog, so it reaches exactly what it names and otherwise nothing. "+

@@ -786,6 +786,11 @@ reloads, and (being a toggle) it commits on change, so nothing typed is at risk.
 recipe and the safe-experiment copy both existed as endpoints and neither was reachable from the
 page where you author. Duplicate opens the copy, because working on the copy is the point.
 
+The derived **What a turn costs** line keeps up with all of this: a step with tools is a short agent
+loop (one call per round, up to `StageToolRounds`), a delegated step spends another agent's whole
+turn, a step that only pins values is free, and a guarded step charges a check on every turn spent
+in it.
+
 **Steps reorder** (↑↓ on each step's toolbar — the order is the rail and the reading order),
 machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
 the working one in place is how the working one stops working), and **What a turn costs** is derived

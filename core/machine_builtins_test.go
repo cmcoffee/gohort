@@ -490,3 +490,31 @@ func TestRenamingAStepRewritesEveryReference(t *testing.T) {
 		t.Errorf("a rename must not create problems: %v", probs)
 	}
 }
+
+// What a step costs, and what it cannot do, both follow from its shape.
+// These two advisories cover the shapes where a control silently does
+// nothing — the editor hides them, but the JSON door and the machine
+// tool can still write them.
+func TestAdviceOnToolsThatCannotApply(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "dig", Phases: []MachinePhase{
+		{Name: "dig", Prompt: "Go and look for the cause.", Next: "reply",
+			Agent: "Log analyst", Tools: []string{"read_file"}},
+		{Name: "reply", Prompt: "Answer.", Resident: true},
+	}}
+	advice := strings.Join(def.Advice(), "\n")
+	if !strings.Contains(advice, "names tools AND delegates") {
+		t.Errorf("a delegated step's tool list does nothing and should say so: %v", def.Advice())
+	}
+	// It is delegated, so the go-and-look advice must NOT also fire —
+	// the delegate is exactly how that step goes and looks.
+	if strings.Contains(advice, "the instructions send it looking") {
+		t.Errorf("a delegated step already has reach: %v", def.Advice())
+	}
+
+	// Drop the delegate and the other advisory takes over.
+	def.Phases[0].Agent = ""
+	def.Phases[0].Tools = nil
+	if !strings.Contains(strings.Join(def.Advice(), "\n"), "the instructions send it looking") {
+		t.Errorf("a step told to look with nothing to look with should be flagged: %v", def.Advice())
+	}
+}

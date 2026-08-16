@@ -453,15 +453,19 @@ func machineGraphSVG(def MachineDef) string {
 // and a guessed total would be a lie some of the time — each piece's
 // price is exact.
 func costText(def MachineDef) string {
-	var passing, pinned, guarded []string
+	var passing, pinned, guarded, searching, delegated []string
 	for _, p := range def.Phases {
 		switch {
 		case p.Resident:
 			if strings.TrimSpace(p.Guard) != "" {
 				guarded = append(guarded, p.Name)
 			}
+		case strings.TrimSpace(p.Agent) != "":
+			delegated = append(delegated, p.Name)
 		case len(p.ModelOutput()) == 0 && strings.TrimSpace(p.Prompt) == "" && len(p.StaticFields()) > 0:
 			pinned = append(pinned, p.Name)
+		case len(p.Tools) > 0:
+			searching = append(searching, p.Name)
 		default:
 			passing = append(passing, p.Name)
 		}
@@ -469,6 +473,15 @@ func costText(def MachineDef) string {
 	var parts []string
 	if len(passing) > 0 {
 		parts = append(parts, strings.Join(passing, ", ")+" each cost one model call when they run (a reply that fails to decode costs one repair retry)")
+	}
+	// A step with tools is a small agent loop, not one call — the number
+	// comes from the cap itself so it cannot go stale.
+	if len(searching) > 0 {
+		parts = append(parts, strings.Join(searching, ", ")+" may use tools, so each is a short loop: one call per round, up to "+
+			strconv.Itoa(StageToolRounds))
+	}
+	if len(delegated) > 0 {
+		parts = append(parts, strings.Join(delegated, ", ")+" hand their work to another agent, which spends its own turn (and its own tools) before this one records what came back")
 	}
 	if len(pinned) > 0 {
 		parts = append(parts, strings.Join(pinned, ", ")+" only pin values and are free")

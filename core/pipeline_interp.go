@@ -985,6 +985,12 @@ func stageTier(stage PipelineStage) LLMTier {
 // full agent stage.
 const pipelineStageMaxRounds = 10
 
+// StageToolRounds is pipelineStageMaxRounds for callers that have to
+// TELL somebody what a tool-equipped step can cost. The editor's cost
+// line quotes it, and a number quoted from anywhere but the constant
+// itself is a number that goes stale.
+const StageToolRounds = pipelineStageMaxRounds
+
 // Fanout caps. Items bounds how many branches a single fanout stage
 // runs (a runaway decompose stage shouldn't spawn hundreds of LLM
 // calls); Parallel bounds how many run concurrently so a fanout doesn't
