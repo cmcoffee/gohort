@@ -1412,6 +1412,14 @@ func TestTheEditorOffersBoundedExits(t *testing.T) {
 	if !strings.Contains(form, `"field":"exits_to"`) {
 		t.Fatal("no control for bounding where the agent may move the conversation")
 	}
+	// Only where it can apply. A turn is only ever parked in a step the
+	// conversation waits in, so on a step that passes on this would be a
+	// control that could never do anything.
+	tri, _ := def.Phase("triage")
+	passing, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
+	if strings.Contains(string(passing), `"field":"exits_to"`) {
+		t.Error("a step that passes on is never the one a conversation is moved FROM")
+	}
 	// Empty is the default and has to stay obviously available: a
 	// conversation that changed subject must not be trapped by accident.
 	if !strings.Contains(form, "Leave every box empty and the conversation can be moved to any step") {

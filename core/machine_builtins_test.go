@@ -582,3 +582,39 @@ func TestAStepCanBoundWhereTheModelMovesIt(t *testing.T) {
 		t.Errorf("a refused move must not move anything, got %q", cur.Phase)
 	}
 }
+
+// exits_to has to hold at BOTH doors a conversation leaves by on the
+// agent's initiative. It bounded change_phase and leaked through the
+// guard: the same decision — this has moved on, take it there —
+// arriving by the door nobody would think to check.
+func TestABoundedStepIsBoundedAtTheGuardToo(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "decide", Choices: []string{"left", "right"}, Next: "right"},
+		{Name: "left", Prompt: "l", Resident: true, Guard: "moved on", GuardTo: "triage",
+			ExitsTo: []string{"left_more"}},
+		{Name: "left_more", Prompt: "l2", Resident: true},
+		{Name: "right", Prompt: "r", Resident: true},
+	}}
+	left, _ := def.Phase("left")
+
+	// The model's verdict names the other arm: refused, and the turn
+	// falls back to the target the AUTHOR declared.
+	note, kinds, _ := collectNotes()
+	got, ok := def.guardTarget(left, map[string]any{"to": "right"}, note)
+	if !ok || got.Name != "triage" {
+		t.Fatalf("a bounded step should fall back to its own guard target, got %q", got.Name)
+	}
+	if !hasNote(*kinds, "machine_exit_refused") {
+		t.Errorf("refusing the model's pick is a framework decision and should leave a breadcrumb: %v", *kinds)
+	}
+
+	// A pick the step DOES allow goes through untouched.
+	if got, _ = def.guardTarget(left, map[string]any{"to": "left_more"}, nil); got.Name != "left_more" {
+		t.Errorf("an allowed target should be honoured, got %q", got.Name)
+	}
+	// And an unrestricted step still goes wherever the verdict says.
+	right, _ := def.Phase("right")
+	if got, _ = def.guardTarget(right, map[string]any{"to": "left"}, nil); got.Name != "left" {
+		t.Errorf("an unbounded step should keep today's behaviour, got %q", got.Name)
+	}
+}

@@ -84,7 +84,7 @@ func (T *AppCore) checkGuard(ctx context.Context, def MachineDef, ph MachinePhas
 	if why == "" {
 		why = "the guard judged this turn to be outside the phase's job"
 	}
-	target, ok := def.guardTarget(ph, fields)
+	target, ok := def.guardTarget(ph, fields, note)
 	if !ok {
 		note("machine_guard_unresolved", "the guard on phase "+ph.Name+" wanted to move ("+why+") but named no phase that exists; staying put. Raw verdict: "+previewForRepair(raw))
 		return ph, false
@@ -111,8 +111,24 @@ func (T *AppCore) checkGuard(ctx context.Context, def MachineDef, ph MachinePhas
 // correctly and then can't say where to go is the common small-model
 // failure, and "back to the start" is almost always the author's intent
 // anyway — that is where a machine re-decomposes.
-func (d MachineDef) guardTarget(ph MachinePhase, fields map[string]any) (MachinePhase, bool) {
+func (d MachineDef) guardTarget(ph MachinePhase, fields map[string]any, note func(kind, detail string)) (MachinePhase, bool) {
 	want, _ := fields["to"].(string)
+	// The verdict's target is the MODEL's pick, so a step that bounds
+	// where it may be moved bounds this too. Without it, exits_to held
+	// for change_phase and leaked through the guard — the same decision
+	// (this conversation has moved on, take it there) arriving by the
+	// other door, and the door nobody would think to check.
+	//
+	// GuardTo and the start phase are NOT bounded: they are the author's
+	// own wiring, and a restriction that refuses where its own machine
+	// says to go would be arguing with itself.
+	if w := strings.TrimSpace(want); w != "" && !ph.MayExitTo(w) {
+		if note != nil {
+			note("machine_exit_refused", "the guard on step "+ph.Name+" named "+w+
+				", which this step may not move to; using its declared target instead")
+		}
+		want = ""
+	}
 	for _, name := range []string{want, ph.GuardTo, d.StartPhase()} {
 		if name = strings.TrimSpace(name); name == "" {
 			continue

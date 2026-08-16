@@ -568,6 +568,16 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Help: "Plain words, judged on each new turn that arrives here. Empty means the conversation stays until something else moves it. Costs one model call per turn, so say something worth checking."},
 			ui.FormField{Field: "guard_to", Type: "select", Label: "…and go to", Options: phaseOptions(def, true),
 				Help: "Empty means back to the start."},
+			// Both ways a conversation leaves on the AGENT's initiative —
+			// change_phase mid-turn, and the guard naming somewhere — are
+			// bounded by this one list. It lives here, with the other
+			// leaving controls, and only on a step the conversation waits
+			// in: those are the only steps a turn is ever parked in, so on
+			// a step that passes on it would be a control that could never
+			// apply.
+			ui.FormField{Field: "exits_to", Type: "checklist", Label: "It may move the conversation to", Options: otherPhaseOptions(def, p.Name),
+				Help: "Leave every box empty and the conversation can be moved to any step — right for most machines. Tick some and the agent may only move it to those, which is how the two arms of a branch stay separate. " +
+					"It bounds what the AGENT decides on its own, by either door: change_phase mid-turn, and the guard above naming somewhere to go. Where this step hands off itself, and the target you set above, are your wiring and always allowed."},
 		)
 	} else {
 		fields = append(fields,
@@ -682,14 +692,6 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			{Value: "on", Label: "On — this step is a judgement"},
 			{Value: "off", Label: "Off — this step is a transform"},
 		}},
-		// Where the MODEL may take the conversation on its own. Empty is
-		// the right default (a conversation that changed subject must not
-		// be trapped), so this is the control for the one shape a list of
-		// steps cannot express: a machine that branches, where each arm
-		// should stay in its own arm.
-		ui.FormField{Field: "exits_to", Type: "checklist", Label: "It may move the conversation to", Options: otherPhaseOptions(def, p.Name),
-			Help: "Leave every box empty and the conversation can be moved to any step — right for most machines. Tick some and the agent may only move it to those, which is how the two arms of a branch stay separate. " +
-				"This bounds what the AGENT decides mid-turn; where this step hands off itself, and where its guard sends it, are your wiring and always allowed."},
 		ui.FormField{Field: "keep", Type: "checklist", Label: "On re-entry, keep only", Options: otherPhaseOptions(def, p.Name),
 			Help: "Steps whose findings survive coming BACK here a second time. Choose none to keep everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake."},
 		// The user's real tool pool, not a box to type names into — the

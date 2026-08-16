@@ -669,8 +669,13 @@ right for a conversation that genuinely changed subject, and wrong for a machine
 where the model can cross from one arm to the other because it judged the request close enough.
 
 `exits_to` on a step names where the conversation may be moved FROM it. Empty means anywhere (the
-default, and the right one for most machines). It bounds what the AGENT decides on its own: a step's
-own `next` and its guard's target are the author's wiring and stay legal whatever the list says.
+default, and the right one for most machines). It bounds what the AGENT decides on its own, by
+either door — `change_phase` mid-turn, and a guard's verdict naming somewhere to go — because those
+are the same decision arriving two ways, and bounding one would leave the other open. A step's own
+`next` and the `guard_to` its author declared stay legal whatever the list says.
+
+It is offered only on a step the conversation WAITS in: those are the only steps a turn is ever
+parked in, so on a step that passes on it could never apply.
 
 Enforced in the driver (`ChangePhase`), not in the tool, so every path that moves a turn obeys it;
 refused with the list of where the conversation MAY go, because "no" without an alternative just
