@@ -826,8 +826,14 @@ loop (one call per round, up to `StageToolRounds`), a delegated step spends anot
 turn, a step that only pins values is free, and a guarded step charges a check on every turn spent
 in it.
 
+**The map's shape comes from the ARROWS, not the step list.** `layout()` ranks steps by distance
+from the entry over forward edges, so a step sits below whatever leads to it and the declared order
+only decides which side same-depth steps sit on. Reordering a chain therefore changes nothing in the
+picture — correct, but worth saying out loud, because a reorder button next to a diagram invites the
+opposite expectation.
+
 **Steps reorder** (↑↓ on each step's toolbar). The order is not cosmetic: it is the rail and the
-reading order, the tie-break that arranges the map, the order earlier findings are pinned into a
+reading order, the tie-break that arranges same-depth steps in the map, the order earlier findings are pinned into a
 prompt (`establishedBlock` renders in declared order, deliberately, so the cacheable prefix holds),
 and which waiting step catches a step that hands off nowhere (`firstResident`). It is ALSO the entry
 point when `start` was never set — so a move pins `start` to whatever it currently resolves to

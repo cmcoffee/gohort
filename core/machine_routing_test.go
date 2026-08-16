@@ -195,3 +195,61 @@ func TestTheDiagramDrawsASplit(t *testing.T) {
 		}
 	}
 }
+
+// What reordering does to the picture, pinned because the answer
+// surprised somebody: the layout ranks steps by FLOW (distance from the
+// entry over forward edges), so the list order only decides which side
+// same-depth steps sit on. Moving a step in a chain changes nothing in
+// the map, and that is correct — a picture of a machine that rearranged
+// itself by list order would be a picture of the list, not the machine.
+func TestReorderingOnlySwapsStepsAtTheSameDepth(t *testing.T) {
+	build := func(order ...string) MachineDef {
+		by := map[string]MachinePhase{
+			"triage": {Name: "triage", Prompt: "p", Choices: []string{"dig", "answer"}, Next: "answer"},
+			"dig":    {Name: "dig", Prompt: "p", Next: "answer"},
+			"answer": {Name: "answer", Prompt: "p", Resident: true},
+		}
+		d := MachineDef{Name: "m", Start: "triage"}
+		for _, n := range order {
+			d.Phases = append(d.Phases, by[n])
+		}
+		return d
+	}
+	xOf := func(d MachineDef, want string) int {
+		pos, _ := d.Graph().layout()
+		return pos[want].X
+	}
+
+	// dig and answer are both one hop from triage: same depth, so the
+	// list decides which is on the left.
+	a, b := build("triage", "dig", "answer"), build("triage", "answer", "dig")
+	if xOf(a, "dig") >= xOf(a, "answer") {
+		t.Fatalf("declared first should sit left: dig=%d answer=%d", xOf(a, "dig"), xOf(a, "answer"))
+	}
+	if xOf(b, "dig") <= xOf(b, "answer") {
+		t.Errorf("reordering should swap same-depth steps: dig=%d answer=%d", xOf(b, "dig"), xOf(b, "answer"))
+	}
+
+	// A chain has one step per depth, so no reordering can move
+	// anything: every step is placed by what leads to it.
+	chain := func(order ...string) MachineDef {
+		by := map[string]MachinePhase{
+			"one":   {Name: "one", Prompt: "p", Next: "two"},
+			"two":   {Name: "two", Prompt: "p", Next: "three"},
+			"three": {Name: "three", Prompt: "p", Resident: true},
+		}
+		d := MachineDef{Name: "m", Start: "one"}
+		for _, n := range order {
+			d.Phases = append(d.Phases, by[n])
+		}
+		return d
+	}
+	first, shuffled := chain("one", "two", "three"), chain("three", "two", "one")
+	for _, name := range []string{"one", "two", "three"} {
+		p1, _ := first.Graph().layout()
+		p2, _ := shuffled.Graph().layout()
+		if p1[name] != p2[name] {
+			t.Errorf("%s moved in a chain, where the arrows fix every position: %v vs %v", name, p1[name], p2[name])
+		}
+	}
+}

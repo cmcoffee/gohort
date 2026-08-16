@@ -245,7 +245,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		{
 			Title:    "Picture",
 			Wide:     true,
-			Subtitle: "The same map as the one pinned above, full size — click a step to open its section. Reload after a change to see it move.",
+			Subtitle: "The same map as the one pinned above, full size — click a step to open its section. Its shape comes from the ARROWS, not the step list: a step sits below whatever leads to it, so reordering the list only swaps steps that sit at the same depth. Adding, removing, renaming or moving a step redraws it; editing a prompt does not change the shape.",
 			// Inline rather than an <img>: links inside an imaged SVG are
 			// inert, and the whole point of drawing the steps is that
 			// they are the same steps the rail navigates. Every dynamic
@@ -455,7 +455,7 @@ func checklistText(def MachineDef) string {
 // page has no state to get wrong.
 func machineMapCard(def MachineDef) ui.Component {
 	return ui.Card{HTML: `<details class="machine-map" open>` +
-		`<summary>Map — click a step to open it</summary>` +
+		`<summary>Map — click a step to open it. Its shape follows the arrows, not the step order.</summary>` +
 		`<div class="machine-map-body">` + machineGraphSVG(def) + `</div>` +
 		`</details>`}
 }
