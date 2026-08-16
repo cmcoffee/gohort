@@ -280,16 +280,25 @@ func phaseOptions(def MachineDef, withNone bool) []ui.SelectOption {
 // come back. {state:…} is deliberately NOT offered — those name another
 // step and its field, which is a picker with two dependent levels rather
 // than a wheel, and typing one into "from" stays available.
-func staticValueOptions() []ui.SelectOption {
-	var out []ui.SelectOption
+func fieldKindOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{Value: "", Label: "— choose —"}}
 	for _, v := range MachineVars() {
 		if v.Ref == "{established}" {
 			continue // a whole block is not one field's value
 		}
-		out = append(out, ui.SelectOption{Value: BuiltinFieldName(v.Ref), Label: v.Means})
+		name := BuiltinFieldName(v.Ref)
+		out = append(out, ui.SelectOption{Value: name, Label: name + " — " + v.Means})
 	}
-	return out
+	// Last, and phrased as the work rather than as a category: the
+	// alternative to a value the framework already holds is a value the
+	// step has to establish.
+	return append(out, ui.SelectOption{Value: customFieldKind, Label: "Something this step works out"})
 }
+
+// customFieldKind is the kind marker for a field the step establishes
+// itself. It is never a field NAME — outputsFromAny reads the typed name
+// for these rows — so it cannot collide with the built-in vocabulary.
+const customFieldKind = "custom"
 
 // toolsLabel and toolsHelp say what the tools list MEANS here, which is
 // two different things.
@@ -327,11 +336,28 @@ func toolsHelp(p MachinePhase) string {
 // picked once when the field is added, never edited into something it
 // cannot be.
 func builtinNameExpr() string {
+	return "builtin:" + strings.Join(builtinFieldNames(), "|")
+}
+
+// fieldKindChosenExpr matches a row whose kind has been answered at all
+// — built-in or custom. That is when the choice settles: a field that
+// changes KIND after it has been described is a different field, and
+// re-pointing one would leave its description explaining the old one.
+func fieldKindChosenExpr() string {
+	return "builtin:" + strings.Join(append(builtinFieldNames(), customFieldKind), "|")
+}
+
+// builtinFieldNames is the vocabulary by the name a field takes when it
+// holds one, minus the block that no single field can hold.
+func builtinFieldNames() []string {
 	var names []string
-	for _, o := range staticValueOptions() {
-		names = append(names, o.Value)
+	for _, v := range MachineVars() {
+		if v.Ref == "{established}" {
+			continue
+		}
+		names = append(names, BuiltinFieldName(v.Ref))
 	}
-	return "name:" + strings.Join(names, "|")
+	return names
 }
 
 // builtinVarHelp writes the fixed vocabulary out, from the table core
@@ -535,15 +561,22 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			ui.FormField{Field: "output", Type: "rows", Label: "", AddLabel: "+ Add field",
 				Placeholder: "(nothing yet)",
 				Columns: []ui.FormField{
-					// The wheel is ON THE NAME. Type your own and the step
-					// works it out; pick a built-in and the field is FILLED
-					// from what the framework already holds — it never
-					// reaches the model at all. One control, because
-					// "which field is this" and "where does its value come
-					// from" are the same question at the moment you name it.
-					{Field: "name", Type: "combo", Label: "Field", Width: 2, Options: staticValueOptions(),
-						LockWhen: builtinNameExpr(),
-						Help:     "Your own name, or one of the built-ins to have it filled for you."},
+					// WHAT KIND of thing this is, chosen before anything is
+					// typed. A combo box asked both questions at once —
+					// click it and you are typing, with the built-ins
+					// hidden behind a dropdown arrow nobody looks for — so
+					// the two decisions are now in order: pick a built-in
+					// and the framework fills it, or pick "something this
+					// step works out" and name it yourself. Locked once
+					// answered, because a field that changes KIND after it
+					// has been described is a different field.
+					{Field: "builtin", Type: "select", Label: "What is this?", Width: 3,
+						Options:  fieldKindOptions(),
+						LockWhen: fieldKindChosenExpr(),
+						Help:     "A built-in is filled from what the framework already holds; your own is what the step works out."},
+					{Field: "name", Type: "text", Label: "Field", Width: 2, HideWhen: builtinNameExpr(),
+						Placeholder: "hypothesis",
+						Help:        "What to call it. Other steps read it as {state:<step>.<name>}."},
 					// The columns below are the STEP's work to configure. A
 					// field filled from a built-in has none of it: its type
 					// is text, it is always present, and there is nothing
@@ -915,7 +948,18 @@ func outputsFromAny(v any) []PipelineField {
 			continue
 		}
 		name := strings.TrimSpace(fmt.Sprint(m["name"]))
-		if name == "" || name == "<nil>" {
+		if name == "<nil>" {
+			name = ""
+		}
+		// A row that picked a built-in IS that built-in, whatever is in
+		// the name box — the box is hidden for those rows, and a stale
+		// value left in it from before the choice must not win.
+		if kind := strings.TrimSpace(fmt.Sprint(m["builtin"])); kind != "" && kind != "<nil>" && kind != customFieldKind {
+			if _, isBuiltin := BuiltinRefForFieldName(kind); isBuiltin {
+				name = kind
+			}
+		}
+		if name == "" {
 			continue
 		}
 		f := PipelineField{Name: name}
@@ -941,9 +985,17 @@ func outputsFromAny(v any) []PipelineField {
 func phaseRecord(p MachinePhase) map[string]any {
 	rows := make([]map[string]any, 0, len(p.Output))
 	for _, f := range p.Output {
+		// The kind column is derived, never stored: a field named after
+		// a built-in IS that built-in (core decides this, at every door),
+		// so the form is told what the definition already means rather
+		// than carrying a second copy that could disagree with it.
+		kind := customFieldKind
+		if _, isBuiltin := BuiltinRefForFieldName(f.Name); isBuiltin {
+			kind = f.Name
+		}
 		rows = append(rows, map[string]any{
 			"name": f.Name, "type": string(f.Type), "required": f.Required,
-			"desc": f.Desc, "from": f.From,
+			"desc": f.Desc, "from": f.From, "builtin": kind,
 		})
 	}
 	return map[string]any{

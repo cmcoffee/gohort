@@ -597,10 +597,14 @@ declaring it a list describes something that cannot happen — and `Advice()` sa
 not in them, so a turn that arrived as a photo and nothing else resolves to nothing; the driver
 leaves a `machine_static_empty` breadcrumb rather than a silently empty field.
 
-The wheel is on the field NAME rather than beside it, because "which field is this" and "where does
-its value come from" are the same question at the moment you name it. It is a `combo` cell — the
-generic core/ui column added for this: a text box with a native `datalist`, so you either pick one
-of the built-ins or type your own name and the step works it out.
+Adding a field asks WHAT KIND first: a choice between each built-in (by the name a field takes when
+it holds one, with what it means beside it) and "Something this step works out". A combo box asked
+both questions at once — click it and you are typing, with the built-ins behind a dropdown arrow
+nobody looks for. Only a field of your own reveals a name box.
+
+The kind column is DERIVED, never stored: core decides that a field named after a built-in is that
+built-in (at every door), so the form is told what the definition already means rather than carrying
+a second copy that could disagree with it.
 
 **Picked when the field is added, settled after that.** The moment a row names a built-in it has
 nothing left to configure — the name is the choice, the value comes from the framework, the type is

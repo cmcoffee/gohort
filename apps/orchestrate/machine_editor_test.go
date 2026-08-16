@@ -662,27 +662,37 @@ func TestTheFormListsTheBuiltInVariables(t *testing.T) {
 	}
 }
 
-// The wheel sits on the field NAME: pick a built-in and the field is
-// filled from it. If the options are not there, the feature exists only
-// for whoever edits the JSON.
-func TestTheValueWheelOffersTheBuiltIns(t *testing.T) {
+// Adding a field asks WHAT KIND first, as a choice rather than a text
+// box that happens to have suggestions. A combo asked both questions at
+// once: click it and you are typing, with the built-ins behind a
+// dropdown arrow nobody looks for.
+func TestAddingAFieldPicksItsKindFirst(t *testing.T) {
 	_, _, _, def := editorFixture(t)
 	tri, _ := def.Phase("triage")
 	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	form := string(raw)
 
-	if !strings.Contains(form, `"combo"`) {
-		t.Fatal("the name column is not a combo — there is no wheel to pick a built-in from")
+	if strings.Contains(form, `"combo"`) {
+		t.Error("the kind of a field is a choice, not free text with suggestions")
 	}
+	if !strings.Contains(form, `"field":"builtin"`) {
+		t.Fatal("no control for choosing what kind of field this is")
+	}
+	// Every built-in, by the name a field takes when it holds one, with
+	// what it means beside it — and the alternative said as work rather
+	// than as a category.
 	for _, want := range []string{"original_input", "now", "user"} {
 		if !strings.Contains(form, `"value":"`+want+`"`) {
-			t.Errorf("%s is a built-in but not offered on the wheel", want)
+			t.Errorf("%s is a built-in but not offered", want)
 		}
+	}
+	if !strings.Contains(form, `"value":"custom"`) || !strings.Contains(form, "Something this step works out") {
+		t.Error("there should be an explicit choice for a field the step establishes")
 	}
 	// Names, not template syntax: the braces are how a value is
 	// referenced in a prompt, not part of what a field is called.
 	if strings.Contains(form, `"value":"{now}"`) {
-		t.Error("the wheel should offer field NAMES, not {braced} references")
+		t.Error("the choices should be field NAMES, not {braced} references")
 	}
 	// A whole block is not one field's value.
 	if strings.Contains(form, `"value":"established"`) {
@@ -698,12 +708,22 @@ func TestTheValueWheelOffersTheBuiltIns(t *testing.T) {
 // is true for the machine tool and an imported file as well.
 func TestTheValueWheelRoundTrips(t *testing.T) {
 	out := outputsFromAny([]any{
-		map[string]any{"name": "original_input", "type": "string"},
-		map[string]any{"name": "kind", "type": "string"},
+		// The kind column answers where the name comes from. Row 1 picked
+		// a built-in and still carries a name somebody typed BEFORE
+		// choosing — the box is hidden for that kind, so the stale value
+		// must not win.
+		map[string]any{"builtin": "original_input", "name": "leftover", "type": "string"},
+		map[string]any{"builtin": "custom", "name": "kind", "type": "string"},
 		map[string]any{"name": "asked", "type": "string", "from": "{original_input}"},
 	})
 	if len(out) != 3 {
 		t.Fatalf("expected three fields, got %+v", out)
+	}
+	if out[0].Name != "original_input" {
+		t.Errorf("the chosen kind names the field, not a stale box: %+v", out[0])
+	}
+	if out[1].Name != "kind" {
+		t.Errorf("a custom field is named by what was typed: %+v", out[1])
 	}
 	// A hand-authored from on a field with its own name survives an
 	// editor save — the JSON door and the form door agree.
@@ -727,10 +747,24 @@ func TestTheValueWheelRoundTrips(t *testing.T) {
 		t.Errorf("a field nobody named after a built-in stays the step's work: %+v", filled)
 	}
 
+	// And the form is told which kind each stored row is, derived from
+	// the definition rather than stored beside it.
 	rec := phaseRecord(ph)
 	rows, _ := rec["output"].([]map[string]any)
-	if len(rows) == 0 || rows[0]["name"] != "original_input" {
-		t.Errorf("the record should carry the fields back to the form: %+v", rows)
+	if len(rows) != 3 {
+		t.Fatalf("the record should carry the fields back to the form: %+v", rows)
+	}
+	if rows[0]["builtin"] != "original_input" || rows[0]["name"] != "original_input" {
+		t.Errorf("a built-in row should come back as that built-in: %+v", rows[0])
+	}
+	if rows[1]["builtin"] != "custom" || rows[1]["name"] != "kind" {
+		t.Errorf("a field the step works out should come back as custom: %+v", rows[1])
+	}
+	// A field with its own name but a hand-authored fill is still the
+	// step's own field — the JSON door's case, which the form must not
+	// silently convert into a built-in.
+	if rows[2]["builtin"] != "custom" || rows[2]["name"] != "asked" {
+		t.Errorf("an explicitly-filled field keeps its own name: %+v", rows[2])
 	}
 }
 
@@ -745,11 +779,16 @@ func TestABuiltInFieldSettlesWhenItIsPicked(t *testing.T) {
 	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	form := string(raw)
 
-	if !strings.Contains(form, `"lock_when":"name:`) {
-		t.Error("the name column should lock once it names a built-in")
+	if !strings.Contains(form, `"lock_when":"builtin:`) {
+		t.Error("the kind should settle once it is answered")
 	}
-	if !strings.Contains(form, `"hide_when":"name:`) {
-		t.Error("type/required/instruction should go away for a built-in field")
+	if !strings.Contains(form, `"hide_when":"builtin:`) {
+		t.Error("name/type/required/instruction should go away for a built-in field")
+	}
+	// Settling covers BOTH answers: a field that changes kind after it
+	// has been described is a different field.
+	if !strings.Contains(fieldKindChosenExpr(), "|custom") {
+		t.Error("choosing 'something this step works out' should settle the row too")
 	}
 	// The condition has to list every built-in, or the ones it misses
 	// keep a type control that does nothing.
