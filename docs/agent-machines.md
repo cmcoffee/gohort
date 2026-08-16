@@ -728,6 +728,16 @@ page is rebuilt — the add dialog used to close and appear to do nothing. The a
 the editor carrying the new step's section anchor, so it reopens with that step's form already
 open.
 
+**Changing a step's KIND rebuilds the form.** The sections under "What kind of step is this?" are
+built from that answer server-side, so toggling it without a rebuild left a step showing controls
+its new kind cannot use — an output contract on a step that now waits, a guard on one that no
+longer does. Same rule as the rename field: a control whose answer changes which controls exist
+reloads, and (being a toggle) it commits on change, so nothing typed is at risk.
+
+**Export and Duplicate** sit on the editor page, next to the machine's own fields — the portable
+recipe and the safe-experiment copy both existed as endpoints and neither was reachable from the
+page where you author. Duplicate opens the copy, because working on the copy is the point.
+
 **Steps reorder** (↑↓ on each step's toolbar — the order is the rail and the reading order),
 machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
 the working one in place is how the working one stops working), and **What a turn costs** is derived

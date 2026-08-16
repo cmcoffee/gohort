@@ -167,13 +167,34 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).
 			ClientAction("machine_try_reset", machineTryResetJS).
+			ClientAction("machine_duplicate", machineDuplicateJS).
 			JS(machineTryEnterJS),
 		Sections: []ui.Section{
 			{
 				Title:    "The machine",
 				Wide:     true,
 				Subtitle: "Its name, and where a new conversation begins.",
-				Body:     meta,
+				Body: ui.Stack{Children: []ui.Component{
+					meta,
+					// The portable recipe and the safe-experiment copy,
+					// both of which already existed as endpoints and
+					// neither of which was reachable from the page where
+					// you author. Export downloads the same JSON the
+					// bundle carries; Duplicate lands in the copy, so
+					// trying something drastic never costs the original.
+					ui.Toolbar{Actions: []ui.ToolbarAction{{
+						Label:  "Export",
+						Title:  "Download this machine's portable recipe",
+						Method: "GET",
+						URL:    "/orchestrate/api/machines/" + url_(def.ID) + "/export",
+					}, {
+						Label:  "Duplicate",
+						Title:  "Make a copy to experiment on, and open it",
+						Method: "client",
+						URL:    "machine_duplicate",
+						Data:   def.ID,
+					}}},
+				}},
 			},
 		},
 	}
@@ -293,6 +314,23 @@ const machineRemoveStepJS = `function(ctx) {
     })
     .catch(function(err) {
       window.uiAlert && window.uiAlert('Could not remove it: ' + (err && err.message || err));
+    });
+}`
+
+// machineDuplicateJS copies the machine and opens the copy — the point
+// of duplicating is to work on the copy, so staying on the original
+// would be the wrong half of the action.
+const machineDuplicateJS = `function(ctx) {
+  var id = ctx && ctx.action && ctx.action.data;
+  if (!id) return;
+  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/duplicate', {method: 'POST'})
+    .then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+      return r.json();
+    })
+    .then(function(d) { window.location.href = '/orchestrate/machine?id=' + encodeURIComponent(d.id); })
+    .catch(function(err) {
+      window.uiAlert && window.uiAlert('Could not duplicate it: ' + (err && err.message || err));
     });
 }`
 

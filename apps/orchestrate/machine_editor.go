@@ -469,7 +469,15 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 
 		{Type: "header", Label: "What kind of step is this?",
 			Help: "The one answer everything below depends on. A step the conversation WAITS in replies to the person and cannot record fields — its reply goes to them, not to a decoder. A step that passes through records what it worked out and hands to the next one."},
-		{Field: "resident", Type: "toggle", Label: "The conversation waits here",
+		// The sections below are built from this answer, server-side, so
+		// the promise in the help text ("the sections below change to
+		// match") is only true if the page rebuilds. Toggling it left a
+		// step showing controls its new kind cannot use — an output
+		// contract on a step that now waits, a guard on one that does
+		// not — which is the same lie as an added step that never
+		// appears. A toggle saves on change, never on a debounce, so
+		// reloading here costs nothing typed.
+		{Field: "resident", Type: "toggle", Label: "The conversation waits here", ReloadOnChange: true,
 			Help: "ON: a turn ENDS here and the person replies into it — this is where a conversation lives, and the sections below change to match. OFF: the step runs, records what it establishes, and passes straight on within the same turn. A machine needs at least one step with this on, or a turn has nowhere to finish."},
 	}
 	if !p.Resident {

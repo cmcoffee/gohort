@@ -245,3 +245,39 @@ console.log('OK');
 		t.Fatalf("machineTryJS threw before the fetch:\n%s", out)
 	}
 }
+
+// Export and Duplicate existed as endpoints but were unreachable from
+// the page where machines are authored — the portable recipe and the
+// safe-experiment copy both lived somewhere else. Wiring like this
+// spans two files, so pin the pair.
+func TestTheEditorOffersExportAndDuplicate(t *testing.T) {
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(page)
+	if !strings.Contains(src, `/export"`) {
+		t.Error("the editor has no way to download the recipe")
+	}
+	if !strings.Contains(src, `URL:    "machine_duplicate"`) {
+		t.Error("the editor has no way to copy the machine")
+	}
+	if !strings.Contains(src, `ClientAction("machine_duplicate", machineDuplicateJS)`) {
+		t.Error("machine_duplicate is named by a button but never registered — the button would do nothing")
+	}
+	// Duplicating opens the COPY: staying on the original is the wrong
+	// half of the action.
+	if !strings.Contains(machineDuplicateJS, "window.location.href = '/orchestrate/machine?id='") {
+		t.Error("duplicate should land in the copy")
+	}
+	// And the endpoint it posts to is one the router serves.
+	routes, err := os.ReadFile("machines_http.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`case "duplicate":`, `case "export":`} {
+		if !strings.Contains(string(routes), want) {
+			t.Errorf("nothing serves %s", want)
+		}
+	}
+}

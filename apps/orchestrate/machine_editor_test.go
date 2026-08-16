@@ -1000,3 +1000,34 @@ func TestAddingAStepLandsOnTheNewStep(t *testing.T) {
 		t.Error("the step should exist in the store")
 	}
 }
+
+// Toggling "the conversation waits here" rebuilds the page, because the
+// sections below it are built from that answer server-side. Without the
+// reload the step kept showing controls its new kind cannot use — an
+// output contract on a step that now waits, a guard on one that no
+// longer does — and the toggle's own help text promised otherwise.
+func TestTheKindToggleRebuildsTheForm(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
+	form := string(raw)
+
+	if !strings.Contains(form, `"field":"resident"`) {
+		t.Fatal("no kind toggle in the form")
+	}
+	// The flag has to be on the toggle specifically — it is the only
+	// control on this form whose answer changes which controls exist.
+	var fields []map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fields {
+		if f["field"] == "resident" && f["reload_on_change"] != true {
+			t.Error("toggling the step's kind must rebuild the form it changes")
+		}
+	}
+	// And the promise it makes is the one being kept.
+	if !strings.Contains(form, "the sections below change to match") {
+		t.Error("the help text that motivates the reload went missing")
+	}
+}
