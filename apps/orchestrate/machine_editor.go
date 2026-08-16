@@ -583,14 +583,14 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// anyway, so letting somebody correct themselves costs
 					// nothing and is what everything else on this page
 					// already allows.
-					{Field: "builtin", Type: "select", Label: "What is this?", Width: 3,
+					{Field: "builtin", Type: "select", Label: "What is this?", Width: 4,
 						Options: fieldKindOptions(),
 						Help:    "A built-in is filled from what the framework already holds. A variable is something this step works out."},
 					// The placeholder shows the SHAPE, not an example noun.
 					// A bare "hypothesis" sitting in a box labelled Field
 					// reads as neither a value nor an instruction — it
 					// just asks the reader why hypothesis.
-					{Field: "name", Type: "text", Label: "Field", Width: 2, HideWhen: builtinOrUnansweredExpr(),
+					{Field: "name", Type: "text", Label: "Name", Width: 3, HideWhen: builtinOrUnansweredExpr(),
 						Placeholder: "short_lowercase_name",
 						Help:        "What to call this value. Later steps read it as {state:<step>.<name>}, and it is the label it appears under in what they are handed."},
 					// The columns below are the STEP's work to configure. A
@@ -598,7 +598,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// is text, it is always present, and there is nothing
 					// to instruct. Leaving them on screen would be three
 					// controls that quietly do nothing.
-					{Field: "type", Type: "select", Label: "Type", HideWhen: builtinOrUnansweredExpr(), Options: []ui.SelectOption{
+					{Field: "type", Type: "select", Label: "Type", Width: 2, HideWhen: builtinOrUnansweredExpr(), Options: []ui.SelectOption{
 						{Value: "string", Label: "text"},
 						{Value: "list", Label: "list"},
 						{Value: "number", Label: "number"},
@@ -606,12 +606,11 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 						{Value: "object", Label: "object"},
 					}},
 					{Field: "required", Type: "toggle", Label: "Required", HideWhen: builtinOrUnansweredExpr()},
-					// The instruction, and the widest thing on the row. A
-					// single-line cell taught people to write three words;
-					// this is where the work of the step is actually
-					// specified, so it has to look like somewhere you
-					// write.
-					{Field: "desc", Type: "textarea", Rows: 3, Width: 6, HideWhen: builtinOrUnansweredExpr(),
+					// The instruction, on its own line. It is where the work
+					// of the step is actually specified, and sharing a line
+					// with the short cells meant either it was too narrow
+					// to write in or they were too narrow to read.
+					{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, HideWhen: builtinOrUnansweredExpr(),
 						Label:       "What to work out — write it as the instruction for this field",
 						Placeholder: "e.g. the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
 				}},

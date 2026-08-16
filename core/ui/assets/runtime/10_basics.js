@@ -1471,6 +1471,24 @@
           return (r && typeof r === 'object') ? JSON.parse(JSON.stringify(r)) : {};
         }) : [];
         input = el('div', {class: 'ui-rows'});
+        // Column headers. A repeating row of bare controls is a puzzle
+        // without them — a select, a text box and a checkbox side by
+        // side say nothing about which is which, and the title
+        // attribute each cell carries is a tooltip, not a label.
+        // Rendered only when the caller named its columns, so an
+        // unlabelled rows field is untouched, and only over the cells
+        // that share the top line (an own_line cell labels itself).
+        if (cols.some(function(c) { return c.label && !c.own_line; })) {
+          var headRow = el('div', {class: 'ui-rows-head'});
+          cols.forEach(function(c) {
+            if (c.own_line) return;
+            headRow.appendChild(el('div', {
+              style: 'flex:' + (c.width || 1) + ';min-width:0',
+              text: c.label || '',
+            }));
+          });
+          input.appendChild(headRow);
+        }
         var body = el('div', {});
         input.appendChild(body);
 
@@ -1513,7 +1531,7 @@
             }));
           }
           rowsVal.forEach(function(row, idx) {
-            var cells = [];
+            var cells = [], wide = [];
             // What this row looked like when it was drawn. Every cell
             // commits through the closure below, so a change that flips
             // a condition redraws and one that does not costs nothing.
@@ -1529,7 +1547,12 @@
               // ignored for — the setting that silently does nothing is
               // worse than the setting that is not offered.
               if (c.hide_when && matchesWhen(c.hide_when, row)) {
-                cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'}));
+                // A hidden top-line cell still holds its column open, so
+                // rows stay aligned under the headers; a hidden own_line
+                // cell simply has no line.
+                if (!c.own_line) {
+                  cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'}));
+                }
                 return;
               }
               if (c.lock_when && matchesWhen(c.lock_when, row)) {
@@ -1631,6 +1654,18 @@
                 ctl.addEventListener('blur', commit);
               }
               ctl.title = c.help || c.label || c.field;
+              if (c.own_line) {
+                // Full width, on a line of its own, with its label above
+                // it: a cell holding an instruction cannot share a line
+                // with the short cells that identify the row without
+                // squeezing every one of them.
+                var block = el('div', {class: 'ui-rows-wide'});
+                if (c.label) block.appendChild(el('div', {class: 'ui-rows-wide-label', text: c.label}));
+                block.appendChild(ctl);
+                if (extra) block.appendChild(extra);
+                wide.push(block);
+                return;
+              }
               cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'},
                            extra ? [ctl, extra] : [ctl]));
             });
@@ -1651,9 +1686,17 @@
                 onclick: function() { rowsVal.splice(idx, 1); drawRows(); persistRows(); },
               }, ['✕']),
             ]));
-            body.appendChild(el('div', {
-              style: 'display:flex;gap:0.35rem;align-items:center;margin-bottom:0.3rem',
-            }, cells));
+            var top = el('div', {style: 'display:flex;gap:0.35rem;align-items:center'}, cells);
+            if (wide.length === 0) {
+              top.style.marginBottom = '0.3rem';
+              body.appendChild(top);
+            } else {
+              // A row that spans lines needs to read as ONE row, so it
+              // gets a block of its own with a rule under it. Without
+              // that, a three-line row and the next row's first line are
+              // the same distance apart and nothing says where one ends.
+              body.appendChild(el('div', {class: 'ui-rows-row'}, [top].concat(wide)));
+            }
           });
         }
         drawRows();

@@ -1286,3 +1286,35 @@ func TestAFieldRowCanChangeItsMind(t *testing.T) {
 		t.Errorf("an unnamed variable should not be stored: %+v", got)
 	}
 }
+
+// The row is a small record, not a strip: the cells that IDENTIFY a
+// field share the top line under headers, and the instruction — the
+// cell that carries the actual work — gets its own.
+func TestTheFieldRowIsLaidOutToBeRead(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
+	var fields []map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	var cols []map[string]any
+	for _, f := range fields {
+		if f["field"] == "output" {
+			b, _ := json.Marshal(f["columns"])
+			_ = json.Unmarshal(b, &cols)
+		}
+	}
+	for _, c := range cols {
+		label, _ := c["label"].(string)
+		if label == "" {
+			t.Errorf("column %v has no header, so nothing on screen says what it is", c["field"])
+		}
+		if c["field"] == "desc" && c["own_line"] != true {
+			t.Error("the instruction should not share a line with the cells that name the field")
+		}
+		if c["field"] != "desc" && c["own_line"] == true {
+			t.Errorf("%v identifies the field and belongs on the top line", c["field"])
+		}
+	}
+}

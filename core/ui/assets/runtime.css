@@ -1404,6 +1404,36 @@ select:-webkit-autofill {
   max-height: 28rem;
   overflow-y: auto;
 }
+/* Repeating rows: headers over the columns, and a row that spans lines
+   reading as one row. Without the rule, a three-line row and the next
+   row's first line sit the same distance apart and nothing says where
+   one ends. */
+.ui-rows-head {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.3rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.ui-rows-row {
+  padding: 0.45rem 0.5rem;
+  margin-bottom: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-1, transparent);
+}
+.ui-rows-wide { margin-top: 0.45rem; }
+.ui-rows-wide-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  margin-bottom: 0.15rem;
+}
+
 .ui-checklist-toolbar {
   display: flex; gap: 0.3rem;
   padding-bottom: 0.4rem; margin-bottom: 0.4rem;

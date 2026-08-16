@@ -905,6 +905,17 @@ type FormField struct {
 	// under the person still typing the rest.
 	ReloadOnChange bool `json:"reload_on_change,omitempty"`
 
+	// OwnLine puts a "rows" column on its own full-width line beneath
+	// the row's other cells, with its Label above it.
+	//
+	// For the cell that holds an INSTRUCTION rather than an identifier.
+	// Sharing a line with the short cells means either it is too narrow
+	// to write in or they are too narrow to read; on its own line both
+	// are what they need to be, and the row reads as a small record
+	// rather than a squeezed strip. A row with one of these is drawn as
+	// a bordered block so it still reads as ONE row.
+	OwnLine bool `json:"own_line,omitempty"`
+
 	// HideWhen and LockWhen are ROW-SCOPED conditions on a "rows"
 	// column, written in the same grammar as ShowWhen ("field:value",
 	// "field:a|b", "!field", chained with ";") but evaluated against the

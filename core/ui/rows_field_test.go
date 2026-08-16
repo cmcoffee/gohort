@@ -7,6 +7,7 @@ package ui
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -286,4 +287,63 @@ func TestEveryRowCellCommitsThroughTheSameGate(t *testing.T) {
 			t.Errorf("a cell type still commits its own way: %q", branch)
 		}
 	}
+}
+
+// A repeating row of bare controls is a puzzle: a select, a text box
+// and a checkbox side by side say nothing about which is which, and the
+// title attribute each carries is a tooltip, not a label. And a cell
+// holding an INSTRUCTION cannot share a line with the short cells that
+// identify the row — either it is too narrow to write in or they are
+// too narrow to read.
+func TestRowsHaveHeadersAndCanGiveALineToOneCell(t *testing.T) {
+	f := FormField{
+		Field: "output", Type: "rows",
+		Columns: []FormField{
+			{Field: "name", Type: "text", Label: "Name", Width: 3},
+			{Field: "desc", Type: "textarea", Label: "What to work out", OwnLine: true},
+		},
+	}
+	raw, _ := json.Marshal(f)
+	if !strings.Contains(string(raw), `"own_line":true`) {
+		t.Errorf("the flag should reach the runtime:\n%s", raw)
+	}
+
+	src := readRuntimeFile(t, "10_basics.js")
+	// Headers, over the top-line columns only — an own_line cell labels
+	// itself, above its own control.
+	if !strings.Contains(src, "ui-rows-head") {
+		t.Error("rows should be headed by their column labels")
+	}
+	if !strings.Contains(src, "if (c.label && !c.own_line)") &&
+		!strings.Contains(src, "c.label && !c.own_line") {
+		t.Error("the header should cover exactly the cells that share the top line")
+	}
+	if !strings.Contains(src, "ui-rows-wide-label") {
+		t.Error("an own_line cell should carry its own label")
+	}
+	// Alignment under those headers survives a hidden cell: a hidden
+	// top-line cell holds its column open, a hidden own_line cell does
+	// not leave an empty band.
+	if !strings.Contains(src, "if (!c.own_line) {") {
+		t.Error("a hidden cell should only hold a column open when it HAS one")
+	}
+	// And a multi-line row has to read as one row.
+	if !strings.Contains(src, "ui-rows-row") {
+		t.Error("a row that spans lines needs to be bounded, or it blurs into the next")
+	}
+	css := readRuntimeCSSForTest(t)
+	for _, want := range []string{".ui-rows-head", ".ui-rows-row", ".ui-rows-wide-label"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("%s has no styling, so it renders as undifferentiated text", want)
+		}
+	}
+}
+
+func readRuntimeCSSForTest(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("assets", "runtime.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
