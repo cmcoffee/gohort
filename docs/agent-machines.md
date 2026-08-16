@@ -798,6 +798,14 @@ what `Problems()` would reject, so there is nothing to explain and nothing to un
 The steps are also the page's left rail (`SectionNav`), so a machine is navigated the way it is read:
 one step at a time, in order.
 
+**The map redraws when a step changes shape.** It is rendered server-side, so an edit that changes
+the machine without reloading the page — ticking a choice adds an arrow — would leave the picture
+describing the machine as it was a moment before, while you look at it. It re-fetches itself
+(`/graph?links=1`, the map form with the section anchors) on the same invalidation broadcast the
+preview uses, coalesced so a checklist's save-per-box is one redraw, and re-lights the step you are
+on afterwards. Structural edits that reload the page (add, remove, rename, reorder, kind) never
+reach it.
+
 **The map is pinned above the steps** (`Page.Sticky`), because `SectionNav` shows one section at a
 time — a picture in a section of its own could never be on screen with the step being edited, which
 is exactly when you need it: a step's form lists the names it may choose between, while the SHAPE of

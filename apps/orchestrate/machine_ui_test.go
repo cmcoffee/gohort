@@ -555,3 +555,63 @@ func TestTheStepListShowsABranch(t *testing.T) {
 		t.Errorf("a step that hands off to one place is a sequence, not a branch: %v", got)
 	}
 }
+
+// The map is rendered server-side, so an edit that changes the SHAPE
+// without reloading the page leaves it describing the machine as it was
+// a moment ago. Ticking a choice is exactly that edit: it adds an
+// arrow, and it is made while looking at the picture that should show
+// it.
+func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide", Next: "answer"},
+			{Name: "dig", Prompt: "look", Next: "answer"},
+			{Name: "answer", Prompt: "reply", Resident: true},
+		}})
+
+	// The endpoint the refresh calls draws the MAP — anchors and all —
+	// not the plain picture, or a redraw would quietly cost every box
+	// its link.
+	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/graph?links=1", nil)
+	w := httptest.NewRecorder()
+	app.handleMachineOne(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("graph fetch failed: %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `href="#dig"`) {
+		t.Error("the refreshed map should keep its links")
+	}
+	// And the plain endpoint stays plain — it is what a standalone
+	// image or a saved copy gets.
+	r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/graph", nil)
+	w = httptest.NewRecorder()
+	app.handleMachineOne(w, asUser(r, user))
+	if strings.Contains(w.Body.String(), `href="#dig"`) {
+		t.Error("anchors only mean something inside the page that has those sections")
+	}
+
+	// Adding a choice adds an arrow: what the redraw exists to show.
+	before := strings.Count(machineGraphSVG(def), "stroke-dasharray")
+	def.Phases[0].Choices = []string{"dig", "answer"}
+	if after := strings.Count(machineGraphSVG(def), "stroke-dasharray"); after <= before {
+		t.Errorf("ticking a choice should change the picture: %d then %d", before, after)
+	}
+
+	// The listener keys off the same broadcast the preview uses, and
+	// coalesces: a checklist fires one save per box.
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(page)
+	if !strings.Contains(src, "graph?links=1") {
+		t.Error("the map never refetches itself")
+	}
+	if !strings.Contains(src, "clearTimeout(pending)") {
+		t.Error("three ticks should not be three fetches of the same picture")
+	}
+	if !strings.Contains(src, "body.innerHTML = svg;\n          mark();") {
+		t.Error("a redrawn map should light the step you are on again")
+	}
+}

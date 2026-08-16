@@ -534,6 +534,35 @@ const machineMapHereJS = `(function() {
   }
   window.addEventListener('hashchange', mark);
   mark();
+
+  // Redraw the map when a step is saved. Ticking a choice ADDS AN ARROW
+  // — the shape changed — and the map is rendered server-side, so
+  // without this the picture kept describing the machine as it was
+  // before the edit that was made while looking at it. Structural edits
+  // that reload the page (add, remove, rename, reorder, kind) do not
+  // need it; the ones that quietly change routing do.
+  var pending = null;
+  window.addEventListener('ui-data-changed', function(ev) {
+    var sources = (ev.detail && ev.detail.sources) || [];
+    var touched = sources.some(function(s) { return String(s).indexOf('/phases?name=') >= 0; });
+    if (!touched) return;
+    var body = document.querySelector('.machine-map-body');
+    var id = new URLSearchParams(window.location.search).get('id');
+    if (!body || !id) return;
+    // One redraw per burst: a checklist fires a save per box, and three
+    // ticks should not be three fetches of the same picture.
+    clearTimeout(pending);
+    pending = setTimeout(function() {
+      fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/graph?links=1')
+        .then(function(r) { return r.ok ? r.text() : null; })
+        .then(function(svg) {
+          if (!svg) return;
+          body.innerHTML = svg;
+          mark();
+        })
+        .catch(function() {});
+    }, 250);
+  });
 })();`
 
 // machineGraphSVG renders the picture with each step linking to its own

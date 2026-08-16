@@ -370,6 +370,14 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		// ?links=1 draws it as the editor's MAP: every box a door into
+		// that step's section. Same picture either way — the difference
+		// is anchors, which only mean something inside the page that has
+		// those sections.
+		if r.URL.Query().Get("links") == "1" {
+			_, _ = w.Write([]byte(machineGraphSVG(def)))
+			return
+		}
 		_, _ = w.Write([]byte(def.Graph().SVG(overlay)))
 	case "export":
 		if r.Method != http.MethodGet {
