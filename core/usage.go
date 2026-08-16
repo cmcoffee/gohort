@@ -1,6 +1,9 @@
 package core
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // UsageTracker accumulates LLM token counts (split by worker / lead
 // tier) and search API calls across a process. Instrumentation lives
@@ -86,6 +89,36 @@ var processUsage = &UsageTracker{}
 // AddWorker / AddLead / AddSearchCall helpers on the singleton.
 func ProcessUsage() *UsageTracker { return processUsage }
 
+// requestUsageKey carries a per-request UsageTracker on a request
+// context so instrumentation can credit the request that caused a
+// call, not just the process. Installed by UsageReportMiddleware.
+type requestUsageKey struct{}
+
+// WithRequestUsage returns a child context carrying a fresh
+// UsageTracker plus the tracker itself. The tracker starts at zero,
+// so a plain Snapshot() at the end of the scope IS the scope's own
+// consumption — no start snapshot to diff against, and no cross-talk
+// from concurrent requests or background work that share the process
+// tracker. Detached contexts (background pipelines) deliberately drop
+// the tracker: their spend belongs to the process, not the request
+// that happened to spawn them.
+func WithRequestUsage(ctx context.Context) (context.Context, *UsageTracker) {
+	t := &UsageTracker{}
+	return context.WithValue(ctx, requestUsageKey{}, t), t
+}
+
+// RequestUsage returns the context's request-scoped tracker, or nil
+// when the context isn't wrapped (background jobs, scheduled tasks,
+// detached pipeline contexts). Instrumentation points nil-check and
+// skip — the process-wide tracker still counts everything.
+func RequestUsage(ctx context.Context) *UsageTracker {
+	if ctx == nil {
+		return nil
+	}
+	t, _ := ctx.Value(requestUsageKey{}).(*UsageTracker)
+	return t
+}
+
 // AddWorker records token consumption from a worker-tier LLM call.
 // Safe to call with zero values (no-op when provider didn't report
 // token counts). Also rolls the diff into the persistent daily-cost
@@ -105,10 +138,16 @@ func (u *UsageTracker) AddWorkerTokens(input, output, cacheRead, cacheWrite int)
 	u.workerCacheRead += int64(cacheRead)
 	u.workerCacheWrite += int64(cacheWrite)
 	u.mu.Unlock()
-	recordDailyUsage(UsageDiff{
-		WorkerInput: int64(input), WorkerOutput: int64(output),
-		WorkerCacheRead: int64(cacheRead), WorkerCacheWrite: int64(cacheWrite),
-	})
+	// Persist only from the process singleton. Request-scoped trackers
+	// (WithRequestUsage) see the same Add calls as the global; without
+	// this guard every call reached the daily rollup twice and the admin
+	// chart doubled.
+	if u == processUsage {
+		recordDailyUsage(UsageDiff{
+			WorkerInput: int64(input), WorkerOutput: int64(output),
+			WorkerCacheRead: int64(cacheRead), WorkerCacheWrite: int64(cacheWrite),
+		})
+	}
 }
 
 // AddLead records token consumption from a lead-tier LLM call.
@@ -127,10 +166,12 @@ func (u *UsageTracker) AddLeadTokens(input, output, cacheRead, cacheWrite int) {
 	u.leadCacheRead += int64(cacheRead)
 	u.leadCacheWrite += int64(cacheWrite)
 	u.mu.Unlock()
-	recordDailyUsage(UsageDiff{
-		LeadInput: int64(input), LeadOutput: int64(output),
-		LeadCacheRead: int64(cacheRead), LeadCacheWrite: int64(cacheWrite),
-	})
+	if u == processUsage {
+		recordDailyUsage(UsageDiff{
+			LeadInput: int64(input), LeadOutput: int64(output),
+			LeadCacheRead: int64(cacheRead), LeadCacheWrite: int64(cacheWrite),
+		})
+	}
 }
 
 // AddSearchCall increments the external search counter. Should fire
@@ -140,7 +181,9 @@ func (u *UsageTracker) AddSearchCall() {
 	u.mu.Lock()
 	u.searchCalls++
 	u.mu.Unlock()
-	recordDailyUsage(UsageDiff{SearchCalls: 1})
+	if u == processUsage {
+		recordDailyUsage(UsageDiff{SearchCalls: 1})
+	}
 }
 
 // AddImageCall increments the image-generation counter. Fires per
@@ -153,7 +196,9 @@ func (u *UsageTracker) AddImageCall() {
 	u.mu.Lock()
 	u.imageCalls++
 	u.mu.Unlock()
-	recordDailyUsage(UsageDiff{ImageCalls: 1})
+	if u == processUsage {
+		recordDailyUsage(UsageDiff{ImageCalls: 1})
+	}
 }
 
 // Snapshot returns a consistent read of the current counter values.

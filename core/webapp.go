@@ -672,7 +672,20 @@ func MarkUsageReportHandled(ctx context.Context) {
 }
 
 // UsageReportMiddleware wraps an http.Handler so per-request usage is
-// snapshotted at entry and reported at exit via FormatUsageReport.
+// tracked and reported at exit via FormatUsageReport. A fresh
+// request-scoped UsageTracker rides the context (WithRequestUsage);
+// the LLM instrumentation in trackTokens/trackLeadTokens and the
+// image-gen path credit it alongside the process-wide tracker, so the
+// end-of-request line reports THIS request's own spend. It used to
+// diff the process-wide counter instead, which rolled every concurrent
+// user turn, scheduled run, and background pipeline that overlapped
+// the request into its line — the lines could neither be trusted
+// individually nor summed, and never reconciled with the admin chart.
+//
+// SearchCalls is the one remaining approximation: the search tool
+// stack takes no context, so it's diffed over the process-wide window
+// (same trade-off UsageScope makes). Tokens and image calls are exact.
+//
 // Skips when no counters moved (static GETs, HTML pages) so the log
 // doesn't fill with zero-delta noise. Skips streaming paths outright.
 // Skips when the handler called MarkUsageReportHandled — that's how
@@ -693,8 +706,9 @@ func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 			// flip via MarkUsageReportHandled.
 			skip := new(atomic.Bool)
 			ctx := context.WithValue(r.Context(), usageReportSkipKey{}, skip)
+			ctx, reqUsage := WithRequestUsage(ctx)
 			r = r.WithContext(ctx)
-			start := ProcessUsage().Snapshot()
+			globalStart := ProcessUsage().Snapshot()
 			// Defer so the report fires even if the handler panics. The
 			// Go server's own panic recovery lets the middleware's defer
 			// run before the connection is torn down.
@@ -702,7 +716,10 @@ func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 				if skip.Load() {
 					return
 				}
-				d := ProcessUsage().Diff(start)
+				// reqUsage started at zero, so its snapshot IS the
+				// request's own consumption.
+				d := reqUsage.Snapshot()
+				d.SearchCalls = ProcessUsage().Diff(globalStart).SearchCalls
 				if d == (UsageDiff{}) {
 					return
 				}

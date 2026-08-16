@@ -342,6 +342,9 @@ func generateWithProvider(ctx context.Context, provider, apiKey, prompt string, 
 	defer func() {
 		if err == nil && result != nil {
 			ProcessUsage().AddImageCall()
+			if t := RequestUsage(ctx); t != nil {
+				t.AddImageCall()
+			}
 		}
 	}()
 

@@ -418,9 +418,9 @@ func (s *Session) ChatStream(ctx context.Context, messages []Message, handler St
 	}
 	s.recordTokens(resp)
 	if servedByLead {
-		s.agent.trackLeadTokens(resp)
+		s.agent.trackLeadTokens(ctx, resp)
 	} else {
-		s.agent.trackTokens(resp)
+		s.agent.trackTokens(ctx, resp)
 	}
 	return resp, err
 }
@@ -628,12 +628,12 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 		if resp != nil {
 			resp.Tier = WORKER
 		}
-		T.trackTokens(resp)
+		T.trackTokens(ctx, resp)
 	} else {
 		if resp != nil {
 			resp.Tier = LEAD
 		}
-		T.trackLeadTokens(resp)
+		T.trackLeadTokens(ctx, resp)
 	}
 	return resp, nil
 }
@@ -972,7 +972,7 @@ func (T *AppCore) WorkerChat(ctx context.Context, messages []Message, opts ...Ch
 		resp.Tier = WORKER
 	}
 	Debug("[llm] chat completed in %s (input: %d, output: %d tokens)", elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
-	T.trackTokens(resp)
+	T.trackTokens(ctx, resp)
 	return resp, nil
 }
 
@@ -1234,9 +1234,9 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 	}
 	Debug("[llm] %s stream completed in %s (input: %d, output: %d tokens)", label, elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
 	if tier == LEAD {
-		T.trackLeadTokens(resp)
+		T.trackLeadTokens(ctx, resp)
 	} else {
-		T.trackTokens(resp)
+		T.trackTokens(ctx, resp)
 	}
 	return resp, nil
 }
@@ -1246,7 +1246,7 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 // paths call it. For lead-tier calls, use trackLeadTokens. The split
 // matters for cost estimation since worker and lead models typically
 // price very differently.
-func (T *AppCore) trackTokens(resp *Response) {
+func (T *AppCore) trackTokens(ctx context.Context, resp *Response) {
 	if resp == nil {
 		return
 	}
@@ -1263,6 +1263,12 @@ func (T *AppCore) trackTokens(resp *Response) {
 	// Also feed the process-wide UsageTracker so per-run Scope()
 	// callers see the worker portion of consumption.
 	ProcessUsage().AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+	// And the request-scoped tracker, when this call came from an HTTP
+	// request — that's what makes the middleware's per-request cost line
+	// report this request's own spend instead of the process-wide window.
+	if t := RequestUsage(ctx); t != nil {
+		t.AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+	}
 }
 
 // trackLeadTokens is the lead-tier counterpart to trackTokens. Called
@@ -1270,7 +1276,7 @@ func (T *AppCore) trackTokens(resp *Response) {
 // LeadChat falls back to the primary LLM (LeadFallback path), callers
 // should use trackTokens instead so the tokens get attributed to the
 // worker tier that actually served them.
-func (T *AppCore) trackLeadTokens(resp *Response) {
+func (T *AppCore) trackLeadTokens(ctx context.Context, resp *Response) {
 	if resp == nil {
 		return
 	}
@@ -1285,6 +1291,9 @@ func (T *AppCore) trackLeadTokens(resp *Response) {
 		}
 	}
 	ProcessUsage().AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+	if t := RequestUsage(ctx); t != nil {
+		t.AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+	}
 }
 
 // SetLimiter sets the limiter with the given limit.

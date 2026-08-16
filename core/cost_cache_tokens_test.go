@@ -10,6 +10,7 @@ package core
 // looked free.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,7 @@ func cachedTurn() *Response {
 
 func TestTheCachedPromptIsCountedNotDiscarded(t *testing.T) {
 	start := ProcessUsage().Snapshot()
-	(&AppCore{}).trackTokens(cachedTurn())
+	(&AppCore{}).trackTokens(context.Background(), cachedTurn())
 	d := ProcessUsage().Diff(start)
 
 	if d.WorkerInput != 2 {
