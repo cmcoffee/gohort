@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -410,5 +411,58 @@ func TestMachineTool_RoundTripsChoicesAndDelegation(t *testing.T) {
 	}
 	if route.RoutesBy() != BuiltinNextStep {
 		t.Errorf("a phase with choices should route on %s, got %q", BuiltinNextStep, route.RoutesBy())
+	}
+}
+
+// The tool is the other authoring door, and a field it silently drops
+// is a machine the model cannot write — which happened once already
+// ("agent" was documented and never decoded, so a machine authored here
+// could not delegate). This makes that class impossible: every field of
+// a phase must round-trip through the decoder, and be mentioned in the
+// spec the model reads.
+func TestTheToolDecodesAndDocumentsEveryPhaseField(t *testing.T) {
+	// Every field set to something non-zero, so a dropped one shows up
+	// as a zero value rather than as a guess about which mattered.
+	one := map[string]any{
+		"name": "step_one", "desc": "what it does", "prompt": "do it",
+		"tools": []any{"read_file"}, "model": "lead", "think": "on",
+		"output": []any{map[string]any{
+			"name": "found", "type": "string", "desc": "what turned up",
+			"required": true, "from": "{now}", "enum": []any{"answer"},
+		}},
+		"resident": true, "next": "answer", "next_from": "found",
+		"choices": []any{"answer"}, "guard": "they moved on", "guard_to": "answer",
+		"keep": []any{"answer"}, "agent": "Log analyst", "exits_to": []any{"answer"},
+	}
+	phases, err := parseMachinePhases([]any{one})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(phases) != 1 {
+		t.Fatalf("expected one phase, got %d", len(phases))
+	}
+
+	v := reflect.ValueOf(phases[0])
+	typ := v.Type()
+	for i := 0; i < typ.NumField(); i++ {
+		tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if v.Field(i).IsZero() {
+			t.Errorf("phase field %q was documented and set, but the decoder dropped it", tag)
+		}
+		// And the model has to be told it exists, or it can never write
+		// one: a field the spec omits is a field nothing will use.
+		if !strings.Contains(machineHelpText, tag) {
+			t.Errorf("phase field %q is decoded but the spec never mentions it", tag)
+		}
+	}
+
+	// The nested field shape too — a declared output is the one place a
+	// phase carries a sub-record.
+	f := phases[0].Output[0]
+	if f.Name == "" || f.Type == "" || f.Desc == "" || !f.Required || f.From == "" || len(f.Enum) == 0 {
+		t.Errorf("a declared field lost part of itself in the decoder: %+v", f)
 	}
 }

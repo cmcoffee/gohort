@@ -103,7 +103,8 @@ agent      agent name/id — for kind=agent, optionally for kind=fanout
 tools      restrict a worker stage to a subset of the caller's catalog; [] = none
 think      true on stages that genuinely reason (synthesis, verification, decomposition)
 model      "worker" (default) | "lead" — the precision tier
-output     [{name, type, desc, required}] — declare a validated JSON result
+output     [{name, type, desc, required, enum?}] — declare a validated JSON result. "enum": [values]
+           constrains a string field to a fixed set, checked where the decoder can still repair it
 fan_over   (fanout) an earlier stage, or one of its list fields: "plan.queries"
 body       (loop) nested stage list, repeated
 count      (loop) required, 1-25 — the hard ceiling
@@ -624,6 +625,15 @@ func parsePipelineFields(stageNum int, raw any) ([]PipelineField, error) {
 				Desc:     mapStr(f, "desc"),
 				Fields:   nested,
 				Required: mapBool(f, "required"),
+				// Both of these were dropped, and both are load-bearing.
+				// enum is how a routing field DECLARES where it may send
+				// a turn — without it the picture fans out to every step
+				// and a bad target stops being a save-time error. from
+				// fills a field from a variable instead of asking the
+				// model for it, which is the whole point of the feature
+				// the spec describes two paragraphs above.
+				Enum: mapStrList(f, "enum"),
+				From: strings.TrimSpace(mapStr(f, "from")),
 			})
 		default:
 			return nil, fmt.Errorf("stage %d: each output entry must be a field object {name, type, desc?, required?} or a bare field name", stageNum)

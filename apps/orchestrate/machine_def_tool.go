@@ -151,7 +151,9 @@ for it and do NOT list the options in a prompt or a description: the framework d
 with those values, writes the instruction naming each destination and what it is for, and rejects a
 choice that is not a phase when the machine is SAVED. Keep "next" as the fallback.
 By hand: declare a string field and point "next_from" at it, when the value is also a finding worth
-naming. If the model returns a name that does not exist at run time, the machine falls back to
+naming. Give that field "enum": [phase names] to declare where it may send the turn — that is what
+gets the arrows drawn, makes a name that is not a phase a save-time error, and constrains the reply
+where the decoder can still repair it. "choices" does all of that for you. If the model returns a name that does not exist at run time, the machine falls back to
 "next" and leaves a breadcrumb rather than stranding the turn.
 
 === LEAVING A PHASE ===
