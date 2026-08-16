@@ -1056,3 +1056,81 @@ func TestCostLineCountsToolsAndDelegates(t *testing.T) {
 		}
 	}
 }
+
+// One render of the whole editor, over a machine that uses every shape
+// the feature has: a step that decides, one that delegates, one with
+// tools, a filled field, a resident step with a guard. Everything here
+// is composed server-side from that definition, so a mistake anywhere
+// in the composition shows up as a missing section, a stray <nil>, or a
+// panic — none of which the per-function tests can see.
+func TestTheWholeEditorPageRenders(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	if _, err := saveAgent(udb, AgentRecord{Name: "Log analyst", Owner: user, OrchestratorPrompt: "dig"}); err != nil {
+		t.Fatal(err)
+	}
+	def := SaveMachineDef(udb, MachineDef{
+		Owner: user, Name: "Investigation", Description: "Explain something you are seeing.",
+		Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Desc: "Which kind of turn is this?", Prompt: "Decide.",
+				Choices: []string{"dig", "answer"}, Next: "answer",
+				Output: []PipelineField{
+					{Name: "original_input", Type: FieldString},
+					{Name: "observation", Type: FieldString, Desc: "what was seen"},
+				}},
+			{Name: "dig", Desc: "Go and look.", Prompt: "Search for the cause.", Next: "answer",
+				Agent: "Log analyst"},
+			{Name: "log check", Desc: "Read the bundle.", Prompt: "Read it.", Next: "answer",
+				Tools: []string{"read_file", "a_tool_this_box_does_not_have"}},
+			{Name: "answer", Desc: "Reply.", Prompt: "Answer plainly.", Resident: true,
+				Guard: "they moved to a different problem", GuardTo: "triage"},
+		},
+	})
+
+	r := httptest.NewRequest("GET", "/orchestrate/machine?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("the editor did not render: %d", w.Code)
+	}
+	body := w.Body.String()
+	if len(body) < 2000 {
+		t.Fatalf("suspiciously small page (%d bytes)", len(body))
+	}
+
+	// Every section the page promises, and one per step.
+	for _, want := range []string{
+		"The machine", "triage", "dig", "log check", "answer",
+		"Add a step", "Try it", "Picture", "What a turn costs",
+		"Who runs it", "Worth a look", "What is still missing",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	// The picture is inline and its boxes are doors into the rail.
+	// The spec is JSON inside the page, so "<" arrives escaped — assert
+	// on what actually ships rather than on what the Go source looks like.
+	if !strings.Contains(body, `u003csvg`) || !strings.Contains(body, `href=\"#log-check\"`) {
+		t.Error("the diagram should be inlined with a link per step")
+	}
+	// Every client action the page's buttons name is registered on it.
+	for _, action := range []string{"machine_try", "machine_try_reset", "machine_move_step",
+		"machine_remove_step", "machine_duplicate"} {
+		if strings.Count(body, action) < 2 {
+			t.Errorf("%s is named or registered but not both", action)
+		}
+	}
+	// A tool this deployment lacks stays visible rather than being
+	// dropped by the next save.
+	if !strings.Contains(body, "a_tool_this_box_does_not_have") {
+		t.Error("a tool the machine names but the box lacks should still be shown")
+	}
+	// Composition mistakes leave fingerprints: a Sprintf that ran out of
+	// arguments, or a nil that reached a string.
+	for _, smell := range []string{"%!", "<nil>", "&lt;nil&gt;"} {
+		if strings.Contains(body, smell) {
+			t.Errorf("the rendered page contains %q — something composed wrong", smell)
+		}
+	}
+}

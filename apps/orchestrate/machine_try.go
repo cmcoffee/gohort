@@ -187,11 +187,20 @@ func machineTryPanel(def MachineDef) ui.Component {
 			`</div>` +
 			`<div id="machine-try-out" style="margin-top:0.75rem"></div>`},
 		ui.Toolbar{Actions: []ui.ToolbarAction{{
-			Label:   "Run it",
-			Title:   "Send that message through the machine and show the path it takes",
+			Label:   "Send",
+			Title:   "Send that message through the machine and show the path it takes; send another to continue the same rehearsal",
 			Method:  "client",
 			URL:     "machine_try",
 			Variant: "primary",
+		}, {
+			// The other half of a multi-turn rehearsal: without this the
+			// only way back to turn one is reloading the page, and the
+			// handler that clears it was registered with nothing naming
+			// it — a button that exists only in the runtime's registry.
+			Label:  "Start over",
+			Title:  "Forget this rehearsal and begin a fresh conversation",
+			Method: "client",
+			URL:    "machine_try_reset",
 		}}},
 	}}
 }

@@ -124,6 +124,16 @@ func TestMachineTryPanel_ButtonMarkupAndRouteAgree(t *testing.T) {
 	if !strings.Contains(panel, `"url":"machine_try"`) || !strings.Contains(panel, `"method":"client"`) {
 		t.Errorf("the button does not name the client action: %s", panel)
 	}
+	// A rehearsal that can only be cleared by reloading the page is half
+	// a rehearsal — and the handler for this was registered with nothing
+	// naming it for several versions, which is why the pairing is pinned
+	// from BOTH sides now (see TestTheWholeEditorPageRenders).
+	if !strings.Contains(panel, `"url":"machine_try_reset"`) {
+		t.Error("no way to start the rehearsal over")
+	}
+	if !strings.Contains(panel, `"label":"Send"`) {
+		t.Error("the button should read as sending another message, not running once")
+	}
 	// The JS looks these up by id. A renamed element is a panel that
 	// renders and a button that quietly finds nothing.
 	for _, id := range []string{"machine-try-msg", "machine-try-out"} {
