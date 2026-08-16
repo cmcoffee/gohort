@@ -289,10 +289,11 @@ func fieldKindOptions() []ui.SelectOption {
 		name := BuiltinFieldName(v.Ref)
 		out = append(out, ui.SelectOption{Value: name, Label: name + " — " + v.Means})
 	}
-	// Last, and phrased as the work rather than as a category: the
-	// alternative to a value the framework already holds is a value the
-	// step has to establish.
-	return append(out, ui.SelectOption{Value: customFieldKind, Label: "Something this step works out"})
+	// Last, and named plainly: this is the ordinary case, and the word
+	// for it should be the one an author would use to a colleague. The
+	// sentence version ("something this step works out") reads as a
+	// description of one field rather than the standing choice it is.
+	return append(out, ui.SelectOption{Value: customFieldKind, Label: "Variable"})
 }
 
 // customFieldKind is the kind marker for a field the step establishes
@@ -353,13 +354,6 @@ func builtinOrUnansweredExpr() string {
 	return builtinNameExpr() + "|"
 }
 
-// fieldKindChosenExpr matches a row whose kind has been answered at all
-// — built-in or custom. That is when the choice settles: a field that
-// changes KIND after it has been described is a different field, and
-// re-pointing one would leave its description explaining the old one.
-func fieldKindChosenExpr() string {
-	return "builtin:" + strings.Join(append(builtinFieldNames(), customFieldKind), "|")
-}
 
 // builtinFieldNames is the vocabulary by the name a field takes when it
 // holds one, minus the block that no single field can hold.
@@ -580,14 +574,18 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// click it and you are typing, with the built-ins
 					// hidden behind a dropdown arrow nobody looks for — so
 					// the two decisions are now in order: pick a built-in
-					// and the framework fills it, or pick "something this
-					// step works out" and name it yourself. Locked once
-					// answered, because a field that changes KIND after it
-					// has been described is a different field.
+					// and the framework fills it, or pick Variable and name
+					// it yourself.
+					//
+					// Deliberately NOT locked once answered. It settled the
+					// moment it was picked, which turned a mis-click into
+					// a remove-and-re-add; the row reshapes on every change
+					// anyway, so letting somebody correct themselves costs
+					// nothing and is what everything else on this page
+					// already allows.
 					{Field: "builtin", Type: "select", Label: "What is this?", Width: 3,
-						Options:  fieldKindOptions(),
-						LockWhen: fieldKindChosenExpr(),
-						Help:     "A built-in is filled from what the framework already holds; your own is what the step works out."},
+						Options: fieldKindOptions(),
+						Help:    "A built-in is filled from what the framework already holds. A variable is something this step works out."},
 					// The placeholder shows the SHAPE, not an example noun.
 					// A bare "hypothesis" sitting in a box labelled Field
 					// reads as neither a value nor an instruction — it
@@ -1007,12 +1005,18 @@ func phaseRecord(p MachinePhase) map[string]any {
 		// a built-in IS that built-in (core decides this, at every door),
 		// so the form is told what the definition already means rather
 		// than carrying a second copy that could disagree with it.
-		kind := customFieldKind
+		kind, name := customFieldKind, f.Name
 		if _, isBuiltin := BuiltinRefForFieldName(f.Name); isBuiltin {
-			kind = f.Name
+			// The kind carries the identity for these, and the name box
+			// is hidden — so leave it EMPTY. Handing back "now" would
+			// pre-fill that box the moment somebody switched the row to
+			// Variable, and a variable named after a built-in is read as
+			// that built-in at every door: the switch would appear to do
+			// nothing.
+			kind, name = f.Name, ""
 		}
 		rows = append(rows, map[string]any{
-			"name": f.Name, "type": string(f.Type), "required": f.Required,
+			"name": name, "type": string(f.Type), "required": f.Required,
 			"desc": f.Desc, "from": f.From, "builtin": kind,
 		})
 	}

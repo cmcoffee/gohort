@@ -598,9 +598,15 @@ not in them, so a turn that arrived as a photo and nothing else resolves to noth
 leaves a `machine_static_empty` breadcrumb rather than a silently empty field.
 
 Adding a field asks WHAT KIND first: a choice between each built-in (by the name a field takes when
-it holds one, with what it means beside it) and "Something this step works out". A combo box asked
-both questions at once — click it and you are typing, with the built-ins behind a dropdown arrow
-nobody looks for. Only a field of your own reveals a name box.
+it holds one, with what it means beside it) and **Variable** — the ordinary case, named in the word
+an author would use to a colleague. A combo box asked both questions at once: click it and you are
+typing, with the built-ins behind a dropdown arrow nobody looks for. Only a Variable reveals a name
+box, a type, a Required toggle and an instruction; a built-in row is the choice and nothing else.
+
+The choice is never locked. It settled the instant it was picked once, which turned a mis-click
+into a remove-and-re-add; the row reshapes on every change anyway. Switching a built-in row to
+Variable hands back an EMPTY name box on purpose — a variable named after a built-in is read as
+that built-in at every door, so pre-filling "now" there would make the switch appear to do nothing.
 
 The kind column is DERIVED, never stored: core decides that a field named after a built-in is that
 built-in (at every door), so the form is told what the definition already means rather than carrying

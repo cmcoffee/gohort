@@ -687,8 +687,10 @@ func TestAddingAFieldPicksItsKindFirst(t *testing.T) {
 			t.Errorf("%s is a built-in but not offered", want)
 		}
 	}
-	if !strings.Contains(form, `"value":"custom"`) || !strings.Contains(form, "Something this step works out") {
-		t.Error("there should be an explicit choice for a field the step establishes")
+	// Named plainly, in the word an author would use to a colleague —
+	// this is the ordinary case, not a sentence describing one field.
+	if !strings.Contains(form, `"value":"custom"`) || !strings.Contains(form, `"label":"Variable"`) {
+		t.Error("the ordinary case should be offered as Variable")
 	}
 	// Names, not template syntax: the braces are how a value is
 	// referenced in a prompt, not part of what a field is called.
@@ -755,8 +757,13 @@ func TestTheValueWheelRoundTrips(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("the record should carry the fields back to the form: %+v", rows)
 	}
-	if rows[0]["builtin"] != "original_input" || rows[0]["name"] != "original_input" {
-		t.Errorf("a built-in row should come back as that built-in: %+v", rows[0])
+	// The kind carries a built-in row's identity, and the name box it
+	// hides comes back EMPTY: handing "original_input" to that box would
+	// pre-fill it the moment somebody switched the row to Variable, and
+	// a variable named after a built-in is read as that built-in at
+	// every door — so the switch would appear to do nothing.
+	if rows[0]["builtin"] != "original_input" || rows[0]["name"] != "" {
+		t.Errorf("a built-in row should come back as the kind alone: %+v", rows[0])
 	}
 	if rows[1]["builtin"] != "custom" || rows[1]["name"] != "kind" {
 		t.Errorf("a field the step works out should come back as custom: %+v", rows[1])
@@ -769,27 +776,22 @@ func TestTheValueWheelRoundTrips(t *testing.T) {
 	}
 }
 
-// Picked when the field is added, and settled after that. A built-in
-// field has nothing left to configure — its name is the choice, its
-// value comes from the framework, its type is text — so the name locks
-// and the rest of the row goes away rather than sitting there offering
-// changes that would be ignored.
+// A built-in row collapses to the one thing it is: its name is the
+// choice, its value comes from the framework, its type is text — so the
+// rest of the row goes away rather than sitting there offering changes
+// that would be ignored. What it must NOT do is trap the choice: a
+// mis-click should be a second click, not a remove-and-re-add.
 func TestABuiltInFieldSettlesWhenItIsPicked(t *testing.T) {
 	_, _, _, def := editorFixture(t)
 	tri, _ := def.Phase("triage")
 	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
 	form := string(raw)
 
-	if !strings.Contains(form, `"lock_when":"builtin:`) {
-		t.Error("the kind should settle once it is answered")
+	if strings.Contains(form, `"lock_when":"builtin:`) {
+		t.Error("the kind should stay changeable — everything else on this page lets you correct yourself")
 	}
 	if !strings.Contains(form, `"hide_when":"builtin:`) {
 		t.Error("name/type/required/instruction should go away for a built-in field")
-	}
-	// Settling covers BOTH answers: a field that changes kind after it
-	// has been described is a different field.
-	if !strings.Contains(fieldKindChosenExpr(), "|custom") {
-		t.Error("choosing 'something this step works out' should settle the row too")
 	}
 	// The condition has to list every built-in, or the ones it misses
 	// keep a type control that does nothing.
@@ -1248,5 +1250,39 @@ func TestAFreshFieldRowAsksOneQuestion(t *testing.T) {
 	// condition grammar compares as a string like any other value.
 	if !strings.HasSuffix(builtinOrUnansweredExpr(), "|") {
 		t.Error("the unanswered case should be part of the same expression, not a second mechanism")
+	}
+}
+
+// Changing your mind has to work in both directions, and the switch
+// back must not be a no-op: a variable named after a built-in IS that
+// built-in at every door, so a row flipped from "now" to Variable must
+// arrive with an empty name rather than "now" sitting in the box.
+func TestAFieldRowCanChangeItsMind(t *testing.T) {
+	// built-in → Variable: the kind changes, the name is typed fresh.
+	out := outputsFromAny([]any{
+		map[string]any{"builtin": "custom", "name": "when_it_started", "type": "string",
+			"desc": "when the trouble began"},
+	})
+	if len(out) != 1 || out[0].Name != "when_it_started" || out[0].From != "" {
+		t.Fatalf("a variable is the step's own work: %+v", out)
+	}
+
+	// Variable → built-in: the choice wins over whatever was typed, and
+	// the framework fills it.
+	out = outputsFromAny([]any{
+		map[string]any{"builtin": "now", "name": "when_it_started", "type": "string"},
+	})
+	if len(out) != 1 || out[0].Name != "now" {
+		t.Fatalf("the chosen built-in names the field: %+v", out)
+	}
+	ph := MachinePhase{Name: "triage", Output: out}
+	if len(ph.StaticFields()) != 1 {
+		t.Errorf("and it should be filled rather than asked for: %+v", ph.StaticFields())
+	}
+
+	// A row switched to Variable but not yet named is not a field yet —
+	// it is dropped rather than stored nameless.
+	if got := outputsFromAny([]any{map[string]any{"builtin": "custom", "name": ""}}); len(got) != 0 {
+		t.Errorf("an unnamed variable should not be stored: %+v", got)
 	}
 }
