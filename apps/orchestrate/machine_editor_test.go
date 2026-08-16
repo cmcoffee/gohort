@@ -957,3 +957,46 @@ func TestAddingAStepUnderAnExistingNameIsRefused(t *testing.T) {
 		t.Error("the existing step was clobbered by the add form")
 	}
 }
+
+// Adding a step used to close the dialog and change nothing on screen:
+// the sections, the rail and every other step's selects are built
+// server-side from the phase list, so the new step existed only in the
+// store until a manual refresh. The add form now redirects to the
+// editor with the new step's section anchor — three parts that have to
+// agree: the form declares the redirect, the POST answers with what it
+// substitutes, and the slug matches what the section rail computes.
+func TestAddingAStepLandsOnTheNewStep(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+
+	raw, _ := json.Marshal(addPanel(def, "api/machines/"+def.ID))
+	spec := string(raw)
+	if !strings.Contains(spec, `"redirect_url":"/orchestrate/machine?id={id}#{slug}"`) {
+		t.Fatalf("the add form must reopen the editor on the new step: %s", spec)
+	}
+	if !strings.Contains(spec, `"redirect_target":"_self"`) {
+		t.Error("the redirect should replace the page, not open a tab")
+	}
+
+	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"name": "log check", "desc": "dig"}`))
+	w := httptest.NewRecorder()
+	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	if w.Code != 200 {
+		t.Fatalf("add failed: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct{ ID, Name, Slug string }
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ID != def.ID || resp.Name != "log check" {
+		t.Errorf("the response must carry what the redirect substitutes: %+v", resp)
+	}
+	// The anchor has to be the slug the rail computes from the section
+	// title, or the redirect lands on the page but not on the step.
+	if resp.Slug != ui.SectionSlug("log check") || resp.Slug != "log-check" {
+		t.Errorf("slug %q does not match the section rail's own transform", resp.Slug)
+	}
+	saved, _ := LoadMachineDef(udb, user, def.ID)
+	if _, ok := saved.Phase("log check"); !ok {
+		t.Error("the step should exist in the store")
+	}
+}

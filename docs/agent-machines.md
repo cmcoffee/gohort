@@ -722,6 +722,12 @@ the section nav's new hash support: each section has a URL (`#verify`, `#try-it`
 transform in Go and JS, pinned together by a test), so a deep link or the back button lands on a
 section, on any `SectionNav` page in the product.
 
+**Adding a step lands you on it.** The sections, the rail and every other step's selects are built
+server-side from the phase list, so a step added in the browser exists nowhere on screen until the
+page is rebuilt — the add dialog used to close and appear to do nothing. The add form redirects to
+the editor carrying the new step's section anchor, so it reopens with that step's form already
+open.
+
 **Steps reorder** (↑↓ on each step's toolbar — the order is the rail and the reading order),
 machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
 the working one in place is how the working one stops working), and **What a turn costs** is derived

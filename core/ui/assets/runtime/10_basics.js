@@ -2133,7 +2133,13 @@
           input.setAttribute('list', dl.id);
           fieldWrap.appendChild(dl);
         }
-        input.addEventListener('input', function(){ debounced(f.field, input.value); });
+        // A reload_on_change field is COMMIT-ON-BLUR, never debounced:
+        // it renames the thing the page is addressing, and a mid-typing
+        // save would rename it to whatever half-word was on screen 600ms
+        // ago and then reload the page underneath the person typing.
+        if (!f.reload_on_change) {
+          input.addEventListener('input', function(){ debounced(f.field, input.value); });
+        }
         input.addEventListener('blur', function(){
           clearTimeout(debounceTimers[f.field]);
           if (current[f.field] !== input.value) save(f.field, input.value);

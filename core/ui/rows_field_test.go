@@ -231,3 +231,23 @@ func TestChecklistIsTheGroupedRendererWithAFilter(t *testing.T) {
 		t.Error("select-all/clear should act on the filtered view, not the whole set")
 	}
 }
+
+// ReloadOnChange has two halves and they are one decision: the save
+// reloads the page, so the save must not fire mid-typing. A debounced
+// identity field would rename the record to half a word and reload the
+// page under the person typing the rest.
+func TestReloadOnChangeFieldsCommitOnBlur(t *testing.T) {
+	f := FormField{Field: "name", Type: "text", ReloadOnChange: true}
+	raw, _ := json.Marshal(f)
+	if !strings.Contains(string(raw), `"reload_on_change":true`) {
+		t.Fatalf("the flag should reach the runtime: %s", raw)
+	}
+
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "if (!f.reload_on_change) {\n          input.addEventListener('input', function(){ debounced(f.field, input.value); });") {
+		t.Error("a reload_on_change text field must skip the typing debounce and commit on blur")
+	}
+	if !strings.Contains(src, "if (fdef && fdef.reload_on_change) window.location.reload()") {
+		t.Error("a successful save of such a field should reload the page")
+	}
+}

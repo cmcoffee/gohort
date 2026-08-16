@@ -897,6 +897,12 @@ type FormField struct {
 	// including this form's own post URL — pointing at a name that no
 	// longer exists, and a reload is the honest way to catch them all
 	// up. Auto-save fields only; a submit-mode form redirects instead.
+	//
+	// It also makes a text field COMMIT ON BLUR rather than on the usual
+	// typing debounce. Both halves are the same decision: a field whose
+	// save reloads the page cannot fire 600ms after a pause, or it
+	// renames the record to half a word and pulls the page out from
+	// under the person still typing the rest.
 	ReloadOnChange bool `json:"reload_on_change,omitempty"`
 
 	// HideWhen and LockWhen are ROW-SCOPED conditions on a "rows"

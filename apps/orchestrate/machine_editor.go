@@ -111,7 +111,16 @@ func addPanel(def MachineDef, base string) ui.ModalButton {
 		Body: ui.FormPanel{
 			PostURL:     base + "/phases",
 			SubmitLabel: "Add step",
-			Fields:      phaseFormFields(def),
+			// The sections, the rail and every other step's selects are
+			// built server-side from the phase list, so a step added in
+			// the browser exists nowhere on screen until the page is
+			// rebuilt. Rather than leave somebody looking at a dialog
+			// that closed and changed nothing, land them ON the new
+			// step — the redirect carries the section anchor, so the
+			// editor reopens with that step's form already open.
+			RedirectURL:    "/orchestrate/machine?id={id}#{slug}",
+			RedirectTarget: "_self",
+			Fields:         phaseFormFields(def),
 		},
 	}
 }
@@ -752,7 +761,13 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		}
 		saved := SaveMachineDef(udb, def)
 		Log("[orchestrate.machines] user=%q edited phase %q of %q", user, ph.Name, def.Name)
-		writeJSON(w, map[string]any{"ok": true, "checklist": saved.Problems()})
+		// id/name/slug are what the ADD form's redirect substitutes to
+		// reopen the editor on the step just created. The per-step
+		// panels post here too and ignore them.
+		writeJSON(w, map[string]any{
+			"ok": true, "checklist": saved.Problems(),
+			"id": saved.ID, "name": ph.Name, "slug": ui.SectionSlug(ph.Name),
+		})
 
 	case http.MethodDelete:
 		out := def.Phases[:0:0]
