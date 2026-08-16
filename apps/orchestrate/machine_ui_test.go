@@ -615,3 +615,41 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 		t.Error("a redrawn map should light the step you are on again")
 	}
 }
+
+// The machine's own fields move the map too: "Starts at" is the entry
+// the layout is ranked FROM, so changing it can rearrange every box.
+// And the page is titled with the machine's name, as is the browser
+// tab, so renaming it without a rebuild leaves both showing the old one.
+func TestTheMachinesOwnFieldsKeepThePageTrue(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	raw, _ := json.Marshal(metaPanel(def, "api/machines/"+def.ID))
+	meta := string(raw)
+	if !strings.Contains(meta, `"reload_on_change":true`) {
+		t.Error("renaming the machine should rebuild the page it titles")
+	}
+	// Only the name: the description and the start do not retitle
+	// anything, and a reload on each would be gratuitous.
+	if strings.Count(meta, `"reload_on_change":true`) != 1 {
+		t.Errorf("only the name needs a rebuild: %s", meta)
+	}
+
+	page, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), "'/meta'") {
+		t.Error("a meta save should redraw the map — the start is what the layout ranks from")
+	}
+
+	// And that claim is true of the graph, not just of the comment: the
+	// entry is drawn differently, and the ranking begins there.
+	from := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "p", Next: "answer"},
+		{Name: "answer", Prompt: "p", Resident: true},
+	}}
+	other := from
+	other.Start = "answer"
+	if machineGraphSVG(from) == machineGraphSVG(other) {
+		t.Error("changing where a machine starts should change its map")
+	}
+}

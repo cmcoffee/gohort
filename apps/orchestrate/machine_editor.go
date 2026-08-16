@@ -87,7 +87,12 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 		Source:  base + "/meta",
 		PostURL: base + "/meta",
 		Fields: []ui.FormField{
-			{Field: "name", Type: "text", Label: "Name"},
+			// The page is titled with this, and so is the browser tab.
+			// Renaming without a rebuild leaves both showing the old
+			// name — the same staleness a step's rename had, and safe
+			// for the same reason: ReloadOnChange commits on blur, never
+			// mid-word.
+			{Field: "name", Type: "text", Label: "Name", ReloadOnChange: true},
 			{Field: "description", Type: "textarea", Rows: 2, Label: "When to use this",
 				Help: "Shown wherever someone picks a machine. Say what kind of conversation it is for, not how it works."},
 			{Field: "global", Type: "toggle", Label: "Offer to every agent",

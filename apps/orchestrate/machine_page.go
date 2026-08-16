@@ -544,7 +544,13 @@ const machineMapHereJS = `(function() {
   var pending = null;
   window.addEventListener('ui-data-changed', function(ev) {
     var sources = (ev.detail && ev.detail.sources) || [];
-    var touched = sources.some(function(s) { return String(s).indexOf('/phases?name=') >= 0; });
+    // A step save, or the machine's own — "Starts at" is the entry the
+    // whole layout is ranked FROM, so changing it can rearrange every
+    // box on the map.
+    var touched = sources.some(function(s) {
+      s = String(s);
+      return s.indexOf('/phases?name=') >= 0 || s.lastIndexOf('/meta') === s.length - 5;
+    });
     if (!touched) return;
     var body = document.querySelector('.machine-map-body');
     var id = new URLSearchParams(window.location.search).get('id');
