@@ -286,7 +286,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			return
 		}
 		dup := def
-		dup.ID, dup.Global = "", false
+		dup.ID = ""
 		dup.Name = copyName(def.Name, ListMachineDefs(udb, user))
 		saved := SaveMachineDef(udb, dup)
 		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)

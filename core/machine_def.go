@@ -77,7 +77,6 @@ type MachineDef struct {
 
 	Phases []MachinePhase `json:"phases"`
 
-	Global  bool      `json:"global,omitempty"`
 	Created time.Time `json:"created,omitempty"` // stripped on export
 	Updated time.Time `json:"updated,omitempty"` // stripped on export
 }
@@ -986,7 +985,6 @@ func ExportMachine(d MachineDef) MachineDef {
 	d.Owner = ""
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
-	d.Global = false // scope is a local decision
 	return d
 }
 

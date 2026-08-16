@@ -883,10 +883,9 @@ func TestMachineDef_ThinkOffSurvivesTheStore(t *testing.T) {
 func TestMachineDefRoundTripAndExport(t *testing.T) {
 	def := triageMachine()
 	def.Owner = "alice"
-	def.Global = true
 
 	exported := ExportMachine(def)
-	if exported.Owner != "" || exported.Global || !exported.Created.IsZero() {
+	if exported.Owner != "" || !exported.Created.IsZero() {
 		t.Errorf("export must strip storage/identity metadata, got %#v", exported)
 	}
 	if exported.ID != def.ID {

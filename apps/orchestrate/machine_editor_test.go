@@ -1487,3 +1487,34 @@ func TestRemovingAStepFromTheEditorLeavesNoComplaint(t *testing.T) {
 		t.Errorf("the stored machine should have lost the reference: %v", tri.Choices)
 	}
 }
+
+// Every control the machine's own form offers has to DO something. The
+// "Offer to every agent" toggle was written to a field nothing read,
+// and its help promised reach it could not grant — worse than inert,
+// because all of a user's machines already appear for all of their
+// agents, so the promise was also already true.
+func TestTheMetaFormOffersNothingInert(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	raw, _ := json.Marshal(metaPanel(def, "api/machines/"+def.ID))
+	form := string(raw)
+	if strings.Contains(form, `"field":"global"`) {
+		t.Error("a toggle nothing reads should not be offered")
+	}
+	// The fields that remain each reach the runtime: the name titles the
+	// page and names the machine, the description is what a picker
+	// shows, and the start is where a conversation begins.
+	for _, want := range []string{`"field":"name"`, `"field":"description"`, `"field":"start"`} {
+		if !strings.Contains(form, want) {
+			t.Errorf("the form should still offer %s", want)
+		}
+	}
+
+	// And the field is gone from the recipe, so no door can write it
+	// back and imply the behaviour returned.
+	var recipe map[string]any
+	b, _ := json.Marshal(ExportMachine(def))
+	_ = json.Unmarshal(b, &recipe)
+	if _, ok := recipe["global"]; ok {
+		t.Error("the recipe should not carry a scope nothing honours")
+	}
+}

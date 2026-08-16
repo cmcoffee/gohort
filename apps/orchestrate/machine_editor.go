@@ -95,8 +95,6 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 			{Field: "name", Type: "text", Label: "Name", ReloadOnChange: true},
 			{Field: "description", Type: "textarea", Rows: 2, Label: "When to use this",
 				Help: "Shown wherever someone picks a machine. Say what kind of conversation it is for, not how it works."},
-			{Field: "global", Type: "toggle", Label: "Offer to every agent",
-				Help: "On: this machine appears for all of your agents. Off: only the ones you point at it. A machine is a whole workflow, so this is a bigger grant than it looks — leave it off unless the workflow genuinely suits everything you run."},
 			{Field: "start", Type: "select", Label: "Starts at", Options: phaseOptions(def, false),
 				Help: "The step a new conversation begins in. Usually the one that decides what kind of turn this is."},
 		},
@@ -772,7 +770,7 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
 			"name": def.Name, "description": def.Description,
-			"start": def.StartPhase(), "global": def.Global,
+			"start": def.StartPhase(),
 		})
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -788,9 +786,6 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		}
 		if v, ok := body["start"]; ok {
 			def.Start = strings.TrimSpace(fmt.Sprint(v))
-		}
-		if _, ok := body["global"]; ok {
-			def.Global = BoolArg(body, "global")
 		}
 		// Saved even when it does not validate. This is an editor: a
 		// machine half-built is the normal state while somebody is
