@@ -291,3 +291,111 @@ func TestTheEditorOffersExportAndDuplicate(t *testing.T) {
 		}
 	}
 }
+
+// The rehearsal is multi-turn, and the only way to see that without a
+// browser is to drive the handler. This runs it twice against a stub
+// DOM: the second message must CONTINUE the first (carrying the cursor
+// back, appending rather than replacing), and Start over must forget
+// it. Both halves shipped broken once — the cursor variable undeclared,
+// then the reset button missing — and neither showed up in a test that
+// only read the source.
+func TestMachineTryJSHoldsAConversation(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	harness := `
+function makeEl(tag) {
+  return {
+    tag: tag, children: [], attrs: {}, dataset: {}, style: {}, textContent: '', value: '',
+    setAttribute: function(k, v) { this.attrs[k] = v; },
+    appendChild: function(c) { this.children.push(c); return c; },
+    focus: function() {},
+    querySelector: function() { return null; },
+    querySelectorAll: function() {
+      return this.children.filter(function(c) { return c.attrs && c.attrs['data-try-turn'] !== undefined; });
+    },
+  };
+}
+var box = makeEl('input'), out = makeEl('div');
+var document = {
+  getElementById: function(id) { return id === 'machine-try-msg' ? box : out; },
+  createElement: makeEl,
+  createTextNode: function(t) { return {text: t}; },
+};
+var window = {location: {search: '?id=m1'}};
+var URLSearchParams = function() { return {get: function() { return 'm1'; }}; };
+
+var sent = [];
+var fetch = function(url, opts) {
+  sent.push(JSON.parse(opts.body));
+  return Promise.resolve({
+    ok: true,
+    json: function() {
+      return Promise.resolve({landed: 'answer', path: [{from: 'triage', to: 'answer'}],
+                              cursor: {phase: 'answer', log: [{from: 'triage', to: 'answer'}]}});
+    },
+  });
+};
+
+var send = ` + machineTryJS + `;
+var reset = ` + machineTryResetJS + `;
+
+box.value = 'why is the export failing?';
+send({button: null});
+setTimeout(function() {
+  box.value = 'any update?';
+  send({button: null});
+  setTimeout(function() {
+    if (sent.length !== 2) throw new Error('expected two requests, got ' + sent.length);
+    if (sent[0].cursor) throw new Error('the first message must start fresh');
+    if (!sent[1].cursor || sent[1].cursor.phase !== 'answer') {
+      throw new Error('the second message must carry the rehearsal position back');
+    }
+    var turns = out.children.filter(function(c) { return c.attrs['data-try-turn'] !== undefined; });
+    if (turns.length !== 2) throw new Error('each message needs its own block, got ' + turns.length);
+    if (turns[1].attrs['data-try-turn'] !== '2') throw new Error('the second block should be turn 2');
+    reset({});
+    if (out.dataset.cursor) throw new Error('Start over must forget the position');
+    console.log('OK');
+  }, 20);
+}, 20);
+`
+	tmp := filepath.Join(t.TempDir(), "rehearsal.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the rehearsal does not hold a conversation:\n%s", out)
+	}
+}
+
+// Every piece of JS this feature ships lives in a Go string, so nothing
+// parses it until a browser does. A syntax error there is a button that
+// silently does nothing — the same failure as a handler nobody
+// registers, arriving by a different road.
+func TestEveryMachineScriptParses(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	// Function expressions get wrapped; statements run as-is.
+	scripts := map[string]string{
+		"machineTryJS":            "var f = " + machineTryJS + ";",
+		"machineTryResetJS":       "var f = " + machineTryResetJS + ";",
+		"machineRemoveStepJS":     "var f = " + machineRemoveStepJS + ";",
+		"machineMoveStepJS":       "var f = " + machineMoveStepJS + ";",
+		"machineDuplicateJS":      "var f = " + machineDuplicateJS + ";",
+		"machineTryEnterJS":       "var document = {addEventListener: function(){}};\n" + machineTryEnterJS,
+		"machinePreviewRefreshJS": "var window = {addEventListener: function(){}};\n" + machinePreviewRefreshJS,
+	}
+	dir := t.TempDir()
+	for name, src := range scripts {
+		path := filepath.Join(dir, name+".js")
+		if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("node", "--check", path).CombinedOutput(); err != nil {
+			t.Errorf("%s does not parse:\n%s", name, out)
+		}
+	}
+}
