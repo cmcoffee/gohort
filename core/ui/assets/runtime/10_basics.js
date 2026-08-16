@@ -1550,6 +1550,26 @@
                   row[c.field] = ctl.checked;
                   persistRows();
                 });
+              } else if (c.type === 'textarea') {
+                // A cell that holds an INSTRUCTION rather than a label.
+                // A single-line input teaches people to write three words;
+                // when the value is meant to be a directive, the box has
+                // to look like somewhere a directive goes. Grows with its
+                // content so a long one is readable without a scrollbar
+                // inside a table row.
+                ctl = el('textarea', {
+                  class: 'ui-input',
+                  rows: String(c.rows || 2),
+                  placeholder: c.placeholder || c.label || c.field,
+                  style: 'resize:vertical;min-height:2.6rem;line-height:1.45',
+                });
+                ctl.value = row[c.field] === undefined || row[c.field] === null ? '' : String(row[c.field]);
+                ctl.addEventListener('input', function() {
+                  row[c.field] = ctl.value;
+                  ctl.style.height = 'auto';
+                  ctl.style.height = Math.min(ctl.scrollHeight, 260) + 'px';
+                });
+                ctl.addEventListener('blur', persistRows);
               } else {
                 ctl = el('input', {
                   type: c.type === 'number' ? 'number' : 'text',

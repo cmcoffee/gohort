@@ -80,3 +80,48 @@ func TestRowsFieldIsRenderedByTheRuntime(t *testing.T) {
 		t.Error("a text cell should commit on blur rather than per character")
 	}
 }
+
+// A cell that holds an INSTRUCTION cannot be a single-line input. The
+// box shapes what gets written in it: a one-line cell teaches people to
+// write three words, which is fine for a label and useless when the
+// value is the directive the model acts on.
+func TestRowsSupportsATextareaColumn(t *testing.T) {
+	f := FormField{
+		Field: "output", Type: "rows",
+		Columns: []FormField{
+			{Field: "name", Type: "text", Label: "Field"},
+			{Field: "desc", Type: "textarea", Rows: 3, Width: 6, Label: "What to work out"},
+		},
+	}
+	raw, _ := json.Marshal(f)
+	if !strings.Contains(string(raw), `"type":"textarea"`) {
+		t.Errorf("a textarea column should survive to the wire:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"rows":3`) {
+		t.Errorf("its height should too:\n%s", raw)
+	}
+
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "c.type === 'textarea'") {
+		t.Fatal("the runtime does not render a textarea cell — the Go side would describe a control that does not exist")
+	}
+	// It grows with its content: a long instruction inside a scrollbar in
+	// a table row is unreadable, which defeats the point of allowing one.
+	if !strings.Contains(src, "ctl.scrollHeight") {
+		t.Error("a textarea cell should grow with what is typed into it")
+	}
+	// And commits on blur like every other cell — the whole array is one
+	// save.
+	if !strings.Contains(src, "ctl.addEventListener('blur', persistRows);") {
+		t.Error("a textarea cell should commit on blur")
+	}
+}
+
+func readRuntimeFile(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile("assets/runtime/" + name)
+	if err != nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	return string(raw)
+}

@@ -437,6 +437,23 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	if from := strings.TrimSpace(p.NextFrom); from != "" && p.Resident {
 		probs = append(probs, "phase "+name+": next_from is not valid on a resident phase (it routes off a declared output field, and a resident phase has none). Use next for a one-turn handoff, or a guard to leave on a condition.")
 	} else if from != "" {
+		// A declared set of targets must name real phases. Checked at
+		// SAVE time, which is the whole point of declaring them: the
+		// alternative is a name that resolves to nothing at run time and
+		// falls back silently to next.
+		if ph, found := d.Phase(name); found {
+			for _, f := range ph.Output {
+				if f.Name != from || len(f.Enum) == 0 {
+					continue
+				}
+				for _, target := range f.Enum {
+					if _, real := d.Phase(strings.TrimSpace(target)); !real {
+						probs = append(probs, "phase "+name+": "+from+" may return "+strconv.Quote(target)+
+							", which is not a phase in this machine. Either add that phase or remove it from the choices.")
+					}
+				}
+			}
+		}
 		switch t, ok := declared[name][from]; {
 		case !ok:
 			probs = append(probs, "phase "+name+": next_from "+strconv.Quote(from)+" is not one of this phase's declared output fields")

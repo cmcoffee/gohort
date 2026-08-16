@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func TestResidentPhaseCannotDelegate(t *testing.T) {
@@ -118,13 +119,26 @@ func TestSelfDelegationRunsInline(t *testing.T) {
 // the thing this editor was built to stop being the only door.
 func TestEditorOffersDelegation(t *testing.T) {
 	_, _, _, def := editorFixture(t)
-	b, _ := json.Marshal(machineEditorSpec(def))
-	raw := string(b)
-	if !strings.Contains(raw, "hand this step to another agent") {
-		t.Error("the phase form should offer delegation")
+	agents := []ui.SelectOption{{Value: "", Label: "— this agent —"}, {Value: "ag-9", Label: "Log analyst"}}
+	fieldsOf := func(name string) string {
+		p, ok := def.Phase(name)
+		if !ok {
+			t.Fatalf("no phase %q", name)
+		}
+		b, _ := json.Marshal(phaseFieldsFor(def, p, agents))
+		return string(b)
 	}
-	if !strings.Contains(raw, "cannot be delegated") {
-		t.Error("the help should say a resident phase cannot delegate, since the form cannot show it")
+	// A transient step offers delegation, as a PICK from real agents
+	// rather than a remembered name.
+	tri := fieldsOf("triage")
+	if !strings.Contains(tri, `"field":"agent"`) || !strings.Contains(tri, `"value":"ag-9"`) {
+		t.Error("a transient step should offer delegation, chosen from the user's agents")
+	}
+	// A resident step does not offer it at all. Better than explaining
+	// the restriction: the form cannot express the thing Problems()
+	// would reject, so there is nothing to explain.
+	if strings.Contains(fieldsOf("answer"), `"field":"agent"`) {
+		t.Error("a resident step was offered delegation, which Problems() forbids")
 	}
 }
 

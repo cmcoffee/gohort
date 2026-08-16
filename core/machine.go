@@ -276,6 +276,35 @@ func (d MachineDef) CompleteTurn(cur *MachineCursor, ph MachinePhase, note func(
 	note("machine_phase_advance", "phase "+ph.Name+" has had its turn; moving to "+nph.Name)
 }
 
+// PhaseInstructions returns EXACTLY what one step is sent, for a caller
+// that needs to show an author the real thing rather than a description
+// of it.
+//
+// The two kinds are composed differently and that difference is easy to
+// get wrong — the editor's first preview called PhaseBlock for both,
+// showing transient steps an "Established earlier" block they never
+// receive and hiding the output contract they do:
+//
+//   - A TRANSIENT step gets its own prompt with {input} / {prev} /
+//     {state:…} resolved, plus the declared-output contract appended by
+//     runDeclaredOutput.
+//   - A RESIDENT step gets PhaseBlock, layered into the agent's system
+//     prompt: its directive, what earlier steps established, where else
+//     it can go, and the routing block.
+//
+// Built from the same functions the run path uses, so it cannot drift
+// into describing something the model never sees.
+func (d MachineDef) PhaseInstructions(ph MachinePhase, st MachineState, input, prev string) string {
+	if ph.Resident {
+		return d.PhaseBlock(ph, st)
+	}
+	out := ResolvePhaseTemplate(ph.Prompt, input, prev, st)
+	if len(ph.Output) > 0 {
+		out += renderOutputContract(ph.Output)
+	}
+	return out
+}
+
 // runPhase resolves one transient phase's prompt and calls it, decoding
 // a declared Output through the same contract → decode → one repair path
 // pipeline stages use.
@@ -449,6 +478,14 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
 		b.WriteString("\n")
 	}
 
+	// The routing instruction, generated from the declaration. Without
+	// this the allowed phases lived in the field's description as prose
+	// somebody maintained by hand — drifting from the phase names, and
+	// invisible to the validator and the diagram alike.
+	if r := d.routingBlock(ph); r != "" {
+		b.WriteString(r)
+	}
+
 	if est := d.establishedBlock(ph, st); est != "" {
 		b.WriteString("\n## Established earlier in this conversation\n")
 		b.WriteString("Settled. Work from it rather than re-deriving it, and do not re-ask what it already answers.\n")
@@ -473,6 +510,43 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState) string {
 			}
 			b.WriteString("\n")
 		}
+	}
+	return b.String()
+}
+
+// routingBlock states where this phase may send the conversation, in
+// the phases' own words: each target's name and what that phase is for.
+//
+// Generated rather than written, so it cannot disagree with the machine
+// it describes. Empty when the phase routes statically or declares no
+// targets — an undeclared routing field keeps its old behaviour, where
+// anything the model returns is tried and an unknown name falls back.
+func (d MachineDef) routingBlock(ph MachinePhase) string {
+	from := strings.TrimSpace(ph.NextFrom)
+	if from == "" {
+		return ""
+	}
+	var targets []string
+	for _, f := range ph.Output {
+		if f.Name == from {
+			targets = f.Enum
+		}
+	}
+	if len(targets) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Where this goes next\n")
+	b.WriteString("Put exactly one of these in \"" + from + "\". Choose by what the work needs, not by order.\n")
+	for _, t := range targets {
+		b.WriteString("- " + t)
+		if p, ok := d.Phase(strings.TrimSpace(t)); ok && strings.TrimSpace(p.Desc) != "" {
+			b.WriteString(": " + strings.TrimSpace(p.Desc))
+		}
+		b.WriteString("\n")
+	}
+	if fb := strings.TrimSpace(ph.Next); fb != "" {
+		b.WriteString("If none of them fits, " + fb + " is used.\n")
 	}
 	return b.String()
 }

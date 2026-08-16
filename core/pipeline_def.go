@@ -277,6 +277,19 @@ type PipelineField struct {
 	// Required fails the stage when the model omits the field. Default
 	// false: an absent optional field resolves to its type's zero value.
 	Required bool `json:"required,omitempty"`
+
+	// Enum constrains a string field to a fixed set of values. Empty
+	// means anything.
+	//
+	// It earns its place by removing hand-written copies of a list the
+	// definition already knows. A machine's routing field is the case
+	// that forced it: next_from names a field whose VALUE is the next
+	// phase, and until now the allowed phases were prose in the field's
+	// description — written by hand, drifting from the phase names, and
+	// invisible to both the validator and the diagram. Declared instead,
+	// one list generates the instruction, gets checked at save time, and
+	// can be drawn.
+	Enum []string `json:"enum,omitempty"`
 }
 
 // resolved returns the field's effective type, defaulting empty to

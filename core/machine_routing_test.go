@@ -1,0 +1,159 @@
+package core
+
+// Declared routing targets. One declaration replaces a hand-written list
+// in three places: the instruction the model reads, the arrows the
+// diagram draws, and what the validator can check.
+
+import (
+	"strings"
+	"testing"
+)
+
+func routingFixture(targets []string) MachineDef {
+	return MachineDef{
+		Name: "Investigation", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Desc: "Is there something to explain?", Prompt: "Decide.",
+				NextFrom: "next_phase", Next: "answer",
+				Output: []PipelineField{{Name: "next_phase", Type: "string", Desc: "where to go", Enum: targets}}},
+			{Name: "hunch", Desc: "Form one hypothesis.", Prompt: "Commit.", Next: "answer"},
+			{Name: "answer", Desc: "Answer it.", Prompt: "Reply.", Resident: true},
+		},
+	}
+}
+
+func TestRoutingInstructionIsGeneratedFromTheDeclaration(t *testing.T) {
+	def := routingFixture([]string{"hunch", "answer"})
+	tri, _ := def.Phase("triage")
+	block := def.PhaseBlock(tri, MachineState{})
+
+	if !strings.Contains(block, `Put exactly one of these in "next_phase"`) {
+		t.Fatalf("no generated routing instruction:\n%s", block)
+	}
+	// Each choice is explained in the TARGET's own words, so one
+	// description serves the phase and every router that can reach it.
+	if !strings.Contains(block, "- hunch: Form one hypothesis.") {
+		t.Errorf("a choice should carry the target phase's own description:\n%s", block)
+	}
+	if !strings.Contains(block, "- answer: Answer it.") {
+		t.Errorf("missing the second choice:\n%s", block)
+	}
+	// The fallback is stated, because a model choosing badly should know
+	// what happens rather than discovering it.
+	if !strings.Contains(block, "If none of them fits, answer is used.") {
+		t.Errorf("the fallback should be stated:\n%s", block)
+	}
+
+	// Undeclared targets keep the old behaviour: nothing generated, the
+	// author's prose still governs.
+	plain := routingFixture(nil)
+	p, _ := plain.Phase("triage")
+	if strings.Contains(plain.PhaseBlock(p, MachineState{}), "Where this goes next") {
+		t.Error("a phase declaring no targets should not get a generated block")
+	}
+}
+
+// A target that is not a phase is a save-time error. The whole point of
+// declaring is that this stops being a silent run-time fallback.
+func TestUnknownTargetIsRefusedAtSave(t *testing.T) {
+	def := routingFixture([]string{"hunch", "typo_phase"})
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("a target naming no phase should be refused")
+	}
+	if !strings.Contains(err.Error(), "typo_phase") || !strings.Contains(err.Error(), "not a phase") {
+		t.Errorf("the refusal should name the offender: %v", err)
+	}
+	if strings.Contains(err.Error(), "\"hunch\"") {
+		t.Errorf("a valid target should not be reported: %v", err)
+	}
+	if err := routingFixture([]string{"hunch", "answer"}).Validate(); err != nil {
+		t.Errorf("valid targets should save: %v", err)
+	}
+}
+
+// The diagram draws what was declared, instead of an arrow to everything.
+func TestDiagramDrawsOnlyDeclaredTargets(t *testing.T) {
+	declared := routingFixture([]string{"hunch"}).Graph()
+	var from int
+	for _, e := range declared.Edges {
+		if e.From == "triage" {
+			from++
+			if e.To != "hunch" && e.To != "answer" {
+				t.Errorf("drew an edge to %q, which was never declared", e.To)
+			}
+		}
+	}
+	// hunch (declared) plus answer (the static fallback) — not every
+	// phase in the machine.
+	if from != 2 {
+		t.Errorf("expected 2 edges out of triage, got %d", from)
+	}
+
+	// Undeclared, the honest drawing is still every possible target.
+	open := routingFixture(nil).Graph()
+	var openFrom int
+	for _, e := range open.Edges {
+		if e.From == "triage" {
+			openFrom++
+		}
+	}
+	if openFrom != 2 {
+		t.Errorf("with nothing declared, every other phase should be reachable: %d", openFrom)
+	}
+}
+
+// The contract the model receives states the set, and a reply outside it
+// is rejected where it can still be repaired.
+func TestContractStatesAndEnforcesTheSet(t *testing.T) {
+	decl := []PipelineField{{Name: "next_phase", Type: FieldString, Required: true,
+		Desc: "where to go", Enum: []string{"hunch", "answer"}}}
+
+	contract := renderOutputContract(decl)
+	if !strings.Contains(contract, "exactly one of: hunch, answer") {
+		t.Errorf("the contract should state the allowed values:\n%s", contract)
+	}
+	if _, err := decodeStageOutput(`{"next_phase":"elsewhere"}`, decl); err == nil {
+		t.Error("a value outside the declared set should be refused")
+	}
+	if _, err := decodeStageOutput(`{"next_phase":"hunch"}`, decl); err != nil {
+		t.Errorf("a declared value should be accepted: %v", err)
+	}
+	// Capitalisation is a choice made correctly, not an error.
+	if _, err := decodeStageOutput(`{"next_phase":"Answer"}`, decl); err != nil {
+		t.Errorf("case should not fail a correct choice: %v", err)
+	}
+}
+
+// A field's description is where the step's real instruction lives, so a
+// multi-line one has to survive into the contract as a block. Crushed
+// onto one line after a colon it stops looking like a directive — to a
+// reader and to the model.
+func TestMultiLineFieldInstructionRendersAsABlock(t *testing.T) {
+	decl := []PipelineField{
+		{Name: "hypothesis", Type: FieldString, Required: true,
+			Desc: "The single best explanation, stated so it could be wrong.\nNot three ranked possibilities: one, committed to.\nHedging here reads as thoroughness and costs the next step its target."},
+		{Name: "asked", Type: FieldString, Desc: "what they actually want to know"},
+	}
+	got := renderOutputContract(decl)
+
+	// Every line of the instruction survives, on its own line.
+	for _, line := range []string{
+		"The single best explanation, stated so it could be wrong.",
+		"Not three ranked possibilities: one, committed to.",
+		"Hedging here reads as thoroughness and costs the next step its target.",
+	} {
+		if !strings.Contains(got, "\n  "+line) {
+			t.Errorf("instruction line missing or not indented:\n%q\nin:\n%s", line, got)
+		}
+	}
+	// A one-line description still reads inline — a block for three words
+	// would be worse than the colon.
+	if !strings.Contains(got, `"asked" (string, optional): what they actually want to know`) {
+		t.Errorf("a short description should stay on its line:\n%s", got)
+	}
+	// And the field it belongs to is still identifiable above it.
+	if !strings.Contains(got, `- "hypothesis" (string, required)`) {
+		t.Errorf("the field header was lost:\n%s", got)
+	}
+}

@@ -2683,6 +2683,12 @@ type ToolbarAction struct {
 	Method  string `json:"method,omitempty"`
 	Confirm string `json:"confirm,omitempty"`
 	Variant string `json:"variant,omitempty"` // "primary" | "danger" | "" (default)
+	// Data is an opaque value handed to a CLIENT action as
+	// ctx.action.data. Method "client" spends URL on the handler's NAME,
+	// so without this a client action knows which handler it is and
+	// nothing about what it acts on — every app hits this the first time
+	// it puts one on a per-item control.
+	Data string `json:"data,omitempty"`
 	// Group, when set, collapses this action into a "<Group> ▾" dropdown in the
 	// toolbar instead of rendering as a standalone button. Actions sharing a
 	// Group land in the same menu, in declared order; ungrouped actions stay as

@@ -647,8 +647,29 @@ func writeContractFields(b *strings.Builder, fields []PipelineField, indent stri
 			b.WriteString(", optional")
 		}
 		b.WriteString(")")
-		if f.Desc != "" {
-			b.WriteString(": " + f.Desc)
+		// A one-line description reads after the colon. A multi-line one
+		// is an INSTRUCTION for this field, and crushing it onto the same
+		// line is how a directive stops looking like one — to a reader
+		// and to the model.
+		if d := strings.TrimSpace(f.Desc); d != "" {
+			if strings.Contains(d, "\n") {
+				b.WriteString("\n")
+				for _, line := range strings.Split(d, "\n") {
+					if line = strings.TrimSpace(line); line != "" {
+						b.WriteString(indent + "  " + line + "\n")
+					}
+				}
+				b.WriteString(strings.TrimSuffix(indent, " "))
+			} else {
+				b.WriteString(": " + d)
+			}
+		}
+		// The allowed values, from the declaration rather than from prose
+		// somebody kept in step by hand. Stated after the description so
+		// the description can say what the field MEANS while this says
+		// what may go in it.
+		if len(f.Enum) > 0 {
+			b.WriteString(" — exactly one of: " + strings.Join(f.Enum, ", "))
 		}
 		b.WriteString("\n")
 		if len(f.Fields) > 0 {
@@ -690,6 +711,16 @@ func decodeStageOutput(text string, decl []PipelineField) (map[string]any, error
 		cv, err := coerceField(f.resolved(), v)
 		if err != nil {
 			return nil, Error("field \"" + f.Name + "\": " + err.Error())
+		}
+		// A declared set is checked HERE, where a mismatch is still
+		// repairable — runDeclaredOutput retries once with the error. A
+		// routing field carrying a phase that does not exist would
+		// otherwise fall back silently and route somewhere nobody chose.
+		if len(f.Enum) > 0 {
+			if str, ok := cv.(string); ok && !containsFold(f.Enum, str) {
+				return nil, Error("field \"" + f.Name + "\": " + strconv.Quote(str) +
+					" is not one of: " + strings.Join(f.Enum, ", "))
+			}
 		}
 		out[f.Name] = cv
 	}
@@ -1187,3 +1218,4 @@ func resolveStageTemplate(tmpl, input, prev string, outputs map[string]stageOutp
 	}
 	return s
 }
+

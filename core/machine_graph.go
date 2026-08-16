@@ -12,6 +12,21 @@ import (
 )
 
 // Graph compiles a machine into its picture.
+// routingTargets returns the declared destinations of a phase's routing
+// field, or nil when it declares none.
+func routingTargets(p MachinePhase) []string {
+	from := strings.TrimSpace(p.NextFrom)
+	if from == "" {
+		return nil
+	}
+	for _, f := range p.Output {
+		if f.Name == from {
+			return f.Enum
+		}
+	}
+	return nil
+}
+
 func (d MachineDef) Graph() WorkflowGraph {
 	g := WorkflowGraph{Title: d.Name, Entry: d.StartPhase()}
 	start := d.StartPhase()
@@ -32,12 +47,23 @@ func (d MachineDef) Graph() WorkflowGraph {
 	for _, p := range d.Phases {
 		switch {
 		case p.NextFrom != "":
-			// The target is a run-time value, so the honest drawing is an
-			// edge to EVERY phase it could pick. Guessing a subset from
-			// the field description would draw a graph the machine does
-			// not have, which is the specific failure a picture is
-			// supposed to prevent.
-			for _, t := range d.Phases {
+			// DECLARED targets are drawn exactly. Undeclared, the target
+			// is a run-time value and the honest drawing is an edge to
+			// every phase it could pick — guessing a subset from the
+			// field's prose would draw a graph the machine does not have,
+			// which is the specific failure a picture is meant to
+			// prevent. Declaring them is what turns that fan-out into the
+			// shape somebody actually built.
+			targets := d.Phases
+			if declared := routingTargets(p); len(declared) > 0 {
+				targets = targets[:0:0]
+				for _, name := range declared {
+					if t, ok := d.Phase(strings.TrimSpace(name)); ok {
+						targets = append(targets, t)
+					}
+				}
+			}
+			for _, t := range targets {
 				if t.Name == p.Name {
 					continue
 				}
@@ -56,7 +82,19 @@ func (d MachineDef) Graph() WorkflowGraph {
 				g.Edges = append(g.Edges, e)
 			}
 			if p.Next != "" {
-				if _, alreadyDrawn := d.Phase(p.Next); !alreadyDrawn {
+				// Was the fallback already drawn as one of the targets?
+				// The old test was "does this phase exist", which held
+				// only because EVERY phase was drawn. With declared
+				// targets the fallback is often not among them, and that
+				// arrow is the one saying where a bad choice lands.
+				alreadyDrawn := false
+				for _, t := range targets {
+					if t.Name == p.Next {
+						alreadyDrawn = true
+						break
+					}
+				}
+				if !alreadyDrawn {
 					g.Edges = append(g.Edges, WorkflowEdge{
 						From: p.Name, To: p.Next, Style: EdgeSolid, Label: "fallback",
 						Note: "taken when " + p.NextFrom + " names no phase that exists",

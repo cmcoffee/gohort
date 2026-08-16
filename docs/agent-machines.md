@@ -448,6 +448,82 @@ have, and the runtime overlay is what turns the ⚠ trail into something you can
   and have no session to hold a cursor, so they run exactly as they always did. See Open.
 
 
+## The fields ARE most of the instruction
+
+A step's declared fields are not a schema bolted onto a prompt — each one is sent to the model with
+the description the author wrote. So a description is a directive:
+
+```
+"the single best explanation, stated so it could be wrong"     ← does the work
+"the hypothesis"                                                ← does not
+```
+
+Which means the prompt should carry what a list of fields cannot: where to look first, what a good
+answer requires, and the mistake this step tends to make. *"Read enough to have a real hypothesis
+rather than a plausible one"* belongs in the prompt; *"return a hypothesis field"* belongs nowhere,
+because declaring the field already said it.
+
+The editor labels a transient step's prompt **"How to go about it"** for that reason, and a step with
+no fields yet is told the box is currently the whole instruction.
+
+## What a step is actually told
+
+The prompt box is only part of it. `PhaseBlock` composes the rest mechanically, every turn:
+
+```
+## Current phase: verify
+Test it.
+
+Go and look.                          ← your instructions
+
+## Established earlier in this conversation
+Settled. Work from it rather than re-deriving it, and do not re-ask what it already answers.
+
+### triage — Is there something to explain?
+Observation: …
+Next phase: …
+
+## Other phases in this workflow
+Reachable with change_phase, and only when the request has genuinely moved on.
+- triage: Is there something to explain?
+- hunch: Form one hypothesis.
+```
+
+Plus the declared fields, requested separately as a validated schema.
+
+**So do not repeat any of it in the prompt.** Earlier steps' findings arrive pinned and labelled; the fields a step must return are asked for on their own. A prompt that pastes `{state:triage.observation}` into a sentence is paying for those tokens twice and keeping a copy that drifts from the field name. Reach for a reference only when the phrasing genuinely matters — "What they saw: X" reading better than a labelled block.
+
+The editor shows this under **"What this step actually receives"**, rendered by calling `PhaseBlock` itself with placeholder findings. Not a description of the composition and not a re-implementation — the same bytes a live turn produces, so it cannot quietly stop being true.
+
+### Declared routing targets
+
+A routing field can declare which steps it may name:
+
+```json
+{"name": "next_phase", "type": "string", "enum": ["hunch", "answer"]}
+```
+
+One declaration replaces a hand-written list in three places:
+
+- **The instruction is generated.** `PhaseBlock` states *"Put exactly one of these in next_phase"*
+  and explains each choice in the TARGET's own words (its `desc`), so one description serves the
+  phase and every router that can reach it. The fallback is stated too — a model choosing badly
+  should know what happens rather than discover it.
+- **The diagram draws those arrows** instead of one to every phase. Undeclared, a dynamic route
+  honestly fans out to everything it could pick; declaring is what turns that into the shape you
+  actually built.
+- **The validator refuses a target that is not a phase**, at SAVE time. That is the point: without
+  it, a name that resolves to nothing falls back silently at run time and routes somewhere nobody
+  chose.
+
+The generated contract also carries the set, and a reply outside it is rejected where
+`runDeclaredOutput` can still repair it — one retry with the error, rather than a bad route.
+Capitalisation is not an error: a model answering "Answer" for "answer" has chosen correctly.
+
+Leaving it undeclared keeps the old behaviour exactly, so nothing existing changes.
+
+What is NOT generated yet: the routing instruction. `next_from` points at a field, and what may go in it is still hand-written into that field's description ("exactly one of: hunch, answer"). That is derivable from the machine's shape, and it is the same declaration an editable diagram needs to draw those edges.
+
 ## Delegating a step
 
 A transient phase can name another agent:
@@ -490,6 +566,18 @@ wrong thing wearing the right name is the one outcome worse than an error.
 
 **Configure → Machines → Edit** opens the structured editor: the machine's name and
 starting phase, a table of phases, and a form per phase.
+
+**One panel per step, not one form behind a table.** Every choice is computed from the step it
+belongs to: `next_from` offers only that step's own TEXT fields (a list cannot name a phase, and
+another step's field is not readable there), `keep` offers the other steps by name, the delegate is
+picked from your agents, and the prompt's help SPELLS OUT the `{state:…}` references available —
+which is the one thing an author otherwise types from memory and finds out about after saving.
+
+A resident step is not offered `output`, `next_from` or a delegate at all. The form cannot express
+what `Problems()` would reject, so there is nothing to explain and nothing to undo.
+
+The steps are also the page's left rail (`SectionNav`), so a machine is navigated the way it is read:
+one step at a time, in order.
 
 The form asks questions rather than naming fields. *"The conversation waits here"* is
 `resident`, with the consequence spelled out where the choice is made. *"Then go to"* is a
