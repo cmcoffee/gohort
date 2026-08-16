@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1170,6 +1171,35 @@ func TestTheWholeEditorPageRenders(t *testing.T) {
 	for _, smell := range []string{"%!", "<nil>", "&lt;nil&gt;"} {
 		if strings.Contains(body, smell) {
 			t.Errorf("the rendered page contains %q — something composed wrong", smell)
+		}
+	}
+}
+
+// A placeholder is greyed text inside an input, so it has to be
+// self-explanatory: it either shows the SHAPE of what goes there or is
+// visibly an example. A bare noun ("hypothesis" in a box labelled
+// Field) is neither — it just asks the reader why that word.
+func TestPlaceholdersExplainThemselves(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	specs := [][]byte{}
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
+	specs = append(specs, raw)
+	raw, _ = json.Marshal(phaseFormFields(def))
+	specs = append(specs, raw)
+
+	ph := regexp.MustCompile(`"placeholder":"([^"]*)"`)
+	for _, spec := range specs {
+		for _, m := range ph.FindAllStringSubmatch(string(spec), -1) {
+			p := m[1]
+			switch {
+			case strings.HasPrefix(p, "e.g. "), // visibly an example
+				strings.HasPrefix(p, "("), // an empty-state note
+				strings.Contains(p, "_"),  // shows the shape
+				strings.Contains(p, " "):  // a phrase that completes its label
+			default:
+				t.Errorf("placeholder %q is a bare word: it reads as neither a value nor an instruction", p)
+			}
 		}
 	}
 }

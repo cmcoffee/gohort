@@ -574,9 +574,13 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 						Options:  fieldKindOptions(),
 						LockWhen: fieldKindChosenExpr(),
 						Help:     "A built-in is filled from what the framework already holds; your own is what the step works out."},
+					// The placeholder shows the SHAPE, not an example noun.
+					// A bare "hypothesis" sitting in a box labelled Field
+					// reads as neither a value nor an instruction — it
+					// just asks the reader why hypothesis.
 					{Field: "name", Type: "text", Label: "Field", Width: 2, HideWhen: builtinNameExpr(),
-						Placeholder: "hypothesis",
-						Help:        "What to call it. Other steps read it as {state:<step>.<name>}."},
+						Placeholder: "short_lowercase_name",
+						Help:        "What to call this value. Later steps read it as {state:<step>.<name>}, and it is the label it appears under in what they are handed."},
 					// The columns below are the STEP's work to configure. A
 					// field filled from a built-in has none of it: its type
 					// is text, it is always present, and there is nothing
@@ -597,7 +601,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// write.
 					{Field: "desc", Type: "textarea", Rows: 3, Width: 6, HideWhen: builtinNameExpr(),
 						Label:       "What to work out — write it as the instruction for this field",
-						Placeholder: "the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
+						Placeholder: "e.g. the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
 				}},
 
 			ui.FormField{Type: "header", Label: "Where it goes next"},
@@ -660,10 +664,10 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 // say what it does, wire it afterwards where every option is real.
 func phaseFormFields(def MachineDef) []ui.FormField {
 	return []ui.FormField{
-		{Field: "name", Type: "text", Label: "Name", Placeholder: "triage",
-			Help: "Short handle, lowercase. It is how other steps point here."},
+		{Field: "name", Type: "text", Label: "Name", Placeholder: "short_lowercase_name",
+			Help: "Short handle, lowercase — triage, hunch, verify. It is how other steps point here."},
 		{Field: "desc", Type: "text", Label: "What this step does",
-			Placeholder: "Work out whether there is something to explain",
+			Placeholder: "e.g. Work out whether there is something to explain",
 			Help: "One line, for whoever reads the machine later. Not shown to the agent."},
 		{Field: "prompt", Type: "textarea", Rows: 8, Label: "Instructions for this step",
 			Help: "What the agent should be doing here. Write the JOB, not the identity, and write it to a person. Do not ask for JSON: declare fields in the step's own section afterwards and the framework encodes them."},
