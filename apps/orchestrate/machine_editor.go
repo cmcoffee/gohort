@@ -339,6 +339,20 @@ func builtinNameExpr() string {
 	return "builtin:" + strings.Join(builtinFieldNames(), "|")
 }
 
+// builtinOrUnansweredExpr matches a row that is NOT a field of the
+// step's own: one holding a built-in, or one whose kind is still
+// unanswered. Everything that describes a field the step works out
+// hides behind it, so a fresh row is one question — pick a built-in, or
+// say this is something the step establishes — rather than a name box
+// inviting you to start typing before deciding what you are naming.
+//
+// The trailing empty alternative is the unanswered case: the row
+// condition grammar compares values as strings, so "" is a value like
+// any other.
+func builtinOrUnansweredExpr() string {
+	return builtinNameExpr() + "|"
+}
+
 // fieldKindChosenExpr matches a row whose kind has been answered at all
 // — built-in or custom. That is when the choice settles: a field that
 // changes KIND after it has been described is a different field, and
@@ -578,7 +592,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// A bare "hypothesis" sitting in a box labelled Field
 					// reads as neither a value nor an instruction — it
 					// just asks the reader why hypothesis.
-					{Field: "name", Type: "text", Label: "Field", Width: 2, HideWhen: builtinNameExpr(),
+					{Field: "name", Type: "text", Label: "Field", Width: 2, HideWhen: builtinOrUnansweredExpr(),
 						Placeholder: "short_lowercase_name",
 						Help:        "What to call this value. Later steps read it as {state:<step>.<name>}, and it is the label it appears under in what they are handed."},
 					// The columns below are the STEP's work to configure. A
@@ -586,20 +600,20 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// is text, it is always present, and there is nothing
 					// to instruct. Leaving them on screen would be three
 					// controls that quietly do nothing.
-					{Field: "type", Type: "select", Label: "Type", HideWhen: builtinNameExpr(), Options: []ui.SelectOption{
+					{Field: "type", Type: "select", Label: "Type", HideWhen: builtinOrUnansweredExpr(), Options: []ui.SelectOption{
 						{Value: "string", Label: "text"},
 						{Value: "list", Label: "list"},
 						{Value: "number", Label: "number"},
 						{Value: "bool", Label: "yes/no"},
 						{Value: "object", Label: "object"},
 					}},
-					{Field: "required", Type: "toggle", Label: "Required", HideWhen: builtinNameExpr()},
+					{Field: "required", Type: "toggle", Label: "Required", HideWhen: builtinOrUnansweredExpr()},
 					// The instruction, and the widest thing on the row. A
 					// single-line cell taught people to write three words;
 					// this is where the work of the step is actually
 					// specified, so it has to look like somewhere you
 					// write.
-					{Field: "desc", Type: "textarea", Rows: 3, Width: 6, HideWhen: builtinNameExpr(),
+					{Field: "desc", Type: "textarea", Rows: 3, Width: 6, HideWhen: builtinOrUnansweredExpr(),
 						Label:       "What to work out — write it as the instruction for this field",
 						Placeholder: "e.g. the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
 				}},

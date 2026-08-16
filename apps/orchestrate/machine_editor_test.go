@@ -1203,3 +1203,50 @@ func TestPlaceholdersExplainThemselves(t *testing.T) {
 		}
 	}
 }
+
+// A fresh row is ONE question: pick a built-in, or say this is
+// something the step works out. Everything that describes a field of
+// your own — the name box, its type, whether it is required, the
+// instruction — stays hidden until the kind is answered, so nothing
+// invites you to start typing before deciding what you are naming.
+func TestAFreshFieldRowAsksOneQuestion(t *testing.T) {
+	_, _, _, def := editorFixture(t)
+	tri, _ := def.Phase("triage")
+	raw, _ := json.Marshal(phaseFieldsFor(def, tri, editorCatalog{}))
+
+	var fields []map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	var cols []map[string]any
+	for _, f := range fields {
+		if f["field"] == "output" {
+			raw, _ := json.Marshal(f["columns"])
+			_ = json.Unmarshal(raw, &cols)
+		}
+	}
+	if len(cols) == 0 {
+		t.Fatal("no field rows in the form")
+	}
+	for _, c := range cols {
+		hide, _ := c["hide_when"].(string)
+		switch c["field"] {
+		case "builtin":
+			if hide != "" {
+				t.Error("the kind question must always be visible — it is the one thing a fresh row asks")
+			}
+		case "name", "type", "required", "desc":
+			if !strings.HasSuffix(hide, "|") {
+				t.Errorf("%v should also hide while the kind is unanswered, got %q", c["field"], hide)
+			}
+			if !strings.Contains(hide, "original_input") {
+				t.Errorf("%v should hide for a built-in, got %q", c["field"], hide)
+			}
+		}
+	}
+	// The unanswered case rides on an empty alternative, which the row
+	// condition grammar compares as a string like any other value.
+	if !strings.HasSuffix(builtinOrUnansweredExpr(), "|") {
+		t.Error("the unanswered case should be part of the same expression, not a second mechanism")
+	}
+}

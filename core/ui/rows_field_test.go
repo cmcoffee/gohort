@@ -75,8 +75,9 @@ func TestRowsFieldIsRenderedByTheRuntime(t *testing.T) {
 		t.Error("adding a row should not persist until it has content")
 	}
 	// Text cells commit on blur, not per keystroke — the whole array is
-	// one save.
-	if !strings.Contains(src, "ctl.addEventListener('blur', persistRows)") {
+	// one save. (Through the row's commit gate, which also redraws when
+	// the change moved the row's shape; see the gate test below.)
+	if !strings.Contains(src, "ctl.addEventListener('blur', commit)") {
 		t.Error("a text cell should commit on blur rather than per character")
 	}
 }
@@ -112,7 +113,7 @@ func TestRowsSupportsATextareaColumn(t *testing.T) {
 	}
 	// And commits on blur like every other cell — the whole array is one
 	// save.
-	if !strings.Contains(src, "ctl.addEventListener('blur', persistRows);") {
+	if !strings.Contains(src, "ctl.addEventListener('blur', commit);") {
 		t.Error("a textarea cell should commit on blur")
 	}
 }
@@ -196,9 +197,10 @@ func TestRowsColumnsCanHideAndLockPerRow(t *testing.T) {
 		t.Error("the row condition should reuse the show_when evaluator, not a second one")
 	}
 	// A row that changes kind has to redraw, or it keeps the controls it
-	// just stopped having.
-	if !strings.Contains(src, "if (rowConditions) drawRows()") {
-		t.Error("changing a cell should redraw the row when a column's condition depends on it")
+	// just stopped having — and only then, so committing a cell that
+	// changed nothing structural does not yank focus.
+	if !strings.Contains(src, "if (rowShape(row) !== shapeAtDraw) drawRows();") {
+		t.Error("changing a cell should redraw the row when it moves the row's shape")
 	}
 }
 
@@ -249,5 +251,39 @@ func TestReloadOnChangeFieldsCommitOnBlur(t *testing.T) {
 	}
 	if !strings.Contains(src, "if (fdef && fdef.reload_on_change) window.location.reload()") {
 		t.Error("a successful save of such a field should reload the page")
+	}
+}
+
+// The half of row conditions that is easy to ship broken: a cell that
+// CHANGES a condition has to redraw the row. A select whose change
+// handler only saved left the row showing the controls its new kind
+// does not have — the built-in field's name box, type and instruction
+// all still on screen, and the kind still editable, until a page
+// reload. Every cell commits through one closure now.
+func TestEveryRowCellCommitsThroughTheSameGate(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+
+	// The gate exists and redraws only when the row's SHAPE moved —
+	// redrawing on every commit would yank the control just tabbed into.
+	if !strings.Contains(src, "function rowShape(row)") {
+		t.Fatal("no way to tell a shape change from a value change")
+	}
+	if !strings.Contains(src, "if (rowShape(row) !== shapeAtDraw) drawRows();") {
+		t.Error("the redraw should be conditional on the row's shape changing")
+	}
+	// No cell handler may save directly: persistRows is the low-level
+	// write, reachable from the commit gate and the row add/remove/move
+	// controls (which redraw themselves) — nowhere else.
+	if n := strings.Count(src, "persistRows()"); n > 4 {
+		t.Errorf("a cell handler is saving without the commit gate (%d direct calls)", n)
+	}
+	for _, branch := range []string{
+		"row[c.field] = ctl.value;\n                  commit();",   // select
+		"row[c.field] = ctl.checked;\n                  commit();", // toggle
+		"ctl.addEventListener('blur', commit);",                    // text + textarea
+	} {
+		if !strings.Contains(src, branch) {
+			t.Errorf("a cell type still commits its own way: %q", branch)
+		}
 	}
 }

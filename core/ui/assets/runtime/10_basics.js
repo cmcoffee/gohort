@@ -1491,9 +1491,17 @@
         // depends on the row's own values, in which case editing a cell
         // has to redraw the row rather than leave a stale one on screen.
         var rowConditions = cols.some(function(c) { return c.hide_when || c.lock_when; });
-        function commitRow() {
-          persistRows();
-          if (rowConditions) drawRows();
+        // rowShape is what those conditions currently SAY about one row:
+        // which cells are hidden, which are locked. Comparing it before
+        // and after a change separates a redraw from a no-op — a row
+        // whose shape did not move must not be rebuilt, or committing a
+        // cell would yank the control the person just tabbed into.
+        function rowShape(row) {
+          if (!rowConditions) return '';
+          return cols.map(function(c) {
+            return (c.hide_when && matchesWhen(c.hide_when, row) ? 'h' : '-') +
+                   (c.lock_when && matchesWhen(c.lock_when, row) ? 'l' : '-');
+          }).join('');
         }
 
         function drawRows() {
@@ -1506,6 +1514,14 @@
           }
           rowsVal.forEach(function(row, idx) {
             var cells = [];
+            // What this row looked like when it was drawn. Every cell
+            // commits through the closure below, so a change that flips
+            // a condition redraws and one that does not costs nothing.
+            var shapeAtDraw = rowShape(row);
+            function commit() {
+              persistRows();
+              if (rowShape(row) !== shapeAtDraw) drawRows();
+            }
             cols.forEach(function(c) {
               var ctl, extra = null;
               // Row-scoped conditions. A cell that cannot apply to THIS
@@ -1557,8 +1573,8 @@
                 });
                 ctl.value = row[c.field] === undefined || row[c.field] === null ? '' : String(row[c.field]);
                 ctl.addEventListener('input', function() { row[c.field] = ctl.value; });
-                ctl.addEventListener('change', function() { row[c.field] = ctl.value; commitRow(); });
-                ctl.addEventListener('blur', commitRow);
+                ctl.addEventListener('change', function() { row[c.field] = ctl.value; commit(); });
+                ctl.addEventListener('blur', commit);
               } else if (c.type === 'select') {
                 ctl = el('select', {class: 'ui-input'});
                 (c.options || []).forEach(function(o) {
@@ -1570,14 +1586,14 @@
                 });
                 ctl.addEventListener('change', function() {
                   row[c.field] = ctl.value;
-                  persistRows();
+                  commit();
                 });
               } else if (c.type === 'toggle' || c.type === 'checkbox') {
                 ctl = el('input', {type: 'checkbox'});
                 ctl.checked = !!row[c.field];
                 ctl.addEventListener('change', function() {
                   row[c.field] = ctl.checked;
-                  persistRows();
+                  commit();
                 });
               } else if (c.type === 'textarea') {
                 // A cell that holds an INSTRUCTION rather than a label.
@@ -1598,7 +1614,7 @@
                   ctl.style.height = 'auto';
                   ctl.style.height = Math.min(ctl.scrollHeight, 260) + 'px';
                 });
-                ctl.addEventListener('blur', persistRows);
+                ctl.addEventListener('blur', commit);
               } else {
                 ctl = el('input', {
                   type: c.type === 'number' ? 'number' : 'text',
@@ -1612,7 +1628,7 @@
                 // Commit on blur rather than per keystroke: a row edit is
                 // a whole-array save, and one POST per character would be
                 // both noisy and a race with the next keystroke.
-                ctl.addEventListener('blur', persistRows);
+                ctl.addEventListener('blur', commit);
               }
               ctl.title = c.help || c.label || c.field;
               cells.push(el('div', {style: 'flex:' + (c.width || 1) + ';min-width:0'},
