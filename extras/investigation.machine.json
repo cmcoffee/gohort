@@ -1,6 +1,6 @@
 {
   "name": "Investigation",
-  "description": "Explain something you are seeing. Forms one hypothesis from whatever the observation came from, then tests it against independent evidence. A question with no observation skips straight to answering.",
+  "description": "Explain something you are seeing. Forms one hypothesis from whatever the observation came from, then tests it against independent evidence. A question with no observation skips straight to answering. Before using it, open the hunch step and tick the tools it should search with under \"How this step runs\" — a step that passes on reaches only what it names, so until you do, it can reason but not look.",
   "start": "triage",
   "phases": [
     {

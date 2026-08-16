@@ -26,6 +26,13 @@ func machineTurnFixture(t *testing.T, def MachineDef) (*chatTurn, MachineDef) {
 	udb := UserDB(root, "u")
 	app := &OrchestrateApp{}
 	app.DB = root
+	// The tool catalog a step draws from reads the auth store (tool
+	// groups, users), so a turn fixture needs one to be a real turn.
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:u", AuthUser{Username: "u"})
+	prevAuth := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prevAuth })
 
 	def.Owner = "u"
 	if err := def.Validate(); err != nil {
@@ -393,5 +400,39 @@ func TestPhaseRunnerAnnouncesBeforeItRuns(t *testing.T) {
 	}
 	if !strings.Contains(got, `"type":"status"`) {
 		t.Errorf("it should ride the activity surface's status channel:\n%s", got)
+	}
+}
+
+// A step that names tools gets them. This was the editor's one control
+// that did nothing: the checklist offered the real pool, the machine
+// tool documented it, and the runtime handed every step an empty
+// catalog — so a step told to "go and look" could not.
+func TestAStepThatNamesToolsGetsThem(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+
+	// Naming none costs nothing: no session is built, no catalog resolved.
+	if got := turn.machineCatalog(MachinePhase{Name: "triage"}); got != nil {
+		t.Errorf("a step that names no tools should draw nothing, got %d", len(got))
+	}
+	if turn.machineTools != nil {
+		t.Error("and should not have built a catalog to find that out")
+	}
+
+	// Naming some resolves the pool once and reuses it — a repair retry
+	// and a second step must not each pay for their own.
+	first := turn.machineCatalog(MachinePhase{Name: "hunch", Tools: []string{"read_file"}})
+	if first == nil {
+		t.Fatal("a step that names tools must get a catalog to narrow")
+	}
+	if same := turn.machineCatalog(MachinePhase{Name: "verify", Tools: []string{"read_file"}}); len(same) != len(first) {
+		t.Error("the catalog should be built once per turn, not per step")
+	}
+
+	// PhaseWorker narrows the pool to what the step named — that is the
+	// half that was already right, and the half this feeds.
+	narrowed := PhaseTools(MachinePhase{Tools: []string{"read_file"}},
+		[]AgentToolDef{{Tool: Tool{Name: "read_file"}}, {Tool: Tool{Name: "web_search"}}})
+	if len(narrowed) != 1 || narrowed[0].Tool.Name != "read_file" {
+		t.Errorf("the step should reach exactly what it named, got %+v", narrowed)
 	}
 }

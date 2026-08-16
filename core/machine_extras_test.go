@@ -205,3 +205,32 @@ func TestAdviceCatchesAHandRolledJSONPrompt(t *testing.T) {
 		t.Errorf("a clean phase should draw no advice: %v", adv)
 	}
 }
+
+// The recipe ships with hunch told to go and look — which needs tools
+// ticked in the editor, because a step that passes on reaches only what
+// it names. The advisor says so, and the recipe's own description says
+// so: an example whose last mile is invisible teaches the wrong thing.
+func TestInvestigationRecipeSaysHunchNeedsItsTools(t *testing.T) {
+	raw, err := os.ReadFile("../extras/investigation.machine.json")
+	if err != nil {
+		t.Skip("recipe not present")
+	}
+	var def MachineDef
+	if err := json.Unmarshal(raw, &def); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(def.Description, "tick the tools") {
+		t.Error("the recipe should tell whoever opens it what its last mile is")
+	}
+	advice := strings.Join(def.Advice(), "\n")
+	if !strings.Contains(advice, "step hunch") || !strings.Contains(advice, "names no tools") {
+		t.Errorf("the advisor should name the step that cannot look: %v", def.Advice())
+	}
+	// And it must not fire on the steps that are fine: the resident ones
+	// have the agent's whole catalog, and triage only decides.
+	for _, name := range []string{"step verify", "step answer", "step triage"} {
+		if strings.Contains(advice, name+": the instructions send it looking") {
+			t.Errorf("%s does not need tools ticked: %v", name, def.Advice())
+		}
+	}
+}

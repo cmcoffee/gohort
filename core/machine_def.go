@@ -401,6 +401,11 @@ func (d MachineDef) Advice() []string {
 					"If you need it as a "+string(f.Type)+", let the step work it out instead of filling it.")
 			}
 		}
+		if !p.Resident && len(p.Tools) == 0 && strings.TrimSpace(p.Agent) == "" && wantsToLook(p.Prompt) {
+			out = append(out, "step "+name+": the instructions send it looking, but it names no tools and it is not delegated — "+
+				"a step that passes on runs before the turn has a catalog, so it reaches exactly what it names and otherwise nothing. "+
+				"Tick its tools under \"How this step runs\", or give the step to an agent that already has them.")
+		}
 		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
 			out = append(out, "step "+name+": the prompt asks for JSON, but this step already declares "+
 				"fields — the framework encodes them for you and validates what comes back. Delete the "+
@@ -409,6 +414,34 @@ func (d MachineDef) Advice() []string {
 		}
 	}
 	return out
+}
+
+// wantsToLook spots a prompt that tells a step to go and find
+// something, which it cannot do with no tools.
+//
+// Deliberately phrase-based and narrow, like asksForRawJSON: it fires
+// on instructions to GO somewhere, not on every mention of a source. A
+// step that says "explain what the log showed" is working from what it
+// was handed and is fine.
+func wantsToLook(prompt string) bool {
+	l := strings.ToLower(prompt)
+	for _, sign := range []string{
+		"go and look",
+		"go look",
+		"search ",
+		"look it up",
+		"read the file",
+		"read the log",
+		"run the command",
+		"ask the live",
+		"check the system",
+		"fetch ",
+	} {
+		if strings.Contains(l, sign) {
+			return true
+		}
+	}
+	return false
 }
 
 // asksForRawJSON spots a prompt hand-rolling the structured output the

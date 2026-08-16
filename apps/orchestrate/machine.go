@@ -171,8 +171,30 @@ func cursorDiffers(sess *ChatSession, cur *MachineCursor) bool {
 // pipeline stage takes (see resolveStageTools). The seam is here, and
 // filling it is what moves transient phases onto the real catalog when a
 // machine turns up that needs one.
-func (t *chatTurn) machineCatalog() []AgentToolDef {
-	return nil
+func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
+	if len(ph.Tools) == 0 {
+		return nil
+	}
+	if t.machineTools == nil {
+		// A session of its own, built the way a pipeline's sub-run builds
+		// one mid-turn: it shares the turn's caches and dispatch counts,
+		// and what it stages is folded back into the turn below. The
+		// turn's OWN session does not exist yet — a step runs during
+		// system-prompt assembly, hundreds of lines before newToolSession
+		// is called for the round — which is why this was empty for so
+		// long, and why the fix is a session rather than a wait.
+		sess := t.newToolSession()
+		defer t.captureActiveWorkspace(sess)
+		pool, _, err := t.resolveWorkerTools(sess, false)
+		if err != nil {
+			t.turnDiag("machine_tools_unavailable", "step "+ph.Name+" names tools but the catalog could not be resolved ("+err.Error()+"); it ran without them")
+			return nil
+		}
+		// Prefixed so the activity pane reads as what it is: work done
+		// inside a step, before the turn's own answer began.
+		t.machineTools = t.wrapToolsForActivity(sess, pool, "↳ [step] ")
+	}
+	return t.machineTools
 }
 
 // completeMachine closes the turn: a resident phase that names a Next

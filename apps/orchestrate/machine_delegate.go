@@ -32,8 +32,12 @@ import (
 // ordinary inline worker, wrapped so a phase naming an agent is handed
 // to that agent instead.
 func (t *chatTurn) phaseRunner() PhaseRunner {
-	base := t.app.PhaseWorker(t.machineCatalog())
 	return func(ctx context.Context, ph MachinePhase, prompt string) (string, error) {
+		// Per step, because the catalog is: a step that names no tools
+		// pays nothing, and one that names some gets exactly those
+		// (PhaseWorker narrows by ph.Tools). A delegate brings its own,
+		// so it is handed none of this.
+		base := t.app.PhaseWorker(t.machineCatalog(ph))
 		// Say what is happening BEFORE it happens. These calls run at the
 		// head of the turn, before the persona is even assembled, so
 		// until the first one returns the person is looking at nothing —

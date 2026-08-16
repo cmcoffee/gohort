@@ -321,6 +321,12 @@ type chatTurn struct {
 	udb   Database
 	user  string
 	agent AgentRecord
+	// machineTools is the catalog a machine's steps draw from, built at
+	// most once per turn and only when a step actually names tools (see
+	// chatTurn.machineCatalog). The turn's own session does not exist
+	// when a step runs, so this is a session of the step's own — the
+	// same shape a pipeline sub-run uses.
+	machineTools []AgentToolDef
 	// detach is this TURN's background-job ledger, shared by every session the
 	// turn mints. It has to live here rather than on a session because a plan
 	// runs each step on its OWN session (runWorkerStep), so a per-session cap

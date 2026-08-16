@@ -122,7 +122,11 @@ output     [{name, type, desc, required, from}] — validated JSON. Transient ph
 guard      (resident) plain-language condition that moves the conversation out
 guard_to   (resident) where a tripped guard goes; defaults to the start phase
 keep       [phase names] whose state survives RE-ENTRY into this phase; empty keeps everything
-tools      restrict this phase to a subset of the agent's catalog; empty inherits all
+tools      what this phase may use. A RESIDENT phase runs as the turn itself, so this NARROWS the
+           agent's catalog and empty inherits all. A TRANSIENT phase runs before the turn has a
+           catalog, so it reaches exactly what it names and empty means NO tools — right for a
+           phase that only decides or reshapes, wrong for one told to go and look. A phase needing
+           different REACH (its own persona, memory, tools) should be delegated with "agent".
 model      "worker" | "lead"    think   "on" | "off"
 
 === TRANSIENT vs RESIDENT ===

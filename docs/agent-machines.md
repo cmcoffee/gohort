@@ -679,6 +679,27 @@ same, since that is a second turn of the same agent with all of the cost and non
 **A delegate that errors fails the phase.** It does not fall back: answering the question with the
 wrong thing wearing the right name is the one outcome worse than an error.
 
+## Tools in a step
+
+The two kinds reach tools differently, and the difference is not cosmetic:
+
+- A step the conversation **waits in** runs as the turn itself, so it has the agent's whole
+  catalog and its tool list NARROWS that. Empty means everything.
+- A step that **passes on** runs before the turn has a catalog at all — it happens during
+  system-prompt assembly, hundreds of lines before the round's tool session exists — so it reaches
+  exactly what it names and nothing otherwise. Empty means NO tools.
+
+That second half was inert until v0.6.171: the control existed, the tool's spec documented it, and
+the runtime handed every passing step an empty catalog, so a step told to "go and look" could not.
+It now builds a session of its own the way a pipeline's sub-run does (shared caches and dispatch
+counts, staged files folded back into the turn), and only when a step actually names tools — a step
+that names none pays nothing.
+
+`Advice()` catches the mismatch that motivated this: a step whose instructions send it looking, with
+no tools named and no delegate. The shipped investigation recipe has exactly that shape, on purpose,
+and says so in its description — its `hunch` step is meant to be given whatever search tools the
+deployment has.
+
 ## What the person sees while it runs
 
 A machine's transient steps run at the HEAD of a turn — before the persona is assembled, before a

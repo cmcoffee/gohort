@@ -291,6 +291,32 @@ func staticValueOptions() []ui.SelectOption {
 	return out
 }
 
+// toolsLabel and toolsHelp say what the tools list MEANS here, which is
+// two different things.
+//
+// A step the conversation waits in runs as the turn itself, so it has
+// the agent's whole catalog and this narrows it — empty means
+// everything. A step that passes on runs before the turn has a catalog
+// at all and gets exactly what it names — empty means NOTHING. Saying
+// "empty inherits all" in both places (as this did) tells an author
+// their investigating step has every tool, when in fact it has none.
+func toolsLabel(p MachinePhase) string {
+	if p.Resident {
+		return "Only these tools"
+	}
+	return "Tools this step may use"
+}
+
+func toolsHelp(p MachinePhase) string {
+	if p.Resident {
+		return "Check tools to narrow the agent's catalog while the conversation waits here; none checked = everything it normally has. " +
+			"Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."
+	}
+	return "A step that passes on runs BEFORE the turn has a catalog, so it reaches exactly what you tick here and nothing otherwise — " +
+		"none checked means no tools at all, which is right for a step that only decides or reshapes what it was given. " +
+		"Tick tools for a step that has to go and look. For work that needs a whole different reach, delegate the step to an agent instead (above)."
+}
+
 // builtinNameExpr is the row condition "this field IS a built-in",
 // written in the form's own show_when grammar and built from the same
 // table the resolver reads.
@@ -588,10 +614,10 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// The user's real tool pool, not a box to type names into — the
 		// last thing in this editor that was typed from memory. Checked
 		// none = no narrowing, which is the common case.
-		ui.FormField{Field: "tools", Type: "checklist", Label: "Only these tools", ShowWhen: "!agent",
+		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p), ShowWhen: "!agent",
 			Options:     toolChecklistOptions(cat.tools, p.Tools),
 			Placeholder: "(no tools to offer)",
-			Help: "Check tools to narrow the agent's catalog while it is in this step; none checked = everything it normally has. A step only routes or decides? Narrow it hard. Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."},
+			Help:        toolsHelp(p)},
 	)
 	return fields
 }
