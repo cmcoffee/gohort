@@ -225,10 +225,57 @@ func (g WorkflowGraph) layout() (map[string]point, [][]string) {
 			top = r
 		}
 	}
+	// Order each row UNDER THE STEPS THAT LEAD TO IT, not by the order
+	// its steps were declared.
+	//
+	// Declaration order alone put a step wherever its author happened to
+	// write it, so the second step of the right arm could sit under the
+	// left one and the arrows crossed — with nothing on screen saying
+	// the fix was to reorder a list. The standard remedy applies: sort
+	// each row by the mean position of a node's parents in the row
+	// above (barycentre), which is what makes an arm stay an arm.
+	//
+	// Declaration order survives where it is the only answer: two steps
+	// with the SAME parent — the arms of one split — genuinely tie, and
+	// there the author's order decides which is on the left. That is the
+	// case the ↑↓ buttons speak to.
 	ranks := make([][]string, top+1)
 	for r := 0; r <= top; r++ {
 		ids := rows[r]
-		sort.SliceStable(ids, func(i, j int) bool { return order[ids[i]] < order[ids[j]] })
+		bary := map[string]float64{}
+		if r > 0 {
+			above := map[string]int{}
+			for i, id := range ranks[r-1] {
+				above[id] = i
+			}
+			for _, id := range ids {
+				sum, n := 0.0, 0.0
+				for _, e := range g.Edges {
+					if e.To != id {
+						continue
+					}
+					if pi, ok := above[e.From]; ok {
+						sum += float64(pi)
+						n++
+					}
+				}
+				if n > 0 {
+					bary[id] = sum / n
+				} else {
+					// Nothing above points at it (an unreachable step, or
+					// one reached only by a back edge). Keep it out of the
+					// way of the rows that ARE placed by their parents,
+					// and in the author's order among its own kind.
+					bary[id] = float64(len(ranks[r-1]) + 1)
+				}
+			}
+		}
+		sort.SliceStable(ids, func(i, j int) bool {
+			if bi, bj := bary[ids[i]], bary[ids[j]]; bi != bj {
+				return bi < bj
+			}
+			return order[ids[i]] < order[ids[j]]
+		})
 		ranks[r] = ids
 	}
 

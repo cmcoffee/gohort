@@ -253,3 +253,50 @@ func TestReorderingOnlySwapsStepsAtTheSameDepth(t *testing.T) {
 		}
 	}
 }
+
+// A branch has to LOOK like a branch two steps down. Ordering each row
+// by declaration alone put a step wherever its author happened to write
+// it, so the right arm's second step could sit under the left arm with
+// the arrows crossing — and nothing on screen said the fix was to
+// reorder a list.
+func TestAnArmStaysUnderItsOwnBranch(t *testing.T) {
+	build := func(tail ...MachinePhase) MachineDef {
+		d := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+			{Name: "triage", Prompt: "p", Choices: []string{"left", "right"}, Next: "right"},
+			{Name: "left", Prompt: "p", Next: "left_two"},
+			{Name: "right", Prompt: "p", Next: "right_two"},
+		}}
+		d.Phases = append(d.Phases, tail...)
+		return d
+	}
+	leftTwo := MachinePhase{Name: "left_two", Prompt: "p", Resident: true}
+	rightTwo := MachinePhase{Name: "right_two", Prompt: "p", Resident: true}
+
+	// Whichever order the second row is DECLARED in, each step lands
+	// under the step that leads to it.
+	for _, def := range []MachineDef{build(leftTwo, rightTwo), build(rightTwo, leftTwo)} {
+		pos, _ := def.Graph().layout()
+		if pos["left_two"].X != pos["left"].X {
+			t.Errorf("left_two should sit under left: %d vs %d", pos["left_two"].X, pos["left"].X)
+		}
+		if pos["right_two"].X != pos["right"].X {
+			t.Errorf("right_two should sit under right: %d vs %d", pos["right_two"].X, pos["right"].X)
+		}
+	}
+
+	// And where there is a genuine TIE — the two arms of one split, both
+	// reached from the same step — the author's order still decides
+	// which is on the left. That is what the ↑↓ buttons act on.
+	a := MachineDef{Name: "m", Start: "triage", Phases: []MachinePhase{
+		{Name: "triage", Prompt: "p", Choices: []string{"left", "right"}, Next: "right"},
+		{Name: "left", Prompt: "p", Resident: true},
+		{Name: "right", Prompt: "p", Resident: true},
+	}}
+	b := a
+	b.Phases = []MachinePhase{a.Phases[0], a.Phases[2], a.Phases[1]}
+	pa, _ := a.Graph().layout()
+	pb, _ := b.Graph().layout()
+	if !(pa["left"].X < pa["right"].X && pb["right"].X < pb["left"].X) {
+		t.Errorf("siblings of one split should follow the declared order: %v %v", pa, pb)
+	}
+}

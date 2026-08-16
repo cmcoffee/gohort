@@ -849,10 +849,15 @@ is the distinction such a list most needs to make. Only a real fork nests — a 
 exactly one place is a sequence, and drawing it as a branch would make every machine look forked.
 
 **The map's shape comes from the ARROWS, not the step list.** `layout()` ranks steps by distance
-from the entry over forward edges, so a step sits below whatever leads to it and the declared order
-only decides which side same-depth steps sit on. Reordering a chain therefore changes nothing in the
-picture — correct, but worth saying out loud, because a reorder button next to a diagram invites the
-opposite expectation.
+from the entry over forward edges, so a step sits below whatever leads to it. Within a row, steps are
+ordered by the mean position of their PARENTS (barycentre) — which is what keeps an arm of a branch
+under its own branch two steps down. Declaration order decides only where that genuinely ties: the
+arms of one split, reached from the same step, sit left-to-right in the order they are declared, and
+that is what the ↑↓ buttons act on. Reordering a chain changes nothing in the picture, correctly.
+
+Before the barycentre pass, a row was ordered by declaration alone: write the right arm's second step
+first and it sat under the LEFT arm with the arrows crossing, with nothing on screen saying the fix
+was to reorder a list.
 
 **Steps reorder** (↑↓ on each step's toolbar). The order is not cosmetic: it is the rail and the
 reading order, the tie-break that arranges same-depth steps in the map, the order earlier findings are pinned into a
