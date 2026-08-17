@@ -48,9 +48,28 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 			"A pipeline attaches to an agent as a callable tool (run_<name>), so one that is attached to nothing is inert. " +
 			"Author them from chat with the pipeline tool; this is where you see what you have.",
 		Body: ui.Stack{Children: []ui.Component{
+			// The three ways to get one, on a line: they are
+			// alternatives, and stacked they read as three steps
+			// somebody is meant to take in order.
 			ui.Stack{Row: true, Children: []ui.Component{
-				// Import exists in the HTTP layer and had nothing calling
-				// it — the same gap machines had until v0.6.201. A file
+				// The list could only IMPORT — there was no way to make
+				// a pipeline from the UI at all, which is the same gap
+				// machines had until v0.6.201: the page built for
+				// keeping them could not start one.
+				ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label:   "New pipeline",
+					Title:   "Start from a small pipeline that already runs",
+					URL:     "/orchestrate/pipeline?new=1",
+					Method:  "GET",
+					Variant: "primary",
+				}}},
+				ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label:  "Describe one…",
+					Title:  "Draft a pipeline from a description of what it should do",
+					URL:    "/orchestrate/pipeline?describe=1",
+					Method: "GET",
+				}}},
+				// Import had nothing calling it until v0.6.221. A file
 				// field reads the file as TEXT in the browser and submits
 				// its contents, so this is a form rather than an upload.
 				ui.ModalButton{
@@ -103,6 +122,27 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
+		return
+	}
+	// ?new=1 mints a pipeline that runs and lands you IN it, rather than
+	// on a form asking for a name. The starter comes from the server
+	// (StarterPipeline) and a test proves it validates, so the first
+	// thing anybody sees is something that would run.
+	if r.URL.Query().Get("new") == "1" {
+		fresh := StarterPipeline()
+		fresh.Owner = user
+		fresh.ID = ""
+		saved := SavePipelineDef(udb, fresh)
+		Log("[orchestrate.pipelines] user=%q started a new pipeline (id=%s)", user, saved.ID)
+		http.Redirect(w, r, "/orchestrate/pipeline?id="+saved.ID, http.StatusSeeOther)
+		return
+	}
+	// ?describe=1 is the drafting form, on its own page rather than in a
+	// dialog — drafting runs a model for up to a minute and can come
+	// back with nothing runnable, and a door that cannot show you why it
+	// failed is the wrong door for it (v0.6.220).
+	if r.URL.Query().Get("describe") == "1" {
+		T.servePipelineDescribePage(w, r, user)
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -223,6 +263,52 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Subtitle: "Nothing here refuses a save. It is what the pipeline looks like it might not have meant.",
 			Body:     ui.Card{HTML: findingsHTMLPlain(def.Advice(), "Nothing — the stages read as instructions rather than specifications.")},
 		})
+	page.ServeHTTP(w, r)
+}
+
+// servePipelineDescribePage is the drafting form: one box, one button,
+// and room for what came back.
+func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *http.Request, user string) {
+	page := ui.Page{
+		Title:     "Describe a pipeline",
+		ShowTitle: true,
+		BackURL:   "/gateways",
+		Nav:       HubNav("/gateways"),
+		Sections: []ui.Section{{
+			Title: "What should it do?",
+			Wide:  true,
+			Subtitle: "Say what the work is, start to finish — what it works out first, what it does with each piece, what it produces. " +
+				"A draft opens for you to adjust. A pipeline that would not run is refused rather than saved, so an empty result means the draft failed, not that it vanished.",
+			Body: ui.FormPanel{
+				PostURL:     "/orchestrate/api/pipelines/draft",
+				SubmitLabel: "Draft it",
+				RedirectURL: "/orchestrate/pipeline?id={id}",
+				Fields: []ui.FormField{{
+					Field: "description", Type: "textarea", Rows: 8,
+					Label:       "In plain words",
+					Placeholder: "Break a research question into separate sub-questions, look each one up on the web in parallel, then write one answer that cites what it found and says what it could not settle.",
+					Help:        "It runs a model, so it takes a moment. If it cannot produce something that runs it says so here rather than failing quietly.",
+				}},
+			},
+		}, {
+			Title:    "The other two ways in",
+			Wide:     true,
+			Subtitle: "A starter pipeline that already runs, or a recipe somebody exported. Neither needs a model.",
+			Body: ui.Toolbar{Actions: []ui.ToolbarAction{{
+				Label:   "New pipeline",
+				Title:   "Start from a small pipeline that already runs",
+				URL:     "/orchestrate/pipeline?new=1",
+				Method:  "GET",
+				Variant: "primary",
+			}, {
+				Label:  "Back to the list",
+				Title:  "Extensions, where your pipelines are kept",
+				URL:    "/gateways",
+				Method: "GET",
+			}}},
+		}},
+	}
+	Log("[orchestrate.pipelines] user=%q opened the describe form", user)
 	page.ServeHTTP(w, r)
 }
 

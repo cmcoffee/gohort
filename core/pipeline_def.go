@@ -1063,3 +1063,38 @@ func ImportPipeline(udb Database, owner string, recipe PipelineDef) (PipelineDef
 	}
 	return SavePipelineDef(udb, recipe), nil
 }
+
+// StarterPipeline is a small pipeline that RUNS, for somebody who
+// clicked "new" rather than arriving with a design.
+//
+// The rules it has to teach are easier to read off something correct
+// than out of a rejection: a later stage reads an earlier one by name,
+// declaring output IS the structured-output mechanism (so no prompt
+// here asks for JSON), and a stage that declares nothing is a prose
+// stage, which is right for the one that answers. It uses no tools, so
+// it runs in any deployment.
+//
+// Lives here rather than in a page's JavaScript so there is one copy
+// and a test can prove the claim in this comment.
+func StarterPipeline() PipelineDef {
+	return PipelineDef{
+		Name:        "New pipeline",
+		Description: "What this pipeline is for, and when an agent should reach for it.",
+		Stages: []PipelineStage{
+			{
+				Name:   "plan",
+				Kind:   StageWorker,
+				Prompt: "Work out what is actually being asked, and what a good answer would have to cover.",
+				Output: []PipelineField{
+					{Name: "focus", Type: FieldString, Required: true,
+						Desc: "what the answer must actually address, in one sentence"},
+				},
+			},
+			{
+				Name:   "answer",
+				Kind:   StageWorker,
+				Prompt: "Answer the question, keeping to {stage:plan.focus} and saying plainly where you are unsure.",
+			},
+		},
+	}
+}

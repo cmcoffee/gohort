@@ -308,3 +308,78 @@ func TestThePipelinePageSaysWhatARunCosts(t *testing.T) {
 		t.Error("no way to take a copy before experimenting")
 	}
 }
+
+// You could not make a pipeline from the UI at all — the list offered
+// Import and nothing else, which is the same gap machines had until
+// v0.6.201: the page built for keeping them could not start one.
+func TestThereAreThreeWaysToGetAPipeline(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	adminAuth(t, user)
+
+	// New mints one that RUNS and lands you in it, rather than a form
+	// asking for a name.
+	r := httptest.NewRequest("GET", "/orchestrate/pipeline?new=1", nil)
+	w := httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("new should land in the editor: %d", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/orchestrate/pipeline?id=") {
+		t.Fatalf("wrong destination: %q", loc)
+	}
+	defs := ListPipelineDefs(udb, user)
+	if len(defs) != 1 {
+		t.Fatalf("nothing was minted: %d", len(defs))
+	}
+	if err := defs[0].Validate(); err != nil {
+		t.Errorf("what it minted does not run: %v", err)
+	}
+
+	// Describe is a page, not a dialog.
+	r = httptest.NewRequest("GET", "/orchestrate/pipeline?describe=1", nil)
+	w = httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("the describe page does not render: %d", w.Code)
+	}
+	page := w.Body.String()
+	if !strings.Contains(page, `"post_url":"/orchestrate/api/pipelines/draft"`) {
+		t.Error("the describe page does not post to the draft endpoint")
+	}
+	if strings.Contains(page, "modal_button") {
+		t.Error("drafting should not happen inside a dialog — its failures would be invisible")
+	}
+
+	// And the drafter refuses to store something that would not run,
+	// because every other pipeline door refuses too and a stored one
+	// that cannot run is a tool an agent will call and be failed by.
+	app.LLM = &stubLLM{reply: `{"name":"Broken","stages":[
+		{"name":"a","kind":"worker","prompt":"read {stage:nowhere.thing}"}]}`}
+	r = httptest.NewRequest("POST", "/orchestrate/api/pipelines/draft",
+		strings.NewReader(`{"description":"anything"}`))
+	w = httptest.NewRecorder()
+	app.handlePipelineDraft(w, asUser(r, user))
+	if w.Code == 200 {
+		t.Errorf("a draft that would not run must be refused: %s", w.Body.String())
+	}
+	if len(ListPipelineDefs(udb, user)) != 1 {
+		t.Error("and must not be stored")
+	}
+
+	// A good draft lands, with the id the redirect substitutes.
+	app.LLM = &stubLLM{reply: `{"name":"Research","description":"d","stages":[
+		{"name":"plan","kind":"worker","prompt":"break it up",
+		 "output":[{"name":"queries","type":"list","desc":"q"}]},
+		{"name":"answer","kind":"worker","prompt":"answer {stage:plan.queries}"}]}`}
+	r = httptest.NewRequest("POST", "/orchestrate/api/pipelines/draft",
+		strings.NewReader(`{"description":"research things"}`))
+	w = httptest.NewRecorder()
+	app.handlePipelineDraft(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("draft: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"id":`) {
+		t.Errorf("the response must carry the id the redirect substitutes: %s", w.Body.String())
+	}
+}

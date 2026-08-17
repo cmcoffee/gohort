@@ -72,3 +72,31 @@ func TestTheSharedFindingKeepsBothWordings(t *testing.T) {
 		t.Error("the two readings have drifted apart")
 	}
 }
+
+// The starter has to RUN. A "new" that opens on something the server
+// would refuse teaches the wrong lesson about the whole feature in the
+// first ten seconds — and a starter carrying a finding teaches the
+// finding.
+func TestTheStarterPipelineRunsAsWritten(t *testing.T) {
+	s := StarterPipeline()
+	if err := s.Validate(); err != nil {
+		t.Fatalf("the starter does not validate:\n%v", err)
+	}
+	if adv := s.Advice(); len(adv) != 0 {
+		t.Errorf("the starter carries findings its reader would see:\n%s", strings.Join(adv, "\n"))
+	}
+	// It teaches the thing that is easiest to get wrong: a later stage
+	// reads an earlier one BY NAME.
+	if !strings.Contains(s.Stages[1].Prompt, "{stage:plan.focus}") {
+		t.Error("the starter should demonstrate a stage reading another")
+	}
+	// And it needs nothing this deployment might not have.
+	for _, st := range s.Stages {
+		if len(st.Tools) > 0 || strings.TrimSpace(st.Agent) != "" {
+			t.Errorf("the starter must run anywhere: %+v", st)
+		}
+	}
+	if len(s.Graph().Nodes) != 2 {
+		t.Error("and it should draw")
+	}
+}

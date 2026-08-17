@@ -522,6 +522,7 @@ func (T *OrchestrateApp) Routes() {
 	// import gets its own handler without colliding with the per-id
 	// routes (get/put/delete/export/run) in handlePipelineOne.
 	T.HandleFunc("/api/pipelines/import", g(T.handlePipelineImport))
+	T.HandleFunc("/api/pipelines/draft", g(T.handlePipelineDraft))
 	T.HandleFunc("/api/pipelines/", g(T.handlePipelineOne))
 	// Phase machines (machines_http.go, docs/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a

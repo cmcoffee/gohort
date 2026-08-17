@@ -257,3 +257,74 @@ func samePipelineWiring(a, b PipelineStage) bool {
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
 }
+
+// handlePipelineDraft authors a pipeline from a plain-language
+// description — the "describe one" door, and the counterpart to
+// machine_draft.go.
+//
+//	POST /api/pipelines/draft {"description": "..."} → {id, name}
+//
+// Same drafter, same decoder and the same repair discipline as a
+// revision: a pipeline that would not run is not stored, because every
+// other pipeline door refuses too and a stored one that cannot run is
+// a tool an agent will call and be failed by.
+func (T *OrchestrateApp) handlePipelineDraft(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if T.LLM == nil {
+		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	desc := strings.TrimSpace(body.Description)
+	if desc == "" {
+		http.Error(w, "describe what the pipeline should do", http.StatusBadRequest)
+		return
+	}
+	if len(desc) > maxDraftDescription {
+		desc = desc[:maxDraftDescription]
+	}
+
+	ask := "Design a pipeline for this:\n\n" + desc
+	def, derr := T.draftPipelineOnce(r.Context(), ask)
+	if derr != nil {
+		if def, derr = T.draftPipelineOnce(r.Context(), ask+
+			"\n\nYour previous reply could not be used: "+derr.Error()+
+			"\nReply with ONLY the JSON object."); derr != nil {
+			http.Error(w, "the draft could not be produced: "+derr.Error(), http.StatusBadGateway)
+			return
+		}
+	}
+	if verr := def.Validate(); verr != nil {
+		fixed, ferr := T.draftPipelineOnce(r.Context(), ask+
+			"\n\nA previous attempt would not run:\n"+verr.Error()+
+			"\nReturn a corrected pipeline.")
+		if ferr != nil || fixed.Validate() != nil {
+			http.Error(w, "the draft would not run, and a second attempt did not fix it:\n"+verr.Error(),
+				http.StatusBadGateway)
+			return
+		}
+		def = fixed
+	}
+	def.ID = ""
+	def.Owner = user
+	if strings.TrimSpace(def.Name) == "" {
+		def.Name = "Drafted pipeline"
+	}
+	saved := SavePipelineDef(udb, def)
+	Log("[orchestrate.pipelines] user=%q drafted pipeline %q (id=%s, %d stages)",
+		user, saved.Name, saved.ID, len(saved.Stages))
+	writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name, "stages": len(saved.Stages)})
+}
