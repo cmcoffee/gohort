@@ -76,6 +76,23 @@ A machine cannot be edited into a session that is already parked in it — re-po
 start a new session. Deleting a machine leaves live sessions alone; their next turn runs as an
 ordinary agent turn with a `machine_missing` breadcrumb.
 
+## A machine is not a pipeline-as-agent
+
+Asked directly, and worth answering here because the two look alike from outside.
+
+A **pipeline** runs start to finish and returns a result; it is callable (`run_<name>`) and can back a
+page. A **machine** gives a conversation its shape: the unit is the TURN, it parks between them, and
+nothing calls it or reads a value out of it. The README's roadmap item "pipelines as agents" wants a
+workflow that is an ACTOR — callable, dispatchable, schedulable, with an ACL of its own — and a
+machine is not that. It borrows the agent's identity rather than having one.
+
+The sharpest evidence is a gap in machines, not a claim about them: a **dispatched** turn — a
+schedule firing, a delegation, a sub-agent call — runs WITHOUT the machine, because those paths
+assemble their own prompt and have no session to hold a position in (see Open, below). Dispatch and
+schedule are precisely what "pipelines as agents" wants for free. What machines did prove is the
+weaker, useful half: an agent's body CAN be a declared workflow, authored once and pointed at from
+several agents.
+
 ## Why
 
 gohort has two ways to run an LLM and they sit at opposite corners:

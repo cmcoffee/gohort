@@ -25,7 +25,7 @@ That's the whole install. One static binary, no runtime, no dependency tree.
 
 ## Three ways to think about it
 
-**🏗️ A platform.** A web dashboard that runs a fleet, not a single bot. Multi-agent dispatch with per-caller allowlists, declarative multi-stage **pipelines** (parallel fan-out, bounded loops, branching, and direct tool calls — attached to an agent as a callable tool, or mounted as a page of their own), messaging **channels**, scheduled + event-triggered agents, real multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry — all first-class, not bolted on.
+**🏗️ A platform.** A web dashboard that runs a fleet, not a single bot. Multi-agent dispatch with per-caller allowlists, declarative multi-stage **pipelines** (parallel fan-out, bounded loops, branching, and direct tool calls — attached to an agent as a callable tool, or mounted as a page of their own), **machines** that hold a conversation in one shape across turns, messaging **channels**, scheduled + event-triggered agents, real multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry — all first-class, not bolted on.
 
 **⚙️ A harness.** An agent loop engineered so local and small models stay reliable: the model is told its round budget up front, a loop-guard kills any tool re-called with identical args after it errors 3×, tool-round discipline prevents double replies, failure-streak detection pivots the approach, and runs survive client disconnect. The reliability doesn't come from reaching for a frontier model — it comes from the loop.
 
@@ -53,7 +53,13 @@ That's the loop: **describe it, approve it, it runs.**
 
 - **Local-first, not local-only.** By default the worker tier is your own GPU (Ollama / llama.cpp) and does the bulk of the work; an optional precision tier escalates to a frontier model only for the stages that earn it. Any stage can instead point at a hosted provider — run fully local, fully hosted, or any mix. Privacy is structural: `ForcePrivate` agents and `Private:true` route stages hard-lock to the local tier, so sensitive data (credentials, internal docs, system facts) never leaves the box even by accident.
 
-- **Compose, don't hardcode.** Four primitives — **agents** (persona + tools), **skills** (conditional prompt addendums with a self-training vector corpus), **collections** (RAG buckets), and **pipelines** (declarative workflows authored once — stages fan out for breadth, loop for depth, branch to stop or skip, and call tools directly for the deterministic parts, threading typed fields between each other). A pipeline attaches to any agent as a callable tool, *or* becomes a page: a submit form whose fields are the run's parameters, the stages streaming in as each finishes, and every past run kept to re-read. Export any of them as portable JSON; the recipe carries no identity, so it travels between deployments.
+- **Compose, don't hardcode.** Five primitives — **agents** (persona + tools), **skills** (conditional prompt addendums with a self-training vector corpus), **collections** (RAG buckets), **pipelines** (declarative workflows that run start to finish), and **machines** (workflows a conversation SITS in).
+
+  A **pipeline** is authored once and runs to an end: stages fan out for breadth, loop for depth, branch to stop or skip, and call tools directly for the deterministic parts, threading typed fields between each other. It attaches to any agent as a callable tool, *or* becomes a page — a submit form whose fields are the run's parameters, the stages streaming in as each finishes, and every past run kept to re-read.
+
+  A **machine** is the other half of that idea, and the one a chat needs: a set of steps a conversation moves through and then *stays* in. Work out what is being asked once, pick an approach once, then answer in that frame for the rest of the thread — re-deciding only when the subject genuinely changes. What earlier steps established is **state, not transcript**, so turn eight is not re-reading turn one's reasoning; a step can delegate to another agent, narrow its own tools, or be guarded so the conversation leaves when the job does. Both have an editor with the workflow drawn above it — every box a link into that step's form — a rehearsal or a real run on the page, and the same "describe a change" door that redrafts from a sentence and can be taken back.
+
+  Export any primitive as portable JSON; the recipe carries no identity, so it travels between deployments.
 
 ## Quick start
 
@@ -103,7 +109,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 
 | App | What it is |
 |-----|-----------|
-| `orchestrate` | **Agency** — the agent fleet runner. Chat with seed agents (Chat, Builder, Research, …) or your own; multi-layer governed per-(user, agent) memory, plan-driven authoring, sub-agent dispatch, attachable pipelines |
+| `orchestrate` | **Agency** — the agent fleet runner. Chat with seed agents (Chat, Builder, Research, …) or your own; multi-layer governed per-(user, agent) memory, plan-driven authoring, sub-agent dispatch, attachable pipelines and machines |
 | `admin` | Operator panel — users, permissions, app groups, API credentials, MCP servers, connectors, tool/skill curation, and all service config |
 | `agents` | One published agent, one URL — a permission-gated chat surface scoped to a single agent |
 | `knowledge` | Document Collections — shared / per-user RAG buckets agents attach to |
@@ -124,7 +130,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
 ## Where it's going
 
-The toolkit composes today around **agents + skills + collections + pipelines**, and the through-line is that every new app either uses an existing primitive or proves a new one should exist — so the next app is faster to build than the last.
+The toolkit composes today around **agents + skills + collections + pipelines + machines**, and the through-line is that every new app either uses an existing primitive or proves a new one should exist — so the next app is faster to build than the last. Machines are the most recent instance of that rule: they exist because a *conversation* needed a shape a start-to-finish pipeline could not hold.
 
 On deck:
 - **Artifact marketplace** — every artifact type already exports as a portable, identity-free bundle; next is a remote catalog with signing and provenance, so a pipeline or agent recipe can travel between deployments the way a package does.
@@ -132,11 +138,16 @@ On deck:
 - **A multi-agent turn** — N agents seeing the same context, each contributing per round, with a synthesizer composing the result. Pipelines can express this today only by naming each participant as its own stage; making the roster declarative is what a debate-shaped app actually wants.
 - **Pipelines as agents** — a pipeline is now expressive enough to describe a real multi-round workflow (typed fields between stages, breadth, depth, branching, direct tool calls), but it still has no identity of its own. Next is letting an agent's *body* be a pipeline, so a composed workflow gets a name, an ACL, dispatch, and a schedule for free instead of a second copy of that plumbing.
 
+  *Didn't machines do that?* Nearly, and the difference is worth stating because the two look alike. A machine gives an agent's **conversation** a shape: its unit is the turn, it parks between them, and it never returns a value to a caller. A pipeline-as-agent wants the opposite — a workflow that is an **actor**: callable, dispatchable, schedulable, with a result. Machines proved the pattern (an agent's body can be a declared workflow, authored once and reused) and did *not* absorb the item. The clearest evidence is a known gap in machines themselves: a **dispatched** turn — a schedule firing, a delegation, a sub-agent call — runs *without* the machine, because those paths have no session to hold a position in. Dispatch and schedule are exactly the plumbing this item wants for free, and a machine does not get them.
+
 ## Learn more
 
 - **[docs/REFERENCE.md](docs/REFERENCE.md)** — the full feature surface, SDK interfaces, CLI flags, and project layout
 - **[core/ui/AUTHORING.md](core/ui/AUTHORING.md)** — how to write a new app from scratch
 - **[core/README.md](core/README.md)** — framework core types and internals
+- **[docs/agent-machines.md](docs/agent-machines.md)** — machines: the model, the editor, and the decisions behind both
+- **[docs/pipeline-surfaces.md](docs/pipeline-surfaces.md)** — the pipeline list, page and per-stage form, and where they deliberately differ from machines
+- **[docs/workflow-graph.md](docs/workflow-graph.md)** — one picture for both, and what a fanout, a branch and a loop are drawn as
 
 ## License
 
