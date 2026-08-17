@@ -961,3 +961,29 @@ func TestTheProseFindingOffersARewrite(t *testing.T) {
 		t.Error("the editor spec should say which findings can be rewritten")
 	}
 }
+
+// This app builds its own dialog (openOrchModal) alongside the
+// framework's, and both used to pin themselves at z-index 1000 — so a
+// dialog opened from inside a dialog sat on the same layer as the one
+// it came from, with the first still visible underneath. The framework
+// hands out layers now; sharing that counter is what keeps the two
+// implementations on one stack, and keeping a second counter here would
+// be the same bug with more code.
+func TestTheAppsOwnModalSharesTheFrameworksStack(t *testing.T) {
+	assets, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatalf("read assets: %v", err)
+	}
+	js := string(assets)
+	if !strings.Contains(js, "window.uiNextModalZ()") {
+		t.Error("openOrchModal pins its own layer instead of taking one from the framework")
+	}
+	if !strings.Contains(js, "window.uiReleaseModalZ()") {
+		t.Error("and never gives the layer back, so the stack only ever climbs")
+	}
+	// Escape closes the top dialog only — every open modal registers its
+	// own listener, so one press used to dismiss the whole stack.
+	if !strings.Contains(js, "querySelectorAll('[data-ui-modal]')") {
+		t.Error("Escape does not check whether another dialog is above this one")
+	}
+}

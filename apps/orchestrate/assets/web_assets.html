@@ -2450,6 +2450,13 @@
       function openOrchModal(title) {
         var overlay = document.createElement('div');
         overlay.className = 'ui-orch-modal-overlay';
+        // Share the framework's ONE modal counter (core/ui prelude).
+        // Both implementations used to pin themselves at z-index 1000,
+        // so a dialog opened from inside a dialog sat on the same layer
+        // as the one it came from — the earlier one still visible
+        // underneath, which reads as the new modal failing to open.
+        overlay.setAttribute('data-ui-modal', '1');
+        if (window.uiNextModalZ) overlay.style.zIndex = window.uiNextModalZ();
         var modal = document.createElement('div');
         modal.className = 'ui-orch-modal';
         overlay.appendChild(modal);
@@ -2475,11 +2482,25 @@
         footer.className = 'ui-orch-modal-ftr';
         modal.appendChild(footer);
 
+        var released = false;
         function close() {
           overlay.remove();
           document.removeEventListener('keydown', onKey);
+          if (!released) { released = true; if (window.uiReleaseModalZ) window.uiReleaseModalZ(); }
         }
-        function onKey(ev) { if (ev.key === 'Escape') close(); }
+        // Escape closes the TOP dialog only — every open modal has its
+        // own listener, so without this one cancel dismissed the whole
+        // stack.
+        function onKey(ev) {
+          if (ev.key !== 'Escape') return;
+          var mine = Number(overlay.style.zIndex) || 0;
+          var others = document.querySelectorAll('[data-ui-modal]');
+          for (var i = 0; i < others.length; i++) {
+            if ((Number(others[i].style.zIndex) || 0) > mine) return;
+          }
+          ev.stopPropagation();
+          close();
+        }
         hClose.addEventListener('click', close);
         // No backdrop-click-to-close (drag-select copy would dismiss mid-copy);
         // Escape or the close button dismiss.

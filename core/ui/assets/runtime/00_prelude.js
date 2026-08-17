@@ -429,15 +429,53 @@
   //
   // Returns { overlay, dialog, body, close, primaryButton }. `dialog` is the
   // card element; `close` tears the whole overlay down.
+  // Modal STACKING. Every overlay used to be created at a flat
+  // z-index:1000 — this one, and the ones apps build themselves — so a
+  // dialog opened from inside a dialog landed on the same layer as the
+  // one it came from, separated only by DOM order, with the first still
+  // visible underneath and Escape closing both at once.
+  //
+  // uiNextModalZ hands out an increasing layer and uiReleaseModalZ
+  // gives it back. Exported because an app with its own dialog has to
+  // share ONE counter with this file: two counters is the same bug with
+  // more code. Mark the overlay with data-ui-modal so Escape can tell
+  // what is above it.
+  var modalDepth = 0;
+  window.uiNextModalZ = function() {
+    modalDepth++;
+    return 1000 + modalDepth * 10;
+  };
+  window.uiReleaseModalZ = function() {
+    if (modalDepth > 0) modalDepth--;
+  };
+
   window.uiOpenModal = function(opts) {
     opts = opts || {};
     var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:1rem;box-sizing:border-box';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:' + window.uiNextModalZ() + ';padding:1rem;box-sizing:border-box';
     var dlg = document.createElement('div');
     dlg.style.cssText = 'box-sizing:border-box;background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:100%;max-width:' + (opts.width || '640px') + ';max-height:88vh;display:flex;flex-direction:column';
     overlay.appendChild(dlg);
-    function close() { overlay.remove(); document.removeEventListener('keydown', onKey); }
-    function onKey(ev) { if (ev.key === 'Escape') close(); }
+    var released = false;
+    function close() {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      if (!released) { released = true; window.uiReleaseModalZ(); }
+    }
+    // Escape closes the TOP dialog only. Each open modal registers its
+    // own listener, so without this every one of them closed at once —
+    // cancelling a picker took the form that opened it with it.
+    function onKey(ev) {
+      if (ev.key !== 'Escape') return;
+      var mine = Number(overlay.style.zIndex) || 0;
+      var others = document.querySelectorAll('[data-ui-modal]');
+      for (var i = 0; i < others.length; i++) {
+        if ((Number(others[i].style.zIndex) || 0) > mine) return; // something is above us
+      }
+      ev.stopPropagation();
+      close();
+    }
+    overlay.setAttribute('data-ui-modal', '1');
     document.addEventListener('keydown', onKey);
     if (opts.title) {
       var h = document.createElement('h3');
@@ -930,12 +968,13 @@
   }
   function showToast(msg) {
     var t = el('div', {class: 'ui-toast'}, [msg]);
-    // ABOVE every modal layer (uiOpenModal's overlay is 1000, the form
-    // chip modal's is 1100). At z-index 50 a toast raised while a dialog
-    // was open rendered BEHIND the backdrop — so a submit that failed
-    // inside a modal reset its button and said nothing anybody could
-    // see, which reads as a button that does nothing.
-    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg-2);border:1px solid var(--border);color:var(--text);padding:0.6rem 1rem;border-radius:8px;z-index:2000;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:0.85rem;';
+    // ABOVE every modal layer. Dialogs start at 1000 and climb by 10 as
+    // they stack, so 9000 clears any depth anybody will ever reach. At
+    // z-index 50 a toast raised while a dialog was open rendered BEHIND
+    // the backdrop — so a submit that failed inside a modal reset its
+    // button and said nothing anybody could see, which reads as a
+    // button that does nothing.
+    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg-2);border:1px solid var(--border);color:var(--text);padding:0.6rem 1rem;border-radius:8px;z-index:9000;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:0.85rem;';
     document.body.appendChild(t);
     setTimeout(function(){ t.remove(); }, 2500);
   }
