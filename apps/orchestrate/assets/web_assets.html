@@ -4266,42 +4266,24 @@
             r.querySelector('div').appendChild(jsonBtn);
             r.querySelector('div').appendChild(figToggle);
             r.querySelector('div').appendChild(figWrap);
-            // Delete lives on the row rather than in the footer: the
-            // footer's Save applies to the AGENT, and one button that
-            // sometimes means "save this agent" and sometimes "destroy a
-            // machine" is how someone deletes a workflow by accident.
-            var del = document.createElement('button');
-            del.className = 'ui-orch-list-del';
-            del.type = 'button';
-            del.textContent = '×';
-            del.title = 'Delete this machine everywhere';
-            del.style.cssText = 'flex:0 0 auto';
-            del.onclick = function(ev) {
-              ev.preventDefault();
-              ev.stopPropagation();
-              var warn = 'Delete the machine "' + mc.name + '"?';
-              if (mc.used_by && mc.used_by.length) {
-                warn += ' It will be detached from ' + mc.used_by.join(', ') + '.';
-              }
-              warn += ' Conversations already running it keep their history and continue as ordinary agent turns.';
-              Promise.resolve(window.uiConfirm ? window.uiConfirm(warn) : confirm(warn)).then(function(ok) {
-                if (!ok) return;
-                fetch('api/machines/' + encodeURIComponent(mc.id), {method: 'DELETE'})
-                  .then(function(resp) {
-                    if (!resp.ok) return resp.text().then(function(t) { throw new Error(t); });
-                    m.close();
-                    window.UIClientActions['orchestrate_machines_modal']();
-                  })
-                  .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
-              });
-            };
-            r.appendChild(del);
+            // No delete here. This modal picks a machine for THIS agent,
+            // and every other control on the row is scoped that way — the
+            // checkbox attaches, the buttons open. A × that destroyed the
+            // machine for every agent that runs it sat one row-width from
+            // a checkbox that means "use this one", which is how a
+            // workflow gets deleted by somebody who meant to detach it.
+            // Deleting is managing, and managing lives in Extensions →
+            // Machines, where the row says what uses it before you go.
             list.appendChild(r);
           });
 
           var note = document.createElement('div');
           note.style.cssText = 'color:var(--text-mute);font-size:0.74rem;line-height:1.5;margin-top:0.7rem';
-          note.textContent = 'Conversations already open keep the machine they started with — this applies to new sessions.';
+          // Where deleting went, said once. Removing the row's × without
+          // saying so would read as the capability going missing rather
+          // than moving somewhere it cannot be hit by accident.
+          note.textContent = 'Conversations already open keep the machine they started with — this applies to new sessions. ' +
+            'To rename, delete or build machines, go to Extensions → Machines.';
           m.body.appendChild(note);
 
           var cancelBtn = document.createElement('button');

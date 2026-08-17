@@ -256,7 +256,7 @@ func TestEditorPageUsesTheSharedSpec(t *testing.T) {
 	if !strings.Contains(string(src), "machineEditorSpec(def,") {
 		t.Error("the page should render the shared editor spec, not a second copy of it")
 	}
-	if !strings.Contains(string(src), "checklistText(def)") {
+	if !strings.Contains(string(src), "checklistHTML(def)") {
 		t.Error("the page should show what is still missing")
 	}
 }

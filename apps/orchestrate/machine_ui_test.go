@@ -48,7 +48,18 @@ func TestMachinesModal_ToolbarEntryAndHandlerAgree(t *testing.T) {
 	}
 	// Editing is reachable from the same row, and PUTs the recipe.
 	if !strings.Contains(string(assets), "function openMachineEditor(") {
-		t.Error("no machine editor — the modal can select and delete but not fix a typo")
+		t.Error("no machine editor — the modal could select a machine but not fix a typo in one")
+	}
+	// And it does NOT delete. Every other control on the row is scoped to
+	// this agent — the checkbox attaches, the buttons open — so a × that
+	// destroyed the machine for every agent running it sat one row-width
+	// from a checkbox meaning "use this one". Deleting is managing, and
+	// managing lives in Extensions → Machines.
+	if strings.Contains(string(assets), "Delete this machine everywhere") {
+		t.Error("a per-agent picker should not destroy a machine for every agent")
+	}
+	if !strings.Contains(string(assets), "Extensions → Machines") {
+		t.Error("the modal should say where deleting went, or it reads as a capability that vanished")
 	}
 	// The verb is now conditional (create POSTs, edit PUTs); the create
 	// path is pinned in TestMachinesModalCanCreate.
@@ -82,9 +93,6 @@ func TestMachineSelectField_HidesItselfUntilThereIsSomethingToPick(t *testing.T)
 	}
 }
 
-// The Machines modal could select, edit, diagram and delete — but not
-// create. "How do I load a machine" had no answer in the UI at all, and
-// an editor that can only edit what already exists is a strange shape
 // Creating a machine goes to the PAGE from everywhere, including the
 // chat modal. The modal used to open the JSON editor on a starter,
 // which is the one door that asks a newcomer to read a schema before
@@ -708,17 +716,34 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 	// together: a refresh phrased differently reads as the page changing
 	// its mind rather than as the same list one item shorter.
 	clean := MachineDef{Name: "ok", Start: "s", Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}}
-	goneClean := checklistText(clean)
+	goneClean := checklistHTML(clean)
 	if !strings.Contains(src, "Nothing outstanding — this machine will run as written.") ||
 		!strings.Contains(goneClean, "Nothing outstanding — this machine will run as written.") {
 		t.Error("the empty-checklist sentence should be the same on both sides")
 	}
-	if !strings.Contains(src, "' to fix: • '") || !strings.Contains(checklistText(def), " to fix: • ") {
+	if !strings.Contains(src, "' to fix'") || !strings.Contains(checklistHTML(def), " to fix") {
 		t.Error("the counted form should be the same on both sides")
 	}
 	if !strings.Contains(src, "the steps read as instructions rather than specifications.") ||
-		!strings.Contains(adviceText(clean), "the steps read as instructions rather than specifications.") {
+		!strings.Contains(adviceHTML(clean), "the steps read as instructions rather than specifications.") {
 		t.Error("the empty-advice sentence should be the same on both sides")
+	}
+
+	// And the SHAPE is pinned with the wording. Each finding runs to
+	// several lines of prose, so joining them into one paragraph with
+	// inline bullets made three findings read as one wall — the page
+	// draws <li> per finding, and so must the refresh.
+	if !strings.Contains(checklistHTML(def), "<li>") || strings.Contains(checklistHTML(def), " • ") {
+		t.Error("the page should draw one finding per line")
+	}
+	if !strings.Contains(src, "ul.className = 'machine-findings'") ||
+		!strings.Contains(src, "createElement('li')") {
+		t.Error("the refresh should rebuild the same list, not a joined line")
+	}
+	// Built with textContent: a finding quotes step names, and a step
+	// named by somebody else is not markup.
+	if !strings.Contains(src, "li.textContent = it") {
+		t.Error("findings are text, not HTML")
 	}
 }
 
@@ -817,5 +842,47 @@ func TestAFindingYouCannotActOnHasAButton(t *testing.T) {
 	app.handleMachinePage(w, asUser(r, user))
 	if strings.Contains(w.Body.String(), "Fix it") {
 		t.Error("a machine with nothing to fix should offer no fix")
+	}
+}
+
+// A finding names a step, and several of them end in an instruction to
+// go to it — tick its tools, set next, turn on resident. The rail shows
+// one section at a time, so a finding that names a step without linking
+// to it asks somebody to do the navigation twice.
+func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
+	def := MachineDef{Name: "M", Start: "log check", Phases: []MachinePhase{
+		// A transient step that goes nowhere, and one whose name is a
+		// prefix of the other's — longest match or the link lands wrong.
+		{Name: "log", Prompt: "look"},
+		{Name: "log check", Prompt: "search the logs", Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	html := checklistHTML(def)
+	if !strings.Contains(html, `href="#log"`) {
+		t.Errorf("the finding about \"log\" should open it:\n%s", html)
+	}
+	if !strings.Contains(adviceHTML(def), `href="#log-check"`) {
+		t.Errorf("and the advice about \"log check\" should open THAT step:\n%s", adviceHTML(def))
+	}
+	// The label is only the step, not the whole finding.
+	if !strings.Contains(html, `>step log</a>`) {
+		t.Errorf("the link should be the step name, not the sentence:\n%s", html)
+	}
+	// A finding about the machine rather than a step stays plain text.
+	whole := checklistHTML(MachineDef{Name: "M", Phases: []MachinePhase{{Name: "s", Prompt: "p"}}})
+	if strings.Contains(whole, "<a") && !strings.Contains(whole, "step s") {
+		t.Errorf("a machine-level finding has no step to open:\n%s", whole)
+	}
+	// The refresh applies the same rule, from the step names in the map
+	// it just redrew — one list of steps on the page, not two.
+	src, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"function stepNames()", "data-node", "function findingStep(names, line)",
+		"machine-finding-step"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("the live refresh is missing %q", want)
+		}
 	}
 }

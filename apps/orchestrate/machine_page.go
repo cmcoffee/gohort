@@ -321,7 +321,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: "Nothing here refuses a save. It is what the machine looks like it might not have meant.",
 			Wide:     true,
 			Body: withRepairButton(def, RepairAdvice,
-				ui.Card{HTML: `<div data-machine-advice>` + HTMLEscape(adviceText(def)) + `</div>`}),
+				ui.Card{HTML: `<div data-machine-advice>` + adviceHTML(def) + `</div>`}),
 		},
 		{
 			Title: "What is still missing",
@@ -337,7 +337,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: "The same findings a save is checked against, as work remaining.",
 			Wide:     true,
 			Body: withRepairButton(def, RepairProblems,
-				ui.Card{HTML: `<div data-machine-checklist>` + HTMLEscape(checklistText(def)) + `</div>`}),
+				ui.Card{HTML: `<div data-machine-checklist>` + checklistHTML(def) + `</div>`}),
 		},
 	}...)
 	page.ServeHTTP(w, r)
@@ -555,23 +555,70 @@ func phaseSubtitle(p MachinePhase) string {
 	return b.String()
 }
 
-// checklistText renders Problems() as one readable line, or says the
-// machine is complete.
-// adviceText renders Advice(), or says there is none.
-func adviceText(def MachineDef) string {
-	adv := def.Advice()
-	if len(adv) == 0 {
-		return "Nothing — the steps read as instructions rather than specifications."
+// A findings list is a LIST. Joined into one paragraph with inline
+// bullets, three findings that each run to four lines of prose read as
+// a wall — and the wall is what somebody works down one item at a time,
+// so it is the last place to save vertical space.
+// And the step a finding names is a LINK to that step. Several of them
+// end in an instruction to go somewhere — tick its tools, set next,
+// turn on resident — and the rail is one section at a time, so a
+// finding that names a step you then have to go and find is asking you
+// to do the navigation twice.
+func findingsHTML(def MachineDef, items []string, empty string) string {
+	if len(items) == 0 {
+		return `<div class="machine-findings-none">` + HTMLEscape(empty) + `</div>`
 	}
-	return "• " + strings.Join(adv, " • ")
+	var b strings.Builder
+	b.WriteString(`<ul class="machine-findings">`)
+	for _, it := range items {
+		b.WriteString(`<li>`)
+		if step := findingStep(def, it); step != "" {
+			lead := "step " + step
+			b.WriteString(`<a class="machine-finding-step" href="#` + ui.SectionSlug(step) + `">` +
+				HTMLEscape(lead) + `</a>` + HTMLEscape(strings.TrimPrefix(it, lead)))
+		} else {
+			b.WriteString(HTMLEscape(it))
+		}
+		b.WriteString(`</li>`)
+	}
+	b.WriteString(`</ul>`)
+	return b.String()
 }
 
-func checklistText(def MachineDef) string {
+// findingStep is the step a finding opens with, or "" for a finding
+// about the machine itself.
+//
+// The boundary is a colon OR a space, because the findings are written
+// as sentences and not all of them punctuate the same way ("step x:
+// next names…" but "step x passes on but goes nowhere"). Longest match
+// wins: a step may be named with another step's name as its prefix, and
+// then both match and only the longer one is right.
+func findingStep(def MachineDef, line string) string {
+	best := ""
+	for _, p := range def.Phases {
+		n := strings.TrimSpace(p.Name)
+		if n == "" || len(n) <= len(best) || !strings.HasPrefix(line, "step "+n) {
+			continue
+		}
+		switch rest := line[len("step "+n):]; {
+		case rest == "", rest[0] == ':', rest[0] == ' ':
+			best = n
+		}
+	}
+	return best
+}
+
+func adviceHTML(def MachineDef) string {
+	return findingsHTML(def, def.Advice(), "Nothing — the steps read as instructions rather than specifications.")
+}
+
+func checklistHTML(def MachineDef) string {
 	probs := def.Problems()
 	if len(probs) == 0 {
-		return "✓ Nothing outstanding — this machine will run as written."
+		return findingsHTML(def, nil, "✓ Nothing outstanding — this machine will run as written.")
 	}
-	return strconv.Itoa(len(probs)) + " to fix: • " + strings.Join(probs, " • ")
+	return `<div class="machine-findings-count">` + strconv.Itoa(len(probs)) + ` to fix</div>` +
+		findingsHTML(def, probs, "")
 }
 
 // machineMapCard is the sticky map: the whole machine, the step you are
@@ -606,6 +653,20 @@ const machineMapCSS = `
   display: flex; justify-content: center;
 }
 .machine-map-body > svg { flex: 0 0 auto; margin: 0 auto; }
+/* One finding per line, and each one indented under its own marker so a
+   four-line finding does not read as four findings. */
+.machine-findings { margin: 0; padding-left: 1.1rem; }
+.machine-findings > li { margin: 0 0 0.5rem 0; line-height: 1.5; }
+.machine-findings > li:last-child { margin-bottom: 0; }
+.machine-findings-count {
+  font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-mute); margin-bottom: 0.4rem;
+}
+.machine-findings-none { color: var(--text-mute); }
+.machine-finding-step {
+  color: var(--accent, #6366f1); text-decoration: none; font-weight: 600;
+}
+.machine-finding-step:hover { text-decoration: underline; }
 .machine-map svg a { text-decoration: none; }
 /* You are here. The fill is what carries it — a border alone is lost
    among the boxes that are already drawn heavier for holding a turn. */
@@ -627,13 +688,72 @@ const machineMapHereJS = `(function() {
   // deliberately, and pinned by a test, because a refresh that phrased
   // them differently would read as the page changing its mind rather
   // than as the same list one item shorter.
-  function checklistLine(items) {
-    if (!items.length) return '\u2713 Nothing outstanding — this machine will run as written.';
-    return items.length + ' to fix: • ' + items.join(' • ');
+  // Rebuilt as a LIST, matching what the page rendered — the server
+  // draws <ul><li>, so replacing it with one joined line would make the
+  // panel change shape the first time anything was saved.
+  function paintFindings(box, items, empty, count) {
+    if (!box) return;
+    box.textContent = '';
+    if (!items.length) {
+      var none = document.createElement('div');
+      none.className = 'machine-findings-none';
+      none.textContent = empty;
+      box.appendChild(none);
+      return;
+    }
+    if (count) {
+      var head = document.createElement('div');
+      head.className = 'machine-findings-count';
+      head.textContent = items.length + ' to fix';
+      box.appendChild(head);
+    }
+    var names = stepNames();
+    var ul = document.createElement('ul');
+    ul.className = 'machine-findings';
+    items.forEach(function(it) {
+      var li = document.createElement('li');
+      var step = findingStep(names, it);
+      if (step) {
+        var a = document.createElement('a');
+        a.className = 'machine-finding-step';
+        a.href = '#' + slugOf(step);
+        a.textContent = 'step ' + step;
+        li.appendChild(a);
+        li.appendChild(document.createTextNode(it.slice(('step ' + step).length)));
+      } else {
+        li.textContent = it;   // textContent, so a finding quoting a step name is text
+      }
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
   }
-  function adviceLine(items) {
-    if (!items.length) return 'Nothing — the steps read as instructions rather than specifications.';
-    return '• ' + items.join(' • ');
+
+  // The step names come from the map this refresh just redrew, so there
+  // is one list of steps on the page rather than a second copy shipped
+  // alongside the findings.
+  function stepNames() {
+    var out = [];
+    var nodes = document.querySelectorAll('.machine-map [data-node]');
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i].getAttribute('data-node');
+      if (n) out.push(n);
+    }
+    return out;
+  }
+  function slugOf(name) {
+    return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  // Longest match wins, same as the server: one step may be named with
+  // another's name as its prefix.
+  function findingStep(names, line) {
+    var best = '';
+    names.forEach(function(n) {
+      var lead = 'step ' + n;
+      if (n.length <= best.length || line.indexOf(lead) !== 0) return;
+      var next = line.charAt(lead.length);
+      if (next === '' || next === ':' || next === ' ') best = n;
+    });
+    return best;
   }
 
   function mark() {
@@ -690,8 +810,8 @@ const machineMapHereJS = `(function() {
           if (!spec) return;
           var c = document.querySelector('[data-machine-checklist]');
           var a = document.querySelector('[data-machine-advice]');
-          if (c) c.textContent = checklistLine(spec.checklist || []);
-          if (a) a.textContent = adviceLine(spec.advice || []);
+          paintFindings(c, spec.checklist || [], '\u2713 Nothing outstanding — this machine will run as written.', true);
+          paintFindings(a, spec.advice || [], 'Nothing — the steps read as instructions rather than specifications.', false);
         })
         .catch(function() {});
     }, 250);
