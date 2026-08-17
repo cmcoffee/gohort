@@ -1150,14 +1150,20 @@ func TestTheWholeEditorPageRenders(t *testing.T) {
 	// Every section the page promises, and one per step.
 	for _, want := range []string{
 		"The machine", "triage", "dig", "log check", "answer",
-		"Add a step", "Try it", "Picture", "What a turn costs",
+		"Add a step", "Try it", "What a turn costs",
 		"Who runs it", "Worth a look", "What is still missing",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page is missing %q", want)
 		}
 	}
-	// The picture is inline and its boxes are doors into the rail.
+	// The picture is the PINNED map and nothing else — a second copy in
+	// a section of its own was the same diagram twice, and the pinned one
+	// is on screen while you edit, which is the reason it exists.
+	if strings.Count(body, "u003csvg") != 1 {
+		t.Errorf("the machine should be drawn once, found %d", strings.Count(body, "u003csvg"))
+	}
+	// It is inline and its boxes are doors into the rail.
 	// The spec is JSON inside the page, so "<" arrives escaped — assert
 	// on what actually ships rather than on what the Go source looks like.
 	if !strings.Contains(body, `u003csvg`) || !strings.Contains(body, `href=\"#log-check\"`) {

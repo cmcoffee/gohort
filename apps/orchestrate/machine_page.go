@@ -208,6 +208,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_try", machineTryJS).
 			ClientAction("machine_try_reset", machineTryResetJS).
 			ClientAction("machine_duplicate", machineDuplicateJS).
+			ClientAction("machine_repair", machineRepairJS).
 			CSS(machineMapCSS).
 			JS(machineMapHereJS).
 			JS(machineTryEnterJS).
@@ -283,17 +284,6 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Body:     machineTryPanel(def),
 		},
 		{
-			Title:    "Picture",
-			Wide:     true,
-			Subtitle: "The same map as the one pinned above, full size — click a step to open its section. Its shape comes from the ARROWS, not the step list: a step sits below whatever leads to it, so reordering the list only swaps steps that sit at the same depth. Adding, removing, renaming or moving a step redraws it; editing a prompt does not change the shape.",
-			// Inline rather than an <img>: links inside an imaged SVG are
-			// inert, and the whole point of drawing the steps is that
-			// they are the same steps the rail navigates. Every dynamic
-			// string in the document is escaped at the renderer
-			// (xmlEscape), which is what makes inlining safe.
-			Body: ui.Card{HTML: `<div style="overflow-x:auto">` + machineGraphSVG(def) + `</div>`},
-		},
-		{
 			// Derived, not written: the definition knows exactly which
 			// steps cost a model call and which turns pay a guard check,
 			// and the person choosing between one step and three should
@@ -330,7 +320,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			// send somebody rewriting something that works.
 			Subtitle: "Nothing here refuses a save. It is what the machine looks like it might not have meant.",
 			Wide:     true,
-			Body:     ui.Card{HTML: `<div data-machine-advice>` + HTMLEscape(adviceText(def)) + `</div>`},
+			Body: withRepairButton(def, RepairAdvice,
+				ui.Card{HTML: `<div data-machine-advice>` + HTMLEscape(adviceText(def)) + `</div>`}),
 		},
 		{
 			Title: "What is still missing",
@@ -345,11 +336,71 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			// costs something.
 			Subtitle: "The same findings a save is checked against, as work remaining.",
 			Wide:     true,
-			Body:     ui.Card{HTML: `<div data-machine-checklist>` + HTMLEscape(checklistText(def)) + `</div>`},
+			Body: withRepairButton(def, RepairProblems,
+				ui.Card{HTML: `<div data-machine-checklist>` + HTMLEscape(checklistText(def)) + `</div>`}),
 		},
 	}...)
 	page.ServeHTTP(w, r)
 }
+
+// withRepairButton puts a fix-it button under a findings list, and only
+// when there is something it can honestly fix.
+//
+// The button is scoped to the panel it sits under: each list settles
+// its own findings. It is labelled with the COUNT and titled with the
+// changes themselves, because a button that edits the thing you are
+// building has to say what it will do before it does it — and because
+// the ones it cannot fix stay in the list, so "fix 2" next to five
+// findings is the honest shape rather than a bug.
+func withRepairButton(def MachineDef, kind string, body ui.Component) ui.Component {
+	fixable := def.Repairs(kind)
+	if len(fixable) == 0 {
+		return body
+	}
+	label := "Fix it"
+	if len(fixable) > 1 {
+		label = "Fix " + strconv.Itoa(len(fixable)) + " of these"
+	}
+	return ui.Stack{Children: []ui.Component{
+		body,
+		ui.Toolbar{Actions: []ui.ToolbarAction{{
+			Label:  label,
+			Title:  "Applies exactly these:\n• " + strings.Join(RepairLines(fixable), "\n• "),
+			Method: "client",
+			URL:    "machine_repair",
+			Data:   kind,
+		}}},
+	}}
+}
+
+// machineRepairJS applies one panel's mechanical fixes and reloads.
+//
+// A reload rather than a patch of the two lists: a repair rewrites the
+// wiring of steps whose own forms are on this page, so their pickers
+// and previews are stale the moment it succeeds.
+const machineRepairJS = `function(ctx) {
+  var kind = (ctx && ctx.action && ctx.action.data) || '';
+  var id = new URLSearchParams(window.location.search).get('id');
+  if (!id) return;
+  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) +
+        '/repair?kind=' + encodeURIComponent(kind), {method: 'POST'})
+    .then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+      return r.json();
+    })
+    .then(function(d) {
+      // Nothing to do is worth saying: the alternative is a button that
+      // looks like it did something and a page that looks unchanged.
+      if (!d || !d.fixed || !d.fixed.length) {
+        window.uiAlert && window.uiAlert('Nothing left to fix here.');
+        return;
+      }
+      window.location.reload();
+    })
+    .catch(function(err) {
+      window.uiAlert && window.uiAlert('Could not fix it: ' + (err && err.message || err));
+    });
+}`
 
 // machineRemoveStepJS deletes one step and reloads.
 //
@@ -526,27 +577,35 @@ func checklistText(def MachineDef) string {
 // machineMapCard is the sticky map: the whole machine, the step you are
 // on lit up, every box a door into that step's form.
 //
-// Collapsible, and that is not decoration — a four-step machine is
-// nearly 300px of permanent screen, which is a real price to pay while
-// writing a long prompt. Open by default because the reason it exists
-// is to be seen; <details> so the browser remembers nothing and the
-// page has no state to get wrong.
+// Not collapsible. The map is how this page is read — the steps below
+// it are a form per box, and hiding the shape leaves a list of forms
+// whose relationship to each other is invisible. A collapse control
+// offers to turn the page back into the thing the map was built to
+// replace, and the height it would reclaim is capped already.
 func machineMapCard(def MachineDef) ui.Component {
-	return ui.Card{HTML: `<details class="machine-map" open>` +
-		`<summary>Map — click a step to open it. Its shape follows the arrows, not the step order.</summary>` +
+	return ui.Card{HTML: `<div class="machine-map">` +
+		`<div class="machine-map-cap">Map — click a step to open it. Its shape follows the arrows, not the step order.</div>` +
 		`<div class="machine-map-body">` + machineGraphSVG(def) + `</div>` +
-		`</details>`}
+		`</div>`}
 }
 
 // machineMapCSS keeps the map from eating the page, and lights the step
 // the reader is on.
 const machineMapCSS = `
 .machine-map { padding: 0.3rem 0.5rem; }
-.machine-map > summary {
-  cursor: pointer; font-size: 0.72rem; letter-spacing: 0.04em;
+.machine-map-cap {
+  font-size: 0.72rem; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text-mute);
+  text-align: center;
 }
-.machine-map-body { overflow: auto; max-height: 42vh; padding-top: 0.35rem; }
+/* Centred, and only while it FITS: a machine wider than the card still
+   scrolls from its left edge, where the first step is. Centring a
+   scrolled diagram would hide both ends at once. */
+.machine-map-body {
+  overflow: auto; max-height: 42vh; padding-top: 0.35rem;
+  display: flex; justify-content: center;
+}
+.machine-map-body > svg { flex: 0 0 auto; margin: 0 auto; }
 .machine-map svg a { text-decoration: none; }
 /* You are here. The fill is what carries it — a border alone is lost
    among the boxes that are already drawn heavier for holding a turn. */

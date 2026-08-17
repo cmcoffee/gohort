@@ -1427,13 +1427,22 @@ select:-webkit-autofill {
 }
 /* A stack of ALTERNATIVES reads as one choice on a line, not as three
    steps down the page. Wraps rather than squeezing, so a narrow screen
-   gets two lines instead of three cramped buttons. */
+   gets two lines instead of three cramped buttons.
+   flex-direction is the load-bearing line: .ui-stack sets column, so
+   without overriding it here the row modifier renders identically to
+   the thing it modifies. */
 .ui-stack.row {
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
 }
+/* Children of a row are laid out BY the row; a toolbar or button that
+   still claims the full width pushes its siblings onto their own
+   lines, which is the same vertical stack under a different class. */
+.ui-stack.row > * { width: auto; flex: 0 0 auto; }
 
 .ui-rows-head {
   display: flex;

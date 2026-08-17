@@ -4113,7 +4113,15 @@
           newBtn.type = 'button';
           newBtn.textContent = 'New machine';
           newBtn.style.cssText = 'margin-bottom:0.6rem';
-          newBtn.onclick = function() { m.close(); openMachineEditor('', ''); };
+          // Creating goes to the PAGE, which offers three ways to do it —
+          // a starter machine that already runs, a description the
+          // framework drafts from, and a recipe somebody handed you.
+          // This used to open the JSON editor on a starter, which is the
+          // one door that asks a newcomer to read a schema first.
+          newBtn.onclick = function(ev) {
+            ev.preventDefault();
+            window.open('/orchestrate/machine?new=1', '_blank');
+          };
           m.body.appendChild(newBtn);
 
           var list = document.createElement('div');
@@ -4341,25 +4349,23 @@
       // are registered by that PAGE, so in a modal they would have found
       // nothing. Deleted rather than wired up. One editor.
 
+      // Editing an EXISTING machine as raw JSON. Creating goes to the
+      // page, which offers a starter that already runs, a description to
+      // draft from, and a recipe to import — none of which ask a
+      // newcomer to read a schema first. This door stays because it is
+      // what the machine tool writes and the fastest path for somebody
+      // who already knows the shape.
       function openMachineEditor(machineID, machineName) {
-        var creating = !machineID;
-        // The starter comes from the SERVER, not from here. One copy, and
-        // a Go test proves it validates — an editor that opens on a
-        // definition the server would refuse teaches the wrong lesson
-        // about the whole feature in the first ten seconds.
-        var loaded = creating
-          ? fetch('api/machines?starter=1').then(function(r) { return r.json(); })
-          : fetch('api/machines/' + encodeURIComponent(machineID))
-              .then(function(r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-              });
-        loaded
+        fetch('api/machines/' + encodeURIComponent(machineID))
+          .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
           .then(function(def) {
-            var m = openOrchModal(creating ? 'New machine' : ('Edit machine — ' + (machineName || machineID)));
+            var m = openOrchModal('Edit machine — ' + (machineName || machineID));
             var help = document.createElement('div');
             help.className = 'ui-orch-modal-help';
-            help.textContent = (creating ? 'A starting point you can replace entirely. ' : '') +
+            help.textContent =
               'The machine definition. Every phase needs a name and a prompt; at least one must be resident (user turns land there). Transient phases hand off with next or next_from. Ask Builder for machine(action="help") for the full spec — or just describe the change to it instead of editing here.';
             m.body.appendChild(help);
 
@@ -4408,8 +4414,8 @@
               }
               saveBtn.disabled = true;
               errBox.style.display = 'none';
-              fetch(creating ? 'api/machines' : 'api/machines/' + encodeURIComponent(machineID), {
-                method: creating ? 'POST' : 'PUT',
+              fetch('api/machines/' + encodeURIComponent(machineID), {
+                method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(body),
               }).then(function(resp) {

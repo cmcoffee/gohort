@@ -532,7 +532,24 @@ func TestAStackCanLayItsChildrenInARow(t *testing.T) {
 	if !strings.Contains(src, "'ui-stack' + (cfg.row ? ' row' : '')") {
 		t.Error("the runtime does not read the layout")
 	}
-	if css := readRuntimeCSSForTest(t); !strings.Contains(css, ".ui-stack.row") {
-		t.Error("and it has no styling, so it would stack anyway")
+	// The rule has to OVERRIDE the base, which is the part that was
+	// wrong: .ui-stack sets flex-direction column, so a .ui-stack.row
+	// block that never says row inherits it and the modifier renders
+	// identically to the thing it modifies — present in the CSS, visible
+	// nowhere. Read the block, not the selector.
+	css := readRuntimeCSSForTest(t)
+	at := strings.Index(css, ".ui-stack.row {")
+	if at < 0 {
+		t.Fatal("and it has no styling, so it would stack anyway")
+	}
+	block := css[at:]
+	if end := strings.Index(block, "}"); end > 0 {
+		block = block[:end]
+	}
+	if !strings.Contains(block, "flex-direction: row") {
+		t.Errorf("the row modifier inherits column from .ui-stack unless it says otherwise:\n%s", block)
+	}
+	if !strings.Contains(block, "justify-content: center") {
+		t.Errorf("alternatives on a line sit centred, not jammed against the left:\n%s", block)
 	}
 }

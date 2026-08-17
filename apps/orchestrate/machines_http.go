@@ -297,6 +297,36 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		saved := SaveMachineDef(udb, dup)
 		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
 		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
+	case "repair":
+		// Settle the findings that have exactly one right answer. The
+		// class this exists for is a reference to a step that is gone:
+		// the picker no longer offers the name, so the finding names
+		// something there is no longer any way to open or clear.
+		//
+		// Scoped by the panel that asked, because a button in one list
+		// that quietly rewrote the other's findings would be its own
+		// surprise. Nothing here guesses at intent — see core's
+		// machine_repair.go for what it refuses.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+		switch kind {
+		case RepairAll, RepairProblems, RepairAdvice:
+		default:
+			http.Error(w, "unknown repair kind", http.StatusBadRequest)
+			return
+		}
+		fixed := def.Repair(kind)
+		if len(fixed) == 0 {
+			writeJSON(w, map[string]any{"fixed": []string{}})
+			return
+		}
+		saved := SaveMachineDef(udb, def)
+		Log("[orchestrate.machines] user=%q repaired machine %q: %s", user, saved.Name,
+			strings.Join(RepairLines(fixed), "; "))
+		writeJSON(w, map[string]any{"fixed": RepairLines(fixed), "id": saved.ID})
 	case "move":
 		// Reordering is cosmetic to the DRIVER (routing is by name) but
 		// not to the person: the order is the rail, the reading order,

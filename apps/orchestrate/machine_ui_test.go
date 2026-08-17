@@ -85,8 +85,12 @@ func TestMachineSelectField_HidesItselfUntilThereIsSomethingToPick(t *testing.T)
 // The Machines modal could select, edit, diagram and delete — but not
 // create. "How do I load a machine" had no answer in the UI at all, and
 // an editor that can only edit what already exists is a strange shape
-// for the surface people are pointed at first.
-func TestMachinesModalCanCreate(t *testing.T) {
+// Creating a machine goes to the PAGE from everywhere, including the
+// chat modal. The modal used to open the JSON editor on a starter,
+// which is the one door that asks a newcomer to read a schema before
+// they can begin — while the page offers a starter that already runs, a
+// description to draft from, and a recipe to import.
+func TestCreatingAMachineGoesToThePage(t *testing.T) {
 	assets, err := os.ReadFile("assets/web_assets.html")
 	if err != nil {
 		t.Fatalf("read assets: %v", err)
@@ -96,18 +100,22 @@ func TestMachinesModalCanCreate(t *testing.T) {
 	if !strings.Contains(js, "New machine") {
 		t.Error("no way to start a new machine from the modal")
 	}
-	// Create POSTs to the collection; edit PUTs to the item. One editor,
-	// two verbs — a second editor would drift from the first.
-	if !strings.Contains(js, "creating ? 'api/machines' : 'api/machines/'") {
-		t.Error("the editor should POST when creating and PUT when editing")
+	if !strings.Contains(js, "window.open('/orchestrate/machine?new=1'") {
+		t.Error("the modal's New machine should open the page that knows three ways to make one")
 	}
-	if !strings.Contains(js, "creating ? 'POST' : 'PUT'") {
-		t.Error("the method should follow the same switch as the URL")
+	// The JSON door is edit-only now, and says so in one verb: a create
+	// branch nothing could reach was a second way in that had quietly
+	// stopped being one.
+	if strings.Contains(js, "creating ?") {
+		t.Error("the JSON editor should not carry a create path nothing reaches")
 	}
-	// The starter comes from the server, so there is one copy of it and a
-	// Go test can prove it validates.
-	if !strings.Contains(js, "api/machines?starter=1") {
-		t.Error("the starter should be fetched, not written in the JavaScript")
+	if !strings.Contains(js, `method: 'PUT',`) {
+		t.Error("editing an existing machine PUTs to the item")
+	}
+	// And the starter still comes from the server wherever it is used, so
+	// there is one copy of it and a Go test can prove it validates.
+	if !strings.Contains(js, "api/machines?starter=1") && !strings.Contains(js, "?new=1") {
+		t.Error("the starter should come from the server, not from JavaScript")
 	}
 }
 
@@ -505,10 +513,16 @@ func TestTheMapIsPinnedAboveTheSteps(t *testing.T) {
 	if !strings.Contains(body, "hashchange") || !strings.Contains(body, "classList.toggle('here'") {
 		t.Error("the map should light the step whose section is open")
 	}
-	// And it can be got out of the way: a four-step machine is nearly
-	// 300px of permanent screen.
-	if !strings.Contains(body, "details class=\\\"machine-map\\\" open") {
-		t.Error("the map should be collapsible, and open by default")
+	// And it is not collapsible. The steps below it are a form per box;
+	// hiding the shape leaves a list of forms whose relationship to each
+	// other is invisible, which is what the map was built to replace.
+	if strings.Contains(body, "details class=\\\"machine-map") {
+		t.Error("the map should not offer to hide itself")
+	}
+	// Centred, so the diagram sits under the page rather than hugging an
+	// edge of a card it does not fill.
+	if !strings.Contains(body, "justify-content: center") {
+		t.Error("the map should be centred in its card")
 	}
 }
 
@@ -742,5 +756,66 @@ func TestTheMachinesListCarriesInAndOut(t *testing.T) {
 	if !strings.Contains(body, `"label":"Export","post_to":"/orchestrate/api/machines/{id}/export","method":"GET"`) &&
 		!strings.Contains(body, `"method":"GET"`) {
 		t.Error("export should navigate rather than fetch-and-discard")
+	}
+}
+
+// A finding you cannot act on. When a step is deleted, RemoveStep drops
+// every reference to it — but a machine that arrived any other way (an
+// import, an older save, the tool) can name a step that is not there,
+// and then the picker offering targets no longer offers that name. The
+// checklist says "next names unknown step" and there is nothing on the
+// page to clear it.
+//
+// So the panel that reports it fixes it, scoped to itself and only for
+// findings with exactly one right answer.
+func TestAFindingYouCannotActOnHasAButton(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide", Next: "testing"},
+			{Name: "answer", Prompt: "reply", Resident: true},
+		}})
+
+	r := httptest.NewRequest("GET", "/orchestrate/machine?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	body := w.Body.String()
+	if !strings.Contains(body, "machine_repair") || !strings.Contains(body, "Fix it") {
+		t.Fatal("the checklist reports a dangling reference with no way to settle it")
+	}
+	// Labelled with what it will do, before it does it.
+	if !strings.Contains(body, "Applies exactly these") || !strings.Contains(body, "testing") {
+		t.Error("the button should say what it changes")
+	}
+
+	// And the endpoint settles it.
+	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/repair?kind=problems", nil)
+	w = httptest.NewRecorder()
+	app.handleMachineOne(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("repair: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "testing") {
+		t.Errorf("the response should name what it changed: %s", w.Body.String())
+	}
+	stored, _ := LoadMachineDef(udb, user, def.ID)
+	if strings.TrimSpace(stored.Phases[0].Next) != "" {
+		t.Errorf("the reference survived the repair: %q", stored.Phases[0].Next)
+	}
+	for _, p := range stored.Problems() {
+		if strings.Contains(p, "testing") {
+			t.Errorf("still reported: %s", p)
+		}
+	}
+
+	// A clean machine offers no button — a fix-it that fixes nothing is
+	// the same lie as a control that does nothing.
+	clean := SaveMachineDef(udb, MachineDef{Owner: user, Name: "C", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
+	r = httptest.NewRequest("GET", "/orchestrate/machine?id="+clean.ID, nil)
+	w = httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	if strings.Contains(w.Body.String(), "Fix it") {
+		t.Error("a machine with nothing to fix should offer no fix")
 	}
 }
