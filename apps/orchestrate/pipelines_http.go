@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"strconv"
 )
 
 // pipelineRow is the trimmed list shape — enough for the attach picker
@@ -37,6 +38,55 @@ type pipelineRow struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Stages      int    `json:"stages"`
+	// The rest is for the Extensions table, computed here rather than in
+	// the page so a row says the same thing wherever it is shown. Same
+	// reasoning as machineRow: "used by nothing" is the single most
+	// useful fact about a pipeline, because an unattached one is a tool
+	// no agent can call.
+	StageNames []string `json:"stage_names,omitempty"`
+	UsedBy     []string `json:"used_by,omitempty"`
+	UsedByText string   `json:"used_by_text,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	EditURL    string   `json:"edit_url,omitempty"`
+}
+
+// pipelineStatusText summarises what a pipeline is made of, and what is
+// worth a look in it. Validate refuses anything unrunnable at every
+// door, so a stored pipeline has no problems to report — only advice.
+func pipelineStatusText(d PipelineDef) string {
+	kinds := map[PipelineStageKind]int{}
+	for _, s := range d.Stages {
+		k := s.Kind
+		if strings.TrimSpace(string(k)) == "" {
+			k = StageWorker
+		}
+		kinds[k]++
+	}
+	var parts []string
+	for _, k := range []PipelineStageKind{StageWorker, StageAgent, StageFanout, StageLoop, StageBranch, StageTool} {
+		if n := kinds[k]; n > 0 {
+			parts = append(parts, strconv.Itoa(n)+" "+string(k))
+		}
+	}
+	out := strings.Join(parts, ", ")
+	if n := len(d.Advice()); n > 0 {
+		if out != "" {
+			out += " · "
+		}
+		out += strconv.Itoa(n) + " worth a look"
+	}
+	return out
+}
+
+// pipelineStageNames lists the stages in order, for the row and the page.
+func pipelineStageNames(d PipelineDef) []string {
+	out := make([]string, 0, len(d.Stages))
+	for _, s := range d.Stages {
+		if n := strings.TrimSpace(s.Name); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // handlePipelines serves the collection-level routes: GET list, POST
@@ -49,9 +99,25 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 	switch r.Method {
 	case http.MethodGet:
 		defs := ListPipelineDefs(udb, user)
+		// Which agents can call what. A pipeline attaches to an agent as
+		// a tool (run_<name>), so an unattached one is inert in exactly
+		// the way an unattached machine is.
+		users := map[string][]string{}
+		for _, ag := range listAgents(udb, user) {
+			for _, pid := range ag.AttachedPipelines {
+				users[pid] = append(users[pid], chFirst(ag.Name, ag.ID))
+			}
+		}
 		rows := make([]pipelineRow, 0, len(defs))
 		for _, d := range defs {
-			rows = append(rows, pipelineRow{ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages)})
+			rows = append(rows, pipelineRow{
+				ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages),
+				StageNames: pipelineStageNames(d),
+				UsedBy:     users[d.ID],
+				UsedByText: usedByText(users[d.ID]),
+				Status:     pipelineStatusText(d),
+				EditURL:    "/orchestrate/pipeline?id=" + d.ID,
+			})
 		}
 		writeJSON(w, map[string]any{"pipelines": rows})
 	case http.MethodPost:
