@@ -36,7 +36,17 @@ func (a *AdminApp) handleMCPOAuthStart(w http.ResponseWriter, r *http.Request) {
 
 // handleMCPOAuthCallback redeems the authorization code. The state is the
 // unguessable secret tying the callback to the pending request (and the
-// authorizing user), so this only needs a logged-in session, not admin.
+// authorizing user), so this needs no admin check of its OWN — but note
+// it gets one anyway: the whole admin sub-mux is gated behind
+// AuthIsAdmin (see admin.go), so a non-admin who arrives here is
+// refused before this runs.
+//
+// That is why the per-user flow has a separate callback under /account
+// (account.go: mcpConnectCallbackURI) rather than sharing this path.
+// The two are otherwise interchangeable — both call the same
+// MCP().CompleteOAuth, which looks the pending request up by state — so
+// a provider with a pre-registered client must have BOTH redirect URIs
+// registered, and the admin form's Client ID help says so.
 func (a *AdminApp) handleMCPOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if AuthCurrentUser(r) == "" {
 		http.Error(w, "not logged in", http.StatusUnauthorized)
