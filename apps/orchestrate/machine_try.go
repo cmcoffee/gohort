@@ -131,9 +131,36 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 		"notes":       notes,
 		"cursor":      cur,
 		// Stated every time. Somebody reading a thin answer should know
-		// which of the two reasons it is.
-		"caveat": "A dry run has no tools and does not run the step it lands in — it shows where a turn would GO, not what it would say.",
+		// which of the reasons it is.
+		"caveat": tryCaveat(def),
 	})
+}
+
+// tryCaveat says what THIS machine's rehearsal cannot show.
+//
+// The constant part is the two limits every dry run has. The rest is
+// the one that is easy to mistake for a passing result: the model
+// moving the conversation itself, with change_phase, happens INSIDE a
+// resident step's turn — and a rehearsal does not run the step it lands
+// in. So a machine whose arms are kept apart by exits_to rehearses
+// exactly the same whether the bound works or is missing entirely, and
+// "it stayed put" is not evidence either way. Guards are different and
+// worth saying so: they are judged by the driver, before the step runs,
+// so a rehearsal does exercise them.
+func tryCaveat(def MachineDef) string {
+	base := "A dry run has no tools and does not run the step it lands in — it shows where a turn would GO, not what it would say."
+	bounded := false
+	for _, p := range def.Phases {
+		if len(p.ExitsTo) > 0 {
+			bounded = true
+			break
+		}
+	}
+	if !bounded {
+		return base
+	}
+	return base + " Guards ARE judged here, but change_phase is not: that decision is made inside the step's own turn, " +
+		"so a conversation staying put in a rehearsal is not evidence that exits_to is holding."
 }
 
 // tryPath renders the traversal in the words the editor uses — only the
