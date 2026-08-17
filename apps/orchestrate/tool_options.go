@@ -340,8 +340,25 @@ func (t *chatTurn) buildAttachedSourceToolDefs() []AgentToolDef {
 		}
 		defs := ReferenceItemTools(t.user, kind, item)
 		if len(defs) == 0 {
+			// A BREADCRUMB, not just a server log. The attachment is a
+			// frozen {kind, item_id}; when that id stops resolving — the
+			// item was removed, unshared, or re-created on the far side of
+			// a peer — ItemTools returns nil by contract and the agent
+			// simply has no investigate_/search_ tool for it. Nothing said
+			// so anywhere the person could see, so the tool "vanished" and
+			// the only cure anybody found was detach-and-reattach, which
+			// rewrites the id.
+			//
+			// Reported live once, hit for real: a change to a remote
+			// peered system left the attachment pointing at an item that
+			// no longer resolved, and the log line below was the only
+			// record of it.
 			Log("[orchestrate.tools] agent=%s: attached source %s/%s resolved to no tools (removed or no longer shared?)",
 				t.agent.ID, kind, item)
+			t.turnDiag("attached_source_empty", "the attached source "+kind+"/"+item+
+				" gave this turn no tools — it was removed, is no longer shared, or was re-created with a "+
+				"different id on the far side. Detach and re-attach it (Configure → Sources) to point at "+
+				"what is there now.")
 			continue
 		}
 		for _, d := range defs {
