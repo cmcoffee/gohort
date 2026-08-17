@@ -409,15 +409,22 @@ an agent, the way Cortex and Fleet are.
 - **orchestrate**: authoring lives in the `machine` tool (Builder-only, same gate as `pipeline`).
 - **Agent settings**: the Phase machine picker under Persona, hidden until you have one.
 - **Chat**: the phase pill in the toolbar, and **Configure → Machines** (list every machine, what
-  it is made of, who runs it; pick one for this agent; show its diagram; edit; delete). A machine is
-  single-select, so the modal is a radio list rather than the chip picker Pipelines uses.
+  it is made of, who runs it; pick one for this agent; show its diagram; open the editor). A machine
+  is single-select, so the modal is a radio list rather than the chip picker Pipelines uses.
 
-**Editing is a JSON textarea, not a form**, and that is a deliberate stop-gap. A machine gets TUNED
-in a way a pipeline does not — guard wording, phase prompts, whether a phase should be resident —
-so "author it in chat and never touch it again" was the wrong read. But the phase schema is still
-allowed to move (St4), and a form built against a moving schema is the expensive thing to throw
-away. The definition is the editor until the fields people actually keep editing are known; the
-validator reporting every problem in one response is what makes that survivable.
+  It does NOT delete, and did until v0.6.204. Every other control on that row is scoped to THIS
+  agent — the checkbox attaches, the buttons open — so a × that destroyed the machine for every
+  agent running it sat one row-width from a checkbox meaning "use this one". Deleting is managing,
+  and managing lives in Extensions → Machines, where the row says what uses a machine before you go.
+  The modal says where it went; removing it silently would read as a capability that vanished
+  rather than one that moved.
+
+**Editing WAS a JSON textarea**, on the reasoning that the phase schema was still allowed to move
+and a form built against a moving schema is the expensive thing to throw away. That held until the
+fields people actually keep editing were known — they turned out to be the guard wording, the phase
+prompts, and whether a phase is resident, which is exactly what the argument predicted. The editor
+page (`/orchestrate/machine?id=…`) is a form per step now, with the map pinned above it; the JSON
+door stays behind *Edit as JSON* for anyone who already knows the shape. See **Editing one** below.
 
 A graph view of a machine's phases and transitions is **built** (see
 [workflow-graph.md](workflow-graph.md)) — "Show diagram" on each row of the Machines modal, with the
@@ -695,6 +702,21 @@ refused with the list of where the conversation MAY go, because "no" without an 
 gets tried again; and `PhaseBlock` offers exactly the legal exits, since listing one the tool would
 refuse teaches the model to spend a round being told no.
 
+**And it is drawn** (v0.6.206). It was not, for four versions, which was the wrong omission to make:
+`exits_to` is a fact about SHAPE — it exists to stop a conversation crossing from one arm of a split
+into the other — and shape is the one thing the picture carries. Worse than the missing arrows, the
+legend said "any phase can move to any other with `change_phase` — not drawn, because it connects
+everything to everything", which is precisely what `exits_to` makes false; a reader took the drawing
+to mean the bound was not there. Allowed exits are dotted, like a guard, because both are the
+conversation leaving a waiting step by something other than a handoff. The legend now names the
+bounded phases, keeps the blanket claim only for machines that bound nothing, and says so plainly
+when every phase lists its exits.
+
+**On a step that passes on it is reported, not drawn.** `change_phase` happens DURING a turn and
+such a step never holds one, the same reason a guard there judges nothing — so the checklist says so
+in the same words as the guard rule, and the graph draws no arrow rather than contradicting the
+report sitting next to it.
+
 ## Delegating a step
 
 A transient phase can name another agent:
@@ -794,6 +816,40 @@ Two references are deliberately NOT rewritten, because only a person can answer 
 text. Both surface in the checklist as questions rather than as damage, and the removal's confirm
 names them beforehand — computed by the same walk that will do the removing, so the warning cannot
 promise something else.
+
+**A finding you cannot act on gets a button.** When a step is deleted its references go with it,
+but a machine that arrived any other way — an import, an older save, the `machine` tool — can name a
+step that is not there, and then the picker offering targets no longer offers that name. "step
+go_deep: next names unknown step \"testing\"" sat in the checklist with nothing on the page able to
+clear it. `core/machine_repair.go` settles that class and only that class: `next`, `guard_to`,
+`choices`, `keep`, `exits_to`, routing targets, `start`, and a field filled from a variable but
+declared as something other than text. Each panel fixes what it reports, the button is labelled with
+the count and titled with the changes themselves, and it does not appear when there is nothing to do.
+
+What it REFUSES is the point. A step that names tools AND delegates, a step that routes by a field
+AND lists choices, a duplicate name, a prompt that hand-rolls JSON — every one has two defensible
+answers, so fixing it would be picking one on the author's behalf and deleting work to do it. Those
+stay in the list, and there is a test that keeps them there.
+
+**The one finding whose fix is prose gets a draft, not an edit.** "the prompt asks for JSON, but
+this step already declares fields" is answered by deleting sentences from what the author wrote, and
+which sentences are formatting instructions and which are the subject is a judgement — "return the
+JSON object's key" is content. So that finding carries a *Rewrite the instructions…* button which
+opens the framework's assist workbench (`uiOpenAssist`) on the stored prompt, with the finding as
+its opening request. Every version including the original stays one click away, which is what makes
+accepting a suggestion safe. It drives the same `/suggest` endpoint the step's own ✨ button uses —
+a second endpoint would be a second set of rules about what a step's instructions may say — and
+accepting saves through the phase form's own endpoint, so one place still decides what a save does.
+
+**A hidden control is a finding nobody can act on.** Three fields hid values they were still
+storing, and each turned a checklist entry into a dead end. `choices` and `next_from` hide each
+other, which is right while one is in use — but a step carrying BOTH showed NEITHER, while "keep
+one" sat in the checklist. The tools list hides under a delegate, so "it names tools AND delegates"
+offered two ways out and one was behind a control nothing could open. `model` and `think` hide the
+same way, and those are not even inert: when the named delegate does not exist in this deployment
+the phase runs INLINE with exactly them. All three now follow the rule the checklist renderer
+already follows for a checked value whose option is gone — what is STORED stays visible so it can be
+removed — while exclusivity is untouched whenever only one side is in use.
 
 **Renaming a step is one edit.** `RenameStep` rewrites every reference the definition holds —
 `next`, `choices`, `keep`, `guard_to`, routing targets, `start`, and `{state:old.…}` in prompts,
