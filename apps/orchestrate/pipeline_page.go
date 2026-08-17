@@ -152,7 +152,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			}},
 		}},
 	}
-	page.Sections = append(page.Sections, pipelineStageSections(def)...)
+	page.Sections = append(page.Sections, pipelineStageSections(def,
+		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
 	page.Sections = append(page.Sections,
 		ui.Section{
 			Title:    "Worth a look",
@@ -205,21 +206,96 @@ func stageSectionTitle(i int, name string) string {
 // pipelineStageSections is one section per stage, in order, so the rail
 // is the stage list and you read the pipeline the way it runs.
 //
-// Read-only for now, and deliberately: the per-stage form is the second
-// half of this work, and a form built against a guess at what people
-// edit is the expensive thing to throw away (the same argument that
-// kept the machine editor a JSON box until the answer was known).
-func pipelineStageSections(def PipelineDef) []ui.Section {
+// A form per stage, plus the facts a form does not hold — what it
+// returns, what a loop's body is. Those stay a card because they are
+// derived: the declared output belongs to the stage spec and a loop's
+// body is a stage list of its own, and inventing a control for either
+// here would be a worse editor than the tool that writes them.
+func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
+	base := "api/pipelines/" + url_(def.ID) + "/stages"
 	out := make([]ui.Section, 0, len(def.Stages))
 	for i, s := range def.Stages {
+		body := []ui.Component{
+			ui.FormPanel{
+				Source:  base + "?name=" + url_(s.Name),
+				PostURL: base + "?name=" + url_(s.Name),
+				Fields:  stageFormFields(def, s, cat),
+			},
+		}
+		if extra := stageDerivedHTML(s); extra != "" {
+			body = append(body, ui.Card{HTML: extra})
+		}
+		body = append(body, ui.Toolbar{Actions: []ui.ToolbarAction{{
+			Label:   "Remove this stage",
+			Title:   "Delete it. Refused while another stage still reads it, naming which.",
+			Method:  "DELETE",
+			URL:     "/orchestrate/" + base + "?name=" + url_(s.Name),
+			Variant: "danger",
+			Confirm: "Remove the stage \"" + s.Name + "\"?",
+		}}})
 		out = append(out, ui.Section{
 			Title:    stageSectionTitle(i, s.Name),
 			Wide:     true,
 			Subtitle: stageSubtitle(s),
-			Body:     ui.Card{HTML: stageDetailHTML(s)},
+			Body:     ui.Stack{Children: body},
 		})
 	}
+	// The add form, last, so the rail ends where a new stage would go.
+	out = append(out, ui.Section{
+		Title:    "Add a stage",
+		Wide:     true,
+		Subtitle: "It lands at the end. Wire it up afterwards, where every option is a real stage.",
+		Body: ui.FormPanel{
+			PostURL:        "api/pipelines/" + url_(def.ID) + "/stages",
+			SubmitLabel:    "Add it",
+			RedirectURL:    "/orchestrate/pipeline?id=" + url_(def.ID),
+			RedirectTarget: "_self",
+			Fields: []ui.FormField{
+				{Field: "name", Type: "text", Label: "Name",
+					Help: "Lowercase, no dots — a dot would make {stage:a.b} ambiguous between a stage called a.b and field b of stage a."},
+				{Field: "kind", Type: "select", Label: "What it does", Options: []ui.SelectOption{
+					{Value: "worker", Label: "Worker — one model call"},
+					{Value: "agent", Label: "Agent — dispatch to one of your agents"},
+					{Value: "fanout", Label: "Fanout — run once per item of an earlier list"},
+					{Value: "loop", Label: "Loop — repeat a body of stages"},
+					{Value: "branch", Label: "Branch — read a bool and skip or stop"},
+					{Value: "tool", Label: "Tool — call a tool directly"},
+				}},
+				{Field: "prompt", Type: "textarea", Rows: 4, Label: "Instructions",
+					Help: "What it should DO. The rest is wired on its own panel once it exists."},
+			},
+		},
+	})
 	return out
+}
+
+// stageDerivedHTML is what the form does not hold: the contract this
+// stage declares, and a loop's body.
+func stageDerivedHTML(s PipelineStage) string {
+	var facts []string
+	if len(s.Output) > 0 {
+		names := make([]string, 0, len(s.Output))
+		for _, f := range s.Output {
+			n := f.Name
+			if strings.TrimSpace(f.From) != "" {
+				n += " (filled from " + f.From + ")"
+			}
+			names = append(names, n)
+		}
+		facts = append(facts, "returns: "+strings.Join(names, ", "))
+	}
+	if len(s.Body) > 0 {
+		inner := make([]string, 0, len(s.Body))
+		for _, b := range s.Body {
+			inner = append(inner, b.Name)
+		}
+		facts = append(facts, "body: "+strings.Join(inner, " → "))
+	}
+	if len(facts) == 0 {
+		return ""
+	}
+	return `<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " · ")) +
+		` — declared with the pipeline tool, which is where the shapes that need nesting belong.</div>`
 }
 
 // stageSubtitle says what KIND of stage this is in one line, in the
@@ -244,7 +320,11 @@ func stageSubtitle(s PipelineStage) string {
 	return "A worker step: one model call with this stage's instructions."
 }
 
-// stageDetailHTML shows what the stage actually carries.
+// stageDetailHTML is retained for the row-level preview the chat
+// modal renders. The PAGE shows a form instead.
+//
+//nolint:unused
+
 func stageDetailHTML(s PipelineStage) string {
 	var b strings.Builder
 	if p := strings.TrimSpace(s.Prompt); p != "" {

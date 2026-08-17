@@ -228,6 +228,9 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	case "stages":
+		// The per-stage form (pipeline_editor.go).
+		T.handlePipelineStages(w, r, udb, user, def)
 	case "export":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -89,11 +89,31 @@ func TestThePipelinePageReadsInTheOrderItRuns(t *testing.T) {
 	if !strings.Contains(body, "A worker step") {
 		t.Error("a plain stage should say so")
 	}
-	// And what it carries that a prompt does not show.
-	for _, want := range []string{"tools: web_search", "returns: queries", "model: lead"} {
+	// The stage is EDITABLE: a form per stage, loading and posting to
+	// the same address, so a save merges onto what is stored rather
+	// than replacing it with what one panel happened to show.
+	for _, want := range []string{
+		`"source":"api/pipelines/` + def.ID + `/stages?name=dig"`,
+		`"post_url":"api/pipelines/` + def.ID + `/stages?name=dig"`,
+		`"field":"fan_over"`, `"field":"tools"`, `"field":"model"`,
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("the page does not show %q", want)
+			t.Errorf("the stage form is missing %s", want)
 		}
+	}
+	// What a form does not hold stays a fact: the declared contract is
+	// the stage spec's, and inventing a control for it here would be a
+	// worse editor than the tool that writes it.
+	if !strings.Contains(body, "returns: queries") {
+		t.Error("the declared contract should still be visible")
+	}
+	// And a stage can be removed, with a confirm.
+	if !strings.Contains(body, "Remove this stage") {
+		t.Error("no way to remove a stage")
+	}
+	// A new stage lands at the end.
+	if !strings.Contains(body, "Add a stage") {
+		t.Error("no way to add one")
 	}
 	// Name and description are editable, because the description is what
 	// an agent reads when deciding whether to call it.
