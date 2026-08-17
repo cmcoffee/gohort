@@ -1531,3 +1531,130 @@ func TestTheMetaFormOffersNothingInert(t *testing.T) {
 		t.Error("the recipe should not carry a scope nothing honours")
 	}
 }
+
+// A finding is only worth reporting if it can be acted on. "It names
+// tools AND delegates — keep one" offers two ways out, and one of them
+// was behind a control that hides itself the moment a delegate is set:
+// you could drop the delegate, but you could not drop the tools.
+//
+// Same rule as a checked value whose option is gone — what is STORED
+// stays visible so it can be removed.
+func TestATooledDelegateCanStillDropItsTools(t *testing.T) {
+	both := MachinePhase{Name: "dig", Prompt: "look", Next: "answer",
+		Agent: "ag-1", Tools: []string{"read_file"}}
+	def := MachineDef{Name: "M", Start: "dig", Phases: []MachinePhase{
+		both, {Name: "answer", Prompt: "reply", Resident: true}}}
+	cat := editorCatalog{tools: []ui.SelectOption{{Value: "read_file", Label: "read_file"}}}
+
+	find := func(p MachinePhase) ui.FormField {
+		for _, f := range phaseFieldsFor(def, p, cat) {
+			if f.Field == "tools" {
+				return f
+			}
+		}
+		t.Fatalf("no tools field for %q", p.Name)
+		return ui.FormField{}
+	}
+
+	tools := find(both)
+	if tools.ShowWhen != "" {
+		t.Errorf("a delegate carrying tools must still be able to drop them, got show_when=%q", tools.ShowWhen)
+	}
+	// And it says why it is there rather than leaving the reader to find
+	// the explanation in a findings list two sections down.
+	if !strings.Contains(tools.Help, "delegate") || !strings.Contains(tools.Help, "do nothing") {
+		t.Errorf("the inert state should explain itself: %q", tools.Help)
+	}
+	// The checklist still reports it — this is not a way of hiding the
+	// finding, it is a way of settling it.
+	found := false
+	for _, a := range def.Advice() {
+		if strings.Contains(a, "names tools AND delegates") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the finding should stand until somebody acts on it")
+	}
+
+	// The ordinary case is unchanged: a delegate with no tools does not
+	// grow an inert control.
+	plain := MachinePhase{Name: "dig", Prompt: "look", Next: "answer", Agent: "ag-1"}
+	if got := find(plain).ShowWhen; got != "!agent" {
+		t.Errorf("an empty list under a delegate should stay hidden, got %q", got)
+	}
+}
+
+// The sharpest instance of the same class. The two routing mechanisms
+// hide each other — pick a field and the checklist goes away, tick the
+// checklist and the field goes away — which is right while only one is
+// in use. A step carrying BOTH (no editor session produces it; an
+// import, an older save or the tool does) therefore showed NEITHER,
+// while the checklist reported "keep one — the field wins today". There
+// was no way to keep one.
+func TestAStepWithBothRoutingMechanismsCanStillDropOne(t *testing.T) {
+	both := MachinePhase{Name: "triage", Prompt: "decide",
+		Choices: []string{"dig"}, NextFrom: "lane",
+		Output: []PipelineField{{Name: "lane", Type: FieldString, Desc: "which"}}}
+	def := MachineDef{Name: "M", Start: "triage", Phases: []MachinePhase{
+		both, {Name: "dig", Prompt: "look", Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true}}}
+
+	shown := map[string]string{}
+	for _, f := range phaseFieldsFor(def, both, editorCatalog{}) {
+		if f.Field != "" {
+			shown[f.Field] = f.ShowWhen
+		}
+	}
+	for _, f := range []string{"choices", "next_from"} {
+		got, ok := shown[f]
+		if !ok {
+			t.Errorf("%s is not on the form at all", f)
+			continue
+		}
+		if got != "" {
+			t.Errorf("%s hides behind %q while the other is set — both are hidden and the finding cannot be acted on", f, got)
+		}
+	}
+	// The finding stands: this settles it, it does not conceal it.
+	found := false
+	for _, p := range def.Problems() {
+		if strings.Contains(p, "Keep one") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the checklist should still report it")
+	}
+
+	// And with only one in use the exclusivity is unchanged — the
+	// control that would be ignored still gets out of the way.
+	one := MachinePhase{Name: "triage", Prompt: "decide", Choices: []string{"dig"}}
+	for _, f := range phaseFieldsFor(def, one, editorCatalog{}) {
+		if f.Field == "choices" && f.ShowWhen != "!next_from" {
+			t.Errorf("ordinary exclusivity was lost: %q", f.ShowWhen)
+		}
+	}
+}
+
+// Same rule for the settings under a delegate — and these are not even
+// inert: when the delegate does not exist in this deployment the phase
+// runs inline with exactly them, which is what a portable machine meets.
+func TestADelegatesStoredModelAndReasoningStayVisible(t *testing.T) {
+	p := MachinePhase{Name: "dig", Prompt: "look", Next: "answer",
+		Agent: "ag-1", Model: "lead", Think: "on"}
+	def := MachineDef{Name: "M", Start: "dig", Phases: []MachinePhase{
+		p, {Name: "answer", Prompt: "reply", Resident: true}}}
+	for _, f := range phaseFieldsFor(def, p, editorCatalog{}) {
+		if (f.Field == "model" || f.Field == "think") && f.ShowWhen != "" {
+			t.Errorf("%s is set to something and hidden behind %q", f.Field, f.ShowWhen)
+		}
+	}
+	// Unset ones still get out of the way under a delegate.
+	bare := MachinePhase{Name: "dig", Prompt: "look", Next: "answer", Agent: "ag-1"}
+	for _, f := range phaseFieldsFor(def, bare, editorCatalog{}) {
+		if (f.Field == "model" || f.Field == "think") && f.ShowWhen != "!agent" {
+			t.Errorf("%s should stay hidden when empty, got %q", f.Field, f.ShowWhen)
+		}
+	}
+}

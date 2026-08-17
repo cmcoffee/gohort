@@ -346,7 +346,49 @@ func toolsLabel(p MachinePhase) string {
 	return "Tools this step may use"
 }
 
+// toolsShowWhen hides the list under a delegate only while there is
+// nothing in it to take back out.
+func toolsShowWhen(p MachinePhase) string {
+	if len(p.Tools) > 0 {
+		return ""
+	}
+	return "!agent"
+}
+
+// delegatedShowWhen is the same rule for the single-value settings under
+// a delegate. They are not even inert: when the delegate does not exist
+// in this deployment the phase runs INLINE with exactly these, which is
+// the case a portable machine meets most often.
+func delegatedShowWhen(stored string) string {
+	if strings.TrimSpace(stored) != "" {
+		return ""
+	}
+	return "!agent"
+}
+
+// routingShowWhen keeps the two routing mechanisms exclusive while only
+// one is in use, and shows BOTH when a step somehow has both.
+//
+// This was the sharpest instance of the whole class: choices hid itself
+// behind "!next_from" and next_from hid itself behind "!choices", so a
+// step carrying both — which no editor session produces but an import,
+// an older save or the tool can — showed NEITHER control, while the
+// checklist reported "keep one". There was no way to keep one.
+func routingShowWhen(p MachinePhase, expr string) string {
+	if len(p.Choices) > 0 && strings.TrimSpace(p.NextFrom) != "" {
+		return ""
+	}
+	return expr
+}
+
 func toolsHelp(p MachinePhase) string {
+	// The one state where this control is visible and inert. Saying so
+	// where the control is beats leaving somebody to find it in a
+	// findings list two sections down.
+	if strings.TrimSpace(p.Agent) != "" {
+		return "This step is delegated, so these do nothing — the delegate works from its own catalog. " +
+			"Untick them, or clear the delegate above to let this step do the work itself."
+	}
 	if p.Resident {
 		return "Check tools to narrow the agent's catalog while the conversation waits here; none checked = everything it normally has. " +
 			"Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."
@@ -676,7 +718,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// worst way to enforce it. Live, because show_when reads the
 			// form rather than the stored record: pick a field to route
 			// on and this goes away under your hand.
-			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", ShowWhen: "!next_from",
+			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", ShowWhen: routingShowWhen(p, "!next_from"),
 				Options: otherPhaseOptions(def, p.Name),
 				Help: "Tick the steps it may send the conversation to and it decides at run time. You do not declare a field for the decision: the framework adds next_step to what this step returns, writes the instruction naming each destination and what that step is for, draws those arrows, and refuses to save a name that is not a step. \"Then go to\" is the fallback if the choice does not resolve."},
 		)
@@ -692,13 +734,13 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// halves of this exclusivity symmetrical instead of one
 			// server-side and one not.
 			fields = append(fields,
-				ui.FormField{Type: "header", Label: "Routing by hand", ShowWhen: "!choices",
+				ui.FormField{Type: "header", Label: "Routing by hand", ShowWhen: routingShowWhen(p, "!choices"),
 					Collapsed: strings.TrimSpace(p.NextFrom) == "",
 					Help:      "Only if the destination is also a finding worth naming — \"severity\", say, where the value routes AND means something. Otherwise use the list above."},
-				ui.FormField{Field: "next_from", Type: "select", Label: "Route on the field", ShowWhen: "!choices",
+				ui.FormField{Field: "next_from", Type: "select", Label: "Route on the field", ShowWhen: routingShowWhen(p, "!choices"),
 					Options: ownFieldOptions(p),
 					Help:    "One of this step's own text fields, whose value is a step NAME. A step can route ONE way: picking a field here hides the list above, and ticking that list hides this."},
-				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", ShowWhen: "!choices",
+				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", ShowWhen: routingShowWhen(p, "!choices"),
 					Options: otherPhaseOptions(def, p.Name),
 					Help:    "The steps that field is allowed to name. Leave empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
 			)
@@ -710,13 +752,13 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// OWN model, reasoning and tools, so these would be controls
 		// somebody can change and be ignored for. The same rule the
 		// built-in field rows follow.
-		ui.FormField{Field: "model", Type: "select", Label: "Which model", ShowWhen: "!agent", Options: []ui.SelectOption{
+		ui.FormField{Field: "model", Type: "select", Label: "Which model", ShowWhen: delegatedShowWhen(p.Model), Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's routing"},
 			{Value: "worker", Label: "Worker — the cheap, local one"},
 			{Value: "lead", Label: "Lead — the precise, remote one"},
 		},
 			Help: "A routing decision or a transform is worker work; a step that commits to an explanation is usually lead."},
-		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", ShowWhen: "!agent", Options: []ui.SelectOption{
+		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", ShowWhen: delegatedShowWhen(p.Think), Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's setting"},
 			{Value: "on", Label: "On — this step is a judgement"},
 			{Value: "off", Label: "Off — this step is a transform"},
@@ -726,7 +768,15 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// The user's real tool pool, not a box to type names into — the
 		// last thing in this editor that was typed from memory. Checked
 		// none = no narrowing, which is the common case.
-		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p), ShowWhen: "!agent",
+		// Hidden under a delegate, because a delegate works from its own
+		// catalog and the list would be inert — EXCEPT when the step is
+		// already carrying one. Then hiding it is how a finding becomes
+		// unactionable: the checklist says "it names tools AND
+		// delegates, keep one" and one of the two ways to keep one is
+		// behind a control nothing can open. Same rule as a checked
+		// value whose option is gone — what is stored stays visible so
+		// it can be removed.
+		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p), ShowWhen: toolsShowWhen(p),
 			Options:     toolChecklistOptions(cat.tools, p.Tools),
 			Placeholder: "(no tools to offer)",
 			Help:        toolsHelp(p)},
