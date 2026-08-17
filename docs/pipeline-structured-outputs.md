@@ -193,6 +193,34 @@ LLM call.
 > or cycles)" — the implementation never did; it only checks `FanOver`. The
 > comment is aspirational today. This change makes it true.
 
+## Advice (`PipelineDef.Advice`, v0.6.211)
+
+Kept apart from `Validate` deliberately, and for the same reason machines keep advice apart from
+problems: this reads prompt WORDING, which is a guess about intent, and a guess with the power to
+reject somebody's work is worse than no rule.
+
+One rule, and it exists because declaring output fields IS this feature: the framework asks for
+those keys, encodes them, and validates what comes back. A stage whose prompt ALSO specifies a
+format leaves two sets of formatting rules, and the usual result is a JSON string nested inside a
+JSON field. `AsksForRawJSON` spots the phrasings ("as json", "valid json", "respond only with", …)
+and fires only when the stage already declares model-facing fields — a stage whose subject happens
+to be JSON declares nothing and is left alone, and so is one whose only declarations are FILLED
+from variables, since the model is never asked for those.
+
+The sentence comes from `DeclaredOutputPromptAdvice(kind, name)`, shared with machines, which take
+the same rule with "step" in place of "stage". That is not tidiness: the machine editor matches its
+findings by VALUE to decide which line carries its Rewrite button, so a second copy of the sentence
+would strand the button the day the two drifted.
+
+What did NOT come across: a machine warns about a step told to go looking with no tools. Wrong
+here — a worker stage inherits the calling agent's whole catalog unless it narrows, so an empty
+tools list means everything rather than nothing.
+
+Surfaced by the `pipeline` tool on create/update (after the save, because it never refuses one), on
+`get`, and as a `worth_a_look` count on `list` — a pipeline written before the rule existed will
+never see a create reply again, so `get` and `list` are the only places its findings can reach
+anybody. Loop bodies are walked and located (`round › critique`).
+
 ## Compatibility
 
 - `Output` empty = today's code path, byte for byte. No `WithJSONMode`, no

@@ -147,4 +147,35 @@ func TestThePipelineToolReportsItsOwnAdvice(t *testing.T) {
 	if !strings.Contains(pipelineHelpText, "NEVER ask for JSON in the prompt") {
 		t.Error("the spec should say it before the mistake, not only after")
 	}
+
+	// A pipeline written before the rule existed will never see a create
+	// reply again, so get and list are the only places its findings can
+	// reach anybody.
+	got, err := ct.pipelineGet(map[string]any{"name": "Research"})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(got, "stage plan") {
+		t.Errorf("get should carry the finding:\n%s", got)
+	}
+	if full, err := ct.pipelineGet(map[string]any{"name": "Research", "full": true}); err != nil {
+		t.Fatalf("get full: %v", err)
+	} else if !strings.Contains(full, "stage plan") {
+		t.Errorf("and so should the full read:\n%s", full)
+	}
+	if quiet, err := ct.pipelineGet(map[string]any{"name": "Simple"}); err != nil {
+		t.Fatalf("get clean: %v", err)
+	} else if strings.Contains(quiet, "Worth a look") {
+		t.Errorf("nothing to say, so say nothing:\n%s", quiet)
+	}
+	lst, err := ct.pipelineList()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(lst, `"worth_a_look":1`) {
+		t.Errorf("list should say which pipelines need a look:\n%s", lst)
+	}
+	if strings.Count(lst, "worth_a_look") != 1 {
+		t.Errorf("and should stay quiet about the ones that do not:\n%s", lst)
+	}
 }

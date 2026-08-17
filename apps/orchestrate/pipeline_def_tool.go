@@ -365,10 +365,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	// already produce) a mistake this surface is the most likely to
 	// produce. The machine tool says the same thing about the same
 	// mistake, from the same function.
-	if adv := saved.Advice(); len(adv) > 0 {
-		msg += "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
-			strings.Join(adv, "\n- ")
-	}
+	msg += pipelineAdviceNote(saved)
 	return msg, nil
 }
 
@@ -382,10 +379,15 @@ func (t *chatTurn) pipelineList() (string, error) {
 		Name        string `json:"name"`
 		Description string `json:"description,omitempty"`
 		Stages      int    `json:"stages"`
+		// So "which of my pipelines needs a look" is answerable without
+		// getting every one of them. Omitted when there is nothing to
+		// say, which is the common case.
+		WorthALook int `json:"worth_a_look,omitempty"`
 	}
 	out := make([]row, len(defs))
 	for i, d := range defs {
-		out[i] = row{ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages)}
+		out[i] = row{ID: d.ID, Name: d.Name, Description: d.Description,
+			Stages: len(d.Stages), WorthALook: len(d.Advice())}
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
@@ -402,11 +404,24 @@ func (t *chatTurn) pipelineGet(args map[string]any) (string, error) {
 	// the verbatim stage prompts (for editing an existing/inherited
 	// pipeline you didn't write this session). See
 	// project_long_context_management.
+	// The advice travels with the definition, because a pipeline written
+	// before the rule existed will never see a create reply again — get
+	// is the only place its findings can reach anybody.
 	if b, ok := args["full"].(bool); ok && b {
 		full, _ := json.Marshal(def)
-		return string(full), nil
+		return string(full) + pipelineAdviceNote(def), nil
 	}
-	return string(slimPipelineJSON(def)), nil
+	return string(slimPipelineJSON(def)) + pipelineAdviceNote(def), nil
+}
+
+// pipelineAdviceNote is the soft half, in the words both tools use.
+func pipelineAdviceNote(def PipelineDef) string {
+	adv := def.Advice()
+	if len(adv) == 0 {
+		return ""
+	}
+	return "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
+		strings.Join(adv, "\n- ")
 }
 
 // slimPipelineJSON renders a PipelineDef for the pipeline(get) tool
