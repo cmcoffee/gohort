@@ -4142,7 +4142,7 @@
   }
 
   components.stack = function(cfg, ctx) {
-    var wrap = el('div', {class: 'ui-stack'});
+    var wrap = el('div', {class: 'ui-stack' + (cfg.row ? ' row' : '')});
     (cfg.items || []).forEach(function(item) { mountComponent(item, wrap, ctx); });
     return wrap;
   };

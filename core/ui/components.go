@@ -1635,6 +1635,13 @@ func (r RecordView) MarshalJSON() ([]byte, error) {
 type Stack struct {
 	Children []Component       `json:"-"`
 	Items    []json.RawMessage `json:"items"`
+	// Row lays the children out along one line instead of down the
+	// page, wrapping when they run out of room.
+	//
+	// For a set of children that are ALTERNATIVES to each other — three
+	// ways to get a new machine, say. Stacked, each reads as its own
+	// step in a sequence; on one line they read as the choice they are.
+	Row bool `json:"row,omitempty"`
 }
 
 func (Stack) componentType() string { return "stack" }
@@ -1648,7 +1655,8 @@ func (s Stack) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type  string            `json:"type"`
 		Items []json.RawMessage `json:"items"`
-	}{"stack", s.Items})
+		Row   bool              `json:"row,omitempty"`
+	}{"stack", s.Items, s.Row})
 }
 
 // NavShell is an app-shell layout: a left rail of nav buttons, a content

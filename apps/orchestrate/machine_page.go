@@ -50,60 +50,65 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 			"A machine is yours and reusable: point several agents at the same one. " +
 			"Attach one to an agent from that agent's chat toolbar (Configure → Machines); this is where you build them.",
 		Body: ui.Stack{Children: []ui.Component{
-			// A create affordance where machines are AUTHORED. Without it
-			// the only "new" lived in the chat modal and opened the JSON
-			// editor — so the page built for authoring could not start one.
-			ui.Toolbar{Actions: []ui.ToolbarAction{{
-				Label:   "New machine",
-				Title:   "Start from a small working machine you can replace entirely",
-				URL:     "/orchestrate/machine?new=1",
-				Method:  "GET",
-				Variant: "primary",
-			}}},
-			// The other door: say what you want and review a draft,
-			// instead of building from a blank. The editor's checklist
-			// carries anything the draft got wrong, so an imperfect
-			// draft is still a better starting point than an empty one.
-			ui.ModalButton{
-				Label:    "Describe one…",
-				Title:    "Draft a machine from a description",
-				Subtitle: "Say what the conversation should do — what it works out first, what it decides between, where it settles. A draft machine opens in the editor for you to adjust.",
-				Width:    "560px",
-				Body: ui.FormPanel{
-					PostURL:     "/orchestrate/api/machines/draft",
-					SubmitLabel: "Draft it",
-					RedirectURL: "/orchestrate/machine?id={id}",
-					Fields: []ui.FormField{{
-						Field: "description", Type: "textarea", Rows: 6,
-						Label:       "What should it do?",
-						Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
-						Help:        "Plain words. Say what kinds of turns arrive and what should happen to each; the draft picks the steps.",
-					}},
+			// The three ways to get a machine, on one line: they are
+			// alternatives to each other, and stacked they read as three
+			// steps somebody is meant to take in order.
+			ui.Stack{Row: true, Children: []ui.Component{
+				// A create affordance where machines are AUTHORED. Without it
+				// the only "new" lived in the chat modal and opened the JSON
+				// editor — so the page built for authoring could not start one.
+				ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label:   "New machine",
+					Title:   "Start from a small working machine you can replace entirely",
+					URL:     "/orchestrate/machine?new=1",
+					Method:  "GET",
+					Variant: "primary",
+				}}},
+				// The other door: say what you want and review a draft,
+				// instead of building from a blank. The editor's checklist
+				// carries anything the draft got wrong, so an imperfect
+				// draft is still a better starting point than an empty one.
+				ui.ModalButton{
+					Label:    "Describe one…",
+					Title:    "Draft a machine from a description",
+					Subtitle: "Say what the conversation should do — what it works out first, what it decides between, where it settles. A draft machine opens in the editor for you to adjust.",
+					Width:    "560px",
+					Body: ui.FormPanel{
+						PostURL:     "/orchestrate/api/machines/draft",
+						SubmitLabel: "Draft it",
+						RedirectURL: "/orchestrate/machine?id={id}",
+						Fields: []ui.FormField{{
+							Field: "description", Type: "textarea", Rows: 6,
+							Label:       "What should it do?",
+							Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
+							Help:        "Plain words. Say what kinds of turns arrive and what should happen to each; the draft picks the steps.",
+						}},
+					},
 				},
-			},
-			// The third way in. The endpoint has existed since machines
-			// did, with nothing on any page calling it — so a recipe
-			// somebody was handed could only be brought in through the
-			// tool or a bundle. A file field reads the file as TEXT in
-			// the browser and submits its contents, so this is a form
-			// rather than an upload path.
-			ui.ModalButton{
-				Label:    "Import…",
-				Title:    "Bring in a machine somebody exported",
-				Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own — a copy, with its own id — and opens in the editor.",
-				Width:    "480px",
-				Body: ui.FormPanel{
-					PostURL:        "/orchestrate/api/machines/import",
-					SubmitLabel:    "Import",
-					RedirectURL:    "/orchestrate/machine?id={id}",
-					RedirectTarget: "_self",
-					Fields: []ui.FormField{{
-						Field: "recipe", Type: "file", Accept: ".json",
-						Label: "Recipe file",
-						Help:  "The file an Export produced. Steps, prompts and wiring travel; nothing about the conversations that ran it does.",
-					}},
+				// The third way in. The endpoint has existed since machines
+				// did, with nothing on any page calling it — so a recipe
+				// somebody was handed could only be brought in through the
+				// tool or a bundle. A file field reads the file as TEXT in
+				// the browser and submits its contents, so this is a form
+				// rather than an upload path.
+				ui.ModalButton{
+					Label:    "Import…",
+					Title:    "Bring in a machine somebody exported",
+					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own — a copy, with its own id — and opens in the editor.",
+					Width:    "480px",
+					Body: ui.FormPanel{
+						PostURL:        "/orchestrate/api/machines/import",
+						SubmitLabel:    "Import",
+						RedirectURL:    "/orchestrate/machine?id={id}",
+						RedirectTarget: "_self",
+						Fields: []ui.FormField{{
+							Field: "recipe", Type: "file", Accept: ".json",
+							Label: "Recipe file",
+							Help:  "The file an Export produced. Steps, prompts and wiring travel; nothing about the conversations that ran it does.",
+						}},
+					},
 				},
-			},
+			}},
 			ui.Table{
 				Source: "/orchestrate/api/machines",
 				RowKey: "id",

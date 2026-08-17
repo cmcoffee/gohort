@@ -4237,7 +4237,25 @@
               ev.stopPropagation();
               window.open('/orchestrate/machine?id=' + encodeURIComponent(mc.id), '_blank');
             };
+            // The other door, and the one that had quietly closed: the
+            // only way into the JSON editor for an EXISTING machine was
+            // a button inside a builder nothing called, so the recipe
+            // view — and the PUT behind it — could be reached for a new
+            // machine and never for one that already existed.
+            var jsonBtn = document.createElement('button');
+            jsonBtn.className = 'ui-orch-modal-btn';
+            jsonBtn.type = 'button';
+            jsonBtn.textContent = 'Edit as JSON';
+            jsonBtn.title = 'The whole recipe at once — what the machine tool writes';
+            jsonBtn.style.cssText = 'font-size:0.72rem;padding:0.15rem 0.5rem;margin-top:0.4rem;margin-right:0.35rem';
+            jsonBtn.onclick = function(ev) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              m.close();
+              openMachineEditor(mc.id, mc.name);
+            };
             r.querySelector('div').appendChild(editBtn);
+            r.querySelector('div').appendChild(jsonBtn);
             r.querySelector('div').appendChild(figToggle);
             r.querySelector('div').appendChild(figWrap);
             // Delete lives on the row rather than in the footer: the
@@ -4315,105 +4333,13 @@
       // against a moving schema is the expensive thing to throw away.
       // The server's validator is what makes this usable — it reports
       // every problem in one response instead of one per round trip.
-      // The STRUCTURED editor: questions instead of JSON. The spec comes
-      // from the server (machine_editor.go) because the selects need the
-      // machine's own phase names and declared output fields, and the
-      // help text — which is the part that carries the concepts — belongs
-      // where it can be reviewed and tested.
-      //
-      // openMachineEditor (the JSON one, below) stays as the other door:
-      // it is what the machine tool writes and the fastest path for
-      // somebody who already knows the shape.
-      function openMachineBuilder(machineID, machineName) {
-        // uiEl is the runtime's element helper. Bound locally because this
-        // script block is a different IIFE from the one that aliases it —
-        // a bare el() here throws, and it throws inside a click handler,
-        // where nobody sees it.
-        var el = window.uiEl;
-        fetch('api/machines/' + encodeURIComponent(machineID) + '/editor')
-          .then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          })
-          .then(function(spec) {
-            var m = openOrchModal('Machine — ' + (spec.name || machineName || machineID));
-            var checklist = document.createElement('div');
-            m.body.appendChild(checklist);
-
-            // What is still missing, from the machine's own Validate. Work
-            // remaining, not a refusal: a half-built machine has problems
-            // by definition, and an editor that reported them as failure
-            // would be arguing with somebody mid-thought.
-            function drawChecklist(items) {
-              checklist.innerHTML = '';
-              if (!items || !items.length) {
-                checklist.appendChild(el('div', {
-                  class: 'ui-orch-modal-help',
-                  style: 'color:var(--accent,#56d364)',
-                  text: '✓ This machine is complete — it will run as written.',
-                }));
-                return;
-              }
-              var list = el('ul', {style: 'margin:0 0 0.9rem 1.1rem;padding:0;font-size:0.82rem;line-height:1.6'});
-              items.forEach(function(p) { list.appendChild(el('li', {text: p})); });
-              checklist.appendChild(el('div', {class: 'ui-orch-modal-help'}, [
-                el('strong', {text: 'Still to do'}), list,
-              ]));
-            }
-            drawChecklist(spec.checklist);
-            // Advice sits under the checklist and reads differently on
-            // purpose: it is a guess about intent, not a defect, and one
-            // dressed as the other sends people rewriting what works.
-            if (spec.advice && spec.advice.length) {
-              var adv = el('ul', {style: 'margin:0 0 0.9rem 1.1rem;padding:0;font-size:0.82rem;line-height:1.6;color:var(--text-mute)'});
-              spec.advice.forEach(function(a) { adv.appendChild(el('li', {text: a})); });
-              m.body.appendChild(el('div', {class: 'ui-orch-modal-help'}, [
-                el('strong', {text: 'Worth a look'}), adv,
-              ]));
-            }
-
-            (spec.components || []).forEach(function(c) {
-              var host = document.createElement('div');
-              host.style.marginBottom = '0.9rem';
-              m.body.appendChild(host);
-              window.uiMountComponent(c, host);
-            });
-
-            // Every save returns the fresh checklist, so the list tracks
-            // what you just did rather than what was true when it opened.
-            // Polled rather than threaded through each component: the
-            // components are generic and know nothing about machines, and
-            // teaching them would be exactly the leak core/ui forbids.
-            var poll = setInterval(function() {
-              if (!document.body.contains(checklist)) { clearInterval(poll); return; }
-              fetch('api/machines/' + encodeURIComponent(machineID) + '/editor')
-                .then(function(r) { return r.ok ? r.json() : null; })
-                .then(function(fresh) { if (fresh) drawChecklist(fresh.checklist); })
-                .catch(function() {});
-            }, 4000);
-
-            var foot = el('div', {style: 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.6rem'}, [
-              el('button', {
-                class: 'ui-orch-modal-btn',
-                text: 'Edit as JSON',
-                onclick: function() { clearInterval(poll); m.close(); openMachineEditor(machineID, machineName); },
-              }),
-              el('button', {
-                class: 'ui-orch-modal-btn primary',
-                text: 'Done',
-                onclick: function() {
-                  clearInterval(poll);
-                  m.close();
-                  window.UIClientActions['orchestrate_machines_modal']();
-                },
-              }),
-            ]);
-            m.body.appendChild(foot);
-          })
-          .catch(function(err) {
-            window.uiAlert('Could not open the editor: ' + (err && err.message || err));
-          });
-      }
+      // A structured builder used to live here too, fetching the same
+      // /editor spec this modal once mounted. It went unused the day
+      // authoring moved to its own page — nothing called it — and it
+      // could not have worked anyway: the step panels it renders carry
+      // buttons whose handlers (machine_remove_step, machine_move_step)
+      // are registered by that PAGE, so in a modal they would have found
+      // nothing. Deleted rather than wired up. One editor.
 
       function openMachineEditor(machineID, machineName) {
         var creating = !machineID;

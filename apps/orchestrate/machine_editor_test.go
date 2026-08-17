@@ -189,16 +189,20 @@ func TestPhaseRowReadsAsEnglish(t *testing.T) {
 	}
 }
 
-// Both halves of the modal are wired in files that know nothing about
-// each other, which is the pair that half-lands.
-func TestBuilderIsWiredIntoTheModal(t *testing.T) {
+// The modal PICKS a machine for the open agent; it does not edit one.
+// It used to carry a structured editor of its own, fetching the same
+// /editor spec — dead the day authoring moved to a page (nothing called
+// it), and unable to work anyway: the step panels that spec returns
+// carry buttons whose handlers are registered by the PAGE, so in a
+// modal they would have found nothing.
+func TestTheModalPicksAndLinksRatherThanEditing(t *testing.T) {
 	assets, err := os.ReadFile("assets/web_assets.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := string(assets)
-	if !strings.Contains(src, "function openMachineBuilder(") {
-		t.Fatal("the structured editor is never defined")
+	if strings.Contains(src, "function openMachineBuilder(") {
+		t.Error("a second structured editor is a second thing to keep in step with this one")
 	}
 	// The row opens the EDITOR PAGE. Authoring outgrew the dialog — a
 	// machine with four phases does not fit one — and this modal's job is
@@ -207,13 +211,16 @@ func TestBuilderIsWiredIntoTheModal(t *testing.T) {
 		t.Error("the row should open the full editor page")
 	}
 	// The JSON path stays reachable — it is what the machine tool writes.
-	if !strings.Contains(src, "text: 'Edit as JSON'") {
+	if !strings.Contains(src, "jsonBtn.textContent = 'Edit as JSON';") {
 		t.Error("the JSON editor should stay available as the other door")
 	}
-	// el() lives in a different IIFE; a bare call throws inside a click
-	// handler, where nobody sees it.
-	if !strings.Contains(src, "var el = window.uiEl;\n        fetch(") {
-		t.Error("the builder must bind uiEl locally")
+	// And that door has to be reachable for an EXISTING machine, not
+	// only when creating one: the only button that opened it sat inside
+	// the dead builder, so the recipe view — and the PUT behind it —
+	// could be reached for a new machine and never for one that already
+	// existed.
+	if !strings.Contains(src, "openMachineEditor(mc.id, mc.name)") {
+		t.Error("a machine in the list should be openable as JSON")
 	}
 }
 

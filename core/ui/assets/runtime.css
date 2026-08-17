@@ -1425,6 +1425,16 @@ select:-webkit-autofill {
      you read. */
   --rows-actions: calc(3 * var(--tap) + 0.3rem);
 }
+/* A stack of ALTERNATIVES reads as one choice on a line, not as three
+   steps down the page. Wraps rather than squeezing, so a narrow screen
+   gets two lines instead of three cramped buttons. */
+.ui-stack.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .ui-rows-head {
   display: flex;
   gap: 0.35rem;

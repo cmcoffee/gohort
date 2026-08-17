@@ -513,3 +513,26 @@ console.log('OK');
 		t.Fatalf("the gone-value rule does not hold:\n%s", out)
 	}
 }
+
+// A stack of ALTERNATIVES belongs on one line. Stacked, three ways to
+// do the same thing read as three steps somebody is meant to take in
+// order.
+func TestAStackCanLayItsChildrenInARow(t *testing.T) {
+	raw, _ := json.Marshal(Stack{Row: true, Children: []Component{Card{HTML: "a"}}})
+	if !strings.Contains(string(raw), `"row":true`) {
+		t.Errorf("the layout should reach the runtime:\n%s", raw)
+	}
+	// A plain stack serializes unchanged, so every existing one is
+	// untouched.
+	plain, _ := json.Marshal(Stack{Children: []Component{Card{HTML: "a"}}})
+	if strings.Contains(string(plain), "row") {
+		t.Errorf("a stacked stack should be exactly as it was:\n%s", plain)
+	}
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "'ui-stack' + (cfg.row ? ' row' : '')") {
+		t.Error("the runtime does not read the layout")
+	}
+	if css := readRuntimeCSSForTest(t); !strings.Contains(css, ".ui-stack.row") {
+		t.Error("and it has no styling, so it would stack anyway")
+	}
+}
