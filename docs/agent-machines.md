@@ -798,6 +798,12 @@ where the second went.
 
 ## Editing one
 
+> Pipelines are edited the same way, deliberately, and differ in four places on purpose —
+> see [pipeline-surfaces.md](pipeline-surfaces.md). The most instructive difference: removing a step
+> from a MACHINE drops every reference to it, because a machine's references live in fields; removing
+> a STAGE from a pipeline refuses while anything still reads it, because a pipeline's live in prose.
+
+
 **Or describe one.** "Describe one…" next to New machine takes a paragraph — what kinds of turns
 arrive, what should happen to each — and drafts a complete machine, landing you in the editor to
 adjust it. The drafter reads the machine tool's own spec (`machineHelpText`) and its output goes

@@ -139,7 +139,7 @@ read from the def.
 | **G1** ✅ | `WorkflowGraph` + `MachineDef.Graph()` + the SVG renderer + `/graph`. |
 | **G2** ✅ | Runtime overlay. It reads `MachineCursor.Log`, NOT the diagnostics trail as originally sketched: "which edges did this take" is a structural question, and parsing framework-authored prose would break silently the first time someone reworded a message. |
 | **G3** ✅ | `PipelineDef.Graph()` — proved the adapter: the renderer took a second def with no changes at all, and `NodeExit`, reserved in G1 for "a pipeline's terminal stage", was waiting for it. Three shapes needed thought rather than translation, below. |
-| **G4** | Interactive editing, only if G1-G3 show the layout holds up. Not committed to. |
+| **G4** | Interactive editing, only if G1-G3 show the layout holds up. Still not committed to — and the reason has changed. The layout does hold up, but what the pages needed was not a canvas: the map is pinned above the sections and every box is a LINK to that step's or stage's own form (v0.6.196 for machines, v0.6.222 for pipelines). Reading the shape and editing one piece at a time turned out to be the whole requirement; dragging boxes would answer a question nobody asked. |
 
 ### What G3 had to decide
 
@@ -164,18 +164,24 @@ of a box. Body node IDs are prefixed with the loop's name because body names are
 
 ## Open
 
-- **Layout algorithm.** Layered (rank by distance from entry, resolve cycles by breaking back-edges)
-  is the obvious choice and is ~150 lines. Worth checking whether a machine with four phases even
-  needs ranking, or whether a fixed row with curved back-edges reads better at this size. Prototype
-  both on the Triage example before committing.
 - ~~**Node budget.**~~ Resolved by the `viewBox`: the SVG carries its natural size and the modal
   scrolls it horizontally. No refusal needed, and a large machine stays readable rather than being
   shrunk to fit.
-- **Does the pipeline adapter want subgraphs?** A `loop` body is a nested stage list. Flattening it
-  with a back-edge is probably right and definitely simpler; a real subgraph box is the correct
-  drawing. Defer to G3, where it is a real question rather than a hypothetical.
-- **Theming.** The SVG has to read on both light and dark. `currentColor` plus CSS variables in the
-  markup rather than baked hex, matching how the rest of the UI themes.
+- ~~**Does the pipeline adapter want subgraphs?**~~ Answered by G3 (v0.6.222): flattened, and the
+  guess in the original note was right. A loop is drawn as a HUB — an arrow into the body ("each
+  pass"), the body in order, a dotted edge back ("again"), and one arrow out ("when it stops") — with
+  the body's stages as ordinary nodes whose ids are prefixed with the loop's name, because body names
+  are scoped to the loop and two loops may each hold a `critique`. A subgraph box would be the more
+  literal drawing and buys nothing at this size: the hub already says the body repeats, and the back
+  edge says what stops it. What the body must NOT be is summarised — "3 stages inside" is a picture
+  of a box.
+- ~~**Theming.**~~ Done: every colour in the renderer is `var(--token, #fallback)`, so the SVG takes
+  the page's theme and still reads when served standalone from `/graph` (where no variables exist and
+  the fallbacks apply).
+- ~~**Layout algorithm.**~~ Settled in practice rather than decided: rows are ranked from the entry
+  and then ORDERED WITHIN A ROW by the mean position of each node's parents in the row above
+  (barycentre), which is what stopped a branch's two arms crossing. The "fixed row" alternative was
+  never needed once a machine could branch.
 
 ## Not doing
 

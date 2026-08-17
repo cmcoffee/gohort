@@ -223,6 +223,9 @@ LLM call.
 > or cycles)" — the implementation never did; it only checks `FanOver`. The
 > comment is aspirational today. This change makes it true.
 
+The surfaces that show and edit all of this — the list, the page, the per-stage form, the picture —
+are described in [pipeline-surfaces.md](pipeline-surfaces.md).
+
 ## Advice (`PipelineDef.Advice`, v0.6.211)
 
 Kept apart from `Validate` deliberately, and for the same reason machines keep advice apart from
