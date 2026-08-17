@@ -126,6 +126,30 @@ func TestRemapsPathsTracksTheBackend(t *testing.T) {
 	}
 }
 
+// TestScopesReadsIsAskedSeparately — the three backends' answers, asserted here
+// so a fourth cannot inherit a default.
+//
+// It is a SEPARATE property from confines() because they diverge: Seatbelt
+// confines and cannot scope a read (see sandbox_seatbelt.go). Anything that
+// gates a read-only path list on confines() is asking the wrong question, and
+// the cost of that mistake is a check that passes while constraining nothing.
+func TestScopesReadsIsAskedSeparately(t *testing.T) {
+	if !(bwrapSandbox{path: "/usr/bin/bwrap"}).scopesReads() {
+		t.Error("bubblewrap binds read-only paths into a mount namespace but reports it cannot scope reads")
+	}
+	if (noSandbox{}).scopesReads() {
+		t.Error("the none backend claims to scope reads — a path_scope would be checked and then ignored")
+	}
+	if (seatbeltSandbox{path: seatbeltBinary}).scopesReads() {
+		t.Error("seatbelt claims to scope reads, but its profile allows file-read* filesystem-wide")
+	}
+	// The divergence itself, stated as an assertion rather than left in a
+	// comment: this pairing is the whole reason the predicate exists.
+	if sb := (seatbeltSandbox{path: seatbeltBinary}); !sb.confines() || sb.scopesReads() {
+		t.Errorf("seatbelt must be confines=true scopesReads=false, got %v/%v", sb.confines(), sb.scopesReads())
+	}
+}
+
 // TestTheNoneBackendKeepsTheOldShapes — behavior on an unsandboxed host must be
 // exactly what it was before the split: a shell run in the workspace, a pipe in
 // /tmp, a script through its interpreter.

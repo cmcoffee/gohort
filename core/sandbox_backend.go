@@ -71,6 +71,11 @@ type sandboxRun struct {
 	// Same path inside as out, so a resolved absolute path is correct on
 	// both sides with no translation, and read-only because these are
 	// somebody's registered corpus rather than the tool's scratch space.
+	//
+	// Only a backend whose scopesReads() is true honors this. The others
+	// cannot narrow a read at all, so a run that sets this field is refused
+	// before it starts (scopedRunRefusal) rather than running with the field
+	// quietly ignored.
 	ReadOnly []string
 }
 
@@ -86,6 +91,23 @@ type sandboxBackend interface {
 	// inside the sandbox. See the file comment — this is the question callers
 	// actually have.
 	remapsPaths() bool
+	// scopesReads reports whether this backend can restrict READS to a named
+	// set of paths — i.e. whether sandboxRun.ReadOnly means anything.
+	//
+	// A SECOND property, distinct from confines(), because a backend can
+	// genuinely confine and still be unable to keep this particular promise.
+	// bubblewrap builds a mount namespace, so a path it was not told about
+	// does not exist; Seatbelt evaluates a policy against the real filesystem
+	// and its profile aborts on load if file-read* is scoped by subpath, so it
+	// allows reads filesystem-wide and constrains writes and network instead.
+	//
+	// Asked separately because scopedRunRefusal used to gate on confines(),
+	// which reads as the right question and is not: on macOS the guard passed
+	// and the command then ran able to read the scoped folder AND everything
+	// else — the exact state the guard exists to refuse. Whether a backend
+	// confines and whether it can scope a read are two facts, so the next
+	// backend answers both by construction rather than by remembering.
+	scopesReads() bool
 	// build returns the command to execute for one run.
 	build(ctx context.Context, run sandboxRun) *exec.Cmd
 }
@@ -97,6 +119,7 @@ type bwrapSandbox struct{ path string }
 func (b bwrapSandbox) name() string      { return "bubblewrap" }
 func (b bwrapSandbox) confines() bool    { return true }
 func (b bwrapSandbox) remapsPaths() bool { return true } // it builds a mount namespace
+func (b bwrapSandbox) scopesReads() bool { return true } // --ro-bind: unlisted paths do not exist
 
 func (b bwrapSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	var args []string
@@ -123,6 +146,7 @@ type noSandbox struct{}
 func (noSandbox) name() string      { return "none" }
 func (noSandbox) confines() bool    { return false }
 func (noSandbox) remapsPaths() bool { return false }
+func (noSandbox) scopesReads() bool { return false }
 
 func (noSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	switch run.Kind {

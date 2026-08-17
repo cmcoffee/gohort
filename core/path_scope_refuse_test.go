@@ -30,8 +30,11 @@ func TestAScopedRunRefusesWhenNothingCanConfineIt(t *testing.T) {
 	msg := err.Error()
 	// The message is read by an operator whose tool just stopped working
 	// for a reason that is not in their tool, so it has to name the path,
-	// the missing thing, and both ways out.
-	for _, want := range []string{"/var/log/bundles/a", "no sandbox", "none", "bubblewrap", "path_scope"} {
+	// the missing thing, and both ways out. The install advice is asserted
+	// through unsandboxedAdvice() rather than as a literal, because it is
+	// platform-derived: hardcoding "bubblewrap" here would be the same bug
+	// this whole file family exists to prevent, one level up.
+	for _, want := range []string{"/var/log/bundles/a", "no sandbox", "none", unsandboxedAdvice(), "path_scope"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal should mention %q:\n%s", want, msg)
 		}
@@ -44,8 +47,52 @@ func TestAScopedRunRefusesWhenNothingCanConfineIt(t *testing.T) {
 		t.Errorf("an unscoped run must still be allowed: %v", err)
 	}
 
-	// A backend that confines keeps the promise, so it runs.
+	// A backend that scopes reads keeps the promise, so it runs.
 	if err := scopedRunRefusal(bwrapSandbox{path: "/usr/bin/bwrap"}, scoped); err != nil {
-		t.Errorf("a confining backend should be allowed to run it: %v", err)
+		t.Errorf("a read-scoping backend should be allowed to run it: %v", err)
+	}
+}
+
+// TestAConfiningBackendThatCannotScopeAReadStillRefuses is the case that was
+// live and wrong: Seatbelt confines, so the guard's old confines() test passed,
+// and the command then ran with the scoped folder readable AND the rest of the
+// filesystem with it — a path_scope that had been checked and then applied to
+// nothing.
+//
+// Runs on Linux against the darwin backend deliberately. The behavior belongs
+// to the backend, not to the host, and the machine this suite runs on is not
+// the machine that was affected.
+func TestAConfiningBackendThatCannotScopeAReadStillRefuses(t *testing.T) {
+	sb := seatbeltSandbox{path: seatbeltBinary}
+	scoped := []string{"/var/log/bundles/a"}
+
+	if !sb.confines() {
+		t.Fatal("seatbelt must still report that it confines — writes and network are governed")
+	}
+	if sb.scopesReads() {
+		t.Fatal("seatbelt cannot scope a read: the profile allows file-read* filesystem-wide")
+	}
+
+	err := scopedRunRefusal(sb, scoped)
+	if err == nil {
+		t.Fatal("a scoped run under a backend that cannot narrow reads must refuse, not run unscoped")
+	}
+	msg := err.Error()
+	// Names the path, the backend, why the scope buys nothing here, and the
+	// two real moves. Explicitly NOT install advice: there is nothing to
+	// install on macOS that would change this answer.
+	for _, want := range []string{"/var/log/bundles/a", "seatbelt", "filesystem-wide", "bubblewrap", "path_scope"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal should mention %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "no sandbox") {
+		t.Errorf("this host HAS a sandbox — the message must not read as an absent one:\n%s", msg)
+	}
+
+	// Unscoped runs are untouched: every ordinary shell tool on a Mac still
+	// works, which is the difference between this refusal and a regression.
+	if err := scopedRunRefusal(sb, nil); err != nil {
+		t.Errorf("an unscoped run under seatbelt must still be allowed: %v", err)
 	}
 }

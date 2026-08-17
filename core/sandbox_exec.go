@@ -777,7 +777,7 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 // RunSandboxedShellScoped is RunSandboxedShellWithEnv plus read-only
 // access to paths a scope check has already proved.
 //
-// It REFUSES when the sandbox does not confine, rather than running the
+// It REFUSES when the sandbox cannot SCOPE A READ, rather than running the
 // command anyway. Everywhere else in this file an absent sandbox is a
 // warning and the command still runs, because the alternative is a
 // deployment where no tool works at all. Here the caller has been
@@ -786,6 +786,9 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 // would run with the daemon's own view of the filesystem, where the
 // resolved path is readable and so is everything around it. A constraint
 // that silently does not apply is worse than a refusal that says so.
+//
+// "Cannot scope a read" and "does not confine" are not the same condition,
+// which is what this used to test for. See scopedRunRefusal.
 func RunSandboxedShellScoped(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
 	if err := scopedRunRefusal(activeSandbox(), readOnly); err != nil {
 		return SandboxedShellResult{Err: err}
@@ -800,13 +803,37 @@ func RunSandboxedShellScoped(ctx context.Context, command, workspaceDir string, 
 //
 // nil when there is nothing to promise (no scoped paths) or the backend
 // can keep the promise.
+//
+// The gate is scopesReads(), NOT confines(). The two came apart when the
+// second confining backend arrived: Seatbelt confines writes and network
+// but allows reads filesystem-wide, so on macOS this returned nil and the
+// command then ran able to read the scoped path AND everything around it
+// — the precise outcome the refusal exists to prevent, reached through the
+// check meant to prevent it. A guard has to ask for the property it
+// promises rather than a stronger-sounding one that seems to imply it.
 func scopedRunRefusal(sb sandboxBackend, readOnly []string) error {
-	if len(readOnly) == 0 || sb.confines() {
+	if len(readOnly) == 0 || sb.scopesReads() {
 		return nil
 	}
-	return Error("this tool reads a registered path (" + strings.Join(readOnly, ", ") +
-		") and this host has no sandbox to confine it to (" + sb.name() + "). Refusing rather " +
-		"than running it with the daemon's own view of the filesystem, where that constraint " +
-		"would not apply. Install bubblewrap, or drop the path_scope from the tool's parameter " +
-		"and accept that it is unconstrained.")
+	paths := strings.Join(readOnly, ", ")
+	// Two different situations, and an operator can act on only one of them,
+	// so they get different sentences. "No sandbox at all" is a host somebody
+	// can fix by installing a package. "A sandbox that cannot scope a read" is
+	// a property of the mechanism, where the only moves are a different host
+	// or a different tool — telling that reader to install bubblewrap would be
+	// advice they cannot follow, which is the mistake sandbox_backend.go was
+	// written to stop repeating.
+	if !sb.confines() {
+		return Error("this tool reads a registered path (" + paths +
+			") and this host has no sandbox to confine it to (" + sb.name() + "). Refusing rather " +
+			"than running it with the daemon's own view of the filesystem, where that constraint " +
+			"would not apply. " + unsandboxedAdvice() + " Or drop the path_scope from the tool's " +
+			"parameter and accept that it is unconstrained.")
+	}
+	return Error("this tool reads a registered path (" + paths + ") and the " + sb.name() +
+		" sandbox on this host cannot restrict reads to it: it confines writes and network, but its " +
+		"policy allows reads filesystem-wide, so the path_scope narrows nothing. Refusing rather " +
+		"than running a check that does not apply — the path would be readable and so would " +
+		"everything around it. Run this tool on a Linux host with bubblewrap, or drop the " +
+		"path_scope from the tool's parameter and accept that it is unconstrained.")
 }

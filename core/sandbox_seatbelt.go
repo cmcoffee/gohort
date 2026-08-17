@@ -126,6 +126,20 @@ func (s seatbeltSandbox) confines() bool { return true }
 // every hook-using script would die on its first line with ModuleNotFoundError.
 func (s seatbeltSandbox) remapsPaths() bool { return false }
 
+// scopesReads is false, and this is the ONE place that fact is recorded where a
+// caller can act on it.
+//
+// seatbeltProfile emits a blanket "(allow file-read*)" — it has to, because
+// macOS aborts a profile that scopes file-read* by subpath (measured; see
+// seatbeltDeniedReads). Reads are narrowed only by the named secret denials, so
+// there is no way to say "this folder and nothing else" here.
+//
+// It was answered by confines() before, which is true and was the wrong
+// question: a path-scoped run passed the guard on macOS and then executed with
+// the scoped folder readable AND the rest of the filesystem with it. Saying so
+// here turns that into a refusal that names the reason.
+func (s seatbeltSandbox) scopesReads() bool { return false }
+
 func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	spec := seatbeltSpec{
 		Workspace:    run.WorkspaceDir,
@@ -140,12 +154,17 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		spec.AllowNetwork = false
 		spec.HookSocket = ""
 	}
-	if lib := EnsureGohortLibDir(); lib != "" {
-		spec.ReadOnly = append(spec.ReadOnly, lib)
-	}
-	if py := EnsurePyDepsDir(); py != "" {
-		spec.ReadOnly = append(spec.ReadOnly, py)
-	}
+	// Called for the DEPLOYMENT half only: Ensure* writes the helper package
+	// and the managed deps to their host locations and reports where they
+	// landed. There is nothing to add to the profile for them, because reads
+	// are already allowed filesystem-wide — see scopesReads.
+	//
+	// These used to append to a spec.ReadOnly field, which nothing rendered.
+	// That field is gone: an unrendered list of paths reads as a constraint in
+	// force, and it was the reason run.ReadOnly went missing here without
+	// anybody noticing.
+	EnsureGohortLibDir()
+	EnsurePyDepsDir()
 
 	profile := seatbeltProfile(spec)
 	var argv []string
@@ -166,9 +185,12 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 
 // seatbeltSpec is what a profile is generated from.
 type seatbeltSpec struct {
-	Workspace    string   // the single writable working directory, or "" for none
-	ReadOnly     []string // extra host dirs readable but not writable
-	HookSocket   string   // unix socket the hook listens on, or ""
+	Workspace  string // the single writable working directory, or "" for none
+	HookSocket string // unix socket the hook listens on, or ""
+	// No read-only path list. Reads are allowed filesystem-wide by
+	// construction (a subpath-scoped file-read* aborts the profile), so a
+	// field naming readable directories could only ever describe paths that
+	// were already readable — see seatbeltSandbox.scopesReads.
 	AllowNetwork bool
 }
 
