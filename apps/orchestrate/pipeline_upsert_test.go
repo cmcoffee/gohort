@@ -105,3 +105,46 @@ func TestUpdateOfAnExistingPipelineStillUpdates(t *testing.T) {
 		t.Fatalf("update must not mint a second record, have %d", len(got))
 	}
 }
+
+// The pipeline tool says what the machine tool says about the same
+// mistake — a prompt hand-rolling the JSON its declared fields already
+// produce. The author on this path is a model, which is the one most
+// likely to make it.
+func TestThePipelineToolReportsItsOwnAdvice(t *testing.T) {
+	ct := upsertTurn(&DBase{Store: kvlite.MemStore()})
+
+	out, err := ct.pipelineCreateOrUpdate(map[string]any{
+		"name": "Research",
+		"stages": []any{
+			map[string]any{"name": "plan", "kind": "worker",
+				"prompt": "Break it up. Respond only with valid JSON.",
+				"output": []any{map[string]any{"name": "queries", "type": "list", "desc": "searches"}}},
+			map[string]any{"name": "answer", "kind": "worker", "prompt": "answer from {stage:plan.queries}"},
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !strings.Contains(out, "Worth a look") || !strings.Contains(out, "stage plan") {
+		t.Errorf("the tool said nothing about it:\n%s", out)
+	}
+	// Advice, not refusal.
+	if !strings.Contains(out, "Created pipeline") {
+		t.Errorf("it should still have been stored:\n%s", out)
+	}
+
+	clean, err := ct.pipelineCreateOrUpdate(map[string]any{
+		"name":   "Simple",
+		"stages": []any{map[string]any{"name": "answer", "kind": "worker", "prompt": "reply plainly"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("create clean: %v", err)
+	}
+	if strings.Contains(clean, "Worth a look") {
+		t.Errorf("nothing to say, so say nothing:\n%s", clean)
+	}
+	// And the spec now warns in advance, the way the machine spec does.
+	if !strings.Contains(pipelineHelpText, "NEVER ask for JSON in the prompt") {
+		t.Error("the spec should say it before the mistake, not only after")
+	}
+}

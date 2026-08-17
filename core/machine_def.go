@@ -569,12 +569,30 @@ func (d MachineDef) Advice() []string {
 //
 // Written once and matched by value, so the panel offering to rewrite it
 // and the list reporting it cannot drift into two different sentences.
-func promptFormatAdvice(name string) string {
-	return "step " + name + ": the prompt asks for JSON, but this step already declares " +
+func promptFormatAdvice(name string) string { return DeclaredOutputPromptAdvice("step", name) }
+
+// DeclaredOutputPromptAdvice is that finding for anything with declared
+// output fields — a machine's step, a pipeline's stage.
+//
+// Both mechanisms are the same one: declare fields and the framework
+// asks for them, encodes them, and validates what comes back. So both
+// have the same failure, where the prompt ALSO specifies a format and
+// the model ends up nesting a JSON string inside a JSON field. The
+// machine spec has told authors not to since it existed; the pipeline
+// spec never did, and neither checked.
+//
+// kind is the caller's noun ("step", "stage") and appears twice, so the
+// sentence reads in the vocabulary of whatever is reporting it.
+func DeclaredOutputPromptAdvice(kind, name string) string {
+	return kind + " " + name + ": the prompt asks for JSON, but this " + kind + " already declares " +
 		"fields — the framework encodes them for you and validates what comes back. Delete the " +
 		"format instructions and the example, and say what to FIND instead. Two sets of " +
 		"formatting rules is how a model ends up returning a JSON string inside a JSON field."
 }
+
+// AsksForRawJSON reports whether a prompt hand-rolls a JSON contract.
+// Exported for the other definitions that declare output fields.
+func AsksForRawJSON(prompt string) bool { return asksForRawJSON(prompt) }
 
 // MachineRewrite is a finding a draft-and-review can settle: the step,
 // and the finding as the brief the drafter is given.

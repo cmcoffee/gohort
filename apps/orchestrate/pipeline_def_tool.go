@@ -125,7 +125,7 @@ args       (tool) {param: template}
 Every reference is checked when the pipeline is SAVED, so a typo is an authoring error, not a mid-run surprise.
 
 === STRUCTURED OUTPUT ===
-Give a stage "output": [{"name": lowercase_key, "type": "string"|"number"|"bool"|"list"|"object", "desc": what goes in it, "required": bool}] and it is asked for JSON with those keys, validated, and each field becomes {stage:NAME.field} downstream. Use it when a later stage needs ONE PIECE of an earlier result — a list to fan over, a count, a verdict, a title. This is what makes fan_over-a-field, loop until, and branch when possible. A stage that declares output renders its own {stage:NAME} as JSON, so point fan_over at the field ("plan.queries"). Nested fields go one level deep. Not valid on fanout, loop, or branch. Skip it for prose stages (a draft, a summary) — wrapping prose in a JSON envelope buys nothing.
+Give a stage "output": [{"name": lowercase_key, "type": "string"|"number"|"bool"|"list"|"object", "desc": what goes in it, "required": bool}] and it is asked for JSON with those keys, validated, and each field becomes {stage:NAME.field} downstream. Use it when a later stage needs ONE PIECE of an earlier result — a list to fan over, a count, a verdict, a title. This is what makes fan_over-a-field, loop until, and branch when possible. A stage that declares output renders its own {stage:NAME} as JSON, so point fan_over at the field ("plan.queries"). Nested fields go one level deep. Not valid on fanout, loop, or branch. Skip it for prose stages (a draft, a summary) — wrapping prose in a JSON envelope buys nothing. NEVER ask for JSON in the prompt as well: declaring the fields IS the mechanism, so a prompt that also specifies a format is two sets of formatting rules, and the usual result is a JSON string nested inside a JSON field. Say what to FIND; the framework handles the shape.
 
 === FANOUT (breadth) ===
 Runs its prompt once PER ELEMENT of an earlier list, in parallel, then collects into one labeled block. Point fan_over at the stage (whose prompt emits a JSON array) or at a declared list field, and use {item}. A branch runs as a worker over the stage's tools by default; name an agent to dispatch each one instead. Capped at 12 items / 6 concurrent; per-branch errors are non-fatal. Canonical: decompose (emits JSON list) -> fanout (worker[web_search,fetch_url], "Research: {item}") -> synthesize (tools=[], think).
@@ -357,6 +357,17 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 		msg += " WARNING: this pipeline is not attached to ANY agent — if it's meant for one, call pipeline(action=\"update\", name=" + saved.Name + ", attach_to_agents=[\"<agent_name>\"]) to wire it up."
 	} else {
 		msg += fmt.Sprintf(" Currently attached to: %s.", strings.Join(currentAttachments, ", "))
+	}
+	// The soft half. Validate has already refused anything unrunnable,
+	// so what is left is what the pipeline looks like it might not have
+	// meant — and on this path the author is a MODEL, which makes the
+	// one rule here (a prompt hand-rolling the JSON its declared fields
+	// already produce) a mistake this surface is the most likely to
+	// produce. The machine tool says the same thing about the same
+	// mistake, from the same function.
+	if adv := saved.Advice(); len(adv) > 0 {
+		msg += "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
+			strings.Join(adv, "\n- ")
 	}
 	return msg, nil
 }
