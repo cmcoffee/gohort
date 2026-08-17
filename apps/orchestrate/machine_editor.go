@@ -59,6 +59,10 @@ func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 		// Kept separate from the checklist: advice is a guess about
 		// intent and must never read as "this is broken".
 		"advice": def.Advice(),
+		// Which of those findings a draft-and-review can settle, so the
+		// live refresh redraws the same buttons the page rendered rather
+		// than dropping them the first time anything is saved.
+		"rewrites": def.PromptRewrites(),
 		// The pieces, separately, so a PAGE can put each phase's panel in
 		// its own section. "components" below is the same set flattened
 		// for the modal, which mounts them in order into one body.

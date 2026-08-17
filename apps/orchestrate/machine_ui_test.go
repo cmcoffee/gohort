@@ -886,3 +886,78 @@ func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
 		}
 	}
 }
+
+// The finding whose fix is prose gets a draft-and-review, not a silent
+// edit. The case that decides the design is a step carrying TWO findings
+// at once — "the prompt asks for JSON" and "the instructions send it
+// looking, but it names no tools" — where only the first is a rewrite
+// and the second is answered by ticking a tool.
+func TestTheProseFindingOffersARewrite(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "decide_approach",
+		Phases: []MachinePhase{
+			{Name: "decide_approach", Next: "answer",
+				Prompt: "Go and look at the logs. Respond only with valid JSON: {\"lane\": \"...\"}",
+				Output: []PipelineField{{Name: "lane", Type: FieldString, Desc: "which lane"}}},
+			{Name: "answer", Prompt: "reply", Resident: true},
+		}})
+
+	r := httptest.NewRequest("GET", "/orchestrate/machine?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	body := w.Body.String()
+
+	// Exactly one button, on exactly one of that step's two findings.
+	if n := strings.Count(body, "machine-finding-rewrite\\\" data-rewrite-step"); n != 1 {
+		t.Fatalf("expected one rewrite button, found %d — the step has two findings and only one is prose", n)
+	}
+	if !strings.Contains(body, "data-rewrite-step=\\\"decide_approach\\\"") {
+		t.Error("the button should name the step it rewrites")
+	}
+	// It drives the SAME assist endpoint the step's own suggest button
+	// does. A second endpoint would be a second set of rules about what a
+	// step's instructions may say, and the two would drift.
+	src, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	for _, want := range []string{"uiOpenAssist", "'/suggest'", "field: 'prompt'", "ask:", "onAccept:"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the rewrite flow is missing %q", want)
+		}
+	}
+	// Accepting saves through the phase form's own endpoint, so one place
+	// still decides what a save does to a step.
+	if !strings.Contains(js, "'/phases?name=' + encodeURIComponent(step)") {
+		t.Error("accepting a draft should save the way the form does")
+	}
+	// Delegated, because both findings lists are rebuilt on every save —
+	// a handler bound to the button would survive exactly one edit.
+	if !strings.Contains(js, "closest('[data-rewrite-step]')") {
+		t.Error("the handler should be delegated, or it dies with the first redraw")
+	}
+	// And the live refresh redraws the button.
+	if !strings.Contains(js, "btn.setAttribute('data-rewrite-step'") {
+		t.Error("a save would drop the button until the next reload")
+	}
+
+	// A machine with no prose finding offers no rewrite.
+	clean := SaveMachineDef(udb, MachineDef{Owner: user, Name: "C", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "reply plainly", Resident: true}}})
+	r = httptest.NewRequest("GET", "/orchestrate/machine?id="+clean.ID, nil)
+	w = httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	// The handler ships on every page; the BUTTON is what must be absent.
+	if strings.Contains(w.Body.String(), "machine-finding-rewrite\\\" data-rewrite-step") {
+		t.Error("nothing to rewrite, so nothing should offer to")
+	}
+
+	// The refresh endpoint carries the set, or the buttons vanish on save.
+	r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/editor", nil)
+	w = httptest.NewRecorder()
+	app.handleMachineOne(w, asUser(r, user))
+	if !strings.Contains(w.Body.String(), `"rewrites"`) {
+		t.Error("the editor spec should say which findings can be rewritten")
+	}
+}

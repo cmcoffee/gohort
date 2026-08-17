@@ -24,6 +24,12 @@
   //               done({reply, value}) on success — value omitted or
   //               empty means the model answered without proposing a
   //               change — or done(null, "error text") on failure.
+  //   ask       — an opening request, sent automatically on open, as
+  //               though the caller had typed it. For a workbench opened
+  //               with a specific brief ("settle this finding", "make it
+  //               shorter") rather than a blank invitation to draft:
+  //               without it every such caller repeats the brief in a
+  //               subtitle the person then has to retype.
   //   onAccept  — fn(text) when the user keeps the draft.
   window.uiOpenAssist = function(opts) {
     opts = opts || {};
@@ -165,7 +171,18 @@
         wrap.appendChild(left);
         wrap.appendChild(right);
         body.appendChild(wrap);
-        setTimeout(function() { composer.focus(); }, 0);
+        setTimeout(function() {
+          composer.focus();
+          // The opening request, if the caller had one. Sent through the
+          // same path a typed one takes, so it appears in the log, joins
+          // the history, and produces a version like any other — the
+          // person can walk back to the original from it.
+          var ask = String(opts.ask == null ? '' : opts.ask).trim();
+          if (ask) {
+            composer.value = ask;
+            send();
+          }
+        }, 0);
       },
     });
   };

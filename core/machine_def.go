@@ -556,11 +556,47 @@ func (d MachineDef) Advice() []string {
 				"Tick its tools under \"How this step runs\", or give the step to an agent that already has them.")
 		}
 		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
-			out = append(out, "step "+name+": the prompt asks for JSON, but this step already declares "+
-				"fields — the framework encodes them for you and validates what comes back. Delete the "+
-				"format instructions and the example, and say what to FIND instead. Two sets of "+
-				"formatting rules is how a model ends up returning a JSON string inside a JSON field.")
+			out = append(out, promptFormatAdvice(name))
 		}
+	}
+	return out
+}
+
+// promptFormatAdvice is the one finding whose fix is PROSE: everything
+// else the editor reports is answered by a control (tick a tool, set a
+// next, turn on resident), and this one is answered by deleting
+// sentences from what the author wrote.
+//
+// Written once and matched by value, so the panel offering to rewrite it
+// and the list reporting it cannot drift into two different sentences.
+func promptFormatAdvice(name string) string {
+	return "step " + name + ": the prompt asks for JSON, but this step already declares " +
+		"fields — the framework encodes them for you and validates what comes back. Delete the " +
+		"format instructions and the example, and say what to FIND instead. Two sets of " +
+		"formatting rules is how a model ends up returning a JSON string inside a JSON field."
+}
+
+// MachineRewrite is a finding a draft-and-review can settle: the step,
+// and the finding as the brief the drafter is given.
+type MachineRewrite struct {
+	Step string `json:"step"`
+	Why  string `json:"why"`
+}
+
+// PromptRewrites lists them.
+//
+// Deliberately not a repair (see machine_repair.go): which sentences are
+// formatting instructions and which are content is a judgement — "return
+// the JSON object's key" is the subject, not the format — so this class
+// gets a draft to react to rather than a silent edit.
+func (d MachineDef) PromptRewrites() []MachineRewrite {
+	var out []MachineRewrite
+	for _, p := range d.Phases {
+		name := strings.TrimSpace(p.Name)
+		if name == "" || len(p.Output) == 0 || !asksForRawJSON(p.Prompt) {
+			continue
+		}
+		out = append(out, MachineRewrite{Step: name, Why: promptFormatAdvice(name)})
 	}
 	return out
 }

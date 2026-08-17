@@ -123,3 +123,43 @@ func TestRepairLeavesAnEmptyMachineAlone(t *testing.T) {
 		t.Errorf("%+v start=%q", rs, d.Start)
 	}
 }
+
+// The finding whose fix is prose. It is deliberately NOT a repair: which
+// sentences are formatting instructions and which are the subject is a
+// judgement ("return the JSON object's key" is content), so it gets a
+// draft to react to instead of a silent edit.
+func TestPromptRewritesAreTheProseFindings(t *testing.T) {
+	d := MachineDef{Name: "M", Start: "decompose", Phases: []MachinePhase{
+		{Name: "decompose", Prompt: "Break it down. Reply with valid JSON: {\"parts\": []}", Next: "decide",
+			Output: []PipelineField{{Name: "parts", Type: FieldString, Desc: "the pieces"}}},
+		// Same trigger words, but nothing declared — the framework is not
+		// encoding anything, so the instruction is the author's own.
+		{Name: "raw", Prompt: "explain this config as json", Next: "answer"},
+		// Declares fields and never mentions a format.
+		{Name: "decide", Prompt: "work out which lane", Next: "answer",
+			Output: []PipelineField{{Name: "lane", Type: FieldString, Desc: "which"}}},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	rw := d.PromptRewrites()
+	if len(rw) != 1 || rw[0].Step != "decompose" {
+		t.Fatalf("only a step that declares fields AND hand-rolls the format: %+v", rw)
+	}
+	// The brief is the finding itself, by value — the panel matches on it
+	// to decide which line carries the button, and a second copy of the
+	// sentence would put it on none of them.
+	found := false
+	for _, a := range d.Advice() {
+		if a == rw[0].Why {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the brief is not one of the findings:\n%s", rw[0].Why)
+	}
+	// And it stays out of the mechanical repairs.
+	for _, r := range d.Repairs(RepairAll) {
+		if strings.Contains(r.What, "JSON") {
+			t.Errorf("prose is not a mechanical repair: %s", r.What)
+		}
+	}
+}

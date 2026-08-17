@@ -211,6 +211,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_repair", machineRepairJS).
 			CSS(machineMapCSS).
 			JS(machineMapHereJS).
+			JS(machineRewriteJS).
 			JS(machineTryEnterJS).
 			JS(machinePreviewRefreshJS),
 		Sections: []ui.Section{
@@ -568,6 +569,14 @@ func findingsHTML(def MachineDef, items []string, empty string) string {
 	if len(items) == 0 {
 		return `<div class="machine-findings-none">` + HTMLEscape(empty) + `</div>`
 	}
+	// The findings whose fix is prose. Matched by VALUE against the same
+	// sentence core writes, because a step can carry two findings at once
+	// and only one of them is a rewrite — matching by step would put the
+	// button on whichever came first.
+	rewritable := map[string]string{}
+	for _, rw := range def.PromptRewrites() {
+		rewritable[rw.Why] = rw.Step
+	}
 	var b strings.Builder
 	b.WriteString(`<ul class="machine-findings">`)
 	for _, it := range items {
@@ -578,6 +587,10 @@ func findingsHTML(def MachineDef, items []string, empty string) string {
 				HTMLEscape(lead) + `</a>` + HTMLEscape(strings.TrimPrefix(it, lead)))
 		} else {
 			b.WriteString(HTMLEscape(it))
+		}
+		if step, ok := rewritable[it]; ok {
+			b.WriteString(` <button type="button" class="machine-finding-rewrite" data-rewrite-step="` +
+				HTMLEscape(step) + `">Rewrite the instructions…</button>`)
 		}
 		b.WriteString(`</li>`)
 	}
@@ -667,6 +680,17 @@ const machineMapCSS = `
   color: var(--accent, #6366f1); text-decoration: none; font-weight: 600;
 }
 .machine-finding-step:hover { text-decoration: underline; }
+/* Offered where the finding is, not in a toolbar: this one settles ONE
+   finding, and a button away from the sentence it answers has to
+   restate it. */
+.machine-finding-rewrite {
+  display: inline-block; margin-left: 0.25rem; padding: 0.05rem 0.45rem;
+  font: inherit; font-size: 0.74rem; cursor: pointer;
+  color: var(--accent, #6366f1); background: transparent;
+  border: 1px solid var(--accent, #6366f1); border-radius: 999px;
+  white-space: nowrap;
+}
+.machine-finding-rewrite:hover { background: var(--accent-soft, rgba(99,102,241,0.16)); }
 .machine-map svg a { text-decoration: none; }
 /* You are here. The fill is what carries it — a border alone is lost
    among the boxes that are already drawn heavier for holding a turn. */
@@ -691,8 +715,10 @@ const machineMapHereJS = `(function() {
   // Rebuilt as a LIST, matching what the page rendered — the server
   // draws <ul><li>, so replacing it with one joined line would make the
   // panel change shape the first time anything was saved.
-  function paintFindings(box, items, empty, count) {
+  function paintFindings(box, items, empty, count, rewrites) {
     if (!box) return;
+    var rewritable = {};
+    (rewrites || []).forEach(function(rw) { if (rw && rw.why) rewritable[rw.why] = rw.step; });
     box.textContent = '';
     if (!items.length) {
       var none = document.createElement('div');
@@ -722,6 +748,15 @@ const machineMapHereJS = `(function() {
         li.appendChild(document.createTextNode(it.slice(('step ' + step).length)));
       } else {
         li.textContent = it;   // textContent, so a finding quoting a step name is text
+      }
+      if (rewritable[it]) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'machine-finding-rewrite';
+        btn.setAttribute('data-rewrite-step', rewritable[it]);
+        btn.textContent = 'Rewrite the instructions…';
+        li.appendChild(document.createTextNode(' '));
+        li.appendChild(btn);
       }
       ul.appendChild(li);
     });
@@ -810,11 +845,102 @@ const machineMapHereJS = `(function() {
           if (!spec) return;
           var c = document.querySelector('[data-machine-checklist]');
           var a = document.querySelector('[data-machine-advice]');
-          paintFindings(c, spec.checklist || [], '\u2713 Nothing outstanding — this machine will run as written.', true);
-          paintFindings(a, spec.advice || [], 'Nothing — the steps read as instructions rather than specifications.', false);
+          paintFindings(c, spec.checklist || [], '\u2713 Nothing outstanding — this machine will run as written.', true, spec.rewrites);
+          paintFindings(a, spec.advice || [], 'Nothing — the steps read as instructions rather than specifications.', false, spec.rewrites);
         })
         .catch(function() {});
     }, 250);
+  });
+})();`
+
+// machineRewriteJS is the one finding whose fix is prose.
+//
+// Draft-and-review rather than a silent edit: which sentences are
+// formatting instructions and which are the subject is a judgement, so
+// the model proposes and the person keeps or discards. The workbench
+// (uiOpenAssist) is the framework's, and it already holds every version
+// including the original — so walking back from a bad suggestion to
+// what was there is one click, which is what makes accepting one safe.
+//
+// It drives the SAME assist endpoint the step's own ✨ button does, with
+// the finding as its opening request. A second endpoint here would be a
+// second set of rules about what a step's instructions may say, and the
+// two would drift.
+const machineRewriteJS = `(function() {
+  function machineID() { return new URLSearchParams(window.location.search).get('id'); }
+
+  // Delegated: the findings lists are redrawn on every save, so a
+  // handler bound to the buttons would survive exactly one edit.
+  document.addEventListener('click', function(ev) {
+    var btn = ev.target && ev.target.closest && ev.target.closest('[data-rewrite-step]');
+    if (!btn) return;
+    ev.preventDefault();
+    var step = btn.getAttribute('data-rewrite-step');
+    var id = machineID();
+    if (!step || !id || !window.uiOpenAssist) return;
+    var base = '/orchestrate/api/machines/' + encodeURIComponent(id);
+
+    // Open on what is actually STORED rather than on the textarea in the
+    // section, which may be mid-edit or not rendered yet — the rail
+    // mounts one section at a time.
+    btn.disabled = true;
+    fetch(base)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(def) {
+        btn.disabled = false;
+        if (!def) throw new Error('could not read the machine');
+        var phase = (def.phases || []).filter(function(p) { return p.name === step; })[0];
+        if (!phase) throw new Error('no step called ' + step);
+        window.uiOpenAssist({
+          title: 'Rewrite the instructions — ' + step,
+          subtitle: 'The declared fields already say what to produce. Keep the method; drop the format.',
+          initial: phase.prompt || '',
+          placeholder: 'Ask for another pass — shorter, keep the second paragraph…',
+          ask: 'These instructions hand-roll the JSON the declared fields already produce. ' +
+               'Rewrite them: delete the format instructions and any example object, keep everything ' +
+               'that says HOW to do the work, and add nothing new. Reply with the instructions only.',
+          send: function(req, done) {
+            fetch(base + '/suggest', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                field: 'prompt',
+                record: {name: step},
+                message: req.message,
+                draft: req.draft,
+                history: req.history,
+              }),
+            })
+              .then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                return r.json();
+              })
+              .then(function(d) { done({reply: d && d.reply, value: d && d.value}); })
+              .catch(function(err) { done(null, (err && err.message) || String(err)); });
+          },
+          onAccept: function(text) {
+            fetch(base + '/phases?name=' + encodeURIComponent(step), {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({prompt: text}),
+            })
+              .then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                // Reload: the prompt is on screen in its own section and
+                // the finding that sent you here is in two lists, all of
+                // which just became wrong.
+                window.location.reload();
+              })
+              .catch(function(err) {
+                window.uiAlert && window.uiAlert('Could not save it: ' + (err && err.message || err));
+              });
+          },
+        });
+      })
+      .catch(function(err) {
+        btn.disabled = false;
+        window.uiAlert && window.uiAlert('Could not open it: ' + (err && err.message || err));
+      });
   });
 })();`
 
