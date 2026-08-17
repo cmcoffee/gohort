@@ -814,6 +814,13 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 			probs = append(probs, "step "+name+": guard_to is set but there is no guard to trip it")
 		}
 	}
+	if len(p.ExitsTo) > 0 && !p.Resident {
+		// change_phase happens DURING a turn — the model deciding the
+		// request has moved on — and a step that passes on never holds
+		// one. So this bounds nothing, the same way a guard on a
+		// transient step judges nothing.
+		probs = append(probs, "step "+name+": exits_to is only valid on a step the conversation waits in (it bounds change_phase, which happens during a turn, and a step that passes on never holds one). Set next, or list choices for it to decide between.")
+	}
 	for _, t := range p.ExitsTo {
 		if t = strings.TrimSpace(t); t != "" && !seen[t] {
 			probs = append(probs, "step "+name+": exits_to names unknown step "+strconv.Quote(t))

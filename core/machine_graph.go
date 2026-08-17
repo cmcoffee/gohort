@@ -115,6 +115,7 @@ func (d MachineDef) Graph() WorkflowGraph {
 			})
 		}
 
+		drawn := map[string]bool{}
 		if strings.TrimSpace(p.Guard) != "" {
 			target := strings.TrimSpace(p.GuardTo)
 			if target == "" {
@@ -125,16 +126,62 @@ func (d MachineDef) Graph() WorkflowGraph {
 					From: p.Name, To: target, Style: EdgeBack, Label: "guard",
 					Note: "guard: " + p.Guard,
 				})
+				drawn[target] = true
 			}
+		}
+
+		// Where this phase MAY be moved to, when it says.
+		//
+		// exits_to exists to stop a conversation crossing from one arm of
+		// a split into the other, which is a fact about SHAPE — so a
+		// picture that leaves it out is missing the thing it was drawn
+		// for. It also makes the legend's "any phase can move to any
+		// other" false for this phase, which is the worse half: a reader
+		// takes the drawing to mean the bound does not exist.
+		for _, t := range p.ExitsTo {
+			if !p.Resident {
+				break // inert there, and reported as such — drawing it would argue with the checklist
+			}
+			t = strings.TrimSpace(t)
+			if t == "" || t == p.Name || drawn[t] || t == strings.TrimSpace(p.Next) {
+				continue
+			}
+			if _, ok := d.Phase(t); !ok {
+				continue // reported by the checklist; not drawn as real
+			}
+			g.Edges = append(g.Edges, WorkflowEdge{
+				From: p.Name, To: t, Style: EdgeBack, Label: "may exit",
+				Note: "this phase may be moved to " + t + " — and, because it lists its exits, nowhere else",
+			})
+			drawn[t] = true
 		}
 	}
 
 	if len(d.Phases) > 1 {
-		g.Legend = append(g.Legend,
-			"Any phase can move to any other with change_phase — not drawn, because it connects everything to everything.")
+		// The blanket claim is only true of the phases that DID NOT say
+		// where they may go. Leaving it whole next to a machine that
+		// bounds its exits tells the reader the bound is not there.
+		bounded := make([]string, 0, len(d.Phases))
+		for _, p := range d.Phases {
+			if len(p.ExitsTo) > 0 {
+				bounded = append(bounded, p.Name)
+			}
+		}
+		switch {
+		case len(bounded) == 0:
+			g.Legend = append(g.Legend,
+				"Any phase can move to any other with change_phase — not drawn, because it connects everything to everything.")
+		case len(bounded) < len(d.Phases):
+			g.Legend = append(g.Legend,
+				"\""+strings.Join(bounded, "\", \"")+"\" may only move where their dotted arrows go. "+
+					"Any other phase can move to any other with change_phase, which is not drawn.")
+		default:
+			g.Legend = append(g.Legend,
+				"Every phase lists where it may move to, so the arrows are the whole story.")
+		}
 	}
 	g.Legend = append(g.Legend,
-		"Solid: an unconditional handoff. Dashed: decided at run time. Dotted: a guard sending the conversation back.")
+		"Solid: an unconditional handoff. Dashed: decided at run time. Dotted: a guard, or an exit this phase allows.")
 	return g
 }
 
@@ -169,6 +216,14 @@ func phaseTags(p MachinePhase) []string {
 	}
 	if strings.TrimSpace(p.Guard) != "" {
 		tags = append(tags, "guarded")
+	}
+	// A delegated step's work is done by something with its own persona,
+	// tools and memory. Undrawn, it looks exactly like a step the agent
+	// runs itself — which is the largest behavioural difference a box can
+	// hide. The name is not shown because the reference is stored as an
+	// id, and an id in a picture is noise.
+	if strings.TrimSpace(p.Agent) != "" {
+		tags = append(tags, "delegated")
 	}
 	return tags
 }
