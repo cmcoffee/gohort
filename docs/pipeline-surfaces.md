@@ -71,10 +71,28 @@ its kind does not use keeps that control visible so it can be emptied (`keepWhil
 more here than on machines: a pipeline's validator REFUSES what it cannot resolve, so a hidden
 `fan_over` on a stage that is no longer a fanout is a save nobody could make succeed.
 
-What stays a card rather than becoming a control: the **declared output contract** and a **loop's
-body**. Both are structures the `pipeline` tool writes well and a hand-rolled control here would write
-badly — the same judgement that kept the machine editor a JSON box until the answer was known. The
-page says so where the facts are shown rather than leaving the absence unexplained.
+### What this stage returns (v0.6.239)
+
+Editable, as a `rows` control per field. It was a read-only card at first, on the reasoning that the
+tool writes this shape well — which was right about the SHAPE and wrong about the audience: declaring
+output is how a pipeline stops being a chain of prose, so leaving it to the tool meant the one thing
+that makes a stage useful to the NEXT stage was the one thing the page could not change.
+
+The two questions are asked in ORDER, the way the machine editor learned to ask them: is this
+something the stage WORKS OUT, or a value the pipeline already HOLDS — and only then what to call it.
+A single combo box asks both at once and hides the second answer behind a dropdown arrow nobody looks
+for.
+
+A **filled** field's source is a picker, not a text box, listing `{input}`, `{prev}`, and every field
+an EARLIER stage declares. Earlier only: stages run strictly in order and `Validate` refuses a forward
+reference, so offering one would be offering a save that cannot succeed. A filled field's type and
+instruction are not shown at all — it holds text, and there is nothing to instruct.
+
+What the control does NOT edit: `enum` (a list inside a row) and nested `fields` (a shape inside a
+shape). Both are **preserved** through a save rather than dropped — a form that silently deletes what
+it cannot show is the worst of the three possible behaviours, worse than refusing and worse than
+read-only — and the card beneath names them as the tool's, so the absence is explained rather than
+mysterious. A **loop's body** stays the tool's for the same reason.
 
 ### Renaming rewrites every reference
 

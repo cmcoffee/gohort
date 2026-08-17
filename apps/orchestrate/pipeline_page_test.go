@@ -102,11 +102,14 @@ func TestThePipelinePageReadsInTheOrderItRuns(t *testing.T) {
 			t.Errorf("the stage form is missing %s", want)
 		}
 	}
-	// What a form does not hold stays a fact: the declared contract is
-	// the stage spec's, and inventing a control for it here would be a
-	// worse editor than the tool that writes it.
-	if !strings.Contains(body, "returns: queries") {
-		t.Error("the declared contract should still be visible")
+	// The declared contract is EDITABLE now (v0.6.239) — a rows control
+	// per field, with the two questions asked in order. What stays a
+	// fact is only the part the control does not edit.
+	if !strings.Contains(body, `"field":"output"`) || !strings.Contains(body, `"type":"rows"`) {
+		t.Error("the declared contract should be editable, not just described")
+	}
+	if !strings.Contains(body, "Something this stage works out") {
+		t.Error("the asked-vs-filled question should be asked before the name")
 	}
 	// And a stage can be removed, with a confirm.
 	if !strings.Contains(body, "Remove this stage") {

@@ -503,16 +503,22 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 // stage declares, and a loop's body.
 func stageDerivedHTML(s PipelineStage) string {
 	var facts []string
-	if len(s.Output) > 0 {
-		names := make([]string, 0, len(s.Output))
-		for _, f := range s.Output {
-			n := f.Name
-			if strings.TrimSpace(f.From) != "" {
-				n += " (filled from " + f.From + ")"
-			}
-			names = append(names, n)
+	// The parts of a declared field the rows control does NOT edit: a
+	// list of legal values, and a nested shape. Shown only when a field
+	// actually has one, so the note is never an unexplained absence —
+	// and named as the tool's, because a control that half-edits a
+	// structure is worse than one that says it does not.
+	for _, f := range s.Output {
+		if len(f.Enum) > 0 {
+			facts = append(facts, f.Name+" may only be "+strings.Join(f.Enum, " | "))
 		}
-		facts = append(facts, "returns: "+strings.Join(names, ", "))
+		if len(f.Fields) > 0 {
+			inner := make([]string, 0, len(f.Fields))
+			for _, n := range f.Fields {
+				inner = append(inner, n.Name)
+			}
+			facts = append(facts, f.Name+" holds {"+strings.Join(inner, ", ")+"}")
+		}
 	}
 	if len(s.Body) > 0 {
 		inner := make([]string, 0, len(s.Body))
@@ -525,7 +531,7 @@ func stageDerivedHTML(s PipelineStage) string {
 		return ""
 	}
 	return `<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " · ")) +
-		` — declared with the pipeline tool, which is where the shapes that need nesting belong.</div>`
+		` — written with the pipeline tool, which owns the shapes that nest. Editing them here would half-edit a structure.</div>`
 }
 
 // stageSubtitle says what KIND of stage this is in one line, in the

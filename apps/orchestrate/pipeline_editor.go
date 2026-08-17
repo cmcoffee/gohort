@@ -90,6 +90,17 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Help:     "Called directly with the arguments you write. For computation rather than judgement: arithmetic, dedup, one specific API call."},
 	)
 
+	// What it returns. Every kind that makes a model call can declare
+	// output, and a stage that declares none returns prose — which is
+	// right for a draft or a summary and wrong for anything a later
+	// stage has to read a PIECE of.
+	fields = append(fields,
+		ui.FormField{Type: "header", Label: "What this stage returns",
+			Help: "Declare fields and the framework asks for them, validates the reply, and exposes each one as {stage:" + s.Name + ".field} — that is what makes fan_over-a-field, a loop's until, and a branch's when possible. " +
+				"Never ask for JSON in the instructions as well: two sets of formatting rules is how a model ends up returning a JSON string inside a JSON field. Declare nothing for a prose stage."},
+		stageOutputRows(def, s),
+	)
+
 	// How it runs. Collapsed, because most stages never touch it.
 	fields = append(fields,
 		ui.FormField{Type: "header", Label: "How this stage runs", Collapsed: true},
@@ -179,7 +190,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"agent": s.Agent, "fan_over": s.FanOver, "count": s.Count,
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
 		"tool": s.Tool, "model": s.Model, "think": thinkValue(s.Think),
-		"tools": s.Tools,
+		"tools": s.Tools, "output": stageOutputRecord(s),
 	}
 }
 
@@ -236,6 +247,9 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 	}
 	if _, ok := body["tools"]; ok {
 		s.Tools = stringSliceFromArgs(body, "tools")
+	}
+	if raw, ok := body["output"]; ok {
+		applyStageOutput(s, raw)
 	}
 }
 
@@ -574,4 +588,163 @@ func pipelineAgentPills(udb Database, user string, def PipelineDef) map[string]a
 		"items": items,
 		"note":  "An agent can hold several pipelines, so switching one on adds this one and leaves the rest alone. It reaches the agent as a tool named run_<name>.",
 	}
+}
+
+// stageOutputRows is the declared-output editor.
+//
+// It was left as a read-only card when the stage forms landed, on the
+// reasoning that the tool writes this shape well and a hand-rolled
+// control would write it badly. That was right about the SHAPE and wrong
+// about the audience: declaring output is how a pipeline stops being a
+// chain of prose, and leaving it to the tool means the one thing that
+// makes a stage useful to the next stage is the one thing the page
+// cannot change.
+//
+// The two questions are asked in ORDER, the way the machine editor
+// learned to ask them: is this something the stage WORKS OUT, or a value
+// the pipeline already HOLDS — and only then what to call it. A single
+// combo box asked both at once and hid the second answer behind a
+// dropdown arrow nobody looks for.
+//
+// What it deliberately does not edit: `enum` (a list inside a row) and
+// nested `fields` (a shape inside a shape). Those keep their card, and
+// the card says the tool owns them, because a control that half-edits a
+// structure is worse than one that says it does not.
+func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
+	return ui.FormField{
+		Field: "output", Type: "rows", Label: "", AddLabel: "+ Add field",
+		Placeholder: "(nothing — this stage returns prose)",
+		Columns: []ui.FormField{
+			{Field: "kind", Type: "select", Label: "What is this?", Width: 4,
+				Options: []ui.SelectOption{
+					{Value: "", Label: "Choose…"},
+					{Value: "asked", Label: "Something this stage works out"},
+					{Value: "filled", Label: "A value the pipeline already holds"},
+				},
+				Help: "A value the pipeline already holds is FILLED: it is left out of what the model is asked for entirely and merged into the result afterwards. Asking for something you already have invites a paraphrase."},
+			{Field: "name", Type: "text", Label: "Name", Width: 3, HideWhen: "!kind",
+				Placeholder: "short_lowercase_name",
+				Help:        "Later stages read it as {stage:" + s.Name + ".<name>}."},
+			// The source of a filled field, from the values that actually
+			// exist at this point in the run — computed rather than typed,
+			// which is the difference between a picker and a place to make
+			// a typo the validator then refuses.
+			{Field: "from", Type: "select", Label: "Filled from", Width: 4, ShowWhen: "kind:filled",
+				Options: stageFillOptions(def, s.Name),
+				Help:    "Only values from EARLIER in the run: stages run strictly in order, so a reference forward resolves to nothing and the save is refused."},
+			// A filled field holds text, always, so its type and its
+			// instruction are controls that would do nothing.
+			{Field: "type", Type: "select", Label: "Type", Width: 2, ShowWhen: "kind:asked", Options: []ui.SelectOption{
+				{Value: "string", Label: "text"},
+				{Value: "list", Label: "list"},
+				{Value: "number", Label: "number"},
+				{Value: "bool", Label: "yes/no"},
+				{Value: "object", Label: "object"},
+			}},
+			{Field: "required", Type: "toggle", Label: "Required", ShowWhen: "kind:asked",
+				Help: "A required field the model omits fails the stage. An optional one resolves to empty."},
+			{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, ShowWhen: "kind:asked",
+				Label:       "What to find — write it as the instruction for this field",
+				Placeholder: "e.g. the specific claim the sources actually support, not a summary of what they discuss."},
+		},
+	}
+}
+
+// stageFillOptions is what a filled field can be filled FROM at this
+// point in the run: the pipeline's input, the previous stage's whole
+// output, and every field an EARLIER stage declares.
+//
+// Earlier only, because stages run strictly in order and Validate
+// refuses a forward reference — offering one would be offering a save
+// that cannot succeed.
+func stageFillOptions(def PipelineDef, upTo string) []ui.SelectOption {
+	out := []ui.SelectOption{
+		{Value: "", Label: "Choose a value…"},
+		{Value: "{input}", Label: "{input} — what the run was started with"},
+		{Value: "{prev}", Label: "{prev} — the previous stage's whole output"},
+	}
+	for _, s := range def.Stages {
+		if strings.TrimSpace(s.Name) == strings.TrimSpace(upTo) {
+			break
+		}
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, ui.SelectOption{
+			Value: "{stage:" + name + "}", Label: "{stage:" + name + "} — all of " + name + "'s output",
+		})
+		for _, f := range s.ModelOutput() {
+			out = append(out, ui.SelectOption{
+				Value: "{stage:" + name + "." + f.Name + "}",
+				Label: "{stage:" + name + "." + f.Name + "} — " + previewText(f.Desc, 40),
+			})
+		}
+	}
+	return out
+}
+
+// stageOutputRecord renders a stage's declared fields for the rows
+// control, answering the kind question from what the field IS.
+func stageOutputRecord(s PipelineStage) []map[string]any {
+	out := make([]map[string]any, 0, len(s.Output))
+	for _, f := range s.Output {
+		kind := "asked"
+		if strings.TrimSpace(f.From) != "" {
+			kind = "filled"
+		}
+		out = append(out, map[string]any{
+			"kind": kind, "name": f.Name, "from": f.From,
+			"type": string(f.Type), "required": f.Required, "desc": f.Desc,
+		})
+	}
+	return out
+}
+
+// applyStageOutput merges the rows control back onto the stage.
+//
+// Nested `fields` and `enum` are PRESERVED from the stored field of the
+// same name rather than dropped: the control does not edit them, and a
+// form that silently deletes what it cannot show is the worst of the
+// three possible behaviours.
+func applyStageOutput(s *PipelineStage, raw any) {
+	rows, ok := raw.([]any)
+	if !ok {
+		return
+	}
+	keep := map[string]PipelineField{}
+	for _, f := range s.Output {
+		keep[strings.TrimSpace(f.Name)] = f
+	}
+	out := make([]PipelineField, 0, len(rows))
+	for _, item := range rows {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(mapStr(m, "name"))
+		if name == "" {
+			continue
+		}
+		f := PipelineField{Name: name}
+		if prev, had := keep[name]; had {
+			f.Enum, f.Fields = prev.Enum, prev.Fields
+		}
+		if strings.TrimSpace(mapStr(m, "kind")) == "filled" {
+			// Filled: no type, no instruction, no required — the value is
+			// already known and everything a variable carries is text.
+			f.From = strings.TrimSpace(mapStr(m, "from"))
+			f.Type = FieldString
+			out = append(out, f)
+			continue
+		}
+		f.Type = PipelineFieldType(strings.ToLower(strings.TrimSpace(mapStr(m, "type"))))
+		if f.Type == "" {
+			f.Type = FieldString
+		}
+		f.Desc = mapStr(m, "desc")
+		f.Required = mapBool(m, "required")
+		out = append(out, f)
+	}
+	s.Output = out
 }
