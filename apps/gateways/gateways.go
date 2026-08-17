@@ -58,7 +58,6 @@ func (T *Gateways) Routes() {
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
-	T.HandleFunc("/api/pipelines", T.handleUserPipelines)
 	T.HandleFunc("/", T.servePage)
 }
 
@@ -910,61 +909,6 @@ func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUserPipelines is the user's OWN pipelines surface — the per-user
-// counterpart to the admin Pipelines section, scoped to the calling user's pool.
-// A pipeline is a declarative multi-stage workflow authored in Agents (the
-// pipeline tool / Builder), so — like skills and tools — this surface is view +
-// delete, not authoring. GET lists (with the full definition for the stage
-// inspector); DELETE retires one.
-//
-// Storage note: pipelines live in ORCHESTRATE's per-app bucket, not this app's,
-// so we scope UserDB off RootDB.Bucket("orchestrate") — the same base the admin
-// Pipelines section reaches into. This couples to orchestrate's app name, which
-// is where the data genuinely lives; the alternative (a cross-app pipeline API)
-// isn't worth it for a read/delete view.
-func (T *Gateways) handleUserPipelines(w http.ResponseWriter, r *http.Request) {
-	base := RootDB
-	if base == nil {
-		http.Error(w, "pipeline store unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	user, udb, ok := RequireUser(w, r, base.Bucket("orchestrate"))
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		// Detail carries the full definition so the row's "View" expand can show
-		// the stages without a second fetch (mirrors the admin section).
-		type wire struct {
-			ID          string      `json:"id"`
-			Name        string      `json:"name"`
-			Description string      `json:"description,omitempty"`
-			Stages      int         `json:"stages"`
-			Detail      PipelineDef `json:"detail"`
-		}
-		defs := ListPipelineDefs(udb, user)
-		out := make([]wire, 0, len(defs))
-		for _, d := range defs {
-			out = append(out, wire{ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages), Detail: d})
-		}
-		writeJSON(w, map[string]any{"pipelines": out})
-	case http.MethodDelete:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		if _, found := LoadPipelineDef(udb, user, id); !found {
-			http.NotFound(w, r)
-			return
-		}
-		DeletePipelineDef(udb, id)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
 
 // handlePromotions lets a user request that one of their OWN resources be
 // published deployment-wide (bottom-up escalation — an admin approves it on the
@@ -1515,29 +1459,6 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			}},
-		},
-		{
-			Title:    "My pipelines",
-			Subtitle: "Declarative multi-stage workflows your agents run — authored in Agents (the pipeline tool or Builder). Expand one to inspect its stages; delete to retire a definition (it also detaches from any agent that used it).",
-			Body: ui.Table{
-				Source:       "api/pipelines",
-				RecordsField: "pipelines",
-				RowKey:       "id",
-				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
-					{Field: "description", Mute: true, Flex: 2},
-					{Field: "stages", Label: "Stages"},
-				},
-				RowActions: []ui.RowAction{
-					ui.Expand("View", ui.JSONView{Field: "detail", Title: "Definition"}),
-					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "api/pipelines?id={id}",
-						Variant:    "danger",
-						Confirm:    "Delete this pipeline definition? It's removed and detached from any agent that used it; re-authoring means re-creating the stages.",
-						Optimistic: true},
-				},
-				EmptyText: "No pipelines yet. Ask Builder in Agents to author one, or use the pipeline tool.",
-			},
 		},
 		{
 			Title:    "Global tools",
