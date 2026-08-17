@@ -13,6 +13,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
+	"strconv"
 )
 
 func init() { RegisterApp(new(Account)) }
@@ -140,14 +141,30 @@ func (T *Account) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Every exit from here renders the result PAGE, including the two
+	// that used to be a bare http.Error. This runs in a 600x760 popup
+	// with no chrome: a raw 404 in there is a blank white box, and the
+	// only thing it tells somebody who clicked Reconnect is that
+	// Reconnect does not work. The failures worth explaining are the
+	// ones where the integration was renamed or its auth mode changed
+	// under a card that still lists it.
 	server := strings.TrimSpace(r.URL.Query().Get("server"))
 	if server == "" {
-		http.Error(w, "server required", http.StatusBadRequest)
+		mcpConnectResultPage(w, "This link did not say which integration to connect.\n\n"+
+			"Close this window and try Connect again from Extensions.")
 		return
 	}
 	cfg, found := MCP().Load(server)
-	if !found || cfg.AuthMode != MCPAuthOAuth {
-		http.Error(w, "no such OAuth MCP server", http.StatusNotFound)
+	switch {
+	case !found:
+		mcpConnectResultPage(w, "There is no integration called "+strconv.Quote(server)+" any more.\n\n"+
+			"It was probably renamed or removed by an administrator. Close this window and reload "+
+			"Extensions to see what is available now.")
+		return
+	case cfg.AuthMode != MCPAuthOAuth:
+		mcpConnectResultPage(w, strconv.Quote(server)+" does not connect with your own account.\n\n"+
+			"It authenticates a different way, so there is nothing here for you to authorize. "+
+			"Close this window; if an agent cannot reach it, that is for an administrator to fix.")
 		return
 	}
 	authURL, err := MCP().StartOAuth(user, server, mcpConnectCallbackURI(r))
