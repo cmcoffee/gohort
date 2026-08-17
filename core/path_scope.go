@@ -25,6 +25,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -217,4 +218,65 @@ func PathScopeKnown(ref string) bool {
 	defer pathScopeMu.RUnlock()
 	_, ok := pathScopes[kind]
 	return ok
+}
+
+// ResolveScopedArgs rewrites every path-scoped argument to the absolute
+// path it proved to be inside its registered root, and refuses the call
+// when one does not resolve.
+//
+// Lifted out of servitor's appliance dispatch, which was the only place
+// this ran — so a parameter declaring `path_scope` on any OTHER dispatch
+// path was DECORATION, checked by nothing, on a value that had been
+// shell-quoted and nothing more. That is the confusion this file opens by
+// warning about: quoting stops a value contributing syntax and says
+// nothing about it pointing somewhere else, and "../../var/lib/something"
+// is a perfectly well-formed single argument.
+//
+// Returns a COPY when it changes anything: the caller's map is what gets
+// logged and echoed back, and rewriting it in place would make the record
+// disagree with what the model actually asked for.
+//
+// An ABSENT argument is not this function's business — that is the
+// required-check's — so a missing or empty value passes through.
+// It also returns the absolute paths it resolved, for a caller that has
+// to make them READABLE. A sandbox binds nothing it was not told about,
+// so a proved path the script cannot open is a check that passes and a
+// tool that fails — and binding exactly what resolved is stricter than
+// binding the root it came from, which would hand over every sibling.
+func ResolveScopedArgs(user, agentID string, params map[string]ToolParam, args map[string]any) (map[string]any, []string, error) {
+	out := args
+	copied := false
+	var resolved []string
+	// Sorted, so the paths (and any bind list built from them) are stable
+	// across calls rather than following map order.
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		p := params[name]
+		ref := strings.TrimSpace(p.PathScope)
+		if ref == "" {
+			continue
+		}
+		raw, present := args[name]
+		if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+			continue
+		}
+		abs, err := ResolvePathScope(user, agentID, ref, fmt.Sprint(raw))
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if !copied {
+			out = make(map[string]any, len(args))
+			for k, v := range args {
+				out[k] = v
+			}
+			copied = true
+		}
+		out[name] = abs
+		resolved = append(resolved, abs)
+	}
+	return out, resolved, nil
 }

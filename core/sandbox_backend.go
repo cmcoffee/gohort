@@ -59,6 +59,19 @@ type sandboxRun struct {
 	WorkspaceDir string            // sandboxShellRun only; the single writable path
 	Env          map[string]string // extras merged into the sandbox env
 	AllowNetwork bool
+	// ReadOnly are host paths to expose READ-ONLY inside the sandbox, at
+	// the same path they have outside.
+	//
+	// It exists for a tool whose parameter is scoped to a registered root
+	// (core/path_scope.go): the scope check proves the path, and then the
+	// script cannot open it, because a sandbox binds nothing it was not
+	// told about. A check that passes and a tool that fails is worse than
+	// either alone — it reads as the check being wrong.
+	//
+	// Same path inside as out, so a resolved absolute path is correct on
+	// both sides with no translation, and read-only because these are
+	// somebody's registered corpus rather than the tool's scratch space.
+	ReadOnly []string
 }
 
 // sandboxBackend is one OS confinement mechanism.
@@ -94,6 +107,7 @@ func (b bwrapSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		args = bwrapScriptArgv(run.Interpreter, run.Command)
 	default:
 		args = bwrapArgvWithEnv(run.WorkspaceDir, run.Command, run.Env, run.AllowNetwork)
+		args = withReadOnlyBinds(args, run.ReadOnly, run.WorkspaceDir)
 	}
 	return exec.CommandContext(ctx, b.path, args...)
 }

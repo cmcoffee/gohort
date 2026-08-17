@@ -1608,6 +1608,27 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		workspaceDir = tmp
 	}
 	_ = ephemeralDir
+	// Path scopes, BEFORE substitution. A parameter declaring
+	// path_scope: "files:<store>" has to be proved to land inside that
+	// registered root, and the value substituted is the absolute path it
+	// resolved to.
+	//
+	// This ran nowhere on this path until v0.6.241 — only servitor's
+	// appliance dispatch checked it — so the declaration was decoration
+	// on a value that had been shell-quoted and nothing more. Quoting
+	// stops a value contributing SYNTAX and says nothing about it
+	// pointing somewhere else, which core/path_scope.go opens by warning
+	// about: "../../var/lib/something" is a perfectly well-formed single
+	// argument.
+	scopedArgs, scopedPaths, serr := ResolveScopedArgs(sess.Username, sess.AgentID, tt.Params, args)
+	if serr != nil {
+		// Refuse. A scope that fails open is not a scope, and the model
+		// gets a message it can act on: the root it may name, and what
+		// it asked for.
+		Log("[temptool] %q refused: %v", tt.Name, serr)
+		return "", fmt.Errorf("%s: %w", tt.Name, serr)
+	}
+	args = scopedArgs
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
@@ -1795,7 +1816,13 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// is upstream (redeploy or missing-script validation).
 	Debug("[temptool] %q sandbox enter (envArgs=%d hook=%v)", tt.Name, len(envArgs), hook != nil)
 	tExec := time.Now()
-	res := RunSandboxedShellWithEnv(ctx, cmd, workspaceDir, envArgs)
+	// Scoped paths are bound READ-ONLY into the sandbox, at the same path
+	// they have outside. Without this the check passes and the script
+	// still cannot open the file, which reads as the check being wrong.
+	// RunSandboxedShellScoped REFUSES when the host has no sandbox rather
+	// than running with the daemon's own view of the filesystem, where
+	// "this path only" would not apply.
+	res := RunSandboxedShellScoped(ctx, cmd, workspaceDir, envArgs, scopedPaths)
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))
 	output := strings.TrimSpace(res.Output)
@@ -2860,12 +2887,12 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		credName = "no_auth"
 	}
 	// Owner-aware: resolve in the AUTHOR's namespace so a user-owned credential
-	// (their own "My API credentials", e.g. a Builder-drafted key) is found, not
+	// (their own "API credentials", e.g. a Builder-drafted key) is found, not
 	// just global/admin ones. Runtime dispatch already resolves owner-aware, so
 	// this keeps create-time validation consistent with it.
 	cr, ok := Secure().Resolve(credName, sess.Username)
 	if !ok {
-		return "", fmt.Errorf("credential %q is not registered. Register it in Extensions > My API credentials (or Admin > APIs for a shared one), then enable it", credName)
+		return "", fmt.Errorf("credential %q is not registered. Register it in Extensions > API credentials (or Admin > APIs for a shared one), then enable it", credName)
 	}
 	// A secured credential auto-binds to any tool that declares it (api-mode
 	// dispatches server-side; secret never exposed) — no approval step, access

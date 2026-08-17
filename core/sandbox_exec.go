@@ -210,6 +210,13 @@ func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir str
 // from the command silently fail. Missing connector = network allowed
 // (back-compat for callers not yet plumbing one through).
 func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) SandboxedShellResult {
+	return runSandboxedShellWithBinds(ctx, command, workspaceDir, extraEnv, nil)
+}
+
+// runSandboxedShellWithBinds is the body both variants share. readOnly is
+// empty for every caller that does not use a path scope, which is all of
+// them but one.
+func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
 	sb := activeSandbox()
 	allowNetwork := NetworkAllowedFromContext(ctx)
 
@@ -254,7 +261,7 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	}
 	c := sb.build(ctx, sandboxRun{
 		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
-		Env: extraEnv, AllowNetwork: allowNetwork,
+		Env: extraEnv, AllowNetwork: allowNetwork, ReadOnly: readOnly,
 	})
 	sandbox := sb.confines()
 	env := sandboxEnv(sb.remapsPaths())
@@ -724,4 +731,82 @@ func sandboxEnv(remaps bool) []string {
 		}
 	}
 	return env
+}
+
+// withReadOnlyBinds inserts --ro-bind flags for caller-supplied paths,
+// before the "--" that separates bwrap's flags from the command.
+//
+// Skips anything already inside the workspace (it is bound writable
+// there, and a later read-only bind of the same path would take the
+// write away) and anything empty. Uses --ro-bind-try rather than
+// --ro-bind so a path that has been removed since it resolved leaves the
+// script reporting "no such file" instead of bwrap refusing to start,
+// which is the difference between an error a model can act on and one it
+// cannot see past.
+func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []string {
+	if len(readOnly) == 0 {
+		return args
+	}
+	sepIdx := len(args)
+	for i, a := range args {
+		if a == "--" {
+			sepIdx = i
+			break
+		}
+	}
+	binds := make([]string, 0, len(readOnly)*3)
+	seen := map[string]bool{}
+	for _, p := range readOnly {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || withinDir(p, workspaceDir) {
+			continue
+		}
+		seen[p] = true
+		binds = append(binds, "--ro-bind-try", p, p)
+	}
+	if len(binds) == 0 {
+		return args
+	}
+	out := make([]string, 0, len(args)+len(binds))
+	out = append(out, args[:sepIdx]...)
+	out = append(out, binds...)
+	out = append(out, args[sepIdx:]...)
+	return out
+}
+
+// RunSandboxedShellScoped is RunSandboxedShellWithEnv plus read-only
+// access to paths a scope check has already proved.
+//
+// It REFUSES when the sandbox does not confine, rather than running the
+// command anyway. Everywhere else in this file an absent sandbox is a
+// warning and the command still runs, because the alternative is a
+// deployment where no tool works at all. Here the caller has been
+// promised something specific — this path, read-only, and nothing else —
+// and without a mount namespace that promise is not kept: the command
+// would run with the daemon's own view of the filesystem, where the
+// resolved path is readable and so is everything around it. A constraint
+// that silently does not apply is worse than a refusal that says so.
+func RunSandboxedShellScoped(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
+	if err := scopedRunRefusal(activeSandbox(), readOnly); err != nil {
+		return SandboxedShellResult{Err: err}
+	}
+	return runSandboxedShellWithBinds(ctx, command, workspaceDir, extraEnv, readOnly)
+}
+
+// scopedRunRefusal is the decision, separated from the run so it can be
+// exercised against a backend that does not confine — on a host with
+// bubblewrap installed, a test of the refusal would otherwise skip, and a
+// skipped test proves nothing about the case it names.
+//
+// nil when there is nothing to promise (no scoped paths) or the backend
+// can keep the promise.
+func scopedRunRefusal(sb sandboxBackend, readOnly []string) error {
+	if len(readOnly) == 0 || sb.confines() {
+		return nil
+	}
+	return Error("this tool reads a registered path (" + strings.Join(readOnly, ", ") +
+		") and this host has no sandbox to confine it to (" + sb.name() + "). Refusing rather " +
+		"than running it with the daemon's own view of the filesystem, where that constraint " +
+		"would not apply. Install bubblewrap, or drop the path_scope from the tool's parameter " +
+		"and accept that it is unconstrained.")
 }

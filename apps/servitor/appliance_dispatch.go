@@ -257,28 +257,11 @@ func applianceToolDescription(t ApplianceTool, a Appliance) string {
 // and rewriting it in place would make the record disagree with what the
 // model actually asked for.
 func resolveScopedArgs(user, agentID string, tool ApplianceTool, args map[string]any) (map[string]any, error) {
-	out := args
-	copied := false
-	for name, p := range tool.Params {
-		if strings.TrimSpace(p.PathScope) == "" {
-			continue
-		}
-		raw, present := args[name]
-		if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
-			continue // absence is the required-check's business, not this one
-		}
-		abs, err := ResolvePathScope(user, agentID, p.PathScope, fmt.Sprint(raw))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
-		}
-		if !copied {
-			out = make(map[string]any, len(args))
-			for k, v := range args {
-				out[k] = v
-			}
-			copied = true
-		}
-		out[name] = abs
-	}
-	return out, nil
+	// core.ResolveScopedArgs is this function, lifted (v0.6.240) once a
+	// second dispatch path needed it. It also returns the paths it
+	// resolved, which an appliance does not use: an appliance runs the
+	// command on the TARGET, so there is no local sandbox to bind them
+	// into.
+	out, _, err := ResolveScopedArgs(user, agentID, tool.Params, args)
+	return out, err
 }
