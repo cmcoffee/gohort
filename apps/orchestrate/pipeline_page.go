@@ -238,6 +238,42 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	page.Sections = append(page.Sections, pipelineStageSections(def,
 		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
 	page.Sections = append(page.Sections,
+		// Run it, here. The streaming endpoints have existed since a
+		// PipelineDef could back an app (core/pipeline_runs.go), and
+		// nothing on any page for the pipeline ITSELF called them — the
+		// only way to try one you had just built was to attach it to an
+		// agent and ask. Same class as every other door this work has
+		// opened: the capability was there and unreachable.
+		//
+		// The framework's own panel, not a bespoke run box: a custom app
+		// backed by a pipeline already mounts exactly this, so a
+		// pipeline gets the transcript, the run history and the cancel
+		// button by pointing at its own endpoints rather than growing a
+		// second, worse version of them.
+		ui.Section{
+			Title:    "Run it",
+			Wide:     true,
+			NoChrome: true, // the panel manages its own layout
+			Body: ui.PipelinePanel{
+				SessionsListURL:  "api/pipelines/" + url_(def.ID) + "/sessions",
+				SessionLoadURL:   "api/pipelines/" + url_(def.ID) + "/sessions/{id}",
+				SessionDeleteURL: "api/pipelines/" + url_(def.ID) + "/sessions/{id}",
+				SubmitURL:        "api/pipelines/" + url_(def.ID) + "/stream",
+				SubmitLabel:      "Run it",
+				Fields: []ui.PipelineField{{
+					// "topic" because the stream endpoint accepts
+					// input|topic and the panel titles a run from it.
+					Name: "topic", Type: "textarea", Required: true, Rows: 3,
+					Label:       "What should this run on?",
+					Placeholder: "A real question. This is a REAL run: it spends model calls and its stages reach whatever tools they name.",
+				}},
+				// A stage transcript is prose, and a run history is
+				// something you prune in batches.
+				Markdown:   true,
+				BulkSelect: true,
+				EmptyText:  "No runs yet. This is the fastest way to find out whether a stage is doing what its prompt says.",
+			},
+		},
 		// A form on the page, not a dialog: drafting runs a model for up
 		// to a minute and can come back with nothing runnable, and a
 		// door that cannot show you why is the wrong door for it

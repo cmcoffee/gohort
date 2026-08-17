@@ -383,3 +383,51 @@ func TestThereAreThreeWaysToGetAPipeline(t *testing.T) {
 		t.Errorf("the response must carry the id the redirect substitutes: %s", w.Body.String())
 	}
 }
+
+// Running one from its own page. The streaming endpoints have existed
+// since a PipelineDef could back a custom app, and nothing on the
+// pipeline's own surface called them — the only way to try a pipeline
+// you had just built was to attach it to an agent and ask it nicely.
+func TestAPipelineCanBeRunFromItsOwnPage(t *testing.T) {
+	app, _, user, def := pipelinePageFixture(t)
+	r := httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	body := w.Body.String()
+
+	// The framework's panel, pointed at this pipeline's own endpoints —
+	// not a bespoke run box. A custom app backed by a pipeline mounts
+	// exactly this, so the transcript, the run history and cancel come
+	// for free instead of in a second, worse copy.
+	if !strings.Contains(body, `"type":"pipeline_panel"`) {
+		t.Fatal("no run panel on the page")
+	}
+	for _, want := range []string{
+		`"submit_url":"api/pipelines/` + def.ID + `/stream"`,
+		`"sessions_list_url":"api/pipelines/` + def.ID + `/sessions"`,
+		`"session_load_url":"api/pipelines/` + def.ID + `/sessions/{id}"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the panel is missing %s", want)
+		}
+	}
+	// The endpoints it names are actually routed — a panel pointed at a
+	// 404 is the same lie as a button that does nothing.
+	r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/sessions", nil)
+	w = httptest.NewRecorder()
+	app.handlePipelineOne(w, asUser(r, user))
+	if w.Code == 404 {
+		t.Error("the sessions endpoint the panel names is not routed")
+	}
+	// The input field is named for what the stream endpoint reads.
+	if !strings.Contains(body, `"name":"topic"`) {
+		t.Error("the input field should be one the stream endpoint accepts")
+	}
+	// And it says what a run actually costs somebody, because this is
+	// not a rehearsal: a machine's Try it has no tools and does not run
+	// the step it lands in; this spends real calls and reaches real
+	// tools.
+	if !strings.Contains(body, "REAL run") {
+		t.Error("the panel should say a run is real")
+	}
+}
