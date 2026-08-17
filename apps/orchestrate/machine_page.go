@@ -65,26 +65,20 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					Variant: "primary",
 				}}},
 				// The other door: say what you want and review a draft,
-				// instead of building from a blank. The editor's checklist
-				// carries anything the draft got wrong, so an imperfect
-				// draft is still a better starting point than an empty one.
-				ui.ModalButton{
-					Label:    "Describe one…",
-					Title:    "Draft a machine from a description",
-					Subtitle: "Say what the conversation should do — what it works out first, what it decides between, where it settles. A draft machine opens in the editor for you to adjust.",
-					Width:    "560px",
-					Body: ui.FormPanel{
-						PostURL:     "/orchestrate/api/machines/draft",
-						SubmitLabel: "Draft it",
-						RedirectURL: "/orchestrate/machine?id={id}",
-						Fields: []ui.FormField{{
-							Field: "description", Type: "textarea", Rows: 6,
-							Label:       "What should it do?",
-							Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
-							Help:        "Plain words. Say what kinds of turns arrive and what should happen to each; the draft picks the steps.",
-						}},
-					},
-				},
+				// instead of building from a blank. A PAGE, like New
+				// machine — not a dialog. ModalButton opens a native
+				// <dialog> with showModal(), which sits in the browser's
+				// top layer above every z-index, so anything the
+				// framework raised from inside it (a failure toast, a
+				// second dialog) was invisible underneath. Drafting runs
+				// a model for up to a minute and can fail; a door that
+				// cannot show you why it failed is the wrong door for it.
+				ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label:  "Describe one…",
+					Title:  "Draft a machine from a description of what it should do",
+					URL:    "/orchestrate/machine?describe=1",
+					Method: "GET",
+				}}},
 				// The third way in. The endpoint has existed since machines
 				// did, with nothing on any page calling it — so a recipe
 				// somebody was handed could only be brought in through the
@@ -168,6 +162,19 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		http.Redirect(w, r, "/orchestrate/machine?id="+saved.ID, http.StatusSeeOther)
 		return
 	}
+	// ?describe=1 is the drafting form, on its own page.
+	//
+	// It was a dialog until somebody could not tell whether it had
+	// failed. The framework's own failure surfaces — the toast, an
+	// alert — are z-indexed elements, and a native <dialog> opened with
+	// showModal() renders in the TOP LAYER above all of them, so they
+	// landed underneath it. Drafting runs a model for up to a minute and
+	// can come back with nothing usable; that is exactly the door that
+	// has to be able to say so.
+	if r.URL.Query().Get("describe") == "1" {
+		T.serveMachineDescribePage(w, r, user)
+		return
+	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	def, found := LoadMachineDef(udb, user, id)
 	if !found {
@@ -240,27 +247,34 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 						URL:    "machine_duplicate",
 						Data:   def.ID,
 					}}},
-					// Say what should change, against the machine already
-					// on screen. Drafting one from a paragraph was one
-					// shot: if it missed, the only recourse was editing
-					// twelve fields by hand, which is the wrong recourse
-					// for "make triage decide between three lanes".
-					ui.ModalButton{
-						Label:    "Describe a change…",
-						Title:    "Redraft this machine from a sentence about what should change",
-						Subtitle: "Say what should be different. The whole machine is redrafted with that change made, keeping everything it does not touch — and the version you have now is kept, so you can put it back.",
-						Width:    "560px",
-						Body: ui.FormPanel{
-							PostURL:     machineAPIBase(def) + "/revise",
-							SubmitLabel: "Revise it",
-							RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
-							Fields: []ui.FormField{{
-								Field: "description", Type: "textarea", Rows: 5,
-								Label:       "What should change?",
-								Placeholder: "Let triage choose between three lanes — logs, config, and a plain question — and give the config lane its own step before it answers.",
-								Help:        "One change, in plain words. Steps and prompts the change does not touch are kept as they are.",
-							}},
-						},
+				}},
+			},
+			// Say what should change, against the machine already on
+			// screen. A SECTION rather than a dialog, and that is the
+			// whole point: ModalButton opens a native <dialog> with
+			// showModal(), which renders in the browser's top layer —
+			// above every z-index there is. Anything the framework
+			// raises from inside one (a toast, another modal) lands
+			// underneath it and cannot be seen, so a submit that failed
+			// in there reset its button and told you nothing. On the
+			// page the form is just a form: its errors render inline,
+			// next to the box you typed in.
+			{
+				Title: "Describe a change",
+				Wide:  true,
+				Subtitle: "Say what should be different and the machine is redrafted with that change made, keeping every step and prompt it does not touch. " +
+					"The version you have now is kept, so you can put it back.",
+				Body: ui.Stack{Children: []ui.Component{
+					ui.FormPanel{
+						PostURL:     machineAPIBase(def) + "/revise",
+						SubmitLabel: "Revise it",
+						RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
+						Fields: []ui.FormField{{
+							Field: "description", Type: "textarea", Rows: 4,
+							Label:       "What should change?",
+							Placeholder: "Let triage choose between three lanes — logs, config, and a plain question — and give the config lane its own step before it answers.",
+							Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
+						}},
 					},
 					undoRevisionToolbar(def),
 				}},
@@ -396,6 +410,52 @@ func withRepairButton(def MachineDef, kind string, body ui.Component) ui.Compone
 			Data:   kind,
 		}}},
 	}}
+}
+
+// serveMachineDescribePage is the drafting form: one box, one button,
+// and room for what came back.
+func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http.Request, user string) {
+	page := ui.Page{
+		Title:     "Describe a machine",
+		ShowTitle: true,
+		BackURL:   "/gateways",
+		Nav:       HubNav("/gateways"),
+		Sections: []ui.Section{{
+			Title: "What should it do?",
+			Wide:  true,
+			Subtitle: "Say what kinds of turns arrive and what should happen to each — what the conversation works out first, what it decides between, where it settles. " +
+				"A draft machine opens in the editor for you to adjust; anything the draft got wrong is waiting in its checklist, which beats an empty editor.",
+			Body: ui.FormPanel{
+				PostURL:     "/orchestrate/api/machines/draft",
+				SubmitLabel: "Draft it",
+				RedirectURL: "/orchestrate/machine?id={id}",
+				Fields: []ui.FormField{{
+					Field: "description", Type: "textarea", Rows: 8,
+					Label:       "In plain words",
+					Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
+					Help:        "It runs a model, so it takes a moment. If it cannot produce something usable it says so here rather than failing quietly.",
+				}},
+			},
+		}, {
+			Title:    "The other two ways in",
+			Wide:     true,
+			Subtitle: "A starter machine that already runs, or a recipe somebody exported. Neither needs a model.",
+			Body: ui.Toolbar{Actions: []ui.ToolbarAction{{
+				Label:   "New machine",
+				Title:   "Start from a small working machine you can replace entirely",
+				URL:     "/orchestrate/machine?new=1",
+				Method:  "GET",
+				Variant: "primary",
+			}, {
+				Label:  "Back to the list",
+				Title:  "Extensions, where your machines are kept",
+				URL:    "/gateways",
+				Method: "GET",
+			}}},
+		}},
+	}
+	Log("[orchestrate.machines] user=%q opened the describe form", user)
+	page.ServeHTTP(w, r)
 }
 
 // machineRepairJS applies one panel's mechanical fixes and reloads.

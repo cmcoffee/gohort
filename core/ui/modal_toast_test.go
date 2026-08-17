@@ -129,3 +129,57 @@ func max0(n int) int {
 	}
 	return n
 }
+
+// ModalButton had its own dialog, and that was the bug behind three
+// failed attempts to make a failure visible inside one.
+//
+// It built a native <dialog> and called showModal(). A top-layer dialog
+// renders above every z-index there is, so the toast on a failed submit
+// and any second modal opened from inside it landed underneath and
+// could not be seen — the button reset and said nothing. Raising the
+// toast's z-index could not fix that: the top layer is not a z-index.
+//
+// One implementation, so a dialog opened from a dialog stacks and a
+// toast clears both.
+func TestModalButtonUsesTheFrameworksOneModal(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	at := strings.Index(src, "components.modal_button = function")
+	if at < 0 {
+		t.Fatal("modal_button moved")
+	}
+	end := strings.Index(src[at:], "components.json_view")
+	if end < 0 {
+		end = 4000
+	}
+	body := src[at : at+end]
+	// Comment lines stripped: this block EXPLAINS the old dialog, and a
+	// test that matched the explanation would fail on its own footnote.
+	var code strings.Builder
+	for _, line := range strings.Split(body, "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "//") {
+			continue
+		}
+		code.WriteString(line + "\n")
+	}
+	body = code.String()
+
+	if strings.Contains(body, "showModal()") || strings.Contains(body, "createElement('dialog')") {
+		t.Error("modal_button still builds its own top-layer dialog, so nothing raised inside it can be seen")
+	}
+	if !strings.Contains(body, "window.uiOpenModal({") {
+		t.Error("modal_button should open the framework's modal")
+	}
+	// The close hook a submit-mode FormPanel calls has to survive the
+	// swap, or a successful save leaves the dialog sitting open looking
+	// like it did nothing.
+	if !strings.Contains(body, "childCtx.__closeModal") {
+		t.Error("the inner component lost its close hook")
+	}
+	// And the two things the old one carried deliberately: the caller's
+	// width, and the subtitle.
+	for _, want := range []string{"cfg.width", "cfg.subtitle"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("modal_button dropped %s in the swap", want)
+		}
+	}
+}

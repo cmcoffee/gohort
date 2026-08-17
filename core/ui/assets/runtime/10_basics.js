@@ -4328,48 +4328,39 @@
     if (cfg.variant) btnClass += ' ' + cfg.variant;
     var btn = el('button', {type: 'button', class: btnClass}, [cfg.label || 'Open']);
     btn.addEventListener('click', function() {
-      var dlg = document.createElement('dialog');
-      dlg.style.cssText = 'background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:92%;max-width:' + (cfg.width || '520px') + ';max-height:88vh;display:flex;flex-direction:column';
-
-      var title = cfg.title || cfg.label || '';
-      if (title) {
-        dlg.appendChild(el('h3', {style: 'margin:0 0 0.4rem'}, [title]));
-      }
-      if (cfg.subtitle) {
-        dlg.appendChild(el('p', {style: 'margin:0 0 0.8rem;font-size:0.82rem;color:var(--text-mute);line-height:1.45'}, [cfg.subtitle]));
-      }
-
-      // flex:1 1 auto (NOT flex:1) — a flex:1 child has flex-basis:0, which
-      // WebKit/WKWebView collapses to ZERO height inside a flex column whose
-      // own height is indefinite (a <dialog> sizes to content). Chrome/Firefox
-      // fall back to content height so it looked fine in a browser, but in the
-      // gohort-desktop webview the modal opened with a blank body. flex-basis
-      // auto makes the body size to its content; min-height:0 lets it shrink
-      // and scroll when content exceeds the dialog's max-height.
-      var body = el('div', {style: 'overflow-y:auto;flex:1 1 auto;min-height:0;padding-right:0.3rem'});
-      dlg.appendChild(body);
-      if (cfg.body) {
-        // Hand the inner component a close hook (namespaced so it can't collide
-        // with parent-record fields ctx also carries). A submit-mode FormPanel
-        // calls it on a successful save so the dialog auto-dismisses instead of
-        // sitting open after the user clicks the submit button.
-        var childCtx = {};
-        for (var k in (ctx || {})) childCtx[k] = ctx[k];
-        childCtx.__closeModal = function() { try { dlg.close(); } catch (_) {} dlg.remove(); };
-        mountComponent(cfg.body, body, childCtx);
-      }
-
-      var actions = el('div', {style: 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)'});
-      var close = el('button', {type: 'button', class: 'ui-row-btn primary'}, ['Close']);
-      close.addEventListener('click', function() { dlg.close(); dlg.remove(); });
-      actions.appendChild(close);
-      dlg.appendChild(actions);
-
-      document.body.appendChild(dlg);
-      if (typeof dlg.showModal === 'function') dlg.showModal();
-      // No click-outside-to-close: a text-selection drag that ends past the
-      // dialog edge fires a backdrop click and would dismiss the modal
-      // mid-copy. Dismiss only via the Close button or Escape.
+      // uiOpenModal, NOT a <dialog> of its own.
+      //
+      // This built a native <dialog> and called showModal(), which
+      // renders in the browser's TOP LAYER — above every z-index there
+      // is. So everything the framework raises to report an outcome
+      // landed underneath it and could not be seen: the toast on a
+      // failed submit, another modal opened from inside. A submit that
+      // failed in here reset its button and told you nothing, which is
+      // what a button that does nothing looks like, and no z-index
+      // could have fixed it because the top layer is not a z-index.
+      //
+      // One implementation now, so a dialog opened from a dialog stacks
+      // (uiNextModalZ) and a toast at 9000 clears both.
+      var m = window.uiOpenModal({
+        title: cfg.title || cfg.label || '',
+        subtitle: cfg.subtitle || undefined,
+        width: cfg.width || '520px',
+        // No click-outside-to-close is inherited: a text-selection drag
+        // ending past the dialog edge would otherwise dismiss it
+        // mid-copy.
+        mount: function(body, api) {
+          if (!cfg.body) return;
+          // Hand the inner component a close hook (namespaced so it
+          // cannot collide with parent-record fields ctx also carries).
+          // A submit-mode FormPanel calls it on a successful save so the
+          // dialog dismisses instead of sitting open looking inert.
+          var childCtx = {};
+          for (var k in (ctx || {})) childCtx[k] = ctx[k];
+          childCtx.__closeModal = function() { api.close(); };
+          mountComponent(cfg.body, body, childCtx);
+        },
+      });
+      return m;
     });
 
     row.appendChild(btn);

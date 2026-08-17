@@ -1018,3 +1018,63 @@ func TestTheAppsOwnModalSharesTheFrameworksStack(t *testing.T) {
 		t.Error("Escape does not check whether another dialog is above this one")
 	}
 }
+
+// Neither drafting door is a dialog any more, and the reason is
+// structural rather than cosmetic.
+//
+// ui.ModalButton opens a native <dialog> with showModal(), which renders
+// in the browser's TOP LAYER — above every z-index there is. So every
+// surface the framework uses to report a failure (the toast; another
+// modal) lands underneath it and cannot be seen. A submit that failed in
+// there reset its button and told you nothing, which is exactly what a
+// button that does nothing looks like. Raising the toast's z-index, as
+// v0.6.216 did, could not have fixed it: no z-index beats the top layer.
+//
+// Drafting runs a model for up to a minute and can come back with
+// nothing usable, so it is precisely the door that has to be able to say
+// so. On a page the form is just a form: its errors render inline.
+func TestNeitherDraftingDoorIsADialog(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
+	adminAuth(t, user)
+
+	// The editor's own door is a section, posting to revise.
+	editor := renderMachinePage(t, app, user, def.ID)
+	at := strings.Index(editor, "Describe a change")
+	if at < 0 {
+		t.Fatal("the editor lost its describe-a-change form")
+	}
+	if strings.Contains(editor[max0(at-400):at+400], "modal_button") {
+		t.Error("describe a change is still a dialog — its failures would be invisible")
+	}
+	if !strings.Contains(editor, `"post_url":"api/machines/`+def.ID+`/revise"`) {
+		t.Error("the form does not post to revise")
+	}
+
+	// The list's door is a link to a page.
+	r := httptest.NewRequest("GET", "/orchestrate/machine?describe=1", nil)
+	w := httptest.NewRecorder()
+	app.handleMachinePage(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("the describe page does not render: %d", w.Code)
+	}
+	page := w.Body.String()
+	if !strings.Contains(page, `"post_url":"/orchestrate/api/machines/draft"`) {
+		t.Error("the describe page does not post to the draft endpoint")
+	}
+	if !strings.Contains(page, `"redirect_url":"/orchestrate/machine?id={id}"`) {
+		t.Error("a drafted machine should land in the editor")
+	}
+	if strings.Contains(page, "modal_button") {
+		t.Error("the describe page should not open a dialog to do its own job")
+	}
+	// And the ways in that do NOT need a model are on it, because
+	// somebody who lands here and does not want to describe anything
+	// should not have to go back to find them.
+	for _, want := range []string{"machine?new=1", "New machine"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+}
