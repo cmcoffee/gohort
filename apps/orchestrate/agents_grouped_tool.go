@@ -68,11 +68,18 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			Type:        "string",
 			Description: "(run) Name or id of the agent to dispatch to. Give either this or `pipeline`, never both.",
 		}
-		params["pipeline"] = ToolParam{
-			Type: "string",
-			Description: "(run) Name or id of a saved PIPELINE to run instead of dispatching to an agent — a fixed multi-stage workflow that takes your message as its starting input and hands back the final synthesized output. " +
-				"Use it when the work has a workflow already built for it; use `agent` when you want another agent's judgement. Give either this or `agent`, never both.",
+		// Naming the reachable pipelines here, for the same reason servitor's
+		// ask_system names the systems it reaches: an agent that cannot see
+		// its own reach answers "I can't do that" about a workflow it holds.
+		// A pipeline is dispatchable without being attached, so unlike a
+		// run_<name> tool there is nothing else in the catalog to advertise
+		// it — this description is the only place it appears.
+		pipeDesc := "(run) Name or id of a saved PIPELINE to run instead of dispatching to an agent — a fixed multi-stage workflow that takes your message as its starting input and hands back the final synthesized output. " +
+			"Use it when the work has a workflow already built for it; use `agent` when you want another agent's judgement. Give either this or `agent`, never both."
+		if names := t.dispatchablePipelineNames(maxAdvertisedPipelines); len(names) > 0 {
+			pipeDesc += " Pipelines you can run: " + strings.Join(names, "; ") + "."
 		}
+		params["pipeline"] = ToolParam{Type: "string", Description: pipeDesc}
 		params["message"] = ToolParam{
 			Type:        "string",
 			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base, and it re-threads your prior dispatches to it this session (ephemeral continuity), so a follow-up can be brief without repeating earlier context.",

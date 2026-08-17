@@ -32,6 +32,12 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// maxAdvertisedPipelines caps how many pipeline names the agents tool lists in
+// its own description. The list is prompt weight on every turn of every agent;
+// past a handful it stops being a menu and becomes noise, and the model can
+// still name any of them — the description is a hint, not the allowlist.
+const maxAdvertisedPipelines = 12
+
 // validateDispatchTarget checks that exactly one target is named.
 //
 // Ported from StandingAgent.ValidateTarget deliberately, reasoning included:
@@ -85,44 +91,84 @@ func dispatchedPipelines(ctx context.Context) []string {
 // agent id would spend one budget on two different targets.
 func dispatchPipelineCapKey(id string) string { return "pipeline:" + id }
 
-// dispatchablePipeline resolves a pipeline the caller may run, by name or id.
+// dispatchablePipelines lists the pipelines this caller may dispatch to:
+// every pipeline the OWNER has, not just the ones attached to this agent.
 //
-// Reachability is the attachment set (effectivePipelineIDs), NOT every
-// pipeline the owner has. That is the conservative reading of a surface which
-// previously required attachment for any access at all: dispatch removes the
-// need to arrange the attachment BEFORE the need is known, not the need for
-// the owner to have granted the pipeline to this agent.
+// Attachment stays what it always was — the decision to put a workflow in an
+// agent's catalog as a run_<name> tool, advertised in its prompt, reached for
+// by habit. Dispatch answers the other question: this agent needs a workflow
+// once, and arranging an attachment first means knowing the need before it
+// arises. Gating dispatch on attachment made the two the same question and
+// left dispatch adding nothing an attached tool did not already do.
+//
+// The one absolute is Allow none. An agent whose dispatch policy is off does
+// not acquire a second delegation channel because the target is a pipeline —
+// that setting means this agent does not hand work to anything, and a rule
+// with an exception in it is not the rule the operator selected.
+//
+// The allowlist modes deliberately do NOT constrain this.
+// AllowedDispatchTargets holds AGENT ids, is curated through an agent picker,
+// and has never governed pipelines: an agent in Only mode can already run its
+// attached pipelines without appearing anywhere in that list. Reading it as a
+// pipeline restriction too would invent a policy nobody set.
+// DisabledPipelines still bites, because an absent grant and an expressed
+// denial are different statements. Widening says a missing attachment no
+// longer blocks; it does not say an operator who ticked "not this agent" gets
+// overruled.
+func (t *chatTurn) dispatchablePipelines() []PipelineDef {
+	if effectiveDispatchMode(t.agent) == dispatchNone {
+		return nil
+	}
+	all := ListPipelineDefs(t.udb, t.user)
+	if len(t.agent.DisabledPipelines) == 0 {
+		return all
+	}
+	out := make([]PipelineDef, 0, len(all))
+	for _, d := range all {
+		if !containsString(t.agent.DisabledPipelines, d.ID) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// dispatchablePipelineNames is the reachable set as display names, for the
+// tool description. Bounded: a name list is prompt weight on every turn, and
+// past the first several it stops being a menu and becomes noise.
+func (t *chatTurn) dispatchablePipelineNames(max int) []string {
+	defs := t.dispatchablePipelines()
+	names := make([]string, 0, len(defs))
+	for _, d := range defs {
+		if n := strings.TrimSpace(d.Name); n != "" {
+			names = append(names, n)
+		}
+		if len(names) == max {
+			break
+		}
+	}
+	return names
+}
+
+// dispatchablePipeline resolves a pipeline the caller may run, by name or id.
 func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return PipelineDef{}, errors.New("pipeline is required for action=run")
 	}
-	ids := t.effectivePipelineIDs()
+	if effectiveDispatchMode(t.agent) == dispatchNone {
+		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused — your dispatch policy is Allow NONE, which covers pipelines as well as agents. Do the work with the tools you have", ref)
+	}
 	var names []string
-	for _, id := range ids {
-		def, ok := LoadPipelineDef(t.udb, t.user, id)
-		if !ok {
-			continue // the attachment outlived the def
-		}
+	for _, def := range t.dispatchablePipelines() {
+		// Matched by NAME as well as id: a name is what the model has, since
+		// it reads pipeline names and never storage keys.
 		if strings.EqualFold(def.ID, ref) || strings.EqualFold(def.Name, ref) {
 			return def, nil
 		}
 		names = append(names, def.Name)
 	}
-	// Distinguish "not yours to run" from "does not exist". An agent told a
-	// pipeline is missing will try to author a replacement; one told it is not
-	// attached asks the person to attach it, which is the actionable ask.
-	//
-	// Matched by NAME as well as id, because a name is what the model has: it
-	// reads pipeline names, not storage keys, so an id-only check reported
-	// every unattached pipeline as missing — the exact wrong answer.
-	for _, d := range ListPipelineDefs(t.udb, t.user) {
-		if strings.EqualFold(d.ID, ref) || strings.EqualFold(d.Name, ref) {
-			return PipelineDef{}, fmt.Errorf("pipeline %q exists but is not attached to you — ask the user to attach it on the pipeline's page (\"Who can call it\"), or mark it global", d.Name)
-		}
-	}
 	if len(names) == 0 {
-		return PipelineDef{}, fmt.Errorf("no pipeline %q — you have none attached", ref)
+		return PipelineDef{}, fmt.Errorf("no pipeline %q — the user has no saved pipelines", ref)
 	}
 	return PipelineDef{}, fmt.Errorf("no pipeline %q — you can run: %s", ref, strings.Join(names, ", "))
 }

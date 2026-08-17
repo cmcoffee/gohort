@@ -38,10 +38,11 @@ import (
 // user-wide tool pool — a pipeline marked Global reaches every agent that
 // hasn't denied it.
 //
-// Shared with dispatch (agents(run, pipeline=…)) so reachability is stated
-// once. Two copies would drift into a pipeline callable one way and refused
-// the other, which is the worst of the three possible outcomes: the model
-// would see it advertised and be told no.
+// This is the CATALOG question — which pipelines get a run_<name> tool of
+// their own, advertised in the agent's prompt. It is deliberately not the
+// dispatch question: agents(run, pipeline=…) reaches any pipeline the owner
+// has, because arranging an attachment first means knowing the need before it
+// arises. Attachment is now about prominence, not permission.
 func (t *chatTurn) effectivePipelineIDs() []string {
 	if t == nil {
 		return nil

@@ -61,9 +61,9 @@ func TestDispatchTargetIsExactlyOne(t *testing.T) {
 	}
 }
 
-// Reachability is the attachment set, and a pipeline resolves by name or id
-// the way an agent target does.
-func TestDispatchablePipelineResolvesAttachedByNameAndID(t *testing.T) {
+// A pipeline resolves by name or id, the way an agent target does — the model
+// has names, so an id-only lookup would strand it.
+func TestDispatchablePipelineResolvesByNameAndID(t *testing.T) {
 	var def PipelineDef
 	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
 		def = savePipeline(t, udb, "Nightly Report", false)
@@ -80,42 +80,82 @@ func TestDispatchablePipelineResolvesAttachedByNameAndID(t *testing.T) {
 	}
 }
 
-// A global pipeline reaches every agent that has not denied it — the same rule
-// the attached-tool catalog uses, which is why both read it from one place.
-func TestDispatchablePipelineHonorsGlobalAndOptOut(t *testing.T) {
-	var def PipelineDef
+// The point of dispatch: reaching a workflow that was never attached. Gating
+// on attachment made dispatch and the run_<name> tool answer the same
+// question, at which case dispatch added nothing the catalog did not already.
+func TestUnattachedPipelineIsDispatchable(t *testing.T) {
 	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
-		def = savePipeline(t, udb, "Shared", true)
+		savePipeline(t, udb, "Never Attached", false)
 		return nil
 	})
-	if _, err := turn.dispatchablePipeline("Shared"); err != nil {
-		t.Fatalf("a global pipeline should be reachable without attachment: %v", err)
+	got, err := turn.dispatchablePipeline("Never Attached")
+	if err != nil {
+		t.Fatalf("an unattached pipeline should be dispatchable: %v", err)
 	}
-	turn.agent.DisabledPipelines = []string{def.ID}
-	if _, err := turn.dispatchablePipeline("Shared"); err == nil {
-		t.Error("an opted-out global pipeline should not be reachable")
+	if got.Name != "Never Attached" {
+		t.Fatalf("resolved %q, want Never Attached", got.Name)
+	}
+	// A name that matches nothing still has to be refused, and the refusal
+	// names what IS runnable so the model can correct itself in one round.
+	_, err = turn.dispatchablePipeline("No Such Thing")
+	if err == nil {
+		t.Fatal("a pipeline that does not exist should be refused")
+	}
+	if !strings.Contains(err.Error(), "Never Attached") {
+		t.Errorf("refusal should list what can be run; got: %v", err)
 	}
 }
 
-// "Not attached" and "does not exist" are different problems with different
-// fixes: an agent told a pipeline is missing goes off to author a replacement,
-// where the actionable ask is for the person to attach the one that exists.
-func TestUnattachedPipelineSaysSoRatherThanMissing(t *testing.T) {
+// An absent grant and an expressed denial are different statements. Widening
+// says a missing attachment no longer blocks; it must not overrule an operator
+// who ticked "not this agent".
+func TestDeniedPipelineStaysUnreachable(t *testing.T) {
+	var def PipelineDef
 	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
-		savePipeline(t, udb, "Private Workflow", false)
+		def = savePipeline(t, udb, "Off Limits", false)
 		return nil
 	})
-	_, err := turn.dispatchablePipeline("Private Workflow")
+	turn.agent.DisabledPipelines = []string{def.ID}
+	if _, err := turn.dispatchablePipeline("Off Limits"); err == nil {
+		t.Error("an explicitly denied pipeline should not be dispatchable")
+	}
+}
+
+// "Allow none is absolute" — an agent switched off from delegating does not
+// acquire a second channel just because the target is a pipeline rather than
+// an agent.
+func TestDispatchNoneRefusesPipelines(t *testing.T) {
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		savePipeline(t, udb, "Nightly", false)
+		return nil
+	})
+	turn.agent.DispatchMode = dispatchNone
+	_, err := turn.dispatchablePipeline("Nightly")
 	if err == nil {
-		t.Fatal("an unattached pipeline should not be dispatchable")
+		t.Fatal("a dispatch-none agent reached a pipeline")
 	}
-	if !strings.Contains(err.Error(), "not attached") {
-		t.Errorf("refusal should distinguish unattached from missing; got: %v", err)
+	if !strings.Contains(err.Error(), "Allow NONE") {
+		t.Errorf("refusal should name the policy; got: %v", err)
 	}
-	if _, err := turn.dispatchablePipeline("No Such Thing"); err == nil {
-		t.Error("a pipeline that does not exist should be refused")
-	} else if strings.Contains(err.Error(), "not attached") {
-		t.Errorf("a missing pipeline should not be reported as unattached; got: %v", err)
+	if names := turn.dispatchablePipelineNames(5); len(names) != 0 {
+		t.Errorf("a dispatch-none agent should be advertised no pipelines; got %v", names)
+	}
+}
+
+// The reachable set is advertised in the tool description, because a pipeline
+// that needs no attachment has nothing else in the catalog to announce it.
+func TestReachablePipelinesAreAdvertisedAndBounded(t *testing.T) {
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		savePipeline(t, udb, "Alpha", false)
+		savePipeline(t, udb, "Beta", false)
+		return nil
+	})
+	names := turn.dispatchablePipelineNames(maxAdvertisedPipelines)
+	if len(names) != 2 {
+		t.Fatalf("advertised %v, want both pipelines", names)
+	}
+	if got := turn.dispatchablePipelineNames(1); len(got) != 1 {
+		t.Errorf("advertised list ignored its cap: %v", got)
 	}
 }
 
