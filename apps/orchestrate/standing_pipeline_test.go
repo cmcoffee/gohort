@@ -155,3 +155,47 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 		t.Errorf("the row should name the pipeline it fires:\n%s", w.Body.String())
 	}
 }
+
+// Deleting the target. The agent half of this rule has always existed:
+// delete an agent and the schedules that run it are marked broken, kept
+// and relinkable. Without the pipeline half, deleting a pipeline left its
+// schedules looking healthy until they fired.
+func TestDeletingAPipelineMarksTheSchedulesThatRunIt(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	prev := RootDB
+	RootDB = app.DB
+	t.Cleanup(func() { RootDB = prev })
+	wireDependencyGuards()
+
+	def := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Nightly",
+		Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}}})
+	other := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Keep me",
+		Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}}})
+	SaveStandingAgent(RootDB, StandingAgent{Name: "nightly", Owner: user, PipelineID: def.ID})
+	SaveStandingAgent(RootDB, StandingAgent{Name: "keeper", Owner: user, PipelineID: other.ID})
+	SaveStandingAgent(RootDB, StandingAgent{Name: "agenty", Owner: user, AgentID: "ag-1"})
+
+	DeletePipelineDef(udb, def.ID)
+
+	broke, _ := GetStandingAgent(RootDB, user, "nightly")
+	if !broke.Broken {
+		t.Fatal("the schedule that ran it should be marked broken immediately, not at its next fire")
+	}
+	// Named, because a reason reading `runs deleted pipeline ""` helps
+	// nobody — the name is gone from storage by the time the hook fires,
+	// so it travels as an argument.
+	if !strings.Contains(broke.BrokenReason, `"Nightly"`) {
+		t.Errorf("the reason should name what was deleted: %q", broke.BrokenReason)
+	}
+	// KEPT, not deleted: the whole posture is broken-and-relinkable.
+	if _, still := GetStandingAgent(RootDB, user, "nightly"); !still {
+		t.Error("a broken schedule is kept so it can be repointed")
+	}
+	// And nothing else was touched.
+	if keeper, _ := GetStandingAgent(RootDB, user, "keeper"); keeper.Broken {
+		t.Error("a schedule running a different pipeline was marked broken")
+	}
+	if agenty, _ := GetStandingAgent(RootDB, user, "agenty"); agenty.Broken {
+		t.Error("an agent schedule was marked broken by a pipeline deletion")
+	}
+}

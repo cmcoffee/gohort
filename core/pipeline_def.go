@@ -1009,8 +1009,23 @@ func DeletePipelineDef(udb Database, id string) {
 	if udb == nil || id == "" {
 		return
 	}
+	def, existed := LoadPipelineDef(udb, "", id)
 	udb.Unset(PipelineDefsTable, id)
+	// Tell whoever depends on it, the way deleting a credential does
+	// (CredentialDeletedHook). A schedule can target a pipeline, and
+	// without this its only notice is the next fire — the agent path
+	// marks its schedules broken the moment the agent goes, and the two
+	// should not differ on how long a dependent stays wrong.
+	if existed && PipelineDeletedHook != nil {
+		PipelineDeletedHook(def.Owner, def.ID, def.Name)
+	}
 }
+
+// PipelineDeletedHook, when set by an app that owns dependents, is called
+// after a pipeline is removed: owner, id, and the name it had (the name
+// is gone from storage by then, and a reason reading "runs deleted
+// pipeline \"\"" helps nobody).
+var PipelineDeletedHook func(owner, id, name string)
 
 // --- export / import (portable recipe) ------------------------------
 

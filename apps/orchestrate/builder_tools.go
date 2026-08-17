@@ -798,7 +798,15 @@ func surveyWorkspace(owner string) string {
 		if s.Paused {
 			state = " [paused]"
 		}
-		fmt.Fprintf(&b, "  • %s -> agent %s @ %s%s\n", s.Name, orNone(s.AgentID), orNone(when), state)
+		// A schedule's target is an agent OR a pipeline. Printing the agent
+		// field unconditionally rendered a pipeline schedule as
+		// "-> agent (none)", which reads as a broken schedule and is the
+		// kind of thing Builder then tries to fix.
+		target := "agent " + orNone(s.AgentID)
+		if s.TargetsPipeline() {
+			target = "pipeline " + orNone(s.PipelineID)
+		}
+		fmt.Fprintf(&b, "  • %s -> %s @ %s%s\n", s.Name, target, orNone(when), state)
 	}
 	capNote(len(standing))
 

@@ -1027,8 +1027,22 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if !sa.NextRun.IsZero() {
 						next = sa.NextRun.Local().Format("Mon Jan 2 3:04 PM")
 					}
-					fmt.Fprintf(&b, "- %s (%s): runs %q on %s; last=%s; next=%s\n",
-						sa.Name, state, sa.AgentID, StandingScheduleLabel(sa), status, next)
+					// What it RUNS, which is an agent or a pipeline. Printing
+					// sa.AgentID unconditionally rendered a pipeline schedule
+					// as `runs ""` — a listing that shows a blank target is
+					// how somebody concludes the schedule is broken and
+					// deletes a working one.
+					target := strconv.Quote(sa.AgentID)
+					if sa.TargetsPipeline() {
+						target = "pipeline " + strconv.Quote(sa.PipelineID)
+						if sess != nil && sess.DB != nil {
+							if def, ok := LoadPipelineDef(sess.DB, owner, sa.PipelineID); ok {
+								target = "pipeline " + strconv.Quote(def.Name)
+							}
+						}
+					}
+					fmt.Fprintf(&b, "- %s (%s): runs %s on %s; last=%s; next=%s\n",
+						sa.Name, state, target, StandingScheduleLabel(sa), status, next)
 				}
 				return strings.TrimSpace(b.String()), nil
 			},

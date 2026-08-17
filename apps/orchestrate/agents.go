@@ -910,6 +910,7 @@ func deleteAgentReporting(db Database, id, owner string) ([]string, error) {
 				fmt.Sprintf("runs deleted agent %q", a.Name))
 		}
 	}
+	_ = pipelineScheduleGuard // see pipelineDeleted: the same rule for a pipeline target
 	// Recurring tasks have no stored record — they live only as scheduler
 	// entries — so "keep, don't drop" means cancelling the live entry and re-arming
 	// a dormant broken one (parkRecurringBroken) rather than a mark-in-place.

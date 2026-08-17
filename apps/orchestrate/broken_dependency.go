@@ -161,4 +161,34 @@ func wireDependencyGuards() {
 	EventMonitorDependencyError = eventMonitorDependencyError
 	StandingAgentDependencyError = standingAgentDependencyError
 	CredentialDeletedHook = credentialDeleted
+	PipelineDeletedHook = pipelineDeleted
+}
+
+// pipelineScheduleGuard exists to be referenced from the agent-deletion
+// sweep, so the two halves of the same rule are findable from each other.
+const pipelineScheduleGuard = "see pipelineDeleted"
+
+// pipelineDeleted marks every schedule that fires a just-deleted pipeline
+// broken, immediately — so it is paused-and-kept rather than left to fail
+// at its next fire. Wired into core.PipelineDeletedHook.
+//
+// The agent half of this rule has always existed (deleting an agent marks
+// the schedules that run it). Without this one, deleting a pipeline left
+// its schedules looking healthy until they fired, which is the same
+// dependency going stale for longer — and "broken, kept, and relinkable"
+// is the posture this package exists to hold.
+func pipelineDeleted(owner, id, name string) {
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(id) == "" {
+		return
+	}
+	label := strings.TrimSpace(name)
+	if label == "" {
+		label = id
+	}
+	for _, sa := range ListStandingAgents(RootDB, owner) {
+		if sa.PipelineID == id {
+			MarkStandingAgentBroken(RootDB, owner, sa.Name,
+				fmt.Sprintf("runs deleted pipeline %q", label))
+		}
+	}
 }
