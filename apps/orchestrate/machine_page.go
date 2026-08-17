@@ -31,7 +31,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: machinesExtensionSection,
-		Head:  runsOnPillsHead,
+		Head:  assignPillsHead,
 		// After the page's own tools and credentials, which are what
 		// somebody reaches for constantly.
 		Order: 10,
@@ -122,8 +122,16 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					// at all of them at once; opening each machine to
 					// answer that is the navigation the tools table
 					// already avoids.
-					{Type: "button", Label: "Runs on", Method: "client",
-						PostTo: "orchestrate_runs_on"},
+					//
+					// "Assign" rather than "Runs on": the label is the
+					// VERB of what the button does, which is how every
+					// other row action on this page reads (Export,
+					// Duplicate, Delete) and how the tools table's
+					// Access reads. A noun phrase describes the state
+					// and leaves you to guess whether clicking changes
+					// it.
+					{Type: "button", Label: "Assign", Method: "client",
+						PostTo: "orchestrate_assign"},
 					// Downloading a recipe should not require opening the
 					// machine first — the reason to take a copy is usually
 					// that you are about to change it.
@@ -145,7 +153,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 	}, true
 }
 
-// runsOnPillsHead registers the assignment pills for BOTH extension
+// assignPillsHead registers the assignment pills for BOTH extension
 // sections — machines and pipelines contribute it, and registering a
 // client action twice is harmless because the second registration
 // replaces an identical first.
@@ -155,11 +163,11 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 // per the extension-registry rule. The endpoint comes from the ROW
 // (edit_url carries the id), so one action serves both kinds rather
 // than each growing its own copy.
-const runsOnPillsHead = `<script>
+const assignPillsHead = `<script>
 (function(){
   function register(){
     if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
-    window.uiRegisterClientAction('orchestrate_runs_on', function(ctx){
+    window.uiRegisterClientAction('orchestrate_assign', function(ctx){
       var r = (ctx && ctx.record) || {};
       var url = String(r.edit_url || '');
       // /orchestrate/machine?id=X or /orchestrate/pipeline?id=X — the
@@ -171,7 +179,7 @@ const runsOnPillsHead = `<script>
       var base = '/orchestrate/api/' + kind + '/' + encodeURIComponent(id) + '/agents';
       var reload = ctx && ctx.reload;
       window.uiOpenSimpleModal({
-        title: 'Runs on: ' + (r.name || ''),
+        title: 'Assign: ' + (r.name || ''),
         width: '560px',
         mount: function(body){
           var host = document.createElement('div');

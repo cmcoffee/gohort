@@ -28,7 +28,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: pipelinesExtensionSection,
-		Head:  runsOnPillsHead,
+		Head:  assignPillsHead,
 		// Directly after Machines: they are the same kind of thing to
 		// somebody looking for one, and a workflow that runs to an end
 		// belongs next to a workflow a conversation sits in.
@@ -105,8 +105,8 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 				RowActions: []ui.RowAction{
 					// Assignment from the list, same control the machines
 					// table carries and the same one My tools uses.
-					{Type: "button", Label: "Runs on", Method: "client",
-						PostTo: "orchestrate_runs_on"},
+					{Type: "button", Label: "Assign", Method: "client",
+						PostTo: "orchestrate_assign"},
 					{Type: "button", Label: "Export", Method: "GET",
 						PostTo: "/orchestrate/api/pipelines/{id}/export"},
 					{Type: "button", Label: "Delete", Method: "DELETE",

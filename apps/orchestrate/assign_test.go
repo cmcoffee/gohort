@@ -39,7 +39,7 @@ func pillsGET(t *testing.T, app *OrchestrateApp, user, path string) map[string]a
 // A machine moves an agent; a pipeline joins a list. Getting that
 // backwards is how somebody unplugs something they never touched, so
 // each says which it is where the switch is.
-func TestRunsOnPillsSayWhichKindOfAssignmentItIs(t *testing.T) {
+func TestAssignPillsSayWhichKindOfAssignmentItIs(t *testing.T) {
 	app, udb, user := newTestOrchestrate(t)
 	mine := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Mine", Start: "s",
 		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
@@ -116,13 +116,13 @@ func TestRunsOnPillsSayWhichKindOfAssignmentItIs(t *testing.T) {
 
 // One client action serves both tables, because the row already carries
 // where it lives. Two copies would drift the day one gained a feature.
-func TestOneRunsOnActionServesBothLists(t *testing.T) {
+func TestOneAssignActionServesBothLists(t *testing.T) {
 	src, err := os.ReadFile("machine_page.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	head := string(src)
-	if !strings.Contains(head, "uiRegisterClientAction('orchestrate_runs_on'") {
+	if !strings.Contains(head, "uiRegisterClientAction('orchestrate_assign'") {
 		t.Fatal("the action is not registered")
 	}
 	// It picks the endpoint from the row's own edit_url rather than
@@ -141,10 +141,10 @@ func TestOneRunsOnActionServesBothLists(t *testing.T) {
 		if rerr != nil {
 			t.Fatal(rerr)
 		}
-		if !strings.Contains(string(b), "Head:  runsOnPillsHead") {
+		if !strings.Contains(string(b), "Head:  assignPillsHead") {
 			t.Errorf("%s does not contribute the registration", f)
 		}
-		if !strings.Contains(string(b), `Label: "Runs on"`) {
+		if !strings.Contains(string(b), `Label: "Assign"`) {
 			t.Errorf("%s has no assignment button on its list", f)
 		}
 	}
