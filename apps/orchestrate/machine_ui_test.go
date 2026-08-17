@@ -396,15 +396,46 @@ func TestEveryMachineScriptParses(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not installed")
 	}
-	// Function expressions get wrapped; statements run as-is.
-	scripts := map[string]string{
-		"machineTryJS":            "var f = " + machineTryJS + ";",
-		"machineTryResetJS":       "var f = " + machineTryResetJS + ";",
-		"machineRemoveStepJS":     "var f = " + machineRemoveStepJS + ";",
-		"machineMoveStepJS":       "var f = " + machineMoveStepJS + ";",
-		"machineDuplicateJS":      "var f = " + machineDuplicateJS + ";",
-		"machineTryEnterJS":       "var document = {addEventListener: function(){}};\n" + machineTryEnterJS,
-		"machinePreviewRefreshJS": "var window = {addEventListener: function(){}};\n" + machinePreviewRefreshJS,
+	// Read the scripts out of the SOURCE rather than listing them here.
+	// A hand-kept list is a second thing to forget, and it had already
+	// been forgotten three times over — machine_repair, machine_undo and
+	// the map refresh all shipped uncovered while this test passed.
+	// Every machine_*.go, not just the page: the try panel keeps its
+	// scripts next to the handler they drive, and scoping this to one
+	// file is how three of them shipped uncovered.
+	files, err := filepath.Glob("machine_*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no machine sources: %v", err)
+	}
+	decl := regexp.MustCompile("(?s)const (machine[A-Za-z]*JS) = `(.*?)`\n")
+	var found [][]string
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		found = append(found, decl.FindAllStringSubmatch(string(src), -1)...)
+	}
+	if len(found) < 11 {
+		t.Fatalf("expected every machine script, found %d — the declaration shape changed", len(found))
+	}
+	// Enough of a browser for a top-level statement to attach itself to.
+	// Function expressions are wrapped instead; nothing here RUNS, so a
+	// stub only has to satisfy the parser and the outermost call.
+	const stubs = "var document = {addEventListener: function(){}, querySelector: function(){}, " +
+		"querySelectorAll: function(){ return []; }};\n" +
+		"var window = {addEventListener: function(){}, location: {search: ''}};\n"
+	scripts := map[string]string{}
+	for _, m := range found {
+		name, body := m[1], m[2]
+		if strings.HasPrefix(strings.TrimSpace(body), "function(") {
+			scripts[name] = "var f = " + body + ";"
+		} else {
+			scripts[name] = stubs + body
+		}
 	}
 	dir := t.TempDir()
 	for name, src := range scripts {
