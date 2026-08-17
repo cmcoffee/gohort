@@ -13,11 +13,20 @@
 // intent, and a guess with the power to reject somebody's work is worse
 // than no rule at all.
 //
-// Only the rule that genuinely transfers is here. A machine also warns
+// Only the rules that genuinely transfer are here. A machine also warns
 // about a step told to go looking with no tools — that one does NOT
 // transfer, because a worker stage inherits the calling agent's whole
 // catalog unless it narrows, so an empty Tools list means everything
 // rather than nothing.
+//
+// One rule was built, tested against the pipelines this repo ships, and
+// REMOVED: "nothing reads this declared field". It fired on all three,
+// and was wrong all three times. See pipeline-structured-outputs.md —
+// the short version is that {prev} renders the previous stage's whole
+// JSON, so the default way stages chain already reads every field, and
+// a field that genuinely is unreferenced is usually a rationale beside
+// a decision or the unread half of a deliberate pair. A rule that tells
+// somebody to delete work that is doing its job is worse than no rule.
 
 package core
 

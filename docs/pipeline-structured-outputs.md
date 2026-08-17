@@ -60,6 +60,36 @@ type PipelineField struct {
 `list` (no `Fields`) is a list of strings, which is exactly what `fan_over` and
 `DecodeJSONList` already consume.
 
+### Two fields added since
+
+Both live on the shared `PipelineField`, so machines get them too.
+
+```go
+    // Enum constrains a string field to a fixed set, checked where the
+    // decoder can still ask for a repair.
+    Enum []string `json:"enum,omitempty"`
+    // From FILLS the field from a value the pipeline already holds
+    // instead of asking the model for it.
+    From string `json:"from,omitempty"`
+```
+
+`from` takes the same vocabulary a prompt does — `{input}`, `{prev}`,
+`{stage:NAME.field}` — and changes what the model is asked for, not just what
+the result contains. A filled field is left out of the contract **entirely**
+(`ModelOutput` excludes it; `StaticFields` is the other half) and merged into
+the result after the call, so later stages read it exactly like one the model
+answered. Two reasons it exists rather than "just template it into the prompt":
+
+- A value you already hold is not worth a model's attention, and asking for it
+  back invites a paraphrase — the returned "question" is subtly not the question.
+- It gives an existing value YOUR field name, so `{stage:triage.asked}` reads
+  the same whether the value was decided or carried.
+
+Filled fields hold TEXT. Declaring one as `number` or `list` describes something
+that cannot happen; `DeclaredOutput` treats it as text rather than storing a
+lie, and the machine editor's advice says so (and offers to correct it, since
+that one has exactly one right answer).
+
 **Why a field list and not JSON Schema.** Builder authors these, and a user
 edits them in a form. A field list renders to a prompt instruction, to a
 validator, and to a UI table without any of them knowing JSON Schema. Full
@@ -220,6 +250,33 @@ Surfaced by the `pipeline` tool on create/update (after the save, because it nev
 `get`, and as a `worth_a_look` count on `list` — a pipeline written before the rule existed will
 never see a create reply again, so `get` and `list` are the only places its findings can reach
 anybody. Loop bodies are walked and located (`round › critique`).
+
+### A second rule, built and rejected
+
+"Nothing reads this declared field" looked like the obvious companion: a declared field is asked of
+the model, validated, and repaired when it comes back wrong, on every run, so an unread one is paid
+for and spends the contract's attention on nothing. It was built with what seemed like the right
+exemptions — the last stage of each scope (its output IS the result), a whole-stage `{stage:NAME}`
+reference, and `fan_over` / `until` / `when`, which read a field no prompt mentions.
+
+Then it was run against the three pipelines this repo ships. It fired on all three and was wrong
+every time:
+
+| stage | "unread" field | what it actually is |
+|---|---|---|
+| `debate.audit` | `verdict` | one sentence grading the evidence, written beside `clean`/`issues` |
+| `image-find.locate` | `found` | the read half is `nothing_found` — "set exactly one" is deliberate |
+| `research.classify` | `reason` | one clause saying why, beside the `complex`/`simple` decision |
+
+Two things the design missed. `{prev}` renders the previous stage's **whole JSON**, so the default
+way stages chain already reads every field — the exemption list would have had to include the next
+stage's prompt, which is most of them. And a field that genuinely is unreferenced is usually doing
+work anyway: a rationale next to a decision improves the decision, and the unread half of a paired
+bool is what forces an explicit commitment.
+
+A rule that tells an author to delete work that is doing its job is worse than no rule, and this
+one had no true positives to weigh against that. The code is gone; this note is here so the next
+person to have the idea can skip the build.
 
 ## Compatibility
 
