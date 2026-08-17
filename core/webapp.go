@@ -719,7 +719,13 @@ func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 				// reqUsage started at zero, so its snapshot IS the
 				// request's own consumption.
 				d := reqUsage.Snapshot()
-				d.SearchCalls = ProcessUsage().Diff(globalStart).SearchCalls
+				// Searches are still window-diffed, so this request's
+				// window contains any run that scoped itself out with
+				// WithSubUsage and reported on its own line. Net those
+				// out or the same search is billed twice across two
+				// lines that were supposed to sum.
+				d.SearchCalls = reqUsage.UnclaimedSearchCalls(
+					ProcessUsage().Diff(globalStart).SearchCalls)
 				if d == (UsageDiff{}) {
 					return
 				}

@@ -537,6 +537,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// turns that needed it, because the dispatch paths tag their runs here and
 	// this one never did.
 	ctx = withParentRun(ctx, liveRun.ID)
+	// A scheduled fire has no request behind it, so nothing ever reported
+	// what one costs — the tokens landed in the process counter and the
+	// admin rollup and nowhere a reader would look. Give the fire its own
+	// line, same shape as a dispatch, labelled with the run so it can be
+	// matched against the live tree.
+	ctx, reportUsage := WithSubUsage(ctx, "scheduled "+agent.Name+" "+liveRun.ID)
+	defer reportUsage()
 	subSess.Ctx = ctx
 	// Safety net only — Complete is idempotent (first call sticks), and the
 	// explicit call right after the loop below lands first with the real

@@ -73,7 +73,17 @@ func (T *OrchestrateApp) installTaskRunner() {
 		// the agent actually has: what did I start in HERE, and can I stop it.
 		RegisterBackgroundJob(sessionID, TaskRun{ID: run.ID, Label: label}, run.Cancel)
 
+		// The task outlives the turn that spawned it, so its spend is its
+		// own — it cannot ride the turn's line, which has usually already
+		// printed by the time a long render finishes. Scope it and it
+		// reports when the work does. Covers the delivery wake too, since
+		// that is part of what the detach costs.
+		ctx, reportUsage := WithSubUsage(ctx, "task "+agentName+" "+run.ID)
+
 		go func() {
+			// First defer, so it runs LAST — after the panic recovery below
+			// has had its say, and after the result is delivered.
+			defer reportUsage()
 			defer CompleteBackgroundJob(sessionID, run.ID)
 			defer func() {
 				if r := recover(); r != nil {

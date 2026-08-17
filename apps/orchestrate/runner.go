@@ -4826,7 +4826,14 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// The run tees every SSE frame into an in-memory buffer (see runs.go),
 	// so a fresh /api/runs/<id>/stream subscriber after a reconnect
 	// can replay the conversation from any sequence number.
-	ctx, cancel := context.WithCancel(context.Background())
+	//
+	// Detaching the LIFETIME must not detach the OWNERSHIP: the turn's
+	// tokens are still this request's spend. Carry the request-scoped
+	// usage tracker across (CarryRequestUsage) or the middleware's
+	// end-of-request cost report sees a zero delta and prints nothing —
+	// which is what silently took the per-turn "Worker/Lead tokens,
+	// Searches, Est. cost" block out of the log in v0.6.159.
+	ctx, cancel := context.WithCancel(CarryRequestUsage(context.Background(), r.Context()))
 	run := T.runsRegistry().Create(user, agent.ID, sess.ID, cancel).
 		Describe("chat", agent.Name, truncateObs(req.Message, 100))
 	// Tag the ctx with this run's ID so any sub-agent dispatched during the turn

@@ -28,6 +28,14 @@ type UsageTracker struct {
 	leadOutput   int64
 	searchCalls  int64
 	imageCalls   int64
+	// searchClaimed is the share of this scope's search window a NESTED
+	// scope already reported on its own line. Tokens and image calls are
+	// credited through the context and so land on exactly one tracker;
+	// searches are still window-diffed off the process counter (the
+	// search tool stack takes no context), which means a parent's window
+	// contains its children's searches. Children claim theirs as they
+	// finish, the parent subtracts, and the lines sum again.
+	searchClaimed int64
 	// Cached prompt, kept apart from the uncached remainder because the two
 	// are different questions with the same units. SIZE is the sum of all
 	// three; COST is a weighted sum, since a cache read bills at a fraction of
@@ -105,6 +113,62 @@ type requestUsageKey struct{}
 func WithRequestUsage(ctx context.Context) (context.Context, *UsageTracker) {
 	t := &UsageTracker{}
 	return context.WithValue(ctx, requestUsageKey{}, t), t
+}
+
+// CarryRequestUsage copies src's request-scoped tracker onto dst,
+// returning dst unchanged when src carries none. For handlers that
+// detach the WORK's lifetime from the request but not its ownership:
+// a chat turn roots its ctx at Background so a client disconnect can't
+// kill an in-flight tool call, yet every token that turn spends is
+// still this request's spend. Without this, the request tracker never
+// moves and the end-of-request cost line — which skips on a zero delta
+// — never prints at all for exactly the requests worth costing.
+//
+// Distinct from the deliberate drop described on WithRequestUsage:
+// that's for work the request merely SPAWNS and doesn't wait on
+// (background ingest, scheduled follow-ups). Use this only when the
+// handler blocks until the detached work is done.
+func CarryRequestUsage(dst, src context.Context) context.Context {
+	if t := RequestUsage(src); t != nil {
+		return context.WithValue(dst, requestUsageKey{}, t)
+	}
+	return dst
+}
+
+// WithSubUsage scopes a nested run's spend onto its OWN tracker and
+// returns a defer-friendly closure that logs it on its own cost line.
+// The fresh tracker shadows any parent tracker on ctx, so every token
+// the nested run spends is credited to it and NOT to the request that
+// spawned it — a dispatched sub-agent gets its own report rather than
+// silently inflating its delegator's.
+//
+// Searches are the exception the whole tracker shares: they are
+// window-diffed off the process counter, so the scope's own window
+// still contains any searches its children ran. The closure claims
+// this scope's count against the parent tracker (ClaimSearchCalls) and
+// reports its own count net of what ITS children claimed, so a nested
+// chain of lines still sums to the process total.
+//
+//	ctx, reportUsage := WithSubUsage(ctx, "dispatch "+name+" "+runID)
+//	defer reportUsage()
+//
+// Skips the log when nothing moved, matching every other report path.
+func WithSubUsage(ctx context.Context, label string) (context.Context, func()) {
+	parent := RequestUsage(ctx)
+	globalStart := ProcessUsage().Snapshot()
+	sub, t := WithRequestUsage(ctx)
+	return sub, func() {
+		d := t.Snapshot()
+		window := ProcessUsage().Diff(globalStart).SearchCalls
+		d.SearchCalls = t.UnclaimedSearchCalls(window)
+		if parent != nil {
+			parent.ClaimSearchCalls(window)
+		}
+		if d == (UsageDiff{}) {
+			return
+		}
+		Log("%s", FormatUsageReport(label, d))
+	}
 }
 
 // RequestUsage returns the context's request-scoped tracker, or nil
@@ -199,6 +263,33 @@ func (u *UsageTracker) AddImageCall() {
 	if u == processUsage {
 		recordDailyUsage(UsageDiff{ImageCalls: 1})
 	}
+}
+
+// ClaimSearchCalls records that n searches inside this scope's window
+// were already reported by a nested scope on its own line. See
+// searchClaimed and WithSubUsage.
+func (u *UsageTracker) ClaimSearchCalls(n int64) {
+	if n <= 0 {
+		return
+	}
+	u.mu.Lock()
+	u.searchClaimed += n
+	u.mu.Unlock()
+}
+
+// UnclaimedSearchCalls returns the share of a window-diffed search
+// count that belongs to THIS scope — the window minus whatever nested
+// scopes claimed. Never negative: a child that outlives its parent's
+// report can claim more than the parent saw, and a negative search
+// count in a cost line is worse than a low one.
+func (u *UsageTracker) UnclaimedSearchCalls(window int64) int64 {
+	u.mu.Lock()
+	claimed := u.searchClaimed
+	u.mu.Unlock()
+	if n := window - claimed; n > 0 {
+		return n
+	}
+	return 0
 }
 
 // Snapshot returns a consistent read of the current counter values.

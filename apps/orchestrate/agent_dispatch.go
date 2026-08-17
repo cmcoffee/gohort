@@ -541,6 +541,14 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed)
 	ctx = withParentRun(ctx, liveRun.ID)
+	// A delegated run bills to ITSELF. Its spend used to ride the
+	// delegator's context tracker, so a turn that dispatched three
+	// sub-agents printed one line carrying all four runs' tokens, with no
+	// way to see which of them was the expensive one. Scoping it out gives
+	// it its own line — nested dispatch chains included, since each level
+	// shadows the tracker above it.
+	ctx, reportUsage := WithSubUsage(ctx, "dispatch "+target.Name+" "+liveRun.ID)
+	defer reportUsage()
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
 	// owns it, which it reads off this context (the log said "image stayed
@@ -1209,6 +1217,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed)
 	ctx = withParentRun(ctx, liveRun.ID)
+	// Same as the sync path: this run's spend is its own, not the
+	// delegator's. Labelled with the run KIND so a channel turn and a
+	// delegation are told apart in the log.
+	ctx, reportUsage := WithSubUsage(ctx, liveKind+" "+target.Name+" "+liveRun.ID)
+	defer reportUsage()
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
 	// owns it, which it reads off this context (the log said "image stayed
