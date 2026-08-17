@@ -252,6 +252,14 @@
         function openRowPicker(a, row) {
           var agent = window.GOHORT_AGENT_ID || '';
           var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
+          // Which ROW the choice is for. A picker_source is one URL for a
+          // whole column of rows, and the right choices are not always the
+          // same for each of them — a schedule that runs a pipeline needs
+          // pipelines offered, not agents. The POST already carries row._id;
+          // without it here, the source has to guess, and a picker offering
+          // the wrong KIND of thing is worse than no picker: every choice in
+          // it is refused.
+          if (row && row._id) src += '&row=' + encodeURIComponent(row._id);
           window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
             var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, ['Loading…']);
             var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});

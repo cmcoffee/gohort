@@ -273,7 +273,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							// Relink shows only on a broken row: pick a live agent to
 							// re-point the standing agent at (clears broken, stays
 							// paused → then Resume).
-							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_broken"},
+							// "target" rather than "agent": this column holds
+							// schedules, and a schedule can run a pipeline. The
+							// source answers for the row it is asked about, so
+							// the list is agents or pipelines accordingly.
+							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_broken"},
 							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},

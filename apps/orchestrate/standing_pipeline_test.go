@@ -8,6 +8,7 @@ package orchestrate
 // that was pure plumbing.
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -73,5 +74,84 @@ func TestAScheduleWhosePipelineIsGoneReportsIt(t *testing.T) {
 	// And an agent schedule still reports the agent, not the pipeline.
 	if got := standingAgentDependencyError(StandingAgent{Owner: user, AgentID: "ag-vanished"}); !strings.Contains(got, "agent was deleted") {
 		t.Errorf("the agent case should be unchanged: %q", got)
+	}
+}
+
+// The console has to offer the right KIND of target, and accept only
+// that kind. A relink picker listing agents for a schedule that runs a
+// pipeline is worse than no picker: every choice in it gets refused.
+func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	prev := RootDB
+	RootDB = app.DB
+	t.Cleanup(func() { RootDB = prev })
+
+	good := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Nightly",
+		Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}}})
+	agent, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Wren", OrchestratorPrompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	SaveStandingAgent(RootDB, StandingAgent{
+		Name: "nightly", Owner: user, PipelineID: "pl-gone", Broken: true,
+		BrokenReason: "its target pipeline was deleted (id pl-gone)"})
+	SaveStandingAgent(RootDB, StandingAgent{
+		Name: "morning", Owner: user, AgentID: "ag-gone", Broken: true})
+
+	// The picker, asked about the PIPELINE schedule, offers pipelines.
+	r := httptest.NewRequest("GET", "/api/console/agent-options?row=nightly", nil)
+	w := httptest.NewRecorder()
+	app.handleConsoleAgentOptions(w, asUser(r, user))
+	body := w.Body.String()
+	if !strings.Contains(body, good.ID) || !strings.Contains(body, "Nightly") {
+		t.Errorf("the pipeline schedule's picker should list pipelines:\n%s", body)
+	}
+	if strings.Contains(body, agent.ID) {
+		t.Errorf("it must not offer agents — every one would be refused:\n%s", body)
+	}
+	// Asked about the AGENT schedule, it offers agents, exactly as before.
+	r = httptest.NewRequest("GET", "/api/console/agent-options?row=morning", nil)
+	w = httptest.NewRecorder()
+	app.handleConsoleAgentOptions(w, asUser(r, user))
+	if !strings.Contains(w.Body.String(), agent.ID) {
+		t.Errorf("the agent schedule's picker should still list agents:\n%s", w.Body.String())
+	}
+
+	// Relink accepts a pipeline for the pipeline schedule, and clears broken.
+	r = httptest.NewRequest("POST", "/api/console/agents/relink?id=nightly&value="+good.ID, nil)
+	w = httptest.NewRecorder()
+	app.handleConsoleAgentRelink(w, asUser(r, user))
+	if w.Code != 204 {
+		t.Fatalf("relink: %d %s", w.Code, w.Body.String())
+	}
+	sa, _ := GetStandingAgent(RootDB, user, "nightly")
+	if sa.PipelineID != good.ID || sa.Broken {
+		t.Errorf("the schedule was not repointed: %+v", sa)
+	}
+	// And it must NOT have grown an agent target alongside it — the one
+	// state ValidateTarget exists to refuse.
+	if sa.AgentID != "" {
+		t.Errorf("relink set an agent on a pipeline schedule: %q", sa.AgentID)
+	}
+	if err := sa.ValidateTarget(); err != nil {
+		t.Errorf("the repointed schedule is invalid: %v", err)
+	}
+
+	// An agent id offered to a pipeline schedule is refused rather than
+	// stored — this is what would have happened on every pick from the
+	// old picker.
+	r = httptest.NewRequest("POST", "/api/console/agents/relink?id=nightly&value="+agent.ID, nil)
+	w = httptest.NewRecorder()
+	app.handleConsoleAgentRelink(w, asUser(r, user))
+	if w.Code != 400 {
+		t.Errorf("an agent is not a pipeline: %d %s", w.Code, w.Body.String())
+	}
+
+	// The schedules rail row says WHAT it runs.
+	r = httptest.NewRequest("GET", "/api/schedules", nil)
+	w = httptest.NewRecorder()
+	app.handleSchedules(w, asUser(r, user))
+	if !strings.Contains(w.Body.String(), "pipeline · Nightly") {
+		t.Errorf("the row should name the pipeline it fires:\n%s", w.Body.String())
 	}
 }

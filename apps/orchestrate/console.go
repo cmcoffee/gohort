@@ -326,10 +326,21 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		if agentID != "" && manager != agentID {
 			continue
 		}
+		// Say what it RUNS, not just that it is scheduled. A row reading
+		// "scheduled run · every 24h" is the same sentence whether it fires
+		// an agent or a pipeline, and the two behave differently enough
+		// that the rail should not make somebody open it to find out.
+		what := "scheduled run"
+		if sa.TargetsPipeline() {
+			what = "pipeline run"
+			if def, ok := LoadPipelineDef(UserDB(T.DB, user), user, sa.PipelineID); ok {
+				what = "pipeline · " + def.Name
+			}
+		}
 		id := url.QueryEscape(sa.Name)
 		rows = append(rows, map[string]any{
 			"name":           sa.Name,
-			"detail":         "scheduled run · " + StandingScheduleLabel(sa),
+			"detail":         what + " · " + StandingScheduleLabel(sa),
 			"paused":         sa.Paused,
 			"pause_url":      "api/console/agents/pause?id=" + id,
 			"resume_url":     "api/console/agents/resume?id=" + id,
@@ -454,6 +465,25 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 		Label string `json:"label"`
 	}
 	opts := []opt{}
+	// A relink picker for a schedule that runs a PIPELINE must offer
+	// pipelines. The picker source is one URL for the whole column, so it
+	// is told which row it is choosing for (?row=, added by openRowPicker)
+	// and answers for that row's target kind. Offering agents there would
+	// be worse than offering nothing: every choice in the list gets
+	// refused by the relink handler.
+	if row := strings.TrimSpace(r.URL.Query().Get("row")); row != "" {
+		if sa, found := GetStandingAgent(RootDB, user, row); found && sa.TargetsPipeline() {
+			for _, d := range ListPipelineDefs(UserDB(T.DB, user), user) {
+				label := strings.TrimSpace(d.Name)
+				if label == "" {
+					label = d.ID
+				}
+				opts = append(opts, opt{Value: d.ID, Label: label})
+			}
+			writeJSON(w, opts)
+			return
+		}
+	}
 	// with_default=1 (the monitor relink picker only) leads with a "use the
 	// deployment default" choice so relinking a monitor never REQUIRES naming a
 	// specific agent — you pick one only when the persona matters. Standing/
@@ -638,17 +668,42 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
-	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
-	if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
-		http.Error(w, "no such agent", http.StatusBadRequest)
-		return
-	}
+	value := strings.TrimSpace(r.URL.Query().Get("value"))
+	// Load the schedule FIRST: what the value has to be depends on what
+	// this schedule runs. Validating it as an agent before knowing that
+	// is how a pipeline schedule ends up with an AgentID set alongside
+	// its PipelineID — the one state ValidateTarget exists to refuse,
+	// where whichever the runner checks first wins forever.
 	sa, found := GetStandingAgent(RootDB, user, name)
 	if !found {
 		http.Error(w, "no such standing agent", http.StatusNotFound)
 		return
 	}
-	sa.AgentID = newAgent
+	if sa.TargetsPipeline() {
+		def, ok := LoadPipelineDef(UserDB(T.DB, user), user, value)
+		if !ok {
+			http.Error(w, "no such pipeline", http.StatusBadRequest)
+			return
+		}
+		// A pipeline that would not run is not a repair. Refusing here
+		// keeps the schedule broken-and-visible rather than pointing it at
+		// something that fails on its next fire.
+		if err := def.Validate(); err != nil {
+			http.Error(w, "that pipeline would not run: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		sa.PipelineID = def.ID
+		sa.Broken = false
+		sa.BrokenReason = ""
+		SaveStandingAgent(RootDB, sa)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if _, ok := loadAgent(UserDB(T.DB, user), value); !ok {
+		http.Error(w, "no such agent", http.StatusBadRequest)
+		return
+	}
+	sa.AgentID = value
 	sa.Broken = false
 	sa.BrokenReason = ""
 	SaveStandingAgent(RootDB, sa)
