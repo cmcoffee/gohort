@@ -208,12 +208,12 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		}},
 	}
 	page.Sections = append(page.Sections,
-		// Who can call it. The list has said "callable by" since it
+		// Assign to agents. The list has said "callable by" since it
 		// existed and nothing could change it — a pipeline attached to
 		// nothing is a tool no agent has, which is the single most
 		// useful fact about one and was read-only.
 		ui.Section{
-			Title: "Who can call it",
+			Title: "Assign to agents",
 			Wide:  true,
 			Subtitle: "A pipeline reaches an agent as a tool named run_" + strings.ToLower(strings.ReplaceAll(def.Name, " ", "_")) + ". " +
 				"Unlike a machine, an agent can hold several — checking one here adds this pipeline to that agent's list rather than replacing what it already has.",

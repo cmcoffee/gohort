@@ -1158,7 +1158,7 @@ func TestTheWholeEditorPageRenders(t *testing.T) {
 	for _, want := range []string{
 		"The machine", "triage", "dig", "log check", "answer",
 		"Add a step", "Try it", "What a turn costs",
-		"Who runs it", "Worth a look", "What is still missing",
+		"Assign to agents", "Worth a look", "What is still missing",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page is missing %q", want)

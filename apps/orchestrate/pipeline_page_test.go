@@ -267,7 +267,7 @@ func TestAPipelineCanBeGivenToAnAgentFromItsOwnPage(t *testing.T) {
 	// And the control is on the page.
 	page := httptest.NewRecorder()
 	app.handlePipelinePage(page, asUser(httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil), user))
-	if !strings.Contains(page.Body.String(), "Who can call it") {
+	if !strings.Contains(page.Body.String(), "Assign to agents") {
 		t.Error("the page cannot attach the pipeline it describes")
 	}
 }

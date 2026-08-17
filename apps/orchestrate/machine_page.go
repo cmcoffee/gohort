@@ -405,7 +405,12 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: costText(def),
 		},
 		{
-			Title: "Who runs it",
+			// "Assign to agents", matching the button that does the
+			// same job from the list. The heading used to ask a
+			// question ("Who runs it"), which describes the state and
+			// leaves you to work out that the checklist under it
+			// CHANGES that state.
+			Title: "Assign to agents",
 			Wide:  true,
 			Subtitle: "An unattached machine does nothing — an agent has to carry it into its conversations. " +
 				"Checking an agent points it at this machine; an agent can only run one at a time, so checking one that runs another moves it.",

@@ -358,7 +358,7 @@ func indexOfStage(def PipelineDef, name string) int {
 	return 0
 }
 
-// handlePipelineAgents is the "Who can call it" checklist.
+// handlePipelineAgents is the "Assign to agents" checklist.
 //
 //	GET  /api/pipelines/{id}/agents → {agents: [id, ...]}
 //	POST /api/pipelines/{id}/agents {agents: [...]} → attach/detach

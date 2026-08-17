@@ -229,7 +229,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	case "agents":
-		// Who can call it. An unattached pipeline is a tool no agent
+		// Assign to agents. An unattached pipeline is a tool no agent
 		// has, which the list already says and nothing could change.
 		T.handlePipelineAgents(w, r, udb, user, def)
 	case "duplicate":

@@ -1001,7 +1001,7 @@ from the definition: which steps cost a model call when they run, which only pin
 free, and which turns pay a guard check. Per piece rather than per turn, because a deciding step
 makes the path dynamic and a guessed total would sometimes lie.
 
-**Who runs it** is on the page too: a checklist of your agents, checked = attached. An unattached
+**Assign to agents** is on the page too (and, since v0.6.227, on the Extensions list as a row action, so a fleet can be pointed at machines without opening each one): a checklist of your agents, checked = attached. An unattached
 machine does nothing, and the only place to attach one used to be a different surface (the chat
 toolbar's Configure → Machines — still there, still works). An agent runs one machine at a time, so
 an agent already running another is labelled with what checking it would move.

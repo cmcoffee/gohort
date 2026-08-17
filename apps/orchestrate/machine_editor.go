@@ -511,7 +511,7 @@ func otherPhaseOptions(def MachineDef, self string) []ui.SelectOption {
 	return out
 }
 
-// attachAgentOptions lists the user's agents for the "Who runs it"
+// attachAgentOptions lists the user's agents for the "Assign to agents"
 // checklist, each labelled with what it runs TODAY when that is some
 // other machine — moving an agent should be a choice made while looking
 // at what it costs, not a discovery.
