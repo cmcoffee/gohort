@@ -155,6 +155,30 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	page.Sections = append(page.Sections, pipelineStageSections(def,
 		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
 	page.Sections = append(page.Sections,
+		// A form on the page, not a dialog: drafting runs a model for up
+		// to a minute and can come back with nothing runnable, and a
+		// door that cannot show you why is the wrong door for it
+		// (v0.6.220).
+		ui.Section{
+			Title: "Describe a change",
+			Wide:  true,
+			Subtitle: "Say what should be different and the pipeline is redrafted with that change made, keeping every stage and prompt it does not touch. " +
+				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
+					SubmitLabel: "Revise it",
+					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
+					Fields: []ui.FormField{{
+						Field: "description", Type: "textarea", Rows: 4,
+						Label:       "What should change?",
+						Placeholder: "Research each query with the web tools instead of answering from memory, and add a stage that checks the sources before the summary.",
+						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
+					}},
+				},
+				undoPipelineRevisionToolbar(def),
+			}},
+		},
 		ui.Section{
 			Title:    "Worth a look",
 			Wide:     true,
@@ -162,6 +186,22 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Body:     ui.Card{HTML: findingsHTMLPlain(def.Advice(), "Nothing — the stages read as instructions rather than specifications.")},
 		})
 	page.ServeHTTP(w, r)
+}
+
+// undoPipelineRevisionToolbar offers to put back what a revision
+// replaced, and only while there is something to put back.
+func undoPipelineRevisionToolbar(def PipelineDef) ui.Component {
+	if def.Previous == nil {
+		return ui.Stack{}
+	}
+	return ui.Toolbar{Actions: []ui.ToolbarAction{{
+		Label:   "Undo the revision",
+		Title:   "Put back the version this pipeline had before the last Describe a change",
+		Method:  "POST",
+		URL:     "/orchestrate/api/pipelines/" + url_(def.ID) + "/undo",
+		Variant: "danger",
+		Confirm: "Put back the version from before the last revision? What the revision produced is discarded.",
+	}}}
 }
 
 // pipelineMapCard is the picture: the whole pipeline, every box a door

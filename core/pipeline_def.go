@@ -370,6 +370,16 @@ type PipelineDef struct {
 	Global  bool      `json:"global,omitempty"`
 	Created time.Time `json:"created,omitempty"` // stripped on export
 	Updated time.Time `json:"updated,omitempty"` // stripped on export
+
+	// Previous is the definition this one replaced, kept so a wholesale
+	// rewrite can be taken back. Exactly ONE deep, and set only by the
+	// doors that REPLACE a pipeline rather than edit part of it (today:
+	// describe-a-change). A stage form does not need it — the field is
+	// right there — but a revision drafted from a paragraph can rewrite
+	// every prompt in the pipeline, and prompts are the part somebody
+	// actually wrote. Stripped on export. Same field, same reasoning, as
+	// MachineDef.Previous.
+	Previous *PipelineDef `json:"previous,omitempty"`
 }
 
 // Validate checks a pipeline def is runnable: at least one stage,
@@ -1025,6 +1035,10 @@ func ExportPipeline(d PipelineDef) PipelineDef {
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
 	d.Global = false // scope is a local decision; imported pipelines land non-global
+	// A recipe carries a pipeline, not its history — and an undo
+	// snapshot would double every bundle for something the importer can
+	// never take back.
+	d.Previous = nil
 	return d
 }
 

@@ -228,6 +228,13 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	case "revise":
+		// Say what should change, against the pipeline on screen
+		// (pipeline_revise.go). Undoable, because it can rewrite every
+		// prompt in it.
+		T.handlePipelineRevise(w, r, udb, user, def)
+	case "undo":
+		T.handlePipelineUndo(w, r, udb, user, def)
 	case "stages":
 		// The per-stage form (pipeline_editor.go).
 		T.handlePipelineStages(w, r, udb, user, def)
