@@ -2105,9 +2105,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			creds := Secure().ListWithPending()
 			rows := make([]credRow, len(creds))
 			for i, c := range creds {
+				// Orphaned = secured and reachable by NOTHING. Connectors
+				// count: a connector naming a credential is a declaring
+				// consumer exactly as a tool with fetch_via: is, and
+				// checking only tools badged a working credential
+				// unreachable — peer image backends are the case that
+				// surfaced it, and the local image and messaging
+				// connectors have the same shape.
 				orphaned := false
 				if c.Secured && CredentialToolsResolver != nil {
-					orphaned = len(CredentialToolsResolver(c.Name)) == 0
+					orphaned = len(CredentialToolsResolver(c.Name)) == 0 &&
+						len(ConnectorsUsingCredential(RootDB, c.Name)) == 0
 				}
 				level := "open"
 				if c.Secured {

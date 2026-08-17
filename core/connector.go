@@ -312,3 +312,41 @@ func recordConnectorError(db Database, name string, err error) {
 	c.LastError = err.Error()
 	db.Set(connectorsTable, name, c)
 }
+
+// ConnectorsUsingCredential names the connectors whose spec references a
+// SecureAPI credential.
+//
+// It exists because a CONNECTOR is a declaring consumer exactly as a
+// tool with fetch_via: is, and the admin's "orphaned" check only knew
+// about tools — so a secured credential reached only through a
+// connector was badged unreachable while working perfectly. Peer image
+// backends are the case that surfaced it; the local image and messaging
+// connectors have the same shape.
+//
+// The probe decodes just the shared "credential" key rather than every
+// kind's full spec: the alternative is a switch over connector kinds
+// that goes stale the first time somebody adds one, and this answers the
+// only question being asked.
+func ConnectorsUsingCredential(db Database, cred string) []string {
+	cred = strings.TrimSpace(cred)
+	if db == nil || cred == "" {
+		return nil
+	}
+	var out []string
+	for _, c := range ListConnectors(db) {
+		if len(c.Spec) == 0 {
+			continue
+		}
+		var probe struct {
+			Credential string `json:"credential"`
+		}
+		if json.Unmarshal(c.Spec, &probe) != nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(probe.Credential), cred) {
+			out = append(out, c.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

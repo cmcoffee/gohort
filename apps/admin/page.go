@@ -1212,12 +1212,28 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// Lockdown level (open / secured) is shown and set by the
 								// segmented pill in the row actions below — no separate
 								// state badge needed here.
-								// Dead-credential warning — locked but no tool uses
-								// it, so nothing can reach it. Only renders when set.
+								// Dead-credential warning — locked and reached by
+								// nothing (no declaring tool AND no connector). Only
+								// renders when set.
 								{
 									Field: "orphaned", Type: "badge",
 									Badges: []ui.BadgeMapping{
-										{Value: true, Label: "⚠ No tool uses this", Color: "danger"},
+										{Value: true, Label: "⚠ Nothing uses this", Color: "danger"},
+									},
+								},
+								// Owned by another configuration, not by this page.
+								// The peer key is the case: peering writes it when a
+								// peer is added and deletes it when the peer is
+								// forgotten, so editing it here is a change the next
+								// sync overwrites. It stays LISTED because somebody
+								// asking "what holds this key" has to be able to
+								// find it — a record that exists and appears nowhere
+								// is its own kind of lie — but it should not read as
+								// an ordinary credential.
+								{
+									Field: "managed", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: "peer", Label: "Managed by Peers", Color: "info"},
 									},
 								},
 								// Pending = oauth2 draft missing its secret.
