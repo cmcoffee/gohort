@@ -20,12 +20,19 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"strconv"
 )
 
 // registerStandingRunner installs the agent-execution closure for core's
 // standing-agent scheduler and ensures the scheduler handler is live.
 func registerStandingRunner(app *OrchestrateApp) {
 	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
+		// A pipeline target runs the pipeline, not an agent. Branch first:
+		// everything below this reads sa.AgentID, and for a pipeline
+		// schedule that is empty.
+		if sa.TargetsPipeline() {
+			return runStandingPipeline(ctx, app, sa)
+		}
 		// Never run a sub-agent that's still held for approval. A schedule (or a
 		// delegation) can be set up against an agent before its owner activates
 		// it — running it anyway would defeat the approval gate. Report an
@@ -179,4 +186,74 @@ func standingSummary(out string) string {
 		return out
 	}
 	return strings.TrimSpace(out[:max]) + "…"
+}
+
+// runStandingPipeline fires a schedule whose target is a pipeline.
+//
+// Deliberately the SAME execution the page's Run button uses
+// (runPipelineHTTP): RunPipelineDefSync as the owner, agent stages
+// dispatching through RunAgentSync, and no inherited tool catalog — so a
+// worker stage reaches exactly what it declares and nothing otherwise.
+// That posture is not a new decision made for schedules; it is the one
+// the owner already exercises by hand, which is the point. A scheduled
+// run that could reach more than the same pipeline reached when clicked
+// would be a surprise nobody asked for.
+func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAgent) StandingRunResult {
+	udb := UserDB(app.DB, sa.Owner)
+	def, ok := LoadPipelineDef(udb, sa.Owner, sa.PipelineID)
+	if !ok {
+		// Attention rather than failure: the schedule is fine, its target
+		// is gone. Naming the id is what lets somebody repoint it instead
+		// of guessing which of their schedules broke.
+		return StandingRunResult{
+			Status: RunAttention,
+			Summary: "Skipped: no pipeline " + strconv.Quote(sa.PipelineID) + " — it was deleted or renamed. " +
+				"Point this schedule at an existing one, or delete it.",
+		}
+	}
+	// A pipeline REFUSES to be stored unrunnable, but a record written by
+	// an older build (or restored from a bundle) can still be invalid.
+	// Better to say so than to fire it and report whatever the first
+	// stage made of a broken reference.
+	if err := def.Validate(); err != nil {
+		return StandingRunResult{
+			Status:  RunAttention,
+			Summary: "Skipped: pipeline " + strconv.Quote(def.Name) + " would not run — " + err.Error(),
+		}
+	}
+	input := strings.TrimSpace(sa.Mission)
+	if input == "" {
+		// A pipeline's input is its subject, not an instruction to begin,
+		// so the agent path's "Run your standing task now." would be a
+		// worse default here: it becomes {input} in the first stage's
+		// prompt. The pipeline's own name is at least about the work.
+		input = def.Name
+	}
+
+	display := strings.TrimSpace(sa.Name)
+	if display == "" {
+		display = def.Name
+	}
+	// Live-activity registration, same as the agent path: a fire has no
+	// HTTP client, so without this it is invisible while running and only
+	// its finished RunRecord ever surfaces.
+	liveRun := app.runsRegistry().Create(sa.Owner, "", "", nil).
+		Describe("standing", display, truncateObs(input, 100))
+	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
+
+	dispatch := func(c context.Context, agentID, stageInput string) (string, error) {
+		return app.RunAgentSync(c, sa.Owner, sa.Owner, agentID, stageInput)
+	}
+	out, err := app.RunPipelineDefSync(ctx, def, input, dispatch, nil)
+	if err != nil {
+		liveRun.Complete(RunStatusFailed)
+		return StandingRunResult{
+			Status:  RunFailed,
+			Summary: "Pipeline " + strconv.Quote(def.Name) + " failed: " + err.Error(),
+		}
+	}
+	liveRun.Complete(RunStatusCompleted)
+	Log("[orchestrate.standing] user=%q fired pipeline %q (%d stages, %d bytes out)",
+		sa.Owner, def.Name, len(def.Stages), len(out))
+	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out)}
 }

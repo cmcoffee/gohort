@@ -886,7 +886,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Description: "Create a standing (scheduled) agent and start its schedule. agent_id must name an agent that already exists. Schedule it EITHER with cron (recurring at a wall-clock time — preferred for \"every day at HH:MM\") OR with interval_seconds + optional start_at (a specific first run, then a fixed interval).",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
-					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run."},
+					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run. Give this OR pipeline_id, not both."},
+					"pipeline_id":      {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow — a nightly research run, a scheduled report — rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
 					"mission":          {Type: "string", Description: "What the agent should do each run."},
 					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM — NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
 					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
@@ -899,8 +900,15 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				agentID := strings.TrimSpace(oArgStr(args, "agent_id"))
 				cron := strings.TrimSpace(oArgStr(args, "cron"))
 				interval := oArgInt(args, "interval_seconds")
-				if name == "" || agentID == "" {
-					return "", fmt.Errorf("name and agent_id are required")
+				pipelineRef := strings.TrimSpace(oArgStr(args, "pipeline_id"))
+				if name == "" {
+					return "", fmt.Errorf("name is required")
+				}
+				if agentID == "" && pipelineRef == "" {
+					return "", fmt.Errorf("give the schedule something to run: agent_id, or pipeline_id for a pipeline")
+				}
+				if agentID != "" && pipelineRef != "" {
+					return "", fmt.Errorf("name either agent_id or pipeline_id, not both — whichever the runner checked first would be the one that ran")
 				}
 				// Resolve the target to its STABLE record id now, and store that.
 				// Agent ids are UUIDs; agent_id here is usually a name/slug. If we
@@ -913,8 +921,34 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// produces a plausible-sounding run that accomplished nothing.
 				// A warning, not an error: a text-only agent that composes
 				// something and reports back is a legitimate standing task.
+				// A pipeline target resolves to its stored ID the same way an
+				// agent does, and for the same reason: a rename must not
+				// orphan the schedule, and a typo should fail here rather
+				// than at 3am.
+				pipelineID := ""
+				if pipelineRef != "" {
+					if sess == nil || sess.DB == nil {
+						return "", fmt.Errorf("no session store to resolve %q against", pipelineRef)
+					}
+					def, ok := LoadPipelineDef(sess.DB, owner, pipelineRef)
+					if !ok {
+						for _, d := range ListPipelineDefs(sess.DB, owner) {
+							if strings.EqualFold(strings.TrimSpace(d.Name), pipelineRef) {
+								def, ok = d, true
+								break
+							}
+						}
+					}
+					if !ok {
+						return "", fmt.Errorf("no pipeline named %q — pipeline(action=\"list\") shows the exact names", pipelineRef)
+					}
+					if err := def.Validate(); err != nil {
+						return "", fmt.Errorf("pipeline %q would not run: %w", def.Name, err)
+					}
+					pipelineID = def.ID
+				}
 				toolWarn := ""
-				if sess != nil && sess.DB != nil {
+				if agentID != "" && sess != nil && sess.DB != nil {
 					if target, ok := findAgentByNameOrID(sess.DB, owner, agentID); ok {
 						agentID = target.ID
 						if agentHasNoTools(target) {
@@ -932,11 +966,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// fire time). Default it so a self-directed agent (whose orchestrator
 				// prompt already says what to do each run) still fires cleanly.
 				mission := strings.TrimSpace(oArgStr(args, "mission"))
-				if mission == "" {
+				if mission == "" && pipelineID == "" {
 					mission = "Run your standing task now."
 				}
 				sa := StandingAgent{
-					Name: name, Owner: owner, AgentID: agentID,
+					Name: name, Owner: owner, AgentID: agentID, PipelineID: pipelineID,
 					Mission: mission, Created: time.Now(),
 					ReportAgentID:   controllerAgentID,
 					ReportSessionID: controllerSession,

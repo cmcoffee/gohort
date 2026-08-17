@@ -94,13 +94,40 @@ func eventMonitorDependencyError(m EventMonitor) string {
 	return ""
 }
 
-// standingAgentDependencyError returns a reason a standing agent can no longer
-// run — its target agent was deleted — or "" if healthy.
+// standingAgentDependencyError returns a reason a standing agent can no
+// longer run — its target was deleted — or "" if healthy.
+//
+// The target is an agent OR a pipeline (StandingAgent.PipelineID), and
+// the pipeline case was UNCHECKED. Not a false positive — agentExists
+// answers true for an empty id, deliberately — so a schedule whose
+// pipeline had been deleted read as healthy here and failed at fire
+// time instead. Which is the quieter half of the same problem this
+// package exists to solve: a dependency that is gone should be visible
+// where somebody is looking at the schedule, not discovered at 3am.
 func standingAgentDependencyError(sa StandingAgent) string {
+	if sa.TargetsPipeline() {
+		if !pipelineExists(sa.Owner, sa.PipelineID) {
+			return fmt.Sprintf("its target pipeline was deleted (id %s)", sa.PipelineID)
+		}
+		return ""
+	}
 	if !agentExists(sa.Owner, sa.AgentID) {
 		return fmt.Sprintf("its target agent was deleted (id %s)", sa.AgentID)
 	}
 	return ""
+}
+
+// pipelineExists is agentExists' counterpart for a pipeline target.
+func pipelineExists(owner, id string) bool {
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(id) == "" {
+		return false
+	}
+	udb := UserDB(RootDB, owner)
+	if udb == nil {
+		return false
+	}
+	_, ok := LoadPipelineDef(udb, owner, id)
+	return ok
 }
 
 // credentialDeleted marks every watch monitor that polls through a just-deleted

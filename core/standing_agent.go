@@ -38,7 +38,22 @@ type StandingAgent struct {
 	Name    string `json:"name"`
 	Owner   string `json:"owner"`
 	AgentID string `json:"agent_id"`
-	Mission string `json:"mission"` // the standing brief handed to the agent each run
+	// PipelineID targets a stored PipelineDef instead of an agent, for the
+	// shape a schedule most often wants: run this workflow on this
+	// timetable. Exactly one of AgentID / PipelineID is set.
+	//
+	// It exists because the alternative was a wrapper agent whose entire
+	// job was to decide to call run_<pipeline> — an LLM turn spent
+	// reaching a foregone conclusion, and an agent in somebody's fleet
+	// that is pure plumbing. A pipeline already runs without a session
+	// and already has a page and a run history; a schedule was the one
+	// thing that could not point at it.
+	//
+	// AppSpec set the precedent: it carries AgentID ("a conversation
+	// lives here") and PipelineID ("a multi-stage RUN lives here") side
+	// by side, for the same reason.
+	PipelineID string `json:"pipeline_id,omitempty"`
+	Mission    string `json:"mission"` // the standing brief handed to the agent each run, or the pipeline's input
 	Cron    string `json:"cron"`    // schedule spec (NextCronOccurrence), e.g. "FRI 21:30"
 	// Interval scheduling — an alternative to Cron for schedules cron can't
 	// express (specific start + arbitrary interval): first run at StartAt (or
@@ -538,4 +553,30 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 		}
 	}
 	return rec
+}
+
+// TargetsPipeline reports whether this schedule fires a pipeline rather
+// than an agent.
+func (sa StandingAgent) TargetsPipeline() bool {
+	return strings.TrimSpace(sa.PipelineID) != ""
+}
+
+// ValidateTarget checks that exactly one target is named.
+//
+// Both is refused rather than resolved by precedence: a record carrying
+// an agent AND a pipeline has one of them silently ignored forever, and
+// which one depends on the order of an if. Neither is refused because a
+// schedule that fires nothing still fires — it just records an attention
+// entry every time, which is a job that exists to fail.
+func (sa StandingAgent) ValidateTarget() error {
+	agent := strings.TrimSpace(sa.AgentID) != ""
+	pipe := strings.TrimSpace(sa.PipelineID) != ""
+	switch {
+	case agent && pipe:
+		return Error("a schedule names either an agent or a pipeline, not both — " +
+			"drop one, because whichever the runner happened to check first would be the one that ran")
+	case !agent && !pipe:
+		return Error("a schedule needs something to run: an agent_id or a pipeline_id")
+	}
+	return nil
 }
