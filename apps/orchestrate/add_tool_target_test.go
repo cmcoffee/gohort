@@ -5,6 +5,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
+	"strings"
 )
 
 // addToolTestSess builds the minimal ToolSession add_tool needs, plus a parent
@@ -139,4 +140,58 @@ func toolNames(sess *ToolSession, a AgentRecord) []string {
 		out = append(out, p.Tool.Name)
 	}
 	return out
+}
+
+// An allowlist is an INTERSECTION. A name in it that matches no tool
+// removes nothing and adds nothing, so the agent saves clean and is
+// simply missing a capability its author believes it has — and the next
+// read strips the name and says so in a server log, which is the wrong
+// audience. The author is right there in the reply, still able to fix it.
+func TestAToolNameThatMatchesNothingIsReportedToItsAuthor(t *testing.T) {
+	sess, _, _ := addToolTestSess(t)
+
+	// The resolvable name is a prefix-rule one (from_client.*, call_*),
+	// because the chat-tool registry is populated when the server starts
+	// and not in a unit test — the same reason selfHealAllowedTools,
+	// which uses this predicate to DELETE names, only ever runs behind a
+	// live registry.
+	note := unresolvedToolNote(sess.DB, AgentRecord{
+		Owner:        sess.Username,
+		AllowedTools: []string{"call_github", "search_the_moon", "also_not_real"},
+	})
+	if note == "" {
+		t.Fatal("two names match nothing and the author was told nothing")
+	}
+	for _, want := range []string{`"search_the_moon"`, `"also_not_real"`, "intersection"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the warning should carry %s:\n%s", want, note)
+		}
+	}
+	// The real one is not accused.
+	if strings.Contains(note, `"call_github"`) {
+		t.Errorf("a resolvable tool should not be named:\n%s", note)
+	}
+	// And it says what to do, since "this is wrong" without a next step
+	// is how a model reports success anyway.
+	if !strings.Contains(note, "author the tool first") {
+		t.Errorf("the warning should name the fix:\n%s", note)
+	}
+
+	// The sentinels are not tool names and must not be accused.
+	for _, sentinel := range [][]string{{"*"}, {noToolsSentinel}} {
+		if got := unresolvedToolNote(sess.DB, AgentRecord{
+			Owner: sess.Username, AllowedTools: sentinel}); got != "" {
+			t.Errorf("%v is a marker, not a tool: %s", sentinel, got)
+		}
+	}
+	// An empty allowlist is the default pool, not a mistake.
+	if got := unresolvedToolNote(sess.DB, AgentRecord{Owner: sess.Username}); got != "" {
+		t.Errorf("an empty allowlist means everything: %s", got)
+	}
+	// And an agent whose names all resolve gets no note at all — a
+	// warning that appears every time is one nobody reads.
+	if got := unresolvedToolNote(sess.DB, AgentRecord{
+		Owner: sess.Username, AllowedTools: []string{"call_github", "from_client.scan"}}); got != "" {
+		t.Errorf("nothing to warn about:\n%s", got)
+	}
 }

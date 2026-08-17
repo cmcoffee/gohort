@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -197,10 +198,54 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		" Authoring focus is now %q — a subsequent add_tool with no `agent` argument attaches THERE. To tool up a different agent (e.g. the parent this was built for), pass agent=\"<name or id>\" explicitly.",
 		saved.Name,
 	)
+	unresolved := unresolvedToolNote(sess.DB, saved)
 	return fmt.Sprintf(
-		"AGENT_CREATED ok. id=%s name=%q.%s%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, focusNote, string(b),
+		"AGENT_CREATED ok. id=%s name=%q.%s%s%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
+		saved.ID, saved.Name, verifyHint, focusNote, unresolved, string(b),
 	), nil
+}
+
+// unresolvedToolNote names the entries of an agent's allowlist that
+// match no tool.
+//
+// An allowlist is an INTERSECTION: a name that resolves to nothing
+// removes nothing and adds nothing, so the agent saves clean and is
+// simply missing a capability its author believes it has. The next read
+// strips the name (selfHealAllowedTools) and logs it server-side, which
+// is the wrong audience — the author is right here, in this reply,
+// still able to fix it.
+//
+// Run AFTER the session drafts are copied, because that copy is what
+// makes a just-authored tool resolvable; checking earlier would report
+// the ordinary make-a-tool-then-make-an-agent flow as broken.
+func unresolvedToolNote(db Database, a AgentRecord) string {
+	if len(a.AllowedTools) == 0 || isNoToolsSentinel(a.AllowedTools) {
+		return ""
+	}
+	var bad []string
+	for _, name := range a.AllowedTools {
+		if name = strings.TrimSpace(name); name == "" || name == "*" {
+			continue
+		}
+		if !isResolvableToolName(db, a.Owner, name) {
+			bad = append(bad, strconv.Quote(name))
+		}
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" WARNING: %s in allowed_tools match no tool this user has, so the agent does NOT have %s"+
+		" — an allowlist is an intersection, and a name that resolves to nothing removes nothing and adds nothing."+
+		" The next save strips %s. Either author the tool first and add the name back, or drop it and tell the user"+
+		" what the agent cannot do.",
+		strings.Join(bad, ", "), pluralThem(len(bad)), pluralThem(len(bad)))
+}
+
+func pluralThem(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 // autoCopySessionToolsForAgent scans rec.AllowedTools for names that match
@@ -461,9 +506,12 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// same card, same reason.
 	emitPrivilegeCard(sess, saved, append(append([]TempTool{}, inlineTools...), copiedTools...))
 	b, _ := json.Marshal(saved)
+	// Same check as create: an update is where a tool name goes stale,
+	// because the allowlist is rewritten while the tools it references
+	// were authored somewhere else.
 	return fmt.Sprintf(
-		"AGENT_UPDATED ok. id=%s name=%q.%s DONE — reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, string(b),
+		"AGENT_UPDATED ok. id=%s name=%q.%s%s DONE — reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
+		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved), string(b),
 	), nil
 }
 
