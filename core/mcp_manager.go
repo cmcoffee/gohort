@@ -604,7 +604,19 @@ func (m *MCPManager) PerUserOAuthConnectionsFor(user string) []PerUserConnection
 			Connected:   m.connected(user, c.Name),
 			OAuth:       true,
 			Kind:        "mcp",
-			ConnectURL:  "mcp/connect?server=" + url.QueryEscape(c.Name),
+			// ABSOLUTE. This was "mcp/connect?server=…", account-relative,
+			// and its only consumer is the connections card on the
+			// EXTENSIONS page — where it resolved to /mcp/connect, which
+			// nothing serves. The popup then loaded a page whose own
+			// relative sources resolved against /mcp/, so every table on
+			// it fetched HTML and fell over. Reconnect looked like it
+			// landed on the credentials list and broke it.
+			//
+			// The path was already hardcoded here, so naming the mount
+			// adds no coupling that was not present — and the chat's
+			// Connect prompt (orchestrate/runner.go) has always emitted
+			// this same absolute form, which is the drift this removes.
+			ConnectURL:  "/account/mcp/connect?server=" + url.QueryEscape(c.Name),
 		})
 	}
 	return out

@@ -703,8 +703,11 @@ type PerUserConnection struct {
 	OAuth       bool   `json:"oauth"` // true → connect via the consent flow (Connect button), false → paste a key
 	// Kind identifies which subsystem owns this connection so the Account panel
 	// routes Connect/Disconnect correctly: "" (SecureAPI, the default) or "mcp"
-	// (a per-user OAuth MCP server). ConnectURL, when set, is the account-relative
-	// consent path for OAuth kinds that don't use the default SecureAPI route.
+	// (a per-user OAuth MCP server). ConnectURL, when set, is the ABSOLUTE
+	// consent path for OAuth kinds that don't use the default SecureAPI
+	// route — absolute because the panel that renders it is not on the
+	// account page, and a relative one resolved against whatever page
+	// happened to be showing it.
 	Kind       string `json:"kind,omitempty"`
 	ConnectURL string `json:"connect_url,omitempty"`
 }

@@ -65,7 +65,30 @@
 
     function reload(quiet) {
       if (!quiet && refreshIndicator) refreshIndicator.textContent = '↻';
-      // Skip while any expansion is open (don't slam them shut).
+      // firstRecordList pulls the rows out of whatever the source
+    // returned: an array, the conventional {conversations: [...]}, or a
+    // shaped object whose first ARRAY value is the list.
+    //
+    // The array test on that last case is the load-bearing part. It
+    // used to take the first key's value whatever it was, so a payload
+    // that was not a list at all — a single record, an error body, or
+    // the HTML of a 404 page when a relative source resolved against
+    // the wrong base — became `records`, and the next line called
+    // .filter on it. The table died with "records.filter is not a
+    // function", which names the symptom and nothing else; the actual
+    // fault was several layers away, in a URL.
+    function firstRecordList(d) {
+      if (Array.isArray(d)) return d;
+      if (!d || typeof d !== 'object') return [];
+      if (Array.isArray(d.conversations)) return d.conversations;
+      var keys = Object.keys(d);
+      for (var i = 0; i < keys.length; i++) {
+        if (Array.isArray(d[keys[i]])) return d[keys[i]];
+      }
+      return [];
+    }
+
+    // Skip while any expansion is open (don't slam them shut).
       if (Object.keys(openExpansions).some(function(k){ return Object.keys(openExpansions[k]).length > 0; })) return;
       fetchJSON(cfg.source).then(function(d) {
         if (cfg.records_field) {
@@ -77,7 +100,7 @@
           var v = d ? d[cfg.records_field] : null;
           records = Array.isArray(v) ? v : [];
         } else {
-          records = (d && d.conversations) || (Array.isArray(d) ? d : (d && d[Object.keys(d)[0]]) || []);
+          records = firstRecordList(d);
         }
         if (cfg.sort_by) {
           records.sort(function(a, b) {
