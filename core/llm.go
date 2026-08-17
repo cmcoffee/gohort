@@ -131,6 +131,24 @@ type Response struct {
 	// budget to continue a still-unfinished investigation. Zero value on
 	// every non-agent-loop Response and on natural completions.
 	HitRoundCap bool
+
+	// usageCounted marks that this response's tokens have already reached the
+	// usage trackers, so the two layers that record them can both run without
+	// counting the call twice.
+	//
+	// There are two, deliberately. The reloadable LLM handle records every call
+	// that passes through it, which is every call in the shipped framework
+	// INCLUDING the ones that go straight to LLM.Chat without a WorkerChat /
+	// LeadChat / ChatStreamWithReport wrapper around them — the judges, the
+	// suggesters, the compactor. The AppCore wrappers still record too, because
+	// an AppCore built around a raw LLM (the SDK's NewAgent, a test's fake)
+	// never touches a reloadable handle and would otherwise report nothing.
+	// Whichever sees the response first claims it; the other skips.
+	//
+	// Unexported because it is bookkeeping about the response rather than part
+	// of it — no caller should be able to set it, and no serialization of a
+	// Response should carry it.
+	usageCounted bool
 }
 
 // Capability describes the kind of side effect a tool can have. Apps use

@@ -301,6 +301,14 @@ func BuildDiff(globalStart UsageSnapshot, sessions ...*Session) UsageDiff {
 		d.WorkerOutput += x.WorkerOutput
 		d.LeadInput += x.LeadInput
 		d.LeadOutput += x.LeadOutput
+		// The cached share, which the session records and this loop used to
+		// drop — leaving Report()'s log line to describe a large cached run as
+		// a handful of fresh tokens and a cost to match. ReportSessions and
+		// UsageScope.Diff already carried all eight; this was the odd one out.
+		d.WorkerCacheRead += x.WorkerCacheRead
+		d.WorkerCacheWrite += x.WorkerCacheWrite
+		d.LeadCacheRead += x.LeadCacheRead
+		d.LeadCacheWrite += x.LeadCacheWrite
 	}
 	g := ProcessUsage().Diff(globalStart)
 	d.SearchCalls = g.SearchCalls
@@ -336,8 +344,32 @@ type DailyCost struct {
 	WorkerCacheWrite int64 `json:"worker_cache_write,omitempty"`
 	LeadCacheRead    int64 `json:"lead_cache_read,omitempty"`
 	LeadCacheWrite   int64 `json:"lead_cache_write,omitempty"`
+	// The WHOLE prompt per tier — fresh input plus cache reads plus cache
+	// writes. Derived, not accumulated: Price() fills them from the counters
+	// above.
+	//
+	// These exist because WorkerInput / LeadInput are the uncached remainder
+	// ONLY (the provider's own definition), while Cost prices all three
+	// components. A surface that showed "lead in" as LeadInput next to a
+	// dollar figure computed from the full prompt was reporting two numbers
+	// that could not produce each other: on a cache-heavy conversation the
+	// uncached remainder is a rounding error against the prompt the model
+	// actually read, so the tokens looked absent and the cost looked invented.
+	WorkerPrompt int64   `json:"worker_prompt,omitempty"`
+	LeadPrompt   int64   `json:"lead_prompt,omitempty"`
 	ExternalCost float64 `json:"external_cost"` // metered source-hook / credential spend folded in at aggregation (already priced)
 	RunCount     int     `json:"run_count"`
+}
+
+// Price fills the derived fields — the dollar estimate and the two
+// whole-prompt totals — from the counters already summed on the row. One
+// place, so the tokens a surface displays and the cost beside them are
+// always computed from the same usage.
+func (d *DailyCost) Price(rates CostRates) {
+	u := dailyCostUsage(*d)
+	d.Cost = rates.Estimate(u)
+	d.WorkerPrompt = u.WorkerPrompt()
+	d.LeadPrompt = u.LeadPrompt()
 }
 
 type costScanner struct {
@@ -458,12 +490,12 @@ func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 		for i := days - 1; i >= 0; i-- {
 			day := today.AddDate(0, 0, -i).Format("2006-01-02")
 			if d, ok := daily[day]; ok {
-				// dailyCostUsage, NOT a literal: the literal that used to be
+				// Price(), NOT a literal Estimate: the literal that used to be
 				// here omitted the four cache counters, so a day whose spend
 				// was almost entirely cached priced at a rounding error. The
 				// tokens were aggregated correctly ten lines up and then
 				// dropped on the way into Estimate.
-				d.Cost = rates.Estimate(dailyCostUsage(*d))
+				d.Price(rates)
 				out = append(out, *d)
 			} else {
 				out = append(out, DailyCost{Date: day})
@@ -473,7 +505,7 @@ func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 	}
 	out := make([]DailyCost, 0, len(daily))
 	for _, d := range daily {
-		d.Cost = rates.Estimate(dailyCostUsage(*d))
+		d.Price(rates)
 		out = append(out, *d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })

@@ -1260,15 +1260,14 @@ func (T *AppCore) trackTokens(ctx context.Context, resp *Response) {
 			T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
 		}
 	}
-	// Also feed the process-wide UsageTracker so per-run Scope()
-	// callers see the worker portion of consumption.
-	ProcessUsage().AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
-	// And the request-scoped tracker, when this call came from an HTTP
-	// request — that's what makes the middleware's per-request cost line
-	// report this request's own spend instead of the process-wide window.
-	if t := RequestUsage(ctx); t != nil {
-		t.AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
-	}
+	// Feed the process-wide UsageTracker so per-run Scope() callers see the
+	// worker portion of consumption, and the request-scoped tracker when this
+	// call came from an HTTP request — that's what makes the middleware's
+	// per-request cost line report this request's own spend instead of the
+	// process-wide window. A no-op when the reloadable handle already claimed
+	// this response, which is the normal case in the running server; this path
+	// is what covers an AppCore holding a raw LLM.
+	RecordUsage(ctx, WORKER, resp)
 }
 
 // trackLeadTokens is the lead-tier counterpart to trackTokens. Called
@@ -1290,10 +1289,8 @@ func (T *AppCore) trackLeadTokens(ctx context.Context, resp *Response) {
 			T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
 		}
 	}
-	ProcessUsage().AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
-	if t := RequestUsage(ctx); t != nil {
-		t.AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
-	}
+	// See trackTokens: a no-op when the lead handle already claimed it.
+	RecordUsage(ctx, LEAD, resp)
 }
 
 // SetLimiter sets the limiter with the given limit.

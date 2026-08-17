@@ -73,14 +73,34 @@ func ReloadLLMs() error {
 // reloadableLLM forwards every call to whatever the getter currently returns, so
 // a handle captured once (by an app at startup) always uses the live shared LLM
 // after a reload. The LLM interface is just Chat + ChatStream.
-type reloadableLLM struct{ get func() LLM }
+//
+// It is also where token usage is recorded, because it is the ONE place every
+// call in the shipped framework passes through. The AppCore chat wrappers
+// (WorkerChat / LeadChat / ChatStreamWithReport) record too, but only calls
+// that go through them: roughly twenty call sites — the turn judge, the
+// grounding judge, gap check, channel gatekeeping, operator compaction, every
+// suggest/draft helper — reach LLM.Chat directly, and their spend was invisible
+// to the cost history entirely. Instrumenting the handle catches them without
+// asking every future call site to remember, and without the wrappers' side
+// effects (WorkerChat turns thinking on by default, which is not something a
+// judge parsing strict JSON should inherit just to get counted).
+type reloadableLLM struct {
+	get func() LLM
+	// lead marks this as the LEAD-tier handle. Attribution follows the HANDLE
+	// rather than the caller's intent, which is what makes it correct: a lead
+	// request that routed to the worker went through the worker handle and is
+	// worker spend, priced at worker rates.
+	lead bool
+}
 
 func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	llm := r.get()
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
 	}
-	return llm.Chat(ctx, messages, opts...)
+	resp, err := llm.Chat(ctx, messages, opts...)
+	r.record(ctx, resp)
+	return resp, err
 }
 
 func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
@@ -88,7 +108,26 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
 	}
-	return llm.ChatStream(ctx, messages, handler, opts...)
+	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
+	r.record(ctx, resp)
+	return resp, err
+}
+
+// record credits the call to whichever tier this handle serves. Runs on the
+// error path as well — a call that failed after its prompt went out is still
+// billed for the prompt.
+//
+// The LEAD handle falls back to the worker when no distinct lead is configured
+// ("use primary"), so it asks whether one exists RIGHT NOW rather than assuming
+// its own name. Without that check, a worker-only deployment — a free local
+// model with the cloud lead rates still filled in — would price every escalated
+// call at lead rates and invent a bill.
+func (r reloadableLLM) record(ctx context.Context, resp *Response) {
+	tier := WORKER
+	if r.lead && SharedLeadLLM() != nil {
+		tier = LEAD
+	}
+	RecordUsage(ctx, tier, resp)
 }
 
 // ContextSize forwards the underlying LLM's ContextSizer, mirroring retryLLM.
@@ -112,7 +151,7 @@ func ReloadableWorkerLLM() LLM { return reloadableLLM{get: SharedWorkerLLM} }
 // worker when no lead is configured ("use primary"). Always forwards (never a nil
 // interface) so reconfiguring the lead provider later also takes effect live.
 func ReloadableLeadLLM() LLM {
-	return reloadableLLM{get: func() LLM {
+	return reloadableLLM{lead: true, get: func() LLM {
 		if l := SharedLeadLLM(); l != nil {
 			return l
 		}

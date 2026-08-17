@@ -94,11 +94,11 @@ func recordDailyUsage(diff UsageDiff) {
 	rec.LeadCacheRead += diff.LeadCacheRead
 	rec.LeadCacheWrite += diff.LeadCacheWrite
 	rec.RunCount++
-	// Recompute cost using the current rates so the stored cost
-	// reflects whatever rates were configured at call time. The
-	// admin chart re-derives cost on render anyway, but having it
-	// stored makes ad-hoc DB inspection meaningful.
-	rec.Cost = GetCostRates().Estimate(dailyCostUsage(rec))
+	// Recompute cost and the whole-prompt totals using the current rates so
+	// the stored row reflects whatever rates were configured at call time. The
+	// admin chart re-derives both on render anyway, but having them stored
+	// makes ad-hoc DB inspection meaningful.
+	rec.Price(GetCostRates())
 	RootDB.Set(usageDailyTable, day, rec)
 }
 

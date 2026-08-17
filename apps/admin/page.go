@@ -917,7 +917,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			// retained for compatibility but no longer surfaced here.
 			{
 				Title:    "Cost History (Last 30 Days)",
-				Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown of runs, tokens, searches, and images.",
+				Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown of runs, tokens, searches, and images. The \"in\" figures are the whole prompt; the cached / written rows beneath each are the share of it billed at the cache weights rather than the full input rate.",
 				Body: ui.BarChart{
 					Source:    "api/cost-history?days=30",
 					XField:    "date",
@@ -927,11 +927,23 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					YDecimals: 4,
 					HeightPx:  220,
 					EmptyText: "No usage recorded in the last 30 days.",
+					// "in" is the WHOLE prompt (worker_prompt / lead_prompt), not
+					// the uncached remainder the provider calls input_tokens —
+					// the bar above prices all three components, so showing only
+					// the fresh share put a near-zero token count beside a real
+					// dollar figure and made the chart look wrong when it wasn't.
+					// The cached / written rows below each "in" are the split
+					// that explains the price; they omit themselves entirely on a
+					// backend that does no caching.
 					Breakdown: []ui.DisplayPair{
 						{Label: "Runs", Field: "run_count", Format: "thousands"},
-						{Label: "Worker in", Field: "worker_input", Format: "thousands", Mono: true},
+						{Label: "Worker in", Field: "worker_prompt", Format: "thousands", Mono: true},
+						{Label: "— cached", Field: "worker_cache_read", Format: "thousands", Mono: true},
+						{Label: "— written", Field: "worker_cache_write", Format: "thousands", Mono: true},
 						{Label: "Worker out", Field: "worker_output", Format: "thousands", Mono: true},
-						{Label: "Lead in", Field: "lead_input", Format: "thousands", Mono: true},
+						{Label: "Lead in", Field: "lead_prompt", Format: "thousands", Mono: true},
+						{Label: "— cached", Field: "lead_cache_read", Format: "thousands", Mono: true},
+						{Label: "— written", Field: "lead_cache_write", Format: "thousands", Mono: true},
 						{Label: "Lead out", Field: "lead_output", Format: "thousands", Mono: true},
 						{Label: "Searches", Field: "search_calls", Format: "thousands", Mono: true},
 						{Label: "Images", Field: "image_calls", Format: "thousands", Mono: true},

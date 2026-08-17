@@ -238,6 +238,43 @@ func (u *UsageTracker) AddLeadTokens(input, output, cacheRead, cacheWrite int) {
 	}
 }
 
+// RecordUsage credits one completed LLM call to the process tracker and, when
+// the call came from an HTTP request, to that request's tracker as well. tier
+// is the tier that actually SERVED the call, not the one the caller asked for
+// — a lead request that routed or fell back to the worker is worker spend.
+//
+// Idempotent per Response: the first layer to see a response claims it and
+// every later layer skips. See Response.usageCounted for why more than one
+// layer records.
+//
+// Called with a response that carries an error's partial counts too. A stream
+// that failed after the prompt went out still consumed the prompt, and the
+// provider still bills it; dropping it because the call ended badly is how a
+// deployment with a flaky lead under-reports exactly its worst days.
+func RecordUsage(ctx context.Context, tier LLMTier, resp *Response) {
+	if resp == nil || resp.usageCounted {
+		return
+	}
+	if resp.InputTokens == 0 && resp.OutputTokens == 0 &&
+		resp.CacheReadTokens == 0 && resp.CacheWriteTokens == 0 {
+		// Nothing to claim, so leave it unclaimed: a provider that reports no
+		// counts on this call may still have them on a retry of it.
+		return
+	}
+	resp.usageCounted = true
+	if tier == LEAD {
+		ProcessUsage().AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+		if t := RequestUsage(ctx); t != nil {
+			t.AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+		}
+		return
+	}
+	ProcessUsage().AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+	if t := RequestUsage(ctx); t != nil {
+		t.AddWorkerTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
+	}
+}
+
 // AddSearchCall increments the external search counter. Should fire
 // only for real provider hits — cache hits should NOT bump it, since
 // they don't consume search-API quota.

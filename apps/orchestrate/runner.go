@@ -8270,8 +8270,15 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		})
 	}
 	stopKeepalive := startKeepalive(t.sse)
-	// Worker tier (Private: true route stage) — same routing as the
-	// plan round; honors the "worker (thinking)" preference.
+	// Same route stage as the plan round; honors its thinking preference,
+	// and — through ChatStreamWithReport below — its TIER. This round used
+	// to call t.app.LLM.ChatStream straight, which meant an agent with "Use
+	// Lead model" on planned its turn on the lead and then wrote the reply
+	// the user actually reads on the worker, contradicting the stage's own
+	// documented scope ("plan + synthesis"). It also meant not one token of
+	// the largest prompt in the turn — the whole conversation plus every
+	// tool result — reached the usage tracker, so the admin cost history
+	// under-counted every agent turn by roughly a synthesis prompt.
 	think := true
 	if p := RouteThink(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())); p != nil {
 		think = *p
@@ -8299,7 +8306,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// turn so its lens governs the synthesis reply. No trigger hints here —
 	// synthesis has no tools, so a "go consult it" nudge would be useless.
 	synthSys += t.renderTriggeredSkills()
-	resp, err := t.app.LLM.ChatStream(t.ctx,
+	resp, err := t.app.ChatStreamWithReport(t.ctx,
 		msgs,
 		handler,
 		WithSystemPrompt(synthSys),

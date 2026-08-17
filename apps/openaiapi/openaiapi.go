@@ -440,13 +440,16 @@ func (T *OpenAIAPI) servePassthrough(w http.ResponseWriter, r *http.Request, use
 	}
 	id := completionID()
 	sse.chunk(id, req.Model, "", "assistant") // role-only opener, per the OpenAI stream shape
-	llm := SharedWorkerLLM()
-	if lead {
-		if l := SharedLeadLLM(); l != nil {
-			llm = l
-		}
+	// The RELOADABLE handles, not the concrete pair. Two reasons, both of which
+	// this endpoint was quietly missing: a model/provider change applied from
+	// the admin UI reaches this endpoint without a restart, and the handle is
+	// where token usage is recorded — every raw-model completion served here
+	// used to cost real money and appear nowhere in the cost history.
+	llm := ReloadableWorkerLLM()
+	if lead && SharedLeadLLM() != nil {
+		llm = ReloadableLeadLLM()
 	}
-	if llm == nil {
+	if SharedWorkerLLM() == nil && SharedLeadLLM() == nil {
 		sse.done()
 		return
 	}
