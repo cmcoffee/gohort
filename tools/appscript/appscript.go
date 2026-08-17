@@ -93,6 +93,15 @@ func ownerFetchViaCaps(owner string) []string {
 		add(c.Name)
 	}
 	for _, c := range Secure().List() {
+		// Skip credentials another configuration owns. fetch_via IS a
+		// declaring capability, so a secured credential is legitimately
+		// usable this way — but the peer key is not a user capability at
+		// all. It is an admin resource-sharing arrangement that appears
+		// and disappears with its peer, and a script declared against it
+		// stops working the day the peer is forgotten.
+		if c.ManagedElsewhere() {
+			continue
+		}
 		if Secure().UserMayUse(c, owner) {
 			add(c.Name)
 		}

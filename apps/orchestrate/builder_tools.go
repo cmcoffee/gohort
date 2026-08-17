@@ -816,6 +816,16 @@ func surveyCredentials(owner string) []SecureCredential {
 		if c.Name == "" || seen[c.Name] {
 			return
 		}
+		// A credential some other configuration owns is not a thing to
+		// wire something to. The peer key is the case: peering writes it
+		// when a peer is added and deletes it when the peer is
+		// forgotten, so a tool Builder bound to it breaks the day the
+		// peer is dropped — and the survey is otherwise deliberately
+		// generous (it shows disabled and half-finished credentials,
+		// because those are what Builder needs to see).
+		if c.ManagedElsewhere() {
+			return
+		}
 		seen[c.Name] = true
 		out = append(out, c)
 	}
