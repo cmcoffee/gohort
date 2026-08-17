@@ -35,8 +35,8 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 			Name:        "machine",
 			Description: "Author phase machines — workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, list, get, delete.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call** — an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
-				"action":      {Type: "string", Description: "One of: create | update | list | get | delete | help."},
-				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/delete also accept the id."},
+				"action":      {Type: "string", Description: "One of: create | update | list | get | repair | delete | help."},
+				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
 				"id":          {Type: "string", Description: "(update/get/delete) Machine id, if you have it instead of the name."},
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the machine is for."},
 				"start":       {Type: "string", Description: "(create/update) Name of the phase a fresh session enters. Defaults to the first phase in the list."},
@@ -66,10 +66,12 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				return t.machineGet(args)
 			case "delete":
 				return t.machineDelete(args)
+			case "repair":
+				return t.machineRepair(args)
 			case "help", "":
 				return machineHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | list | get | delete | help", action)
+				return "", fmt.Errorf("unknown action %q — use create | update | list | get | repair | delete | help", action)
 			}
 		},
 	}
@@ -80,6 +82,9 @@ const machineHelpText = `machine actions:
 - update  {name|id, ...} — revise in place (same id, attachments stay).
 - list    — your machines: [{id, name, description, phases, start}].
 - get     {name|id, full?:true} — one machine's definition.
+- repair  {name|id} — settle the findings with exactly one right answer (references to steps that
+           are gone, a field filled from a variable but declared as a number). Anything with two
+           defensible answers is left alone and still reported.
 - delete  {name|id}.
 
 An unattached machine does nothing — pass attach_to_agents, or the agent never enters it.
@@ -290,7 +295,34 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 	if len(unknown) > 0 {
 		fmt.Fprintf(&b, " No agent found named: %s.", strings.Join(unknown, ", "))
 	}
+	b.WriteString(machineFindingsNote(saved))
 	return b.String(), nil
+}
+
+// machineFindingsNote reports the advice the editor's "worth a look"
+// panel shows, in the tool's reply.
+//
+// Advice only, and that is not an omission: Validate refuses anything
+// with Problems before this line is reached, so the checklist half is
+// always empty here. What survives a save is the softer half — what the
+// machine looks like it might not have meant.
+//
+// The page has shown it since the editor existed; the tool showed
+// nothing, which is backwards. The author on this path is a MODEL, and
+// the most common finding — "the prompt asks for JSON, but this step
+// already declares fields" — is a mistake only a model makes. The help
+// text warns about it in advance, at the top of a long spec, and then
+// nothing checked afterwards.
+//
+// Same function behind both surfaces, so the tool cannot report a
+// different machine than the page does.
+func machineFindingsNote(def MachineDef) string {
+	adv := def.Advice()
+	if len(adv) == 0 {
+		return ""
+	}
+	return "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
+		strings.Join(adv, "\n- ")
 }
 
 // attachMachineToAgents points each named agent at a machine. Returns
@@ -367,6 +399,13 @@ func (t *chatTurn) machineList() (string, error) {
 		} else {
 			b.WriteString(" Not attached to any agent (inert).")
 		}
+		// A STORED machine can have problems even though create refuses
+		// them: an import, a partial save from the editor, an older
+		// version. Counting them here is what makes "fix my machine" a
+		// question this tool can start answering.
+		if n := len(d.Problems()); n > 0 {
+			fmt.Fprintf(&b, " %d thing%s to fix (get it for the list).", n, plural(n))
+		}
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
@@ -401,7 +440,49 @@ func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 	if !full {
 		out += "\n\n(phase prompts previewed — call again with full=true to read them in full)"
 	}
+	// Both halves here, because a stored machine can carry problems that
+	// create would have refused — this is the surface somebody reaches
+	// for when asked to fix one.
+	if probs := def.Problems(); len(probs) > 0 {
+		out += fmt.Sprintf("\n\nStill missing (%d) — it is stored and it runs degraded until these are settled:\n- %s",
+			len(probs), strings.Join(probs, "\n- "))
+		if fixable := def.Repairs(RepairAll); len(fixable) > 0 {
+			out += fmt.Sprintf("\n\n%d of those have exactly one right answer (references to steps that are gone, and the like). "+
+				"machine(action=\"repair\", name=%q) settles them and leaves everything that needs a judgement alone.",
+				len(fixable), def.Name)
+		}
+	}
+	out += machineFindingsNote(def)
 	return out, nil
+}
+
+// machineRepair settles the findings with exactly one right answer.
+//
+// The page has had this button since v0.6.203 and the tool had no way
+// to do it at all: a dangling reference could only be cleared by
+// rewriting the whole machine through update, which is a large edit to
+// fix something nobody chose. Same core function behind both, so the
+// two surfaces cannot settle different things.
+func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
+	def, ok := t.findMachine(args)
+	if !ok {
+		return "", errors.New("no machine found by that name or id — machine(action=\"list\") shows what you have")
+	}
+	fixed := def.Repair(RepairAll)
+	if len(fixed) == 0 {
+		return "Nothing to repair in " + strconv.Quote(def.Name) + " — every finding it has needs a judgement, so none of them can be settled mechanically. " +
+			"machine(action=\"get\") lists them.", nil
+	}
+	saved := SaveMachineDef(t.udb, def)
+	Log("[orchestrate.machines] user=%q repaired machine %q via tool: %s", t.user, saved.Name,
+		strings.Join(RepairLines(fixed), "; "))
+	out := fmt.Sprintf("Repaired %d thing%s in %q:\n- %s",
+		len(fixed), plural(len(fixed)), saved.Name, strings.Join(RepairLines(fixed), "\n- "))
+	if probs := saved.Problems(); len(probs) > 0 {
+		out += fmt.Sprintf("\n\nStill outstanding (%d), each because it has more than one defensible answer:\n- %s",
+			len(probs), strings.Join(probs, "\n- "))
+	}
+	return out + machineFindingsNote(saved), nil
 }
 
 func (t *chatTurn) machineDelete(args map[string]any) (string, error) {

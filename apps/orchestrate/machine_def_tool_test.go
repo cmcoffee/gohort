@@ -466,3 +466,130 @@ func TestTheToolDecodesAndDocumentsEveryPhaseField(t *testing.T) {
 		t.Errorf("a declared field lost part of itself in the decoder: %+v", f)
 	}
 }
+
+// The tool reports what the editor's "worth a look" panel reports.
+//
+// The author on this path is a MODEL, and the most common finding —
+// hand-rolling the JSON the declared fields already produce — is a
+// mistake only a model makes. The help text warns about it at the top
+// of a long spec and nothing checked afterwards, so the one surface
+// that could catch it as it happened said nothing.
+func TestTheMachineToolReportsItsOwnAdvice(t *testing.T) {
+	turn := machineToolFixture(t)
+	tool := turn.machineGroupedToolDef()
+
+	out, err := tool.Handler(map[string]any{
+		"action": "create",
+		"name":   "Triage",
+		"phases": []any{
+			map[string]any{"name": "decompose", "prompt": "Break it down. Respond only with valid JSON.",
+				"next": "answer",
+				"output": []any{map[string]any{"name": "parts", "type": "string", "desc": "the pieces"}}},
+			map[string]any{"name": "answer", "prompt": "reply", "resident": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !strings.Contains(out, "Worth a look") {
+		t.Errorf("the tool said nothing about a finding the page would show:\n%s", out)
+	}
+	if !strings.Contains(out, "asks for JSON") {
+		t.Errorf("the finding itself should travel:\n%s", out)
+	}
+	// It is advice, not a refusal — the machine is stored.
+	if !strings.Contains(out, "Created machine") {
+		t.Errorf("advice must not read as a failure:\n%s", out)
+	}
+	if len(ListMachineDefs(turn.udb, turn.user)) != 1 {
+		t.Error("the machine should have been saved")
+	}
+
+	// A clean machine gets no note — a tool that appends an empty
+	// section every time teaches the reader to skip the section.
+	clean, err := tool.Handler(map[string]any{
+		"action": "create", "name": "Simple",
+		"phases": []any{map[string]any{"name": "answer", "prompt": "reply plainly", "resident": true}},
+	})
+	if err != nil {
+		t.Fatalf("create clean: %v", err)
+	}
+	if strings.Contains(clean, "Worth a look") {
+		t.Errorf("nothing to say, so say nothing:\n%s", clean)
+	}
+}
+
+// The tool could not settle a dangling reference at all. The page has
+// had the button since v0.6.203; through the tool the only way to clear
+// a reference to a step that is gone was rewriting the whole machine
+// with update — a large edit to fix something nobody chose.
+func TestTheMachineToolCanRepairWhatItCanRepair(t *testing.T) {
+	turn := machineToolFixture(t)
+	tool := turn.machineGroupedToolDef()
+
+	// Stored directly: create would refuse this, which is the point —
+	// a machine gets into this state by import, an older save, or a
+	// partial edit, never by a tool call.
+	broken := SaveMachineDef(turn.udb, MachineDef{Owner: "u", Name: "Broken", Start: "triage",
+		Phases: []MachinePhase{
+			{Name: "triage", Prompt: "decide", Next: "testing"},
+			// A judgement call, which must survive the repair.
+			{Name: "answer", Prompt: "reply", Resident: true, Tools: []string{"read_file"}, Agent: "someone"},
+		}})
+
+	// get names the problem AND says what can be done about it.
+	got, err := tool.Handler(map[string]any{"action": "get", "name": "Broken"})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(got, "Still missing") || !strings.Contains(got, "testing") {
+		t.Errorf("get should report what is outstanding:\n%s", got)
+	}
+	if !strings.Contains(got, `action="repair"`) {
+		t.Errorf("and should say the mechanical half can be settled:\n%s", got)
+	}
+
+	out, err := tool.Handler(map[string]any{"action": "repair", "name": "Broken"})
+	if err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if !strings.Contains(out, "testing") {
+		t.Errorf("the repair should name what it changed:\n%s", out)
+	}
+	stored, ok := LoadMachineDef(turn.udb, "u", broken.ID)
+	if !ok {
+		t.Fatal("the repaired machine is gone")
+	}
+	if strings.TrimSpace(stored.Phases[0].Next) != "" {
+		t.Errorf("the reference survived: %q", stored.Phases[0].Next)
+	}
+	// The judgement call is untouched and still reported — a repair that
+	// quietly resolved it would be picking for the author.
+	if len(stored.Phases[1].Tools) == 0 || stored.Phases[1].Agent == "" {
+		t.Error("repair deleted work that needed a decision")
+	}
+	if !strings.Contains(out, "Worth a look") && !strings.Contains(out, "Still outstanding") {
+		t.Errorf("what it left alone should still be visible:\n%s", out)
+	}
+
+	// Nothing mechanical to do says so rather than reporting success.
+	SaveMachineDef(turn.udb, MachineDef{Owner: "u", Name: "Fine", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "reply", Resident: true}}})
+	quiet, err := tool.Handler(map[string]any{"action": "repair", "name": "Fine"})
+	if err != nil {
+		t.Fatalf("repair clean: %v", err)
+	}
+	if !strings.Contains(quiet, "Nothing to repair") {
+		t.Errorf("a no-op should say it did nothing:\n%s", quiet)
+	}
+
+	// And list counts outstanding work, so "fix my machine" has a
+	// starting point.
+	lst, err := tool.Handler(map[string]any{"action": "list"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(lst, "to fix") {
+		t.Errorf("list should say which machines have work left:\n%s", lst)
+	}
+}

@@ -817,6 +817,16 @@ text. Both surface in the checklist as questions rather than as damage, and the 
 names them beforehand — computed by the same walk that will do the removing, so the warning cannot
 promise something else.
 
+**The tool reports the same findings, and can settle the same half.** `machine(action="create")`
+said nothing about what it had just stored beyond "created" — and the author on that path is a
+MODEL, which makes the most common finding ("the prompt asks for JSON, but this step already
+declares fields") a mistake that surface is the most likely to produce and was the least likely to
+catch. The help text warns about it at the top of a long spec and nothing checked afterwards.
+Create/update now append the advice, `list` counts a stored machine's outstanding problems, `get`
+lists them, and `machine(action="repair")` settles the mechanical half — the same
+`core/machine_repair.go` the button uses, so the two surfaces cannot settle different things.
+Problems never appear on a create reply, and that is not an omission: `Validate` refuses them first.
+
 **A finding you cannot act on gets a button.** When a step is deleted its references go with it,
 but a machine that arrived any other way — an import, an older save, the `machine` tool — can name a
 step that is not there, and then the picker offering targets no longer offers that name. "step
