@@ -356,3 +356,150 @@ func indexOfStage(def PipelineDef, name string) int {
 	}
 	return 0
 }
+
+// handlePipelineAgents is the "Who can call it" checklist.
+//
+//	GET  /api/pipelines/{id}/agents → {agents: [id, ...]}
+//	POST /api/pipelines/{id}/agents {agents: [...]} → attach/detach
+//
+// A pipeline attaches to an agent as a callable tool (run_<name>), and
+// an agent holds a LIST of them — so unlike a machine, checking one
+// here adds to that list rather than replacing what the agent runs.
+func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
+	switch r.Method {
+	case http.MethodGet:
+		var ids []string
+		for _, ag := range listAgents(udb, user) {
+			for _, pid := range ag.AttachedPipelines {
+				if pid == def.ID {
+					ids = append(ids, ag.ID)
+					break
+				}
+			}
+		}
+		writeJSON(w, map[string]any{"agents": ids})
+
+	case http.MethodPost, http.MethodPut:
+		var body struct {
+			Agents []string `json:"agents"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		want := make(map[string]bool, len(body.Agents))
+		for _, id := range body.Agents {
+			want[strings.TrimSpace(id)] = true
+		}
+		var attached, detached []string
+		for _, ag := range listAgents(udb, user) {
+			// The checklist never shows app agents or hidden ones, so a
+			// whole-set POST must not touch them: an agent that was
+			// never ON the list would be silently unplugged by every
+			// save of the agents that are. Same rule the machine
+			// version follows, for the same reason.
+			if isAppAgent(ag.ID) || ag.Hidden {
+				continue
+			}
+			has := false
+			kept := ag.AttachedPipelines[:0:0]
+			for _, pid := range ag.AttachedPipelines {
+				if pid == def.ID {
+					has = true
+					continue
+				}
+				kept = append(kept, pid)
+			}
+			switch {
+			case want[ag.ID] && !has:
+				ag.AttachedPipelines = append(kept, def.ID)
+				if _, err := saveAgent(udb, ag); err == nil {
+					attached = append(attached, chFirst(ag.Name, ag.ID))
+				}
+			case !want[ag.ID] && has:
+				// Only this pipeline is removed; the agent's other
+				// pipelines are its own business.
+				ag.AttachedPipelines = kept
+				if _, err := saveAgent(udb, ag); err == nil {
+					detached = append(detached, chFirst(ag.Name, ag.ID))
+				}
+			}
+		}
+		if len(attached)+len(detached) > 0 {
+			Log("[orchestrate.pipelines] user=%q pipeline %q: attached %v, detached %v",
+				user, def.Name, attached, detached)
+		}
+		writeJSON(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// attachPipelineAgentOptions lists the agents a pipeline can be given
+// to, with what each one is for — a list of bare names makes somebody
+// guess which is which.
+func attachPipelineAgentOptions(udb Database, user string) []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, ag := range listAgents(udb, user) {
+		if isAppAgent(ag.ID) || ag.Hidden {
+			continue
+		}
+		label := chFirst(ag.Name, ag.ID)
+		if d := strings.TrimSpace(ag.Description); d != "" {
+			label += " — " + d
+		}
+		out = append(out, ui.SelectOption{Value: ag.ID, Label: label})
+	}
+	return out
+}
+
+// pipelineCostText derives what one run costs, in model calls.
+//
+// Derived rather than written: the definition knows exactly which
+// stages call a model and which do not, and a fanout or a loop turns
+// one line of a stage list into twelve calls. Somebody choosing between
+// three stages and six should see the price where they are choosing.
+func pipelineCostText(def PipelineDef) string {
+	var plain, free []string
+	var multiplied []string
+	for _, s := range def.Stages {
+		name := strings.TrimSpace(s.Name)
+		switch PipelineStageKind(strings.TrimSpace(string(s.Kind))) {
+		case StageBranch:
+			free = append(free, name)
+		case StageTool:
+			free = append(free, name)
+		case StageFanout:
+			multiplied = append(multiplied, name+" (once per item, up to "+strconv.Itoa(FanoutMaxItems)+")")
+		case StageLoop:
+			inner := 0
+			for _, b := range s.Body {
+				switch PipelineStageKind(strings.TrimSpace(string(b.Kind))) {
+				case StageBranch, StageTool:
+				default:
+					inner++
+				}
+			}
+			multiplied = append(multiplied, name+" ("+strconv.Itoa(inner)+" per pass, up to "+strconv.Itoa(s.Count)+" passes)")
+		case StageAgent:
+			multiplied = append(multiplied, name+" (a whole agent turn, with its own tools)")
+		default:
+			plain = append(plain, name)
+		}
+	}
+	var parts []string
+	if len(plain) > 0 {
+		parts = append(parts, strings.Join(plain, ", ")+" cost one model call each")
+	}
+	if len(multiplied) > 0 {
+		parts = append(parts, strings.Join(multiplied, "; "))
+	}
+	if len(free) > 0 {
+		parts = append(parts, strings.Join(free, ", ")+" make no model call at all")
+	}
+	if len(parts) == 0 {
+		return "Nothing — this pipeline has no stages yet."
+	}
+	return strings.Join(parts, ". ") + ". A stage that declares output may pay one extra repair call when a reply comes back malformed."
+}

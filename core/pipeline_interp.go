@@ -1019,6 +1019,11 @@ const (
 	fanoutParallel = 6
 )
 
+// FanoutMaxItems is the item cap, exported so a surface quoting the
+// price of a fanout takes the number FROM the cap rather than writing
+// its own copy that goes stale the day this changes.
+const FanoutMaxItems = fanoutMaxItems
+
 // runFanoutStage runs the stage's inner work once per element of the
 // FanOver stage's list output, bounded-parallel, and combines the
 // results into one labeled block ("## Item N: <item>\n<result>") that

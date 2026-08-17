@@ -228,6 +228,26 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	case "agents":
+		// Who can call it. An unattached pipeline is a tool no agent
+		// has, which the list already says and nothing could change.
+		T.handlePipelineAgents(w, r, udb, user, def)
+	case "duplicate":
+		// Iterating on a working pipeline in place is how the working
+		// one stops working. The copy is where an experiment belongs,
+		// and landing in it is the reason anybody clicked.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		dup := def
+		dup.ID = ""
+		dup.Previous = nil
+		dup.Global = false
+		dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
+		saved := SavePipelineDef(udb, dup)
+		Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
+		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
 	case "revise":
 		// Say what should change, against the pipeline on screen
 		// (pipeline_revise.go). Undoable, because it can rewrite every

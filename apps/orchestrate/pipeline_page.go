@@ -127,7 +127,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		// screen with the stage being read — and a branch or a fanout is
 		// exactly what a stage's own section cannot show.
 		Sticky: pipelineMapCard(def),
-		Head:   ui.NewHead().CSS(pipelineStageCSS),
+		Head: ui.NewHead().CSS(pipelineStageCSS).
+			ClientAction("pipeline_duplicate", pipelineDuplicateJS),
 		Sections: []ui.Section{{
 			Title:    "The pipeline",
 			Wide:     true,
@@ -148,10 +149,47 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 					Title:  "Download this pipeline's portable recipe",
 					Method: "GET",
 					URL:    "/orchestrate/api/pipelines/" + url_(def.ID) + "/export",
+				}, {
+					// A client action, not a POST toolbar button: the
+					// toolbar fires the request and stays put, and the
+					// point of duplicating is to work on the COPY.
+					Label:  "Duplicate",
+					Title:  "Make a copy to experiment on, and open it",
+					Method: "client",
+					URL:    "pipeline_duplicate",
+					Data:   def.ID,
 				}}},
 			}},
 		}},
 	}
+	page.Sections = append(page.Sections,
+		// Who can call it. The list has said "callable by" since it
+		// existed and nothing could change it — a pipeline attached to
+		// nothing is a tool no agent has, which is the single most
+		// useful fact about one and was read-only.
+		ui.Section{
+			Title: "Who can call it",
+			Wide:  true,
+			Subtitle: "A pipeline reaches an agent as a tool named run_" + strings.ToLower(strings.ReplaceAll(def.Name, " ", "_")) + ". " +
+				"Unlike a machine, an agent can hold several — checking one here adds this pipeline to that agent's list rather than replacing what it already has.",
+			Body: ui.FormPanel{
+				Source:  "api/pipelines/" + url_(def.ID) + "/agents",
+				PostURL: "api/pipelines/" + url_(def.ID) + "/agents",
+				Fields: []ui.FormField{{
+					Field: "agents", Type: "checklist",
+					Placeholder: "(no agents yet — create one in the chat sidebar first)",
+					Options:     attachPipelineAgentOptions(udb, user),
+				}},
+			},
+		},
+		ui.Section{
+			// Derived, not written: the definition knows which stages
+			// call a model, and a fanout or a loop turns one line of a
+			// stage list into twelve calls.
+			Title:    "What a run costs",
+			Wide:     true,
+			Subtitle: pipelineCostText(def),
+		})
 	page.Sections = append(page.Sections, pipelineStageSections(def,
 		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
 	page.Sections = append(page.Sections,
@@ -187,6 +225,23 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		})
 	page.ServeHTTP(w, r)
 }
+
+// pipelineDuplicateJS copies the pipeline and opens the copy — the
+// point of duplicating is to work on the copy, so staying on the
+// original would be the wrong half of the action.
+const pipelineDuplicateJS = `function(ctx) {
+  var id = ctx && ctx.action && ctx.action.data;
+  if (!id) return;
+  fetch('/orchestrate/api/pipelines/' + encodeURIComponent(id) + '/duplicate', {method: 'POST'})
+    .then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+      return r.json();
+    })
+    .then(function(d) { window.location.href = '/orchestrate/pipeline?id=' + encodeURIComponent(d.id); })
+    .catch(function(err) {
+      window.uiAlert && window.uiAlert('Could not duplicate it: ' + (err && err.message || err));
+    });
+}`
 
 // undoPipelineRevisionToolbar offers to put back what a revision
 // replaced, and only while there is something to put back.

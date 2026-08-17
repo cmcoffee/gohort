@@ -293,7 +293,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		dup := def
 		dup.ID = ""
-		dup.Name = copyName(def.Name, ListMachineDefs(udb, user))
+		dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
 		saved := SaveMachineDef(udb, dup)
 		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
 		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
@@ -528,10 +528,13 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 // copyName picks the duplicate's name: "X (copy)", counting up until it
 // is not already taken — two unlabelled "X"s in a list is a coin flip
 // every time somebody attaches one.
-func copyName(base string, existing []MachineDef) string {
+//
+// Takes NAMES rather than definitions: pipelines duplicate too, and one
+// of the two would otherwise grow its own copy of this and drift.
+func copyName(base string, existing []string) string {
 	taken := make(map[string]bool, len(existing))
-	for _, m := range existing {
-		taken[m.Name] = true
+	for _, n := range existing {
+		taken[n] = true
 	}
 	name := base + " (copy)"
 	for n := 2; taken[name]; n++ {
@@ -566,4 +569,22 @@ func decodeMachineRecipe(body []byte) (MachineDef, error) {
 		return MachineDef{}, Error("that does not read as a machine recipe (" + err.Error() + ")")
 	}
 	return recipe, nil
+}
+
+// machineNames and pipelineNames feed copyName. Two lines each, and the
+// alternative is a generic that hides which list is which.
+func machineNames(defs []MachineDef) []string {
+	out := make([]string, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.Name)
+	}
+	return out
+}
+
+func pipelineNames(defs []PipelineDef) []string {
+	out := make([]string, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.Name)
+	}
+	return out
 }

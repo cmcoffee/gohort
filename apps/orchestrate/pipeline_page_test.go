@@ -222,3 +222,89 @@ func TestThePipelinePageDrawsItAndTheBoxesAreDoors(t *testing.T) {
 		t.Error("nothing to draw, so nothing should be drawn")
 	}
 }
+
+// "Callable by" was read-only from the day the list existed. A pipeline
+// attached to nothing is a tool no agent has — the single most useful
+// fact about one — and the page could state it and not change it.
+func TestAPipelineCanBeGivenToAnAgentFromItsOwnPage(t *testing.T) {
+	app, udb, user, def := pipelinePageFixture(t)
+	wren, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Wren", OrchestratorPrompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An agent that already holds ANOTHER pipeline: attaching this one
+	// must add to its list, not replace what it runs. That is the real
+	// difference from a machine, which is single-select.
+	other := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Other",
+		Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}}})
+	busy, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Busy", OrchestratorPrompt: "hi",
+		AttachedPipelines: []string{other.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"agents":["` + wren.ID + `","` + busy.ID + `"]}`
+	r := httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/agents", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	app.handlePipelineOne(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("attach: %d %s", w.Code, w.Body.String())
+	}
+	got, _ := loadAgent(udb, busy.ID)
+	if len(got.AttachedPipelines) != 2 {
+		t.Fatalf("attaching should ADD to the list, got %v", got.AttachedPipelines)
+	}
+
+	// Unchecking removes only this pipeline.
+	r = httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/agents", strings.NewReader(`{"agents":[]}`))
+	w = httptest.NewRecorder()
+	app.handlePipelineOne(w, asUser(r, user))
+	got, _ = loadAgent(udb, busy.ID)
+	if len(got.AttachedPipelines) != 1 || got.AttachedPipelines[0] != other.ID {
+		t.Errorf("detaching one must leave the agent's others alone: %v", got.AttachedPipelines)
+	}
+
+	// And the control is on the page.
+	page := httptest.NewRecorder()
+	app.handlePipelinePage(page, asUser(httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil), user))
+	if !strings.Contains(page.Body.String(), "Who can call it") {
+		t.Error("the page cannot attach the pipeline it describes")
+	}
+}
+
+// What a run costs, derived. A fanout or a loop turns one line of a
+// stage list into twelve calls, and somebody choosing between three
+// stages and six should see the price where they are choosing.
+func TestThePipelinePageSaysWhatARunCosts(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Costly",
+		Stages: []PipelineStage{
+			{Name: "plan", Kind: StageWorker, Prompt: "p",
+				Output: []PipelineField{{Name: "queries", Type: FieldList, Desc: "q"},
+					{Name: "skip", Type: FieldBool, Desc: "s"}}},
+			{Name: "gate", Kind: StageBranch, When: "plan.skip", SkipTo: "answer"},
+			{Name: "dig", Kind: StageFanout, FanOver: "plan.queries", Prompt: "{item}"},
+			{Name: "answer", Kind: StageWorker, Prompt: "done"},
+		}})
+	r := httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	body := w.Body.String()
+
+	if !strings.Contains(body, "plan, answer cost one model call each") {
+		t.Error("plain stages should be counted plainly")
+	}
+	// The multiplier is the point, and the number comes FROM the cap so
+	// it cannot go stale.
+	if !strings.Contains(body, "once per item, up to 12") {
+		t.Error("a fanout should say it is many calls")
+	}
+	if !strings.Contains(body, "gate make no model call at all") {
+		t.Error("a branch is free and should say so")
+	}
+	// Duplicate is here too, and it is a client action because a
+	// toolbar POST would stay on the original.
+	if !strings.Contains(body, "pipeline_duplicate") {
+		t.Error("no way to take a copy before experimenting")
+	}
+}
