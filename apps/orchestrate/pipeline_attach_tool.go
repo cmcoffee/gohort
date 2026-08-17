@@ -32,19 +32,20 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// buildAttachedPipelineToolDefs returns one callable tool per pipeline
-// in the agent's AttachedPipelines list. Missing/cross-owner pipeline
-// IDs are skipped silently (the attachment outlived the def, or the
-// def belongs to someone else). Tool names are de-duplicated so two
-// pipelines that sanitize to the same handle don't shadow each other.
-func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
+// effectivePipelineIDs is the set of pipelines this agent may run: its own
+// explicit attachments UNION the owner's GLOBAL pipelines, minus this agent's
+// opt-outs (DisabledPipelines). The global scope is the pipeline analogue of a
+// user-wide tool pool — a pipeline marked Global reaches every agent that
+// hasn't denied it.
+//
+// Shared with dispatch (agents(run, pipeline=…)) so reachability is stated
+// once. Two copies would drift into a pipeline callable one way and refused
+// the other, which is the worst of the three possible outcomes: the model
+// would see it advertised and be told no.
+func (t *chatTurn) effectivePipelineIDs() []string {
 	if t == nil {
 		return nil
 	}
-	// Effective set = this agent's explicit attachments UNION the owner's
-	// GLOBAL pipelines, minus this agent's opt-outs (DisabledPipelines). The
-	// global scope is the pipeline analogue of a user-wide tool pool: a
-	// pipeline marked Global reaches every agent that hasn't denied it.
 	ids := make([]string, 0, len(t.agent.AttachedPipelines))
 	seenID := make(map[string]bool, len(t.agent.AttachedPipelines))
 	for _, pid := range t.agent.AttachedPipelines {
@@ -60,6 +61,19 @@ func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
 		seenID[d.ID] = true
 		ids = append(ids, d.ID)
 	}
+	return ids
+}
+
+// buildAttachedPipelineToolDefs returns one callable tool per pipeline
+// in the agent's AttachedPipelines list. Missing/cross-owner pipeline
+// IDs are skipped silently (the attachment outlived the def, or the
+// def belongs to someone else). Tool names are de-duplicated so two
+// pipelines that sanitize to the same handle don't shadow each other.
+func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
+	if t == nil {
+		return nil
+	}
+	ids := t.effectivePipelineIDs()
 	if len(ids) == 0 {
 		return nil
 	}

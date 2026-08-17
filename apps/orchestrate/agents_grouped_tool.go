@@ -40,7 +40,7 @@ import (
 // authoring-intent routing sends control right back here). Builder
 // delegates execution via plan_set workers instead.
 func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
-	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work to a named agent and get its synthesis back). Single entry point for agent operations — pick the action that matches the intent."
+	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back — to a named agent for its judgement, or to a named pipeline to run a saved multi-stage workflow). Single entry point for agent operations — pick the action that matches the intent."
 	if !allowRun {
 		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY — dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
 	}
@@ -66,7 +66,12 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		}
 		params["agent"] = ToolParam{
 			Type:        "string",
-			Description: "(run) Name or id of the agent to dispatch to.",
+			Description: "(run) Name or id of the agent to dispatch to. Give either this or `pipeline`, never both.",
+		}
+		params["pipeline"] = ToolParam{
+			Type: "string",
+			Description: "(run) Name or id of a saved PIPELINE to run instead of dispatching to an agent — a fixed multi-stage workflow that takes your message as its starting input and hands back the final synthesized output. " +
+				"Use it when the work has a workflow already built for it; use `agent` when you want another agent's judgement. Give either this or `agent`, never both.",
 		}
 		params["message"] = ToolParam{
 			Type:        "string",
@@ -219,6 +224,17 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			if !allowRun {
 				return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
 			}
+			// One call, two kinds of target. Which one is named decides the
+			// path; naming both or neither is refused before either runs.
+			if err := validateDispatchTarget(stringArg(args, "agent"), stringArg(args, "pipeline")); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
+				// Fenced like the agent path: a pipeline's stages run workers
+				// and dispatch agents whose tools reach the network, so the
+				// output can carry attacker-influenced content.
+				return fenceAgentsOutput(t.agentsRunPipelineAction(args))
+			}
 			return fenceAgentsOutput(t.agentsRunAction(args))
 		case "run_tool":
 			if !allowRunTool {
@@ -321,10 +337,22 @@ func agentsToolHelp(allowRun, allowRunTool bool) string {
 `
 	if allowRun {
 		base += `
-  action="run"    — dispatch work to an agent by name (or id), get
-                    its synthesis back as the tool result. The sub-
-                    agent runs with its own persona, memory, facts,
-                    and tools. Required: agent, message.
+  action="run"    — dispatch work and get the result back as the
+                    tool result. Name ONE target, never both:
+
+                      agent=<name|id>    — another fleet agent
+                        answers in its own persona, with its own
+                        memory, facts and tools.
+
+                      pipeline=<name|id> — a saved multi-stage
+                        workflow runs start to finish on your
+                        message as its input, and hands back its
+                        final output. Fixed steps, no judgement
+                        about which to take — reach for it when a
+                        workflow for this work already exists.
+
+                    Required: message, plus exactly one of agent /
+                    pipeline.
 `
 	} else {
 		base += `
@@ -1188,10 +1216,27 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			if !handoff(args, sess) {
 				return nil
 			}
+			// Which target kind was named decides which gate refuses it.
+			// Running the agent gate over a pipeline dispatch would reject
+			// every one of them for naming no agent.
+			if err := validateDispatchTarget(stringArg(args, "agent"), stringArg(args, "pipeline")); err != nil {
+				return err
+			}
+			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
+				_, _, err := t.pipelineDispatchGate(args)
+				return err
+			}
 			_, _, err := t.agentsRunGate(args)
 			return err
 		},
 		Detached: func(args map[string]any, d *ToolSession) (string, error) {
+			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
+				def, msg, err := t.pipelineDispatchGate(args)
+				if err != nil {
+					return "", err
+				}
+				return fenceAgentsOutput(t.runDetachedPipeline(d, def, msg))
+			}
 			target, msg, err := t.agentsRunGate(args)
 			if err != nil {
 				return "", err
@@ -1219,6 +1264,12 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			return fenceAgentsOutput(out, rerr)
 		},
 		Label: func(args map[string]any) string {
+			// Name what it actually runs. Reading `agent` unconditionally
+			// labelled every handed-off pipeline "agents run: " with nothing
+			// after the colon, which reads as a broken dispatch.
+			if p := strings.TrimSpace(stringArg(args, "pipeline")); p != "" {
+				return "agents run pipeline: " + truncateObs(p, 40)
+			}
 			return "agents run: " + truncateObs(stringArg(args, "agent"), 40)
 		},
 	}
