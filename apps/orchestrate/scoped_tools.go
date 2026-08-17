@@ -1,5 +1,5 @@
 // Cross-scope enumeration of a user's tools, registered into core's seam so
-// surfaces outside this app (Extensions > My tools) can show everything built
+// surfaces outside this app (Extensions > Tools) can show everything built
 // for a user and what it's attached to.
 //
 // Two scopes live behind this app's knowledge: agent-scoped rows in the

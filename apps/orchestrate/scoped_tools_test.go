@@ -10,7 +10,7 @@ import (
 )
 
 // TestListSessionDraftsShadowing covers the enumeration behind Extensions >
-// My tools. Session drafts are real, callable tools that live only for the life
+// Extensions › Tools. Session drafts are real, callable tools that live only for the life
 // of a chat session and were previously visible ONLY from inside that session —
 // so a user could lose work they never knew existed.
 //
@@ -150,7 +150,7 @@ func TestListScopedToolsNoLister(t *testing.T) {
 }
 
 // TestPromoteSessionDraftTargets covers the session-vs-global choice, shared by
-// the in-chat Tools modal and Extensions > My tools. Both must land a kept
+// the in-chat Tools modal and Extensions > Tools. Both must land a kept
 // draft in the same place — a second, drifting implementation of the ownership
 // check and the strip-redundant-agent-copy step is exactly what this shares.
 func TestPromoteSessionDraftTargets(t *testing.T) {

@@ -99,7 +99,7 @@ user. Phase 3 is the **surface** + one real plumbing problem.
 
 ### In scope — credentials (the axis we've built out) — SHIPPED
 
-- **"My API credentials"** (SHIPPED) — a user CRUDs their OWN credentials
+- **"API credentials"** (SHIPPED) — a user CRUDs their OWN credentials
   (stamped `Owner = them`) from a section on the Account page
   (`apps/account`, `api/credentials`). Every op is scoped to
   `Owner == currentUser` via the keyed store (`ListUser` / `LoadUser` /
@@ -134,7 +134,7 @@ collision to solve — the per-user namespace substrate already existed.
   OWN credentials as `fetch_url_<name>` tools (deduped so a user cred shadows a
   same-named global), so a credential created on the Account page is immediately
   a first-class callable tool for the owner's agents — not reachable only via a
-  temp-tool `fetch_via`. This is the concrete gap the "My API credentials"
+  temp-tool `fetch_via`. This is the concrete gap the "API credentials"
   surface would otherwise have left open.
 - **"My tools"** (SHIPPED) — a section on the Account page (`api/tools`) lists the
   user's OWN persistent tools (mode + description, a missing-dependency badge

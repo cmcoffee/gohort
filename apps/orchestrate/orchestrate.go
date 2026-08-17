@@ -297,7 +297,7 @@ func (T *OrchestrateApp) Routes() {
 	// an inbound, so master (admin) + per-channel rules gate the agent run.
 	registerChannelGatekeeper(T)
 	// Cross-scope tool enumeration (agent-bundled + session drafts) for
-	// surfaces outside this app (Extensions > My tools). Only this app can map
+	// surfaces outside this app (Extensions > Tools). Only this app can map
 	// agents and sessions to a user.
 	registerScopedToolLister(T)
 	// Authored tools commit onto the requesting agent's record. Wired here

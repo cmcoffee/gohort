@@ -438,7 +438,7 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			Body:     ui.Card{HTML: passwordHTML},
 		})
 	}
-	// Connected accounts, My API credentials, and My tools moved to the Gateways
+	// Connected accounts, API credentials, and Extensions › Tools moved to the Gateways
 	// app (the per-user "outward reach" surface). Account keeps identity +
 	// preferences, including inbound personal access tokens below (the keys an
 	// external MCP client uses to reach THIS user's agents).
@@ -798,7 +798,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 })();
 </script>`
 
-// credentialsHTML is the "My API credentials" panel: lists the user's OWN
+// credentialsHTML is the "API credentials" panel: lists the user's OWN
 // credentials (name + type badge + base URL) with Edit/Delete, and an inline
 // add/edit form. App-specific, so it rides in a Card (the Card renderer
 // re-executes this <script>), same pattern as the connections + tokens panels.
@@ -905,7 +905,7 @@ const credentialsHTML = `<div id="acct-creds" class="acct-creds">Loading…</div
 })();
 </script>`
 
-// userToolsHTML is the "My tools" panel: a read-mostly list of the user's OWN
+// userToolsHTML is the "Tools" panel: a read-mostly list of the user's OWN
 // persistent tools (name + mode badge + description, a missing-dependency badge,
 // a shared badge) with a Delete control. Authoring happens in chat, so there's
 // no create form here. App-specific, so it rides in a Card (the Card renderer

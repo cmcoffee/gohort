@@ -180,7 +180,7 @@ type Tool struct {
 
 	// Category is a human-chosen grouping label the tool CLAIMS for itself —
 	// the organizing unit for the tool-picker's section headers (and the user's
-	// "My tools" list). It rides on the tool like Caps do: self-declared, and
+	// "Tools" list). It rides on the tool like Caps do: self-declared, and
 	// because it lives ON the tool it inherits the tool's ownership for free
 	// (a user categorizing their own tool touches only their record — no
 	// separate per-user group store). Empty falls back to the legacy

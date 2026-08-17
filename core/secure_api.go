@@ -1185,7 +1185,7 @@ func (s *SecureAPI) CredentialStatus(name string) (exists, enabled, hasSecret bo
 }
 
 // CredentialStatusOwned is CredentialStatus resolved in a user's namespace: a
-// user-owned credential (their own "My API credentials") is found, falling back
+// user-owned credential (their own "API credentials") is found, falling back
 // to global. Empty owner = global only. hasSecret is false for an unfinished
 // draft (the "(pending)" placeholder), so a caller can tell "needs its secret"
 // from "ready".

@@ -1,6 +1,6 @@
 package orchestrate
 
-// Assignment from the LIST, the way My tools does it.
+// Assignment from the LIST, the way Extensions › Tools does it.
 //
 // Both a machine and a pipeline could only be given to an agent from
 // inside their own page. Somebody deciding which agents run what is

@@ -101,7 +101,7 @@ func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.
 
 	case "persist":
 		// Target: the user-wide pool, or the session's own agent. Both paths live
-		// in promoteSessionDraft so this handler and the Extensions > My tools
+		// in promoteSessionDraft so this handler and the Extensions > Tools
 		// surface promote identically — the agent-copy stripping and ownership
 		// checks are exactly the parts you do not want two copies of.
 		target := ScopeTargetAgent
@@ -126,7 +126,7 @@ func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.
 //
 // target ScopeTargetGlobal → a shared row in the unified store; anything else →
 // a row scoped to the session's agent. Shared by the in-chat Tools modal and
-// Extensions > My tools so both promote identically: the ownership check and
+// Extensions > Tools so both promote identically: the ownership check and
 // the scoping step are exactly the parts you do not want a second, drifting
 // copy of. Returns the scope actually written ("global" | "agent").
 func (T *OrchestrateApp) promoteSessionDraft(udb Database, user, agentID, sid, name, target string) (string, error) {

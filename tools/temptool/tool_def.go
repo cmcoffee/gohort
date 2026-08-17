@@ -511,7 +511,7 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 // create_api_tool (api) based on the mode arg.
 // persistentToolLocked reports whether a tool of this name is Locked in the
 // user's persistent pool. Lock is a user-only control set from Extensions ›
-// My tools; the AI's create/update/delete honor it so a stable tool can't be
+// Extensions › Tools; the AI's create/update/delete honor it so a stable tool can't be
 // silently rewritten or removed. Session-only drafts (never locked) don't count.
 func persistentToolLocked(sess *ToolSession, name string) bool {
 	if sess == nil || sess.DB == nil || sess.Username == "" || name == "" {
@@ -525,7 +525,7 @@ func persistentToolLocked(sess *ToolSession, name string) bool {
 	return false
 }
 
-const lockedToolMsg = "Tool %q is LOCKED — it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › My tools, then it's editable. Do NOT recreate it under a different name."
+const lockedToolMsg = "Tool %q is LOCKED — it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › Tools, then it's editable. Do NOT recreate it under a different name."
 
 func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if name := strings.TrimSpace(StringArg(args, "name")); persistentToolLocked(sess, name) {

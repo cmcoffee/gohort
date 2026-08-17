@@ -104,7 +104,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 				},
 				RowActions: []ui.RowAction{
 					// Assignment from the list, same control the machines
-					// table carries and the same one My tools uses.
+					// table carries and the same one Extensions › Tools uses.
 					{Type: "button", Label: "Assign", Method: "client",
 						PostTo: "orchestrate_assign"},
 					{Type: "button", Label: "Export", Method: "GET",

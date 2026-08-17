@@ -362,7 +362,7 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 	defer s.mu.Unlock()
 	// Owner-aware key: a global (admin) draft keys by bare name; a user-owned
 	// draft keys by the @u:<owner>:<name> tuple, so a personally-crafted API
-	// credential lands in the user's OWN namespace ("My API credentials") for
+	// credential lands in the user's OWN namespace ("API credentials") for
 	// them to finish, rather than the admin pool.
 	key := credStoreKey(c.Owner, c.Name)
 	secretKey := secureCredSecretKey(key)

@@ -117,7 +117,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					{Field: "used_by_text", Label: "Used by", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
-					// Assignment from the LIST, the way My tools does it.
+					// Assignment from the LIST, the way Extensions › Tools does it.
 					// Somebody deciding which agents run what is looking
 					// at all of them at once; opening each machine to
 					// answer that is the navigation the tools table

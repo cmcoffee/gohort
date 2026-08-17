@@ -1574,7 +1574,7 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if noTools {
 			continue
 		}
-		// Governance visibility: a Disabled tool (turned off in My tools) and a
+		// Governance visibility: a Disabled tool (turned off in Extensions › Tools) and a
 		// Builder-only tool are both hidden from every agent EXCEPT Builder.
 		// Builder always loads the full pool so it can load, RUN, test, fix, and
 		// re-enable them — building AND verifying is its whole job; a disabled
@@ -6061,7 +6061,7 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 	if trialDemoted > 0 {
 		// Not silent: a tool moving out of the always-loaded catalog changes
 		// how the LLM must reach it (load_tool first), so leave a trail.
-		Log("[orchestrate.tools] agent=%s: %d unconfirmed (trial) tool(s) kept out of the inline catalog — reachable via load_tool; Confirm them in My tools to pin their schemas", t.agent.ID, trialDemoted)
+		Log("[orchestrate.tools] agent=%s: %d unconfirmed (trial) tool(s) kept out of the inline catalog — reachable via load_tool; Confirm them in Extensions › Tools to pin their schemas", t.agent.ID, trialDemoted)
 	}
 	if len(lazyCustomTools) > 0 {
 		var b strings.Builder

@@ -889,7 +889,7 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 	}
 	cred, ok := sec.Resolve(name, owner)
 	if !ok {
-		writeHookError(conn, fmt.Sprintf("no credential named %q registered — register it via Extensions > My API credentials (or Admin > APIs) first", name))
+		writeHookError(conn, fmt.Sprintf("no credential named %q registered — register it via Extensions > API credentials (or Admin > APIs) first", name))
 		return
 	}
 	if cred.Secured {

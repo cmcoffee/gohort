@@ -155,7 +155,7 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 // hand off. Upserts by credential name so a re-draft refreshes the
 // existing card instead of stacking a new one.
 // emitCredentialSetupCard drops a credential_setup block into the chat. owned=true
-// marks a USER-owned draft (My API credentials) — the card then points the user
+// marks a USER-owned draft (API credentials) — the card then points the user
 // to finish it in their own surface; owned=false is a global/admin draft that
 // routes to Admin > APIs.
 func (t *chatTurn) emitCredentialSetupCard(name, credType, grant, secretLabel string, owned bool) {
@@ -291,7 +291,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				ParamName:   strings.TrimSpace(stringArg(args, "param_name")),
 				Description: strings.TrimSpace(stringArg(args, "description")),
 				// Default a personally-crafted API credential to the user's OWN
-				// namespace ("My API credentials") — they can finish it (paste
+				// namespace ("API credentials") — they can finish it (paste
 				// their own key + enable) without an admin. (OAuth2 stays admin;
 				// see draft_oauth_credential.)
 				Owner: t.user,
@@ -309,7 +309,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				secretNeeded = "the secret value"
 			}
 			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
-			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat — the USER pastes %s and enables it in Extensions › My API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
+			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat — the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
 				c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
 		},
 	}
@@ -365,7 +365,7 @@ func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			Name:        "update_api_credential",
 			Description: "Propose a CONFIG change to an EXISTING api credential the user owns — e.g. correct its base_url. This never deletes, re-creates, or disables the credential and never touches the secret: it shows the user an old→new diff with an Approve button, and on approval ONLY the config changes (the secret + enabled state are preserved). Use this instead of re-drafting or asking the user to delete a credential when a working credential's setting is wrong. You cannot change the secret (the user does that) and cannot edit a global/admin credential (an admin does that in Admin > APIs).",
 			Parameters: map[string]ToolParam{
-				"name":        {Type: "string", Description: "The existing credential to update (in the user's My API credentials)."},
+				"name":        {Type: "string", Description: "The existing credential to update (in the user's own API credentials)."},
 				"base_url":    {Type: "string", Description: "(optional) New base URL, e.g. https://p188-caldav.icloud.com/195178399. Omit to leave unchanged."},
 				"param_name":  {Type: "string", Description: "(optional, header/query types) New header or query-param name. Omit to leave unchanged."},
 				"description": {Type: "string", Description: "(optional) New description. Omit to leave unchanged."},
@@ -448,7 +448,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "check_credential",
-			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Resolves in the user's OWN namespace too, so a credential the user set up in Extensions > My API credentials is found (not just admin globals). Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
+			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Resolves in the user's OWN namespace too, so a credential the user set up in Extensions > API credentials is found (not just admin globals). Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
 			Parameters: map[string]ToolParam{
 				"name":           {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
 				"all_dispatches": {Type: "boolean", Description: "Include SUCCESSFUL (2xx) calls in the Recent dispatches list. Default false shows only FAILURES (non-2xx + errors) — the signal when you're debugging a wiring problem; the 2xx rows are hidden with a count. The full audit is always recorded regardless; this only filters what's shown."},

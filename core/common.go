@@ -2306,7 +2306,7 @@ type TempTool struct {
 	Category string `json:"category,omitempty"`
 	// Locked freezes the tool's DEFINITION: while true, the AI's tool_def
 	// cannot update, delete, or overwrite it — the user must unlock it in
-	// Extensions › My tools first. Running the tool is unaffected. A
+	// Extensions › Tools first. Running the tool is unaffected. A
 	// user-only control (the AI can't set or clear it), the tool analog of
 	// SecureCredential.Secured / the credential re-draft guard.
 	Locked bool `json:"locked,omitempty"`
@@ -2315,7 +2315,7 @@ type TempTool struct {
 	// the user's pool. For diagnostic / Builder-only tools the user doesn't
 	// want cluttering agents. Distinct from TempToolAction.Disabled (which
 	// quarantines ONE action of a toolbox) and AgentRecord.DisabledPersistentTools
-	// (per-agent opt-out) — this is a global, user-managed on/off from My tools.
+	// (per-agent opt-out) — this is a global, user-managed on/off from Extensions › Tools.
 	Disabled bool `json:"disabled,omitempty"`
 	// BuilderOnly exposes the tool to the Builder authoring agent only — every
 	// OTHER agent's runtime catalog omits it. For diagnostic / authoring-support

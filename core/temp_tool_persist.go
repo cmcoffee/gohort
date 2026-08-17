@@ -791,7 +791,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 			continue
 		}
 		// Preserve the USER-set governance flags across an AI re-persist. These
-		// are set from Extensions › My tools, never through tool_def's
+		// are set from Extensions › Tools, never through tool_def's
 		// create-args, so a Builder edit that reconstructs the record would
 		// otherwise silently clear them (e.g. re-enable a disabled tool). Locked
 		// tools can't be re-persisted at all (the tool_def guard blocks it), but

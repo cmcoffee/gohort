@@ -285,7 +285,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Missing     bool   `json:"missing"`
 			Shared      bool   `json:"shared"`
 			LastUsed    string `json:"last_used,omitempty"`
-			// User-managed governance flags (My tools toggles).
+			// User-managed governance flags (Extensions › Tools toggles).
 			Locked      bool `json:"locked"`       // frozen — AI can't modify/delete
 			Disabled    bool `json:"disabled"`     // off for every agent
 			BuilderOnly bool `json:"builder_only"` // exposed to Builder only
@@ -432,7 +432,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		// Reap expired unconfirmed tools before listing, so the page never shows
-		// a row it is about to delete. Opening My tools is the moment a user is
+		// a row it is about to delete. Opening Extensions › Tools is the moment a user is
 		// looking at exactly this, which makes it the honest place to sweep.
 		if ReapTrialTools != nil {
 			if n := ReapTrialTools(AuthDB(), user); n > 0 {
@@ -767,7 +767,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 // packets the assistant draws on in its own context (see the admin section for the
 // full model). Authoring stays in Builder/chat — a skill is instructions plus
 // optional knowledge, not a hand-filled form — so this surface is view + toggle +
-// delete, mirroring "My tools". GET lists; POST ?action=enable|disable mutes/unmutes
+// delete, mirroring "Extensions › Tools". GET lists; POST ?action=enable|disable mutes/unmutes
 // without a full round-trip; DELETE removes one.
 func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
@@ -990,7 +990,7 @@ func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		rows := []row{}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
 			// Own tool (or a same-named one already in the pool) — not a catalog
-			// candidate; it's shown under "My tools" instead.
+			// candidate; it's shown under "Extensions › Tools" instead.
 			if own[p.Tool.Name] {
 				continue
 			}
@@ -1039,7 +1039,7 @@ func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// credentialFormFields is the shared field list for the "My API credentials" add
+// credentialFormFields is the shared field list for the "API credentials" add
 // (modal) and edit (row Expand) forms — the user-namespace counterpart to the
 // admin credential form, trimmed to the simple key-based types (no OAuth2, which
 // stays admin-managed). Type-specific inputs collapse via ShowWhen; the secret is
@@ -1100,7 +1100,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 	sections := []ui.Section{
 		{
-			Title: "My API credentials",
+			Title: "API credentials",
 			Wide:  true,
 			Subtitle: "API keys you own and manage yourself. They live in your namespace — no other user can reach them, and they never appear on the admin page. " +
 				"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
@@ -1171,7 +1171,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 			Body:     ui.Card{HTML: connectionsHTML},
 		},
 		{
-			Title:    "My tools",
+			Title:    "Tools",
 			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			// Tools first, then the categories that head them. Categories used to
 			// be their own rail section, which put the fix one navigation away
@@ -1403,7 +1403,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 			}},
 		},
 		{
-			Title:    "My skills",
+			Title:    "Skills",
 			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions), or ask Builder in Agents for skills that ship code or grant tools. Disable to mute a skill without losing it; delete to retire it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
@@ -1513,7 +1513,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		ShowTitle: true,
 		BackURL:   "/",
 		Nav:       HubNav("/gateways"), // shared hub tabs, Extensions active
-		// Full width. My tools is the widest table in the product — name,
+		// Full width. Extensions › Tools is the widest table in the product — name,
 		// category, mode, agents, last-used and eight status badges — and at
 		// 1200px the name column ellipsizes while badges wrap, which is most of
 		// why the list is hard to scan. SectionNav shows one section at a time,
@@ -1821,7 +1821,7 @@ func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// toolAccessPillsJS drives the Access pill list on My tools. The generic
+// toolAccessPillsJS drives the Access pill list on Extensions › Tools. The generic
 // renderer lives in core/ui (uiRenderScopePills); this only knows which
 // endpoint to talk to — the app-specific half, per the extension-registry rule.
 const toolAccessPillsJS = `function(ctx){
