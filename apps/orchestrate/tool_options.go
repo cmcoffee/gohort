@@ -411,9 +411,9 @@ func listReferenceSourcesToolDef(user string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "list_reference_sources",
-			Description: "List the cross-app knowledge sources an agent can be attached to (attached_sources) — servitor systems, evidence bundles, tool-backed services, whole servitor workspaces, connected document spaces. " +
+			Description: "List the cross-app knowledge sources an agent can be attached to (attached_sources) — servitor systems, evidence bundles, tool-backed services, whole servitor workspaces, registered file-store folders, connected document spaces. " +
 				"Returns each source's kind and its items with ids, ready to pass as \"<kind>:<item_id>\". " +
-				"Attaching one gives the agent named tools for it: instant search over what has already been gathered, its recorded facts, and a live read-only investigation. No arguments.",
+				"Attaching one gives the agent named tools for it, shaped by the source: instant search over what has already been gathered, its recorded facts and a live read-only investigation for a system; list/search/read for a folder of files. No arguments.",
 		},
 		Handler: func(map[string]any) (string, error) { return renderReferenceSources(user), nil },
 	}
@@ -424,7 +424,7 @@ func listReferenceSourcesToolDef(user string) AgentToolDef {
 func renderReferenceSources(user string) string {
 	groups := ReferenceGroups(user)
 	if len(groups) == 0 {
-		return "No reference sources are available to this user. Servitor systems appear once appliances exist; document spaces appear once connected."
+		return "No reference sources are available to this user. Servitor systems appear once appliances exist; file stores once an admin registers a folder (and the user is allowed to reach it); document spaces once connected."
 	}
 	var b strings.Builder
 	b.WriteString("Attachable reference sources. Pass these as attached_sources entries in the form \"<kind>:<item_id>\":\n\n")
