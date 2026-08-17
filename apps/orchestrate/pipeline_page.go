@@ -207,34 +207,38 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			}},
 		}},
 	}
+	// The order matches the machine editor's, section for section, so
+	// somebody moving between the two finds the same things in the same
+	// places: identity, then the wholesale change, then the parts, then
+	// trying it, what it costs, who gets it, and what is worth a look.
+	// They had drifted into two different orders within a day of each
+	// other.
 	page.Sections = append(page.Sections,
-		// Assign to agents. The list has said "callable by" since it
-		// existed and nothing could change it — a pipeline attached to
-		// nothing is a tool no agent has, which is the single most
-		// useful fact about one and was read-only.
+		// A form on the page, not a dialog: drafting runs a model for up
+		// to a minute and can come back with nothing runnable, and a
+		// door that cannot show you why is the wrong door for it
+		// (v0.6.220).
 		ui.Section{
-			Title: "Assign to agents",
+			Title: "Describe a change",
 			Wide:  true,
-			Subtitle: "A pipeline reaches an agent as a tool named run_" + strings.ToLower(strings.ReplaceAll(def.Name, " ", "_")) + ". " +
-				"Unlike a machine, an agent can hold several — checking one here adds this pipeline to that agent's list rather than replacing what it already has.",
-			Body: ui.FormPanel{
-				Source:  "api/pipelines/" + url_(def.ID) + "/agents",
-				PostURL: "api/pipelines/" + url_(def.ID) + "/agents",
-				Fields: []ui.FormField{{
-					Field: "agents", Type: "checklist",
-					Placeholder: "(no agents yet — create one in the chat sidebar first)",
-					Options:     attachPipelineAgentOptions(udb, user),
-				}},
-			},
+			Subtitle: "Say what should be different and the pipeline is redrafted with that change made, keeping every stage and prompt it does not touch. " +
+				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
+					SubmitLabel: "Revise it",
+					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
+					Fields: []ui.FormField{{
+						Field: "description", Type: "textarea", Rows: 4,
+						Label:       "What should change?",
+						Placeholder: "Research each query with the web tools instead of answering from memory, and add a stage that checks the sources before the summary.",
+						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
+					}},
+				},
+				undoPipelineRevisionToolbar(def),
+			}},
 		},
-		ui.Section{
-			// Derived, not written: the definition knows which stages
-			// call a model, and a fanout or a loop turns one line of a
-			// stage list into twelve calls.
-			Title:    "What a run costs",
-			Wide:     true,
-			Subtitle: pipelineCostText(def),
-		})
+	)
 	page.Sections = append(page.Sections, pipelineStageSections(def,
 		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
 	page.Sections = append(page.Sections,
@@ -274,36 +278,40 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				EmptyText:  "No runs yet. This is the fastest way to find out whether a stage is doing what its prompt says.",
 			},
 		},
-		// A form on the page, not a dialog: drafting runs a model for up
-		// to a minute and can come back with nothing runnable, and a
-		// door that cannot show you why is the wrong door for it
-		// (v0.6.220).
 		ui.Section{
-			Title: "Describe a change",
+			// Derived, not written: the definition knows which stages
+			// call a model, and a fanout or a loop turns one line of a
+			// stage list into twelve calls.
+			Title:    "What a run costs",
+			Wide:     true,
+			Subtitle: pipelineCostText(def),
+		},
+		// Assign to agents. The list has said "callable by" since it
+		// existed and nothing could change it — a pipeline attached to
+		// nothing is a tool no agent has, which is the single most
+		// useful fact about one and was read-only.
+		ui.Section{
+			Title: "Assign to agents",
 			Wide:  true,
-			Subtitle: "Say what should be different and the pipeline is redrafted with that change made, keeping every stage and prompt it does not touch. " +
-				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
-			Body: ui.Stack{Children: []ui.Component{
-				ui.FormPanel{
-					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
-					SubmitLabel: "Revise it",
-					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
-					Fields: []ui.FormField{{
-						Field: "description", Type: "textarea", Rows: 4,
-						Label:       "What should change?",
-						Placeholder: "Research each query with the web tools instead of answering from memory, and add a stage that checks the sources before the summary.",
-						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
-					}},
-				},
-				undoPipelineRevisionToolbar(def),
-			}},
+			Subtitle: "A pipeline reaches an agent as a tool named run_" + strings.ToLower(strings.ReplaceAll(def.Name, " ", "_")) + ". " +
+				"Unlike a machine, an agent can hold several — checking one here adds this pipeline to that agent's list rather than replacing what it already has.",
+			Body: ui.FormPanel{
+				Source:  "api/pipelines/" + url_(def.ID) + "/agents",
+				PostURL: "api/pipelines/" + url_(def.ID) + "/agents",
+				Fields: []ui.FormField{{
+					Field: "agents", Type: "checklist",
+					Placeholder: "(no agents yet — create one in the chat sidebar first)",
+					Options:     attachPipelineAgentOptions(udb, user),
+				}},
+			},
 		},
 		ui.Section{
 			Title:    "Worth a look",
 			Wide:     true,
 			Subtitle: "Nothing here refuses a save. It is what the pipeline looks like it might not have meant.",
 			Body:     ui.Card{HTML: findingsHTMLPlain(def.Advice(), "Nothing — the stages read as instructions rather than specifications.")},
-		})
+		},
+	)
 	page.ServeHTTP(w, r)
 }
 

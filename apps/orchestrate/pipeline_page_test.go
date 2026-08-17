@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"regexp"
 )
 
 func pipelinePageFixture(t *testing.T) (*OrchestrateApp, Database, string, PipelineDef) {
@@ -429,5 +430,70 @@ func TestAPipelineCanBeRunFromItsOwnPage(t *testing.T) {
 	// tools.
 	if !strings.Contains(body, "REAL run") {
 		t.Error("the panel should say a run is real")
+	}
+}
+
+// The two editors present the same things in the same ORDER.
+//
+// They are siblings — a machine is a workflow a conversation sits in, a
+// pipeline is one that runs to an end — and somebody moving between
+// them should find the same controls in the same places. Within a day
+// of each other they had drifted into two different orders: the
+// pipeline put Assign and cost before its stages while the machine put
+// them after, so "where is the thing I just used" had two answers.
+//
+// Compared as SEQUENCES rather than sets, because order is the thing
+// that drifted, and the machine-only sections (its steps are named
+// individually, and it has a checklist a pipeline cannot have) are
+// dropped rather than special-cased into the pipeline.
+func TestBothEditorsPresentTheSameOrder(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	m := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "s",
+		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
+	p := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "P",
+		Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}}})
+
+	shared := map[string]string{
+		"The machine": "identity", "The pipeline": "identity",
+		"Describe a change": "describe",
+		"Add a step":        "add", "Add a stage": "add",
+		"Try it": "try", "Run it": "try",
+		"What a turn costs": "cost", "What a run costs": "cost",
+		"Assign to agents": "assign",
+		"Worth a look":     "advice",
+	}
+	rail := func(name, url string) []string {
+		r := httptest.NewRequest("GET", url, nil)
+		w := httptest.NewRecorder()
+		if name == "machine" {
+			app.handleMachinePage(w, asUser(r, user))
+		} else {
+			app.handlePipelinePage(w, asUser(r, user))
+		}
+		if w.Code != 200 {
+			t.Fatalf("%s page: %d", name, w.Code)
+		}
+		var out []string
+		seen := map[string]bool{}
+		for _, mm := range regexp.MustCompile(`"title":"([^"]{2,40})"`).FindAllStringSubmatch(w.Body.String(), -1) {
+			if key, ok := shared[mm[1]]; ok && !seen[key] {
+				seen[key] = true
+				out = append(out, key)
+			}
+		}
+		return out
+	}
+	got := rail("machine", "/orchestrate/machine?id="+m.ID)
+	want := rail("pipeline", "/orchestrate/pipeline?id="+p.ID)
+	if len(got) != len(want) {
+		t.Fatalf("the two editors offer different sections:\nmachine:  %v\npipeline: %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("the rails have drifted apart:\nmachine:  %v\npipeline: %v", got, want)
+		}
+	}
+	if len(got) < 7 {
+		t.Errorf("expected every shared section, found %v — a title changed and this test stopped checking", got)
 	}
 }
