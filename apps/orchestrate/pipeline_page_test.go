@@ -142,3 +142,63 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// The picture, pinned above the stages. SectionNav shows one section at
+// a time, so a diagram in a section of its own could never be on screen
+// with the stage being read — and a branch or a fanout is exactly what
+// a stage's own section cannot show.
+func TestThePipelinePageDrawsItAndTheBoxesAreDoors(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Research",
+		Stages: []PipelineStage{
+			{Name: "plan", Kind: StageWorker, Prompt: "p",
+				Output: []PipelineField{{Name: "queries", Type: FieldList, Desc: "q"}}},
+			{Name: "gate", Kind: StageBranch, When: "plan.queries", SkipTo: "answer"},
+			{Name: "dig", Kind: StageFanout, FanOver: "plan.queries", Prompt: "{item}"},
+			{Name: "answer", Kind: StageWorker, Prompt: "done"},
+		}})
+
+	r := httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	body := w.Body.String()
+
+	if !strings.Contains(body, `"sticky"`) {
+		t.Fatal("the map should be pinned, not parked in a section")
+	}
+	// Inline SVG — links inside an imaged one are inert, and the point
+	// of drawing the stages is that they are the stages the rail
+	// navigates. "<" arrives escaped inside the page's JSON.
+	if !strings.Contains(body, "u003csvg") {
+		t.Fatal("no picture on the page")
+	}
+	// Every box a door, addressed by the SAME slug the section nav
+	// computes from the section title.
+	for _, want := range []string{`href=\"#1-plan\"`, `href=\"#3-dig\"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the map is missing the link %s", want)
+		}
+	}
+	// The branch's two futures are both drawn, or the picture claims a
+	// pipeline that always jumps.
+	if !strings.Contains(body, "otherwise") || !strings.Contains(body, "when plan.queries") {
+		t.Error("a branch should show both arms")
+	}
+	// One diagram, not two: the machine editor shipped the same picture
+	// twice for a while and it was just a second thing to scroll past.
+	if n := strings.Count(body, "u003csvg"); n != 1 {
+		t.Errorf("the pipeline should be drawn once, found %d", n)
+	}
+	// A pipeline with no stages has nothing to draw and must not render
+	// a broken box.
+	empty := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Empty"})
+	r = httptest.NewRequest("GET", "/orchestrate/pipeline?id="+empty.ID, nil)
+	w = httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("an empty pipeline should still open: %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "u003csvg") {
+		t.Error("nothing to draw, so nothing should be drawn")
+	}
+}

@@ -118,7 +118,16 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		BackURL:   "/gateways",
 		Nav:       HubNav("/gateways"),
 		MaxWidth:  "100%",
-		Head:      ui.NewHead().CSS(pipelineStageCSS),
+		// One section at a time, with the stages as the rail: a pipeline
+		// IS a list of stages, so the page's index should be that list.
+		SectionNav: true,
+		// The picture, pinned above every stage. Same reasoning as the
+		// machine editor: SectionNav shows ONE section at a time, so a
+		// diagram parked in a section of its own could never be on
+		// screen with the stage being read — and a branch or a fanout is
+		// exactly what a stage's own section cannot show.
+		Sticky: pipelineMapCard(def),
+		Head:   ui.NewHead().CSS(pipelineStageCSS),
 		Sections: []ui.Section{{
 			Title:    "The pipeline",
 			Wide:     true,
@@ -154,6 +163,45 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	page.ServeHTTP(w, r)
 }
 
+// pipelineMapCard is the picture: the whole pipeline, every box a door
+// into that stage's section.
+func pipelineMapCard(def PipelineDef) ui.Component {
+	if len(def.Stages) == 0 {
+		return ui.Stack{}
+	}
+	return ui.Card{HTML: `<div class="machine-map">` +
+		`<div class="machine-map-cap">Map — click a stage to open it. A fanout is one box and many calls; a loop's body is drawn inside it.</div>` +
+		`<div class="machine-map-body">` + pipelineGraphSVG(def) + `</div>` +
+		`</div>`}
+}
+
+// pipelineGraphSVG draws the pipeline with each stage linking to its own
+// section.
+//
+// WHERE a node links is the surface's knowledge, not the graph's — the
+// adapter builds shape and this sets Href — so the anchors use the same
+// slug the section nav computes from the section TITLES, which is what
+// makes a drawn box a working door.
+func pipelineGraphSVG(def PipelineDef) string {
+	g := def.Graph()
+	titles := map[string]string{}
+	for i, s := range def.Stages {
+		titles[strings.TrimSpace(s.Name)] = stageSectionTitle(i, s.Name)
+	}
+	for i := range g.Nodes {
+		if title, ok := titles[g.Nodes[i].ID]; ok {
+			g.Nodes[i].Href = "#" + ui.SectionSlug(title)
+		}
+	}
+	return g.SVG(nil)
+}
+
+// stageSectionTitle is the ONE place a stage's section title is written,
+// so the rail, the anchor and the box agree.
+func stageSectionTitle(i int, name string) string {
+	return strconv.Itoa(i+1) + ". " + name
+}
+
 // pipelineStageSections is one section per stage, in order, so the rail
 // is the stage list and you read the pipeline the way it runs.
 //
@@ -165,7 +213,7 @@ func pipelineStageSections(def PipelineDef) []ui.Section {
 	out := make([]ui.Section, 0, len(def.Stages))
 	for i, s := range def.Stages {
 		out = append(out, ui.Section{
-			Title:    strconv.Itoa(i+1) + ". " + s.Name,
+			Title:    stageSectionTitle(i, s.Name),
 			Wide:     true,
 			Subtitle: stageSubtitle(s),
 			Body:     ui.Card{HTML: stageDetailHTML(s)},
@@ -275,6 +323,20 @@ const pipelineStageCSS = `
 .pipeline-stage-facts {
   margin-top: 0.5rem; font-size: 0.78rem; color: var(--text-mute);
 }
+/* The map, same shape and rules as the machine editor's: centred while
+   it fits, scrolling from its left edge (where the first stage is) when
+   it does not. */
+.machine-map { padding: 0.3rem 0.5rem; }
+.machine-map-cap {
+  font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-mute); text-align: center;
+}
+.machine-map-body {
+  overflow: auto; max-height: 42vh; padding-top: 0.35rem;
+  display: flex; justify-content: center;
+}
+.machine-map-body > svg { flex: 0 0 auto; margin: 0 auto; }
+.machine-map svg a { text-decoration: none; }
 .machine-findings { margin: 0; padding-left: 1.1rem; }
 .machine-findings > li { margin: 0 0 0.5rem 0; line-height: 1.5; }
 .machine-findings > li:last-child { margin-bottom: 0; }

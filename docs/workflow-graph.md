@@ -138,8 +138,29 @@ read from the def.
 |---|---|
 | **G1** ✅ | `WorkflowGraph` + `MachineDef.Graph()` + the SVG renderer + `/graph`. |
 | **G2** ✅ | Runtime overlay. It reads `MachineCursor.Log`, NOT the diagnostics trail as originally sketched: "which edges did this take" is a structural question, and parsing framework-authored prose would break silently the first time someone reworded a message. |
-| **G3** | `PipelineDef.Graph()` — proves the adapter, and pipelines get a picture for free. |
+| **G3** ✅ | `PipelineDef.Graph()` — proved the adapter: the renderer took a second def with no changes at all, and `NodeExit`, reserved in G1 for "a pipeline's terminal stage", was waiting for it. Three shapes needed thought rather than translation, below. |
 | **G4** | Interactive editing, only if G1-G3 show the layout holds up. Not committed to. |
+
+### What G3 had to decide
+
+A pipeline reads as a list, which is why it went so long without a picture — and a list is exactly
+wrong for the three shapes that make pipelines worth having.
+
+**A fanout is one box and many calls.** It cannot be drawn as N boxes (N is a run-time value), so
+the box carries the multiplier as a tag — `× each plan.queries` — and the legend says what one box
+means. Drawing it as an ordinary step would make a research pipeline look like a straight line of
+four calls when it is four plus twelve.
+
+**A branch is two futures.** Both are drawn: the jump dashed and labelled with its condition
+(decided at run time), the fall-through solid and labelled "otherwise". Drawing only the jump shows
+a pipeline that always jumps; drawing only the fall-through hides the jump entirely. A branch with
+no `skip_to` ENDS the pipeline, which is not an arrow, so it is a legend line naming that stage.
+
+**A loop is a hub, and its body is drawn.** The loop node takes an arrow into the body ("each
+pass"), the body runs in order, the last body stage returns to the loop node (dotted, "again"), and
+the loop leaves once ("when it stops"). Summarising the body as "3 stages inside" would be a picture
+of a box. Body node IDs are prefixed with the loop's name because body names are scoped to the loop
+— two loops may each hold a `critique`, and they are not the same node.
 
 ## Open
 
