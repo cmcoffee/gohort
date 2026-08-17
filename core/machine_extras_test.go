@@ -44,6 +44,19 @@ func TestExtrasMachineRecipesValidate(t *testing.T) {
 			if svg := def.Graph().SVG(nil); !strings.HasPrefix(svg, "<svg ") {
 				t.Error("recipe does not render")
 			}
+			// Nothing to REPAIR. Advice is deliberately not checked
+			// here: the investigation recipe ships carrying one on
+			// purpose, because the tools its hunch step should search
+			// with are named differently in every deployment, so the
+			// description tells the importer to tick them and the
+			// finding is the reminder (see the test below, and v0.6.171).
+			// A mechanical defect is never intentional in the same way —
+			// a reference to a step that is gone means the recipe was
+			// edited by hand and not re-read.
+			if fix := def.Repairs(RepairAll); len(fix) > 0 {
+				t.Errorf("the recipe has mechanical defects:\n- %s",
+					strings.Join(RepairLines(fix), "\n- "))
+			}
 		})
 	}
 }

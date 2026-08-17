@@ -35,6 +35,18 @@ answer   (resident)           No observation: answer from docs, tickets, the
                               live system. Guarded back to triage.
 ```
 
+**`hunch` ships unable to look, on purpose.** It is transient, and a transient step runs before the
+turn has a catalog: it reaches exactly the tools it names and nothing else. Its prompt tells it to
+go and search, and the recipe names no tools for it — because the tools are called
+`search_prod_logs` here and something else in the next deployment, so a portable recipe cannot ship
+them. The handoff is written into the recipe's own description ("open the hunch step and tick the
+tools it should search with"), and the editor's *worth a look* panel says the same thing in the
+place where you would fix it. The finding IS the instruction; it is not an oversight, and a reader
+who takes it for one will delete the wrong half.
+
+Which half is the wrong half: the prompt's "go and look" is what the design wants. Rewriting it to
+reason-only would make the recipe self-consistent and quietly cost it the reach it is for.
+
 ## Why `look_where` is the important field
 
 The first draft of this had `verify` carry no log tools, on the theory that a log-derived hunch must
