@@ -209,6 +209,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_try_reset", machineTryResetJS).
 			ClientAction("machine_duplicate", machineDuplicateJS).
 			ClientAction("machine_repair", machineRepairJS).
+			ClientAction("machine_undo", machineUndoJS).
 			CSS(machineMapCSS).
 			JS(machineMapHereJS).
 			JS(machineRewriteJS).
@@ -239,6 +240,29 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 						URL:    "machine_duplicate",
 						Data:   def.ID,
 					}}},
+					// Say what should change, against the machine already
+					// on screen. Drafting one from a paragraph was one
+					// shot: if it missed, the only recourse was editing
+					// twelve fields by hand, which is the wrong recourse
+					// for "make triage decide between three lanes".
+					ui.ModalButton{
+						Label:    "Describe a change…",
+						Title:    "Redraft this machine from a sentence about what should change",
+						Subtitle: "Say what should be different. The whole machine is redrafted with that change made, keeping everything it does not touch — and the version you have now is kept, so you can put it back.",
+						Width:    "560px",
+						Body: ui.FormPanel{
+							PostURL:     machineAPIBase(def) + "/revise",
+							SubmitLabel: "Revise it",
+							RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
+							Fields: []ui.FormField{{
+								Field: "description", Type: "textarea", Rows: 5,
+								Label:       "What should change?",
+								Placeholder: "Let triage choose between three lanes — logs, config, and a plain question — and give the config lane its own step before it answers.",
+								Help:        "One change, in plain words. Steps and prompts the change does not touch are kept as they are.",
+							}},
+						},
+					},
+					undoRevisionToolbar(def),
 				}},
 			},
 		},
@@ -401,6 +425,47 @@ const machineRepairJS = `function(ctx) {
     .catch(function(err) {
       window.uiAlert && window.uiAlert('Could not fix it: ' + (err && err.message || err));
     });
+}`
+
+// undoRevisionToolbar offers to put back what a revision replaced, and
+// only while there is something to put back.
+//
+// A revision is the one edit on this page that can rewrite work nobody
+// asked it to touch — every other control changes the field it names.
+// Without a way back it is a control people are right not to press.
+func undoRevisionToolbar(def MachineDef) ui.Component {
+	if def.Previous == nil {
+		return ui.Stack{}
+	}
+	return ui.Toolbar{Actions: []ui.ToolbarAction{{
+		Label:   "Undo the revision",
+		Title:   "Put back the version this machine had before the last Describe a change",
+		Method:  "client",
+		URL:     "machine_undo",
+		Data:    def.ID,
+		Variant: "danger",
+	}}}
+}
+
+// machineUndoJS restores the previous version and reloads.
+const machineUndoJS = `function(ctx) {
+  var id = ctx && ctx.action && ctx.action.data;
+  if (!id) return;
+  Promise.resolve(window.uiConfirm
+    ? window.uiConfirm('Put back the version from before the last revision? What the revision produced is discarded.')
+    : confirm('Put back the version from before the last revision?')).then(function(ok) {
+    if (!ok) return;
+    fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/undo', {method: 'POST'})
+      .then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+        // Reload: every step's form, the map and both findings lists are
+        // showing the version being replaced.
+        window.location.reload();
+      })
+      .catch(function(err) {
+        window.uiAlert && window.uiAlert('Could not undo it: ' + (err && err.message || err));
+      });
+  });
 }`
 
 // machineRemoveStepJS deletes one step and reloads.

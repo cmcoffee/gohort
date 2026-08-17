@@ -827,6 +827,31 @@ lists them, and `machine(action="repair")` settles the mechanical half — the s
 `core/machine_repair.go` the button uses, so the two surfaces cannot settle different things.
 Problems never appear on a create reply, and that is not an omission: `Validate` refuses them first.
 
+**Describe a CHANGE, not just a machine.** "Describe one…" was one shot: a paragraph in, a whole
+machine out, and if it missed the only recourse was editing twelve fields by hand — the wrong
+recourse for "make triage decide between three lanes instead of two", which is a sentence somebody
+can say. The editor carries the same door for a machine that already exists. It reuses the drafter
+whole (same spec, same decoder, same repair pass); what differs is the ask: the current machine goes
+in as its own export, so the model edits a document rather than inventing one, and is told to keep
+everything the change does not touch byte for byte.
+
+Identity is the editor's, not the model's. The ID stays put so every agent pointing at this machine
+keeps pointing at it, and an empty name falls back to the old one rather than landing somebody in an
+editor whose title vanished.
+
+The reply names what changed in STEPS — added, removed, changed (instructions) or changed (wiring),
+plus a rename or a moved start. Not the word "revised": a model that ignored the instruction and one
+that followed it produce that word identically, and a rewrite nobody asked for is the whole risk of
+the door.
+
+And it is undoable. `MachineDef.Previous` holds the definition a revision replaced, exactly one
+deep, set only by the doors that REPLACE a machine rather than edit part of it. A form that changes
+one field does not need it — the field is right there — but a revision can rewrite every prompt in
+the machine, and the prompts are the part somebody actually wrote. Without a way back it is a
+control people are right not to press. The button appears only while there is something to put back,
+undo is one step rather than a toggle (pressing it twice must not walk forward again), and the
+snapshot is stripped on export: a recipe carries a machine, not its history.
+
 **A finding you cannot act on gets a button.** When a step is deleted its references go with it,
 but a machine that arrived any other way — an import, an older save, the `machine` tool — can name a
 step that is not there, and then the picker offering targets no longer offers that name. "step

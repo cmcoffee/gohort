@@ -297,6 +297,13 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		saved := SaveMachineDef(udb, dup)
 		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
 		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
+	case "revise":
+		// Describe a change against the machine already on screen
+		// (machine_revise.go). Undoable, because a revision can rewrite
+		// every prompt in it.
+		T.handleMachineRevise(w, r, udb, user, def)
+	case "undo":
+		T.handleMachineUndo(w, r, udb, user, def)
 	case "repair":
 		// Settle the findings that have exactly one right answer. The
 		// class this exists for is a reference to a step that is gone:

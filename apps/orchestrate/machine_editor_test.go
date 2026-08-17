@@ -276,7 +276,14 @@ func TestEditorCoversEveryMachineField(t *testing.T) {
 
 	// Storage identity and audit stamps are the server's; showing them
 	// invites edits that silently do nothing.
-	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true, "phases": true}
+	//
+	// "previous" is the undo snapshot a revision leaves behind. It is
+	// not a setting — it is a whole earlier machine — so a form control
+	// for it would be an editor inside an editor. It DOES have a
+	// surface: the Undo the revision button, which appears exactly when
+	// there is one (TestARevisionCanBeTakenBack pins that).
+	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true,
+		"phases": true, "previous": true}
 
 	check := func(what string, typ reflect.Type) {
 		for i := 0; i < typ.NumField(); i++ {

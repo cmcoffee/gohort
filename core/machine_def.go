@@ -79,6 +79,20 @@ type MachineDef struct {
 
 	Created time.Time `json:"created,omitempty"` // stripped on export
 	Updated time.Time `json:"updated,omitempty"` // stripped on export
+
+	// Previous is the definition this one replaced, kept so a wholesale
+	// rewrite can be taken back.
+	//
+	// Exactly ONE deep, and only set by the doors that replace a machine
+	// rather than edit part of it (today: describe-a-change). A form
+	// that changes one field does not need it — the field is right
+	// there — but a revision drafted from a paragraph can rewrite every
+	// prompt in the machine, and prompts are the part somebody actually
+	// wrote. Without this, "describe a change" is a control you cannot
+	// safely try, which is the same as one nobody uses.
+	//
+	// Stripped on export: a recipe carries a machine, not its history.
+	Previous *MachineDef `json:"previous,omitempty"`
 }
 
 // MachinePhase is one position a session can hold. Every field except
@@ -1046,6 +1060,10 @@ func ExportMachine(d MachineDef) MachineDef {
 	d.Owner = ""
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
+	// A recipe carries a machine, not its history — and an undo snapshot
+	// would double the size of every bundle for something the importer
+	// can never take back anyway.
+	d.Previous = nil
 	return d
 }
 
