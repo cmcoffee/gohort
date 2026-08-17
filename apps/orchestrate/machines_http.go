@@ -474,6 +474,15 @@ func machineStatusText(d MachineDef) string {
 func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
 	switch r.Method {
 	case http.MethodGet:
+		// ?pills=1 — the shape uiRenderScopePills wants, so assignment
+		// can happen from the LIST as well as from inside the machine.
+		// Somebody deciding which agents run what is looking at all of
+		// them at once, and opening each machine to answer that is the
+		// navigation the tools table already avoids.
+		if r.URL.Query().Get("pills") == "1" {
+			writeJSON(w, machineAgentPills(udb, user, def))
+			return
+		}
 		var ids []string
 		for _, ag := range listAgents(udb, user) {
 			if ag.Machine == def.ID {
@@ -482,10 +491,38 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 		}
 		writeJSON(w, map[string]any{"agents": ids})
 	case http.MethodPost, http.MethodPut:
+		// A single toggle, as the pills send it. The whole-set form
+		// below is the page's checklist and stays exactly as it was.
+		var one struct {
+			Target string `json:"target"`
+			On     *bool  `json:"on"`
+		}
+		raw, _ := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
+		if json.Unmarshal(raw, &one) == nil && one.On != nil && strings.TrimSpace(one.Target) != "" {
+			ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
+			if !ok || ag.Owner != user {
+				http.Error(w, "no such agent", http.StatusNotFound)
+				return
+			}
+			switch {
+			case *one.On:
+				ag.Machine = def.ID
+			case ag.Machine == def.ID:
+				ag.Machine = ""
+			}
+			if _, err := saveAgent(udb, ag); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			Log("[orchestrate.machines] user=%q machine %q: %s %q", user, def.Name,
+				chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
+			writeJSON(w, map[string]any{"ok": true})
+			return
+		}
 		var body struct {
 			Agents []string `json:"agents"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(raw, &body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -587,4 +624,34 @@ func pipelineNames(defs []PipelineDef) []string {
 		out = append(out, d.Name)
 	}
 	return out
+}
+
+// machineAgentPills is the scope-pill view of "who runs this machine".
+//
+// An agent runs at most ONE machine, so a pill that is off may still be
+// busy — and turning it on MOVES that agent rather than adding to a
+// list. The label says which machine it would leave, because the
+// alternative is somebody discovering it afterwards.
+func machineAgentPills(udb Database, user string, def MachineDef) map[string]any {
+	names := map[string]string{}
+	for _, d := range ListMachineDefs(udb, user) {
+		names[d.ID] = d.Name
+	}
+	items := []map[string]any{}
+	for _, ag := range listAgents(udb, user) {
+		if isAppAgent(ag.ID) || ag.Hidden {
+			continue
+		}
+		label := chFirst(ag.Name, ag.ID)
+		if ag.Machine != "" && ag.Machine != def.ID {
+			label += " (runs " + chFirst(names[ag.Machine], "another machine") + ")"
+		}
+		items = append(items, map[string]any{
+			"key": ag.ID, "label": label, "on": ag.Machine == def.ID,
+		})
+	}
+	return map[string]any{
+		"items": items,
+		"note":  "An agent runs one machine at a time, so switching one on moves it off whatever it was running. Sessions already open keep the machine they started with.",
+	}
 }

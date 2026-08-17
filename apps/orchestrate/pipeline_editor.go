@@ -32,6 +32,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
+	"io"
 )
 
 // stageFormFields is the controls for one stage.
@@ -368,6 +369,13 @@ func indexOfStage(def PipelineDef, name string) int {
 func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
 	switch r.Method {
 	case http.MethodGet:
+		// ?pills=1 — the shape uiRenderScopePills wants, so a pipeline
+		// can be handed to an agent from the LIST as well as from its
+		// own page.
+		if r.URL.Query().Get("pills") == "1" {
+			writeJSON(w, pipelineAgentPills(udb, user, def))
+			return
+		}
 		var ids []string
 		for _, ag := range listAgents(udb, user) {
 			for _, pid := range ag.AttachedPipelines {
@@ -380,10 +388,41 @@ func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Req
 		writeJSON(w, map[string]any{"agents": ids})
 
 	case http.MethodPost, http.MethodPut:
+		// A single toggle, as the pills send it.
+		var one struct {
+			Target string `json:"target"`
+			On     *bool  `json:"on"`
+		}
+		raw, _ := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
+		if json.Unmarshal(raw, &one) == nil && one.On != nil && strings.TrimSpace(one.Target) != "" {
+			ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
+			if !ok || ag.Owner != user {
+				http.Error(w, "no such agent", http.StatusNotFound)
+				return
+			}
+			kept := ag.AttachedPipelines[:0:0]
+			for _, pid := range ag.AttachedPipelines {
+				if pid != def.ID {
+					kept = append(kept, pid)
+				}
+			}
+			if *one.On {
+				kept = append(kept, def.ID)
+			}
+			ag.AttachedPipelines = kept
+			if _, err := saveAgent(udb, ag); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			Log("[orchestrate.pipelines] user=%q pipeline %q: %s %q", user, def.Name,
+				chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
+			writeJSON(w, map[string]any{"ok": true})
+			return
+		}
 		var body struct {
 			Agents []string `json:"agents"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(raw, &body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -502,4 +541,37 @@ func pipelineCostText(def PipelineDef) string {
 		return "Nothing — this pipeline has no stages yet."
 	}
 	return strings.Join(parts, ". ") + ". A stage that declares output may pay one extra repair call when a reply comes back malformed."
+}
+
+// pipelineAgentPills is the scope-pill view of "who can call this".
+//
+// Unlike a machine, an agent holds a LIST — so a pill going on adds
+// this pipeline to that agent rather than displacing anything, and the
+// note says so. Getting that backwards is how somebody unplugs a
+// pipeline they never touched.
+func pipelineAgentPills(udb Database, user string, def PipelineDef) map[string]any {
+	items := []map[string]any{}
+	for _, ag := range listAgents(udb, user) {
+		if isAppAgent(ag.ID) || ag.Hidden {
+			continue
+		}
+		on := false
+		others := 0
+		for _, pid := range ag.AttachedPipelines {
+			if pid == def.ID {
+				on = true
+				continue
+			}
+			others++
+		}
+		label := chFirst(ag.Name, ag.ID)
+		if others > 0 {
+			label += " (+" + strconv.Itoa(others) + " other)"
+		}
+		items = append(items, map[string]any{"key": ag.ID, "label": label, "on": on})
+	}
+	return map[string]any{
+		"items": items,
+		"note":  "An agent can hold several pipelines, so switching one on adds this one and leaves the rest alone. It reaches the agent as a tool named run_<name>.",
+	}
 }

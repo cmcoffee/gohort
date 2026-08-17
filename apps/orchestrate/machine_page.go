@@ -31,6 +31,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: machinesExtensionSection,
+		Head:  runsOnPillsHead,
 		// After the page's own tools and credentials, which are what
 		// somebody reaches for constantly.
 		Order: 10,
@@ -116,6 +117,13 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					{Field: "used_by_text", Label: "Used by", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
+					// Assignment from the LIST, the way My tools does it.
+					// Somebody deciding which agents run what is looking
+					// at all of them at once; opening each machine to
+					// answer that is the navigation the tools table
+					// already avoids.
+					{Type: "button", Label: "Runs on", Method: "client",
+						PostTo: "orchestrate_runs_on"},
 					// Downloading a recipe should not require opening the
 					// machine first — the reason to take a copy is usually
 					// that you are about to change it.
@@ -136,6 +144,63 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 		}},
 	}, true
 }
+
+// runsOnPillsHead registers the assignment pills for BOTH extension
+// sections — machines and pipelines contribute it, and registering a
+// client action twice is harmless because the second registration
+// replaces an identical first.
+//
+// The generic renderer is the framework's (uiRenderScopePills); this
+// only knows which endpoint to talk to, which is the app-specific half
+// per the extension-registry rule. The endpoint comes from the ROW
+// (edit_url carries the id), so one action serves both kinds rather
+// than each growing its own copy.
+const runsOnPillsHead = `<script>
+(function(){
+  function register(){
+    if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
+    window.uiRegisterClientAction('orchestrate_runs_on', function(ctx){
+      var r = (ctx && ctx.record) || {};
+      var url = String(r.edit_url || '');
+      // /orchestrate/machine?id=X or /orchestrate/pipeline?id=X — the
+      // row already carries where it lives, so the action does not have
+      // to be told which kind it is.
+      var kind = url.indexOf('/pipeline') >= 0 ? 'pipelines' : 'machines';
+      var id = (url.split('id=')[1] || '').split('&')[0];
+      if (!id) { window.uiAlert && window.uiAlert('No row selected.'); return; }
+      var base = '/orchestrate/api/' + kind + '/' + encodeURIComponent(id) + '/agents';
+      var reload = ctx && ctx.reload;
+      window.uiOpenSimpleModal({
+        title: 'Runs on: ' + (r.name || ''),
+        width: '560px',
+        mount: function(body){
+          var host = document.createElement('div');
+          body.appendChild(host);
+          window.uiRenderScopePills(host, {
+            load: function(){
+              return fetch(base + '?pills=1', {cache:'no-store'}).then(function(res){
+                if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+                return res.json();
+              });
+            },
+            toggle: function(key, on){
+              return fetch(base, {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ target: key, on: on })
+              }).then(function(res){
+                if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+                if (reload) reload();
+              });
+            }
+          });
+        }
+      });
+    });
+  }
+  register();
+})();
+</script>`
 
 // handleMachinePage is the editor, full width.
 //
