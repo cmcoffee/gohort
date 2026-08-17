@@ -133,4 +133,14 @@ func (app *OrchestrateApp) recordChannelSilent(in ChannelInbound) {
 			Log("[channel.silent] WARN failed to record silent inbound agent=%s sub=%s: %v", in.AgentID, sessionID, err)
 		}
 	})
+	// And into the cortex, for an agent whose standing thread is NOT this
+	// session. The mirror above put the message where the agent will read it on
+	// its next wake HERE; a multi-channel cortex agent's standing thread is a
+	// different thread, and it was getting nothing — the gatekeeper blocks the
+	// quiet majority of a group room, so the cortex held only the fraction of
+	// the conversation that happened to wake the agent. The owner reads that
+	// thread as the record of the room, so a partial one reads as messages
+	// having gone missing. No-op when cortex is off (AppendCortexObservation),
+	// and skipped when the mirror above already landed IN the cortex.
+	app.observeChannelInbound(in, sessionID, strings.TrimSpace(in.Text))
 }

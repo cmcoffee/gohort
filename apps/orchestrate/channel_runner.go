@@ -246,6 +246,28 @@ func channelObsFrom(in ChannelInbound) string {
 	return who + " · " + where
 }
 
+// observeChannelInbound feeds one handled channel inbound to the agent's cortex
+// as a non-triggering observation card — UNLESS the turn already ran in the
+// cortex itself.
+//
+// A DEDICATED cortex agent's channel session IS its standing thread
+// (effectiveChannelSession), so the dispatch has already persisted the inbound
+// there as a proper user message with its Sender attached. Appending a card too
+// wrote the SAME words a second time into the SAME thread, as an assistant-role
+// message carrying somebody else's sentence — which is the agent's own voice.
+// In a group room that is how one participant's line ends up in the record as
+// something the agent, or whoever it was last talking to, supposedly said.
+//
+// So: cortex agents that fan several channels into one standing thread get the
+// card (it is the only trace they'd have); the agent whose thread already holds
+// the real, attributed message gets nothing added on top of it.
+func (app *OrchestrateApp) observeChannelInbound(in ChannelInbound, sessionID, obs string) {
+	if sessionID == cortexSessionID(in.AgentID) {
+		return
+	}
+	app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
+}
+
 // effectiveChannelSession resolves the session id a channel inbound actually
 // runs in. A DEDICATED cortex agent (Cortex on, exactly one channel) runs its
 // inbound IN its single standing thread (the channel is just the pipe), so its
@@ -468,16 +490,20 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		text, deliver := channelDelivery(replyText, res.Images, res.Videos, res.Silenced, res.PhantomDelivery)
 		if !deliver {
 			Log("[channel] agent chose silence for owner=%s agent=%s — delivering nothing", in.Owner, in.AgentID)
-			// A silent turn still has to leave a card when it DID something.
-			// Silence is the norm in a group room, and this path returned
-			// before the cortex append below — so a turn that searched the web,
-			// armed a monitor or messaged a third party and then said nothing
-			// left no trace anywhere the owner looks. That is the turn they
-			// most need to see: an action with no reply attached to explain it.
+			// A silent turn still leaves a card. Silence is the NORM in a group
+			// room, and this recorded one only when the turn had ALSO called a
+			// tool — so the cortex kept whichever messages the agent happened to
+			// answer or act on, and none of the ones it merely read. The owner
+			// sees that as their own messages going missing from the standing
+			// thread while the transport's own thread has every one of them, and
+			// a gappy record is worse than a quiet one: it is a sample the agent
+			// then reasons over as though it were the whole room.
+			obs := strings.TrimSpace(in.Text)
 			if used := toolsUsedNote(res.ToolsUsed); used != "" {
-				obs := strings.TrimSpace(strings.TrimSpace(in.Text) + "\n" + used + "\n↳ stayed silent (nothing sent to the channel)")
-				app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
+				obs = strings.TrimSpace(obs + "\n" + used)
 			}
+			obs = strings.TrimSpace(obs + "\n↳ stayed silent (nothing sent to the channel)")
+			app.observeChannelInbound(in, sessionID, obs)
 			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
 		}
 		if text != replyText {
@@ -511,7 +537,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		if rt := strings.TrimSpace(replyText); rt != "" {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
-		app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
+		app.observeChannelInbound(in, sessionID, obs)
 		// Carry the bound agent's display name so the transport can prefix an
 		// outbound name tag (opt-in) — lets the recipient tell the agent's reply
 		// apart from the owner's own texts in the same thread.

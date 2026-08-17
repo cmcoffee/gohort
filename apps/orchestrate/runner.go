@@ -8346,16 +8346,11 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 func toLLMMessages(msgs []ChatMessage) []Message {
 	out := make([]Message, 0, len(msgs))
 	for mi, m := range msgs {
-		base := Message{Role: m.Role, Content: m.Content}
-		// Automated reports store a clean body (the UI shows the producer in a
-		// card header); re-attach an origin marker for the LLM so it reads as an
-		// automated report, not something it said itself. Wrapped in
-		// <gohort-meta> so that if the model echoes it into a reply it's scrubbed
-		// (a bare [standing agent …] would leak); the model still reads it as
-		// input (StripMetaTags only touches output).
-		if m.ReportFrom != "" {
-			base.Content = fmt.Sprintf("<gohort-meta>automated report from %q — context, not user input</gohort-meta>\n%s", m.ReportFrom, m.Content)
-		}
+		// Shared with the dispatch builder (llmHistoryContent): a named speaker's
+		// user turn keeps their name, an automated report card keeps its origin
+		// marker. Rendering history here on its own is what let a group room's
+		// participants collapse into one anonymous "user" voice in web chat.
+		base := Message{Role: m.Role, Content: llmHistoryContent(m)}
 		// Preserve tool calls + results across turns. ChatMessage.ToolCalls
 		// (set on the assistant turn that fired them) gets expanded into
 		// the LLM-protocol shape: the assistant message carries ToolCalls,

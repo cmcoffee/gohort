@@ -1476,7 +1476,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	bounded := T.compactOperatorHistory(runtimeDB, runtimeUser, target, subSessionID, priorSession.Messages)
 	llmMessages := make([]Message, 0, len(bounded)+1)
 	for _, m := range bounded {
-		llmMessages = append(llmMessages, Message{Role: m.Role, Content: attributeSender(m.Role, m.Sender, m.Content)})
+		llmMessages = append(llmMessages, Message{Role: m.Role, Content: llmHistoryContent(m)})
 	}
 	// Provenance for the LLM ONLY — appended to the run-time copy of the user
 	// message so the agent knows which channel/transport this arrived on, but
@@ -1943,6 +1943,35 @@ func attributeSender(role, sender, content string) string {
 		return content
 	}
 	return sender + ": " + content
+}
+
+// llmHistoryContent renders ONE stored message the way the LLM must read it.
+//
+// A stored message carries its authorship in two disjoint fields: Sender names
+// the person who typed a user turn in a multi-party room, and ReportFrom marks
+// an assistant-role card whose body is something that HAPPENED rather than
+// something the agent said. Both are attribution, and dropping either one
+// rewrites who said what.
+//
+// This exists because the two history builders each applied one and ignored the
+// other: the web-chat builder attached the report marker but discarded Sender,
+// so every participant in a group room collapsed into one anonymous "user"
+// voice — reading, to a model answering the owner, as the owner having said all
+// of it; the dispatch builder attributed Sender but discarded ReportFrom, so an
+// observation card carrying somebody else's message read as the agent's own
+// past words. Same thread, two builders, two different ways to lose the speaker.
+// Both call this now; neither renders history on its own.
+func llmHistoryContent(m ChatMessage) string {
+	// Automated reports store a clean body (the UI shows the producer in a card
+	// header); re-attach an origin marker for the LLM so it reads as an
+	// automated report, not something it said itself. Wrapped in <gohort-meta>
+	// so that if the model echoes it into a reply it's scrubbed (a bare
+	// [standing agent …] would leak); the model still reads it as input
+	// (StripMetaTags only touches output).
+	if strings.TrimSpace(m.ReportFrom) != "" {
+		return fmt.Sprintf("<gohort-meta>automated report from %q — context, not user input</gohort-meta>\n%s", strings.TrimSpace(m.ReportFrom), m.Content)
+	}
+	return attributeSender(m.Role, m.Sender, m.Content)
 }
 
 // findAgentByNameOrID looks up an agent in udb either by exact ID
