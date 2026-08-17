@@ -467,7 +467,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 				think = *stage.Think
 			}
 			// JSON mode only helps the tool-less path — see runWorkerStage.
-			jsonMode := len(stage.Output) > 0
+			jsonMode := len(stage.ModelOutput()) > 0
 			tier := stageTier(stage)
 			if tier == LEAD {
 				kindLabel += " model=lead"
@@ -501,7 +501,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 				// other stage — decode it, but with no repair retry: there
 				// is no model to ask again, so a mismatch is the tool's
 				// contract being wrong, not a bad generation.
-				fields, err = decodeStageOutput(out, stage.Output)
+				fields, err = decodeStageOutput(out, stage.ModelOutput())
 				if err != nil {
 					err = Error("tool returned a result that does not match the declared output: " + err.Error())
 				}
@@ -510,7 +510,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			return "", Error("stage " + stage.Name + ": unknown kind " + string(stage.Kind))
 		}
 		if call != nil {
-			if len(stage.Output) > 0 {
+			if len(stage.ModelOutput()) > 0 {
 				out, fields, err = T.runDeclaredStage(ctx, stage, prompt, call, status)
 			} else {
 				out, err = call(prompt)
@@ -527,6 +527,24 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			return "", fmt.Errorf("stage %q: %w", stage.Name, err)
 		}
 		out = strings.TrimSpace(out)
+		// Fields the stage takes from a variable rather than asking for.
+		// Filled AFTER the call and merged in, so they land in outputs
+		// exactly like answered ones and every {stage:NAME.field} reads
+		// them the same way. A value the pipeline already holds is not
+		// worth a model's attention, and asking for it invites a
+		// paraphrase of something that was already right.
+		if static := stage.StaticFields(); len(static) > 0 {
+			if fields == nil {
+				fields = map[string]any{}
+			}
+			for _, f := range static {
+				filled := resolveStageTemplate(f.From, input, prev, outputs)
+				for k, v := range vars {
+					filled = strings.ReplaceAll(filled, k, v)
+				}
+				fields[f.Name] = strings.TrimSpace(r.applyRunVars(filled))
+			}
+		}
 		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
 		// The transcript gets a READABLE rendering; `out` — the JSON a declared
 		// stage produces — stays exactly as it is for everything downstream.
@@ -573,7 +591,7 @@ type stageOutput struct {
 // debuggable behavior — and the breadcrumb rule still holds: both the
 // repair attempt and the final failure land on the status line.
 func (T *AppCore) runDeclaredStage(ctx context.Context, stage PipelineStage, prompt string, call func(string) (string, error), status func(string)) (string, map[string]any, error) {
-	return T.runDeclaredOutput(ctx, "stage "+stage.Name, stage.Output, prompt, call, status)
+	return T.runDeclaredOutput(ctx, "stage "+stage.Name, stage.ModelOutput(), prompt, call, status)
 }
 
 // runDeclaredOutput is runDeclaredStage's body, with the stage removed.

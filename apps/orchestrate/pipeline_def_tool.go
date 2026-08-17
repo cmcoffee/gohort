@@ -103,8 +103,12 @@ agent      agent name/id — for kind=agent, optionally for kind=fanout
 tools      restrict a worker stage to a subset of the caller's catalog; [] = none
 think      true on stages that genuinely reason (synthesis, verification, decomposition)
 model      "worker" (default) | "lead" — the precision tier
-output     [{name, type, desc, required, enum?}] — declare a validated JSON result. "enum": [values]
-           constrains a string field to a fixed set, checked where the decoder can still repair it
+output     [{name, type, desc, required, enum?, from?}] — declare a validated JSON result.
+           "enum": [values] constrains a string field to a fixed set, checked where the decoder can
+           still repair it. "from": "{input}" | "{prev}" | "{stage:NAME.field}" FILLS the field from
+           a value the pipeline already holds instead of asking the model for it — it is left out of
+           the contract entirely and merged into the result, so later stages read it the same way.
+           A value you already have is not worth a model's attention, and asking invites a paraphrase
 fan_over   (fanout) an earlier stage, or one of its list fields: "plan.queries"
 body       (loop) nested stage list, repeated
 count      (loop) required, 1-25 — the hard ceiling

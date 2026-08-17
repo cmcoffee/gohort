@@ -306,9 +306,12 @@ type PipelineField struct {
 	// output contract entirely: the model is never shown a field it is
 	// not being asked for.
 	//
-	// Honoured by machines today. A pipeline stage would want the same
-	// thing with {stage:…} references, which is why this lives on the
-	// shared field rather than on MachinePhase.
+	// Honoured by both: a machine step fills from the built-in
+	// vocabulary, a pipeline stage from {input} / {prev} /
+	// {stage:NAME.field}. It lives on the shared field because it is the
+	// same idea in both — the caller already has the value, so spending
+	// a model on copying it across buys a paraphrase and a chance of
+	// omission.
 	From string `json:"from,omitempty"`
 }
 
@@ -319,6 +322,35 @@ func (f PipelineField) resolved() PipelineFieldType {
 		return FieldString
 	}
 	return f.Type
+}
+
+// ModelOutput is what the model is actually asked for: everything the
+// stage declares, minus the fields already filled from a variable.
+//
+// The same split a machine step makes, for the same two reasons: show a
+// model a field it is not being asked for and it answers anyway, usually
+// with a paraphrase of a value that was already correct; leave a filled
+// field out of the RESULT and everything downstream loses it.
+func (s PipelineStage) ModelOutput() []PipelineField {
+	out := make([]PipelineField, 0, len(s.Output))
+	for _, f := range s.Output {
+		if strings.TrimSpace(f.From) == "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// StaticFields are the fields filled from a variable rather than asked
+// for, in declared order.
+func (s PipelineStage) StaticFields() []PipelineField {
+	var out []PipelineField
+	for _, f := range s.Output {
+		if strings.TrimSpace(f.From) != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // PipelineDef is the declarative, serializable definition of a
