@@ -707,3 +707,40 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 		t.Error("the empty-advice sentence should be the same on both sides")
 	}
 }
+
+// Both doors, on the page where machines are kept. Export was reachable
+// only from inside a machine — though the reason to take a copy is
+// usually that you are about to change it — and import was reachable
+// from nowhere at all.
+func TestTheMachinesListCarriesInAndOut(t *testing.T) {
+	_, _, user := newTestOrchestrate(t)
+	// The access gate is not what this test is about.
+	adminAuth(t, user)
+	sec, ok := machinesExtensionSection(asUser(httptest.NewRequest("GET", "/gateways", nil), user), user)
+	if !ok {
+		t.Fatal("the section did not build")
+	}
+	raw, _ := json.Marshal(sec)
+	body := string(raw)
+
+	// In: a file field, landing in the imported machine's editor.
+	if !strings.Contains(body, "/api/machines/import") {
+		t.Error("no way to bring a machine in")
+	}
+	if !strings.Contains(body, `"type":"file"`) || !strings.Contains(body, `"accept":".json"`) {
+		t.Error("importing should be picking the file somebody was handed")
+	}
+	if !strings.Contains(body, `"redirect_url":"/orchestrate/machine?id={id}"`) {
+		t.Error("an import should land in the machine it made, like Draft and Duplicate do")
+	}
+
+	// Out: on the row, as a navigation — the endpoint answers with a
+	// Content-Disposition, so the browser downloads and the page stays.
+	if !strings.Contains(body, `"post_to":"/orchestrate/api/machines/{id}/export"`) {
+		t.Error("no way to take a machine out from the list")
+	}
+	if !strings.Contains(body, `"label":"Export","post_to":"/orchestrate/api/machines/{id}/export","method":"GET"`) &&
+		!strings.Contains(body, `"method":"GET"`) {
+		t.Error("export should navigate rather than fetch-and-discard")
+	}
+}

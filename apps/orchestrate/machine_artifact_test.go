@@ -7,6 +7,8 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -166,5 +168,54 @@ func TestAnImperfectDraftRoundTripsThroughImport(t *testing.T) {
 	empty, _ := json.Marshal(MachineDef{Name: "Nothing"})
 	if _, _, err := m.ImportArtifact(nil, empty, "alice"); err == nil {
 		t.Error("a recipe with no steps should be refused")
+	}
+}
+
+// The import endpoint existed from the beginning with nothing calling
+// it: a recipe somebody handed you could only be brought in through the
+// tool or a bundle. The page reaches it now, which needs the endpoint to
+// accept the shape a FORM sends as well as the shape a script does.
+func TestImportAcceptsBothShapes(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	recipe := `{"name":"Handed to me","start":"s","phases":[{"name":"s","prompt":"p","resident":true}]}`
+
+	// A script or tool posts the recipe itself.
+	r := httptest.NewRequest("POST", "/orchestrate/api/machines/import", strings.NewReader(recipe))
+	w := httptest.NewRecorder()
+	app.handleMachineImport(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("bare recipe should import: %d %s", w.Code, w.Body.String())
+	}
+	var first MachineDef
+	_ = json.Unmarshal(w.Body.Bytes(), &first)
+	if first.ID == "" || first.Name != "Handed to me" {
+		t.Fatalf("the response should be the stored machine: %+v", first)
+	}
+
+	// The browser posts a form, and a file field carries the file as
+	// TEXT under its own name.
+	wrapped, _ := json.Marshal(map[string]string{"recipe": recipe})
+	r = httptest.NewRequest("POST", "/orchestrate/api/machines/import", strings.NewReader(string(wrapped)))
+	w = httptest.NewRecorder()
+	app.handleMachineImport(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("a form-posted recipe should import: %d %s", w.Code, w.Body.String())
+	}
+	var second MachineDef
+	_ = json.Unmarshal(w.Body.Bytes(), &second)
+	if second.ID == "" || second.ID == first.ID {
+		t.Errorf("an import is a copy of its own: %q vs %q", second.ID, first.ID)
+	}
+	if len(ListMachineDefs(udb, user)) != 2 {
+		t.Error("both imports should have landed")
+	}
+
+	// The likeliest mistake is a file that is not a machine at all, and
+	// "bad request" would leave somebody guessing which part was wrong.
+	r = httptest.NewRequest("POST", "/orchestrate/api/machines/import", strings.NewReader("hello, this is not json"))
+	w = httptest.NewRecorder()
+	app.handleMachineImport(w, asUser(r, user))
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "does not read as a machine recipe") {
+		t.Errorf("a wrong file should say so: %d %s", w.Code, w.Body.String())
 	}
 }

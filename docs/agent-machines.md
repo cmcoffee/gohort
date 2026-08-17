@@ -649,6 +649,19 @@ is refused there too: the block already composes it. Before this, a resident pro
 
 ## Travelling
 
+**In and out from the page where machines live.** Export is a row action on the list (the reason to
+take a copy is usually that you are about to change it, so it should not require opening the machine
+first) and a button in the editor. Import is a modal with a file field — `core/ui` reads the chosen
+file as TEXT in the browser and submits its contents, so this is a form rather than an upload path,
+and the imported machine opens in the editor the way a draft or a duplicate does.
+
+That last part needed the endpoint to accept both shapes it legitimately arrives in: the recipe
+itself (what a script or the tool posts) and `{"recipe": "…"}` (what a form posts). Accepting only
+the first is why `POST /api/machines/import` sat fully implemented and unreachable from any page
+since machines shipped.
+
+
+
 Machines are a bundle artifact type ("machine", `machine_artifact.go`), so they ride the unified
 export/import surface next to agents, pipelines, tools and the rest. The recipe keeps its ID — an
 agent's `Machine` pointer is an ID, and the pointer travels in the agent's own recipe — which is

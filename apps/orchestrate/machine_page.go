@@ -81,6 +81,29 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					}},
 				},
 			},
+			// The third way in. The endpoint has existed since machines
+			// did, with nothing on any page calling it — so a recipe
+			// somebody was handed could only be brought in through the
+			// tool or a bundle. A file field reads the file as TEXT in
+			// the browser and submits its contents, so this is a form
+			// rather than an upload path.
+			ui.ModalButton{
+				Label:    "Import…",
+				Title:    "Bring in a machine somebody exported",
+				Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own — a copy, with its own id — and opens in the editor.",
+				Width:    "480px",
+				Body: ui.FormPanel{
+					PostURL:        "/orchestrate/api/machines/import",
+					SubmitLabel:    "Import",
+					RedirectURL:    "/orchestrate/machine?id={id}",
+					RedirectTarget: "_self",
+					Fields: []ui.FormField{{
+						Field: "recipe", Type: "file", Accept: ".json",
+						Label: "Recipe file",
+						Help:  "The file an Export produced. Steps, prompts and wiring travel; nothing about the conversations that ran it does.",
+					}},
+				},
+			},
 			ui.Table{
 				Source: "/orchestrate/api/machines",
 				RowKey: "id",
@@ -94,6 +117,11 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					{Field: "used_by_text", Label: "Used by", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
+					// Downloading a recipe should not require opening the
+					// machine first — the reason to take a copy is usually
+					// that you are about to change it.
+					{Type: "button", Label: "Export", Method: "GET",
+						PostTo: "/orchestrate/api/machines/{id}/export"},
 					{Type: "button", Label: "Duplicate", Method: "POST",
 						PostTo:         "/orchestrate/api/machines/{id}/duplicate",
 						RedirectURL:    "/orchestrate/machine?id={id}",

@@ -30,6 +30,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -184,9 +185,14 @@ func (T *OrchestrateApp) handleMachineImport(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var recipe MachineDef
-	if err := json.NewDecoder(r.Body).Decode(&recipe); err != nil {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	recipe, err := decodeMachineRecipe(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	saved, err := ImportMachine(udb, user, recipe)
@@ -495,4 +501,32 @@ func copyName(base string, existing []MachineDef) string {
 		name = base + " (copy " + strconv.Itoa(n) + ")"
 	}
 	return name
+}
+
+// maxImportBytes bounds a pasted or uploaded recipe. A machine is
+// prompts and wiring; anything past this is not one.
+const maxImportBytes = 1 << 20
+
+// decodeMachineRecipe reads a recipe in either of the two shapes it
+// legitimately arrives in.
+//
+// A tool or a script POSTs the recipe itself. The browser posts a FORM,
+// and a file field carries the chosen file as TEXT under its own name —
+// so the body is {"recipe": "{…the json…}"}. Accepting only the first
+// meant the endpoint existed and the page could not reach it, which is
+// how it went unreachable for so long.
+func decodeMachineRecipe(body []byte) (MachineDef, error) {
+	var wrapper struct {
+		Recipe string `json:"recipe"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil && strings.TrimSpace(wrapper.Recipe) != "" {
+		body = []byte(wrapper.Recipe)
+	}
+	var recipe MachineDef
+	if err := json.Unmarshal(body, &recipe); err != nil {
+		// The likeliest mistake by far: a file that is not a machine, or
+		// not JSON at all. Say which rather than "bad request".
+		return MachineDef{}, Error("that does not read as a machine recipe (" + err.Error() + ")")
+	}
+	return recipe, nil
 }
