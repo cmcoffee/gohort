@@ -1399,6 +1399,20 @@
           if (String(initial) === String(o.value)) opt.selected = true;
           return opt;
         };
+        // A stored value with no option left. Options come from a LIVE
+        // set — the steps a machine has, the appliances a workspace can
+        // include — and things leave those sets. Without this the
+        // control silently shows its first option while the record
+        // still says something else: a form that lies about its own
+        // value, and no way to clear what it will not show.
+        (function() {
+          var cur = initial;
+          if (cur == null || cur === '') return;
+          if ((f.options || []).some(function(o) { return String(o.value) === String(cur); })) return;
+          var gone = el('option', {value: String(cur)}, [String(cur) + ' — no longer available']);
+          gone.selected = true;
+          input.appendChild(gone);
+        })();
         // When any option carries a non-empty `group`, nest options under
         // optgroup labels so long lists (e.g. timezones by region) read as
         // sections. Bare (no-group) options render first, in source order.
@@ -2052,19 +2066,36 @@
         // does not re-bucket).
         input = el('div', {class: 'ui-checklist'});
         var initialArr = Array.isArray(initial) ? initial.slice() : [];
+        // Same as the select above, and worse here: this control builds
+        // what it saves by walking its OPTIONS, so a checked value that
+        // has left the live set was invisible AND dropped by the next
+        // save of any other box — a silent edit nobody asked for. Kept,
+        // shown, and removable by unticking, which is the only one of
+        // the three that is somebody's decision.
+        var checkOpts = (f.options || []).slice();
+        (function() {
+          var known = {};
+          checkOpts.forEach(function(o) { known[String(o.value)] = true; });
+          initialArr.forEach(function(v) {
+            if (known[String(v)]) return;
+            known[String(v)] = true;
+            checkOpts.push({value: v, label: String(v),
+              help: 'no longer available — untick to remove it', group: 'No longer available'});
+          });
+        })();
         var selected = {};
         initialArr.forEach(function(v) { selected[String(v)] = true; });
         var countEl = el('span', {class: 'ui-checklist-count'});
         function refreshCount() {
-          var n = 0, total = (f.options || []).length;
-          (f.options || []).forEach(function(o) {
+          var n = 0, total = checkOpts.length;
+          checkOpts.forEach(function(o) {
             if (selected[String(o.value)]) n++;
           });
           countEl.textContent = n + ' / ' + total + ' selected';
         }
         function persist() {
           var out = [];
-          (f.options || []).forEach(function(o) {
+          checkOpts.forEach(function(o) {
             if (selected[String(o.value)]) out.push(o.value);
           });
           refreshCount();
@@ -2078,7 +2109,7 @@
         // never uncheck it, or narrowing the view would edit the data.
         var rowIndex = []; // {row, header, text}
         var filterBox = null;
-        if ((f.options || []).length > 15) {
+        if (checkOpts.length > 15) {
           filterBox = el('input', {type: 'text', class: 'ui-input ui-checklist-filter',
             placeholder: 'Filter…', 'aria-label': 'Filter the list'});
           filterBox.style.cssText = 'flex:1;min-width:8rem;font-size:0.8rem;padding:0.2rem 0.5rem';
@@ -2120,7 +2151,7 @@
 
         var lastGroup = '__init__';
         var lastHeader = null;
-        (f.options || []).forEach(function(o) {
+        checkOpts.forEach(function(o) {
           var grp = o.group || '';
           if (grp !== lastGroup) {
             lastHeader = grp ? el('div', {class: 'ui-checklist-group'}, [grp]) : null;

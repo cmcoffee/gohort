@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -439,5 +440,76 @@ func TestSectionsCanNestInTheRail(t *testing.T) {
 	}
 	if css := readRuntimeCSSForTest(t); !strings.Contains(css, ".ui-secnav-item.nested") {
 		t.Error("nested rail entries have no styling to distinguish them")
+	}
+}
+
+// A stored value whose option has gone away. Options come from a LIVE
+// set — the steps a machine has, the appliances a workspace can include
+// — and things leave those sets. Two different wrongs before this: a
+// select showed its first option while the record said something else,
+// and a checklist (which builds what it saves by walking its OPTIONS)
+// hid the value AND dropped it on the next save of any other box.
+func TestAValueWhoseOptionIsGoneStaysVisibleAndRemovable(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+
+	// The select shows it rather than silently selecting something else.
+	if !strings.Contains(src, "' — no longer available'") {
+		t.Error("a select should show a value it no longer has an option for")
+	}
+	// The checklist keeps it in the list it SAVES from, or unticking is
+	// the only outcome and it happens by accident.
+	if !strings.Contains(src, "var checkOpts = (f.options || []).slice();") {
+		t.Fatal("the checklist should save from a list that can carry a gone value")
+	}
+	if strings.Contains(src[strings.Index(src, "var checkOpts"):strings.Index(src, "} else if (t === 'number')")], "(f.options || [])[") {
+		t.Error("every use in the branch should read the augmented list")
+	}
+	if !strings.Contains(src, "'No longer available'") {
+		t.Error("a gone value should be grouped as what it is")
+	}
+	if !strings.Contains(src, "untick to remove it") {
+		t.Error("and should say how to get rid of it")
+	}
+}
+
+// And the behaviour, driven rather than read: a checked value with no
+// option must survive a save of the OTHER boxes, because dropping it
+// silently is an edit nobody asked for.
+func TestGoneValueSurvivesASaveOfItsNeighbours(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "10_basics.js")
+	start := strings.Index(src, "var checkOpts = (f.options || []).slice();")
+	if start < 0 {
+		t.Fatal("checklist branch not found")
+	}
+	// Lift just the augmentation and the persist walk into a harness:
+	// the whole runtime needs a DOM, this needs the rule.
+	harness := `
+var f = {options: [{value: 'left'}, {value: 'right'}]};
+var initialArr = ['left', 'ghost'];
+` + src[start:strings.Index(src, "var countEl")] + `
+var selected = {};
+initialArr.forEach(function(v) { selected[String(v)] = true; });
+// Save triggered by ticking 'right' — the gone value must ride along.
+selected['right'] = true;
+var out = [];
+checkOpts.forEach(function(o) { if (selected[String(o.value)]) out.push(o.value); });
+if (out.indexOf('ghost') < 0) throw new Error('a gone value was dropped by a save it had nothing to do with: ' + out);
+if (out.length !== 3) throw new Error('expected left, right and ghost, got ' + out);
+// Unticking it is how it goes, and that has to work.
+selected['ghost'] = false;
+var after = [];
+checkOpts.forEach(function(o) { if (selected[String(o.value)]) after.push(o.value); });
+if (after.indexOf('ghost') >= 0) throw new Error('unticking should remove it: ' + after);
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "gone.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the gone-value rule does not hold:\n%s", out)
 	}
 }

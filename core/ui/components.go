@@ -905,6 +905,15 @@ type FormField struct {
 	// under the person still typing the rest.
 	ReloadOnChange bool `json:"reload_on_change,omitempty"`
 
+	// A note that applies to "select" and "checklist" alike: Options
+	// usually come from a LIVE set, and things leave those sets. A
+	// stored value with no option left is rendered anyway, marked "no
+	// longer available" — visible in the select, and in the checklist
+	// checked, carried through saves, and removed only by unticking it.
+	// Nothing an app has to ask for: a control that hides part of its
+	// own value cannot be trusted, and one that drops it on the next
+	// unrelated save is making an edit nobody asked for.
+
 	// OwnLine puts a "rows" column on its own full-width line beneath
 	// the row's other cells, with its Label above it.
 	//
