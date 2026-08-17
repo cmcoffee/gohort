@@ -895,3 +895,25 @@ func TestMachineDefRoundTripAndExport(t *testing.T) {
 		t.Error("export should carry the recipe intact")
 	}
 }
+
+// A phase that narrows the catalog must SAY so. Without it the narrowing is
+// invisible from inside the turn — an earlier phase's successful calls are
+// still in the history, so a name that stops resolving reads as a typo and the
+// model burns rounds retrying spellings.
+func TestPhaseBlockNamesToolScope(t *testing.T) {
+	blk := MachineDef{Name: "triage"}.PhaseBlock(
+		MachinePhase{Name: "gather", Tools: []string{"web_search", "fetch_url"}},
+		MachineState{}, PhaseVars{})
+	for _, want := range []string{"web_search", "fetch_url", "OUT OF SCOPE"} {
+		if !strings.Contains(blk, want) {
+			t.Errorf("phase block missing %q:\n%s", want, blk)
+		}
+	}
+	// A phase that names no tools inherits everything, so saying anything
+	// about scope there would be false.
+	open := MachineDef{Name: "triage"}.PhaseBlock(
+		MachinePhase{Name: "gather"}, MachineState{}, PhaseVars{})
+	if strings.Contains(open, "Tools in this phase") {
+		t.Errorf("unscoped phase claimed a tool scope:\n%s", open)
+	}
+}

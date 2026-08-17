@@ -633,6 +633,20 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 		b.WriteString(r)
 	}
 
+	// Name the tool scope, for the same reason the exits are named below.
+	// A phase with a Tools list narrows the catalog, and the narrowing is
+	// invisible from inside the turn: an earlier phase's successful calls
+	// are still in the history, so a name that stops resolving reads as a
+	// name the model got wrong. It then retries spellings — a refused call
+	// per round — instead of working with what this phase actually has.
+	//
+	// Static per phase, so it costs the cache nothing.
+	if len(ph.Tools) > 0 {
+		b.WriteString("\n## Tools in this phase\n")
+		b.WriteString("This phase is scoped to: " + strings.Join(ph.Tools, ", ") + ".\n")
+		b.WriteString("Anything else is OUT OF SCOPE here, not misnamed — including tools you used earlier in this conversation, under a phase that allowed them. Don't retry those names. Work with the list above, or change_phase if the job has genuinely moved to a phase that carries what you need.\n")
+	}
+
 	// Unless the prompt placed {established} itself — then the author
 	// chose where it goes, and a second copy would argue with them. The
 	// same rule a transient step follows.

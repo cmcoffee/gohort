@@ -6886,7 +6886,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			Log("[orchestrate.orch] private mode dropped %d network-capable dynamic tool(s): %v", len(dropped), dropped)
 		}
 	}
-	Debug("[orchestrate.orch] runPlan: rewriting catalog over %d tools", len(allTools))
+	// Says "assembled", not "rewriting": the runtime group rewriter this line
+	// used to announce was retired, and the sentence outlived it. A stale verb
+	// on a line that also prints the catalog SIZE reads as a size-triggered
+	// rewrite, which is a mechanism that no longer exists — and it is the first
+	// thing anyone greps when tools go missing between turns.
+	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(allTools))
 
 	// (Runtime tool-group rewriting retired. The per-turn
 	// classifier-trim that preceded this block is also gone — every
@@ -6897,11 +6902,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// as admin-side organizational metadata — they just don't gate
 	// the runtime catalog anymore.)
 
-	// Full-surface log every turn — confirms what the LLM actually
-	// receives. If a follow-up turn lacks a tool the first turn had,
-	// this line will show the regression. Includes both control and
-	// worker tools so a bug that drops one but not the other is
-	// visible immediately.
+	// Full-surface log every turn — the ASSEMBLED catalog. If a follow-up
+	// turn lacks a tool the first turn had, this line will show the
+	// regression. Includes both control and worker tools so a bug that drops
+	// one but not the other is visible immediately.
+	//
+	// One filter still runs downstream of this: a machine phase narrows the
+	// catalog to the tools that phase allows (see mach.narrowCatalog). On
+	// those turns this line reports the wider pre-phase set, and the
+	// tools_to_llm_effective line printed there is the authoritative one.
 	allNames := make([]string, 0, len(allTools))
 	for _, td := range allTools {
 		allNames = append(allNames, td.Tool.Name)
@@ -7354,7 +7363,39 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// Narrow the catalog to what the current machine phase may reach. A
 	// phase that names no tools (and every agent with no machine) gets
 	// the catalog back unchanged, so this can sit on the main path.
-	allTools = mach.Tools(allTools)
+	//
+	// Loudly, because this is the one place the agent's reach changes
+	// BETWEEN turns of one session — the phase advances and tools the model
+	// used two turns ago stop resolving. Silently, that reads to the model
+	// as a name it got wrong, and it burns the turn retrying spellings.
+	narrowed, phaseDropped, phaseUnmatched := mach.narrowCatalog(allTools)
+	if len(phaseDropped) > 0 {
+		Log("[orchestrate.orch] machine phase %q narrowed the catalog %d → %d tool(s); dropped: %v",
+			mach.Name(), len(allTools), len(narrowed), phaseDropped)
+	}
+	if len(phaseUnmatched) > 0 {
+		// The phase asked for something the catalog doesn't carry under that
+		// name. Nothing else reports it: the filter is a name match, so a miss
+		// looks exactly like a phase that meant to allow fewer tools.
+		Log("[orchestrate.orch] machine phase %q names %d tool(s) not in this agent's catalog: %v",
+			mach.Name(), len(phaseUnmatched), phaseUnmatched)
+		t.turnDiag("machine_phase_tool_missing", fmt.Sprintf(
+			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly — a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
+			mach.Name(), mach.phase.Tools, phaseUnmatched))
+	}
+	allTools = narrowed
+	// The catalog the model ACTUALLY receives. The full-surface line above
+	// runs before this narrowing, so on a machine turn it reports the wider
+	// pre-phase set — which is what sent a reader chasing catalog size when
+	// the phase filter was what moved.
+	if len(phaseDropped) > 0 || len(phaseUnmatched) > 0 {
+		effective := make([]string, 0, len(allTools))
+		for _, td := range allTools {
+			effective = append(effective, td.Tool.Name)
+		}
+		Log("[orchestrate.orch] session=%s phase=%s tools_to_llm_effective[%d]=%v",
+			sessID, mach.Name(), len(allTools), effective)
+	}
 
 	// pre_input guardrail: judge the incoming request before round 1 so a
 	// topical/disclosure rule ("never mention salary") is caught at the door,

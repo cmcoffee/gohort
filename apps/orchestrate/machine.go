@@ -355,6 +355,42 @@ func (m turnMachine) Tools(catalog []AgentToolDef) []AgentToolDef {
 	return PhaseTools(m.phase, catalog)
 }
 
+// narrowCatalog is Tools plus what it took away: the names this phase
+// removed, and the names it ASKED for that the catalog never had.
+//
+// Both are needed because a silent narrowing is indistinguishable, from
+// inside the turn, from a tool that never existed. The model has its own
+// successful calls from an earlier phase in front of it, so when the name
+// stops resolving it concludes it mistyped and retries spellings — and
+// nothing in the log said otherwise, because the full-surface catalog line
+// is printed upstream of this filter and reported the wider set.
+//
+// The unmatched list catches the other half: a phase naming a tool by a
+// name the catalog doesn't use (an MCP tool is exposed as
+// "<server>_<tool>", not the raw remote name) silently narrows to nothing
+// instead of reporting that its allow-list missed.
+func (m turnMachine) narrowCatalog(catalog []AgentToolDef) (out []AgentToolDef, dropped, unmatched []string) {
+	out = m.Tools(catalog)
+	if !m.on || len(m.phase.Tools) == 0 {
+		return out, nil, nil
+	}
+	kept := make(map[string]bool, len(out))
+	for _, td := range out {
+		kept[td.Tool.Name] = true
+	}
+	for _, td := range catalog {
+		if !kept[td.Tool.Name] {
+			dropped = append(dropped, td.Tool.Name)
+		}
+	}
+	for _, n := range m.phase.Tools {
+		if n = strings.TrimSpace(n); n != "" && !kept[n] {
+			unmatched = append(unmatched, n)
+		}
+	}
+	return out, dropped, unmatched
+}
+
 // Tier is the phase's model override, feeding AgentLoopConfig.
 // TierOverride. TierUnset (no machine, or a phase that names no model)
 // follows the agent's own routing exactly as before.
