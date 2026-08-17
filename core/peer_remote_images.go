@@ -146,6 +146,19 @@ func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, e
 		BaseURL:           p.BaseURL,
 		AllowedURLPattern: imageHostPattern(p.BaseURL),
 		Description:       "Resource-sharing key for peer " + p.Name + ". Created with the peer; removed when it is forgotten.",
+		// SECURED: reachable only through a tool that declares it, which
+		// is what the image connectors below do. Without this the
+		// credential also produced an auto-generated call_<name> tool in
+		// every agent's catalog and auto-routed for the peer's host —
+		// handing the default pool an open request path to the peer,
+		// carrying the sharing key, for a credential nobody chose to
+		// grant. The connectors are unaffected: they name it.
+		Secured: true,
+		// And it is not an operator's credential to maintain. Peering
+		// writes it on save and deletes it on forget, so offering it in
+		// a picker invites a binding that the next peer save overwrites
+		// or that breaks when the peer is dropped.
+		Managed: "peer",
 	}, p.Key); err != nil {
 		return nil, fmt.Errorf("storing the peer key as a credential: %w", err)
 	}

@@ -47,6 +47,38 @@ type mcpOAuthConfig struct {
 	// place of the RFC 8707 `resource` param, which those providers ignore — and
 	// which some reject when it isn't a registered API identifier.
 	Audience string `json:"audience,omitempty"`
+	// RegisteredRedirects is the redirect_uris the DCR client was
+	// registered with, remembered so a later flow can tell whether the
+	// cached client will accept the URI it is about to send.
+	//
+	// This is the fix for a failure with no local symptom at all: the
+	// client is registered once, with whichever callback the first flow
+	// used, and cached. A second entry point — the per-user connect,
+	// whose callback lives under /account rather than /admin — then sent
+	// a URI that client had never registered, and the AUTHORIZATION
+	// SERVER refused it. Nothing here saw an error; the person saw
+	// "the app's callback URL is invalid" on the provider's own page,
+	// with no way to register anything by hand because the client was
+	// created programmatically.
+	RegisteredRedirects []string `json:"registered_redirects,omitempty"`
+}
+
+// knowsRedirect reports whether the registered client will accept this
+// redirect URI. An empty list means the client predates the field, so
+// nothing is known — treated as "does not know it" only when the URI is
+// not the one thing we can infer, to avoid re-registering every old
+// client on sight.
+func (c mcpOAuthConfig) knowsRedirect(uri string) bool {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return true
+	}
+	for _, r := range c.RegisteredRedirects {
+		if strings.EqualFold(strings.TrimSpace(r), uri) {
+			return true
+		}
+	}
+	return false
 }
 
 // mcpApplyResourceParam sets the resource-targeting parameter on an authorize or
@@ -242,13 +274,29 @@ func parseResourceMetadata(header string) string {
 // mcpRegisterClient registers a public PKCE client at the AS and returns
 // the issued client_id (and client_secret if the AS makes it
 // confidential).
-func mcpRegisterClient(ctx context.Context, registrationEndpoint, redirectURI string) (clientID, clientSecret string, err error) {
+func mcpRegisterClient(ctx context.Context, registrationEndpoint string, redirectURIs ...string) (clientID, clientSecret string, err error) {
 	if registrationEndpoint == "" {
 		return "", "", fmt.Errorf("authorization server has no registration_endpoint (manual client_id needed)")
 	}
+	// EVERY callback this deployment can send, not just the one that
+	// happens to be starting the flow. RFC 7591 takes an array, the
+	// client is registered once and cached, and a client registered with
+	// one URI rejects the other for good — which is invisible here,
+	// because the refusal happens on the provider's page.
+	uris := []string{}
+	seen := map[string]bool{}
+	for _, u := range redirectURIs {
+		if u = strings.TrimSpace(u); u != "" && !seen[u] {
+			seen[u] = true
+			uris = append(uris, u)
+		}
+	}
+	if len(uris) == 0 {
+		return "", "", fmt.Errorf("no redirect URI to register")
+	}
 	reqBody, _ := json.Marshal(map[string]any{
 		"client_name":                "gohort",
-		"redirect_uris":              []string{redirectURI},
+		"redirect_uris":              uris,
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "none",
@@ -413,4 +461,50 @@ func mcpGetJSON(ctx context.Context, url string, out any) error {
 		return fmt.Errorf("GET %s: %d", url, resp.StatusCode)
 	}
 	return json.Unmarshal(body, out)
+}
+
+// MCPRedirectURIs is every callback path this deployment can send a
+// per-user MCP consent to, derived from any one of them.
+//
+// There are two, and they cannot be merged: the admin Connect button's
+// callback lives under /admin, whose whole sub-mux is gated behind an
+// admin check, so a non-admin cannot complete a consent that lands
+// there — the per-user flow needs its own under /account. Both are
+// registered on the client so either entry point works with one
+// registration, which is the thing that was missing.
+//
+// Derived from a given URI rather than from config so the caller's own
+// base (external_url, or scheme+host) is preserved exactly; guessing a
+// base here is how a redirect URI stops matching by one character.
+func MCPRedirectURIs(primary string, extra ...string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(u string) {
+		if u = strings.TrimSpace(u); u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	add(primary)
+	for _, e := range extra {
+		add(e)
+	}
+	// The sibling path, on the same base.
+	for _, known := range mcpCallbackPaths {
+		if base, ok := strings.CutSuffix(primary, known); ok {
+			for _, p := range mcpCallbackPaths {
+				add(base + p)
+			}
+			break
+		}
+	}
+	return out
+}
+
+// mcpCallbackPaths are the two per-user MCP consent callbacks this
+// deployment serves. Listed once, here, so a flow that adds a third has
+// one place to say so.
+var mcpCallbackPaths = []string{
+	"/account/mcp/callback",                 // any user, from Extensions or a chat prompt
+	"/admin/api/mcp-servers/oauth/callback", // the Connect button on the admin MCP row
 }

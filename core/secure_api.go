@@ -145,6 +145,22 @@ type SecureCredential struct {
 	// its records' inert `restricted` flag is ignored on decode, so they
 	// read as Open. Open vs Secured is the whole ladder now.)
 	Secured bool `json:"secured,omitempty"`
+	// Managed names the SUBSYSTEM that owns this credential's lifecycle,
+	// when something other than a person does. Empty = an operator made
+	// it and an operator maintains it.
+	//
+	// It exists so a credential that is created and destroyed as part of
+	// some other configuration stops being offered as a thing to wire
+	// up. The peer key is the case: peering saves it when a peer is
+	// added and deletes it when the peer is forgotten, so a menu
+	// offering it invites an edit that the next peer save overwrites, or
+	// a binding that breaks the day the peer is dropped.
+	//
+	// It HIDES from pickers; it does not hide from the admin's
+	// credential list. Somebody asking "what holds this key" has to be
+	// able to find it, and a record that exists but appears nowhere is
+	// its own kind of lie.
+	Managed string `json:"managed,omitempty"`
 	// Owner classifies the credential's NAMESPACE. Empty = GLOBAL (a
 	// deployment/system credential — what the admin page manages; access gated by
 	// AllowedUsers). A username = USER-OWNED (lives in that user's namespace —
@@ -2360,3 +2376,8 @@ func validToolNameStr(s string) bool {
 	}
 	return true
 }
+
+// ManagedElsewhere reports whether some other configuration owns this
+// credential, in which case a menu should not offer it as something to
+// choose or bind.
+func (c SecureCredential) ManagedElsewhere() bool { return strings.TrimSpace(c.Managed) != "" }

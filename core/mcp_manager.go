@@ -800,15 +800,42 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 			disc.ClientID = id
 			disc.ClientSecret = m.loadOAuthClientSecret(server)
 		} else {
-			clientID, clientSecret, err := mcpRegisterClient(ctx, disc.RegistrationEndpoint, redirectURI)
+			all := MCPRedirectURIs(redirectURI)
+			clientID, clientSecret, err := mcpRegisterClient(ctx, disc.RegistrationEndpoint, all...)
 			if err != nil {
 				return "", fmt.Errorf("client registration: %w — or set a Client ID on the server (Admin -> MCP Servers) to use a pre-registered OAuth app", err)
 			}
 			disc.ClientID = clientID
 			disc.ClientSecret = clientSecret
+			disc.RegisteredRedirects = all
 		}
 		oc = disc
 		m.saveOAuthCfg(server, oc)
+	}
+	// A client registered BEFORE this deployment knew about the other
+	// callback path will refuse it, and refuse it at the provider where
+	// nothing here can see the error. Re-register rather than send a URI
+	// the client does not hold: DCR is a request, the old client_id was
+	// only ever cached, and the alternative is a Connect button that
+	// fails forever with an explanation the operator cannot act on.
+	//
+	// Only for DCR clients. A manually pre-registered client_id is the
+	// operator's, and re-registering it is not ours to do — that case is
+	// covered by naming both URIs in the admin form's help.
+	if strings.TrimSpace(cfg.OAuthClientID) == "" && !oc.knowsRedirect(redirectURI) &&
+		strings.TrimSpace(oc.RegistrationEndpoint) != "" {
+		rctx, rcancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
+		defer rcancel()
+		all := MCPRedirectURIs(redirectURI, oc.RegisteredRedirects...)
+		if clientID, clientSecret, err := mcpRegisterClient(rctx, oc.RegistrationEndpoint, all...); err == nil {
+			Log("[mcp] %q: re-registered the OAuth client to accept %s (it held %v)",
+				server, redirectURI, oc.RegisteredRedirects)
+			oc.ClientID, oc.ClientSecret, oc.RegisteredRedirects = clientID, clientSecret, all
+			m.saveOAuthCfg(server, oc)
+		} else {
+			Log("[mcp] %q: the registered OAuth client does not hold %s and re-registration failed: %v",
+				server, redirectURI, err)
+		}
 	}
 	verifier, challenge := mcpPKCE()
 	state := mcpRandomState()

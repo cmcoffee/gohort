@@ -205,3 +205,59 @@ func TestMCPExchangeRequiresPKCEAndResource(t *testing.T) {
 		t.Fatalf("expected 400 for missing resource, got %v", err)
 	}
 }
+
+// A Dynamic Client Registration client is registered ONCE and cached,
+// with whichever callback the first flow happened to use. The second
+// entry point then sends a URI that client never registered, and the
+// AUTHORIZATION SERVER refuses it — on its own page, where nothing here
+// can see the error and nothing can be registered by hand, because the
+// client was created programmatically.
+//
+// Reported as: an Atlassian connector that worked from the admin page
+// answered "the app's callback URL is invalid" on Reconnect.
+func TestClientRegistrationCoversEveryCallbackThisDeploymentSends(t *testing.T) {
+	const base = "https://gohort.example.com"
+	got := MCPRedirectURIs(base + "/account/mcp/callback")
+	if len(got) != 2 {
+		t.Fatalf("both callbacks should be registered, got %v", got)
+	}
+	// The one that started the flow stays first: it is the redirect_uri
+	// actually sent, and some servers treat the first as the default.
+	if got[0] != base+"/account/mcp/callback" {
+		t.Errorf("the active URI should lead: %v", got)
+	}
+	if got[1] != base+"/admin/api/mcp-servers/oauth/callback" {
+		t.Errorf("the sibling path is wrong: %v", got)
+	}
+	// Symmetrically from the admin side.
+	if from := MCPRedirectURIs(base + "/admin/api/mcp-servers/oauth/callback"); len(from) != 2 ||
+		from[0] != base+"/admin/api/mcp-servers/oauth/callback" {
+		t.Errorf("derived from the admin callback: %v", from)
+	}
+	// The base is PRESERVED, never rebuilt — a redirect URI that differs
+	// by one character is not the same URI.
+	if odd := MCPRedirectURIs("https://host:8443/sub/account/mcp/callback"); odd[1] != "https://host:8443/sub/admin/api/mcp-servers/oauth/callback" {
+		t.Errorf("a non-root base should survive: %v", odd)
+	}
+	// An unrecognised callback is registered alone rather than having a
+	// sibling invented for it.
+	if lone := MCPRedirectURIs("https://x/custom/cb"); len(lone) != 1 {
+		t.Errorf("nothing should be guessed: %v", lone)
+	}
+
+	// And the cached client remembers what it holds, so a flow can tell
+	// whether the URI it is about to send will be refused.
+	c := mcpOAuthConfig{RegisteredRedirects: got}
+	if !c.knowsRedirect(base + "/admin/api/mcp-servers/oauth/callback") {
+		t.Error("a registered URI should be recognised")
+	}
+	if c.knowsRedirect(base + "/somewhere/else") {
+		t.Error("an unregistered URI must not read as registered")
+	}
+	// A client from before the field was recorded knows nothing, which is
+	// what triggers the re-registration rather than a silent failure.
+	old := mcpOAuthConfig{ClientID: "abc"}
+	if old.knowsRedirect(base + "/account/mcp/callback") {
+		t.Error("an unrecorded client should not claim to hold a URI")
+	}
+}
