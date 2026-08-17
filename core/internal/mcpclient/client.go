@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -39,6 +40,15 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return fmt.Sprintf("mcp rpc %d: %s", e.Code, e.Message) }
 
+// ToolError is a tools/call the server answered normally but which the TOOL
+// reported as failed (isError). Typed so a caller can tell it from a
+// transport failure: the session is healthy here and only the call went
+// wrong, so tearing the connection down over one would drop a working link
+// every time a tool was handed a bad argument.
+type ToolError struct{ Text string }
+
+func (e *ToolError) Error() string { return "tool reported error: " + e.Text }
+
 // --- MCP payload types ---
 
 // ToolDef is one tool as returned by tools/list. InputSchema is the
@@ -59,6 +69,13 @@ type Client struct {
 	mu          sync.RWMutex
 	initialized bool
 	serverInfo  ServerInfo
+	// generation counts completed handshakes. A call that loses its session
+	// carries the generation it ran under, so concurrent losers of the SAME
+	// session reconnect once between them instead of opening (and leaking) a
+	// session each.
+	generation uint64
+
+	reinitMu sync.Mutex // serializes the reconnect itself
 }
 
 // ServerInfo captures the handshake result for diagnostics.
@@ -83,9 +100,46 @@ func (c *Client) ServerInfo() ServerInfo {
 	return c.serverInfo
 }
 
-// call sends a request and decodes the response result, surfacing any
-// JSON-RPC error.
+// call sends a request, and re-opens the session and replays it once if the
+// server says the session is gone.
+//
+// Replay is safe even for a mutating tools/call: a rejected session id is
+// refused at the transport layer, so the request never reached the tool. The
+// alternative — surfacing the error — is what made an idle agent's next tool
+// call fail permanently, since nothing else in the stack ever re-initialized.
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	gen := c.currentGeneration()
+	raw, err := c.callOnce(ctx, method, params)
+	if err == nil || method == "initialize" || !errors.Is(err, ErrSessionExpired) {
+		return raw, err
+	}
+	if rerr := c.reinit(ctx, gen); rerr != nil {
+		return nil, fmt.Errorf("%w; reconnect failed: %v", err, rerr)
+	}
+	return c.callOnce(ctx, method, params)
+}
+
+// reinit re-runs the handshake once per lost session. A caller whose
+// generation is already stale lost the race to another caller that has
+// reconnected, and rides that session instead of opening a second one.
+func (c *Client) reinit(ctx context.Context, gen uint64) error {
+	c.reinitMu.Lock()
+	defer c.reinitMu.Unlock()
+	if c.currentGeneration() != gen {
+		return nil
+	}
+	return c.Initialize(ctx)
+}
+
+func (c *Client) currentGeneration() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.generation
+}
+
+// callOnce sends a request and decodes the response result, surfacing any
+// JSON-RPC error.
+func (c *Client) callOnce(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := atomic.AddInt64(&c.nextID, 1)
 	frame, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	if err != nil {
@@ -140,6 +194,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.initialized = true
+	c.generation++
 	c.serverInfo = ServerInfo{
 		ProtocolVersion: res.ProtocolVersion,
 		ServerName:      res.ServerInfo.Name,
@@ -197,7 +252,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		b.WriteString("[" + blk.Type + " content omitted]")
 	}
 	if r.IsError {
-		return "", fmt.Errorf("tool reported error: %s", b.String())
+		return "", &ToolError{Text: b.String()}
 	}
 	return b.String(), nil
 }

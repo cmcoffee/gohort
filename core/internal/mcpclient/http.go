@@ -5,12 +5,27 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 )
+
+// ErrSessionExpired reports that the server rejected the Mcp-Session-Id we
+// echoed: the session it named is gone. This is the NORMAL end of a
+// Streamable-HTTP session, not an outage — a server restart ends every
+// session it was holding, and a hosted server expires idle ones on its own
+// clock, which an agent hits routinely because the gap between two turns is
+// dead air on the wire.
+//
+// The spec's answer is to open a new session by re-running initialize
+// without a session id, and the transport has already dropped the stale one
+// by the time this surfaces. Client.call does exactly that and replays the
+// request once, so a caller only ever sees this error if the RECONNECT also
+// failed.
+var ErrSessionExpired = errors.New("mcp session expired")
 
 // Authorizer mutates an outgoing HTTP request to attach credentials
 // (typically an Authorization header). It runs per request so tokens
@@ -63,7 +78,11 @@ func (t *HTTPTransport) Call(ctx context.Context, frame []byte) ([]byte, error) 
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		msg := strings.TrimSpace(string(body))
+		if t.dropExpiredSession(resp.StatusCode, msg) {
+			return nil, fmt.Errorf("%w (http %d: %s)", ErrSessionExpired, resp.StatusCode, msg)
+		}
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, msg)
 	}
 
 	if strings.Contains(ct, "text/event-stream") {
@@ -81,12 +100,45 @@ func (t *HTTPTransport) Notify(ctx context.Context, frame []byte) error {
 		return err
 	}
 	t.captureSession(resp)
+	// Read a bounded prefix rather than discarding outright: a rejected
+	// notification says WHY in the body, and the session-expiry check below
+	// needs those words to tell a dead session from a real failure.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 	resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := strings.TrimSpace(string(body))
+		if t.dropExpiredSession(resp.StatusCode, msg) {
+			return fmt.Errorf("%w (http %d)", ErrSessionExpired, resp.StatusCode)
+		}
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// dropExpiredSession reports whether a failed response means the SESSION is
+// gone (as opposed to the request being wrong), clearing the stale id when it
+// does so the next request opens a fresh session.
+//
+// Guarded on already holding an id: a 404 from a transport with no session is
+// a bad URL, and treating that as expiry would send the client into an
+// initialize loop against an endpoint that was never there.
+func (t *HTTPTransport) dropExpiredSession(code int, body string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sessionID == "" {
+		return false
+	}
+	// 404 is what the spec names. 400-mentioning-session is what several
+	// servers send instead, and the distinction is not worth a permanent
+	// outage to insist on.
+	expired := code == http.StatusNotFound ||
+		(code == http.StatusBadRequest && strings.Contains(strings.ToLower(body), "session"))
+	if !expired {
+		return false
+	}
+	t.sessionID = ""
+	return true
 }
 
 // Close releases idle connections.

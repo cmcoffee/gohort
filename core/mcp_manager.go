@@ -44,6 +44,12 @@ func mcpHandshakeTimeout() time.Duration { return TuneDuration("tune_mcp_handsha
 // over a wiki can be slow, but a hung call must not pin a round.
 func mcpCallTimeout() time.Duration { return TuneDuration("tune_mcp_call_timeout") }
 
+// mcpRedialBackoff is the quiet period after a failed connect before a tool
+// call tries to dial that server again. Without it a genuinely-down server
+// costs one full handshake timeout PER CALL, and the model — which retries a
+// failing tool — turns that into minutes of a stalled turn.
+const mcpRedialBackoff = 30 * time.Second
+
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_mcp_handshake_timeout", Category: "Timeouts", Label: "MCP handshake timeout", Help: "Caps initialize + tools/list when connecting to an MCP server.", Kind: KindSeconds, Default: 20, Min: 4, Max: 120})
 	RegisterTunable(TunableSpec{Key: "tune_mcp_call_timeout", Category: "Timeouts", Label: "MCP call timeout", Help: "Caps a single MCP tools/call invocation.", Kind: KindSeconds, Default: 55, Min: 10, Max: 300})
@@ -118,6 +124,9 @@ type MCPManager struct {
 	conns     map[string]*mcpConn      // SHARED connections (none/bearer/secure_api): server name -> conn
 	userConns map[string]*mcpConn      // PER-USER oauth connections: user+"\x00"+server -> conn
 	proxies   map[string]*mcpProxyTool // exposed name (see mcpExposedName) -> registered proxy (register-once)
+	dialFail  map[string]time.Time     // server name -> when its last connect attempt failed (redial backoff)
+
+	dialMu sync.Mutex // serializes on-demand redials so one dead server is dialed once, not once per waiting turn
 
 	oauthMu        sync.Mutex                // serializes token refresh
 	oauthPendingMu sync.Mutex                // guards oauthPending
@@ -139,6 +148,7 @@ func MCP() *MCPManager {
 			conns:        map[string]*mcpConn{},
 			userConns:    map[string]*mcpConn{},
 			proxies:      map[string]*mcpProxyTool{},
+			dialFail:     map[string]time.Time{},
 			oauthPending: map[string]mcpPendingAuth{},
 		}
 	}
@@ -151,6 +161,78 @@ func MCP() *MCPManager {
 func (m *MCPManager) ready() bool { return m != nil && m.db != nil }
 
 func mcpTokenKey(name string) string { return name + "__token" }
+
+// mcpToolsKey holds the last tool list a server reported. Sidecar record —
+// excluded from List.
+func mcpToolsKey(name string) string { return name + "__tools" }
+
+// saveToolCache records what a server offered, so the tools survive the
+// process that learned them.
+//
+// Stored as JSON rather than handed to the store's own encoder: a ToolDef
+// carries the server's raw inputSchema as map[string]any, and a gob encoder
+// cannot serialize arbitrary values behind an interface without every
+// concrete type registered up front — which is the one thing a remote schema
+// we have never seen cannot promise.
+func (m *MCPManager) saveToolCache(name string, tools []mcpclient.ToolDef) {
+	if !m.ready() || len(tools) == 0 {
+		return
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	m.db.Set(mcpServersTable, mcpToolsKey(name), string(b))
+	m.mu.Unlock()
+}
+
+// loadToolCache returns the last known tool list for a server.
+func (m *MCPManager) loadToolCache(name string) []mcpclient.ToolDef {
+	if !m.ready() {
+		return nil
+	}
+	var raw string
+	if !m.db.Get(mcpServersTable, mcpToolsKey(name), &raw) || raw == "" {
+		return nil
+	}
+	var tools []mcpclient.ToolDef
+	if err := json.Unmarshal([]byte(raw), &tools); err != nil {
+		return nil
+	}
+	return tools
+}
+
+// registerCachedTools puts a server's LAST KNOWN tools into the catalog
+// without waiting for (or requiring) a live connection.
+//
+// Registration used to happen only after a successful handshake, which made
+// the catalog a report on the network at one instant: a server that was slow,
+// restarting, or holding an expired token when this process started exposed
+// no tools at all, and — because nothing retried — exposed none for the life
+// of the process. The agent's answer to "use the wiki search" was that it had
+// no such tool, which is a different and much more confusing failure than
+// saying the wiki is unreachable.
+//
+// Registering from cache inverts that: the tool is present, and a call
+// re-dials (see connFor) or reports a connection problem the model can
+// explain. A schema that has drifted since the cache was written is corrected
+// by the next successful connect, which re-registers in place.
+func (m *MCPManager) registerCachedTools(cfg MCPServerConfig) {
+	if !cfg.Enabled {
+		return
+	}
+	if cfg.ExposeTools {
+		if tools := m.loadToolCache(cfg.Name); len(tools) > 0 {
+			m.registerTools(cfg, tools)
+		}
+	}
+	if cfg.ExposeReference {
+		// Safe to register before connecting: the source's own List() is
+		// connection-aware, so it simply lists nothing until the server is up.
+		RegisterReferenceSource(mcpReferenceSource{mgr: m, server: cfg.Name})
+	}
+}
 
 // mcpOAuthClientSecretKey holds the manual OAuth client_secret (oauth mode, the
 // non-DCR fallback) for a server, encrypted. Sidecar record — excluded from List.
@@ -187,7 +269,7 @@ func (m *MCPManager) List() []MCPServerConfig {
 	for _, k := range m.db.Keys(mcpServersTable) {
 		// Skip sidecar records (bearer token + per-server/per-user oauth
 		// state) — only the config records are keyed by bare server name.
-		if strings.HasSuffix(k, "__token") || strings.Contains(k, "__oauthcfg") || strings.Contains(k, "__oauthtok__") || strings.HasSuffix(k, "__oauthclientsecret") {
+		if strings.HasSuffix(k, "__token") || strings.HasSuffix(k, "__tools") || strings.Contains(k, "__oauthcfg") || strings.Contains(k, "__oauthtok__") || strings.HasSuffix(k, "__oauthclientsecret") {
 			continue
 		}
 		var c MCPServerConfig
@@ -255,6 +337,7 @@ func (m *MCPManager) Delete(name string) error {
 	}
 	m.db.Unset(mcpServersTable, name)
 	m.db.Unset(mcpServersTable, mcpTokenKey(name))
+	m.db.Unset(mcpServersTable, mcpToolsKey(name))
 	m.db.Unset(mcpServersTable, mcpOAuthClientSecretKey(name))
 	dropMCPToolGroup(cfg)
 	return nil
@@ -312,6 +395,11 @@ func (m *MCPManager) Reload() {
 			m.disconnect(cfg.Name)
 			continue
 		}
+		// Catalog first, connection second. These are separate facts — what
+		// the server offers, and whether it is answering right now — and
+		// binding them together is what made a slow server look like a server
+		// with no tools.
+		m.registerCachedTools(cfg)
 		if cfg.AuthMode == MCPAuthOAuth {
 			// Per-user + lazy: no shared connection. Restore connections
 			// for users already authorized (re-registers the global tool
@@ -350,16 +438,25 @@ func (m *MCPManager) Reload() {
 func (m *MCPManager) bringUp(cfg MCPServerConfig) {
 	conn, err := m.connect(cfg)
 	if err != nil {
+		m.noteDialFailure(cfg.Name)
 		Warn("[mcp] %q connect failed: %v", cfg.Name, err)
 		return
 	}
+	m.adoptConn(cfg, conn)
+}
+
+// adoptConn installs a freshly dialed shared connection and refreshes what it
+// exposes. Split out of bringUp so the on-demand redial lands identically.
+func (m *MCPManager) adoptConn(cfg MCPServerConfig, conn *mcpConn) {
 	m.mu.Lock()
 	if old := m.conns[cfg.Name]; old != nil {
 		old.client.Close()
 	}
 	m.conns[cfg.Name] = conn
+	delete(m.dialFail, cfg.Name)
 	m.mu.Unlock()
 
+	m.saveToolCache(cfg.Name, conn.tools)
 	if cfg.ExposeTools {
 		m.registerTools(cfg, conn.tools)
 	}
@@ -369,6 +466,14 @@ func (m *MCPManager) bringUp(cfg MCPServerConfig) {
 		RegisterReferenceSource(mcpReferenceSource{mgr: m, server: cfg.Name})
 	}
 	Log("[mcp] %q connected: %d tool(s)", cfg.Name, len(conn.tools))
+}
+
+// noteDialFailure starts the backoff window for a server that would not
+// connect.
+func (m *MCPManager) noteDialFailure(name string) {
+	m.mu.Lock()
+	m.dialFail[name] = time.Now()
+	m.mu.Unlock()
 }
 
 // connect builds a SHARED client (none/bearer/secure_api auth) and
@@ -415,6 +520,7 @@ func (m *MCPManager) bringUpUser(user string, cfg MCPServerConfig) {
 	}
 	m.userConns[key] = conn
 	m.mu.Unlock()
+	m.saveToolCache(cfg.Name, conn.tools)
 	if cfg.ExposeTools {
 		m.registerTools(cfg, conn.tools)
 	}
@@ -493,7 +599,42 @@ func (m *MCPManager) callToolForUser(ctx context.Context, user, server, rawName 
 	if err != nil {
 		return "", err
 	}
-	return conn.client.CallTool(ctx, rawName, args)
+	out, err := conn.client.CallTool(ctx, rawName, args)
+	if mcpConnectionLost(err) {
+		// Retire the connection rather than leaving it in the map answering
+		// every later call with the same failure. The next call re-dials, and
+		// re-dialing is also what picks up a rotated bearer token, since the
+		// authorizer reads it when the connection is built.
+		conn.alive.Store(false)
+		Warn("[mcp] %q: connection lost on %s (%v) — the next call will reconnect", server, rawName, err)
+	}
+	return out, err
+}
+
+// mcpConnectionLost reports whether a failed call means the CONNECTION is
+// unusable, as opposed to the call itself having failed.
+//
+// The distinction has to be made here because the two need opposite
+// treatment. A tool handed bad arguments, an unknown method, or a call that
+// outran its deadline all leave a healthy session, and dropping the
+// connection over one would mean a single malformed argument cost every
+// later call a fresh handshake. A transport error, or an HTTP status from
+// the endpoint itself, means nothing on this link will work again.
+func mcpConnectionLost(err error) bool {
+	if err == nil {
+		return false
+	}
+	// The caller's deadline, not the server's health.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	// The server answered — the answer was an error.
+	var rpcErr *mcpclient.RPCError
+	if errors.As(err, &rpcErr) {
+		return false
+	}
+	var toolErr *mcpclient.ToolError
+	return !errors.As(err, &toolErr)
 }
 
 // MCPNotConnectedError signals that (user, server) has no per-user OAuth
@@ -533,22 +674,61 @@ func (m *MCPManager) connFor(user, server string) (*mcpConn, error) {
 			// (RunWithSession) rather than dead-ending on this string.
 			return nil, MCPNotConnectedError{Server: server}
 		}
-		conn, err := m.dialMCP(cfg, m.oauthAuthorizer(user, server))
+		fresh, err := m.dialMCP(cfg, m.oauthAuthorizer(user, server))
 		if err != nil {
 			return nil, err
 		}
 		m.mu.Lock()
-		m.userConns[key] = conn
+		if conn != nil {
+			// Retired, not merely replaced: this path also runs when a
+			// connection was marked dead mid-session, and the old client still
+			// holds idle sockets.
+			conn.client.Close()
+		}
+		m.userConns[key] = fresh
 		m.mu.Unlock()
-		return conn, nil
+		m.saveToolCache(server, fresh.tools)
+		return fresh, nil
 	}
 	m.mu.Lock()
 	conn := m.conns[server]
 	m.mu.Unlock()
-	if conn == nil || !conn.alive.Load() {
-		return nil, fmt.Errorf("mcp server %q is not connected", server)
+	if conn != nil && conn.alive.Load() {
+		return conn, nil
 	}
-	return conn, nil
+	// No usable shared connection. Dial one NOW rather than reporting "not
+	// connected" and waiting for someone to press Reload: the only previous
+	// route back from a failed startup connect was an admin save or a
+	// restart, so a server that was briefly down at boot stayed unusable for
+	// the life of the process while its tools sat in the catalog failing.
+	return m.redial(cfg)
+}
+
+// redial builds a shared connection on demand, at most once per backoff
+// window per server, and installs it.
+func (m *MCPManager) redial(cfg MCPServerConfig) (*mcpConn, error) {
+	m.dialMu.Lock()
+	defer m.dialMu.Unlock()
+	// Re-check under the dial lock: while this caller waited, another may
+	// have connected the very server it is about to dial.
+	m.mu.Lock()
+	conn := m.conns[cfg.Name]
+	last, failed := m.dialFail[cfg.Name]
+	m.mu.Unlock()
+	if conn != nil && conn.alive.Load() {
+		return conn, nil
+	}
+	if failed && time.Since(last) < mcpRedialBackoff {
+		return nil, fmt.Errorf("mcp server %q is not connected (a connection attempt failed %s ago; retrying shortly)",
+			cfg.Name, time.Since(last).Round(time.Second))
+	}
+	fresh, err := m.connect(cfg)
+	if err != nil {
+		m.noteDialFailure(cfg.Name)
+		return nil, fmt.Errorf("mcp server %q is not connected: %w", cfg.Name, err)
+	}
+	m.adoptConn(cfg, fresh)
+	return fresh, nil
 }
 
 // connected reports whether (user, server) currently has a usable

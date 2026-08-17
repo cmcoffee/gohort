@@ -151,6 +151,55 @@ func usableCaps(m PeerManifest) []string {
 	return out
 }
 
+// refreshedCaps is usableCaps for a RE-probe: same rule, plus it keeps a
+// capability that is still granted but was momentarily not being served.
+//
+// The two halves of "usable" have very different lifetimes. GRANTED is an
+// operator's decision on the far side and changes when someone changes it;
+// SERVED is a property of the far PROCESS, and is false for the window
+// between that process accepting connections and the app that implements the
+// capability finishing its wiring. A refresh landing inside that window used
+// to write the capability out of the local record — and since a call checks
+// the local record first (PeerExec, PeerInvestigate), the capability then
+// failed HERE, without a request, until the next refresh half an hour later.
+// The far side was fine the whole time.
+//
+// A withdrawal still takes effect immediately, because a withdrawal clears
+// GRANTED. And nothing is invented: a capability is only retained if it was
+// already usable, which it could only have become through a probe that saw
+// it both served and granted.
+func refreshedCaps(prev []string, m PeerManifest) []string {
+	had := map[string]bool{}
+	for _, c := range prev {
+		had[c] = true
+	}
+	var out []string
+	for _, e := range m.Capabilities {
+		switch {
+		case e.Served && e.Granted:
+			out = append(out, e.Name)
+		case e.Granted && had[e.Name]:
+			// Still ours to use; that instance just is not answering for it
+			// this second.
+			out = append(out, e.Name)
+			Debug("[peer] %s reports %q granted but not currently served — keeping it, it worked before", m.Instance, e.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// servesCap reports whether a manifest says a capability is being served
+// right now, whatever this key is granted.
+func servesCap(m PeerManifest, cap string) bool {
+	for _, e := range m.Capabilities {
+		if e.Name == cap {
+			return e.Served
+		}
+	}
+	return false
+}
+
 // SaveRemotePeer validates, probes and stores a peer. The probe is not
 // optional: a peer saved without one would sit in the picker looking usable
 // and fail at the first embed, at which point the cause is three screens away.
@@ -218,7 +267,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 		return p, err
 	}
 	p.LastError = ""
-	p.Caps = usableCaps(m)
+	p.Caps = refreshedCaps(p.Caps, m)
 	p.Instance = m.Instance
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
@@ -233,7 +282,15 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	// Replaced wholesale, not merged: an appliance withdrawn on the far side
 	// must disappear here at the next check rather than lingering in the picker
 	// as something that 403s when asked.
-	p.Investigable = m.Investigable
+	//
+	// But only when the far side actually ANSWERED the question. An instance
+	// that is not serving investigate right now sends no list, and an absent
+	// list is not the same statement as an empty one — reading it as "nothing
+	// is granted any more" emptied the picker on the strength of a question
+	// that was never asked.
+	if servesCap(m, PeerCapInvestigate) {
+		p.Investigable = m.Investigable
+	}
 	// A grant revoked on the far side stops offering a renderer here at the
 	// next check, rather than leaving a backend in the picker that 403s.
 	syncPeerImages(&p, m.Images)
