@@ -2893,17 +2893,31 @@
           submitBtn.textContent = 'Saving…';
           msgEl.style.display = 'none';
           msgEl.textContent = '';
+          // Some submits are a save and some are a JOB — an endpoint that
+          // asks a model to draft something can run for a minute. A
+          // button that has said "Saving…" for that long is
+          // indistinguishable from one that hung, so say so IN the form
+          // rather than leaving somebody to guess.
+          var slow = setTimeout(function() {
+            msgEl.textContent = 'Still working. This one runs a model, so it can take a minute.';
+            msgEl.style.borderLeftColor = 'var(--border)';
+            msgEl.style.color = 'var(--text-mute, var(--text))';
+            msgEl.style.display = '';
+          }, 4000);
+          var done = function() { clearTimeout(slow); };
           var postURL = cfg.post_url || cfg.source;
           fetchJSON(postURL, {
             method: cfg.method || 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(current),
           }).then(function(resp) {
+            done();
             window.uiInvalidateSaved(cfg);
             // Always give a visible "it saved" signal. A submit that closes a
             // modal or just restores the button (204, no message) otherwise
             // looks like it did nothing — the exact "the save button should do
             // something" gap. A redirect navigates away, so skip the toast there.
+            msgEl.style.display = 'none';
             if (!cfg.redirect_url) { showToast(cfg.saved_toast || 'Saved ✓'); }
             if (cfg.redirect_url) {
               var dest = substitute(cfg.redirect_url, resp || {});
@@ -2928,8 +2942,17 @@
               }
             }
           }).catch(function(err) {
+            done();
             submitBtn.textContent = cfg.submit_label;
             submitBtn.disabled = false;
+            // In the FORM as well as the toast. A toast lasts three
+            // seconds and a server's reason for refusing is often a
+            // paragraph; this one stays until the next submit, next to
+            // the fields somebody would change.
+            msgEl.textContent = String((err && err.message) || err);
+            msgEl.style.borderLeftColor = 'var(--danger, #d9534f)';
+            msgEl.style.color = 'var(--danger, #d9534f)';
+            msgEl.style.display = '';
             showToast('Save failed: ' + err.message);
           });
         });
