@@ -510,6 +510,11 @@ func (m *MCPManager) dialMCP(cfg MCPServerConfig, auth mcpclient.Authorizer) (*m
 func (m *MCPManager) bringUpUser(user string, cfg MCPServerConfig) {
 	conn, err := m.dialMCP(cfg, m.oauthAuthorizer(user, cfg.Name))
 	if err != nil {
+		// Rejected at the handshake: same recovery as a rejected call, or the
+		// next dial presents the same dead token and fails identically.
+		if errors.Is(err, mcpclient.ErrUnauthorized) {
+			m.invalidateOAuthToken(cfg.Name, user)
+		}
 		Warn("[mcp] %q oauth connect for user %q failed: %v", cfg.Name, user, err)
 		return
 	}
@@ -600,6 +605,18 @@ func (m *MCPManager) callToolForUser(ctx context.Context, user, server, rawName 
 		return "", err
 	}
 	out, err := conn.client.CallTool(ctx, rawName, args)
+	// Credential refused. Clear the access token (keeping the refresh token) so
+	// the next call mints a fresh one and works, instead of every later call
+	// repeating this 401 until somebody reconnects by hand. THIS call still
+	// fails — nothing is replayed, so a mutating tool is never re-sent behind
+	// the caller's back. Only for per-user oauth: a shared bearer or SecureAPI
+	// credential has no refresh token here to renew with.
+	if errors.Is(err, mcpclient.ErrUnauthorized) {
+		if cfg, ok := m.Load(server); ok && cfg.AuthMode == MCPAuthOAuth && user != "" {
+			m.invalidateOAuthToken(server, user)
+			return out, fmt.Errorf("%s rejected the stored credential; it has been renewed — run this call again", server)
+		}
+	}
 	if mcpConnectionLost(err) {
 		// Retire the connection rather than leaving it in the map answering
 		// every later call with the same failure. The next call re-dials, and
@@ -676,6 +693,12 @@ func (m *MCPManager) connFor(user, server string) (*mcpConn, error) {
 		}
 		fresh, err := m.dialMCP(cfg, m.oauthAuthorizer(user, server))
 		if err != nil {
+			// Same recovery as bringUpUser: a handshake refused on the stored
+			// token must clear it, or the next attempt presents the same dead
+			// token and fails the same way, forever.
+			if errors.Is(err, mcpclient.ErrUnauthorized) {
+				m.invalidateOAuthToken(server, user)
+			}
 			return nil, err
 		}
 		m.mu.Lock()
@@ -842,10 +865,15 @@ func (m *MCPManager) oauthAuthorizer(user, server string) mcpclient.Authorizer {
 func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 	m.oauthMu.Lock()
 	defer m.oauthMu.Unlock()
-	tok, ok := m.loadOAuthToken(server, user)
-	if !ok {
+	// RAW: a record with only a refresh token is the state a 401 leaves, and
+	// resolving it is precisely this function's job. The gated load would call
+	// it "no token" and dead-end on a reconnect the user does not need.
+	tok, ok := m.loadOAuthTokenRaw(server, user)
+	if !ok || (tok.AccessToken == "" && tok.RefreshToken == "") {
 		return "", fmt.Errorf("no token for user %q on %q", user, server)
 	}
+	// A zero Expiry means the provider told us nothing, NOT that the token is
+	// good forever — so it only rides while we still hold one.
 	if tok.AccessToken != "" && (tok.Expiry.IsZero() || time.Until(tok.Expiry) > 60*time.Second) {
 		return tok.AccessToken, nil
 	}
@@ -860,6 +888,17 @@ func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 	defer cancel()
 	nt, err := mcpRefreshAccess(ctx, cfg, tok)
 	if err != nil {
+		// The refresh token itself is finished — revoked, expired, or already
+		// rotated away. No number of retries brings it back, so clear the
+		// record and ask for the reconnect that IS required here, instead of
+		// leaving a dead token to fail as something else on every later call.
+		if oauthGrantRejected(err) {
+			if m.ready() {
+				m.db.Unset(mcpServersTable, mcpOAuthTokKey(server, user))
+			}
+			Log("[mcp] %q refused %q's refresh token (%v) — cleared; reconnect required", server, user, err)
+			return "", MCPNotConnectedError{Server: server}
+		}
 		if tok.AccessToken != "" && (tok.Expiry.IsZero() || time.Now().Before(tok.Expiry)) {
 			return tok.AccessToken, nil // not yet expired; ride it out
 		}
@@ -918,12 +957,63 @@ func (m *MCPManager) saveOAuthCfg(server string, c mcpOAuthConfig) {
 }
 
 func (m *MCPManager) loadOAuthToken(server, user string) (mcpOAuthToken, bool) {
+	t, ok := m.loadOAuthTokenRaw(server, user)
+	return t, ok && t.AccessToken != ""
+}
+
+// loadOAuthTokenRaw is loadOAuthToken without the "has an access token" gate.
+//
+// A record holding only a refresh token is what a 401 leaves behind, and it
+// means "we can mint a new one" — not "this user never connected". The gated
+// form stays for callers asking whether a usable token exists RIGHT NOW.
+func (m *MCPManager) loadOAuthTokenRaw(server, user string) (mcpOAuthToken, bool) {
 	var t mcpOAuthToken
 	if !m.ready() || user == "" {
 		return t, false
 	}
 	ok := m.db.Get(mcpServersTable, mcpOAuthTokKey(server, user), &t)
-	return t, ok && t.AccessToken != ""
+	return t, ok
+}
+
+// invalidateOAuthToken drops a user's ACCESS token for a server, keeping the
+// refresh token so the next call mints a fresh one, and retires the connection
+// built on the dead token.
+//
+// The server rejecting the credential is more authoritative than any expiry we
+// stored, and it is the only signal at all when the provider sent no expires_in
+// — the case that left a token being used long after it stopped working, with
+// re-authorization as the only way out.
+//
+// No refresh token means nothing to recover with, so the record goes and the
+// user is genuinely asked to reconnect.
+func (m *MCPManager) invalidateOAuthToken(server, user string) {
+	tok, ok := m.loadOAuthTokenRaw(server, user)
+	if !ok {
+		return
+	}
+	key := user + "\x00" + server
+	m.mu.Lock()
+	if conn := m.userConns[key]; conn != nil {
+		// Retire it: the connection was built with the rejected token, and the
+		// authorizer runs per REQUEST but initialize already happened under the
+		// old one. Leaving it in the map would answer every later call with the
+		// same 401 the refresh was meant to fix.
+		conn.alive.Store(false)
+		conn.client.Close()
+		delete(m.userConns, key)
+	}
+	m.mu.Unlock()
+	if tok.RefreshToken == "" {
+		if m.ready() {
+			m.db.Unset(mcpServersTable, mcpOAuthTokKey(server, user))
+		}
+		Log("[mcp] %q rejected %q's token and no refresh token is stored — reconnect required", server, user)
+		return
+	}
+	tok.AccessToken = ""
+	tok.Expiry = time.Time{}
+	m.saveOAuthToken(server, user, tok)
+	Log("[mcp] %q rejected %q's access token — cleared; the next call will refresh it", server, user)
 }
 
 func (m *MCPManager) saveOAuthToken(server, user string, t mcpOAuthToken) {

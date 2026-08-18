@@ -27,6 +27,22 @@ import (
 // failed.
 var ErrSessionExpired = errors.New("mcp session expired")
 
+// ErrUnauthorized reports that the server rejected our CREDENTIAL — a 401, or a
+// 403 that means the same thing for our purposes here.
+//
+// Distinct from ErrSessionExpired, which is about the session id and is
+// recovered inside this package by re-initializing. This one cannot be: the
+// token has to be renewed a layer up, where the refresh token lives. Typed
+// rather than left as "http 401" in a string so that layer can key off it
+// without matching on error text, which is what the same code did before and is
+// how a message reword silently turns a recovery off.
+var ErrUnauthorized = errors.New("mcp unauthorized")
+
+// authRejected reports whether a status means our credential was refused.
+func authRejected(code int) bool {
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
 // Authorizer mutates an outgoing HTTP request to attach credentials
 // (typically an Authorization header). It runs per request so tokens
 // can be minted/refreshed at call time. nil means no auth.
@@ -82,6 +98,9 @@ func (t *HTTPTransport) Call(ctx context.Context, frame []byte) ([]byte, error) 
 		if t.dropExpiredSession(resp.StatusCode, msg) {
 			return nil, fmt.Errorf("%w (http %d: %s)", ErrSessionExpired, resp.StatusCode, msg)
 		}
+		if authRejected(resp.StatusCode) {
+			return nil, fmt.Errorf("%w (http %d: %s)", ErrUnauthorized, resp.StatusCode, msg)
+		}
 		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, msg)
 	}
 
@@ -110,6 +129,9 @@ func (t *HTTPTransport) Notify(ctx context.Context, frame []byte) error {
 		msg := strings.TrimSpace(string(body))
 		if t.dropExpiredSession(resp.StatusCode, msg) {
 			return fmt.Errorf("%w (http %d)", ErrSessionExpired, resp.StatusCode)
+		}
+		if authRejected(resp.StatusCode) {
+			return fmt.Errorf("%w (http %d)", ErrUnauthorized, resp.StatusCode)
 		}
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}

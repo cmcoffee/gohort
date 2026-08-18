@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -127,5 +128,56 @@ func TestNotFoundWithoutASessionIsNotExpiry(t *testing.T) {
 	}
 	if inits != 1 {
 		t.Errorf("initialize attempts = %d, want 1 — a 404 with no session must not trigger a reconnect loop", inits)
+	}
+}
+
+// A 401 is a rejected CREDENTIAL, not an expired session, and the two recover
+// in different places: a session is re-opened inside this package, a token has
+// to be renewed a layer up where the refresh token lives. So a 401 must not be
+// swallowed by the session-replay path, and must reach the caller typed.
+func TestUnauthorizedSurfacesTyped(t *testing.T) {
+	var inits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			ID     any    `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "initialize" {
+			inits++
+			w.Header().Set("Mcp-Session-Id", "sess-1")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0", "id": req.ID,
+				"result": map[string]any{"protocolVersion": protocolVersion, "serverInfo": map[string]any{"name": "t"}},
+			})
+			return
+		}
+		if req.ID == nil {
+			w.WriteHeader(http.StatusAccepted) // notifications/initialized
+			return
+		}
+		http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	cl := New(NewHTTPTransport(srv.URL, HTTPOptions{}))
+	defer cl.Close()
+	ctx := context.Background()
+	if err := cl.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	_, err := cl.CallTool(ctx, "anything", nil)
+	if err == nil {
+		t.Fatal("expected the 401 to surface as an error")
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("401 did not surface as ErrUnauthorized: %v", err)
+	}
+	if errors.Is(err, ErrSessionExpired) {
+		t.Error("401 was misread as an expired session")
+	}
+	if inits != 1 {
+		t.Errorf("a 401 must not trigger the session re-initialize replay (inits=%d)", inits)
 	}
 }

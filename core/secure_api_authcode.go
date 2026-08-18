@@ -50,19 +50,60 @@ func (s *SecureAPI) SaveUserToken(name, user string, tok CredOAuthToken) error {
 }
 
 func (s *SecureAPI) loadUserToken(name, user string) (CredOAuthToken, bool) {
+	tok, ok := s.loadUserTokenRaw(name, user)
+	return tok, ok && tok.AccessToken != ""
+}
+
+// loadUserTokenRaw is loadUserToken without the "has an access token" gate.
+//
+// Needed because a token can legitimately hold a refresh token and NO access
+// token: that is what a 401 leaves behind (see InvalidateUserAccessToken), and
+// it means "we can mint a new one", not "disconnected". The gated form is kept
+// for callers that specifically want a usable access token right now.
+func (s *SecureAPI) loadUserTokenRaw(name, user string) (CredOAuthToken, bool) {
 	if !s.ready() || user == "" {
 		return CredOAuthToken{}, false
 	}
 	var tok CredOAuthToken
 	ok := s.db.Get(secureAPITable, secureCredUserTokenKey(name, user), &tok)
-	return tok, ok && tok.AccessToken != ""
+	return tok, ok
 }
 
 // HasUserToken reports whether a user has connected (has a stored token) — for
 // the Account page's connected/disconnected badge. Never returns the token.
+//
+// A refresh token alone counts as connected. Between a 401 and the next call
+// there is no access token stored, and reporting that as disconnected would put
+// a "Connect" button in front of someone whose account is fine and about to
+// heal itself.
 func (s *SecureAPI) HasUserToken(name, user string) bool {
-	_, ok := s.loadUserToken(name, user)
-	return ok
+	tok, ok := s.loadUserTokenRaw(name, user)
+	return ok && (tok.AccessToken != "" || tok.RefreshToken != "")
+}
+
+// InvalidateUserAccessToken drops a user's ACCESS token for a credential while
+// keeping the refresh token, so the next call mints a fresh one.
+//
+// Called when the provider answers 401: the server has told us the token is no
+// longer good, which is more authoritative than any expiry we stored — and is
+// the only signal available at all when the provider never sent one.
+//
+// With no refresh token there is nothing to recover with, so the record goes
+// entirely and the user is asked to reconnect, which is true in that case.
+func (s *SecureAPI) InvalidateUserAccessToken(name, user string) {
+	tok, ok := s.loadUserTokenRaw(name, user)
+	if !ok {
+		return
+	}
+	if tok.RefreshToken == "" {
+		s.ClearUserToken(name, user)
+		Log("[secureapi] %q rejected %q's token and no refresh token is stored — reconnect required", name, user)
+		return
+	}
+	tok.AccessToken = ""
+	tok.Expiry = time.Time{}
+	_ = s.SaveUserToken(name, user, tok)
+	Log("[secureapi] %q rejected %q's access token — cleared; the next call will refresh it", name, user)
 }
 
 // ClearUserToken disconnects a user from an OAuth credential.
@@ -191,12 +232,21 @@ func (s *SecureAPI) OAuthCallback(ctx context.Context, state, code string) (cred
 // it when expired (or near expiry). Used by the dispatch for authorization_code
 // per_user credentials.
 func (s *SecureAPI) userAccessToken(ctx context.Context, c SecureCredential, user string) (string, error) {
-	tok, ok := s.loadUserToken(c.Name, user)
-	if !ok {
+	// RAW: a token holding only a refresh token is the state a 401 leaves, and
+	// it is exactly the case this function exists to resolve. The gated load
+	// would call it "not connected" and send the user off to reconnect an
+	// account that is one refresh away from working.
+	tok, ok := s.loadUserTokenRaw(c.Name, user)
+	if !ok || (tok.AccessToken == "" && tok.RefreshToken == "") {
 		return "", fmt.Errorf("not connected")
 	}
 	// Fresh enough? (60s skew so a call doesn't race the expiry.)
-	if tok.Expiry.IsZero() || time.Until(tok.Expiry) > 60*time.Second {
+	//
+	// A zero Expiry means the provider told us nothing, NOT that the token is
+	// good forever — so it only passes here while we still hold one. Once a 401
+	// has cleared it, this falls through to the refresh below instead of
+	// handing back an empty bearer.
+	if tok.AccessToken != "" && (tok.Expiry.IsZero() || time.Until(tok.Expiry) > 60*time.Second) {
 		return tok.AccessToken, nil
 	}
 	if tok.RefreshToken == "" {
@@ -212,7 +262,21 @@ func (s *SecureAPI) userAccessToken(ctx context.Context, c SecureCredential, use
 	}
 	refreshed, err := credTokenRequest(ctx, c.TokenURL, form, tok)
 	if err != nil {
-		return tok.AccessToken, nil // refresh failed; fall back to the (maybe-stale) token
+		// The refresh token itself is finished — revoked, expired, or already
+		// rotated away. Retrying gets the same answer forever, so clear the
+		// record and say so plainly rather than handing back a token that
+		// cannot work and letting it fail as something else.
+		if oauthGrantRejected(err) {
+			s.ClearUserToken(c.Name, user)
+			Log("[secureapi] %q refused %q's refresh token (%v) — cleared; reconnect required", c.Name, user, err)
+			return "", fmt.Errorf("your %q connection has expired and can't be renewed automatically — reconnect it on your Account page (Connected accounts)", c.Name)
+		}
+		// Anything else (a blip, a 500, a timeout) leaves a good refresh token.
+		// Ride the current access token out and try again on the next call.
+		if tok.AccessToken != "" {
+			return tok.AccessToken, nil
+		}
+		return "", fmt.Errorf("could not renew your %q access token: %w", c.Name, err)
 	}
 	_ = s.SaveUserToken(c.Name, user, refreshed)
 	return refreshed.AccessToken, nil

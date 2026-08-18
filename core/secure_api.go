@@ -1693,15 +1693,18 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// the auth-injection branch for this type. AllowedURLPattern,
 	// audit logging, rate limits, and HTTPS enforcement still apply.
 	var secret string
+	// Hoisted out of the branch below: the 401 handler after the response needs
+	// to know WHOSE token was rejected, and an authorization_code credential is
+	// per-user by definition.
+	callUser := ""
+	if sess != nil {
+		callUser = sess.Username
+	}
 	if c.Type != SecureCredNone && c.inlineSecret != "" {
 		// A synthesized credential brings its own secret; there is nothing in
 		// the store under this name to look up.
 		secret = c.inlineSecret
 	} else if c.Type != SecureCredNone {
-		callUser := ""
-		if sess != nil {
-			callUser = sess.Username
-		}
 		if c.IsAuthCode() {
 			// Interactive OAuth: use the CALLING user's per-user access token
 			// (refreshed when expired). secret holds the bearer token; the OAuth2
@@ -1710,6 +1713,14 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			tok, terr := s.userAccessToken(tctx, c, callUser)
 			cancel()
 			if terr != nil || tok == "" {
+				// userAccessToken already distinguishes "never connected" from
+				// "connection expired and could not be renewed" — pass its
+				// wording through rather than replacing both with the first one,
+				// which sent people to click Connect on an account that WAS
+				// connected and had just lost its refresh token.
+				if terr != nil {
+					return "", terr
+				}
 				return "", fmt.Errorf("you haven't connected your %q account yet — click Connect on your Account page (Connected accounts)", c.Name)
 			}
 			secret = tok
@@ -1936,6 +1947,20 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
 	defer resp.Body.Close()
+
+	// The provider says this token is no longer good. That is more
+	// authoritative than any expiry we stored — and it is the ONLY signal we
+	// have when the provider never sent an expires_in, which is the case that
+	// used to wedge a credential until a human reconnected it.
+	//
+	// Drop the access token, keep the refresh token: THIS call still fails
+	// (nothing is replayed, so a streaming upload or a non-idempotent request
+	// is never re-sent behind the caller's back), and the next one mints a fresh
+	// token and works. Placed before every return path below so the recovery
+	// happens whatever shape the response takes.
+	if resp.StatusCode == http.StatusUnauthorized && c.IsAuthCode() && callUser != "" {
+		s.InvalidateUserAccessToken(c.Name, callUser)
+	}
 
 	// save_to path: read up to the larger save cap and stream straight
 	// to disk. The LLM only sees a metadata line, so we don't pay the
