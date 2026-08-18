@@ -199,16 +199,18 @@ func standingSummary(out string) string {
 // run that could reach more than the same pipeline reached when clicked
 // would be a surprise nobody asked for.
 func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAgent) StandingRunResult {
-	udb := UserDB(app.DB, sa.Owner)
-	def, ok := LoadPipelineDef(udb, sa.Owner, sa.PipelineID)
+	// Own, or one shared with this user (pipeline_sharing.go). A schedule fires
+	// as its owner either way: a shared pipeline's stages dispatch to THIS
+	// user's agents and resolve THEIR tools, exactly as a hand-run does.
+	def, ok := pipelineForUser(sa.Owner, sa.PipelineID)
 	if !ok {
-		// Attention rather than failure: the schedule is fine, its target
-		// is gone. Naming the id is what lets somebody repoint it instead
-		// of guessing which of their schedules broke.
+		// Attention rather than failure: the schedule is fine, its target is
+		// gone. Which KIND of gone decides what somebody does about it —
+		// repoint the schedule, or go ask the person who withdrew the share.
 		return StandingRunResult{
 			Status: RunAttention,
-			Summary: "Skipped: no pipeline " + strconv.Quote(sa.PipelineID) + " — it was deleted or renamed. " +
-				"Point this schedule at an existing one, or delete it.",
+			Summary: "Skipped: " + pipelineMissingReason(sa.Owner, sa.PipelineID) + ". " +
+				"Point this schedule at a pipeline you can reach, or delete it.",
 		}
 	}
 	// A pipeline REFUSES to be stored unrunnable, but a record written by

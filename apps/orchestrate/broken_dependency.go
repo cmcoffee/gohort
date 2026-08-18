@@ -107,7 +107,7 @@ func eventMonitorDependencyError(m EventMonitor) string {
 func standingAgentDependencyError(sa StandingAgent) string {
 	if sa.TargetsPipeline() {
 		if !pipelineExists(sa.Owner, sa.PipelineID) {
-			return fmt.Sprintf("its target pipeline was deleted (id %s)", sa.PipelineID)
+			return "its target pipeline is out of reach — " + pipelineMissingReason(sa.Owner, sa.PipelineID)
 		}
 		return ""
 	}
@@ -118,15 +118,15 @@ func standingAgentDependencyError(sa StandingAgent) string {
 }
 
 // pipelineExists is agentExists' counterpart for a pipeline target.
+// Reachable, not merely present: a pipeline shared with this user counts, and
+// one whose share was withdrawn does not — which is the same answer the fire
+// path gives, from the same helper, so the schedule list and the 3am run cannot
+// disagree about whether a schedule is healthy.
 func pipelineExists(owner, id string) bool {
 	if strings.TrimSpace(owner) == "" || strings.TrimSpace(id) == "" {
 		return false
 	}
-	udb := UserDB(RootDB, owner)
-	if udb == nil {
-		return false
-	}
-	_, ok := LoadPipelineDef(udb, owner, id)
+	_, ok := pipelineForUser(owner, id)
 	return ok
 }
 
@@ -168,6 +168,23 @@ func wireDependencyGuards() {
 	PipelineSavedHook = syncPipelineShareIndex
 }
 
+// scheduleOwners is every user whose schedules might point at a just-deleted
+// pipeline: the owner first (the ordinary case, and the only one before
+// sharing), then everybody else. Falls back to the owner alone when there is no
+// user directory to walk, so a single-user deployment pays nothing.
+func scheduleOwners(owner string) []string {
+	out := []string{owner}
+	if RootDB == nil {
+		return out
+	}
+	for _, u := range AuthListUsers(RootDB) {
+		if u.Username != "" && u.Username != owner {
+			out = append(out, u.Username)
+		}
+	}
+	return out
+}
+
 // pipelineScheduleGuard exists to be referenced from the agent-deletion
 // sweep, so the two halves of the same rule are findable from each other.
 const pipelineScheduleGuard = "see pipelineDeleted"
@@ -193,10 +210,20 @@ func pipelineDeleted(owner, id, name string) {
 	// takes a moment, and a recipient resolving it in between would find the
 	// index pointing at a record that is already gone.
 	dropPipelineShareIndex(id)
-	for _, sa := range ListStandingAgents(RootDB, owner) {
-		if sa.PipelineID == id {
-			MarkStandingAgentBroken(RootDB, owner, sa.Name,
-				fmt.Sprintf("runs deleted pipeline %q", label))
+	// Every user's schedules, not just the owner's. A shared pipeline can be
+	// fired by somebody else's schedule, and deleting it leaves THEIR schedule
+	// pointing at nothing — the case that is easiest to miss precisely because
+	// the person who broke it never sees the thing they broke.
+	for _, u := range scheduleOwners(owner) {
+		for _, sa := range ListStandingAgents(RootDB, u) {
+			if sa.PipelineID != id {
+				continue
+			}
+			why := fmt.Sprintf("runs deleted pipeline %q", label)
+			if u != owner {
+				why = fmt.Sprintf("runs pipeline %q, which %s deleted", label, owner)
+			}
+			MarkStandingAgentBroken(RootDB, u, sa.Name, why)
 		}
 	}
 	// A pipeline can be named on an agent's dispatch target list, so deleting

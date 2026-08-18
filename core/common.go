@@ -282,6 +282,23 @@ func (T *AppCore) HasDistinctLead() bool {
 	return !T.LeadDenied() && T.LeadLLM != nil && LeadIsDistinct()
 }
 
+// leadUnavailableReason says WHY an escalation could not happen, in the words
+// somebody would need to fix it. Three different settings produce the same
+// silent worker call, and "it went to the worker" is not a diagnosis.
+func leadUnavailableReason(T *AppCore) string {
+	switch {
+	case T == nil:
+		return "no LLM stack is wired"
+	case T.LeadDenied():
+		return "this deployment is pinned to private models (no-lead), which no per-run setting can override"
+	case T.LeadLLM == nil:
+		return "no lead model is configured for this app"
+	case !LeadIsDistinct():
+		return "no separate lead model is configured — the lead and the worker would be the same model, so there is nothing to escalate to (set one in the LLM settings)"
+	}
+	return "the lead was unavailable"
+}
+
 // WorkerContextSize returns the worker LLM's context window size, or 0
 // if the LLM doesn't implement ContextSizer.
 func (T *AppCore) WorkerContextSize() int {
@@ -1181,6 +1198,16 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 	// requires HasDistinctLead(), which folds in LeadDenied().
 	if probe.TierOverride != TierUnset {
 		useLead = probe.TierOverride == LEAD && T.HasDistinctLead()
+		// A pin that CANNOT be honored has to say so. Somebody set a resource to
+		// the lead and got the worker; without this line the only evidence is the
+		// answer being worse than expected, and the cause (no distinct lead is
+		// configured at all, or the privacy pin denies one) is invisible from
+		// every surface that would make them look. This is the guard dropping
+		// something, and a guard that drops something leaves a breadcrumb.
+		if probe.TierOverride == LEAD && !useLead {
+			Log("[llm] route=%q pinned to LEAD but running on the WORKER — %s. Nothing is wrong with the pin; there is no lead to reach.",
+				probe.RouteKey, leadUnavailableReason(T))
+		}
 	}
 
 	llm := T.LLM

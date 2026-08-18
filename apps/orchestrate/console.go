@@ -333,8 +333,11 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		what := "scheduled run"
 		if sa.TargetsPipeline() {
 			what = "pipeline run"
-			if def, ok := LoadPipelineDef(UserDB(T.DB, user), user, sa.PipelineID); ok {
+			if def, ok := pipelineForUser(user, sa.PipelineID); ok {
 				what = "pipeline · " + def.Name
+				if def.Owner != "" && def.Owner != user {
+					what += " (shared by " + def.Owner + ")"
+				}
 			}
 		}
 		id := url.QueryEscape(sa.Name)
@@ -479,6 +482,17 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 					label = d.ID
 				}
 				opts = append(opts, opt{Value: d.ID, Label: label})
+			}
+			// A schedule can fire a pipeline somebody shared, so relinking one
+			// has to be able to CHOOSE it. Labelled with the sharer: two people
+			// can name a pipeline the same thing, and a picker that cannot tell
+			// them apart is how a schedule gets pointed at the wrong one.
+			for _, sp := range sharedPipelinesFor(user) {
+				label := strings.TrimSpace(sp.Def.Name)
+				if label == "" {
+					label = sp.Def.ID
+				}
+				opts = append(opts, opt{Value: sp.Def.ID, Label: label + " (shared by " + sp.Owner + ")"})
 			}
 			writeJSON(w, opts)
 			return

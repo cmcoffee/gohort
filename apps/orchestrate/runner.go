@@ -5917,6 +5917,15 @@ func (t *chatTurn) turnRouting() (pin LLMTier, routeKey string) {
 		if lead {
 			pin = LEAD
 		}
+		if !lead {
+			// Said out loud, in the place the reader is already looking. A step
+			// configured for the lead that runs on the worker is indistinguishable
+			// from a step that ignored its configuration, and this is the
+			// difference between "gohort is broken" and "turn private mode off".
+			t.turnDiag("machine-tier-denied", "Step "+t.machine.Name()+" asks for the lead model, but this turn may not reach it (private mode, or this agent forces private). It ran on the worker.")
+			Log("[orchestrate.routing] agent=%s step=%q pinned LEAD but privacy holds this turn on the worker (private=%v force=%v)",
+				t.agent.ID, t.machine.Name(), t.privateMode, t.agent.ForcePrivate)
+		}
 	case WORKER:
 		lead, pin = false, WORKER
 	}
@@ -7018,6 +7027,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// goes last: a cheap classify phase can turn reasoning off inside an
 	// agent that otherwise always reasons.
 	think = mach.Think(think)
+	if mach.on {
+		// Only while a machine is running, because that is when somebody asks
+		// "why did my lead step run on the worker" and needs one line rather
+		// than an inference across three settings. An ordinary turn's log is
+		// not made longer for a question nobody is asking of it.
+		Log("[orchestrate.routing] agent=%s step=%q model=%q think=%q → route=%s pin=%v reasoning=%v",
+			t.agent.ID, mach.Name(), mach.phase.Model, mach.phase.Think, routeKey, tierPin, think)
+	}
 
 	// Per-round bubbles: each agent-loop round that streams text gets
 	// its own assistant bubble, finalized at the round boundary by

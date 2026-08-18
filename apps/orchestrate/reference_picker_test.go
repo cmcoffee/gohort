@@ -30,6 +30,14 @@ func newTestOrchestrate(t *testing.T) (*OrchestrateApp, Database, string) {
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { AuthDB = prev })
 	token = AuthCreateSession(adb, "alice")
+	// The running app sets orchestrateBaseDB = T.DB at web-init (orchestrate.go),
+	// and the free functions that resolve a per-user record read it. A test that
+	// left it nil exercised a different store than production does — which is how
+	// pipelineExists came to be written against RootDB, a DIFFERENT bucket from
+	// the one pipelines are saved in, and pass its test anyway.
+	prevBase := orchestrateBaseDB
+	orchestrateBaseDB = root
+	t.Cleanup(func() { orchestrateBaseDB = prevBase })
 	return &OrchestrateApp{AppCore: AppCore{DB: root}}, UserDB(root, "alice"), "alice"
 }
 

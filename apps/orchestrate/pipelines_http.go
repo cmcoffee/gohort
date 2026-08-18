@@ -339,9 +339,14 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		before := def.AllowedUsers
 		def.Owner = user
 		def.AllowedUsers = normalizeShareList(body.AllowedUsers, user)
 		saved := SavePipelineDef(udb, def)
+		// Anybody dropped from the list loses it now, including any schedule
+		// they had armed against it — a share taken back has to take back
+		// everything it enabled, not just the next page load.
+		breakSchedulesForLostRecipients(saved, before)
 		Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
 		writeJSON(w, saved)
 	case "export":

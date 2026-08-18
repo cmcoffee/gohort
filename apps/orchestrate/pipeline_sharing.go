@@ -27,11 +27,13 @@
 // way, the dispatch policy reads a shared pipeline exactly as it reads an owned
 // one, and the caller's warden judges its actions. See dispatchablePipelines.
 //
-// What a share still does NOT reach is a SCHEDULE. StandingAgent resolves its
-// PipelineID in the owner's own store, so a schedule can only fire a pipeline
-// its owner has — and an unattended, recurring run of somebody else's recipe is
-// the case where "a person is in the loop" stops being true in a way dispatch
-// does not.
+// SCHEDULES reach a shared pipeline too (v0.6.268). The "nobody is in the loop"
+// worry is real but it is about the SCHEDULE, not about whose recipe it runs:
+// somebody sat down and armed it, against a definition they could read, and a
+// recurring run of their own pipeline is no more supervised than a recurring run
+// of somebody else's. What the widening does need is that a schedule cannot
+// outlive its permission — see pipelineForUser, and the revoke path below, which
+// marks a recipient's schedule broken rather than letting it fire into a refusal.
 //
 // WHY AN INDEX. A recipient looking for "pipelines shared with me" is asking
 // about records in other users' stores. Walking every user's store on every page
@@ -43,6 +45,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -171,6 +174,78 @@ func resolvePipelineFor(reqUser string, udb Database, id string) (def PipelineDe
 	return PipelineDef{}, "", false, false
 }
 
+// pipelineForUser resolves a pipeline that an UNATTENDED run should fire for a
+// user: their own, else one shared with them. The schedule twin of
+// resolvePipelineFor, without an HTTP request to hang it on.
+func pipelineForUser(user, id string) (PipelineDef, bool) {
+	if strings.TrimSpace(user) == "" || strings.TrimSpace(id) == "" {
+		return PipelineDef{}, false
+	}
+	if def, ok := LoadPipelineDef(UserDB(orchestrateBaseDB, user), user, id); ok {
+		return def, true
+	}
+	for _, sp := range sharedPipelinesFor(user) {
+		if sp.Def.ID == id {
+			return sp.Def, true
+		}
+	}
+	return PipelineDef{}, false
+}
+
+// pipelineMissingReason explains why a pipeline a schedule points at could not
+// be resolved, in the words somebody needs to fix it.
+//
+// Deleted and un-shared are the same silence to the resolver and completely
+// different problems to the reader: one means repoint the schedule, the other
+// means ask a colleague. Worth a full walk because it runs only on the failure
+// path of a schedule that is already broken.
+func pipelineMissingReason(user, id string) string {
+	if orchestrateBaseDB != nil {
+		for _, u := range AuthListUsers(orchestrateBaseDB) {
+			if u.Username == user {
+				continue
+			}
+			if def, ok := LoadPipelineDef(UserDB(orchestrateBaseDB, u.Username), u.Username, id); ok {
+				return "pipeline " + strconv.Quote(def.Name) + " still exists, but " + u.Username + " no longer shares it with you"
+			}
+		}
+	}
+	return "no pipeline " + strconv.Quote(id) + " — it was deleted, or the share was withdrawn"
+}
+
+// breakSchedulesForLostRecipients marks broken any schedule belonging to a user
+// who has just been taken off a pipeline's recipient list.
+//
+// A schedule must not outlive its permission. Without this, revoking a share
+// leaves the recipient's schedule looking healthy and firing into a refusal at
+// whatever hour it is armed for — the exact "discovered at 3am" failure the
+// broken-dependency package exists to prevent, arriving through a door that
+// package could not see. Paused-and-kept, like every other broken dependency, so
+// the owner of the schedule decides whether to repoint or delete it.
+func breakSchedulesForLostRecipients(def PipelineDef, before []string) {
+	still := map[string]bool{}
+	for _, u := range def.AllowedUsers {
+		still[u] = true
+	}
+	label := strings.TrimSpace(def.Name)
+	if label == "" {
+		label = def.ID
+	}
+	for _, u := range before {
+		if u == "" || still[u] {
+			continue
+		}
+		for _, sa := range ListStandingAgents(RootDB, u) {
+			if sa.PipelineID != def.ID {
+				continue
+			}
+			MarkStandingAgentBroken(RootDB, u, sa.Name,
+				fmt.Sprintf("runs pipeline %q, which %s no longer shares with you", label, def.Owner))
+			Log("[orchestrate.pipelines] share of %q withdrawn from %q — their schedule %q was marked broken", label, u, sa.Name)
+		}
+	}
+}
+
 // listUserOwnedPipelinesForAdmin walks every user's store and returns the
 // pipelines they own, each with its recipient list — the admin's audit over a
 // plane that otherwise lives entirely in per-user stores.
@@ -215,9 +290,11 @@ func revokePipelineShareForAdmin(db Database, owner, id string) error {
 	if !ok {
 		return fmt.Errorf("no pipeline %q owned by %q", id, owner)
 	}
+	before := def.AllowedUsers
 	def.Owner = owner
 	def.AllowedUsers = nil
 	SavePipelineDef(udb, def)
+	breakSchedulesForLostRecipients(def, before)
 	Log("[orchestrate.pipelines] admin revoked every share of pipeline %q (owner=%q)", def.Name, owner)
 	return nil
 }

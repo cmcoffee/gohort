@@ -68,8 +68,12 @@ func TestAScheduleWhosePipelineIsGoneReportsIt(t *testing.T) {
 	}
 	gone := StandingAgent{Name: "nightly", Owner: user, PipelineID: "pl-vanished"}
 	got := standingAgentDependencyError(gone)
-	if !strings.Contains(got, "pipeline was deleted") || !strings.Contains(got, "pl-vanished") {
-		t.Errorf("a deleted pipeline should be reported by id: %q", got)
+	// Pinned as properties, not phrasing: it must name the pipeline that is
+	// missing and say it is gone. The wording gained a second case when a
+	// schedule could fire a pipeline somebody SHARED — deleted and un-shared
+	// are the same silence to the resolver and different problems to the reader.
+	if !strings.Contains(got, "pl-vanished") || !strings.Contains(got, "deleted") {
+		t.Errorf("a missing pipeline should be reported by id: %q", got)
 	}
 	// And an agent schedule still reports the agent, not the pipeline.
 	if got := standingAgentDependencyError(StandingAgent{Owner: user, AgentID: "ag-vanished"}); !strings.Contains(got, "agent was deleted") {
