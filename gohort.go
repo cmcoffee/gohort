@@ -356,6 +356,17 @@ func main() {
 			}
 			return days
 		}
+		// The ceiling a session cannot slide past, counted from when it was
+		// created. session_days is now the IDLE window (it renews while you
+		// work); this is what still ends a session that never goes idle, and
+		// what bounds a stolen cookie. 0 = no ceiling.
+		AuthSessionAbsoluteDays = func() int {
+			var days int
+			if !global.db.Get(WebTable, "session_absolute_days", &days) {
+				return DefaultSessionAbsoluteDays
+			}
+			return days // an explicit 0 is the operator choosing no ceiling
+		}
 		AuthAPIKey = func() string {
 			var key string
 			global.db.Get(WebTable, "api_key", &key)

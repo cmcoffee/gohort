@@ -4881,10 +4881,13 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	var allow_signup, ollama_proxy_enabled bool
-	var session_days, max_attempts, lockout_minutes, ollama_proxy_port, fetch_cache_quota_mb int
+	var session_days, session_absolute_days, max_attempts, lockout_minutes, ollama_proxy_port, fetch_cache_quota_mb int
 	var service_name, external_url, notify_from string
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
 	a.db.Get(WebTable, "session_days", &session_days)
+	// Presence, not value: 0 is a legal setting here (no ceiling), so an
+	// absent key has to be told apart from an operator who chose zero.
+	session_absolute_set := a.db.Get(WebTable, "session_absolute_days", &session_absolute_days)
 	a.db.Get(WebTable, "max_login_attempts", &max_attempts)
 	a.db.Get(WebTable, "lockout_minutes", &lockout_minutes)
 	a.db.Get(WebTable, "service_name", &service_name)
@@ -4898,6 +4901,9 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if session_days == 0 {
 		session_days = 7
+	}
+	if !session_absolute_set {
+		session_absolute_days = DefaultSessionAbsoluteDays
 	}
 	if max_attempts == 0 {
 		max_attempts = 5
@@ -4938,24 +4944,25 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]interface{}{
-		"allow_signup":         allow_signup,
-		"session_days":         session_days,
-		"max_login_attempts":   max_attempts,
-		"lockout_minutes":      lockout_minutes,
-		"service_name":         service_name,
-		"external_url":         external_url,
-		"notify_from":          notify_from,
-		"default_apps":         AuthGetDefaultApps(a.db),
-		"ollama_proxy_enabled": ollama_proxy_enabled,
-		"ollama_proxy_port":    ollama_proxy_port,
-		"ollama_proxy_url":     proxy_url,
-		"ollama_active":        ollama_active,
-		"fetch_cache_quota_mb": fetch_cache_quota_mb,
-		"channel_wake_rules":   AuthGetChannelWakeRules(a.db),
-		"ui_theme":             ui_theme,
-		"doc_brand":            AuthGetDocBrand(a.db),
-		"site_name":            AuthGetSiteName(a.db),
-		"timezone":             DeploymentTimezoneName(a.db),
+		"allow_signup":          allow_signup,
+		"session_days":          session_days,
+		"session_absolute_days": session_absolute_days,
+		"max_login_attempts":    max_attempts,
+		"lockout_minutes":       lockout_minutes,
+		"service_name":          service_name,
+		"external_url":          external_url,
+		"notify_from":           notify_from,
+		"default_apps":          AuthGetDefaultApps(a.db),
+		"ollama_proxy_enabled":  ollama_proxy_enabled,
+		"ollama_proxy_port":     ollama_proxy_port,
+		"ollama_proxy_url":      proxy_url,
+		"ollama_active":         ollama_active,
+		"fetch_cache_quota_mb":  fetch_cache_quota_mb,
+		"channel_wake_rules":    AuthGetChannelWakeRules(a.db),
+		"ui_theme":              ui_theme,
+		"doc_brand":             AuthGetDocBrand(a.db),
+		"site_name":             AuthGetSiteName(a.db),
+		"timezone":              DeploymentTimezoneName(a.db),
 	}
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
@@ -4971,22 +4978,23 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AllowSignup        *bool     `json:"allow_signup,omitempty"`
-		SessionDays        *int      `json:"session_days,omitempty"`
-		MaxLoginAttempts   *int      `json:"max_login_attempts,omitempty"`
-		LockoutMinutes     *int      `json:"lockout_minutes,omitempty"`
-		ServiceName        *string   `json:"service_name,omitempty"`
-		ExternalURL        *string   `json:"external_url,omitempty"`
-		NotifyFrom         *string   `json:"notify_from,omitempty"`
-		DefaultApps        *[]string `json:"default_apps,omitempty"`
-		OllamaProxyEnabled *bool     `json:"ollama_proxy_enabled,omitempty"`
-		OllamaProxyPort    *int      `json:"ollama_proxy_port,omitempty"`
-		FetchCacheQuotaMB  *int      `json:"fetch_cache_quota_mb,omitempty"`
-		ChannelWakeRules   *string   `json:"channel_wake_rules,omitempty"`
-		UITheme            *string   `json:"ui_theme,omitempty"`
-		DocBrand           *string   `json:"doc_brand,omitempty"`
-		SiteName           *string   `json:"site_name,omitempty"`
-		Timezone           *string   `json:"timezone,omitempty"`
+		AllowSignup         *bool     `json:"allow_signup,omitempty"`
+		SessionDays         *int      `json:"session_days,omitempty"`
+		SessionAbsoluteDays *int      `json:"session_absolute_days,omitempty"`
+		MaxLoginAttempts    *int      `json:"max_login_attempts,omitempty"`
+		LockoutMinutes      *int      `json:"lockout_minutes,omitempty"`
+		ServiceName         *string   `json:"service_name,omitempty"`
+		ExternalURL         *string   `json:"external_url,omitempty"`
+		NotifyFrom          *string   `json:"notify_from,omitempty"`
+		DefaultApps         *[]string `json:"default_apps,omitempty"`
+		OllamaProxyEnabled  *bool     `json:"ollama_proxy_enabled,omitempty"`
+		OllamaProxyPort     *int      `json:"ollama_proxy_port,omitempty"`
+		FetchCacheQuotaMB   *int      `json:"fetch_cache_quota_mb,omitempty"`
+		ChannelWakeRules    *string   `json:"channel_wake_rules,omitempty"`
+		UITheme             *string   `json:"ui_theme,omitempty"`
+		DocBrand            *string   `json:"doc_brand,omitempty"`
+		SiteName            *string   `json:"site_name,omitempty"`
+		Timezone            *string   `json:"timezone,omitempty"`
 	}
 	// Read the body once: the static settings decode into the typed struct
 	// above, the tunables come off the same bytes as a generic map (validated
@@ -5004,6 +5012,12 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.AllowSignup != nil {
 		a.db.Set(WebTable, "allow_signup", *req.AllowSignup)
 		Log("[admin] user %q set allow_signup=%v", current, *req.AllowSignup)
+	}
+	if req.SessionAbsoluteDays != nil && *req.SessionAbsoluteDays >= 0 && *req.SessionAbsoluteDays <= 3650 {
+		// Written even when 0 — that is the "no ceiling" choice, and storing it
+		// is what keeps it from reading as unset on the next load.
+		a.db.Set(WebTable, "session_absolute_days", *req.SessionAbsoluteDays)
+		Log("[admin] user %q set session_absolute_days=%d", current, *req.SessionAbsoluteDays)
 	}
 	if req.SessionDays != nil && *req.SessionDays >= 1 && *req.SessionDays <= 90 {
 		a.db.Set(WebTable, "session_days", *req.SessionDays)

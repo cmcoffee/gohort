@@ -1213,7 +1213,13 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 			redirectToLogin(w, r)
 			return
 		}
-		_, ok := AuthValidateSession(db, cookie.Value)
+		// Sliding renewal lives HERE and only here: the one path that sees
+		// every browser request and can write a cookie. Past the halfway mark
+		// the session's expiry moves out to a full duration from now, bounded
+		// by an absolute ceiling from its creation — so working in gohort keeps
+		// you logged in, and walking away still logs you out. See
+		// auth_session_slide.go.
+		_, ok := AuthValidateSessionSliding(db, w, cookie.Value)
 		if !ok {
 			redirectToLogin(w, r)
 			return
