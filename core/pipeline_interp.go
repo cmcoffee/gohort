@@ -479,7 +479,11 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			if dispatch == nil {
 				return "", Error("stage " + stage.Name + ": agent stage but no dispatch hook provided")
 			}
-			call = func(p string) (string, error) { return dispatch(ctx, stage.Agent, p) }
+			// The set does NOT travel: this stage hands the work to an agent
+			// with rules of its own, and judging its actions by the caller's
+			// is not what either owner authored.
+			agentCtx := WithoutStageGuardrails(ctx)
+			call = func(p string) (string, error) { return dispatch(agentCtx, stage.Agent, p) }
 		case StageFanout:
 			// Run the stage's inner work across each element of the
 			// FanOver stage's JSON-array output, in parallel, then collect
@@ -916,11 +920,19 @@ func (T *AppCore) runWorkerStageConfirm(ctx context.Context, prompt string, tool
 	if confirm == nil {
 		confirm = func(name, args string) bool { return true }
 	}
+	// The caller's guardrails, when it handed any over (see StageGuardrails).
+	// Narrowed to pre_action by stageCheck: this stage can ACT, and an action
+	// gate is the only guard that prevents rather than redacts.
+	guards := stageGuardrails(ctx)
 	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: prompt}}, AgentLoopConfig{
-		Tools:     tools,
-		Tier:      tier,
-		MaxRounds: pipelineStageMaxRounds,
-		Confirm:   confirm,
+		Tools:             tools,
+		Tier:              tier,
+		MaxRounds:         pipelineStageMaxRounds,
+		Confirm:           confirm,
+		GuardrailCheck:    guards.stageCheck(),
+		GuardrailHalted:   guards.Halted,
+		GuardrailReject:   guards.Reject,
+		GuardrailDeclines: guards.Declines,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),
@@ -950,9 +962,10 @@ func (T *AppCore) runWorkerStageConfirm(ctx context.Context, prompt string, tool
 func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, prev string, tools []AgentToolDef, vars map[string]string) (string, error) {
 	name := strings.TrimSpace(stage.Tool)
 	var handler ToolHandlerFunc
+	var needsConfirm bool // consequential — the set the pre_action gate covers
 	for _, td := range tools {
 		if td.Tool.Name == name {
-			handler = td.Handler
+			handler, needsConfirm = td.Handler, td.NeedsConfirm
 			break
 		}
 	}
@@ -977,6 +990,23 @@ func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, pre
 	}
 	if ctx.Err() != nil {
 		return "", ctx.Err()
+	}
+	// Same pre_action gate a worker stage's own tool calls get, for the same
+	// reason and on the same set of tools — the consequential ones. A tool
+	// stage's NAME is the author's, but its ARGUMENTS are templated from
+	// upstream stage output, which is model-written and can carry whatever the
+	// pipeline read along the way. "The owner wrote the recipe" establishes
+	// which tool runs; it does not establish what it is about to be told to do.
+	if guards := stageGuardrails(ctx); guards.Check != nil && needsConfirm {
+		if dec := guards.Check(GuardHookPreAction, name+" "+formatArgsForGuardrail(args)); dec.Blocked {
+			Log("[pipeline] stage %q: guardrail blocked tool %q", stage.Name, name)
+			// The stage FAILS rather than returning the block message as its
+			// output: a stage's return value flows into the next stage as
+			// {prev}, so handing back a refusal would feed a downstream prompt
+			// text that reads like content. A pipeline is not a conversation —
+			// there is nobody here to read a message and choose differently.
+			return "", Error("stage " + stage.Name + ": tool " + strconv.Quote(name) + " was not called — a constraint on the agent running this pipeline covers it")
+		}
 	}
 	out, err := handler(args)
 	if err != nil {
@@ -1077,7 +1107,7 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 				if dispatch == nil {
 					err = Error("agent fanout but no dispatch hook provided")
 				} else {
-					out, err = dispatch(ctx, agent, p)
+					out, err = dispatch(WithoutStageGuardrails(ctx), agent, p) // the branch agent carries its own rules
 				}
 			} else {
 				// No jsonMode: a fanout branch produces free text that

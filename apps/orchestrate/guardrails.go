@@ -983,19 +983,41 @@ func (t *chatTurn) guardrailEnforcer() guardrailEnforcement {
 	if t.guardrails != nil {
 		return *t.guardrails
 	}
-	e := guardrailEnforcement{}
-	if check := t.guardrailCheckHook(); check != nil {
-		e = guardrailEnforcement{
-			Check:  check,
-			Halted: func() bool { return t.guardrailBlocks >= guardBlockEscalateAt },
-			Reject: t.guardrailRejection,
-		}
-	}
+	e := t.guardrailEnforcerCtx(t.ctx)
 	t.guardrails = &e
 	return e
 }
 
+// guardrailEnforcerCtx is guardrailEnforcer bound to an explicit context rather
+// than the turn's, and deliberately NOT cached — the cache belongs to the turn,
+// and a set built against another context is not the turn's set.
+//
+// It exists for work that outlives the turn which authorized it. A handed-off
+// dispatch runs on the detached task's context, and by then t.ctx is cancelled:
+// a warden call made on it does not return a lenient verdict, it returns an
+// error, and an error is handled as "the check could not run". A guard that
+// reports itself unable to run for structural reasons is not a guard, so the
+// context has to be the live one.
+func (t *chatTurn) guardrailEnforcerCtx(ctx context.Context) guardrailEnforcement {
+	check := t.guardrailCheckHookCtx(ctx)
+	if check == nil {
+		return guardrailEnforcement{} // inert — core takes its no-guardrails path
+	}
+	return guardrailEnforcement{
+		Check:  check,
+		Halted: func() bool { return t.guardrailBlocks >= guardBlockEscalateAt },
+		// Bound to the same context as the check, for the same reason: the
+		// rejection writer is itself a model call, and one made on a dead
+		// context falls through to the canned decline every time.
+		Reject: func(reason, request string) string { return t.guardrailRejectionCtx(ctx, reason, request) },
+	}
+}
+
 func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) GuardrailDecision {
+	return t.guardrailCheckHookCtx(t.ctx)
+}
+
+func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, candidate string) GuardrailDecision {
 	if resolveGuardrailHooks(t.agent) == nil {
 		return nil // no rules / no hooks → inert
 	}
@@ -1009,7 +1031,7 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 		if !guardrailHookActive(t.agent, hookPoint) {
 			return pass
 		}
-		verdicts, err := t.app.runWarden(t.ctx, t.agent, hookPoint, candidate, who)
+		verdicts, err := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who)
 		if err != nil {
 			// The warden is itself an LLM call, so an infra hiccup has to have
 			// a policy. The owner picks it per agent (GuardrailFailClosed);
@@ -1037,7 +1059,7 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 		// which is the house rule for every guard that drops something.
 		if worstVerdict(verdicts) == guardNoVerdict {
 			Log("[orchestrate.guardrail] agent=%s warden reached NO VERDICT at %s — retrying once", t.agent.ID, hookPoint)
-			retried, rerr := t.app.runWarden(t.ctx, t.agent, hookPoint, candidate, who, wardenRetryOptions()...)
+			retried, rerr := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who, wardenRetryOptions()...)
 			if rerr == nil && worstVerdict(retried) != guardNoVerdict {
 				verdicts = retried
 			} else {
@@ -1474,6 +1496,12 @@ func rejectionIdentityLine(name string) string {
 // Empty on any failure, so the caller falls back to the canned decline. A
 // rejection that can't be written must never mean the draft gets released.
 func (t *chatTurn) guardrailRejection(reason, request string) string {
+	return t.guardrailRejectionCtx(t.ctx, reason, request)
+}
+
+// guardrailRejectionCtx is guardrailRejection on an explicit context, for the
+// callers whose work outlives the turn (see guardrailEnforcerCtx).
+func (t *chatTurn) guardrailRejectionCtx(ctx context.Context, reason, request string) string {
 	if t.app == nil || t.app.LLM == nil {
 		return ""
 	}
@@ -1508,7 +1536,7 @@ func (t *chatTurn) guardrailRejection(reason, request string) string {
 		if attempt > 0 {
 			ask += "\n\nYour previous attempt was unusable. One short sentence, in your own voice, saying only that you won't do this. Do not explain, do not mention anything about how the decision was made, and do not suggest asking again."
 		}
-		if out := t.guardrailRejectionAttempt(ask, reason, request); out != "" {
+		if out := t.guardrailRejectionAttempt(ctx, ask, reason, request); out != "" {
 			return out
 		}
 	}
@@ -1517,8 +1545,8 @@ func (t *chatTurn) guardrailRejection(reason, request string) string {
 
 // guardrailRejectionAttempt runs one rejection generation and returns the
 // usable refusal, or "" when it has to be thrown away.
-func (t *chatTurn) guardrailRejectionAttempt(user, reason, request string) string {
-	cctx, cancel := context.WithTimeout(t.ctx, 30*time.Second)
+func (t *chatTurn) guardrailRejectionAttempt(ctx context.Context, user, reason, request string) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	resp, err := t.app.WorkerChat(cctx, []Message{
 		{Role: "system", Content: rejectionSystemPrompt},

@@ -244,6 +244,11 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 		// is licensed to walk past.
 		return "", errors.New(block)
 	}
+	// The warden, before anything is spent. A refused request must not leave a
+	// run record, an activity pill, or a half-finished pipeline behind it.
+	if err := t.guardPipelineInput(t.ctx, def, msg); err != nil {
+		return "", err
+	}
 	t.dispatchDepth++
 	defer func() { t.dispatchDepth-- }()
 
@@ -256,6 +261,10 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 
 	ctx := withDispatchedPipeline(t.ctx, def.ID)
 	ctx = withParentRun(ctx, liveRun.ID)
+	// The caller's rules travel INTO the run, so a worker stage's tool calls
+	// are judged the way the caller's own would be. Withheld output is a
+	// redaction; a blocked action is the only guard that prevents.
+	ctx = t.guardedPipelineContext(ctx)
 
 	status := func(s string) {
 		t.emitStatus("[" + def.Name + "] " + s)
@@ -269,6 +278,10 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)
 	}
 	liveRun.Complete(RunStatusCompleted)
+	out, err = t.guardPipelineOutput(t.ctx, def, out)
+	if err != nil {
+		return "", err
+	}
 	return pipelineDispatchResult(def, out)
 }
 
@@ -282,12 +295,21 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 // This mirrors the agent path's split, and the turn-free posture the schedule
 // runner already uses.
 func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg string) (string, error) {
+	// The detached session's context, NOT the turn's: t.ctx was cancelled when
+	// the turn that handed this off ended, and a warden call on a dead context
+	// fails the check instead of running it. Everything here that touches a
+	// model gets d.Context() for the same reason.
+	ctx := d.Context()
+	if err := t.guardPipelineInput(ctx, def, msg); err != nil {
+		return "", err
+	}
 	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
 		Describe("pipeline", def.Name, truncateObs(msg, 100))
 	defer liveRun.Complete(RunStatusFailed)
 
-	ctx := withDispatchedPipeline(d.Context(), def.ID)
+	ctx = withDispatchedPipeline(ctx, def.ID)
 	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = t.guardedPipelineContext(ctx) // as inline; see agentsRunPipelineAction
 
 	Log("[orchestrate.agents.run] %s handed off pipeline %q (%d stages)", t.agent.ID, def.Name, len(def.Stages))
 	// nil status: the live run above is what carries progress here, and the
@@ -298,6 +320,10 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)
 	}
 	liveRun.Complete(RunStatusCompleted)
+	out, err = t.guardPipelineOutput(ctx, def, out)
+	if err != nil {
+		return "", err
+	}
 	return pipelineDispatchResult(def, out)
 }
 

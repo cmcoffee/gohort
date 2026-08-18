@@ -499,6 +499,13 @@ func (t *chatTurn) pipelineRun(args map[string]any) (string, error) {
 // would strand the output. The per-stage status emits keep the user
 // oriented during the (potentially slow) multi-stage run.
 func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, error) {
+	// The same boundary the dispatch path is judged at (pipeline_guardrail.go).
+	// That an attached pipeline was arranged in advance says who set it up, not
+	// that it is outside the rules — otherwise "attach it instead of
+	// dispatching it" would be the way around every guardrail an agent has.
+	if err := t.guardPipelineInput(t.ctx, def, input); err != nil {
+		return "", err
+	}
 	dispatch := func(ctx context.Context, agentID, stageInput string) (string, error) {
 		// Agent stages run as the same user; RunAgentSync resolves the
 		// agent from the user's store and dispatches with isolated
@@ -513,7 +520,11 @@ func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, 
 	// connection. A hardcoded pipeline-wide deadline on top would just
 	// race those without adding value, and would override what the
 	// operator picked for the underlying LLM tier.
-	ctx := t.ctx
+	// The caller's rules ride down into the stages (pre_action), and the
+	// synthesis is judged on the way back out. This path inherits the caller's
+	// whole tool catalog, so it is the one where an ungoverned stage could act
+	// with the most reach.
+	ctx := t.guardedPipelineContext(t.ctx)
 	// Status callback fans out to BOTH the activity pane (SSE chip)
 	// AND the diag log. Without the Log fan-out, pipeline stage events
 	// vanished from gohort.log — making "did the pipeline actually run
@@ -547,7 +558,7 @@ func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)
 	}
-	return out, nil
+	return t.guardPipelineOutput(t.ctx, def, out)
 }
 
 // findPipeline resolves a pipeline from the args by id first, then by
