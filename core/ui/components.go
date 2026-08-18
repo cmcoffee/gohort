@@ -987,6 +987,12 @@ type FormField struct {
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
 	Decimals int            `json:"decimals,omitempty"`
 	Options  []SelectOption `json:"options,omitempty"`
+	// Multiple turns a "select" field into a multi-select that saves an ARRAY.
+	// For a field that legitimately takes several values — the sources a mode
+	// consults, the collections it searches — where the alternative was a
+	// second component with its own endpoint contract for what is, in the
+	// browser, one attribute on the control that was already there.
+	Multiple bool `json:"multiple,omitempty"`
 	// Suggestions offers existing values on a text field WITHOUT constraining
 	// it to them (rendered as a native datalist). Use wherever the value is
 	// free-form but reuse should be the easy path — claiming an existing
@@ -2843,9 +2849,25 @@ type CodeWriterPanel struct {
 	// Same wire shape as ArticleEditor's picker — see core.ReferenceSource.
 	ReferenceSourcesURL string `json:"reference_sources_url,omitempty"`
 
-	// ProfilesListURL, when set, renders a PROFILE picker in the panel header:
-	// a named configuration the whole surface works under, chosen once and
-	// carried on every chat POST as `profile`.
+	// ProfilesListURL, when set, renders the PROFILE BAR under the toolbar: the
+	// roster of named configurations this surface can work under, one of which
+	// is in force at a time and rides every chat POST as `profile`.
+	//
+	// A profile is a SNAPSHOT OF THIS PANEL'S SETTINGS — language, sources,
+	// collections — saved under a name and restored by clicking it. Not an
+	// entity with a life of its own: there is nothing to manage on another
+	// page, because there is nothing in a profile that isn't already a control
+	// on this panel.
+	//
+	// It exists because those controls reset to their defaults on reload, so a
+	// recurring kind of work meant re-picking the same handful of settings at
+	// the start of every session — and the cost of not bothering was a turn
+	// that ran without the material it needed, silently.
+	//
+	// Its own bar spanning the panel, not a control inside either pane: the
+	// settings it restores belong to the editor as much as the chat. A roster
+	// rather than a dropdown because switching quickly is the point, and a
+	// dropdown hides the set behind the one name it displays.
 	//
 	// GET → [{id, name, description}]. The distinction from the pickers above
 	// is persistence and scope: collections and reference sources are per-turn
@@ -2861,11 +2883,20 @@ type CodeWriterPanel struct {
 	// ProfilesNoun is the user-facing label for the picker (defaults to
 	// "Profile"). Same host-supplied-noun contract as CollectionsNoun.
 	ProfilesNoun string `json:"profiles_noun,omitempty"`
-	// ProfilesManageURL, when set, adds a "Manage" link beside the picker
-	// pointing at wherever the host lets a user create and edit profiles.
-	// Without it the picker lists what exists and offers no way to add one,
-	// which reads as broken the first time somebody opens an empty list.
-	ProfilesManageURL string `json:"profiles_manage_url,omitempty"`
+	// ProfilesSaveURL, when set, adds "Save current" to the bar: it POSTs the
+	// panel's CURRENT control state — {name, lang, collections, references} —
+	// and the new profile joins the roster.
+	//
+	// Saving from the bar rather than editing a record on some other page is
+	// the whole ergonomic point. A profile is a snapshot of settings you have
+	// already dialled in by working, so the moment you want to keep them is the
+	// moment you are looking at them; sending someone to a form to re-describe
+	// what the panel is already set to is asking them to enter the same
+	// information twice, from memory.
+	ProfilesSaveURL string `json:"profiles_save_url,omitempty"`
+	// ProfilesDeleteURL, when set, puts a × on the selected profile's pill.
+	// {id} is replaced with the profile's id.
+	ProfilesDeleteURL string `json:"profiles_delete_url,omitempty"`
 
 	// Field name mapping — defaults match SnippetRecord.
 	IDField   string `json:"id_field,omitempty"`   // default "id"

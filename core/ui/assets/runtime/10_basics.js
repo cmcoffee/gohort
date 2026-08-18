@@ -1416,10 +1416,23 @@
           };
         }
       } else if (t === 'select') {
-        input = el('select', {class: 'ui-form-select'});
+        // Multi-select: the same control with `multiple` set, saving an ARRAY.
+        // Plain HTML the component simply never exposed, and the alternative
+        // for a field that legitimately takes several values was a second
+        // component with its own endpoint contract.
+        var multi = !!f.multiple;
+        input = el('select', {class: 'ui-form-select' + (multi ? ' ui-form-multi' : '')});
+        if (multi) input.multiple = true;
+        // The stored value is a list in multi mode. Compared as strings so a
+        // numeric id from JSON matches an option value that came through as
+        // text, which is the same rule the single case already used.
+        var selectedSet = {};
+        if (multi && Array.isArray(initial)) {
+          initial.forEach(function(v){ selectedSet[String(v)] = true; });
+        }
         var mkOpt = function(o) {
           var opt = el('option', {value: o.value}, [o.label || o.value]);
-          if (String(initial) === String(o.value)) opt.selected = true;
+          if (multi ? selectedSet[String(o.value)] : String(initial) === String(o.value)) opt.selected = true;
           return opt;
         };
         // A stored value with no option left. Options come from a LIVE
@@ -1430,6 +1443,9 @@
         // value, and no way to clear what it will not show.
         (function() {
           var cur = initial;
+          // Multi mode keeps its own vanished-value handling below; this
+          // branch is about the single stored scalar.
+          if (multi) return;
           if (cur == null || cur === '') return;
           if ((f.options || []).some(function(o) { return String(o.value) === String(cur); })) return;
           var gone = el('option', {value: String(cur)}, [String(cur) + ' — no longer available']);
@@ -1463,11 +1479,21 @@
         // undefined until the user changes the dropdown. Seed
         // current with the first option's value so a form that
         // accepts the default still ships a value on submit.
-        if ((initial === undefined || initial === null || initial === '') &&
+        if (!multi && (initial === undefined || initial === null || initial === '') &&
             f.options && f.options.length > 0) {
           current[f.field] = f.options[0].value;
         }
-        input.addEventListener('change', function(){ save(f.field, input.value); });
+        // A multi-select saves the list of chosen values. NOT input.value,
+        // which on a multiple select is just the first selection — the shape
+        // that silently drops everything the user picked after the first.
+        input.addEventListener('change', function() {
+          if (!multi) { save(f.field, input.value); return; }
+          var vals = [];
+          for (var mi = 0; mi < input.options.length; mi++) {
+            if (input.options[mi].selected) vals.push(input.options[mi].value);
+          }
+          save(f.field, vals);
+        });
       } else if (t === 'toggle') {
         // iOS-style switch as a form field. Saves immediately on
         // change (no debounce) since toggles are discrete decisions.

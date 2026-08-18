@@ -44,21 +44,20 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 					CollectionsNoun:     "Knowledge",
 					ReferenceSourcesURL: "api/reference-sources",
 					ProfilesListURL:     "api/writers",
-					ProfilesNoun:        "Writer",
-					ProfilesManageURL:   "writers",
-					Languages: []string{
-						"bash", "sql", "python", "powershell", "go", "markdown", "regex", "",
-					},
-					Templates:        MarkdownDocTemplates,
-					TemplatesListURL: "api/templates",
-					TemplateURL:      "api/template/{id}",
-					AssistURL:        "api/assist",
-					RulesURL:         "api/rules",
-					EmptyText:        "No snippets yet. Click + New or chat with the LLM to generate one.",
-					PlaceholderName:  "Snippet name…",
-					PlaceholderCode:  "Write or paste code here. Save it for later, or chat with the LLM to generate one.\n\nUse {{NAME}} placeholders for reusable values.",
-					PlaceholderCtx:   "Reference context — table schemas, API docs, notes. Sent to the LLM alongside the code on every chat turn.",
-					PlaceholderChat:  "Discuss with Chat, or click Edit to apply changes.",
+					ProfilesSaveURL:     "api/writers",
+					ProfilesDeleteURL:   "api/writer/{id}",
+					ProfilesNoun:        "Mode",
+					Languages:           codeWriterLanguages,
+					Templates:           MarkdownDocTemplates,
+					TemplatesListURL:    "api/templates",
+					TemplateURL:         "api/template/{id}",
+					AssistURL:           "api/assist",
+					RulesURL:            "api/rules",
+					EmptyText:           "No snippets yet. Click + New or chat with the LLM to generate one.",
+					PlaceholderName:     "Snippet name…",
+					PlaceholderCode:     "Write or paste code here. Save it for later, or chat with the LLM to generate one.\n\nUse {{NAME}} placeholders for reusable values.",
+					PlaceholderCtx:      "Reference context — table schemas, API docs, notes. Sent to the LLM alongside the code on every chat turn.",
+					PlaceholderChat:     "Discuss with Chat, or click Edit to apply changes.",
 				},
 			},
 		},
@@ -70,4 +69,14 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 			"<script>" + editor.UtilsJS() + editor.DiffJS() + "</script>",
 	}
 	page.ServeHTTP(w, r)
+}
+
+// codeWriterLanguages is the editor's language list, defined ONCE.
+//
+// The Modes page builds its language options from this same slice: a mode that
+// could preselect a language the editor has no option for would leave the
+// dropdown showing something else, and the mismatch is invisible until somebody
+// notices the wrong mode prompts firing.
+var codeWriterLanguages = []string{
+	"bash", "sql", "python", "powershell", "go", "markdown", "regex", "",
 }

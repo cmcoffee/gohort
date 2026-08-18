@@ -3,57 +3,74 @@ package codewriter
 import (
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
-// The foundation is AUTHORITATIVE, and the prompt has to say so in the two
-// ways that matter: the foundation wins a disagreement, and the disagreement
-// gets mentioned. Winning silently is how a house convention is replaced by
-// whatever is most common on the public internet, with nothing in the reply to
-// show a choice was made.
-func TestFoundationBlockIsAuthoritative(t *testing.T) {
-	got := WriterRecord{Name: "Acme API", Brief: "Auth is a bearer token in X-Acme-Key."}.foundationBlock()
+// A writer's standing note is what does not change per turn: that a body of
+// knowledge governs this work, that it wins a disagreement, and that the model
+// should ASK rather than guess. The retrieved text itself rides the user
+// message, because retrieval changes per query and a per-turn system prompt
+// re-prefills the whole thread.
+func TestSourceBlockBindsAndSendsYouToAsk(t *testing.T) {
+	wr := WriterRecord{
+		Name:    "Acme API",
+		Sources: ReferenceSelections{{Kind: "agent", ItemID: "a1"}},
+	}
+	got := wr.sourceBlock()
 	if !strings.Contains(got, "Acme API") {
 		t.Error("the block should name the writer it belongs to")
 	}
-	if !strings.Contains(got, "Auth is a bearer token in X-Acme-Key.") {
-		t.Error("the brief itself must be present")
-	}
 	if !strings.Contains(got, "AUTHORITATIVE") {
-		t.Error("the foundation must be stated as authoritative, not offered as reference")
+		t.Error("the sources must bind, not merely be offered as reference")
 	}
 	if !strings.Contains(strings.ToLower(got), "say so when they disagree") {
 		t.Error("a conflict must be surfaced, not silently resolved")
 	}
-	// A foundation with holes must produce a question, not a plausible guess:
-	// code written on an invented convention looks correct, which is the whole
-	// danger.
-	if !strings.Contains(got, "Do NOT invent detail") {
-		t.Error("the model must be told to name gaps rather than fill them")
+	if !strings.Contains(got, "ASK before writing") {
+		t.Error("the model must be told to consult before guessing a detail")
+	}
+	// The block is standing context. Anything query-specific belongs on the
+	// user message, so nothing here may promise retrieved content.
+	if strings.Contains(got, "```") {
+		t.Error("the standing note must not carry retrieved material")
 	}
 }
 
-// A writer with no brief yet contributes NOTHING. Announcing a foundation and
-// then supplying none tells the model authoritative rules exist and shows it
+// A writer with no sources contributes NOTHING. Announcing an authoritative
+// body of knowledge and attaching none tells the model rules exist and shows it
 // none of them, which is worse than staying quiet.
-func TestFoundationBlockEmptyWithoutABrief(t *testing.T) {
-	for _, wr := range []WriterRecord{
-		{Name: "Acme"},
-		{Name: "Acme", Brief: "   \n  "},
-	} {
-		if got := wr.foundationBlock(); got != "" {
-			t.Errorf("a writer with no brief must contribute nothing, got %q", got)
-		}
+func TestSourceBlockEmptyWithoutSources(t *testing.T) {
+	if got := (WriterRecord{Name: "Acme"}).sourceBlock(); got != "" {
+		t.Errorf("a writer with no sources must contribute nothing, got %q", got)
 	}
 }
 
 // An unnamed writer still produces a usable block rather than a dangling
 // heading — the name is a label, not a precondition.
-func TestFoundationBlockSurvivesAnUnnamedWriter(t *testing.T) {
-	got := WriterRecord{Brief: "Use tabs."}.foundationBlock()
+func TestSourceBlockSurvivesAnUnnamedWriter(t *testing.T) {
+	got := WriterRecord{Sources: ReferenceSelections{{Kind: "agent", ItemID: "a1"}}}.sourceBlock()
 	if !strings.Contains(got, "this writer") {
 		t.Errorf("expected a fallback label, got %q", got)
 	}
-	if !strings.Contains(got, "Use tabs.") {
-		t.Error("the brief must survive a missing name")
+}
+
+// A mode is the panel's saved state, so the record has to carry every control
+// that resets on refresh — that reset is the whole reason it exists.
+func TestAModeCarriesThePanelSettings(t *testing.T) {
+	wr := WriterRecord{
+		Name:        "Kiteworks SQL queries",
+		Lang:        "sql",
+		Sources:     ReferenceSelections{{Kind: "agent", ItemID: "kw"}},
+		Collections: []string{"c1", "c2"},
+	}
+	if wr.Lang == "" || len(wr.Sources) == 0 || len(wr.Collections) == 0 {
+		t.Fatal("a mode must carry language, sources and collections together")
+	}
+	// The standing note keys off SOURCES: a mode that only pins a language has
+	// no body of knowledge to bind to, and claiming otherwise would tell the
+	// model authoritative material exists where none is attached.
+	if (WriterRecord{Name: "Bash", Lang: "bash"}).sourceBlock() != "" {
+		t.Error("a mode with no sources must not claim an authoritative body of knowledge")
 	}
 }

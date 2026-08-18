@@ -91,7 +91,6 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/value/", T.handleValue)
 	sub.HandleFunc("/api/contexts", T.handleContexts)
 	sub.HandleFunc("/api/context/", T.handleContext)
-	sub.HandleFunc("/writers", T.handleWritersPage)
 	sub.HandleFunc("/api/writers", T.handleWriters)
 	sub.HandleFunc("/api/writer/", T.handleWriter)
 	sub.HandleFunc("/api/assist", T.handleAssist)
@@ -258,15 +257,33 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	// investigation when the cached picture doesn't answer.
 	var ref_tools []AgentToolDef
 	var ref_context string
-	if len(req.References) > 0 {
+	// The active WRITER's standing sources join whatever the user attached for
+	// this one turn. Merged here rather than handled separately because they
+	// are the same kind of thing and want the same treatment — the only
+	// difference is that one selection was made once and the other per
+	// question. A writer's material must not take a different, weaker path
+	// than a checkbox ticked ten seconds ago.
+	refs := req.References
+	var writer WriterRecord
+	if uid := AuthCurrentUser(r); uid != "" && strings.TrimSpace(req.Writer) != "" {
+		if wr, found := loadWriter(UserDB(T.DB, uid), req.Writer); found {
+			writer = wr
+			// Writer's sources FIRST, then the per-turn picks: a duplicate
+			// resolves to the same item either way, and ordering the standing
+			// material first keeps the prompt prefix stable across turns where
+			// only the ad-hoc pick changes.
+			refs = append(append(ReferenceSelections{}, wr.Sources...), refs...)
+		}
+	}
+	if len(refs) > 0 {
 		if uid := AuthCurrentUser(r); uid != "" {
 			// Rides the current user message, not the system prompt — the
 			// retrieved text changes per query, and a per-turn system prompt
 			// re-prefills the whole thread on the worker every turn.
-			if ref := FetchReferences(r.Context(), uid, req.Message, req.References); ref != "" {
+			if ref := FetchReferences(r.Context(), uid, req.Message, refs); ref != "" {
 				ref_context = "\n\n" + ref
 			}
-			for _, sel := range req.References {
+			for _, sel := range refs {
 				ref_tools = append(ref_tools, ReferenceItemTools(uid, sel.Kind, sel.ItemID)...)
 			}
 			if len(ref_tools) > 0 {
@@ -298,20 +315,13 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	messages = append(messages, Message{Role: "user", Content: prompt + ref_context})
 
-	// The active writer's knowledge foundation — the standing background this
-	// code lives inside, injected on every turn and treated as authoritative.
-	//
-	// AFTER the mode rules on purpose. Those rules are the app's output
-	// CONTRACT (discussion mode emits no fenced block; edit mode returns one
-	// applyable block), and the Apply button reads that shape — so a domain
-	// brief must not be the last word on it. The foundation governs WHAT the
-	// code says; the mode rules govern what the reply looks like, and the two
-	// are not in competition.
-	if uid := AuthCurrentUser(r); uid != "" && strings.TrimSpace(req.Writer) != "" {
-		if wr, found := loadWriter(UserDB(T.DB, uid), req.Writer); found {
-			system_prompt += wr.foundationBlock()
-		}
-	}
+	// The writer's standing note — what its material IS and how far it binds.
+	// AFTER the mode rules on purpose: those are the app's output CONTRACT
+	// (discussion mode emits no fenced block, edit mode returns one applyable
+	// block) and the Apply button reads that shape, so a note about domain
+	// knowledge must not be the last word on it. The sources govern WHAT the
+	// code says; the mode rules govern what the reply looks like.
+	system_prompt += writer.sourceBlock()
 
 	// Standing rules append to the system prompt on every chat turn, the
 	// same as on assist — they're constraints on output, not on mode.

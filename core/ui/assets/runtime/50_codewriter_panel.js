@@ -122,6 +122,297 @@
     var toolbar = el('div', {class: 'ui-cw-toolbar'}, toolbarKids);
     main.appendChild(toolbar);
 
+
+    // The PROFILE BAR — which named configuration this surface is working
+    // under, and the roster of the ones that exist.
+    //
+    // Its own bar, spanning the panel under the toolbar, rather than a dropdown
+    // in the chat header. A profile is not a chat setting: it governs what gets
+    // WRITTEN, so it belongs above both panes, where the editor can see it too.
+    // A control tucked into one pane's header reads as belonging to that pane,
+    // and this one does not.
+    //
+    // Roster rather than a select, because the point is to establish and switch
+    // between KINDS of work. A dropdown shows one name and hides the rest, so
+    // the fact that other profiles exist has to be discovered; pills show the
+    // set, which is what makes "these are the kinds of writing I do here" a
+    // visible fact rather than a remembered one.
+    //
+    // core/ui knows only the shape: a list of {id, name, description}, one
+    // selection, sent as `profile`. What a profile MEANS is the host's entirely.
+    var profileNoun = cfg.profiles_noun || 'Profile';
+    var profileKey  = 'ui-cw-profile:' + (cfg.profiles_list_url || '');
+    var profList    = [];
+    var pickedProfile = '';
+    try { pickedProfile = window.localStorage.getItem(profileKey) || ''; } catch (_) {}
+    var profBar = el('div', {class: 'ui-cw-prof-bar'});
+    if (!cfg.profiles_list_url) profBar.style.display = 'none';
+
+    // applyProfile pushes a profile's saved settings onto the panel's own
+    // controls.
+    //
+    // This is the whole reason a profile is worth having. Every control it
+    // touches — the language, the reference source, the collections — resets to
+    // its default on refresh, so a particular kind of work meant re-picking the
+    // same handful of things at the start of every session. The cost of not
+    // bothering was not cosmetic: a turn ran without the material it needed, and
+    // nothing in the answer said so.
+    //
+    // Every field is a control this panel already OWNS, which is what keeps
+    // this domain-agnostic: the panel restores its own state from a record the
+    // host supplied, and never interprets what the record means.
+    //
+    // `initial` marks the restore that happens on page load, as opposed to a
+    // person picking a profile mid-session. The language is applied only then:
+    // switching profiles while a saved snippet is open must not silently
+    // relabel that file, but arriving with nothing loaded should start in the
+    // language this kind of work is written in.
+    function applyProfile(p, initial) {
+      if (!p) return;
+      if (initial && p.lang) {
+        for (var i = 0; i < langSelect.options.length; i++) {
+          if (langSelect.options[i].value === p.lang) { langSelect.selectedIndex = i; break; }
+        }
+        if (typeof syncDocViewBtn === 'function') syncDocViewBtn();
+      }
+      if (Array.isArray(p.collections)) {
+        collSelected = {};
+        p.collections.forEach(function(id){ collSelected[id] = true; });
+        renderCollBar();
+      }
+      // The reference picker holds ONE selection, so a profile carrying several
+      // preselects the first and leaves the rest to its tools — which ride the
+      // turn regardless of what this dropdown shows.
+      if (Array.isArray(p.references) && p.references.length && typeof refSelect !== 'undefined' && refSelect) {
+        var want = p.references[0];
+        var handle = (want.kind || '') + ':' + (want.item_id || '');
+        for (var j = 0; j < refSelect.options.length; j++) {
+          var o = refSelect.options[j];
+          if (!o.value) continue;
+          if ((o.getAttribute('data-kind') || '') + ':' + o.value === handle) {
+            refSelect.selectedIndex = j;
+            selectedRef = {kind: o.getAttribute('data-kind'), item_id: o.value};
+            break;
+          }
+        }
+      }
+    }
+    // saveCurrentProfile snapshots the panel as it stands right now.
+    //
+    // Reads the live controls rather than any stored record: the point is to
+    // keep what you have already dialled in by working, so whatever the panel
+    // is set to IS the profile. Nothing to re-describe and nothing to get
+    // wrong by describing it from memory.
+    function saveCurrentProfile() {
+      // uiPrompt, NOT window.prompt. Wails' WKWebView leaves
+      // runJavaScriptTextInputPanel unimplemented, so native prompt() returns
+      // null with no dialog ever shown — the button simply did nothing in
+      // gohort-desktop, silently and identically to a cancel. The async
+      // wrappers exist for exactly this and route to the host's own dialog
+      // where one is injected.
+      window.uiPrompt('Save the current settings as:', '').then(function(name) {
+        if (name === null || name === undefined) return;
+        name = String(name).trim();
+        if (!name) return;
+        postProfile(name);
+      });
+    }
+    function postProfile(name, id) {
+      var body = {
+        // An id makes this an UPDATE of that record; without one the server
+        // mints a new profile. Same endpoint either way, so there is one shape
+        // of "here is what the panel is set to" rather than two.
+        id: id || '',
+        name: name,
+        lang: langSelect.value || '',
+        collections: pickedCollections(),
+        references: selectedRef ? [selectedRef] : [],
+      };
+      fetch(cfg.profiles_save_url, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      })
+        // The SERVER'S reason, not a generic failure. A save that fails
+        // validation used to report "Could not save" and nothing else, so a
+        // shape mismatch between this body and the handler was invisible from
+        // the one place anybody would look.
+        .then(function(r) {
+          if (r.ok) return r.json();
+          return r.text().then(function(msg) {
+            throw new Error((msg || '').trim() || ('save failed: HTTP ' + r.status));
+          });
+        })
+        .then(function(rec) {
+          if (!rec || !rec.id) { showToast('Could not save'); return; }
+          // Replace an existing entry of the same name rather than stacking a
+          // second one: saving twice under one name reads as "update this",
+          // and a roster with two identical pills is unusable.
+          profList = profList.filter(function(p){ return p.name !== rec.name; });
+          profList.push(rec);
+          setProfile(rec.id);
+          showToast('Saved ' + rec.name);
+        })
+        .catch(function(e){ showToast(String((e && e.message) || 'Could not save')); });
+    }
+    function deleteProfile(p) {
+      if (!p || !p.id) return;
+      // Same reason as the prompt above: native confirm() returns FALSE in that
+      // webview, so this read as "cancelled" and delete quietly never fired.
+      window.uiConfirm('Delete ' + (p.name || 'this ' + profileNoun.toLowerCase()) + '? Your snippets are not affected.')
+        .then(function(ok) { if (ok) doDeleteProfile(p); });
+    }
+    function doDeleteProfile(p) {
+      fetch(cfg.profiles_delete_url.replace('{id}', encodeURIComponent(p.id)), {
+        method: 'DELETE', credentials: 'same-origin',
+      })
+        .then(function() {
+          profList = profList.filter(function(x){ return x.id !== p.id; });
+          // Back to None, but WITHOUT re-applying anything: deleting the
+          // profile you are working under should not also tear down the
+          // settings you are working with.
+          pickedProfile = '';
+          try { window.localStorage.removeItem(profileKey); } catch (_) {}
+          renderProfBar();
+        })
+        .catch(function(){ showToast('Could not delete'); });
+    }
+    // LAST SETTINGS — how the panel was left, remembered across reloads.
+    //
+    // A profile is the NAMED version of this; every panel also has an unnamed
+    // current state, and that was the thing resetting to defaults on every
+    // refresh. Remembering it means the page comes back how you left it whether
+    // or not you ever named the arrangement — and it makes the profiles honest,
+    // because clicking one now sets the same state that gets remembered rather
+    // than living in a parallel place.
+    var lastKey = 'ui-cw-last:' + (cfg.chat_url || cfg.list_url || '');
+    function rememberSettings() {
+      try {
+        window.localStorage.setItem(lastKey, JSON.stringify({
+          lang: langSelect.value || '',
+          collections: pickedCollections(),
+          references: selectedRef ? [selectedRef] : [],
+        }));
+      } catch (_) {}
+    }
+    // Language is restored ONCE, on the first restore after load. The restore
+    // points below fire when their option lists arrive, which can be twice —
+    // and re-applying a language later would fight the snippet the user has
+    // since opened, whose own language is the one that should be showing.
+    var settingsRestored = false;
+    function restoreSettings() {
+      var initial = !settingsRestored;
+      settingsRestored = true;
+      var raw = null;
+      try { raw = window.localStorage.getItem(lastKey); } catch (_) {}
+      if (!raw) return;
+      var st = null;
+      try { st = JSON.parse(raw); } catch (_) { return; }
+      // Reuses applyProfile: restoring remembered state and applying a named
+      // one are the same operation on the same controls, and two code paths
+      // for that is how they drift.
+      if (st) applyProfile(st, initial);
+    }
+    function profileByID(id) {
+      for (var i = 0; i < profList.length; i++) {
+        if (profList[i].id === id) return profList[i];
+      }
+      return null;
+    }
+    function setProfile(id) {
+      pickedProfile = id || '';
+      try {
+        if (pickedProfile) window.localStorage.setItem(profileKey, pickedProfile);
+        else window.localStorage.removeItem(profileKey);
+      } catch (_) {}
+      applyProfile(profileByID(pickedProfile), false);
+      rememberSettings();
+      renderProfBar();
+    }
+    function renderProfBar() {
+      profBar.innerHTML = '';
+      profBar.appendChild(el('span', {class: 'ui-cw-prof-lbl'}, [profileNoun]));
+      // "None" is a real choice and needs a control, not just the absence of a
+      // selection — without it a profile can be turned on and never off.
+      var noneBtn = el('button', {
+        type: 'button',
+        class: 'ui-cw-prof-pill' + (pickedProfile ? '' : ' active'),
+        title: 'Write with no ' + profileNoun.toLowerCase(),
+        onclick: function(){ setProfile(''); },
+      }, ['None']);
+      profBar.appendChild(noneBtn);
+      profList.forEach(function(p) {
+        var active = (p.id === pickedProfile);
+        profBar.appendChild(el('button', {
+          type: 'button',
+          class: 'ui-cw-prof-pill' + (active ? ' active' : ''),
+          title: p.description || p.name || p.id,
+          onclick: function(){ setProfile(p.id); },
+        }, [p.name || p.id]));
+      });
+      // Delete lives on the SELECTED pill only. On every pill it is six × in a
+      // row next to six things you are trying to click; on the selected one it
+      // is exactly where you look when you have decided you no longer want it.
+      if (cfg.profiles_delete_url && pickedProfile) {
+        var cur = profileByID(pickedProfile);
+        if (cur) {
+          profBar.appendChild(el('button', {
+            type: 'button', class: 'ui-cw-prof-del',
+            title: 'Delete ' + (cur.name || profileNoun.toLowerCase()),
+            onclick: function() { deleteProfile(cur); },
+          }, ['×']));
+        }
+      }
+      // Update the loaded one, in place. Without it the only way to keep a
+      // tweak was to re-save under the same name and rely on the replace-by-
+      // name rule — which works, but asks you to retype a name you are looking
+      // at to mean "keep what I just changed".
+      // ONE right-aligned group, not two independently-pushed buttons. Both
+      // used to carry margin-left:auto, and flex splits the free space between
+      // every auto margin — so Update drifted to the middle of the bar while
+      // Save sat at the edge, reading as two unrelated controls.
+      if (cfg.profiles_save_url) {
+        var acts = el('div', {class: 'ui-cw-prof-actions'});
+        var upd = pickedProfile ? profileByID(pickedProfile) : null;
+        if (upd) {
+          acts.appendChild(el('button', {
+            type: 'button', class: 'ui-cw-prof-save',
+            title: 'Save the current settings over ' + (upd.name || profileNoun.toLowerCase()),
+            onclick: function(){ postProfile(upd.name, upd.id); },
+          }, ['Save']));
+        }
+        acts.appendChild(el('button', {
+          type: 'button', class: 'ui-cw-prof-save',
+          title: 'Save the current settings as a new ' + profileNoun.toLowerCase(),
+          onclick: function(){ saveCurrentProfile(); },
+        }, ['Save New']));
+        profBar.appendChild(acts);
+      }
+    }
+    if (cfg.profiles_list_url) {
+      renderProfBar(); // paint the label + None immediately; the roster fills in
+      fetch(cfg.profiles_list_url, {credentials: 'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : []; })
+        .then(function(list) {
+          profList = list || [];
+          // A remembered pick that no longer exists (deleted, or another
+          // user's) falls back to None rather than leaving the bar showing
+          // nothing selected while still POSTing a dead id.
+          if (pickedProfile && !profList.some(function(p){ return p.id === pickedProfile; })) {
+            pickedProfile = '';
+            try { window.localStorage.removeItem(profileKey); } catch (_) {}
+          }
+          // The bar shows which profile is selected; the SETTINGS come from
+          // what was last on screen (restoreSettings, below). Those are the
+          // same thing until you adjust a control without saving — and at that
+          // point what you were actually working with is the honest thing to
+          // come back to, not the profile's older copy of it.
+          renderProfBar();
+        })
+        .catch(function(){ profBar.style.display = 'none'; });
+    }
+    main.appendChild(profBar);
+
     // Body row — editor (flex:1) + chat pane (right, fixed-ish width).
     var bodyRow = el('div', {class: 'ui-cw-body'});
 
@@ -294,6 +585,7 @@
       if (docAssistBtn) docAssistBtn.style.display = 'none';
     }
     langSelect.addEventListener('change', syncDocViewBtn);
+    langSelect.addEventListener('change', rememberSettings);
     // The toolbar was assembled above, before these buttons existed. Park
     // them right after the language select they belong to.
     var docAnchor = langSelect.nextSibling;
@@ -413,7 +705,7 @@
       collList.forEach(function(c){
         if (!collSelected[c.id]) return;
         var x = el('span', {class: 'ui-cw-coll-x', title: 'Remove'}, ['×']);
-        x.addEventListener('click', function(){ delete collSelected[c.id]; renderCollBar(); });
+        x.addEventListener('click', function(){ delete collSelected[c.id]; renderCollBar(); rememberSettings(); });
         collBar.appendChild(el('span', {class: 'ui-cw-coll-chip'}, [(c.name || c.id) + ' ', x]));
       });
     }
@@ -429,6 +721,12 @@
         .then(function(list){
           collList = list || [];
           if (!collList.length) { collBar.style.display = 'none'; return; }
+          // Re-apply: this list and the profile list load independently, and a
+          // profile that resolved first set collSelected against an EMPTY
+          // collList — so the chips rendered as nothing and, worse,
+          // pickedCollections() (which walks collList) sent nothing. The mode
+          // looked applied and grounded no turn.
+          restoreSettings();
           renderCollBar();
         })
         .catch(function(){ collBar.style.display = 'none'; });
@@ -518,54 +816,6 @@
     var chatHdr  = el('div', {class: 'ui-cw-chat-h'});
     chatHdr.appendChild(el('span', {}, ['Chat']));
 
-    // Profile picker — "which kind of writer am I talking to", chosen once and
-    // carried on every turn. Unlike the reference and collection pickers below
-    // it, this is not a per-question attachment: it persists across reloads
-    // (localStorage, keyed by the endpoint so two panels on one deployment do
-    // not share a selection) because a profile is a standing choice and having
-    // to re-pick it every visit would make it feel like one of the checkboxes.
-    //
-    // core/ui knows only the shape: a list of {id, name, description}, one
-    // selection, sent as `profile`. What it MEANS is entirely the host's.
-    var profileNoun = cfg.profiles_noun || 'Profile';
-    var profileKey  = 'ui-cw-profile:' + (cfg.profiles_list_url || '');
-    var pickedProfile = '';
-    try { pickedProfile = window.localStorage.getItem(profileKey) || ''; } catch (_) {}
-    if (cfg.profiles_list_url) {
-      var profSelect = el('select', {class: 'ui-chat-mode',
-        title: profileNoun + ' — applies to everything written here',
-        onchange: function() {
-          pickedProfile = profSelect.value || '';
-          try { window.localStorage.setItem(profileKey, pickedProfile); } catch (_) {}
-        }});
-      profSelect.appendChild(el('option', {value: ''}, ['No ' + profileNoun.toLowerCase()]));
-      fetch(cfg.profiles_list_url, {credentials: 'same-origin'})
-        .then(function(r){ return r.ok ? r.json() : []; })
-        .then(function(list) {
-          (list || []).forEach(function(p) {
-            profSelect.appendChild(el('option', {value: p.id, title: p.description || ''}, [p.name || p.id]));
-          });
-          // Re-apply the remembered pick AFTER the options exist — assigning a
-          // value to an empty select silently does nothing, which read as the
-          // choice being forgotten on every reload.
-          if (pickedProfile) {
-            profSelect.value = pickedProfile;
-            // Gone (deleted, or another user's): fall back to none rather than
-            // leaving a blank select that still POSTs a dead id.
-            if (profSelect.value !== pickedProfile) {
-              pickedProfile = '';
-              try { window.localStorage.removeItem(profileKey); } catch (_) {}
-            }
-          }
-        })
-        .catch(function(){ profSelect.style.display = 'none'; });
-      chatHdr.appendChild(profSelect);
-      if (cfg.profiles_manage_url) {
-        chatHdr.appendChild(el('a', {class: 'ui-cw-prof-manage', href: cfg.profiles_manage_url,
-          title: 'Create and edit ' + profileNoun.toLowerCase() + 's'}, ['Manage']));
-      }
-    }
-
     // Generic reference picker — when the host wires reference_sources_url,
     // surface every registered reference source in one dropdown. The chosen
     // item rides along with each chat POST as references ([{kind, item_id}]);
@@ -578,6 +828,7 @@
         onchange: function() {
           var o = refSelect.options[refSelect.selectedIndex];
           selectedRef = (o && o.value) ? {kind: o.getAttribute('data-kind'), item_id: o.value} : null;
+          rememberSettings();
         }});
       refSelect.appendChild(el('option', {value: ''}, ['Reference…']));
       fetch(cfg.reference_sources_url, {credentials: 'same-origin'})
@@ -591,6 +842,9 @@
             });
             refSelect.appendChild(og);
           });
+          // Same race as the collection list: state restored before these
+          // options existed found nothing to match and left the picker empty.
+          restoreSettings();
         }).catch(function() { refSelect.style.display = 'none'; });
       chatHdr.appendChild(refSelect);
     }
@@ -955,7 +1209,7 @@
           if (!collSelected[c.id]) return;
           anyEnabled = true;
           var x = el('span', {class: 'ui-cw-coll-x', title: 'Remove'}, ['×']);
-          x.addEventListener('click', function(){ delete collSelected[c.id]; renderCollBar(); paint(); });
+          x.addEventListener('click', function(){ delete collSelected[c.id]; renderCollBar(); paint(); rememberSettings(); });
           pillsEl.appendChild(el('span', {class: 'ui-cw-coll-chip'}, [(c.name || c.id) + ' ', x]));
         });
         if (!anyEnabled) pillsEl.appendChild(el('span', {class: 'ui-cw-empty', style: 'padding:0.1rem 0;text-align:left'}, ['None enabled yet.']));
@@ -973,7 +1227,7 @@
           if (c.chunks != null)    bits.push(c.chunks + ' chunks');
           if (bits.length) info.appendChild(el('div', {class: 'ui-cw-list-meta mono'}, [bits.join(' · ')]));
           var addBtn = el('button', {class: 'ui-cw-list-btn add', type: 'button', title: 'Add'}, ['+']);
-          addBtn.addEventListener('click', function(){ collSelected[c.id] = true; renderCollBar(); paint(); });
+          addBtn.addEventListener('click', function(){ collSelected[c.id] = true; renderCollBar(); paint(); rememberSettings(); });
           availEl.appendChild(el('div', {class: 'ui-cw-list-row'}, [info, addBtn]));
         });
         if (!anyAvail) availEl.appendChild(el('div', {class: 'ui-cw-empty'}, ['All collections added.']));
