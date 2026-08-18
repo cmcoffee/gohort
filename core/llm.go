@@ -686,6 +686,14 @@ type ChatConfig struct {
 	Think        *bool  // Enable/disable thinking for thinking models (nil = model default)
 	ThinkBudget  *int   // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
+	// TierOverride pins this call's tier regardless of what RouteKey's stage
+	// says — the per-call form of AgentLoopConfig.TierOverride, and the only
+	// way that pin can reach the STREAMING path, which resolves the tier from
+	// the options alone and never sees the loop's config.
+	//
+	// It cannot escalate past the privacy pin: every reader still requires
+	// HasDistinctLead(), which folds in LeadDenied().
+	TierOverride LLMTier
 	// NoTierFallback refuses the quiet degrade to the worker when a lead call
 	// fails.
 	//
@@ -847,6 +855,13 @@ func WorkerJudgeThink() ChatOption { return WithThinkBudget(workerJudgeThinkBudg
 // to lead, so it's safe to add WithRouteKey before registering the stage.
 func WithRouteKey(key string) ChatOption {
 	return func(c *ChatConfig) { c.RouteKey = key }
+}
+
+// WithTierOverride pins this call to a tier, ahead of whatever the route
+// stage says — see ChatConfig.TierOverride. TierUnset is a no-op, so a caller
+// can pass an unresolved pin without branching.
+func WithTierOverride(tier LLMTier) ChatOption {
+	return func(c *ChatConfig) { c.TierOverride = tier }
 }
 
 // WithNoTierFallback refuses the silent degrade to the worker on a lead

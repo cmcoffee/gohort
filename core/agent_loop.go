@@ -2521,6 +2521,17 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		callOpts := opts
 		if deescalated != "" {
 			callOpts = append(append([]ChatOption{}, opts...), WithRouteKey(""))
+		} else if cfg.TierOverride != TierUnset {
+			// Carry the per-run pin onto the call itself. The non-streaming
+			// branch below reads cfg directly, but ChatStreamWithReport gets
+			// only these options — so without this the pin reached every path
+			// EXCEPT the streaming one, and the streaming one is every
+			// interactive turn. Copied rather than appended in place: opts is
+			// the caller's slice and is reused every round.
+			//
+			// Skipped while de-escalated, where the cleared route key is the
+			// decision and a pin must not undo it.
+			callOpts = append(append([]ChatOption{}, opts...), WithTierOverride(cfg.TierOverride))
 		}
 		// Whether THIS round went to the lead — the fallback below only fires
 		// for rounds the lead actually served, so a worker failure isn't

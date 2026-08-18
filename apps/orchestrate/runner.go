@@ -5869,6 +5869,17 @@ func (t *chatTurn) shouldUseLeadModel() bool {
 	if !t.agent.LeadModel {
 		return false
 	}
+	return t.leadPermitted()
+}
+
+// leadPermitted answers the PRIVACY half of the tier question on its own: may
+// this turn reach the lead at all, whatever anybody prefers.
+//
+// Split out because a machine phase that pins "lead" overrules the agent's own
+// preference — and must not overrule this. A preference is a routing choice; the
+// pin exists because the lead may be a third party, and "the phase said so" is
+// exactly the kind of thing that would otherwise become the exception to it.
+func (t *chatTurn) leadPermitted() bool {
 	if AllLLMsPrivate() {
 		return true
 	}
@@ -5880,6 +5891,36 @@ func (t *chatTurn) shouldUseLeadModel() bool {
 		return false
 	}
 	return !t.privateMode
+}
+
+// turnRouting resolves this turn's tier ONCE, folding in the machine phase's
+// pin, and returns both the per-run pin the agent loop takes and the route key
+// that carries the stage's thinking preference.
+//
+// One answer with two consumers, because they used to be computed
+// independently: the route key from the agent's own "Use Lead model" toggle,
+// the pin from the phase. A phase naming "lead" therefore moved the pin and
+// left the key behind — and the key is what RouteThink reads AND what the
+// streaming path resolves the tier from, so a phase asking for the lead got
+// neither the model nor its reasoning. Every interactive turn streams, so the
+// phase's Model field did nothing at all on the path that matters.
+func (t *chatTurn) turnRouting() (pin LLMTier, routeKey string) {
+	lead := t.shouldUseLeadModel()
+	switch t.machine.Tier() {
+	case LEAD:
+		// The most specific ROUTING setting in the chain, so it beats the
+		// agent's toggle — but it is still a preference, and leadPermitted is
+		// not. A pin that cannot be honored resolves DOWN rather than being
+		// dropped, so the loop and the route key never disagree.
+		lead = t.leadPermitted()
+		pin = WORKER
+		if lead {
+			pin = LEAD
+		}
+	case WORKER:
+		lead, pin = false, WORKER
+	}
+	return pin, orchestratorRouteKey(t.agent.ID, lead)
 }
 
 // frameworkConversationalTools is the single source of truth for the always-on
@@ -6935,8 +6976,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	}
 
 	stopKeepalive := startKeepalive(t.sse)
+	// Tier and reasoning come off ONE resolution (turnRouting), so a machine
+	// phase that pins a tier also picks up that tier's thinking preference.
+	tierPin, routeKey := t.turnRouting()
 	think := true
-	if p := RouteThink(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())); p != nil {
+	if p := RouteThink(routeKey); p != nil {
 		think = *p
 	}
 	// Per-agent override wins over the route default — the author may
@@ -7419,8 +7463,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		Tools:          allTools,
 		// A machine phase may pin the tier for turns spent in it.
 		// TierUnset (no machine, or a phase that names no model) follows
-		// the route stage exactly as before.
-		TierOverride:         mach.Tier(),
+		// the route stage exactly as before. Resolved with the route key
+		// above so the two cannot disagree — see turnRouting.
+		TierOverride:         tierPin,
 		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
 		DynamicTools:         t.dynamicNewTempTools(sess),
 		ToolFallbackResolver: t.lazyToolFallback,
@@ -7573,7 +7618,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// attach calls. The architecture itself enforces deliberate
 		// per-file delivery now.)
 		ChatOptions: []ChatOption{
-			WithRouteKey(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())),
+			WithRouteKey(routeKey),
 			WithThink(think),
 		},
 	})
@@ -8320,8 +8365,11 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// the largest prompt in the turn — the whole conversation plus every
 	// tool result — reached the usage tracker, so the admin cost history
 	// under-counted every agent turn by roughly a synthesis prompt.
+	// Read from t.machine rather than the plan round's copy: change_phase can
+	// move the phase mid-turn, and the reply belongs to where the turn ENDED.
+	tierPin, routeKey := t.turnRouting()
 	think := true
-	if p := RouteThink(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())); p != nil {
+	if p := RouteThink(routeKey); p != nil {
 		think = *p
 	}
 	// Per-agent override wins over the route default (see plan round
@@ -8351,7 +8399,8 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		msgs,
 		handler,
 		WithSystemPrompt(synthSys),
-		WithRouteKey(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())),
+		WithRouteKey(routeKey),
+		WithTierOverride(tierPin), // the phase's pin, which the route key alone cannot carry
 		WithThink(think),
 	)
 	stopKeepalive()

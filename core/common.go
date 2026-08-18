@@ -1172,6 +1172,16 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 		opt(&probe)
 	}
 	useLead := probe.RouteKey != "" && RouteToLead(probe.RouteKey) && T.HasDistinctLead()
+	// An explicit per-call pin beats the stage, the same precedence
+	// AgentLoopConfig.wantsLead applies on the non-streaming path. Without this
+	// the two paths disagreed: a caller that pinned a tier got it when it took
+	// the plain-Chat branch and silently lost it the moment it streamed — which
+	// is every interactive turn. A machine phase naming "lead" was the case
+	// that surfaced it. The privacy floor is unchanged: escalating still
+	// requires HasDistinctLead(), which folds in LeadDenied().
+	if probe.TierOverride != TierUnset {
+		useLead = probe.TierOverride == LEAD && T.HasDistinctLead()
+	}
 
 	llm := T.LLM
 	tier := WORKER
