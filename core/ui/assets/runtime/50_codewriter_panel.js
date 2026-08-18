@@ -518,6 +518,54 @@
     var chatHdr  = el('div', {class: 'ui-cw-chat-h'});
     chatHdr.appendChild(el('span', {}, ['Chat']));
 
+    // Profile picker — "which kind of writer am I talking to", chosen once and
+    // carried on every turn. Unlike the reference and collection pickers below
+    // it, this is not a per-question attachment: it persists across reloads
+    // (localStorage, keyed by the endpoint so two panels on one deployment do
+    // not share a selection) because a profile is a standing choice and having
+    // to re-pick it every visit would make it feel like one of the checkboxes.
+    //
+    // core/ui knows only the shape: a list of {id, name, description}, one
+    // selection, sent as `profile`. What it MEANS is entirely the host's.
+    var profileNoun = cfg.profiles_noun || 'Profile';
+    var profileKey  = 'ui-cw-profile:' + (cfg.profiles_list_url || '');
+    var pickedProfile = '';
+    try { pickedProfile = window.localStorage.getItem(profileKey) || ''; } catch (_) {}
+    if (cfg.profiles_list_url) {
+      var profSelect = el('select', {class: 'ui-chat-mode',
+        title: profileNoun + ' — applies to everything written here',
+        onchange: function() {
+          pickedProfile = profSelect.value || '';
+          try { window.localStorage.setItem(profileKey, pickedProfile); } catch (_) {}
+        }});
+      profSelect.appendChild(el('option', {value: ''}, ['No ' + profileNoun.toLowerCase()]));
+      fetch(cfg.profiles_list_url, {credentials: 'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : []; })
+        .then(function(list) {
+          (list || []).forEach(function(p) {
+            profSelect.appendChild(el('option', {value: p.id, title: p.description || ''}, [p.name || p.id]));
+          });
+          // Re-apply the remembered pick AFTER the options exist — assigning a
+          // value to an empty select silently does nothing, which read as the
+          // choice being forgotten on every reload.
+          if (pickedProfile) {
+            profSelect.value = pickedProfile;
+            // Gone (deleted, or another user's): fall back to none rather than
+            // leaving a blank select that still POSTs a dead id.
+            if (profSelect.value !== pickedProfile) {
+              pickedProfile = '';
+              try { window.localStorage.removeItem(profileKey); } catch (_) {}
+            }
+          }
+        })
+        .catch(function(){ profSelect.style.display = 'none'; });
+      chatHdr.appendChild(profSelect);
+      if (cfg.profiles_manage_url) {
+        chatHdr.appendChild(el('a', {class: 'ui-cw-prof-manage', href: cfg.profiles_manage_url,
+          title: 'Create and edit ' + profileNoun.toLowerCase() + 's'}, ['Manage']));
+      }
+    }
+
     // Generic reference picker — when the host wires reference_sources_url,
     // surface every registered reference source in one dropdown. The chosen
     // item rides along with each chat POST as references ([{kind, item_id}]);
@@ -691,6 +739,11 @@
           context: ctxEditor.value || '',
           collections: pickedCollections(),
           references: selectedRef ? [selectedRef] : [],
+          // The standing profile, sent on EVERY turn — including the first of a
+          // session and every edit. A foundation that applied only to some turns
+          // would be worse than none: the code would follow house conventions
+          // intermittently, and nothing in the reply would say which turns had it.
+          profile: pickedProfile || '',
           message: message,
           mode:    mode,
           history: history,

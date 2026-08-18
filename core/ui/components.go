@@ -2843,6 +2843,30 @@ type CodeWriterPanel struct {
 	// Same wire shape as ArticleEditor's picker — see core.ReferenceSource.
 	ReferenceSourcesURL string `json:"reference_sources_url,omitempty"`
 
+	// ProfilesListURL, when set, renders a PROFILE picker in the panel header:
+	// a named configuration the whole surface works under, chosen once and
+	// carried on every chat POST as `profile`.
+	//
+	// GET → [{id, name, description}]. The distinction from the pickers above
+	// is persistence and scope: collections and reference sources are per-turn
+	// attachments a user ticks for one question, while a profile is the standing
+	// answer to "which kind of writer am I talking to" — it survives reloads and
+	// applies to everything written under it.
+	//
+	// Named PROFILE rather than after any host's noun, and labelled by
+	// ProfilesNoun, so this component keeps naming no specific app. What a
+	// profile MEANS is entirely the host's business: the panel selects one and
+	// reports it, and never interprets it.
+	ProfilesListURL string `json:"profiles_list_url,omitempty"`
+	// ProfilesNoun is the user-facing label for the picker (defaults to
+	// "Profile"). Same host-supplied-noun contract as CollectionsNoun.
+	ProfilesNoun string `json:"profiles_noun,omitempty"`
+	// ProfilesManageURL, when set, adds a "Manage" link beside the picker
+	// pointing at wherever the host lets a user create and edit profiles.
+	// Without it the picker lists what exists and offers no way to add one,
+	// which reads as broken the first time somebody opens an empty list.
+	ProfilesManageURL string `json:"profiles_manage_url,omitempty"`
+
 	// Field name mapping — defaults match SnippetRecord.
 	IDField   string `json:"id_field,omitempty"`   // default "id"
 	NameField string `json:"name_field,omitempty"` // default "name"

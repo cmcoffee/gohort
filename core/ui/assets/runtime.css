@@ -4411,6 +4411,15 @@ select:-webkit-autofill {
   text-transform: none; letter-spacing: normal;
   max-width: 55%; text-overflow: ellipsis;
 }
+/* "Manage" beside the profile picker. Muted and small on purpose: it is the
+ * way OUT of the writing surface, and a link that competes with the picker
+ * beside it invites a click that leaves the page mid-thought. */
+.ui-cw-prof-manage {
+  text-transform: none; letter-spacing: normal;
+  font-size: 0.72rem; color: var(--text-mute);
+  text-decoration: none; white-space: nowrap;
+}
+.ui-cw-prof-manage:hover { color: var(--accent); text-decoration: underline; }
 .ui-cw-chat-msgs {
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto;

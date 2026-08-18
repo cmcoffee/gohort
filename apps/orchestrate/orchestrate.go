@@ -30,6 +30,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -367,6 +368,26 @@ func (T *OrchestrateApp) Routes() {
 	// transcript, so it shows in the agent's chat and is in-context on the next
 	// wake — the agent reads along even while it stays silent.
 	registerChannelSilentRecorder(T)
+	// One-shot agent dispatch for apps that are not orchestrate: an app that
+	// needs what an AGENT knows — its memory, attached sources, collections and
+	// tools — rather than what a bare model call can produce. See core.AskAgent.
+	// runtimeUser == owner: the app is asking on behalf of the person whose
+	// agent it is, so the run reads their store and nobody else's.
+	RegisterAgentAsk(func(ctx context.Context, owner, agentID, question string) (string, error) {
+		return T.RunAgentSync(ctx, owner, owner, agentID, question, "app")
+	})
+	// ...and the list to pick from. Hidden agents are dropped: an agent kept
+	// out of orchestrate's own pickers should not reappear in another app's.
+	RegisterAgentList(func(owner string) []AgentChoice {
+		var out []AgentChoice
+		for _, a := range T.AgentsForUser(owner) {
+			if a.Hidden {
+				continue
+			}
+			out = append(out, AgentChoice{ID: a.ID, Name: a.Name, Description: a.Description})
+		}
+		return out
+	})
 	// Reply overflow: when a bidirectional channel is bound to a service with no
 	// output path, the transport routes the agent's undeliverable reply here — into
 	// the agent's cortex feed — instead of stranding it in an outbox nothing drains.

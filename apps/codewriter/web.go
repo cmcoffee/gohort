@@ -91,6 +91,9 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/value/", T.handleValue)
 	sub.HandleFunc("/api/contexts", T.handleContexts)
 	sub.HandleFunc("/api/context/", T.handleContext)
+	sub.HandleFunc("/writers", T.handleWritersPage)
+	sub.HandleFunc("/api/writers", T.handleWriters)
+	sub.HandleFunc("/api/writer/", T.handleWriter)
 	sub.HandleFunc("/api/assist", T.handleAssist)
 	sub.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		HandleDocRules(w, r, T.DB, "codewriter")
@@ -162,6 +165,15 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		// chat so the LLM can dig deeper when the cached picture doesn't
 		// answer.
 		References []ReferenceSelection `json:"references"`
+		// Writer names the configured WRITER this turn runs under (writers.go):
+		// a named profile whose knowledge foundation governs everything written
+		// here. Distinct from the three fields above, which are per-turn
+		// attachments the user ticks — this one is chosen from the panel's
+		// picker and persists across turns and sessions. Empty = no writer.
+		// Wire name is the panel's generic `profile`; the app's own name for the
+		// concept is Writer. core/ui names no host's nouns (see CollectionsNoun),
+		// so the contract stays generic and the domain word lives here.
+		Writer string `json:"profile"`
 		// History is the prior conversation, client-maintained.
 		// Allows Chat → Edit to carry discussion context so Edit can
 		// act on what was just discussed. File state (code/context)
@@ -285,6 +297,21 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, Message{Role: role, Content: h.Content})
 	}
 	messages = append(messages, Message{Role: "user", Content: prompt + ref_context})
+
+	// The active writer's knowledge foundation — the standing background this
+	// code lives inside, injected on every turn and treated as authoritative.
+	//
+	// AFTER the mode rules on purpose. Those rules are the app's output
+	// CONTRACT (discussion mode emits no fenced block; edit mode returns one
+	// applyable block), and the Apply button reads that shape — so a domain
+	// brief must not be the last word on it. The foundation governs WHAT the
+	// code says; the mode rules govern what the reply looks like, and the two
+	// are not in competition.
+	if uid := AuthCurrentUser(r); uid != "" && strings.TrimSpace(req.Writer) != "" {
+		if wr, found := loadWriter(UserDB(T.DB, uid), req.Writer); found {
+			system_prompt += wr.foundationBlock()
+		}
+	}
 
 	// Standing rules append to the system prompt on every chat turn, the
 	// same as on assist — they're constraints on output, not on mode.
