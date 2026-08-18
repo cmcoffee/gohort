@@ -125,12 +125,28 @@ func dispatchPipelineCapKey(id string) string { return "pipeline:" + id }
 // DisabledPipelines still bites on top of all of it: an absent grant and an
 // expressed denial are different statements, and Except mode is where the
 // second one belongs.
+//
+// SHARED pipelines are in the set too (v0.6.267). They were held out when
+// peer-sharing landed, on the argument that an agent choosing by itself to run
+// another user's recipe is a different question from a person clicking Run.
+// What settles it is that the difference is one of degree and the guards do not
+// care which: the run happens in the REQUESTER's namespace either way — their
+// agents answer its agent stages, their catalog resolves its tools, their
+// credentials back them, and their warden judges its actions (v0.6.263) — and
+// the dispatch policy applies to a shared pipeline exactly as it does to an
+// owned one. A recipe somebody else wrote is untrusted text that this user
+// already accepted; leaving it reachable by hand and not by agent protected
+// nothing, it just meant the useful half needed a human in the loop.
+//
+// It IS worth knowing that under the default Allow-all policy this makes every
+// pipeline shared with a user reachable by all of their agents. Except mode
+// denies one; Only mode requires it ticked.
 func (t *chatTurn) dispatchablePipelines() []PipelineDef {
 	mode := effectiveDispatchMode(t.agent)
 	if mode == dispatchNone {
 		return nil
 	}
-	all := ListPipelineDefs(t.udb, t.user)
+	all := t.pipelineUniverse()
 	out := make([]PipelineDef, 0, len(all))
 	for _, d := range all {
 		if t.pipelineDispatchAllowed(mode, d) {
@@ -138,6 +154,43 @@ func (t *chatTurn) dispatchablePipelines() []PipelineDef {
 		}
 	}
 	return out
+}
+
+// pipelineUniverse is every pipeline this user can see, before policy: their
+// own, then the ones shared with them. Policy is applied by the callers,
+// separately, because one of them has to tell a target this agent may not reach
+// apart from a name that does not exist — and a pre-filtered list cannot.
+func (t *chatTurn) pipelineUniverse() []PipelineDef {
+	own := ListPipelineDefs(t.udb, t.user)
+	out := make([]PipelineDef, 0, len(own))
+	names := make(map[string]bool, len(own))
+	for _, d := range own {
+		names[strings.ToLower(strings.TrimSpace(d.Name))] = true
+		out = append(out, d)
+	}
+	// Own first, so a name that exists in both resolves to the user's own — the
+	// same shadowing rule resolvePipelineFor applies on the page. A shared one
+	// whose name collides is dropped rather than listed: the model has names and
+	// not ids, so listing it would advertise a target that can never be reached
+	// by the only handle the model has. Logged, because "my colleague shared it
+	// and my agent says there is no such pipeline" is otherwise unanswerable.
+	for _, sp := range sharedPipelinesFor(t.user) {
+		if names[strings.ToLower(strings.TrimSpace(sp.Def.Name))] {
+			Log("[orchestrate.pipelines] %q shared by %q is not dispatchable for %q: the name collides with one of their own",
+				sp.Def.Name, sp.Owner, t.user)
+			continue
+		}
+		out = append(out, sp.Def)
+	}
+	return out
+}
+
+// foreignPipeline reports whether a dispatch target belongs to somebody else.
+// Owner is stamped on every stored record, so this needs no second lookup —
+// and every place that treats a shared pipeline differently asks it here.
+func (t *chatTurn) foreignPipeline(d PipelineDef) bool {
+	owner := strings.TrimSpace(d.Owner)
+	return owner != "" && owner != t.user
 }
 
 // pipelineDispatchAllowed applies this agent's dispatch policy to one pipeline.
@@ -188,7 +241,7 @@ func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 	mode := effectiveDispatchMode(t.agent)
 	var names []string
 	var denied string
-	for _, def := range ListPipelineDefs(t.udb, t.user) {
+	for _, def := range t.pipelineUniverse() {
 		// Matched by NAME as well as id: a name is what the model has, since
 		// it reads pipeline names and never storage keys.
 		match := strings.EqualFold(def.ID, ref) || strings.EqualFold(def.Name, ref)
@@ -203,6 +256,10 @@ func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 		}
 		if match {
 			return def, nil
+		}
+		if t.foreignPipeline(def) {
+			names = append(names, def.Name+" (shared by "+def.Owner+")")
+			continue
 		}
 		names = append(names, def.Name)
 	}
@@ -307,7 +364,7 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 	// Live activity, same as the agent path and the schedule path: without it
 	// a multi-minute run is invisible until it finishes.
 	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
-		Describe("pipeline", def.Name, truncateObs(msg, 100)).
+		Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100)).
 		Parent(parentRunFromCtx(t.ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
@@ -323,7 +380,7 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 		Log("[orchestrate.pipeline %q] %s", def.Name, s)
 	}
 
-	Log("[orchestrate.agents.run] %s dispatching pipeline %q (%d stages)", t.agent.ID, def.Name, len(def.Stages))
+	Log("[orchestrate.agents.run] %s dispatching pipeline %q%s (%d stages)", t.agent.ID, def.Name, pipelineOwnerNote(t, def), len(def.Stages))
 	out, err := t.app.RunPipelineDefSync(ctx, def, msg, t.pipelineStageDispatch(), status)
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
@@ -356,14 +413,14 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 		return "", err
 	}
 	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
-		Describe("pipeline", def.Name, truncateObs(msg, 100))
+		Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100))
 	defer liveRun.Complete(RunStatusFailed)
 
 	ctx = withDispatchedPipeline(ctx, def.ID)
 	ctx = withParentRun(ctx, liveRun.ID)
 	ctx = t.guardedPipelineContext(ctx) // as inline; see agentsRunPipelineAction
 
-	Log("[orchestrate.agents.run] %s handed off pipeline %q (%d stages)", t.agent.ID, def.Name, len(def.Stages))
+	Log("[orchestrate.agents.run] %s handed off pipeline %q%s (%d stages)", t.agent.ID, def.Name, pipelineOwnerNote(t, def), len(def.Stages))
 	// nil status: the live run above is what carries progress here, and the
 	// turn's status channel is closed.
 	out, err := t.app.RunPipelineDefSync(ctx, def, msg, t.pipelineStageDispatch(), nil)
@@ -377,6 +434,26 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 		return "", err
 	}
 	return pipelineDispatchResult(def, out)
+}
+
+// pipelineRunLabel names a run in the activity surface. A pipeline somebody
+// else wrote carries their name, because "why is my agent running Payroll
+// Report" has a different answer depending on whose Payroll Report it is, and
+// the pill is where somebody looks first.
+func pipelineRunLabel(t *chatTurn, def PipelineDef) string {
+	if t.foreignPipeline(def) {
+		return def.Name + " (shared by " + def.Owner + ")"
+	}
+	return def.Name
+}
+
+// pipelineOwnerNote is the same fact for the log line: empty for the ordinary
+// case, so an owned dispatch logs exactly what it always did.
+func pipelineOwnerNote(t *chatTurn, def PipelineDef) string {
+	if t.foreignPipeline(def) {
+		return " (shared by " + def.Owner + ")"
+	}
+	return ""
 }
 
 // pipelineDispatchResult is the shared ending for both paths.

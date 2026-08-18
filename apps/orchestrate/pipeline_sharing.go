@@ -19,13 +19,19 @@
 // and a shared pipeline that anybody could rewrite is not shared, it is jointly
 // owned, which is a different feature with a different set of questions.
 //
-// WHAT A RECIPIENT CANNOT DO WITH IT YET: dispatch. A shared pipeline is
-// reachable from the pipeline page — a person choosing to run somebody's
-// workflow — and is deliberately NOT in dispatchablePipelines, which is what an
-// AGENT reaches autonomously. An agent picking, unprompted, to run another
-// user's recipe is a different question from a person clicking Run on one, and
-// the dispatch policy (v0.6.265) reasons about one user's fleet. Widening it is
-// a decision to take on its own evidence, not a side effect of adding sharing.
+// DISPATCH. A shared pipeline is reachable by the recipient's AGENTS as well as
+// by the recipient (v0.6.267 — it was page-only for one version, on the argument
+// that an agent choosing unprompted to run somebody else's recipe is a different
+// question from a person clicking Run). It is a difference of degree, and none
+// of the guards turn on it: the run happens in the requester's namespace either
+// way, the dispatch policy reads a shared pipeline exactly as it reads an owned
+// one, and the caller's warden judges its actions. See dispatchablePipelines.
+//
+// What a share still does NOT reach is a SCHEDULE. StandingAgent resolves its
+// PipelineID in the owner's own store, so a schedule can only fire a pipeline
+// its owner has — and an unattended, recurring run of somebody else's recipe is
+// the case where "a person is in the loop" stops being true in a way dispatch
+// does not.
 //
 // WHY AN INDEX. A recipient looking for "pipelines shared with me" is asking
 // about records in other users' stores. Walking every user's store on every page
