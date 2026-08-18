@@ -371,6 +371,21 @@ type PipelineDef struct {
 	Created time.Time `json:"created,omitempty"` // stripped on export
 	Updated time.Time `json:"updated,omitempty"` // stripped on export
 
+	// AllowedUsers is the peer-share recipient set: which OTHER users of this
+	// deployment may read and run this pipeline. Empty = private to the owner,
+	// which is what every pipeline was until now.
+	//
+	// The RECIPE travels; the authority does not. A recipient runs the owner's
+	// definition against their OWN agents, tools and credentials, so a shared
+	// pipeline grants a way of working rather than a way into the owner's
+	// namespace — the same rule AgentRecord.AllowedUsers states for a shared
+	// agent, and the reason sharing one is not a secret-disclosure decision.
+	//
+	// Editing the definition stays the owner's: a recipient reads, runs and
+	// copies. Stripped on export, like Owner and Global — a recipient list is a
+	// fact about THIS deployment's users and means nothing in another one.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+
 	// Previous is the definition this one replaced, kept so a wholesale
 	// rewrite can be taken back. Exactly ONE deep, and set only by the
 	// doors that REPLACE a pipeline rather than edit part of it (today:
@@ -963,8 +978,20 @@ func SavePipelineDef(udb Database, d PipelineDef) PipelineDef {
 	}
 	d.Updated = time.Now()
 	udb.Set(PipelineDefsTable, d.ID, d)
+	// Every save path funnels through here — the HTTP editor, the pipeline
+	// tool, revise, undo, import, duplicate — which is why the share index is
+	// synced from a hook rather than at each of those call sites. A grant that
+	// silently fails to register on one path is a grant the owner believes they
+	// made.
+	if PipelineSavedHook != nil {
+		PipelineSavedHook(d)
+	}
 	return d
 }
+
+// PipelineSavedHook, when set by an app that keeps an index over pipelines, is
+// called after every save with the stored record. Mirrors PipelineDeletedHook.
+var PipelineSavedHook func(def PipelineDef)
 
 // LoadPipelineDef reads a pipeline def by ID. Returns ok=false when
 // absent or when the record's owner doesn't match (defensive — a
@@ -1050,6 +1077,10 @@ func ExportPipeline(d PipelineDef) PipelineDef {
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
 	d.Global = false // scope is a local decision; imported pipelines land non-global
+	// Names of users in the exporting deployment. In another one they are
+	// somebody else or nobody, and an import that silently carried a grant to
+	// a name that got reused is the worst possible way to find that out.
+	d.AllowedUsers = nil
 	// A recipe carries a pipeline, not its history — and an undo
 	// snapshot would double every bundle for something the importer can
 	// never take back.

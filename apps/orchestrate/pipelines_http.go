@@ -48,6 +48,12 @@ type pipelineRow struct {
 	UsedByText string   `json:"used_by_text,omitempty"`
 	Status     string   `json:"status,omitempty"`
 	EditURL    string   `json:"edit_url,omitempty"`
+	// Whose it is. Mine is true for the user's own; Owner names the sharer on
+	// a row somebody else owns, so one table carries both without a reader
+	// having to work out why a row has no Edit button.
+	Mine       bool   `json:"mine"`
+	Owner      string `json:"owner,omitempty"`
+	SharedWith string `json:"shared_with,omitempty"`
 }
 
 // pipelineStatusText summarises what a pipeline is made of, and what is
@@ -117,6 +123,21 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 				UsedByText: usedByText(users[d.ID]),
 				Status:     pipelineStatusText(d),
 				EditURL:    "/orchestrate/pipeline?id=" + d.ID,
+				Mine:       true,
+				SharedWith: strings.Join(d.AllowedUsers, ", "),
+			})
+		}
+		// Pipelines other people shared, after the user's own and labelled with
+		// whose they are. Listed at all because a share nobody can find is a
+		// share that did not happen; listed LAST because your own work is what
+		// you came to this page for.
+		for _, sp := range sharedPipelinesFor(user) {
+			rows = append(rows, pipelineRow{
+				ID: sp.Def.ID, Name: sp.Def.Name, Description: sp.Def.Description, Stages: len(sp.Def.Stages),
+				StageNames: pipelineStageNames(sp.Def),
+				Status:     "shared by " + sp.Owner,
+				EditURL:    "/orchestrate/pipeline?id=" + sp.Def.ID,
+				Owner:      sp.Owner,
 			})
 		}
 		writeJSON(w, map[string]any{"pipelines": rows})
@@ -130,6 +151,10 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 		// assert id/owner on create.
 		def.ID = ""
 		def.Owner = user
+		// Sharing is its own door (/share). A create that could assert a
+		// recipient list would let one POST make a pipeline and hand it out
+		// in the same breath, which is not a thing anybody asked to do.
+		def.AllowedUsers = nil
 		if err := def.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -192,7 +217,10 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		http.NotFound(w, r)
 		return
 	}
-	def, found := LoadPipelineDef(udb, user, id)
+	// Own first, then one somebody shared with this user (pipeline_sharing.go).
+	// mine is what every write below gates on: a recipient reads, runs and
+	// copies; the definition stays the owner's.
+	def, defOwner, mine, found := resolvePipelineFor(user, udb, id)
 	if !found {
 		http.NotFound(w, r)
 		return
@@ -204,15 +232,22 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		case http.MethodGet:
 			writeJSON(w, def)
 		case http.MethodPut:
+			if !pipelineOwnerOnly(w, mine, defOwner, "edit") {
+				return
+			}
 			var body PipelineDef
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 			// Identity stays the server's: keep id/owner from the loaded
-			// record, take name/description/stages from the body.
+			// record, take name/description/stages from the body. The
+			// recipient list is identity too — an edit form must not be able
+			// to widen or clear who a pipeline is shared with, the same way
+			// an agent's guardrails survive a whole-record save.
 			body.ID = def.ID
 			body.Owner = user
+			body.AllowedUsers = def.AllowedUsers
 			body.Created = def.Created
 			if err := body.Validate(); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -222,6 +257,9 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s)", user, saved.Name, saved.ID)
 			writeJSON(w, saved)
 		case http.MethodDelete:
+			if !pipelineOwnerOnly(w, mine, defOwner, "delete") {
+				return
+			}
 			DeletePipelineDef(udb, def.ID)
 			Log("[orchestrate.pipelines] user=%q deleted pipeline %q (id=%s)", user, def.Name, def.ID)
 			writeJSON(w, map[string]any{"deleted": def.ID})
@@ -231,6 +269,15 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 	case "agents":
 		// Assign to agents. An unattached pipeline is a tool no agent
 		// has, which the list already says and nothing could change.
+		//
+		// Owner-only, and not merely for symmetry: attaching writes the
+		// pipeline's ID into an agent's AttachedPipelines, and that agent
+		// resolves the id in its OWN owner's store. A recipient attaching a
+		// shared pipeline would mint a run_<name> tool pointing at a record
+		// their store cannot load.
+		if !pipelineOwnerOnly(w, mine, defOwner, "attach") {
+			return
+		}
 		T.handlePipelineAgents(w, r, udb, user, def)
 	case "duplicate":
 		// Iterating on a working pipeline in place is how the working
@@ -244,6 +291,11 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		dup.ID = ""
 		dup.Previous = nil
 		dup.Global = false
+		// A copy of somebody else's pipeline is YOURS: re-owned, and shared
+		// with nobody until you say so. Carrying their recipient list into
+		// your store would re-share their work under your name.
+		dup.Owner = user
+		dup.AllowedUsers = nil
 		dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
 		saved := SavePipelineDef(udb, dup)
 		Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
@@ -252,12 +304,46 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		// Say what should change, against the pipeline on screen
 		// (pipeline_revise.go). Undoable, because it can rewrite every
 		// prompt in it.
+		if !pipelineOwnerOnly(w, mine, defOwner, "revise") {
+			return
+		}
 		T.handlePipelineRevise(w, r, udb, user, def)
 	case "undo":
+		if !pipelineOwnerOnly(w, mine, defOwner, "undo a change to") {
+			return
+		}
 		T.handlePipelineUndo(w, r, udb, user, def)
 	case "stages":
 		// The per-stage form (pipeline_editor.go).
+		if !pipelineOwnerOnly(w, mine, defOwner, "edit") {
+			return
+		}
 		T.handlePipelineStages(w, r, udb, user, def)
+	case "share":
+		// The recipient list, and ONLY the recipient list. The ACLPicker posts
+		// the whole record back (record mode), and this reads one field out of
+		// it — so a picker save cannot rewrite a stage, and the ordinary edit
+		// path cannot rewrite the ACL. Each door opens one thing, which is the
+		// same split an agent's guardrails have.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !pipelineOwnerOnly(w, mine, defOwner, "change who can see") {
+			return
+		}
+		var body struct {
+			AllowedUsers []string `json:"allowed_users"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		def.Owner = user
+		def.AllowedUsers = normalizeShareList(body.AllowedUsers, user)
+		saved := SavePipelineDef(udb, def)
+		Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
+		writeJSON(w, saved)
 	case "export":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -317,6 +403,20 @@ func (T *OrchestrateApp) runPipelineHTTP(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, map[string]any{"output": out})
+}
+
+// pipelineOwnerOnly refuses a write on a pipeline the requester does not own,
+// and reports whether the caller may continue.
+//
+// A share hands over the recipe, not the pen. The refusal names the owner
+// because the alternative — a flat 403 on a page that plainly shows the thing —
+// reads as a bug, and the reader's actual next step is to go ask that person.
+func pipelineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) bool {
+	if mine {
+		return true
+	}
+	http.Error(w, "this pipeline is shared with you by "+owner+", so you can run and copy it but not "+verb+" it — ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
+	return false
 }
 
 // writeJSON is the small response helper these handlers share.

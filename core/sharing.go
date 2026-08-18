@@ -98,6 +98,27 @@ var (
 	AdminPublishAgent        func(db Database, owner, id string) error
 )
 
+// UserOwnedPipelineRow is one user-owned pipeline for the same governance
+// console. Deliberately the AGENT row minus Exposed: a pipeline has no published
+// app surface to flip, so a field for it would be a control that does nothing.
+type UserOwnedPipelineRow struct {
+	ID         string `json:"id"`
+	Owner      string `json:"owner"`
+	Name       string `json:"name"`
+	SharedWith string `json:"shared_with,omitempty"`
+	Shared     bool   `json:"shared"`
+	Stages     int    `json:"stages"`
+}
+
+// AdminListUserOwnedPipelines / AdminRevokePipelineShare are the pipeline half of
+// the pair above, wired by orchestrate in the same init. An admin who can audit
+// and revoke a shared agent must be able to do both for a shared pipeline, or
+// half the user plane is governable and the other half is invisible.
+var (
+	AdminListUserOwnedPipelines func(db Database) []UserOwnedPipelineRow
+	AdminRevokePipelineShare    func(db Database, owner, id string) error
+)
+
 // CanManageShared reports whether reqUser may change sharing / edit / delete a
 // record with the given owner: the owner, or an admin. Non-owners of a shared
 // record can use it but not manage it. An empty owner is a legacy record with no

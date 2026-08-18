@@ -1501,6 +1501,35 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "User-owned pipelines",
+				Subtitle: "Pipelines users author and (optionally) peer-share. Same audit as agents above, for the other half of the user plane — a share you cannot see is a share you cannot govern. A shared pipeline is a RECIPE: recipients run the owner's definition against their own agents, tools and credentials, and cannot edit it. Revoke clears the recipient list; the owner keeps the pipeline.",
+				Body: ui.Table{
+					Source: "api/user-pipelines",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "owner", Flex: 0, Label: "Owner"},
+						{Field: "name", Flex: 1},
+						{Field: "stages", Flex: 0, Label: "Stages"},
+						{Field: "shared_with", Flex: 2, Mute: true, Label: "Shared with"},
+						{Field: "shared", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Shared", Color: "info"},
+						}},
+					},
+					RowActions: []ui.RowAction{
+						// No Publish twin: a pipeline has no /agents/-style app
+						// surface to flip on, and a button that does nothing is
+						// worse than an absent one.
+						{Type: "button", Label: "Revoke share",
+							PostTo:  "api/user-pipelines?action=revoke_share&owner={owner}&id={id}",
+							Method:  "POST",
+							Confirm: "Revoke this pipeline's sharing? Its recipients lose access; the owner keeps the pipeline.",
+							OnlyIf:  "shared",
+							Variant: "danger"},
+					},
+					EmptyText: "No user-owned pipelines yet. When a user authors one, it appears here.",
+				},
+			},
+			{
 				Title:    "Pending promotions",
 				Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page); Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
 				Body: ui.Table{

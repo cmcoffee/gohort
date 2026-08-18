@@ -162,6 +162,10 @@ func wireDependencyGuards() {
 	StandingAgentDependencyError = standingAgentDependencyError
 	CredentialDeletedHook = credentialDeleted
 	PipelineDeletedHook = pipelineDeleted
+	// Not a dependency guard, but the same family and the same moment: a save
+	// hook whose whole job is keeping an index true. Wired here so there is one
+	// place to look for "what happens when a pipeline is written".
+	PipelineSavedHook = syncPipelineShareIndex
 }
 
 // pipelineScheduleGuard exists to be referenced from the agent-deletion
@@ -185,6 +189,10 @@ func pipelineDeleted(owner, id, name string) {
 	if label == "" {
 		label = id
 	}
+	// A deleted pipeline is shared with nobody. Dropped first: everything below
+	// takes a moment, and a recipient resolving it in between would find the
+	// index pointing at a record that is already gone.
+	dropPipelineShareIndex(id)
 	for _, sa := range ListStandingAgents(RootDB, owner) {
 		if sa.PipelineID == id {
 			MarkStandingAgentBroken(RootDB, owner, sa.Name,

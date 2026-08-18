@@ -151,7 +151,11 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	def, found := LoadPipelineDef(udb, user, id)
+	// Own, or one somebody shared (pipeline_sharing.go). A recipient sees the
+	// same page — reading what a pipeline does is most of why it was shared —
+	// and the sections that WRITE are simply not built for them, which is a
+	// better answer than a form that posts and 403s.
+	def, defOwner, mine, found := resolvePipelineFor(user, udb, id)
 	if !found {
 		http.NotFound(w, r)
 		return
@@ -312,6 +316,31 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Body:     ui.Card{HTML: findingsHTMLPlain(def.Advice(), "Nothing — the stages read as instructions rather than specifications.")},
 		},
 	)
+	// Share with users — the owner's decision, so the section exists only for
+	// them. The recipient gets the note below instead: a page that shows a
+	// picker you cannot use is a page that has to explain itself twice.
+	if mine {
+		page.Sections = append(page.Sections, ui.Section{
+			Title: "Share with users",
+			Subtitle: "Let specific other users read and run this pipeline. They run YOUR recipe against THEIR agents, tools and credentials — nothing of yours travels with the share, and nothing of theirs comes back. " +
+				"Editing stays yours: a recipient can run it and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
+			Body: ui.ACLPicker(ui.ACLPickerConfig{
+				OptionsSource: "api/user-candidates",
+				RecordSource:  "api/pipelines/" + url_(def.ID),
+				Field:         "allowed_users",
+				PostTo:        "api/pipelines/" + url_(def.ID) + "/share",
+				Method:        "POST",
+				Noun:          "user",
+				Intro:         "Users who may run this pipeline.",
+				EmptyText:     "No other users to share with yet.",
+			}),
+		})
+	} else {
+		page.Sections = append(page.Sections, ui.Section{
+			Title:    "Shared with you",
+			Subtitle: defOwner + " shared this pipeline with you. You can run it and duplicate it; the definition stays theirs, and it runs against your own agents, tools and credentials rather than " + defOwner + "'s.",
+		})
+	}
 	page.ServeHTTP(w, r)
 }
 
