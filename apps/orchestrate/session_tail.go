@@ -32,10 +32,32 @@ func init() {
 		Min:      0,
 		Max:      100000,
 	})
+	RegisterTunable(TunableSpec{
+		Key:      "tune_cortex_tail_messages",
+		Category: "Limits",
+		Label:    "Messages loaded when opening a cortex thread",
+		Help:     "The same bound for an agent's standing thread (its cortex), which is append-only and never ends — so it outgrows an ordinary conversation by a wide margin and is the one that opens slowly. Its cards are pointers whose value is recency, and the first screen is what anyone actually reads. \"Load earlier\" fetches more. 0 falls back to the general thread limit.",
+		Kind:     KindInt,
+		Default:  30,
+		Min:      0,
+		Max:      100000,
+	})
 }
 
 // sessionTailLimit is the default number of messages served on open.
 func sessionTailLimit() int { return TuneInt("tune_chat_tail_messages") }
+
+// cortexTailLimit is the default for an agent's standing thread. 0 means the
+// operator turned the cortex-specific bound off, which falls back to the
+// general one rather than to "everything" — the two zeroes mean different
+// things here, and reading this one as unlimited would make turning off a
+// tighter limit the slowest possible setting.
+func cortexTailLimit() int {
+	if n := TuneInt("tune_cortex_tail_messages"); n > 0 {
+		return n
+	}
+	return sessionTailLimit()
+}
 
 // tailMessages returns the last `limit` messages and how many were dropped
 // from the front.
@@ -58,9 +80,18 @@ func tailMessages(msgs []ChatMessage, limit int) ([]ChatMessage, int) {
 // earlier" button, which doubles its request each press and eventually asks for
 // the lot. A limit is a rendering budget, not a permission — every message it
 // could ask for is one this same user could already read.
-func resolveTailLimit(requested string) int {
+func resolveTailLimit(requested string) int { return resolveTailLimitFor(requested, false) }
+
+// resolveTailLimitFor is resolveTailLimit with the one distinction the default
+// depends on: a cortex thread gets its own, tighter default. An explicit client
+// limit still wins either way — "load earlier" has to be able to walk back
+// through a standing thread exactly as it does through any other.
+func resolveTailLimitFor(requested string, cortex bool) int {
 	n, err := atoiStrict(requested)
 	if err != nil {
+		if cortex {
+			return cortexTailLimit()
+		}
 		return sessionTailLimit()
 	}
 	if n <= 0 {

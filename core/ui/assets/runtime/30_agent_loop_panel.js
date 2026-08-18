@@ -37,6 +37,12 @@
     // cortex home thread, so its live poll appends only NEW ones (channel
     // messages / scheduled reports / monitor wakes) without re-rendering.
     var cortexObsSeen = {};
+    // cortexObsSince — the timestamp of the newest card on screen, sent back on
+    // each poll so the server answers with what arrived AFTER it instead of
+    // re-serving the thread. The dedupe above still runs; this stops the whole
+    // transcript being transferred and parsed every six seconds just to find
+    // the nothing that usually changed.
+    var cortexObsSince = '';
     // channelTranscript — non-null while a CHANNEL ROOM session is open
     // (id "chan:<chatID>"). It holds the sender labels so the thread reads
     // as a messaging transcript (contact name + agent name above each line),
@@ -1924,6 +1930,50 @@
         convoLog.scrollTop = convoLog.scrollHeight;
       }
     }
+    // settleConvoScroll pins a freshly-rendered thread to its bottom and KEEPS
+    // it there while the content finishes settling.
+    //
+    // One scrollTop assignment is not enough at the end of a replay, because the
+    // pane is still growing after it. Blocks and cards are appended after the
+    // message loop; markdown mounts a frame later; images and code blocks arrive
+    // with no height and get some once decoded; the tool toggle is attached
+    // after its bubble. Every one of those adds height BELOW a scroll position
+    // that was correct when it was set, which is how a session opens parked a
+    // few hundred pixels short of the end with no way to tell that anything went
+    // wrong. Reopening the thread then "fixes" it, because the second render
+    // measures content the browser has already laid out and cached — which is
+    // exactly the shape of a bug that only happens sometimes.
+    //
+    // So: scroll now, again next frame, again when the layout settles, and again
+    // as each image finishes decoding. Plain stick-to-bottom throughout — see
+    // the reverted read-from-top experiment; this makes the existing behavior
+    // reliable rather than changing it.
+    //
+    // Bails the moment the user scrolls away, so a slow-loading image cannot
+    // yank someone back down after they have started reading.
+    function settleConvoScroll() {
+      convoStickToBottom = true;
+      scrollConvo(true);
+      var again = function() {
+        if (!convoStickToBottom) return;
+        convoLog.scrollTop = convoLog.scrollHeight;
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(again);
+      setTimeout(again, 60);
+      setTimeout(again, 250);
+      // Images report their real height only once decoded. decode() where it
+      // exists, load/error otherwise — error matters too: a broken image still
+      // resolves to a height, and skipping it would leave the pane short.
+      var imgs = convoLog.querySelectorAll('img');
+      for (var i = 0; i < imgs.length; i++) {
+        (function(img) {
+          if (img.complete) return;
+          img.addEventListener('load', again, {once: true});
+          img.addEventListener('error', again, {once: true});
+        })(imgs[i]);
+      }
+    }
+
     convoLog.addEventListener('scroll', function() {
       // Debounce — scrollend would be cleaner but it has spotty
       // browser support. 120ms is short enough to feel responsive
@@ -4362,17 +4412,36 @@
       if (!sid || channelTranscript) return;
       startReportPolling(sid);
     }
+    // noteObsSince advances the poll watermark to this card's timestamp.
+    //
+    // Last one wins, NOT the string-max: both callers walk cards in stored
+    // order, so the last is the newest, and RFC3339 with nanoseconds does not
+    // compare correctly as text — Go trims trailing zeros from the fraction, so
+    // ".1Z" sorts above ".15Z" while 0.1 is the earlier instant. A watermark
+    // that jumped ahead like that would skip the cards in between.
+    function noteObsSince(m) {
+      if (m && m.created) cortexObsSince = String(m.created);
+    }
     function startReportPolling(sid) {
       stopChannelPolling();
       if (!cfg.load_url || !sid) return;
       channelPollTimer = setInterval(function() {
         if (activeSessionId !== sid) { stopChannelPolling(); return; }
-        fetchJSON(substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)))).then(function(rec) {
+        // cards=1 asks for observation cards ONLY, and `since` narrows that to
+        // what landed after the newest one on screen. Without it this refetched
+        // the whole thread — every message, every persisted tool call's args
+        // and output — every six seconds, to render the nothing that usually
+        // arrived. See session_cards.go.
+        var url = substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)));
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'cards=1';
+        if (cortexObsSince) url += '&since=' + encodeURIComponent(cortexObsSince);
+        fetchJSON(url).then(function(rec) {
           if (activeSessionId !== sid) return;
           var msgs = rec && rec[msgsF];
           if (!Array.isArray(msgs)) return;
           msgs.forEach(function(m) {
             if (!m || !m.report_from) return; // observations only — chat turns ride SSE/replay
+            noteObsSince(m);
             var k = obsKey(m);
             if (cortexObsSeen[k]) return;
             cortexObsSeen[k] = true;
@@ -4684,25 +4753,149 @@
     // that computed it has returned.
     var loadedMsgOffset = 0;
 
-    // loadEarlierMessages re-opens the current thread asking for more.
+    // clearConvoPanes empties the conversation + activity panes and the
+    // per-message bookkeeping that indexes into them. One function because the
+    // maps and the DOM have to go together: an entry pointing at a node that is
+    // no longer in the document is a scrub button that PATCHes the wrong index.
+    //
+    // Called either eagerly (opening a different session) or late, just before
+    // the rebuild (re-rendering the same thread for "Show earlier"), so that a
+    // press does not blank what the reader is looking at while it fetches.
+    function clearConvoPanes() {
+      msgEls = {}; activityEls = {}; blockEls = {};
+      // Cleared with the rest of the per-thread state. A stale offset carried
+      // into the next thread would misplace its truncate point.
+      loadedMsgOffset = 0;
+      convoLog.innerHTML = '';
+      activityLog.innerHTML = '';
+    }
+
+    // earlierAnchor remembers WHERE THE READER WAS across a "Show earlier"
+    // press, so the older chunk arrives above them instead of moving them.
+    //
+    // The press re-renders the whole thread (see loadEarlierMessages), which
+    // destroys every node and any scroll position tied to one. Landing at the
+    // top was the first answer, and it is wrong for the obvious reason: you
+    // press the button to read what came BEFORE the message you are on, and it
+    // takes you somewhere else entirely — on the second press, past a chunk you
+    // have not read yet.
+    //
+    // Anchored on a MESSAGE, not on a scroll offset or a height delta. Heights
+    // are still settling when this runs (markdown, images, tool chips), so a
+    // delta measured now is wrong a frame later and re-applying it double-
+    // corrects. An element's position can simply be re-read as the layout
+    // changes, and every re-read converges on the same answer.
+    //
+    // Identified by STORAGE INDEX rather than by node or id: the node is gone
+    // after the re-render, and message ids are not guaranteed present on stored
+    // records, while the index is what the replay already stamps on every
+    // bubble for the scrub affordance.
+    var earlierAnchor = null;
+
+    // captureEarlierAnchor records the topmost message currently in view and
+    // how far down the pane it sits.
+    function captureEarlierAnchor() {
+      earlierAnchor = null;
+      var paneTop = convoLog.getBoundingClientRect().top;
+      var best = null;
+      for (var k in msgEls) {
+        var entry = msgEls[k];
+        if (!entry || typeof entry.storageIndex !== 'number' || !entry.bubble) continue;
+        if (!best || entry.storageIndex < best.storageIndex) best = entry;
+      }
+      if (!best) return;
+      earlierAnchor = {
+        index: best.storageIndex,
+        // Offset from the pane's top edge, via getBoundingClientRect — NOT
+        // offsetTop, which is measured against the nearest positioned ancestor
+        // and quietly means something else the moment one appears.
+        offset: best.bubble.getBoundingClientRect().top - paneTop,
+      };
+    }
+
+    // restoreEarlierAnchor puts the captured message back where it was, and
+    // holds it there while the newly-loaded chunk finishes laying out above it.
+    function restoreEarlierAnchor() {
+      if (!earlierAnchor) {
+        convoLog.scrollTop = 0; // nothing to anchor to: the old behavior
+        return;
+      }
+      // Held by the closures below, then cleared: an anchor belongs to the one
+      // press that made it, and a leftover index applied to a different thread
+      // would scroll it somewhere arbitrary.
+      var target = earlierAnchor;
+      earlierAnchor = null;
+      var apply = function() {
+        var found = null;
+        for (var k in msgEls) {
+          var entry = msgEls[k];
+          if (entry && entry.storageIndex === target.index && entry.bubble) { found = entry; break; }
+        }
+        if (!found) return;
+        var delta = (found.bubble.getBoundingClientRect().top - convoLog.getBoundingClientRect().top) - target.offset;
+        if (delta) convoLog.scrollTop += delta;
+      };
+      apply();
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+      setTimeout(apply, 60);
+      setTimeout(apply, 250);
+      // Same reason as settleConvoScroll: an image has no height until it is
+      // decoded, and one that lands ABOVE the anchor pushes it down.
+      var imgs = convoLog.querySelectorAll('img');
+      for (var i = 0; i < imgs.length; i++) {
+        (function(img) {
+          if (img.complete) return;
+          img.addEventListener('load', apply, {once: true});
+          img.addEventListener('error', apply, {once: true});
+        })(imgs[i]);
+      }
+    }
+
+    // sessionChunkSize is how many messages one "Show earlier" press adds. The
+    // server serves the value for the thread that is open (a cortex is bounded
+    // tighter than an ordinary conversation); this is only the fallback for a
+    // payload that carried none.
+    var sessionChunkSize = 0;
+
+    // loadEarlierMessages re-opens the current thread asking for ONE more chunk.
     //
     // A re-render rather than a DOM prepend: the replay path is a hundred lines
     // of bubble / tool-chip / block hydration, and a second insert-above
     // version of it would drift from this one the first time either changed.
     //
-    // Doubling what is already accounted for guarantees progress — the ask
-    // always exceeds loaded + skipped — so a few presses reach the top of even
-    // a very long thread. When it overshoots the real total the server serves
-    // the lot, the offset comes back 0, and the button takes itself away.
+    // ONE CHUNK, not double what is already loaded. Doubling reached the top of
+    // a long thread in few presses, which sounds good until you watch it happen
+    // on a standing thread: the third press asks for eight chunks and re-renders
+    // every one of them, so the button gets slower the more you use it and a
+    // couple of presses can drop thousands of bubbles into the pane at once.
+    // Reading backwards is a steady walk, so each press costs the same as the
+    // last. Progress is still guaranteed — the ask always exceeds loaded +
+    // skipped — and when it passes the real total the server serves the rest,
+    // the offset comes back 0, and the button takes itself away.
     function loadEarlierMessages(loadedCount, offset) {
-      sessionLoadLimit = (loadedCount + offset) * 2;
+      var chunk = sessionChunkSize > 0 ? sessionChunkSize : Math.max(loadedCount, 20);
+      sessionLoadLimit = loadedCount + offset + chunk;
       openSession(activeSessionId, true);
     }
 
     // keepLimit is set by loadEarlierMessages so the re-open does not reset the
     // ask it was made for.
     function openSession(sid, keepLimit) {
-      if (!keepLimit) sessionLoadLimit = 0;
+      // -1, NOT 0. Both read as "reset" here, but they are opposite requests on
+      // the wire: -1 sends no limit at all and lets the server apply its own
+      // default, while 0 IS a limit, and the one value the server defines as
+      // "serve the whole thread" (an explicit 0 has to mean that, or "Show
+      // earlier" could never reach the top of a thread longer than the steps
+      // ever cover).
+      //
+      // So every ordinary open was asking for the entire transcript. The tail
+      // limit had no effect from this client, message_offset always came back
+      // 0, and with nothing trimmed there was nothing above the first message —
+      // so the "Show earlier" pill never rendered either. A standing thread
+      // opened by shipping and building every message it had ever held, which
+      // is the slow load, and the missing button was the same bug wearing a
+      // different face.
+      if (!keepLimit) sessionLoadLimit = -1;
       // Channel agents no longer force every open onto the home thread — they
       // have a channel thread AND ordinary sessions. The Channel row opens the
       // home thread explicitly (via altPinnedSession); a normal session row /
@@ -4835,13 +5028,24 @@
       // no run at all. Either way, start counting from zero.
       activeRunId = '';
       runSeqReceived = 0;
-      msgEls = {}; activityEls = {}; blockEls = {};
-      // Cleared with the rest of the per-thread state. A stale offset carried
-      // into the next thread would misplace its truncate point.
-      loadedMsgOffset = 0;
-      convoLog.innerHTML = '';
-      activityLog.innerHTML = '';
+      // Emptying the panes is what makes room for the replay, and it used to
+      // happen HERE — before the request had even been sent. So the pane went
+      // blank the instant you pressed "Show earlier" and stayed blank for the
+      // whole round trip, showing nothing while it fetched history you already
+      // had on screen a moment ago.
+      //
+      // For a press that re-renders the SAME thread there is no reason to show
+      // you an empty pane at all: the content you were reading is still valid
+      // right up to the moment its replacement is ready. So the wipe waits for
+      // the response and happens immediately before the rebuild, which is one
+      // synchronous block and therefore one paint — no flash between them.
+      //
+      // Switching to a DIFFERENT session still clears immediately: there the
+      // blank IS the feedback that the click registered, and leaving the old
+      // thread up while another loads reads as a click that did nothing.
+      if (!keepLimit) clearConvoPanes();
       if (!sid) {
+        clearConvoPanes();
         emptyMsg = el('div', {class: 'ui-agent-empty'},
           [cfg.empty_text || 'Start typing below.']);
         convoLog.appendChild(emptyMsg);
@@ -4875,6 +5079,15 @@
         url += (url.indexOf('?') >= 0 ? '&' : '?') + 'limit=' + sessionLoadLimit;
       }
       fetchJSON(url).then(function(rec) {
+        // The deferred wipe for a same-thread re-render. Everything from here
+        // to the end of this handler runs synchronously, so the browser paints
+        // the empty pane and the rebuilt one as a single frame — the reader
+        // sees the thread grow upward, never a blank panel.
+        //
+        // Deliberately AFTER the request resolved and before anything is
+        // appended: a failed fetch falls to .catch having touched nothing, so a
+        // press that errors leaves the thread on screen instead of wiping it.
+        if (keepLimit) clearConvoPanes();
         setHeaderTitle(rec && rec[ttlF]);
         // Channel rooms render as a who-said-what transcript: the session is
         // a 1:1 messaging thread, so "user" lines are the contact (named by
@@ -4897,6 +5110,9 @@
         // never make the ✕ delete somebody else's message.
         var msgOffset = (rec && typeof rec.message_offset === 'number') ? rec.message_offset : 0;
         loadedMsgOffset = msgOffset;
+        // How much one "Show earlier" press adds, per the server's own bound for
+        // THIS thread. Read on every load so switching threads switches the step.
+        sessionChunkSize = (rec && typeof rec.chunk_size === 'number') ? rec.chunk_size : 0;
         // A nonzero offset means there is thread above what arrived. Say so
         // where the top of it is, rather than letting a months-old channel
         // appear to begin mid-sentence.
@@ -4908,10 +5124,17 @@
               onclick: function() {
                 this.disabled = true;
                 this.textContent = 'Loading…';
+                captureEarlierAnchor();
                 loadEarlierMessages(loaded, msgOffset);
               },
-            }, ['Load earlier messages']),
-            el('span', {class: 'ui-agent-earlier-note'}, [msgOffset + ' earlier']),
+            }, ['Show earlier']),
+            // What one press costs and what is left, so pressing it is a known
+            // quantity rather than a guess at how much thread is about to land.
+            el('span', {class: 'ui-agent-earlier-note'}, [
+              sessionChunkSize > 0 && msgOffset > sessionChunkSize
+                ? sessionChunkSize + ' more of ' + msgOffset + ' earlier'
+                : msgOffset + ' earlier',
+            ]),
           ]));
         }
         if (Array.isArray(msgs)) {
@@ -4988,9 +5211,19 @@
         // fetched. Snapping back to the bottom would undo the press: the whole
         // point was to get away from there, and the button would look broken
         // for putting you back where you started.
+        //
+        // Every OTHER open ends at the bottom, explicitly. The per-message
+        // scrolls during replay obey the stick flag, and that flag survives
+        // across sessions — so scrolling up in one thread, or pressing "Show
+        // earlier" (which sets it false right here), left the NEXT thread
+        // opening wherever the scrollbar happened to be. It looked intermittent
+        // because a rebuild sometimes fires a scroll event whose handler
+        // recomputes the flag back to true, and sometimes does not.
         if (keepLimit) {
           convoStickToBottom = false;
-          convoLog.scrollTop = 0;
+          restoreEarlierAnchor();
+        } else {
+          settleConvoScroll();
         }
         loadSessions();
         // Channel threads are append-only and fed server-side (from the
@@ -5011,8 +5244,13 @@
           // user sat looking at the thread simply never appeared, and reopening
           // the session was the only way to find out the work had finished.
           cortexObsSeen = {};
+          cortexObsSince = '';
           if (Array.isArray(msgs)) {
-            msgs.forEach(function(m) { if (m && m.report_from) cortexObsSeen[obsKey(m)] = true; });
+            msgs.forEach(function(m) {
+              if (!m || !m.report_from) return;
+              cortexObsSeen[obsKey(m)] = true;
+              noteObsSince(m);
+            });
           }
           startReportPolling(sid);
         }

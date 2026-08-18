@@ -226,6 +226,14 @@ type servedSession struct {
 	// whole idempotency guard. No extra state, no window where a reload
 	// sends it twice.
 	OpeningPrompt string `json:"opening_prompt,omitempty"`
+	// ChunkSize is how many messages one "show earlier" press should add.
+	//
+	// Served rather than assumed by the client, because the size depends on
+	// which thread this is — a cortex is bounded tighter than an ordinary
+	// conversation — and a client guessing it would either re-render more than
+	// the server thinks a chunk is, or creep back through a long thread a
+	// handful of messages at a time.
+	ChunkSize int `json:"chunk_size,omitempty"`
 }
 
 func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +403,14 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
+		// The live card poll, which wants only what it hasn't seen. Answered
+		// before everything below: it takes no read receipt (a timer firing is
+		// not a person reading), computes no blocks, and serializes no chat
+		// turns. See session_cards.go for why that matters on a long thread.
+		if r.URL.Query().Get("cards") == "1" {
+			serveObservationCards(w, s.Messages, r.URL.Query().Get("since"))
+			return
+		}
 		// Opening a session clears its unread state (a background wake that
 		// landed here is now seen). Writes LastSeen only — not activity.
 		markSessionSeen(udb, agent.ID, sid)
@@ -415,9 +431,14 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// ride along whole — they are not indexed by message, so trimming
 		// messages cannot orphan one.
 		var off int
-		s.Messages, off = tailMessages(s.Messages, resolveTailLimit(r.URL.Query().Get("limit")))
+		isCortex := sid == cortexSessionID(agent.ID)
+		s.Messages, off = tailMessages(s.Messages, resolveTailLimitFor(r.URL.Query().Get("limit"), isCortex))
 		w.Header().Set("Content-Type", "application/json")
-		out := servedSession{ChatSession: s, MessageOffset: off}
+		// The chunk is this thread's OWN default, not whatever the client just
+		// asked for: after a "show earlier" the request carries an accumulated
+		// limit, and echoing that back would make every press add as much as
+		// everything already loaded — the doubling this replaced.
+		out := servedSession{ChatSession: s, MessageOffset: off, ChunkSize: resolveTailLimitFor("", isCortex)}
 		if len(s.Messages) == 0 {
 			out.OpeningPrompt = s.OpeningPrompt
 		}
