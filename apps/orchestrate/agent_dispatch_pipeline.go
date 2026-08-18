@@ -106,30 +106,57 @@ func dispatchPipelineCapKey(id string) string { return "pipeline:" + id }
 // that setting means this agent does not hand work to anything, and a rule
 // with an exception in it is not the rule the operator selected.
 //
-// The allowlist modes deliberately do NOT constrain this.
-// AllowedDispatchTargets holds AGENT ids, is curated through an agent picker,
-// and has never governed pipelines: an agent in Only mode can already run its
-// attached pipelines without appearing anywhere in that list. Reading it as a
-// pipeline restriction too would invent a policy nobody set.
-// DisabledPipelines still bites, because an absent grant and an expressed
-// denial are different statements. Widening says a missing attachment no
-// longer blocks; it does not say an operator who ticked "not this agent" gets
-// overruled.
+// The allowlist modes govern this too. They deliberately did not, on the
+// argument that AllowedDispatchTargets holds AGENT ids curated through an agent
+// picker, so reading it as a pipeline restriction would invent a policy nobody
+// set. What that argument missed is the shape of the hole it leaves: an agent
+// restricted to two named targets still reached every pipeline its owner had,
+// and a pipeline is a delegation channel with a tool catalog of its own. "Only
+// these two" that actually means "only these two, plus anything that is not an
+// agent" is not the policy the operator selected either.
+//
+// So the list is a list of TARGETS, not a list of agents: the picker offers
+// pipelines beside agents (handleAgents, role=dispatch-target), and a pipeline
+// answers to its id or its name. This IS a behaviour change for an existing
+// agent in Only mode — its list names no pipelines, so it reaches none until
+// the owner ticks one. The refusal says exactly that, because a tightening
+// nobody can act on is a tightening that gets switched off.
+//
+// DisabledPipelines still bites on top of all of it: an absent grant and an
+// expressed denial are different statements, and Except mode is where the
+// second one belongs.
 func (t *chatTurn) dispatchablePipelines() []PipelineDef {
-	if effectiveDispatchMode(t.agent) == dispatchNone {
+	mode := effectiveDispatchMode(t.agent)
+	if mode == dispatchNone {
 		return nil
 	}
 	all := ListPipelineDefs(t.udb, t.user)
-	if len(t.agent.DisabledPipelines) == 0 {
-		return all
-	}
 	out := make([]PipelineDef, 0, len(all))
 	for _, d := range all {
-		if !containsString(t.agent.DisabledPipelines, d.ID) {
+		if t.pipelineDispatchAllowed(mode, d) {
 			out = append(out, d)
 		}
 	}
 	return out
+}
+
+// pipelineDispatchAllowed applies this agent's dispatch policy to one pipeline.
+// The single place the question is answered, so the advertised list and the
+// gate cannot disagree — a name the tool description offers and the gate then
+// refuses is worse than never offering it.
+func (t *chatTurn) pipelineDispatchAllowed(mode string, d PipelineDef) bool {
+	if containsString(t.agent.DisabledPipelines, d.ID) {
+		return false
+	}
+	switch mode {
+	case dispatchNone:
+		return false
+	case dispatchOnly:
+		return dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name)
+	case dispatchExcept:
+		return !dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name)
+	}
+	return true // dispatchAll
 }
 
 // dispatchablePipelineNames is the reachable set as display names, for the
@@ -158,17 +185,32 @@ func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 	if effectiveDispatchMode(t.agent) == dispatchNone {
 		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused — your dispatch policy is Allow NONE, which covers pipelines as well as agents. Do the work with the tools you have", ref)
 	}
+	mode := effectiveDispatchMode(t.agent)
 	var names []string
-	for _, def := range t.dispatchablePipelines() {
+	var denied string
+	for _, def := range ListPipelineDefs(t.udb, t.user) {
 		// Matched by NAME as well as id: a name is what the model has, since
 		// it reads pipeline names and never storage keys.
-		if strings.EqualFold(def.ID, ref) || strings.EqualFold(def.Name, ref) {
+		match := strings.EqualFold(def.ID, ref) || strings.EqualFold(def.Name, ref)
+		if !t.pipelineDispatchAllowed(mode, def) {
+			// Named and refused is a DIFFERENT answer from never existed, and
+			// conflating them taught the model to go looking for a spelling
+			// that works. It is told the policy instead, and told to stop.
+			if match {
+				denied = def.Name
+			}
+			continue
+		}
+		if match {
 			return def, nil
 		}
 		names = append(names, def.Name)
 	}
+	if denied != "" {
+		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused — that pipeline exists but is not on this agent's dispatch target list. Ask the user to add it (Security & Access → Dispatch target list) or to change the dispatch policy; do not retry, and do not look for another route to the same work", denied)
+	}
 	if len(names) == 0 {
-		return PipelineDef{}, fmt.Errorf("no pipeline %q — the user has no saved pipelines", ref)
+		return PipelineDef{}, fmt.Errorf("no pipeline %q is available to you — the user has no saved pipelines, or none this agent's dispatch policy permits", ref)
 	}
 	return PipelineDef{}, fmt.Errorf("no pipeline %q — you can run: %s", ref, strings.Join(names, ", "))
 }
@@ -198,6 +240,16 @@ func (t *chatTurn) pipelineDispatchGate(args map[string]any) (PipelineDef, strin
 	// reference.
 	if verr := def.Validate(); verr != nil {
 		return PipelineDef{}, "", fmt.Errorf("pipeline %q would not run — %v", def.Name, verr)
+	}
+	// Transitive authority, the same fence the agent path carries: everything
+	// above judges the IMMEDIATE caller, which makes an allowlist a one-hop
+	// gate — A(allow:[B]) → B → any pipeline would reach what A could not.
+	// Authority must never GROW along a chain. There is no ownership exemption
+	// here, because a pipeline has no owning agent to be internal to.
+	if origin := t.dispatchOrigin; origin != nil && !origin.allowsPipeline(def) {
+		Log("[orchestrate.agents.run] blocked transitive pipeline dispatch %s → %s: not permitted by originator %s",
+			t.agent.ID, def.ID, origin.AgentID)
+		return PipelineDef{}, "", fmt.Errorf("agents(run, pipeline=%q) refused — you are running on behalf of %q, whose dispatch policy does not permit that pipeline. A delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted", def.Name, origin.AgentName, def.Name)
 	}
 	// Cycle guard. A pipeline whose agent stage dispatches back into the same
 	// pipeline is a loop no depth counter catches quickly: each hop resets the

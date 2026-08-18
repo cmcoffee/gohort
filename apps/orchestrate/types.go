@@ -559,6 +559,12 @@ type AgentRecord struct {
 	//     agents" block is filtered to just these entries.
 	// The DispatchMode field below generalizes this; when DispatchMode is
 	// empty a non-empty list is still read as "only" for back-compat.
+	//
+	// It holds TARGETS, not only agents: a PIPELINE is named here too, by id
+	// (what the picker writes) or by name. Pipelines used to sit outside this
+	// list entirely, which made an allowlist mean "only these agents, plus
+	// every pipeline the owner has" — see dispatchablePipelines for why that
+	// was closed and what it changes for an existing allowlist.
 	AllowedDispatchTargets []string `json:"allowed_dispatch_targets,omitempty"`
 
 	// DispatchMode selects how AllowedDispatchTargets is interpreted, so the

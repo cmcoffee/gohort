@@ -210,3 +210,151 @@ func TestPipelineCapKeyIsNamespaced(t *testing.T) {
 		t.Error("a pipeline's cap key must not collide with the agent id namespace")
 	}
 }
+
+// The dispatch policy governs pipelines as well as agents. It used not to, so
+// "only these two targets" quietly meant "only these two, plus every pipeline
+// the owner has" — and a pipeline is a delegation channel with a tool catalog
+// of its own, not a lesser thing than an agent.
+func TestDispatchOnlyGovernsPipelines(t *testing.T) {
+	var allowed, other PipelineDef
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		allowed = savePipeline(t, udb, "Allowed", false)
+		other = savePipeline(t, udb, "Not Allowed", false)
+		return nil
+	})
+	turn.agent.DispatchMode = dispatchOnly
+	turn.agent.AllowedDispatchTargets = []string{allowed.ID}
+
+	if got, err := turn.dispatchablePipeline("Allowed"); err != nil || got.ID != allowed.ID {
+		t.Fatalf("a listed pipeline must be reachable; got %q, %v", got.Name, err)
+	}
+	err := mustRefuse(t, turn, "Not Allowed")
+	// Named-and-refused is a different answer from never-existed. Conflating
+	// them teaches the model to hunt for a spelling that works.
+	if !strings.Contains(err.Error(), "not on this agent's dispatch target list") {
+		t.Errorf("refusal should name the policy, not look like a typo; got: %v", err)
+	}
+	if strings.Contains(err.Error(), "you can run") {
+		t.Errorf("a policy refusal must not read as an unknown name; got: %v", err)
+	}
+	// And what is advertised matches what the gate will accept.
+	names := turn.dispatchablePipelineNames(maxAdvertisedPipelines)
+	if len(names) != 1 || names[0] != "Allowed" {
+		t.Errorf("advertised %v, want only the listed pipeline", names)
+	}
+	_ = other
+}
+
+// The picker writes ids, but a list edited through the agent tool or by hand
+// carries the name the author knows the pipeline by. A grant that silently
+// means nothing is worse than no grant at all.
+func TestDispatchOnlyMatchesPipelineByName(t *testing.T) {
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		savePipeline(t, udb, "Nightly Report", false)
+		return nil
+	})
+	turn.agent.DispatchMode = dispatchOnly
+	turn.agent.AllowedDispatchTargets = []string{"nightly report"} // case-insensitive
+	if _, err := turn.dispatchablePipeline("Nightly Report"); err != nil {
+		t.Fatalf("a pipeline named on the list must be reachable: %v", err)
+	}
+}
+
+// Except mode is where an operator expresses a denial, and it has to reach
+// pipelines for the same reason Only does.
+func TestDispatchExceptBlocksListedPipeline(t *testing.T) {
+	var blocked PipelineDef
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		blocked = savePipeline(t, udb, "Blocked", false)
+		savePipeline(t, udb, "Fine", false)
+		return nil
+	})
+	turn.agent.DispatchMode = dispatchExcept
+	turn.agent.AllowedDispatchTargets = []string{blocked.ID}
+	mustRefuse(t, turn, "Blocked")
+	if _, err := turn.dispatchablePipeline("Fine"); err != nil {
+		t.Fatalf("an unlisted pipeline must stay reachable in Except mode: %v", err)
+	}
+}
+
+// Transitive authority: everything else judges the IMMEDIATE caller, which
+// makes an allowlist a one-hop gate — A(allow:[B]) → B → any pipeline would
+// reach what A itself could not. Authority must never grow along a chain.
+func TestTransitivePipelineAuthority(t *testing.T) {
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		savePipeline(t, udb, "Payroll", false)
+		return nil
+	})
+	// The immediate caller is unrestricted; the agent it runs on behalf of
+	// is not.
+	turn.dispatchOrigin = &dispatchAuthority{
+		AgentID: "originator", AgentName: "Originator",
+		Mode: dispatchOnly, Targets: []string{"some-other-agent"},
+	}
+	_, _, err := turn.pipelineDispatchGate(map[string]any{"pipeline": "Payroll", "message": "go"})
+	if err == nil {
+		t.Fatal("a delegated turn reached a pipeline its originator could not")
+	}
+	if !strings.Contains(err.Error(), "Originator") {
+		t.Errorf("refusal should name whose authority bounds this; got: %v", err)
+	}
+	// Named by the originator, it goes through.
+	turn.dispatchOrigin.Targets = []string{"Payroll"}
+	if _, _, err := turn.pipelineDispatchGate(map[string]any{"pipeline": "Payroll", "message": "go"}); err != nil {
+		t.Fatalf("a pipeline the originator permits must run: %v", err)
+	}
+}
+
+func TestDispatchAuthorityAllowsPipeline(t *testing.T) {
+	def := PipelineDef{ID: "p1", Name: "Nightly"}
+	cases := []struct {
+		mode    string
+		targets []string
+		want    bool
+	}{
+		{dispatchAll, nil, true},
+		{dispatchNone, nil, false},
+		{dispatchOnly, []string{"p1"}, true},
+		{dispatchOnly, []string{"Nightly"}, true},
+		{dispatchOnly, []string{"other"}, false},
+		{dispatchExcept, []string{"p1"}, false},
+		{dispatchExcept, []string{"other"}, true},
+	}
+	for _, tc := range cases {
+		got := dispatchAuthority{Mode: tc.mode, Targets: tc.targets}.allowsPipeline(def)
+		if got != tc.want {
+			t.Errorf("mode=%s targets=%v → %v, want %v", tc.mode, tc.targets, got, tc.want)
+		}
+	}
+}
+
+// The deleted-target self-heal reads "no listed AGENT still exists" as "this
+// allowlist is stale, fall back to Allow all". Once the list can hold
+// pipelines that reading became an escalation: allow exactly one pipeline and
+// no agents, and the whole fleet would have been handed over.
+func TestPipelineOnlyListDoesNotLookStale(t *testing.T) {
+	var def PipelineDef
+	turn := newPipelineDispatchTurn(t, func(udb Database) []string {
+		def = savePipeline(t, udb, "Solo", false)
+		return nil
+	})
+	turn.agent.DispatchMode = dispatchOnly
+	turn.agent.AllowedDispatchTargets = []string{def.ID}
+	if !turn.dispatchListNamesAPipeline() {
+		t.Fatal("a list naming a live pipeline must not read as an emptied allowlist")
+	}
+	turn.agent.AllowedDispatchTargets = []string{"deleted-agent-id"}
+	if turn.dispatchListNamesAPipeline() {
+		t.Error("a list naming nothing that exists must still read as stale")
+	}
+}
+
+// mustRefuse asserts a pipeline is not reachable and returns the refusal.
+func mustRefuse(t *testing.T, turn *chatTurn, ref string) error {
+	t.Helper()
+	_, err := turn.dispatchablePipeline(ref)
+	if err == nil {
+		t.Fatalf("pipeline %q should not have been reachable", ref)
+	}
+	return err
+}

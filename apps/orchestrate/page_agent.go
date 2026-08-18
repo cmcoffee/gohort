@@ -684,15 +684,19 @@ func agentLockIconHTML(id string, locked bool) string {
 // does anything at all — the two most common modes ignore it entirely.
 func dispatchTargetSubtitle(mode string) string {
 	const where = " The policy itself is the **Dispatch policy** select under **Cortex & delegation** above (collapsed by default)."
+	// Pipelines are listed here beside agents because they are dispatch targets
+	// too: an agent restricted to a few targets used to reach every pipeline
+	// its owner had, which made "only these" mean something other than what it
+	// says. A pipeline you don't tick in Only mode is one this agent can't run.
 	switch mode {
 	case dispatchOnly:
-		return "Currently **Only allow selected** — this agent may call ONLY the agents ticked here, including any Hidden ones you pick." + where
+		return "Currently **Only allow selected** — this agent may call ONLY the agents and pipelines ticked here, including any Hidden agents you pick." + where
 	case dispatchExcept:
-		return "Currently **Allow all except selected** — this agent may call any non-hidden agent EXCEPT the ones ticked here." + where
+		return "Currently **Allow all except selected** — this agent may call any non-hidden agent, and any pipeline, EXCEPT the ones ticked here." + where
 	case dispatchNone:
-		return "Currently **Allow none** — this agent dispatches to nobody, so this list has no effect until you change the policy." + where
+		return "Currently **Allow none** — this agent dispatches to nobody, agents and pipelines alike, so this list has no effect until you change the policy." + where
 	default:
-		return "Currently **Allow all** — this agent may call any non-hidden agent, so this list has no effect. It applies only in \"Only allow selected\" or \"Allow all except selected\" mode." + where
+		return "Currently **Allow all** — this agent may call any non-hidden agent and any of your pipelines, so this list has no effect. It applies only in \"Only allow selected\" or \"Allow all except selected\" mode." + where
 	}
 }
 

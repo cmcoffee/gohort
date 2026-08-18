@@ -989,7 +989,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 			listed[id] = true
 		}
 	}
-	if mode == dispatchOnly && len(listed) == 0 {
+	if mode == dispatchOnly && len(listed) == 0 && !t.dispatchListNamesAPipeline() {
 		mode = dispatchAll // self-heal: every allowlisted target was deleted
 	}
 	var available []AgentRecord
@@ -5921,6 +5921,27 @@ func (t *chatTurn) turnRouting() (pin LLMTier, routeKey string) {
 		lead, pin = false, WORKER
 	}
 	return pin, orchestratorRouteKey(t.agent.ID, lead)
+}
+
+// dispatchListNamesAPipeline reports whether this agent's dispatch list names a
+// pipeline that still exists.
+//
+// It exists to stop the deleted-target self-heal from firing on a list that is
+// perfectly healthy. That heal reads "no listed AGENT still exists" as "this
+// allowlist is stale, fall back to Allow all" — which was right while the list
+// could only hold agents, and became a privilege escalation the moment it could
+// hold pipelines: an owner who allowed exactly one pipeline and no agents would
+// have been granted the entire fleet.
+func (t *chatTurn) dispatchListNamesAPipeline() bool {
+	if len(t.agent.AllowedDispatchTargets) == 0 {
+		return false
+	}
+	for _, d := range ListPipelineDefs(t.udb, t.user) {
+		if dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // frameworkConversationalTools is the single source of truth for the always-on

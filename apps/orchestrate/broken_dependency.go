@@ -191,4 +191,32 @@ func pipelineDeleted(owner, id, name string) {
 				fmt.Sprintf("runs deleted pipeline %q", label))
 		}
 	}
+	// A pipeline can be named on an agent's dispatch target list, so deleting
+	// one leaves the same dangling id that deleting an AGENT does — and the
+	// agent path already prunes those. Left in place, the entry is a grant to
+	// nothing that a later pipeline could inherit by reusing the id, and it
+	// keeps an Only-mode list looking populated when it is not.
+	db := UserDB(RootDB, owner)
+	if db == nil {
+		return
+	}
+	for _, k := range db.Keys(agentsTable) {
+		var other AgentRecord
+		if !db.Get(agentsTable, k, &other) || other.Owner != owner || len(other.AllowedDispatchTargets) == 0 {
+			continue
+		}
+		var kept []string
+		changed := false
+		for _, target := range other.AllowedDispatchTargets {
+			if strings.EqualFold(strings.TrimSpace(target), id) {
+				changed = true
+				continue
+			}
+			kept = append(kept, target)
+		}
+		if changed {
+			other.AllowedDispatchTargets = kept
+			_, _ = saveAgent(db, other)
+		}
+	}
 }

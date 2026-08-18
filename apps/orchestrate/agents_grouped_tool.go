@@ -300,6 +300,21 @@ func (a dispatchAuthority) allows(target AgentRecord) bool {
 	}
 }
 
+// allowsPipeline is allows() for the other kind of dispatch target. Same modes,
+// same reading; a pipeline answers to its id or its name.
+func (a dispatchAuthority) allowsPipeline(def PipelineDef) bool {
+	switch a.Mode {
+	case dispatchNone:
+		return false
+	case dispatchOnly:
+		return dispatchListNames(a.Targets, def.ID, def.Name)
+	case dispatchExcept:
+		return !dispatchListNames(a.Targets, def.ID, def.Name)
+	default: // dispatchAll
+		return true
+	}
+}
+
 // originAuthority returns the authority that bounds any dispatch this turn
 // makes. A sub-run reports the ORIGINATOR's authority, carried unchanged; a
 // root turn reports its own, which is what gets stamped onto the first hop.

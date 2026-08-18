@@ -573,6 +573,27 @@ func effectiveDispatchMode(a AgentRecord) string {
 	}
 }
 
+// dispatchListNames reports whether a dispatch target list names a target by
+// any of the identities that target answers to.
+//
+// An agent answers to its id, which is what the picker writes. A PIPELINE also
+// answers to its NAME: the picker writes ids for it too, but a list edited
+// through the agent tool (or by hand) carries the name the author knows it by,
+// and a grant that silently means nothing is worse than no grant at all.
+func dispatchListNames(list []string, ids ...string) bool {
+	for _, x := range list {
+		if x = strings.TrimSpace(x); x == "" {
+			continue
+		}
+		for _, id := range ids {
+			if id != "" && strings.EqualFold(x, id) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // dispatchListContains reports whether id is in the agent's dispatch target list.
 func dispatchListContains(a AgentRecord, id string) bool {
 	for _, x := range a.AllowedDispatchTargets {
@@ -1802,6 +1823,27 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				kept = append(kept, a)
 			}
 			agents = kept
+			// Pipelines are dispatch targets too, so they belong in the list
+			// that decides which targets are reachable. Offering only agents is
+			// what made that list unable to express a pipeline grant — and a
+			// policy the UI cannot state is a policy the gate cannot enforce.
+			// Encoded to the three fields the picker reads (id / name /
+			// description), with the kind said out loud in the description so
+			// a reader can tell what they are ticking.
+			out := make([]map[string]any, 0, len(agents))
+			for _, a := range agents {
+				out = append(out, map[string]any{"id": a.ID, "name": a.Name, "description": a.Description})
+			}
+			for _, d := range ListPipelineDefs(udb, user) {
+				desc := "Pipeline"
+				if s := strings.TrimSpace(d.Description); s != "" {
+					desc += " — " + s
+				}
+				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(agents)
 	case http.MethodPost:
