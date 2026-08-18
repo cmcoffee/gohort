@@ -100,7 +100,13 @@ func set_agent_llm(agent Agent) {
 	}
 	llm, err := NewLLMFromConfig(cfg)
 	if err != nil {
-		Debug("LLM init: %s", err)
+		// LOUD. A configured worker that fails to build leaves the process with
+		// no model at all, and every symptom downstream of that is some other
+		// thing appearing broken. This was a Debug line, which is off by
+		// default, so the one fact that explains everything else was the one
+		// fact nobody could see.
+		Warn("[llm] worker LLM (%s/%s) could not be initialized: %s — this deployment has NO working model until it is fixed (Admin → LLMs).",
+			cfg.Provider, cfg.Model, err)
 		return
 	}
 	T := agent.Get()
@@ -118,10 +124,22 @@ func set_agent_llm(agent Agent) {
 	if lead_cfg.Provider != "" {
 		lead_llm, err := NewLLMFromConfig(lead_cfg)
 		if err != nil {
-			Debug("Lead LLM init: %s", err)
+			// Also LOUD, and RECORDED — the failure is silent by nature: the
+			// deployment keeps working, every escalation quietly runs on the
+			// worker, and the only visible effect is answers being worse than
+			// they should be. Recording it is what lets the routing breadcrumb
+			// say "the lead you configured would not start" instead of "no lead
+			// is configured", which is the wrong instruction to act on.
+			// Credentials are the usual cause and are environment-dependent (an
+			// expired AWS SSO session, a profile the service user cannot read),
+			// so this can start failing with no config change at all.
+			Warn("[llm] lead LLM (%s/%s) could not be initialized: %s — every escalation will run on the WORKER until this is fixed (Admin → LLMs).",
+				lead_cfg.Provider, lead_cfg.Model, err)
+			SetLeadInitError(lead_cfg.Provider, lead_cfg.Model, err)
 		} else {
 			T.LeadLLM = lead_llm
-			Debug("Lead LLM initialized: %s/%s", lead_cfg.Provider, lead_cfg.Model)
+			SetLeadInitError("", "", nil)
+			Log("[llm] lead LLM initialized: %s/%s", lead_cfg.Provider, lead_cfg.Model)
 		}
 	}
 }

@@ -54,6 +54,40 @@ func SharedLeadLLM() LLM {
 // then falls back to the worker), so a nil check answers it without comparing.
 func LeadIsDistinct() bool { return SharedLeadLLM() != nil }
 
+// leadInitErr records a lead model that IS configured and failed to start.
+//
+// The distinction matters more than it looks. "No lead is configured" and "the
+// lead you configured could not be built" produce the identical symptom — every
+// escalation runs on the worker — and lead to opposite actions: configure one,
+// versus go find out why the one you have won't start. Reporting the first when
+// the second is true sends somebody to re-enter settings that were already
+// right, which is exactly what happened with a Bedrock lead whose AWS
+// credentials no longer resolved at boot.
+var (
+	leadInitMu  sync.RWMutex
+	leadInitErr string
+)
+
+// SetLeadInitError records (or with a nil err, clears) the reason a configured
+// lead model is unavailable. Called by whoever builds the LLMs — startup and the
+// admin's live reload alike, so a fixed config clears a stale complaint.
+func SetLeadInitError(provider, model string, err error) {
+	leadInitMu.Lock()
+	defer leadInitMu.Unlock()
+	if err == nil {
+		leadInitErr = ""
+		return
+	}
+	leadInitErr = "the configured lead model (" + provider + "/" + model + ") could not be initialized: " + err.Error()
+}
+
+// LeadInitError returns that reason, or "" when the lead is fine or absent.
+func LeadInitError() string {
+	leadInitMu.RLock()
+	defer leadInitMu.RUnlock()
+	return leadInitErr
+}
+
 // RegisterLLMReloader installs the function that rebuilds the shared worker +
 // lead LLMs from current config and swaps them in via SetSharedLLMs. Called once
 // at startup by the main package (which owns config access). Lets the admin UI

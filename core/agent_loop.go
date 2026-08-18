@@ -2669,7 +2669,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		Debug("[agent_loop] round %d: content=%d chars, reasoning=%d chars, tool_calls=%d", round, len(resp.Content), len(resp.Reasoning), len(resp.ToolCalls))
 		// BREADCRUMB: LLM returned. Pair with the "→ LLM call"
 		// breadcrumb above to detect a wedged provider call.
-		Log("[agent_loop] round %d: ← LLM returned (content=%d, tools=%d)", round, len(resp.Content), len(resp.ToolCalls))
+		// The tier is on this line and not the "→ LLM call" one because it is
+		// the tier that actually SERVED the round, taken off the response — a
+		// fallback or a de-escalation is recorded here as what happened, where
+		// anything logged before the call would only be what was intended. It
+		// is the direct answer to "did this really run on the lead", which no
+		// amount of reading the routing config can settle.
+		Log("[agent_loop] round %d: ← LLM returned (tier=%v, content=%d, tools=%d)", round, resp.Tier, len(resp.Content), len(resp.ToolCalls))
 
 		// DIAGNOSTIC: collapse-ish round — the model wrote a large reasoning
 		// block but little visible content and called no tool. The existing

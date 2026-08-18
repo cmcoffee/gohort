@@ -216,6 +216,10 @@ func main() {
 	// Wire the live LLM-config reload (admin UI applies model/provider/key
 	// changes without a restart) — rebuilds from DB and swaps the shared pair.
 	RegisterLLMReloader(reloadSharedLLMs)
+	// And retry a lead that failed to START, which the reloader cannot help
+	// with: it only runs when an admin saves the settings, and the settings are
+	// not what is wrong. See leadRetryInterval.
+	start_lead_llm_retry()
 
 	if global.debug {
 		enable_debug()

@@ -109,6 +109,55 @@ func loadNoThinkConfig(table string, c *LLMProviderConfig) {
 // admin UI calls core.ReloadLLMs() after saving LLM config. On error the prior
 // LLMs stay active (SetSharedLLMs isn't reached), so a bad config can't break a
 // running server. Apps hold reloadable handles, so the swap reaches them all.
+// leadRetryInterval is how often a lead model that failed to initialize is
+// tried again.
+//
+// Worth retrying at all because this failure class heals ITSELF: the usual cause
+// is credentials rather than configuration — an expired AWS SSO session, an
+// instance profile not yet attached, a role that gets fixed ten minutes later —
+// and none of those produce a config change for the admin path to notice. Before
+// this, a lead that lost its credentials at boot stayed dead until somebody
+// restarted the process or re-saved the LLM settings, and the only symptom was
+// answers quietly coming from the worker.
+//
+// Two minutes: short enough that a fixed credential is picked up before anybody
+// finishes wondering, long enough that a permanently broken config costs
+// nothing. The loop does no work at all while the lead is healthy or absent.
+const leadRetryInterval = 2 * time.Minute
+
+// start_lead_llm_retry runs that retry in the background for the life of the
+// process. Deliberately NOT the full reloadSharedLLMs: rebuilding a WORKING
+// worker on a timer swaps a live client under live traffic to fix something
+// that isn't broken.
+func start_lead_llm_retry() {
+	go func() {
+		for range time.Tick(leadRetryInterval) {
+			if LeadInitError() == "" {
+				continue // healthy, or none configured — nothing to retry
+			}
+			cfg := dbcfg.leadLLM()
+			if cfg.Provider == "" {
+				SetLeadInitError("", "", nil) // it was removed; stop complaining
+				continue
+			}
+			lead, err := NewLLMFromConfig(cfg)
+			if err != nil {
+				// Debug, not Warn: the boot failure was already loud and the
+				// routing breadcrumb repeats the reason on every turn that
+				// wanted the lead. Repeating it every two minutes forever would
+				// teach somebody to filter the log line that matters.
+				Debug("[llm] lead LLM (%s/%s) still unavailable: %s", cfg.Provider, cfg.Model, err)
+				continue
+			}
+			// Swap the lead ALONE. Apps hold reloadable handles, so this reaches
+			// every reference without re-threading anything.
+			SetSharedLLMs(SharedWorkerLLM(), lead)
+			SetLeadInitError("", "", nil)
+			Log("[llm] lead LLM (%s/%s) recovered and is now serving escalations.", cfg.Provider, cfg.Model)
+		}
+	}()
+}
+
 func reloadSharedLLMs() error {
 	cfg := dbcfg.llm()
 	if cfg.Provider == "" {
@@ -122,9 +171,17 @@ func reloadSharedLLMs() error {
 	leadCfg := dbcfg.leadLLM()
 	if leadCfg.Provider != "" {
 		if lead, err = NewLLMFromConfig(leadCfg); err != nil {
+			// Returned AND recorded: the admin who pressed Save sees the error,
+			// and the routing breadcrumb keeps saying why long after they have
+			// closed the page.
+			SetLeadInitError(leadCfg.Provider, leadCfg.Model, err)
 			return fmt.Errorf("lead LLM: %w", err)
 		}
 	}
+	// A reload that got this far has a working lead, or none configured at all.
+	// Either way any recorded failure is stale — a complaint that outlives its
+	// cause is how somebody stops believing the diagnostics.
+	SetLeadInitError("", "", nil)
 	SetSharedLLMs(worker, lead)
 	// Recompute the tool-calling mode from the CONFIG THAT JUST LOADED. Without
 	// this the process kept whatever mode it booted with, so turning "Native

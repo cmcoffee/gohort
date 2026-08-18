@@ -291,6 +291,10 @@ func leadUnavailableReason(T *AppCore) string {
 		return "no LLM stack is wired"
 	case T.LeadDenied():
 		return "this deployment is pinned to private models (no-lead), which no per-run setting can override"
+	// Asked BEFORE "none is configured", because a lead that failed to start
+	// leaves exactly the same nil and is a completely different problem.
+	case LeadInitError() != "":
+		return LeadInitError()
 	case T.LeadLLM == nil:
 		return "no lead model is configured for this app"
 	case !LeadIsDistinct():
@@ -335,6 +339,22 @@ const (
 	WORKER
 	LEAD
 )
+
+// String names the tier, so a diagnostic prints "lead" rather than "2".
+//
+// Added because a routing breadcrumb whose entire job is being read by a person
+// reported pin=2 and made them go looking up an iota. A number is the right
+// thing to store and the wrong thing to report, and %v is what every log line
+// reaches for.
+func (t LLMTier) String() string {
+	switch t {
+	case WORKER:
+		return "worker"
+	case LEAD:
+		return "lead"
+	}
+	return "unset"
+}
 
 // Session is a logical unit of LLM work tagged with a unique caller
 // ID. Every call through the session carries the same UUID, so the
