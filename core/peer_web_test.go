@@ -46,7 +46,7 @@ func TestPeerSearchAnswersInTheSearXNGShape(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapSearch}, 0)
 
 	w := httptest.NewRecorder()
-	HandlePeerSearch(w, searchRequest(t, pk.Key, "golang"))
+	HandlePeerSearch(w, searchRequest(t, peerAuth(t, pk), "golang"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("search → %d: %s", w.Code, w.Body.String())
 	}
@@ -89,7 +89,7 @@ func TestPeerSearchIsRateLimitedSeparately(t *testing.T) {
 	var lastCode int
 	for i := 0; i < peerSearchRatePerMin+1; i++ {
 		w := httptest.NewRecorder()
-		HandlePeerSearch(w, searchRequest(t, pk.Key, "q"))
+		HandlePeerSearch(w, searchRequest(t, peerAuth(t, pk), "q"))
 		lastCode = w.Code
 	}
 	if lastCode != http.StatusTooManyRequests {
@@ -109,7 +109,7 @@ func TestSearchAndBrowseAreSeparateGrants(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapBrowse}, 0)
 
 	w := httptest.NewRecorder()
-	HandlePeerSearch(w, searchRequest(t, pk.Key, "q"))
+	HandlePeerSearch(w, searchRequest(t, peerAuth(t, pk), "q"))
 	if w.Code != http.StatusForbidden {
 		t.Errorf("browse-only key searching → %d, want 403: %s", w.Code, w.Body.String())
 	}
@@ -140,7 +140,7 @@ func TestPeerBrowseRefusesThePrivateNetwork(t *testing.T) {
 	} {
 		body, _ := json.Marshal(map[string]any{"url": target})
 		r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/browse", strings.NewReader(string(body)))
-		r.Header.Set(peerKeyHeader, pk.Key)
+		r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 		w := httptest.NewRecorder()
 		HandlePeerBrowse(w, r)
 		if w.Code != http.StatusBadRequest {
@@ -163,7 +163,7 @@ func TestPeerBrowseRendersAPublicPage(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"url": "https://example.com/article"})
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/browse", strings.NewReader(string(body)))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerBrowse(w, r)
 
@@ -221,6 +221,10 @@ func TestSearchThroughAConfiguredPeer(t *testing.T) {
 	pk, _ := MintPeerKey("consumer", []string{PeerCapSearch}, 0)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	// Exchange is mandatory now, so a fake peer that does not serve the token
+	// endpoint is not a peer any client can pair with — the same 404 a real
+	// instance on an older build would answer with.
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
 	mux.HandleFunc("/api/peer/v1/search", HandlePeerSearch)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

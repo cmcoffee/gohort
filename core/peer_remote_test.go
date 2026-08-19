@@ -17,6 +17,13 @@ func peerServer(t *testing.T, caps ...string) (base, key string) {
 	prevDB, prevCfg := RootDB, GetEmbeddingConfig()
 	t.Cleanup(func() { RootDB = prevDB; SetEmbeddingConfig(prevCfg) })
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	resetPeerTokenCache() // see peerTestDB: the credential cache outlives the store
+	InvalidatePeerResolution()
+	// See peerTestDB: the consuming side's credential cache is keyed by peer
+	// name and outlives the store, so every test naming its peer "gpu-box"
+	// would otherwise inherit the previous one's token.
+	resetPeerTokenCache()
+	InvalidatePeerResolution()
 
 	// A local embedder for the manifest's dimension probe to reach.
 	embedder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +39,10 @@ func peerServer(t *testing.T, caps ...string) (base, key string) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	// Exchange is mandatory now, so a fake peer that does not serve the token
+	// endpoint is not a peer any client can pair with — the same 404 a real
+	// instance on an older build would answer with.
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
 	mux.HandleFunc("/api/peer/v1/audio/transcriptions", HandlePeerTranscribe)
 	srv := httptest.NewServer(mux)
@@ -144,8 +155,14 @@ func TestResolveEmbeddingProviderFillsFromThePeer(t *testing.T) {
 	if got.Model != "nomic-embed-text" {
 		t.Errorf("model = %q, want the peer's", got.Model)
 	}
-	if got.APIKey != key {
-		t.Error("the peer key was not carried into the config, so every embed would 401")
+	// A CREDENTIAL, not the key. The key authenticates nothing since exchange
+	// became mandatory, so a config carrying it would 401 on every embed —
+	// which is exactly what this used to assert, inverted by that change.
+	if got.APIKey == key {
+		t.Error("the config carries the raw pairing code, which authenticates nothing")
+	}
+	if _, live := peerKeyFromAccessToken(got.APIKey); !live {
+		t.Errorf("the config's credential is not a live access token: %q", got.APIKey)
 	}
 	if !strings.HasSuffix(got.Endpoint, "/api/peer/v1") {
 		t.Errorf("endpoint %q is not the peer embedding base", got.Endpoint)
@@ -190,6 +207,8 @@ func TestResolveEmbeddingProviderRefusesAnUnknownPeer(t *testing.T) {
 	prev := RootDB
 	t.Cleanup(func() { RootDB = prev })
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	resetPeerTokenCache() // see peerTestDB: the credential cache outlives the store
+	InvalidatePeerResolution()
 
 	cfg := EmbeddingConfig{Enabled: true, Provider: PeerProviderValue("ghost"),
 		Endpoint: "http://local:11434/api", Model: "local-model"}
@@ -431,10 +450,113 @@ func scratchPeerStore(t *testing.T) func() {
 	prevRoot := RootDB
 	prevCfg := GetEmbeddingConfig()
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	resetPeerTokenCache() // see peerTestDB: the credential cache outlives the store
+	InvalidatePeerResolution()
 	InvalidatePeerResolution()
 	return func() {
 		RootDB = prevRoot
 		SetEmbeddingConfig(prevCfg)
 		InvalidatePeerResolution()
+	}
+}
+
+// Re-pairing an existing peer with a new code keeps its identity: same name,
+// same address, fresh credentials.
+//
+// The recovery path for the serving side's Re-issue. Forget-and-re-add is not
+// equivalent — it drops the image backends the peer contributed and every
+// setting naming it — so an operator recovering from a rotation would take a
+// second outage to fix the first.
+func TestUpdatingAPeerKeyRePairsInPlace(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	p, err := SaveRemotePeer(t.Context(), "gpu-box", base, key)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	first := PeerCredential(p)
+	if first == "" || first == key {
+		t.Fatalf("precondition: the peer should be holding a token, got %q", first)
+	}
+
+	// The far side re-issues: the old credentials die and a new code appears.
+	keys := ListPeerKeys()
+	if len(keys) != 1 {
+		t.Fatalf("expected the fake server's one grant, got %d", len(keys))
+	}
+	reissued, rerr := RepairPeerKey(keys[0].ID)
+	if rerr != nil {
+		t.Fatalf("re-issue: %v", rerr)
+	}
+	if _, live := peerKeyFromAccessToken(first); live {
+		t.Error("re-issuing left the old access token alive")
+	}
+
+	got, uerr := UpdateRemotePeerKey(t.Context(), "gpu-box", reissued.Key)
+	if uerr != nil {
+		t.Fatalf("update key: %v", uerr)
+	}
+	if got.Name != "gpu-box" || got.BaseURL != p.BaseURL {
+		t.Errorf("re-pairing moved the peer: %q at %q", got.Name, got.BaseURL)
+	}
+	if cred := PeerCredential(got); cred == "" || cred == reissued.Key {
+		t.Errorf("the peer is not holding a fresh token: %q", cred)
+	} else if _, live := peerKeyFromAccessToken(cred); !live {
+		t.Error("the credential after re-pairing is not a live access token")
+	}
+	// An unknown peer is a refusal, not a silent create.
+	if _, err := UpdateRemotePeerKey(t.Context(), "nobody", "x"); err == nil {
+		t.Error("updating the key of a peer that does not exist should be refused")
+	}
+}
+
+// A re-key must not leave a window where the record still names the revoked
+// code.
+//
+// Seen live: Update key logged "now requires credential exchange" and then
+// immediately "could not renew the credential … unrecognized or disabled peer
+// key". Clearing the tokens before writing the new key meant every reader in
+// that window found no credential, kicked off a background renewal, read the
+// record, and spent the code the far side had just revoked. The operator's
+// paste was correct and the log said otherwise.
+func TestARekeyNeverExposesTheOldCode(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	keys := ListPeerKeys()
+	if len(keys) != 1 {
+		t.Fatalf("expected one grant, got %d", len(keys))
+	}
+	reissued, err := RepairPeerKey(keys[0].ID)
+	if err != nil {
+		t.Fatalf("re-issue: %v", err)
+	}
+
+	// The instant the credential is cleared, whatever the record names IS what
+	// a racing renewal will spend. Pin that it is never the dead one.
+	var seen []string
+	watch := func() {
+		if p, ok := GetRemotePeer("gpu-box"); ok {
+			if PeerCredential(p) == "" || !p.UseTokens {
+				seen = append(seen, p.Key)
+			}
+		}
+	}
+	watch()
+	if _, err := UpdateRemotePeerKey(t.Context(), "gpu-box", reissued.Key); err != nil {
+		t.Fatalf("update key: %v", err)
+	}
+	watch()
+	for _, k := range seen {
+		if k == key {
+			t.Error("the record named the revoked code while holding no credential — a renewal in that window spends it and 401s")
+		}
+	}
+	p, _ := GetRemotePeer("gpu-box")
+	if p.Key != reissued.Key {
+		t.Errorf("the record kept the old key: %q", p.Key)
+	}
+	if _, live := peerKeyFromAccessToken(PeerCredential(p)); !live {
+		t.Error("the peer is not holding a live token after the re-key")
 	}
 }

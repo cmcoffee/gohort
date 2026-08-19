@@ -778,6 +778,19 @@ type FormPanel struct {
 	// an "add" form in a modal whose result should appear in the table
 	// behind it without a manual reload.
 	Invalidate []string `json:"invalidate,omitempty"`
+	// OnSuccess names a client action (registered with
+	// window.uiRegisterClientAction) called after a successful submit,
+	// with {response, form, ctx}. The response is the server's decoded
+	// JSON body.
+	//
+	// For the case where the SERVER produces something the form could not
+	// have known and the operator has to act on once — a one-time secret,
+	// a generated link, an id to hand to somebody. A toast is the wrong
+	// surface for those: it holds one line and takes it away again.
+	// Deliberately a handler name rather than any built-in rendering,
+	// because what to do with the response is the app's business and
+	// core/ui has no way to be right about it.
+	OnSuccess string `json:"on_success,omitempty"`
 }
 
 // FormTemplate is one named preset for a FormPanel's "Start from

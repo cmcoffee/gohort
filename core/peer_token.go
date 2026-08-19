@@ -13,12 +13,23 @@
 // consumed, and that collision is the alarm. Nothing else about a copied bearer
 // secret is detectable at all.
 //
-// OPT-IN PER GRANT (PeerKey.Rotating). A key minted before this existed keeps
-// working exactly as it did, because the alternative is a release that silently
-// breaks every live pairing on restart. Turning it on is the operator saying
-// "this peer speaks the token flow", and it is one-way per grant: from then on
-// the pairing code is refused at every capability endpoint and accepted only
-// here, once.
+// MANDATORY, AND IT BREAKS COMPATIBILITY. It shipped opt-in per grant so a
+// consuming instance could adopt the flow before the operator committed to it;
+// that ordering existed to avoid stranding a peer during the changeover, and it
+// has served its purpose. Every grant now works one way: the key is a pairing
+// code, exchanged here exactly once, and refused at every capability endpoint.
+//
+// The opt-in could not stay. A switch that leaves a long-lived bearer secret
+// working when it is off is a switch most deployments never flip, and a
+// rotation scheme nobody turns on is a rotation scheme that does not exist. It
+// also made the admin page dishonest in a way that mattered: an operator
+// looking at a key could not tell, without reading a toggle two columns away,
+// whether the string in front of them was a credential or a spent code.
+//
+// A peer running a build older than the consuming half (v0.6.288) will 401
+// after this and must be upgraded. Both ends are the same operator by
+// construction — a peer key is not an account — so that is a rollout ordering
+// problem, not a compatibility surface owed to strangers.
 package core
 
 import (
@@ -321,12 +332,8 @@ func HandlePeerToken(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// peerExchangePairingCode turns a peer key into a first token pair.
-//
-// For a grant not marked Rotating this is a CONVENIENCE: the key keeps working
-// as a bearer, and tokens are simply also available, so a consuming instance can
-// adopt the flow before the operator commits to it. For a Rotating grant it is
-// the one and only way in, and the code is spent here.
+// peerExchangePairingCode turns a peer key into a first token pair. The one and
+// only way in, and the code is spent here.
 func peerExchangePairingCode(w http.ResponseWriter, r *http.Request, code string) (PeerKey, bool) {
 	if code == "" {
 		peerDeny(w, http.StatusBadRequest, "pairing_code is required for this grant type")
@@ -342,11 +349,11 @@ func peerExchangePairingCode(w http.ResponseWriter, r *http.Request, code string
 	// single use is that a copy of the code taken from a chat log or a
 	// screenshot is worth nothing after the peer it was meant for has paired;
 	// honoring it twice would leave the long-lived secret this replaces.
-	if k.Rotating && strings.TrimSpace(k.Paired) != "" {
+	if strings.TrimSpace(k.Paired) != "" {
 		peerNoteAuthFailure(r)
 		peerDeny(w, http.StatusUnauthorized,
 			"this pairing code has already been exchanged — it is single use. "+
-				"Re-pair from the serving instance's admin page to issue a new one")
+				"Re-issue the key from the serving instance's admin page to get a new one")
 		return PeerKey{}, false
 	}
 	pair, err := mintPeerTokenPair(k.ID, UUIDv4())
@@ -354,10 +361,8 @@ func peerExchangePairingCode(w http.ResponseWriter, r *http.Request, code string
 		peerDeny(w, http.StatusInternalServerError, err.Error())
 		return PeerKey{}, false
 	}
-	if k.Rotating {
-		markPeerKeyPaired(k.ID)
-	}
-	Log("[peer] %s paired and took a token family (rotating=%v)", k.Label, k.Rotating)
+	markPeerKeyPaired(k.ID)
+	Log("[peer] %s paired and took a token family", k.Label)
 	writeJSON(w, pair)
 	return k, true
 }
@@ -500,35 +505,6 @@ func peerKeyFromAccessToken(secret string) (PeerKey, bool) {
 		return PeerKey{}, false
 	}
 	return k, true
-}
-
-// SetPeerKeyRotating switches a grant to the token flow.
-//
-// One-way in effect: turning it on invalidates nothing immediately, but the
-// static key stops being accepted as a bearer at once, so a peer still using it
-// must exchange before its next call. That is why this is an explicit operator
-// action and not something a release does on everyone's behalf.
-//
-// Turning it back OFF restores the static key. Offered because the alternative
-// to a reversible switch is an operator who cannot recover a link without
-// re-pairing both ends, and because the pairing code is unchanged either way.
-func SetPeerKeyRotating(id string, rotating bool) (PeerKey, error) {
-	if RootDB == nil {
-		return PeerKey{}, fmt.Errorf("no database available")
-	}
-	pk, ok := peerGrantByID(id)
-	if !ok {
-		return PeerKey{}, fmt.Errorf("no peer key with id %q", id)
-	}
-	pk.Rotating = rotating
-	if !rotating {
-		// Clearing the stamp makes the code exchangeable again, which is the
-		// whole of "put this peer back the way it was".
-		pk.Paired = ""
-	}
-	RootDB.Set(peerKeysTable, id, pk)
-	Log("[peer] key %q rotating=%v", pk.Label, rotating)
-	return pk, nil
 }
 
 // RepairPeerKey issues a fresh pairing code for a grant, keeping its

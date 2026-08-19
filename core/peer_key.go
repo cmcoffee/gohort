@@ -41,15 +41,22 @@ const peerKeysTable = "peer_keys"
 // Capability names a PeerKey can grant. Each is a distinct resource this
 // instance is willing to spend on someone else's behalf.
 //
-// Embeddings, images and transcription are served today. The rest are declared
-// so the manifest can report them as unavailable rather than omitting them — a
-// peer asking "what do you offer" should learn the vocabulary, not have to
-// guess at it.
+// Every capability here is served, except models, which is served only when
+// this instance has a LOCAL backend to lend (see peerCapServed). That one is
+// declared unconditionally so the manifest can report it as unavailable rather
+// than omitting it — a peer asking "what do you offer" should learn the
+// vocabulary rather than guess at it.
 //
-// Transcribe is speech-to-text and is NOT transcode: one turns audio into
-// words, the other turns a media file into a different container. They read
-// alike and share four letters, which is reason enough to say so here rather
-// than let someone wire a whisper endpoint to the transcode grant.
+// A "transcode" grant was declared here and never built. It is gone: an
+// operator ticking a box that has done nothing since the day it appeared learns
+// that the boxes on that page are aspirational, which is the wrong thing to
+// learn about a permission screen. Declaring a capability ahead of building it
+// is worth it when something is coming; it costs trust when nothing is.
+//
+// If it ever is built, note that transcribe is speech-to-text and transcode is
+// a container change — they read alike and share four letters, and wiring a
+// whisper endpoint to a transcode grant would hand over a capability nobody
+// meant to give.
 const (
 	PeerCapEmbeddings = "embeddings"
 	PeerCapImages     = "images"
@@ -57,7 +64,6 @@ const (
 	PeerCapSearch     = "search"
 	PeerCapBrowse     = "browse"
 	PeerCapModels     = "models"
-	PeerCapTranscode  = "transcode"
 	// PeerCapInvestigate lets a peer ask THIS instance to investigate one of a
 	// named user's appliances and return the answer.
 	//
@@ -90,7 +96,7 @@ const (
 
 // PeerCapabilities is every capability name, in a stable order.
 func PeerCapabilities() []string {
-	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapTranscode, PeerCapInvestigate, PeerCapKnowledge, PeerCapExec}
+	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapInvestigate, PeerCapKnowledge, PeerCapExec}
 }
 
 // peerCapServed reports whether this build can actually serve a capability.
@@ -141,21 +147,14 @@ type PeerKey struct {
 	// appliance, including the ones that do not exist yet" is a decision nobody
 	// can review, and a list of ids can be read.
 	Appliances []string `json:"appliances,omitempty"`
-	// Rotating switches this grant to the token flow (see peer_token.go): the
-	// Key stops being accepted as a bearer and becomes a single-use pairing
-	// code, exchanged at /api/peer/v1/token for a short-lived access token and
-	// a refresh token that rotates on every use.
-	//
-	// Opt-in per grant, and false for every key minted before it existed,
-	// because flipping it globally would break every live pairing at the next
-	// restart. See SetPeerKeyRotating.
-	Rotating bool `json:"rotating,omitempty"`
 	// Paired stamps when the pairing code was exchanged, and is what makes it
-	// single use. Empty means "not yet"; RepairPeerKey clears it along with
-	// issuing a new code.
+	// single use. Empty means "not yet" — a key nobody has connected with —
+	// which is the state the admin table shows in place of the secret.
+	// RepairPeerKey clears it along with issuing a new code.
 	//
-	// Only consulted for a Rotating grant: on an ordinary one the key is a
-	// standing credential and exchanging it changes nothing about its validity.
+	// There is no longer a per-grant switch beside it: every key is a pairing
+	// code exchanged once for tokens (see peer_token.go), so a field asking
+	// whether THIS one is would have exactly one answer.
 	Paired string `json:"paired,omitempty"`
 }
 

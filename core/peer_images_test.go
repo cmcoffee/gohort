@@ -24,6 +24,8 @@ func peerImageDB(t *testing.T) {
 		secureAPIInstanceMu.Unlock()
 	})
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	resetPeerTokenCache() // see peerTestDB: the credential cache outlives the store
+	InvalidatePeerResolution()
 	auth := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return auth }
 	secureAPIInstanceMu.Lock()
@@ -39,7 +41,7 @@ func TestImageRenderRefusesAKeyWithoutTheGrant(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/images/render",
 		strings.NewReader(`{"prompt":"a duck"}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerImageRender(w, r)
 
@@ -60,7 +62,7 @@ func TestImageRenderRefusesAnUnofferedBackend(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/images/render",
 		strings.NewReader(`{"prompt":"a duck","backend":"someone-elses-private-graph"}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerImageRender(w, r)
 
@@ -94,7 +96,7 @@ func TestImageRenderRefusesSourcePhotosOnATextOnlyBackend(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/images/render",
 		strings.NewReader(`{"prompt":"make it sunny","backend":"comfyui","init_images":["aGVsbG8="]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerImageRender(w, r)
 
@@ -112,7 +114,7 @@ func TestImageRenderNeedsSomethingToRender(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapImages}, 0)
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/images/render", strings.NewReader(`{}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerImageRender(w, r)
 
@@ -129,7 +131,7 @@ func TestManifestWithholdsRenderersFromAnUngrantedKey(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapEmbeddings}, 0)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerManifest(w, r)
 
@@ -165,8 +167,11 @@ func TestImagesIsReportedAsServed(t *testing.T) {
 	if !PeerCapabilityServed(PeerCapImages) {
 		t.Error("images should be served by this build")
 	}
-	if PeerCapabilityServed(PeerCapModels) || PeerCapabilityServed(PeerCapTranscode) {
-		t.Error("models/transcode are not implemented and must not report as served")
+	// models is the one capability that answers conditionally: it is served
+	// only when this instance has a LOCAL backend to lend, and a test build
+	// has none.
+	if PeerCapabilityServed(PeerCapModels) {
+		t.Error("models has no local backend here and must not report as served")
 	}
 }
 
@@ -217,7 +222,7 @@ func TestPeerEditReachesTheBackend(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapImages}, 0)
 	body := fmt.Sprintf(`{"prompt":"put the number on one pillar","backend":"editor","init_images":[%q]}`, tinyPNG)
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/images/render", strings.NewReader(body))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerImageRender(w, r)
 

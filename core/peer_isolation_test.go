@@ -42,6 +42,8 @@ func isolationRig(t *testing.T) (key PeerKey, imgDir string) {
 		secureAPIInstanceMu.Unlock()
 	})
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	resetPeerTokenCache() // see peerTestDB: the credential cache outlives the store
+	InvalidatePeerResolution()
 	auth := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return auth }
 	VectorDB = &DBase{Store: kvlite.MemStore()}

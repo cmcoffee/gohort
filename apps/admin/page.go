@@ -482,6 +482,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			JS(artifactDownloadHelper).
 			JS(artifactExportControls).
 			JS(artifactImportPreviewJS).
+			JS(peerKeyShowOnceJS).
 			ClientAction("admin_reset_password", adminResetPasswordAction).
 			ClientAction("artifacts_import_preview", artifactsImportPreviewAction).
 			ClientAction("connectors_export", connectorsExportAction).
@@ -502,6 +503,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("credentials_export_all", credentialsExportAllAction).
 			ClientAction("skills_export", skillsExportAction).
 			ClientAction("skills_export_all", skillsExportAllAction).
+			ClientAction("peer_key_issued", peerKeyIssuedAction).
+			ClientAction("peer_key_reissue", peerKeyReissueAction).
 			ClientAction("artifacts_export_all", artifactsExportAllAction),
 		MaxWidth:   "1200px", // desktop admin: wide enough for full-width tables in a single column
 		Grid:       false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)

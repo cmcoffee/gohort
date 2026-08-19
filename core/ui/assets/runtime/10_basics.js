@@ -2962,6 +2962,18 @@
           }).then(function(resp) {
             done();
             window.uiInvalidateSaved(cfg);
+            // A server response the FORM could not have produced — a one-time
+            // secret, a generated link — goes to an app handler rather than a
+            // toast, which holds one line and then takes it away. Runs before
+            // the redirect/close branches so a handler that opens a modal is
+            // not racing a navigation.
+            if (cfg.on_success) {
+              var okFn = window.UIClientActions && window.UIClientActions[cfg.on_success];
+              if (typeof okFn === 'function') {
+                try { okFn({ response: resp || {}, form: host, ctx: ctx }); }
+                catch (e) { if (window.console) console.error('on_success handler failed', e); }
+              }
+            }
             // Always give a visible "it saved" signal. A submit that closes a
             // modal or just restores the button (204, no message) otherwise
             // looks like it did nothing — the exact "the save button should do

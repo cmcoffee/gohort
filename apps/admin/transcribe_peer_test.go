@@ -37,6 +37,10 @@ func transcribePeer(t *testing.T, caps ...string) RemotePeer {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	// Exchange is mandatory now, so a fake peer that does not serve the token
+	// endpoint is not a peer any client can pair with — the same 404 a real
+	// instance on an older build would answer with.
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 

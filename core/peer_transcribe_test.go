@@ -65,7 +65,7 @@ func TestPeerTranscribeReturnsTheText(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapTranscribe}, 0)
 
 	w := httptest.NewRecorder()
-	HandlePeerTranscribe(w, audioRequest(t, pk.Key, "note.m4a", "text", []byte("fake-audio-bytes")))
+	HandlePeerTranscribe(w, audioRequest(t, peerAuth(t, pk), "note.m4a", "text", []byte("fake-audio-bytes")))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("transcribe → %d, want 200: %s", w.Code, w.Body.String())
@@ -86,7 +86,7 @@ func TestPeerTranscribeAnswersJSONWhenTextWasNotAsked(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapTranscribe}, 0)
 
 	w := httptest.NewRecorder()
-	HandlePeerTranscribe(w, audioRequest(t, pk.Key, "note.mp3", "", []byte("x")))
+	HandlePeerTranscribe(w, audioRequest(t, peerAuth(t, pk), "note.mp3", "", []byte("x")))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("→ %d: %s", w.Code, w.Body.String())
@@ -110,7 +110,7 @@ func TestPeerTranscribeRefusesAKeyWithoutTheGrant(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapEmbeddings}, 0)
 
 	w := httptest.NewRecorder()
-	HandlePeerTranscribe(w, audioRequest(t, pk.Key, "a.mp3", "text", []byte("x")))
+	HandlePeerTranscribe(w, audioRequest(t, peerAuth(t, pk), "a.mp3", "text", []byte("x")))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("ungranted key → %d, want 403: %s", w.Code, w.Body.String())
 	}
@@ -128,7 +128,7 @@ func TestPeerTranscribeWillNotRelayAPeersOwnBorrowedSTT(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapTranscribe}, 0)
 
 	w := httptest.NewRecorder()
-	HandlePeerTranscribe(w, audioRequest(t, pk.Key, "a.mp3", "text", []byte("x")))
+	HandlePeerTranscribe(w, audioRequest(t, peerAuth(t, pk), "a.mp3", "text", []byte("x")))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("relay → %d, want 503: %s", w.Code, w.Body.String())
 	}
@@ -157,18 +157,16 @@ func TestManifestOffersTranscriptionOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
-// transcribe is speech-to-text; transcode is a container change. They read
-// alike and share four letters, and wiring one to the other's grant would give
-// a peer a capability nobody meant to hand over.
-func TestTranscribeAndTranscodeAreDistinctCapabilities(t *testing.T) {
-	if PeerCapTranscribe == PeerCapTranscode {
-		t.Fatal("transcribe and transcode collapsed into one grant")
-	}
+// Transcribe is speech-to-text, it is implemented, and it is in the vocabulary
+// — which is what lets a key grant it at all.
+//
+// This used to also pin transcribe apart from a declared-but-unbuilt
+// "transcode" grant. That grant is gone (see peer_key.go), so what is left is
+// the half that was always the real assertion: a capability this instance
+// actually serves has to be offerable and has to report as served.
+func TestTranscribeIsAServedCapability(t *testing.T) {
 	if !PeerCapabilityServed(PeerCapTranscribe) {
 		t.Error("transcribe is implemented and must report as served")
-	}
-	if PeerCapabilityServed(PeerCapTranscode) {
-		t.Error("transcode is not implemented and must not report as served")
 	}
 	var found bool
 	for _, c := range PeerCapabilities() {

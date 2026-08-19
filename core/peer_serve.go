@@ -29,14 +29,7 @@ const peerKeyHeader = "X-Gohort-Peer-Key"
 // peerFromRequest authenticates a peer request. Returns false for anything
 // unrecognized, disabled, or absent.
 func peerFromRequest(r *http.Request) (PeerKey, bool) {
-	secret := strings.TrimSpace(r.Header.Get(peerKeyHeader))
-	if secret == "" {
-		if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
-			if lower := strings.ToLower(auth); strings.HasPrefix(lower, "bearer ") {
-				secret = strings.TrimSpace(auth[len("bearer "):])
-			}
-		}
-	}
+	secret := peerPresentedSecret(r)
 	if secret == "" {
 		return PeerKey{}, false
 	}
@@ -45,26 +38,18 @@ func peerFromRequest(r *http.Request) (PeerKey, bool) {
 	if k, ok := peerKeyFromAccessToken(secret); ok {
 		return k, true
 	}
-	k, ok := LookupPeerKey(secret)
-	if !ok {
-		return k, false
-	}
-	// A rotating grant's key is a PAIRING CODE, not a credential. Accepting it
-	// here would leave the long-lived bearer secret the token flow exists to
-	// retire, and would do it silently: everything would keep working and
-	// nothing would be rotating. peerAuthorize turns this into a 401 that says
-	// where to go instead.
-	if k.Rotating {
-		return PeerKey{}, false
-	}
-	return k, true
+	// And that is the whole of it. A peer KEY is a pairing code, never a
+	// credential: accepting one here would leave the long-lived bearer secret
+	// the token flow exists to retire, and would do it silently — everything
+	// would keep working and nothing would be rotating. peerAuthorize turns a
+	// presented key into a 401 that says where to go instead.
+	return PeerKey{}, false
 }
 
-// peerIsUnexchangedPairingCode reports whether a presented secret is a rotating
-// grant's pairing code — the one authentication failure with a specific remedy,
-// so peerAuthorize can name it instead of answering "unrecognized key" to a
-// credential the operator can see is correct.
-func peerIsUnexchangedPairingCode(r *http.Request) bool {
+// peerPresentedSecret pulls the credential off a request, from either header.
+// One extractor, so a door that reads it a second way cannot end up disagreeing
+// with the one that authenticates.
+func peerPresentedSecret(r *http.Request) string {
 	secret := strings.TrimSpace(r.Header.Get(peerKeyHeader))
 	if secret == "" {
 		if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
@@ -73,11 +58,45 @@ func peerIsUnexchangedPairingCode(r *http.Request) bool {
 			}
 		}
 	}
+	return secret
+}
+
+// peerIsPairingCode reports whether a presented secret is a known key rather
+// than a token — the one authentication failure with a specific remedy, so
+// peerAuthorize can name it instead of answering "unrecognized key" to a
+// string the operator can see is correct.
+func peerIsPairingCode(r *http.Request) bool {
+	if secret := peerPresentedSecret(r); secret != "" {
+		_, ok := LookupPeerKey(secret)
+		return ok
+	}
+	return false
+}
+
+// peerUnspentPairingCode authenticates FIRST CONTACT, and only that.
+//
+// A peer arriving for the first time holds a pairing code and nothing else, and
+// it has to read the manifest to learn that exchange is required — the client
+// decides to adopt the token flow from what the manifest says (see
+// adoptPeerTokenFlow). Refusing the code at every door including that one would
+// make the instruction unreachable by anyone who needs it: the peer would 401
+// forever, correctly configured, with the answer sitting behind the same lock.
+//
+// UNSPENT is what keeps this narrow. Once the code has been exchanged the peer
+// holds tokens and has no reason to come back with the code, so a copy of it
+// taken from a chat log cannot even read the manifest. And it discloses nothing
+// new either way: whoever holds an unspent code can exchange it for a token and
+// read the manifest with that.
+func peerUnspentPairingCode(r *http.Request) (PeerKey, bool) {
+	secret := peerPresentedSecret(r)
 	if secret == "" {
-		return false
+		return PeerKey{}, false
 	}
 	k, ok := LookupPeerKey(secret)
-	return ok && k.Rotating
+	if !ok || strings.TrimSpace(k.Paired) != "" {
+		return PeerKey{}, false
+	}
+	return k, true
 }
 
 // peerDeny writes a JSON error. Peers are machines: the body says what is wrong
@@ -103,7 +122,7 @@ func peerAuthorize(w http.ResponseWriter, r *http.Request, capability string) (P
 	k, ok := peerFromRequest(r)
 	if !ok {
 		peerNoteAuthFailure(r)
-		if peerIsUnexchangedPairingCode(r) {
+		if peerIsPairingCode(r) {
 			peerDeny(w, http.StatusUnauthorized,
 				"this key is a pairing code, not a credential — POST it to /api/peer/v1/token as "+
 					`{"grant_type":"pairing_code","pairing_code":"..."} and use the access token it returns`)
@@ -202,6 +221,12 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	k, ok := peerFromRequest(r)
 	if !ok {
+		// The one door an unspent pairing code opens: this is where a peer
+		// learns it must exchange, so it cannot be the door that requires
+		// having already done so.
+		k, ok = peerUnspentPairingCode(r)
+	}
+	if !ok {
 		peerNoteAuthFailure(r)
 		peerDeny(w, http.StatusUnauthorized, "unrecognized or disabled peer key")
 		return
@@ -269,7 +294,7 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	// be on different sides of the switch during a migration.
 	m.Token = &PeerTokenInfo{
 		Path:      "/api/peer/v1/token",
-		Required:  k.Rotating,
+		Required:  true,
 		ExpiresIn: int(peerAccessTTL / time.Second),
 	}
 	w.Header().Set("Content-Type", "application/json")

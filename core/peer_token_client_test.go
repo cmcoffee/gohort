@@ -49,7 +49,7 @@ func consumingPeer(t *testing.T, name, base, key string, useTokens bool) RemoteP
 func TestAPeerNotOnTheTokenFlowPresentsItsStaticKey(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, false)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, false)
 
 	if got := PeerCredential(p); got != k.Key {
@@ -63,7 +63,7 @@ func TestAPeerNotOnTheTokenFlowPresentsItsStaticKey(t *testing.T) {
 func TestAnUnreachableTokenEndpointFallsBackToTheStaticKey(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, false)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", "http://127.0.0.1:1", k.Key, true)
 
 	if got := PeerCredential(p); got != k.Key {
@@ -76,7 +76,7 @@ func TestAnUnreachableTokenEndpointFallsBackToTheStaticKey(t *testing.T) {
 func TestEnsurePeerTokenPairsAndThenPresentsTheAccessToken(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, true)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, true)
 
 	if err := EnsurePeerToken(t.Context(), p); err != nil {
@@ -104,7 +104,7 @@ func TestEnsurePeerTokenPairsAndThenPresentsTheAccessToken(t *testing.T) {
 func TestARestartResumesOnTheStoredCredential(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, true)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, true)
 	if err := EnsurePeerToken(t.Context(), p); err != nil {
 		t.Fatalf("pair: %v", err)
@@ -124,7 +124,7 @@ func TestARestartResumesOnTheStoredCredential(t *testing.T) {
 func TestEnsurePeerTokenRefreshesRatherThanRePairing(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, true)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, true)
 	if err := EnsurePeerToken(t.Context(), p); err != nil {
 		t.Fatalf("pair: %v", err)
@@ -162,7 +162,7 @@ func TestEnsurePeerTokenRefreshesRatherThanRePairing(t *testing.T) {
 func TestConcurrentRenewalsDoNotTripReuseDetection(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, true)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, true)
 	if err := EnsurePeerToken(t.Context(), p); err != nil {
 		t.Fatalf("pair: %v", err)
@@ -207,7 +207,7 @@ func TestConcurrentRenewalsDoNotTripReuseDetection(t *testing.T) {
 func TestARevokedGrantClearsTheDeadPair(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
-	k := grantFor(t, true)
+	k := grantFor(t)
 	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, true)
 	if err := EnsurePeerToken(t.Context(), p); err != nil {
 		t.Fatalf("pair: %v", err)

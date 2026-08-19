@@ -27,25 +27,26 @@ type peerKeyRow struct {
 	ID       string   `json:"id"`
 	Label    string   `json:"label"`
 	Caps     []string `json:"caps"`
-	Key      string   `json:"key"`
 	Enabled  bool     `json:"enabled"`
 	RatePerM int      `json:"rate_per_min"`
 	Created  string   `json:"created"`
 	LastSeen string   `json:"last_seen"`
 	Calls    int64    `json:"calls"`
-	// Rotating and Key together are what the operator reads to know whether the
-	// Key column is a standing credential or a one-shot pairing code. Shown as
-	// a toggle rather than buried in a modal because it changes what that
-	// column MEANS, and a secret whose meaning is not on screen next to it is
-	// the kind of thing that gets pasted into the wrong field.
-	Rotating bool `json:"rotating"`
-	// Paired is empty until a rotating code is exchanged. Rendered as the key's
-	// state so a code sitting unused looks different from one already spent —
-	// the difference between "the peer has not connected yet" and "somebody
-	// else may have taken this".
+	// There is deliberately NO Key field. The secret is shown once, when it is
+	// minted or re-issued, and never again — so it must not travel in the list
+	// payload either. A column an operator cannot read is still a secret sitting
+	// in a JSON response, in a browser cache, and in whatever proxy log is
+	// between the two.
+	//
+	// Paired takes its place: the code's STATE is what the table can honestly
+	// report. Empty means nobody has connected with it yet; a timestamp means it
+	// was spent and this peer is running on rotating tokens.
 	// No omitempty: the table binds a column to this field, and a key the row
 	// JSON omits reads to the renderer as a column bound to nothing.
 	Paired string `json:"paired"`
+	// Status renders that same fact as a sentence, because "empty" is not a
+	// state anybody reads correctly in a column of timestamps.
+	Status string `json:"status"`
 }
 
 // peerKeysJSON renders the issued keys for the table.
@@ -53,11 +54,18 @@ func peerKeysJSON() []byte {
 	keys := ListPeerKeys()
 	rows := make([]peerKeyRow, 0, len(keys))
 	for _, k := range keys {
+		status := "Not connected yet — the code is still unspent"
+		if strings.TrimSpace(k.Paired) != "" {
+			status = "Paired — running on rotating tokens"
+		}
+		if k.Disabled {
+			status = "Disabled"
+		}
 		rows = append(rows, peerKeyRow{
-			ID: k.ID, Label: k.Label, Caps: k.Caps, Key: k.Key,
+			ID: k.ID, Label: k.Label, Caps: peerCapShortLabels(k.Caps),
 			Enabled: !k.Disabled, RatePerM: k.RatePerM,
 			Created: k.Created, LastSeen: k.LastSeen, Calls: k.Calls,
-			Rotating: k.Rotating, Paired: k.Paired,
+			Paired: k.Paired, Status: status,
 		})
 	}
 	b, _ := json.Marshal(rows)
@@ -116,11 +124,11 @@ func (a *AdminApp) handlePeerKeyMint(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":  true,
-			"id":  pk.ID,
-			"key": pk.Key,
-			"message": "Key minted for " + pk.Label + ". Copy it from the table below — " +
-				"it goes in the peer's own configuration, not here.",
+			"ok":      true,
+			"id":      pk.ID,
+			"key":     pk.Key,
+			"label":   pk.Label,
+			"message": "Key minted for " + pk.Label + ". This is the only time it is shown.",
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -222,21 +230,11 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 			Caps       *[]string `json:"caps"`
 			Owner      *string   `json:"owner"`
 			Appliances *[]string `json:"appliances"`
-			Rotating   *bool     `json:"rotating"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-			(req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil &&
-				req.Rotating == nil) {
-			http.Error(w, "expected {\"enabled\": bool}, {\"caps\": [...]}, {\"owner\", \"appliances\"}, or {\"rotating\": bool}", http.StatusBadRequest)
+			(req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil) {
+			http.Error(w, "expected {\"enabled\": bool}, {\"caps\": [...]}, or {\"owner\", \"appliances\"}", http.StatusBadRequest)
 			return
-		}
-		if req.Rotating != nil {
-			pk, rerr := SetPeerKeyRotating(id, *req.Rotating)
-			if rerr != nil {
-				http.Error(w, rerr.Error(), http.StatusBadRequest)
-				return
-			}
-			Log("[admin] user %q set peer key %q rotating=%v", AuthCurrentUser(r), pk.Label, *req.Rotating)
 		}
 		if req.Caps != nil {
 			pk, cerr := SetPeerKeyCaps(id, *req.Caps)
@@ -320,7 +318,7 @@ func peersJSON() []byte {
 			status = p.LastError
 		}
 		rows = append(rows, peerRow{
-			Name: p.Name, Instance: p.Instance, BaseURL: p.BaseURL, Caps: p.Caps,
+			Name: p.Name, Instance: p.Instance, BaseURL: p.BaseURL, Caps: peerCapShortLabels(p.Caps),
 			EmbedModel: p.EmbedModel, Backends: len(p.ImageConnectors),
 			Status: status, LastChecked: p.LastChecked,
 		})
@@ -406,6 +404,34 @@ func (a *AdminApp) handlePeerItem(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+	case r.Method == http.MethodGet && action == "key":
+		// The blank record the update form loads. A FormPanel posts back what
+		// it loaded, so what it loads has to be the shape it saves — and it
+		// must never be the CURRENT key, which is a secret this side holds and
+		// has no reason to redisplay.
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"key":""}`))
+		return
+	case r.Method == http.MethodPost && action == "key":
+		var body struct {
+			Key string `json:"key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		p, err := UpdateRemotePeerKey(r.Context(), name, body.Key)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		Log("[admin] user %q re-paired peer %q with a new key", AuthCurrentUser(r), name)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"message": "Re-paired with " + p.Instance + ". It offers: " + strings.Join(p.Caps, ", ") + ".",
+		})
+		return
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -521,6 +547,58 @@ func BrowseProviderOptions() []ui.SelectOption {
 // cannot serve yet. Offering them is deliberate: a grant made today starts
 // working the day the capability ships, and the operator can see the roadmap
 // without reading the source.
+// peerCapShortLabel is the human name for a capability, in the register a PILL
+// needs: two or three words, no qualifiers.
+//
+// It exists because the two ends of a share were speaking different languages.
+// The lending end offered "Run commands (the peer gets a shell on these
+// systems…)" in its mint checklist, while the borrowing end's Offers column —
+// and this end's own Granted column — printed the raw storage slug, so an
+// operator reading the peer they had just connected saw "exec" and had to
+// remember which of the friendly sentences that was. A grant nobody can name
+// is a grant nobody audits.
+//
+// An UNKNOWN slug comes back unchanged rather than blank. Offers is filled from
+// the far side's manifest, so a peer running a newer build can legitimately
+// name a capability this one has never heard of, and printing it raw says
+// exactly that — where a lookup miss rendered as an empty pill would read as a
+// grant of nothing.
+func peerCapShortLabel(cap string) string {
+	switch cap {
+	case PeerCapEmbeddings:
+		return "Embeddings"
+	case PeerCapImages:
+		return "Image generation"
+	case PeerCapTranscribe:
+		return "Transcription"
+	case PeerCapSearch:
+		return "Web search"
+	case PeerCapBrowse:
+		return "Page rendering"
+	case PeerCapModels:
+		return "Inference"
+	case PeerCapInvestigate:
+		return "Investigate systems"
+	case PeerCapKnowledge:
+		return "Gathered knowledge"
+	case PeerCapExec:
+		return "Run commands"
+	}
+	return cap
+}
+
+// peerCapShortLabels maps a whole list, for the pill columns.
+func peerCapShortLabels(caps []string) []string {
+	if len(caps) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(caps))
+	for _, c := range caps {
+		out = append(out, peerCapShortLabel(c))
+	}
+	return out
+}
+
 func peerCapOptions() []ui.SelectOption {
 	help := map[string]string{
 		PeerCapEmbeddings: "Let the peer embed text using this instance's embedder.",
@@ -531,7 +609,6 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model — the machine with the GPU does the thinking for the one without. " +
 			"The peer configures an ordinary llama.cpp provider pointed here and everything works as if the model were local: streaming, tool calls, images, thinking budgets. " +
 			"Only LOCAL backends are lent (llama.cpp and ollama). A hosted provider is never relayed, because that would spend this operator's API key on someone else's prompts.",
-		PeerCapTranscode: "Media transcoding and frame sampling.",
 		PeerCapInvestigate: "Let the peer ask questions about systems THIS instance can reach — for a machine on a network the peer has no route to. " +
 			"It sends a question; this instance runs the investigation itself, read-only, under its own approval rules, and returns prose. " +
 			"No command from the peer is ever executed, and no credential leaves here. " +
@@ -546,17 +623,21 @@ func peerCapOptions() []ui.SelectOption {
 			"There is no risk gate on this side, by design — that is what makes a peer-reached system behave exactly like a local one. " +
 			"Grant it only to instances you own, and only for the systems below.",
 	}
-	label := map[string]string{
-		PeerCapEmbeddings:  "Embeddings",
-		PeerCapImages:      "Image generation",
-		PeerCapTranscribe:  "Transcription (speech-to-text)",
-		PeerCapSearch:      "Web search",
-		PeerCapBrowse:      "Page rendering (browser)",
-		PeerCapModels:      "Run inference (the peer's turns execute on this machine's model)",
-		PeerCapTranscode:   "Transcoding",
-		PeerCapInvestigate: "Investigate systems (answers questions, runs no remote commands)",
-		PeerCapKnowledge:   "Share gathered knowledge (copies docs and facts to the peer)",
-		PeerCapExec:        "Run commands (the peer gets a shell on these systems, gated on ITS side)",
+	// The checklist is a permission screen, so it qualifies each name — but it
+	// BUILDS on the short label rather than restating it, so a capability reads
+	// as the same thing here, in the Granted column, and on the far side's
+	// Offers column. Restating them is how "exec" came to have three names.
+	qualifier := map[string]string{
+		PeerCapTranscribe:  " (speech-to-text)",
+		PeerCapBrowse:      " (browser)",
+		PeerCapModels:      " (the peer's turns execute on this machine's model)",
+		PeerCapInvestigate: " (answers questions, runs no remote commands)",
+		PeerCapKnowledge:   " (copies docs and facts to the peer)",
+		PeerCapExec:        " (the peer gets a shell on these systems, gated on ITS side)",
+	}
+	label := map[string]string{}
+	for _, c := range PeerCapabilities() {
+		label[c] = peerCapShortLabel(c) + qualifier[c]
 	}
 	out := make([]ui.SelectOption, 0, len(PeerCapabilities()))
 	for _, c := range PeerCapabilities() {
@@ -605,14 +686,30 @@ func peerSharingSections() []ui.Section {
 					Source:      "api/peer-keys/mint",
 					Method:      "POST",
 					SubmitLabel: "Mint key",
+					// Shown once, here, and never again — the table cannot
+					// display it and the list payload no longer carries it.
+					OnSuccess: "peer_key_issued",
 					// Refresh the table below once a key exists — the form and
 					// the list no longer share an endpoint, so this no longer
 					// happens on its own.
 					Invalidate: []string{"api/peer-keys"},
 					Fields: []ui.FormField{
 						{Field: "label", Label: "Issued to", Type: "text", Required: true,
-							Placeholder: "craig's MacBook",
-							Help:        "How you'll recognize this peer later. Shown only to you."},
+							// The OTHER end of the pair the Peers form below names.
+							// This panel lends, that one borrows, so the two examples
+							// have to be opposite roles: a key is issued to the
+							// instance doing the borrowing (app-box), and the peer you
+							// add is the one that has what you want (gpu-box). Naming
+							// both ends gpu-box would teach the direction backwards.
+							//
+							// It read "craig's MacBook", which pointed at the wrong
+							// key entirely: a laptop running the desktop app
+							// authenticates with a DESKTOP key (core/desktop_key.go,
+							// auto-provisioned, its own endpoint), never with one of
+							// these. Somebody could mint a peer key trying to connect
+							// a laptop and find nothing that accepts it.
+							Placeholder: "app-box",
+							Help:        "Which gohort instance you are lending to — how you'll recognize it later. Shown only to you."},
 						{Field: "caps", Label: "Capabilities", Type: "checklist",
 							Options: peerCapOptions(),
 							Help:    "The key can do these and nothing else. Change them later with the Grants button on the key row \u2014 no need to mint a new one."},
@@ -662,6 +759,25 @@ func peerSharingSections() []ui.Section {
 					RowActions: []ui.RowAction{
 						{Type: "button", Label: "Re-check", PostTo: "api/peers/{name}/refresh",
 							Method: "POST", Compact: true},
+						// The door out of a failed Re-check. A peer key is spent
+						// at pairing and dies when the far side re-issues it, so
+						// "this peer stopped working" is most often answered by a
+						// new code — and until this existed the only way to enter
+						// one was to Forget the peer and add it again, which drops
+						// the image backends it contributed on the way past.
+						ui.ModalAction("Update key", ui.FormPanel{
+							Source:      "api/peers/{name}/key",
+							PostURL:     "api/peers/{name}/key",
+							Method:      "POST",
+							SubmitLabel: "Re-pair",
+							Invalidate:  []string{"api/peers", "api/image-backends"},
+							Fields: []ui.FormField{{
+								Field: "key", Label: "New peer key", Type: "text", Required: true,
+								Help: "Issued on the OTHER instance — Capabilities › Resource Sharing › Re-issue key. " +
+									"Its address and name here are kept; the key is exchanged for fresh credentials immediately, " +
+									"and what it may reach is re-read at the same time.",
+							}},
+						}),
 						{Type: "button", Label: "Forget", PostTo: "api/peers/{name}", Method: "DELETE",
 							Variant: "danger", Compact: true,
 							Confirm: "Forget this peer? Anything already configured to use it keeps working — " +
@@ -682,7 +798,11 @@ func peerSharingSections() []ui.Section {
 				Columns: []ui.Col{
 					{Field: "label", Label: "Issued to", Flex: 2},
 					{Field: "caps", Label: "Granted", Type: "pills", Flex: 2},
-					{Field: "key", Label: "Key", Flex: 3, Mute: true},
+					// No Key column. The secret is shown once when it is issued
+					// and is not in this payload at all — a column an operator
+					// cannot read would still be a secret in a browser cache and
+					// in whatever proxy log sits between here and there.
+					{Field: "status", Label: "State", Flex: 2, Mute: true},
 					{Field: "paired", Label: "Paired", Format: "reltime", Mute: true},
 					{Field: "last_seen", Label: "Last used", Format: "reltime", Mute: true},
 					{Field: "calls", Label: "Calls", Format: "thousands", Mute: true},
@@ -690,10 +810,6 @@ func peerSharingSections() []ui.Section {
 				RowActions: []ui.RowAction{
 					{Type: "toggle", Field: "enabled", Label: "Enabled",
 						PostTo: "api/peer-keys/{id}", Method: "PUT", Leading: true},
-					// Rotation. Off is what every key minted before this shipped
-					// has, and what keeps a live pairing working untouched.
-					{Type: "toggle", Field: "rotating", Label: "Rotating",
-						PostTo: "api/peer-keys/{id}", Method: "PUT"},
 					// Re-granting an existing key, rather than delete-and-mint.
 					// The secret survives, so a peer already holding it picks up
 					// a newly-shipped capability without anything being
@@ -716,14 +832,17 @@ func peerSharingSections() []ui.Section {
 									"Leave empty and an Investigate grant reaches nothing."},
 						},
 					}),
-					// The replacement for re-displaying a secret that no longer
-					// exists: once a rotating code is spent there is nothing
-					// current to show, and what the operator actually wants is
-					// this peer connected again.
-					{Type: "button", Label: "Re-pair", PostTo: "api/peer-keys/{id}/repair", Method: "POST",
-						Compact: true,
-						Confirm: "Issue a new pairing code? The peer's current credentials stop working immediately " +
-							"and it must be given the new code before it can reconnect. Capabilities and scope are kept."},
+					// The replacement for re-displaying a secret that is no longer
+					// displayable. A code is spent the moment its peer pairs, so
+					// there is never anything current to show — and what an
+					// operator staring at a disconnected peer actually wants is
+					// not the old string, it is this peer connected again.
+					//
+					// A client action rather than a plain POST because the reply
+					// carries the new secret, and it has to reach a surface
+					// somebody can copy from before it is gone for good.
+					{Type: "button", Label: "Re-issue key", PostTo: "peer_key_reissue", Method: "client",
+						Compact: true},
 					{Type: "button", Label: "Delete", PostTo: "api/peer-keys/{id}", Method: "DELETE",
 						Variant: "danger", Compact: true,
 						Confirm: "Delete this peer key? The peer using it loses access immediately and the key cannot be recovered."},
@@ -868,3 +987,84 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 	}
 	return out
 }
+
+// --- show-once secret --------------------------------------------------------
+
+// peerKeyShowOnceJS renders the one moment a peer key is visible.
+//
+// The key is no longer a standing credential: it is a pairing code, spent the
+// first time its peer exchanges it, and after that there is nothing current to
+// display. So the table does not carry it and this modal is the only surface it
+// ever appears on — which makes the modal's job narrow and specific. It has to
+// be copyable in one gesture, it has to say plainly that this is the last time,
+// and it must not be dismissable by accident before either has happened.
+//
+// Deliberately NOT a toast. A toast holds one line for three seconds and takes
+// it away, which for a secret somebody has to paste into another machine's
+// configuration is the difference between a working link and re-issuing.
+const peerKeyShowOnceJS = `
+window.__peerKeyShowOnce = function(label, key) {
+  window.uiOpenModal({
+    title: 'Peer key for ' + (label || 'this peer'),
+    subtitle: 'Copy it now — this is the only time it is shown. It goes in the OTHER instance\'s Peers form, ' +
+      'where it is exchanged once for rotating credentials. If it is lost, re-issue the key from this table.',
+    width: '620px',
+    actions: [{label: 'Done', primary: true}],
+    mount: function(box) {
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;flex-direction:column;gap:0.6rem';
+      var code = document.createElement('code');
+      code.textContent = key;
+      code.style.cssText = 'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.82rem;' +
+        'word-break:break-all;padding:0.6rem 0.7rem;border:1px solid var(--accent);border-radius:8px;background:var(--bg-2)';
+      var copy = document.createElement('button');
+      copy.className = 'ui-row-btn';
+      copy.textContent = 'Copy';
+      copy.style.alignSelf = 'flex-start';
+      copy.addEventListener('click', function() {
+        if (navigator.clipboard) navigator.clipboard.writeText(key);
+        copy.textContent = 'Copied';
+        setTimeout(function(){ copy.textContent = 'Copy'; }, 1400);
+      });
+      wrap.appendChild(code);
+      wrap.appendChild(copy);
+      box.appendChild(wrap);
+    }
+  });
+};
+`
+
+// peerKeyIssuedAction is the mint form's OnSuccess: the server just made a
+// secret the form could not have known, and this is its one showing.
+const peerKeyIssuedAction = `function(ctx){
+  var r = (ctx && ctx.response) || {};
+  if (r.key) window.__peerKeyShowOnce(r.label, r.key);
+}`
+
+// peerKeyReissueAction re-issues a key from its row: confirm, POST, show the
+// new secret once.
+//
+// A client action rather than a plain POST row-button because the reply CARRIES
+// that secret. A row button would swallow it into a reload, and the operator
+// would be left with a peer that can no longer connect and no way to reconnect
+// it short of re-issuing again.
+const peerKeyReissueAction = `async function(ctx){
+  var rec = (ctx && ctx.record) || {};
+  var ok = await (window.uiConfirm || window.confirm)(
+    'Re-issue the key for ' + (rec.label || 'this peer') + '? Its current credentials stop working immediately, ' +
+    'and it cannot reconnect until the new key is pasted into its Peers form. Capabilities and scope are kept.');
+  if (!ok) return;
+  if (ctx.button) { ctx.button.disabled = true; }
+  try {
+    var resp = await fetch('api/peer-keys/' + encodeURIComponent(rec.id) + '/repair',
+      {method: 'POST', credentials: 'same-origin'});
+    if (!resp.ok) throw new Error(await resp.text() || ('HTTP ' + resp.status));
+    var d = await resp.json();
+    if (ctx.reload) ctx.reload();
+    window.__peerKeyShowOnce(rec.label, d.key);
+  } catch (e) {
+    (window.uiAlert || window.alert)('Could not re-issue that key: ' + (e && e.message || e));
+  } finally {
+    if (ctx.button) { ctx.button.disabled = false; }
+  }
+}`

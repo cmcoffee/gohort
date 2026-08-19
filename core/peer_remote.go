@@ -307,6 +307,56 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	return p, nil
 }
 
+// UpdateRemotePeerKey re-pairs an EXISTING peer with a new pairing code,
+// keeping its name and address.
+//
+// The recovery path for the other half of re-issue. A code is spent the moment
+// its peer pairs, and re-issuing on the serving side kills the credentials this
+// side is holding — so without a door to paste the new code into, the only way
+// back was to forget the peer and add it again. That is not equivalent: forget
+// drops the image connectors it contributed and any setting naming it, so an
+// operator recovering from a rotation would take an outage in image generation
+// to fix one in everything else.
+//
+// The old tokens are dropped BEFORE the probe. They are dead the instant the
+// far side re-issued, and leaving them in place means a failed exchange falls
+// back on a credential that cannot work — which reads as "the new key is wrong"
+// when the new key is fine.
+func UpdateRemotePeerKey(ctx context.Context, name, key string) (RemotePeer, error) {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if strings.TrimSpace(key) == "" {
+		return RemotePeer{}, fmt.Errorf("a key is required")
+	}
+	p, ok := GetRemotePeer(name)
+	if !ok {
+		return RemotePeer{}, fmt.Errorf("no peer named %q is registered", name)
+	}
+	// THE NEW KEY GOES ON THE RECORD FIRST, and the order is the whole point.
+	//
+	// Clearing the credential is what makes the re-pair take effect — the old
+	// access token is dead the moment the far side re-issues, but it is not
+	// EXPIRED, so EnsurePeerToken would look at its clock, decide the peer is
+	// fine, and never exchange. But clearing it while the record still holds
+	// the OLD key opens a window: every reader that calls PeerCredential in it
+	// finds nothing usable and kicks off a background renewal, which reads the
+	// record, finds the key that was just revoked, and spends it. The far side
+	// answers "unrecognized or disabled peer key" and the operator watches
+	// their correct paste produce an authentication failure.
+	//
+	// So the key lands first. A renewal racing this now exchanges the code that
+	// actually exists, and the worst case is that it wins and the exchange
+	// below finds the credential already there — which is the right answer
+	// arriving by the other door.
+	p.Key = strings.TrimSpace(key)
+	RootDB.Set(remotePeersTable, name, p)
+	InvalidatePeerResolution()
+	clearPeerTokens(name)
+	// Through SaveRemotePeer, not a field write: the new code has to be probed,
+	// exchanged and have its capabilities re-read, because a re-issued key is
+	// commonly a re-scoped one too.
+	return SaveRemotePeer(ctx, name, p.BaseURL, key)
+}
+
 // RefreshRemotePeer re-probes a stored peer and records what came back,
 // including a failure — a peer that has stopped answering should say so in the
 // table rather than looking healthy until something tries to use it.
@@ -533,7 +583,12 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	}
 	cfg.Endpoint = p.EmbeddingsURL()
 	cfg.Model = p.EmbedModel
-	cfg.APIKey = p.Key
+	// PeerCredential, not the raw key. The key authenticates nothing since
+	// exchange became mandatory (peer_token.go) — it is a pairing code. This
+	// resolver is the CONFIG-time twin of the read-time overlay below, and it
+	// snapshotting the key was a latent bug the whole time: it produced a
+	// config that worked only while the static key was still accepted.
+	cfg.APIKey = PeerCredential(p)
 	return cfg, nil
 }
 

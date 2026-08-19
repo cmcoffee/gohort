@@ -166,6 +166,16 @@ func storePeerTokens(name string, t peerTokens) {
 	republishPeerImageCredential(p)
 }
 
+// resetPeerTokenCache drops every in-memory peer credential. The cache is keyed
+// by peer name and lives as long as the process, so a caller that replaces the
+// store beneath it (only tests do) has to clear it or a token minted against
+// the old database is presented against the new one.
+func resetPeerTokenCache() {
+	peerTokenState.mu.Lock()
+	peerTokenState.by = map[string]peerTokens{}
+	peerTokenState.mu.Unlock()
+}
+
 // forgetPeerTokens purges the in-memory credential for a peer that no longer
 // exists. Separate from clearPeerTokens, which writes through to a record —
 // there is none left to write to.
@@ -235,10 +245,23 @@ func renewPeerTokenAsync(name string) {
 		defer cancel()
 		if err := EnsurePeerToken(ctx, p); err != nil {
 			// Logged once per distinct problem: a peer that is simply down
-			// would otherwise produce a line per renewal attempt, and the
-			// static-key fallback means nothing is broken yet.
-			warnPeerResolveOnce("token:"+key, fmt.Sprintf(
-				"could not renew the credential for peer %q (%v) — still using its static key", key, err))
+			// would otherwise produce a line per renewal attempt.
+			//
+			// The old wording ended "still using its static key", which was
+			// true while a key was also a credential and is now actively
+			// misleading: exchange is mandatory, so falling back to the key
+			// means falling back to something the far side refuses. An
+			// authentication failure here is a peer that is DISCONNECTED, and
+			// saying so is the difference between an operator who re-issues a
+			// key and one who waits for a retry that cannot work.
+			note := fmt.Sprintf("could not renew the credential for peer %q (%v)", key, err)
+			if isPeerAuthFailure(err) {
+				note += " — that peer is not connected until it is given a new key: " +
+					"re-issue one under its Resource Sharing settings and paste it into Update key here"
+			} else {
+				note += " — retrying; the peer is unreachable rather than refusing"
+			}
+			warnPeerResolveOnce("token:"+key, note)
 			return
 		}
 		warnPeerResolveOnce("token:"+key, "")

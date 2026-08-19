@@ -27,6 +27,8 @@ func peerModelDB(t *testing.T) Database {
 		secureAPIInstanceMu.Unlock()
 	})
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	resetPeerTokenCache() // see peerTestDB: the credential cache outlives the store
+	InvalidatePeerResolution()
 	auth := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return auth }
 	secureAPIInstanceMu.Lock()
@@ -160,7 +162,7 @@ func TestTheGrantIsRequired(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
 		strings.NewReader(`{"messages":[]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerChatCompletions(w, r)
 	if w.Code != http.StatusForbidden {
@@ -192,7 +194,7 @@ func TestTheProxyForwardsTheBodyVerbatim(t *testing.T) {
 		`"tools":[{"type":"function","function":{"name":"probe"}}],` +
 		`"temperature":0.15,"chat_template_kwargs":{"enable_thinking":false},"stop":["</x>"]}`
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions", strings.NewReader(sent))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerChatCompletions(w, r)
 
@@ -233,7 +235,7 @@ func TestATierAliasIsRewrittenToTheModelId(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
 		strings.NewReader(`{"model":"worker","tools":[{"name":"x"}],"messages":[]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	HandlePeerChatCompletions(httptest.NewRecorder(), r)
 
 	if seenModel != "qwen-27b" {
@@ -265,7 +267,7 @@ func TestStreamingReachesTheCallerIncrementally(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(HandlePeerChatCompletions))
 	defer srv.Close()
 	req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"stream":true,"messages":[]}`))
-	req.Header.Set(peerKeyHeader, pk.Key)
+	req.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +309,7 @@ func TestUpstreamFailuresReachTheCallerAsThemselves(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
 		strings.NewReader(`{"messages":[]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerChatCompletions(w, r)
 
@@ -328,7 +330,7 @@ func TestTheModelListMatchesWhatWillBeServed(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/peer/v1/models", nil)
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerModels(w, r)
 
@@ -356,7 +358,7 @@ func TestTheManifestSaysWhyItIsNotServing(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerManifest(w, r)
 
@@ -389,7 +391,7 @@ func TestTheManifestAdvertisesTheServedModel(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerManifest(w, r)
 
@@ -500,7 +502,7 @@ func TestAPeerRequestQueuesBehindTheLocalScheduler(t *testing.T) {
 		defer close(done)
 		r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
 			strings.NewReader(`{"messages":[]}`)).WithContext(ctx)
-		r.Header.Set(peerKeyHeader, pk.Key)
+		r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 		HandlePeerChatCompletions(httptest.NewRecorder(), r)
 	}()
 
@@ -546,7 +548,7 @@ func TestTheSlotIsHeldForTheWholeStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(HandlePeerChatCompletions))
 	defer srv.Close()
 	req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"stream":true,"messages":[]}`))
-	req.Header.Set(peerKeyHeader, pk.Key)
+	req.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -590,7 +592,7 @@ func TestTheSchedulerLabelsThePeer(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions",
 		strings.NewReader(`{"messages":[]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	HandlePeerChatCompletions(httptest.NewRecorder(), r)
 
 	select {

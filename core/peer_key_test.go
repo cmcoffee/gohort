@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -34,6 +35,15 @@ func peerTestDB(t *testing.T) {
 	prev := RootDB
 	t.Cleanup(func() { RootDB = prev })
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	// The consuming side's credential cache is process-global and keyed by peer
+	// NAME, and every test here calls its peer "gpu-box". Swapping the store
+	// under it leaves a token minted against a database that no longer exists,
+	// which the next test presents and the server correctly does not recognize.
+	// In production nothing swaps RootDB, so this is test hygiene rather than a
+	// missing invalidation — but it is exactly the failure a shared cache keyed
+	// by a name rather than by a store produces.
+	resetPeerTokenCache()
+	InvalidatePeerResolution()
 }
 
 // A peer key must never satisfy ordinary user authentication. The tempting
@@ -55,12 +65,54 @@ func TestPeerKeyIsNotAUserCredential(t *testing.T) {
 	if user := APIKeyUser(r); user != "" {
 		t.Fatalf("a peer key resolved to user %q — it must not authenticate as a person", user)
 	}
-	// And it still works as a PEER credential, which is the whole point.
+	// And the credential it BUYS still works as a peer credential, which is the
+	// whole point. The key itself authenticates nothing on either axis now: not
+	// as a person, and not as a peer.
 	r2 := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
-	r2.Header.Set(peerKeyHeader, pk.Key)
+	r2.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	if _, ok := peerFromRequest(r2); !ok {
-		t.Error("the peer key did not authenticate as a peer")
+		t.Error("an access token did not authenticate as a peer")
 	}
+}
+
+// peerAuth is the credential a peer actually presents: an ACCESS TOKEN.
+//
+// A key authenticates nothing (see peer_token.go) — it is a pairing code, spent
+// once. Tests that exercise a capability endpoint want a paired peer, not the
+// pairing, so this mints the token pair directly rather than driving the HTTP
+// exchange. Callable more than once for the same grant, which the exchange
+// deliberately is not.
+func peerAuth(t *testing.T, k PeerKey) string {
+	t.Helper()
+	pair, err := mintPeerTokenPair(k.ID, UUIDv4())
+	if err != nil {
+		t.Fatalf("mint token pair: %v", err)
+	}
+	return pair.AccessToken
+}
+
+// pairedPeer is the CONSUMING-side twin of peerAuth: it hands a RemotePeer the
+// credentials it would be holding after a successful pairing.
+//
+// Tests that build a RemotePeer literal skip AddRemotePeer, which is where the
+// real exchange happens — so without this they present the raw key and the
+// serving half correctly refuses it. Both halves live in one process here, so
+// minting on one side and storing on the other is honest rather than a stub.
+func pairedPeer(t *testing.T, p RemotePeer, k PeerKey) RemotePeer {
+	t.Helper()
+	pair, err := mintPeerTokenPair(k.ID, UUIDv4())
+	if err != nil {
+		t.Fatalf("mint token pair: %v", err)
+	}
+	p.UseTokens = true
+	p.AccessToken = pair.AccessToken
+	p.RefreshToken = pair.RefreshToken
+	p.AccessExpires = time.Now().Add(time.Duration(pair.ExpiresIn) * time.Second).Format(time.RFC3339)
+	storePeerTokens(p.Name, peerTokens{
+		Access: pair.AccessToken, Refresh: pair.RefreshToken,
+		Expires: time.Now().Add(time.Duration(pair.ExpiresIn) * time.Second),
+	})
+	return p
 }
 
 // Capabilities are an allowlist. A key granted embeddings must not gain image
@@ -74,7 +126,7 @@ func TestPeerKeyCapabilitiesAreAnAllowlist(t *testing.T) {
 	if !pk.Allows(PeerCapEmbeddings) {
 		t.Error("granted capability not allowed")
 	}
-	for _, c := range []string{PeerCapImages, PeerCapModels, PeerCapTranscode} {
+	for _, c := range []string{PeerCapImages, PeerCapModels, PeerCapExec} {
 		if pk.Allows(c) {
 			t.Errorf("ungranted capability %q was allowed", c)
 		}
@@ -176,7 +228,7 @@ func TestPeerEmbeddingsRefusesUngrantedKey(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/embeddings",
 		strings.NewReader(`{"input":["hello"]}`))
-	r.Header.Set("Authorization", "Bearer "+pk.Key)
+	r.Header.Set("Authorization", "Bearer "+peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerEmbeddings(w, r)
 
@@ -194,15 +246,16 @@ func TestPeerAcceptsBearerAsWellAsHeader(t *testing.T) {
 	peerTestDB(t)
 	pk, _ := MintPeerKey("mac", []string{PeerCapEmbeddings}, 0)
 
+	cred := peerAuth(t, pk)
 	for _, set := range []func(*http.Request){
-		func(r *http.Request) { r.Header.Set(peerKeyHeader, pk.Key) },
-		func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+pk.Key) },
-		func(r *http.Request) { r.Header.Set("Authorization", "bearer "+pk.Key) },
+		func(r *http.Request) { r.Header.Set(peerKeyHeader, cred) },
+		func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+cred) },
+		func(r *http.Request) { r.Header.Set("Authorization", "bearer "+cred) },
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
 		set(r)
 		if _, ok := peerFromRequest(r); !ok {
-			t.Errorf("peer key not accepted via %v", r.Header)
+			t.Errorf("peer credential not accepted via %v", r.Header)
 		}
 	}
 }
@@ -222,7 +275,7 @@ func TestPeerEmbeddingsRefusesToRelay(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/embeddings",
 		strings.NewReader(`{"input":["hello"]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerEmbeddings(w, r)
 
@@ -245,7 +298,7 @@ func TestPeerEmbeddingsRefusesAModelMismatch(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/embeddings",
 		strings.NewReader(`{"model":"text-embedding-3-small","input":["hello"]}`))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerEmbeddings(w, r)
 

@@ -323,7 +323,12 @@ func ResolveSearchProvider(cfg WebSearchConfig, provider string) (WebSearchConfi
 	}
 	cfg.Provider = "searxng"
 	cfg.Endpoint = p.SearchURL()
-	cfg.APIKey = p.Key
+	// PeerCredential, not the raw key. The key authenticates nothing since
+	// exchange became mandatory (peer_token.go) — it is a pairing code. This
+	// resolver is the CONFIG-time twin of the read-time overlay below, and it
+	// snapshotting the key was a latent bug the whole time: it produced a
+	// config that worked only while the static key was still accepted.
+	cfg.APIKey = PeerCredential(p)
 	return cfg, nil
 }
 

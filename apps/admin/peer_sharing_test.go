@@ -330,6 +330,10 @@ func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	// Exchange is mandatory now, so a fake peer that does not serve the token
+	// endpoint is not a peer any client can pair with — the same 404 a real
+	// instance on an older build would answer with.
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	if _, err := SaveRemotePeer(t.Context(), "gpu-box", srv.URL, pk.Key); err != nil {
@@ -349,5 +353,85 @@ func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 		if !strings.Contains(f.ShowWhen, "provider:local") {
 			t.Errorf("field %q must hide while a peer is selected, got ShowWhen %q", name, f.ShowWhen)
 		}
+	}
+}
+
+// --- the secret is shown once ------------------------------------------------
+
+// A key the table can display is a key sitting in a JSON response, a browser
+// cache and every proxy log between here and there. Since a code is spent at
+// pairing there is nothing current to show anyway — so the row payload must not
+// carry it, and no column may bind to it.
+func TestTheKeyIsNeverInTheKeysList(t *testing.T) {
+	prev := RootDB
+	t.Cleanup(func() { RootDB = prev })
+	RootDB = &DBase{Store: kvlite.MemStore()}
+
+	pk, err := MintPeerKey("app-box", []string{PeerCapEmbeddings}, 0)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	body := string(peerKeysJSON())
+	if strings.Contains(body, pk.Key) {
+		t.Error("the keys list carries the secret — it is shown once, at issue, and never again")
+	}
+	if strings.Contains(body, `"key"`) {
+		t.Errorf("the row shape still has a key field: %s", body)
+	}
+	// And the state it shows instead has to distinguish a code nobody has used
+	// from one already spent: the difference between "not connected yet" and
+	// "somebody else may have this".
+	if !strings.Contains(body, "Not connected yet") {
+		t.Errorf("an unspent key does not say so: %s", body)
+	}
+
+	_, tables := walkSharing(t)
+	keys, ok := tables["api/peer-keys"]
+	if !ok {
+		t.Fatal("the keys table is not in the sharing surface")
+	}
+	for _, c := range keys.Columns {
+		if c.Field == "key" {
+			t.Error("a column still binds to the key")
+		}
+	}
+}
+
+// The other half of re-issue. A peer key is spent at pairing and dies when the
+// far side re-issues it, so "Re-check failed" is most often answered by a new
+// code — and Forget is not an equivalent path: it drops the image backends the
+// peer contributed on the way past.
+func TestThePeersTableCanTakeANewKey(t *testing.T) {
+	_, tables := walkSharing(t)
+	peers, ok := tables["api/peers"]
+	if !ok {
+		t.Fatal("the peers table is not in the sharing surface")
+	}
+	var found bool
+	for _, a := range peers.RowActions {
+		if strings.Contains(strings.ToLower(a.Label), "update key") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a peer whose key was re-issued can only be recovered by forgetting and re-adding it")
+	}
+}
+
+// Every capability reads as the same thing on both ends. The lending end used
+// to offer "Run commands (…)" while the borrowing end printed "exec", so an
+// operator auditing what they had just connected saw a slug and had to remember
+// which friendly sentence it was.
+func TestCapabilitiesReadTheSameOnBothEnds(t *testing.T) {
+	for _, c := range PeerCapabilities() {
+		short := peerCapShortLabel(c)
+		if short == c {
+			t.Errorf("capability %q has no human label — it renders as a storage slug in the pills", c)
+		}
+	}
+	// An unknown slug survives, because Offers is filled from the far side's
+	// manifest and a newer build may name something this one has never heard of.
+	if got := peerCapShortLabel("something-new"); got != "something-new" {
+		t.Errorf("an unknown capability rendered as %q, want it passed through", got)
 	}
 }

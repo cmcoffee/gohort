@@ -1,6 +1,6 @@
 package core
 
-// Rotating peer credentials.
+// Rotating peer credentials, serving half.
 //
 // The reason this file is long for the amount of code it covers: every branch
 // here is a security decision, and the ones that fail OPEN (a spent pairing code
@@ -50,17 +50,13 @@ func authenticates(secret string) bool {
 	return ok
 }
 
-// grantFor mints a key in a scratch store, optionally on the token flow.
-func grantFor(t *testing.T, rotating bool) PeerKey {
+// grantFor mints a key in a scratch store. There is no flag: exchange is
+// mandatory, so every key is a pairing code.
+func grantFor(t *testing.T) PeerKey {
 	t.Helper()
 	k, err := MintPeerKey("test-peer", []string{PeerCapEmbeddings}, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
-	}
-	if rotating {
-		if k, err = SetPeerKeyRotating(k.ID, true); err != nil {
-			t.Fatalf("set rotating: %v", err)
-		}
 	}
 	return k
 }
@@ -69,7 +65,7 @@ func grantFor(t *testing.T, rotating bool) PeerKey {
 
 func TestPairingCodeBuysATokenPairThatAuthenticates(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
+	k := grantFor(t)
 
 	pair, code, msg := exchange(t, pairingBody(k.Key))
 	if code != http.StatusOK {
@@ -94,7 +90,7 @@ func TestPairingCodeBuysATokenPairThatAuthenticates(t *testing.T) {
 
 func TestRefreshRotatesBothHalves(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
+	k := grantFor(t)
 	first, _, _ := exchange(t, pairingBody(k.Key))
 
 	second, code, msg := exchange(t, refreshBody(first.RefreshToken))
@@ -121,7 +117,7 @@ func TestRefreshRotatesBothHalves(t *testing.T) {
 // own tail.
 func TestReplayInsideTheGraceWindowReturnsTheSameSuccessor(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
+	k := grantFor(t)
 	first, _, _ := exchange(t, pairingBody(k.Key))
 
 	second, _, _ := exchange(t, refreshBody(first.RefreshToken))
@@ -145,7 +141,7 @@ func TestReplayInsideTheGraceWindowReturnsTheSameSuccessor(t *testing.T) {
 // has long since moved to the successor, so this is someone else's copy.
 func TestReuseOutsideTheGraceWindowKillsTheFamily(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
+	k := grantFor(t)
 	first, _, _ := exchange(t, pairingBody(k.Key))
 	second, _, _ := exchange(t, refreshBody(first.RefreshToken))
 
@@ -177,9 +173,9 @@ func TestReuseOutsideTheGraceWindowKillsTheFamily(t *testing.T) {
 
 // --- single use --------------------------------------------------------------
 
-func TestARotatingPairingCodeIsSingleUse(t *testing.T) {
+func TestAPairingCodeIsSingleUse(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
+	k := grantFor(t)
 
 	if _, code, msg := exchange(t, pairingBody(k.Key)); code != http.StatusOK {
 		t.Fatalf("first exchange → %d: %s", code, msg)
@@ -193,12 +189,12 @@ func TestARotatingPairingCodeIsSingleUse(t *testing.T) {
 	}
 }
 
-func TestARotatingKeyIsRefusedAsABearer(t *testing.T) {
+func TestAPeerKeyIsRefusedAsABearer(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
+	k := grantFor(t)
 
 	if authenticates(k.Key) {
-		t.Fatal("a rotating grant's pairing code authenticated a capability call — " +
+		t.Fatal("a pairing code authenticated a capability call — " +
 			"the long-lived bearer secret is still in play and nothing is rotating")
 	}
 	// And the refusal must point somewhere, or it reads as a broken key.
@@ -213,161 +209,68 @@ func TestARotatingKeyIsRefusedAsABearer(t *testing.T) {
 	}
 }
 
-// --- backward compatibility --------------------------------------------------
+// --- the compatibility break -------------------------------------------------
 
-// TestAnOrdinaryKeyKeepsWorkingUntouched — the property that makes this release
-// safe to ship. Every key minted before the token flow existed has Rotating
-// false, and a peer using one must not notice anything changed.
-func TestAnOrdinaryKeyKeepsWorkingUntouched(t *testing.T) {
+// The property that USED to hold here was the opposite: an ordinary key kept
+// working untouched, because rotation was opt-in per grant. It is not any more.
+// Exchange is mandatory, so a key authenticates nothing and this test exists to
+// make that break loud if anybody softens it back.
+func TestAKeyIsNeverACredential(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, false)
+	k := grantFor(t)
 
-	if !authenticates(k.Key) {
-		t.Fatal("an ordinary peer key stopped authenticating — this breaks every live pairing")
+	if authenticates(k.Key) {
+		t.Fatal("a peer key authenticated a request — it is a pairing code, and accepting it leaves exactly the long-lived bearer secret the token flow exists to retire")
 	}
-	// Exchange is still OFFERED, so a consuming instance can adopt the flow
-	// before the operator commits the serving side to it.
 	pair, code, msg := exchange(t, pairingBody(k.Key))
 	if code != http.StatusOK {
-		t.Fatalf("exchange on an ordinary key → %d: %s", code, msg)
+		t.Fatalf("exchange → %d: %s", code, msg)
 	}
 	if !authenticates(pair.AccessToken) {
-		t.Error("a token issued against an ordinary key does not authenticate")
+		t.Error("the access token from an exchange does not authenticate")
 	}
-	// And the code is NOT spent, because on an ordinary grant it is a standing
-	// credential rather than a pairing code.
-	if _, code, _ := exchange(t, pairingBody(k.Key)); code != http.StatusOK {
-		t.Errorf("exchanging an ordinary key twice → %d, want 200", code)
-	}
-	if !authenticates(k.Key) {
-		t.Error("exchanging an ordinary key revoked it")
+	// And the code is spent, so a copy of it taken from a chat log is worth
+	// nothing once the peer it was meant for has paired.
+	if _, code, _ := exchange(t, pairingBody(k.Key)); code == http.StatusOK {
+		t.Error("a spent pairing code was honored a second time")
 	}
 }
 
-// --- revocation reaches issued credentials -----------------------------------
-
-func TestDisablingAGrantRevokesItsTokens(t *testing.T) {
+// First contact has to be possible. A peer arriving with nothing but its code
+// learns that it must exchange by READING THE MANIFEST, so the manifest is the
+// one door an unspent code opens — otherwise the instruction sits behind the
+// lock it is the instruction for.
+func TestAnUnspentCodeCanReadTheManifestAndNothingElse(t *testing.T) {
 	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
-	pair, _, _ := exchange(t, pairingBody(k.Key))
+	k := grantFor(t)
 
-	SetPeerKeyDisabled(k.ID, true)
-	if authenticates(pair.AccessToken) {
-		t.Error("a disabled grant's access token still authenticates — revoked on screen, not in fact")
+	r := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
+	r.Header.Set(peerKeyHeader, k.Key)
+	w := httptest.NewRecorder()
+	HandlePeerManifest(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first contact could not read the manifest → %d: %s", w.Code, w.Body.String())
 	}
-	if _, code, _ := exchange(t, refreshBody(pair.RefreshToken)); code == http.StatusOK {
-		t.Error("a disabled grant still rotates its tokens")
+	var m PeerManifest
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		t.Fatalf("manifest decode: %v", err)
 	}
-}
-
-func TestDeletingAGrantRevokesItsTokens(t *testing.T) {
-	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
-	pair, _, _ := exchange(t, pairingBody(k.Key))
-
-	DeletePeerKey(k.ID)
-	if authenticates(pair.AccessToken) {
-		t.Error("a deleted grant's access token still authenticates")
-	}
-	if _, code, _ := exchange(t, refreshBody(pair.RefreshToken)); code == http.StatusOK {
-		t.Error("a deleted grant still rotates its tokens")
-	}
-}
-
-// --- expiry ------------------------------------------------------------------
-
-// TestAnExpiredAccessTokenIsRefusedWithoutWaitingForASweep — expiry is enforced
-// at the lookup, so a sweep that has not run yet is never the difference
-// between valid and not.
-func TestAnExpiredAccessTokenIsRefusedWithoutWaitingForASweep(t *testing.T) {
-	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
-	pair, _, _ := exchange(t, pairingBody(k.Key))
-
-	stored, ok := getPeerAccessToken(pair.AccessToken)
-	if !ok {
-		t.Fatal("the access token was not stored")
-	}
-	stored.Expires = time.Now().Add(-time.Second)
-	RootDB.Set(peerAccessTable, pair.AccessToken, stored)
-
-	if authenticates(pair.AccessToken) {
-		t.Error("an expired access token still authenticates")
-	}
-	// The refresh half is untouched by the access token's expiry — that is the
-	// entire point of the pair.
-	if _, code, msg := exchange(t, refreshBody(pair.RefreshToken)); code != http.StatusOK {
-		t.Errorf("refresh after access expiry → %d: %s", code, msg)
-	}
-}
-
-func TestAnExpiredRefreshTokenIsRefused(t *testing.T) {
-	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
-	pair, _, _ := exchange(t, pairingBody(k.Key))
-
-	stored, _ := getPeerRefreshToken(pair.RefreshToken)
-	stored.Expires = time.Now().Add(-time.Second)
-	RootDB.Set(peerRefreshTable, pair.RefreshToken, stored)
-
-	_, code, msg := exchange(t, refreshBody(pair.RefreshToken))
-	if code != http.StatusUnauthorized {
-		t.Fatalf("expired refresh → %d, want 401", code)
-	}
-	if !strings.Contains(msg, "expired") {
-		t.Errorf("the refusal does not say it expired: %q", msg)
-	}
-}
-
-// --- re-pairing --------------------------------------------------------------
-
-// TestRepairIssuesANewCodeAndDropsTheOldChain — the replacement for the admin
-// page's re-display affordance, which a spent code cannot offer.
-func TestRepairIssuesANewCodeAndDropsTheOldChain(t *testing.T) {
-	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
-	old, _, _ := exchange(t, pairingBody(k.Key))
-
-	repaired, err := RepairPeerKey(k.ID)
-	if err != nil {
-		t.Fatalf("repair: %v", err)
-	}
-	if repaired.Key == k.Key {
-		t.Error("re-pairing reissued the same code")
-	}
-	if repaired.Paired != "" {
-		t.Error("re-pairing left the code marked as already exchanged")
-	}
-	if authenticates(old.AccessToken) {
-		t.Error("the previous chain survived a re-pair — two credentials for one grant")
-	}
-	// Capabilities and scope survive: the grant is the durable thing, the
-	// credential is the lease.
-	if len(repaired.Caps) != len(k.Caps) {
-		t.Errorf("re-pairing changed the capability grant: %v → %v", k.Caps, repaired.Caps)
-	}
-	if _, code, msg := exchange(t, pairingBody(repaired.Key)); code != http.StatusOK {
-		t.Errorf("the new pairing code does not work → %d: %s", code, msg)
-	}
-}
-
-// TestTurningRotationOffRestoresTheStaticKey — a switch the operator cannot
-// reverse is one they cannot recover from without re-pairing both ends.
-func TestTurningRotationOffRestoresTheStaticKey(t *testing.T) {
-	defer scratchPeerStore(t)()
-	k := grantFor(t, true)
-	if _, code, _ := exchange(t, pairingBody(k.Key)); code != http.StatusOK {
-		t.Fatal("pairing failed")
-	}
-	if authenticates(k.Key) {
-		t.Fatal("precondition: a rotating key should not authenticate")
+	// And it must SAY exchange is required, or the peer has no reason to.
+	if m.Token == nil || !m.Token.Required {
+		t.Fatalf("the manifest does not require exchange: %+v", m.Token)
 	}
 
-	if _, err := SetPeerKeyRotating(k.ID, false); err != nil {
-		t.Fatalf("unset rotating: %v", err)
+	// Once spent, the code opens nothing at all — the peer holds tokens by then
+	// and has no reason to come back with it.
+	if _, code, msg := exchange(t, pairingBody(k.Key)); code != http.StatusOK {
+		t.Fatalf("exchange → %d: %s", code, msg)
 	}
-	if !authenticates(k.Key) {
-		t.Error("turning rotation off did not restore the static key")
+	r2 := httptest.NewRequest(http.MethodGet, "/api/peer/manifest", nil)
+	r2.Header.Set(peerKeyHeader, k.Key)
+	w2 := httptest.NewRecorder()
+	HandlePeerManifest(w2, r2)
+	if w2.Code == http.StatusOK {
+		t.Error("a spent pairing code still read the manifest")
 	}
 }
 
@@ -375,7 +278,7 @@ func TestTurningRotationOffRestoresTheStaticKey(t *testing.T) {
 
 func TestTheTokenEndpointRefusesNonsense(t *testing.T) {
 	defer scratchPeerStore(t)()
-	grantFor(t, true)
+	grantFor(t)
 
 	for _, tc := range []struct {
 		name, body string
@@ -408,8 +311,8 @@ func TestTheTokenEndpointRefusesNonsense(t *testing.T) {
 // only when its static key starts being refused has already broken.
 func TestTheManifestAdvertisesExchangePerKey(t *testing.T) {
 	defer scratchPeerStore(t)()
-	ordinary := grantFor(t, false)
-	rotating := grantFor(t, true)
+	ordinary := grantFor(t)
+	rotating := grantFor(t)
 
 	manifestFor := func(secret string) PeerManifest {
 		t.Helper()
@@ -431,8 +334,11 @@ func TestTheManifestAdvertisesExchangePerKey(t *testing.T) {
 	if m.Token.Path != "/api/peer/v1/token" {
 		t.Errorf("token path = %q", m.Token.Path)
 	}
-	if m.Token.Required {
-		t.Error("exchange is reported as required for an ordinary key")
+	// Required for EVERY key now. It used to be per-grant, which is what let a
+	// consuming instance adopt the flow ahead of the operator; that ordering
+	// existed for the changeover and the changeover is done.
+	if !m.Token.Required {
+		t.Error("the manifest does not require exchange — a peer reading this has no reason to pair")
 	}
 	if m.Token.ExpiresIn != int(peerAccessTTL/time.Second) {
 		t.Errorf("expires_in = %d", m.Token.ExpiresIn)

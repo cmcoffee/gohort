@@ -81,7 +81,7 @@ func TestPeerBrowseClientRendersOnTheFarSide(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	p := RemotePeer{Name: "gpu-box", BaseURL: srv.URL, Key: pk.Key, Caps: []string{PeerCapBrowse}}
+	p := pairedPeer(t, RemotePeer{Name: "gpu-box", BaseURL: srv.URL, Key: pk.Key, Caps: []string{PeerCapBrowse}}, pk)
 	out, err := peerBrowseFetch(p, "https://example.com/article", 500)
 	if err != nil {
 		t.Fatalf("peer browse: %v", err)
@@ -152,7 +152,7 @@ func TestABorrowingInstanceDoesNotServeBrowse(t *testing.T) {
 	pk, _ := MintPeerKey("mac", []string{PeerCapBrowse}, 0)
 	body, _ := json.Marshal(map[string]any{"url": "https://example.com"})
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/browse", strings.NewReader(string(body)))
-	r.Header.Set(peerKeyHeader, pk.Key)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	w := httptest.NewRecorder()
 	HandlePeerBrowse(w, r)
 	if w.Code != http.StatusServiceUnavailable {

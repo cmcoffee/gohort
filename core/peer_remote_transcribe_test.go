@@ -48,8 +48,12 @@ func TestTranscribeThroughAConfiguredPeer(t *testing.T) {
 	if !strings.HasSuffix(cfg.Endpoint, "/api/peer/v1") {
 		t.Errorf("endpoint = %q, want the peer's OpenAI base", cfg.Endpoint)
 	}
-	if cfg.APIKey != key {
-		t.Error("the peer key was not carried into the config, so the call would 401")
+	// A credential, not the key — see the embedding twin of this assertion.
+	if cfg.APIKey == key {
+		t.Error("the config carries the raw pairing code, which authenticates nothing")
+	}
+	if _, live := peerKeyFromAccessToken(cfg.APIKey); !live {
+		t.Errorf("the config's credential is not a live access token: %q", cfg.APIKey)
 	}
 	// Deliberately NOT installed globally: this process is also the serving
 	// instance, and pointing its own config at the peer would trip the
