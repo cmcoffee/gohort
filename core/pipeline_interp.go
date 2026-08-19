@@ -104,6 +104,25 @@ func (T *AppCore) RunPipelineDefSyncWithTools(ctx context.Context, def PipelineD
 // lifecycle, notification, cleanup). onResult, if set, receives the
 // final output when the pipeline completes — the caller persists it /
 // delivers it. Returns the pipeline ID immediately.
+// RunPipelineDefSyncFields is RunPipelineDefSyncWithTools plus the declared
+// fields behind the text it returns.
+//
+// A pipeline whose final stage declared an Output has already produced a
+// validated, typed result; a caller that wants those values should not have
+// to ask a model to read them back out of the text. That second call is what
+// this exists to avoid (see the machine's pipeline phase, which otherwise
+// pays for a shaping call to recover a shape the pipeline already had).
+//
+// Returns nil fields when the final stage declared nothing, which is not an
+// error: a prose pipeline is a normal pipeline.
+func (T *AppCore) RunPipelineDefSyncFields(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string), inheritedTools []AgentToolDef) (string, map[string]any, error) {
+	out, r, err := T.executePipelineDefRun(ctx, def, input, nil, dispatch, statusSink(status), inheritedTools)
+	if err != nil || r == nil {
+		return out, nil, err
+	}
+	return out, r.outputs[r.lastStage].Fields, nil
+}
+
 func (T *AppCore) RunPipelineDefAsync(cfg PipelineConfig, def PipelineDef, input string, dispatch PipelineDispatch, onResult func(string)) string {
 	return T.RunPipeline(cfg, func(ctx context.Context, pc *PipelineCtx) error {
 		out, err := T.executePipelineDef(ctx, def, input, dispatch, pc.Status, nil)
@@ -133,8 +152,15 @@ func (T *AppCore) executePipelineDefSink(ctx context.Context, def PipelineDef, i
 // values. Unexported and called from within core (the run surface), so the four
 // exported Run* entry points keep the signatures they have.
 func (T *AppCore) executePipelineDefVars(ctx context.Context, def PipelineDef, input string, vars map[string]string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
+	out, _, err := T.executePipelineDefRun(ctx, def, input, vars, dispatch, sink, inheritedTools)
+	return out, err
+}
+
+// executePipelineDefRun is executePipelineDefVars plus the run itself, for
+// the one caller that needs more than the final text: the fields behind it.
+func (T *AppCore) executePipelineDefRun(ctx context.Context, def PipelineDef, input string, vars map[string]string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, *pipelineRun, error) {
 	if err := def.Validate(); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	r := &pipelineRun{
 		app:       T,
@@ -146,7 +172,7 @@ func (T *AppCore) executePipelineDefVars(ctx context.Context, def PipelineDef, i
 		outputs:   make(map[string]stageOutput, len(def.Stages)),
 	}
 	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
-	return out, err
+	return out, r, err
 }
 
 // pipelineRun is one execution of a pipeline definition — the state every
@@ -164,9 +190,10 @@ type pipelineRun struct {
 	// loop body builds its own vars ({iteration}) and passes those down: a
 	// threaded value would be visible everywhere EXCEPT inside a loop, which is
 	// where a refinement pipeline does its work.
-	vars     map[string]string
-	outputs  map[string]stageOutput
-	blockSeq atomic.Int64 // block ids, unique across parallel fanout branches
+	vars      map[string]string
+	outputs   map[string]stageOutput
+	lastStage string       // the stage whose output the run is returning
+	blockSeq  atomic.Int64 // block ids, unique across parallel fanout branches
 }
 
 // status emits a soft progress line. Kept as a method so the interpreter's
@@ -550,6 +577,12 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			}
 		}
 		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
+		// Which stage the run's returned text belongs to. A caller that
+		// wants the FIELDS behind that text (a machine phase taking a
+		// pipeline's declared shape as its own) cannot work it out from
+		// def.Stages: a branch may have skipped the tail, so the last
+		// stage in the list is not always the last one to run.
+		r.lastStage = stage.Name
 		// The transcript gets a READABLE rendering; `out` — the JSON a declared
 		// stage produces — stays exactly as it is for everything downstream.
 		closeBlock(transcriptBody(stage, out, fields))

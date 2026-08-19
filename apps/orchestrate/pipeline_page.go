@@ -213,36 +213,17 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	}
 	// The order matches the machine editor's, section for section, so
 	// somebody moving between the two finds the same things in the same
-	// places: identity, then the wholesale change, then the parts, then
-	// trying it, what it costs, who gets it, and what is worth a look.
-	// They had drifted into two different orders within a day of each
-	// other.
-	page.Sections = append(page.Sections,
-		// A form on the page, not a dialog: drafting runs a model for up
-		// to a minute and can come back with nothing runnable, and a
-		// door that cannot show you why is the wrong door for it
-		// (v0.6.220).
-		ui.Section{
-			Title: "Describe a change",
-			Wide:  true,
-			Subtitle: "Say what should be different and the pipeline is redrafted with that change made, keeping every stage and prompt it does not touch. " +
-				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
-			Body: ui.Stack{Children: []ui.Component{
-				ui.FormPanel{
-					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
-					SubmitLabel: "Revise it",
-					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
-					Fields: []ui.FormField{{
-						Field: "description", Type: "textarea", Rows: 4,
-						Label:       "What should change?",
-						Placeholder: "Research each query with the web tools instead of answering from memory, and add a stage that checks the sources before the summary.",
-						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
-					}},
-				},
-				undoPipelineRevisionToolbar(def),
-			}},
-		},
-	)
+	// places: identity, then the parts, then running it, then the
+	// wholesale change, what it costs, who gets it, and what is worth a
+	// look. They had drifted into two different orders within a day of
+	// each other, and the pinned test is what keeps them from doing it
+	// again (TestBothEditorsPresentTheSameOrder).
+	//
+	// Build, rehearse, revise — in that order, because that is the loop.
+	// "Say what should be different" presumes you know what is wrong, and
+	// running it is what tells you; a redraft offered before the rehearsal
+	// asks for a verdict nobody has earned yet. It also put the biggest
+	// button on the page in front of somebody who came to edit one prompt.
 	page.Sections = append(page.Sections, pipelineStageSections(def,
 		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
 	page.Sections = append(page.Sections,
@@ -268,6 +249,10 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				SessionDeleteURL: "api/pipelines/" + url_(def.ID) + "/sessions/{id}",
 				SubmitURL:        "api/pipelines/" + url_(def.ID) + "/stream",
 				SubmitLabel:      "Run it",
+				// This page's ?id= is the PIPELINE. Without naming the param,
+				// the panel's deep-link fallback reads it as a session id and
+				// opens a run that cannot exist.
+				DeepLinkParam: "session",
 				Fields: []ui.PipelineField{{
 					// "topic" because the stream endpoint accepts
 					// input|topic and the panel titles a run from it.
@@ -281,6 +266,30 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				BulkSelect: true,
 				EmptyText:  "No runs yet. This is the fastest way to find out whether a stage is doing what its prompt says.",
 			},
+		},
+		// A form on the page, not a dialog: drafting runs a model for up
+		// to a minute and can come back with nothing runnable, and a
+		// door that cannot show you why is the wrong door for it
+		// (v0.6.220).
+		ui.Section{
+			Title: "Describe a change",
+			Wide:  true,
+			Subtitle: "Say what should be different and the pipeline is redrafted with that change made, keeping every stage and prompt it does not touch. " +
+				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
+					SubmitLabel: "Revise it",
+					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
+					Fields: []ui.FormField{{
+						Field: "description", Type: "textarea", Rows: 4,
+						Label:       "What should change?",
+						Placeholder: "Research each query with the web tools instead of answering from memory, and add a stage that checks the sources before the summary.",
+						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
+					}},
+				},
+				undoPipelineRevisionToolbar(def),
+			}},
 		},
 		ui.Section{
 			// Derived, not written: the definition knows which stages

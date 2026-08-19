@@ -500,3 +500,25 @@ func TestBothEditorsPresentTheSameOrder(t *testing.T) {
 		t.Errorf("expected every shared section, found %v — a title changed and this test stopped checking", got)
 	}
 }
+
+// The editor page's ?id= is the PIPELINE. The run panel's deep-link
+// bootstrap falls back to a bare "id" when an app has not named its param,
+// so an unnamed panel here opened a session whose id was the pipeline's,
+// got a 404, and painted "Load failed" over the empty state on every first
+// load — cleared only by clicking New session.
+func TestRunPanelNamesItsDeepLinkParam(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SavePipelineDef(udb, PipelineDef{
+		Owner: user, Name: "Research",
+		Stages: []PipelineStage{{Name: "one", Prompt: "do"}},
+	})
+	r := httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"deep_link_param":"session"`) {
+		t.Error("the run panel must name its deep-link param, or the page's own ?id= reads as a session id")
+	}
+}

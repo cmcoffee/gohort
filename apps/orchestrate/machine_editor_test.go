@@ -70,24 +70,30 @@ func TestEditorAsksQuestionsRatherThanNamingFields(t *testing.T) {
 	}
 }
 
-// The checklist is Validate's findings shown as work remaining. Same
-// function behind both, so it cannot disagree with what a save accepts.
+// The checklist is Validate's findings shown as work remaining, plus the
+// findings that need to know what this user's agents can actually reach
+// (machineChecklist). Same functions behind the page, the modal, and every
+// save answer, so none of the three can disagree with the others.
 func TestChecklistIsTheValidatorsOwnFindings(t *testing.T) {
 	_, udb, user, _ := editorFixture(t)
 	broken := SaveMachineDef(udb, MachineDef{
 		Owner: user, Name: "Half built",
 		Phases: []MachinePhase{{Name: "one", Prompt: "do a thing"}},
 	})
-	spec := machineEditorSpec(broken, editorCatalog{})
+	spec := machineEditorSpec(broken, editorCatalog{checklist: machineChecklist(udb, user, broken)})
 	list, _ := spec["checklist"].([]string)
 	if len(list) == 0 {
 		t.Fatal("a machine with no resident phase should report work remaining")
 	}
+	// This machine narrows nothing, so the composed list is Validate's
+	// findings exactly — the tool-name pass has nothing to add.
 	if len(list) != len(broken.Problems()) {
 		t.Errorf("checklist and Validate disagree: %v vs %v", list, broken.Problems())
 	}
 	// And a complete machine says so rather than showing an empty list.
-	if done := machineEditorSpec(mustValid(t, udb, user), editorCatalog{}); len(done["checklist"].([]string)) != 0 {
+	valid := mustValid(t, udb, user)
+	done := machineEditorSpec(valid, editorCatalog{checklist: machineChecklist(udb, user, valid)})
+	if len(done["checklist"].([]string)) != 0 {
 		t.Errorf("a valid machine should have nothing outstanding: %v", done["checklist"])
 	}
 }
@@ -256,7 +262,7 @@ func TestEditorPageUsesTheSharedSpec(t *testing.T) {
 	if !strings.Contains(string(src), "machineEditorSpec(def,") {
 		t.Error("the page should render the shared editor spec, not a second copy of it")
 	}
-	if !strings.Contains(string(src), "checklistHTML(def)") {
+	if !strings.Contains(string(src), "checklistHTML(def,") {
 		t.Error("the page should show what is still missing")
 	}
 }
@@ -627,13 +633,18 @@ func TestPhaseFormReadsInTheOrderTheStepRuns(t *testing.T) {
 	body := string(raw)
 
 	order := []string{
+		// The two questions that reshape the form come first: both change
+		// the prompt box under the author's hand — its label, its help,
+		// and the group beneath it — so asking for the prose first was
+		// asking somebody to write against a spec they had not seen.
+		"What kind of step is this?",
+		"Who runs this step",
 		// A step that passes through asks HOW to go about it — the fields
 		// carry what to produce.
 		"How to go about it",
-		"What kind of step is this?",
-		"Who runs this step",
 		"What this step establishes",
 		"Where it goes next",
+		"Coming back to this step",
 		"How this step runs",
 	}
 	prev := -1
@@ -836,7 +847,7 @@ func TestToolNarrowingIsPickedNotTyped(t *testing.T) {
 		{Value: "search_web", Label: "search_web", Group: "Network", Help: "Search the web"},
 		{Value: "read_file", Label: "read_file", Group: "Read"},
 	}}
-	raw, _ := json.Marshal(phaseFieldsFor(def, tri, cat))
+	raw, _ := json.Marshal(phaseToolFields(tri, cat))
 	form := string(raw)
 
 	if strings.Contains(form, `"type":"tags"`) {
@@ -1554,7 +1565,7 @@ func TestATooledDelegateCanStillDropItsTools(t *testing.T) {
 	cat := editorCatalog{tools: []ui.SelectOption{{Value: "read_file", Label: "read_file"}}}
 
 	find := func(p MachinePhase) ui.FormField {
-		for _, f := range phaseFieldsFor(def, p, cat) {
+		for _, f := range phaseToolFields(p, cat) {
 			if f.Field == "tools" {
 				return f
 			}
@@ -1563,10 +1574,10 @@ func TestATooledDelegateCanStillDropItsTools(t *testing.T) {
 		return ui.FormField{}
 	}
 
-	tools := find(both)
-	if tools.ShowWhen != "" {
-		t.Errorf("a delegate carrying tools must still be able to drop them, got show_when=%q", tools.ShowWhen)
+	if !phaseShowsTools(both) {
+		t.Error("a delegate carrying tools must still be able to drop them")
 	}
+	tools := find(both)
 	// And it says why it is there rather than leaving the reader to find
 	// the explanation in a findings list two sections down.
 	if !strings.Contains(tools.Help, "delegate") || !strings.Contains(tools.Help, "do nothing") {
@@ -1585,10 +1596,16 @@ func TestATooledDelegateCanStillDropItsTools(t *testing.T) {
 	}
 
 	// The ordinary case is unchanged: a delegate with no tools does not
-	// grow an inert control.
+	// grow an inert control. The gate moved from a show_when to a server-side
+	// decision when the control moved to its own panel — a show_when reads
+	// the values of its OWN form, and the delegate now lives in the other one.
 	plain := MachinePhase{Name: "dig", Prompt: "look", Next: "answer", Agent: "ag-1"}
-	if got := find(plain).ShowWhen; got != "!agent" {
-		t.Errorf("an empty list under a delegate should stay hidden, got %q", got)
+	if phaseShowsTools(plain) {
+		t.Error("an empty list under a delegate should stay hidden")
+	}
+	// And a step that delegates nothing keeps its control, delegate field or not.
+	if !phaseShowsTools(MachinePhase{Name: "dig", Prompt: "look"}) {
+		t.Error("an undelegated step should offer the control")
 	}
 }
 
@@ -1663,5 +1680,80 @@ func TestADelegatesStoredModelAndReasoningStayVisible(t *testing.T) {
 		if (f.Field == "model" || f.Field == "think") && f.ShowWhen != "!agent" {
 			t.Errorf("%s should stay hidden when empty, got %q", f.Field, f.ShowWhen)
 		}
+	}
+}
+
+// The tool limit and the model choice must not travel in the same save.
+//
+// A FormPanel with no SubmitLabel auto-saves by POSTing the WHOLE record on
+// every field change, so while these shared a panel, setting a step to lead
+// also wrote what that step may reach — and a step whose tool list had gone
+// stale lost its catalog on a save nobody thought was about tools. Separate
+// panels are separate requests, and applyPhaseEdit touches only the keys a
+// body carries.
+func TestModelAndToolsSaveSeparately(t *testing.T) {
+	def := MachineDef{Name: "M", Start: "dig", Phases: []MachinePhase{
+		{Name: "dig", Prompt: "look", Next: "answer", Model: "lead"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	cat := editorCatalog{tools: []ui.SelectOption{{Value: "read_file", Label: "read_file"}}}
+
+	panels := phasePanels(def, "api/machines/x", cat)
+	if len(panels) == 0 {
+		t.Fatal("no panels")
+	}
+	stack, ok := panels[0].(ui.Stack)
+	if !ok {
+		t.Fatalf("phase 0 is %T, want a Stack", panels[0])
+	}
+	holds := func(p ui.FormPanel, field string) bool {
+		for _, f := range p.Fields {
+			if f.Field == field {
+				return true
+			}
+		}
+		return false
+	}
+	var withModel, withTools int
+	for _, c := range stack.Children {
+		fp, ok := c.(ui.FormPanel)
+		if !ok {
+			continue
+		}
+		m, tl := holds(fp, "model"), holds(fp, "tools")
+		if m && tl {
+			t.Error("model and tools share a panel — a save of either writes both")
+		}
+		if m {
+			withModel++
+		}
+		if tl {
+			withTools++
+		}
+	}
+	if withModel != 1 || withTools != 1 {
+		t.Errorf("want one panel each, got model in %d and tools in %d", withModel, withTools)
+	}
+}
+
+// Which model answers is a routing decision, re-read constantly; it is not
+// an advanced setting to be found behind a shut accordion. The tool limit is
+// the rare one, and it collapses — but says how many it holds, because a
+// restriction nobody can see is what this whole seam came out of.
+func TestRoutingIsExposedAndTheToolLimitCollapses(t *testing.T) {
+	p := MachinePhase{Name: "dig", Prompt: "look", Next: "answer", Tools: []string{"read_file", "grep_file"}}
+	def := MachineDef{Name: "M", Start: "dig", Phases: []MachinePhase{p, {Name: "answer", Prompt: "reply", Resident: true}}}
+
+	for _, f := range phaseFieldsFor(def, p, editorCatalog{}) {
+		if f.Type == "header" && strings.Contains(f.Label, "How this step runs") && f.Collapsed {
+			t.Error("the model choice should not be hidden behind a collapsed header")
+		}
+	}
+	head := phaseToolFields(p, editorCatalog{})[0]
+	if head.Type != "header" || !head.Collapsed {
+		t.Fatalf("the tool limit should open collapsed, got %+v", head)
+	}
+	if !strings.Contains(head.Label, "2 selected") {
+		t.Errorf("a collapsed limit must still say it is set: %q", head.Label)
 	}
 }

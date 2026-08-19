@@ -963,6 +963,11 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			SubmitURL:        "pipeline/stream",
 			SubmitLabel:      firstNonEmptyStr(mapStr(m, "submit_label"), "Start"),
 			Fields:           fields,
+			// Name the deep-link param, because an app page's own ?id= is
+			// whatever THAT app means by it — a record in a table section,
+			// usually — and the panel's generic fallback would read it as a
+			// run to open.
+			DeepLinkParam: "session",
 			// A stage transcript is prose — headings, lists, citations — so it
 			// renders as markdown, and past runs get checkboxes because a run
 			// history is something you prune in batches.

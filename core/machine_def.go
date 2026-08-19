@@ -62,6 +62,20 @@ const MachineDefsTable = "machine_defs"
 // turn. Hitting it is a breadcrumb, never a silent stop.
 const MaxPhaseTransitions = 4
 
+// MaxUnattendedTransitions caps an UNATTENDED run the same way, at a
+// number chosen for a different job.
+//
+// Four is right for a turn somebody is waiting on. A run nobody is
+// watching is the other case: deep research is twenty-two phases, and a
+// ceiling that cannot hold the shapes this exists to serve would make
+// the mode useless. A hundred is well clear of that and still bounds a
+// cycle to a bill somebody can survive.
+//
+// It is a BACKSTOP, not a design. A machine whose graph can cycle
+// without a guard that reads a declared field is refused at save time
+// (see problems); this catches what validation cannot prove.
+const MaxUnattendedTransitions = 100
+
 // MachineDef is the serializable recipe: a named, ordered set of phases
 // plus the phase a fresh session starts in.
 type MachineDef struct {
@@ -76,6 +90,20 @@ type MachineDef struct {
 	Start string `json:"start,omitempty"`
 
 	Phases []MachinePhase `json:"phases"`
+
+	// Unattended marks a machine that RUNS rather than converses. It is
+	// started once, walks its phases until one hands off nowhere, and
+	// that phase's result is the run's result. Nobody is waiting, so
+	// there is no phase for a turn to land in and no reason to stop
+	// early: the conversational hop cap (MaxPhaseTransitions, four, a
+	// courtesy to somebody watching a cursor blink) is replaced by
+	// MaxUnattendedTransitions.
+	//
+	// It inverts the resident rule rather than relaxing it. A
+	// conversational machine MUST have a step the conversation waits in;
+	// an unattended one must have none, because a step that waits for a
+	// person is a step this run can never leave.
+	Unattended bool `json:"unattended,omitempty"`
 
 	Created time.Time `json:"created,omitempty"` // stripped on export
 	Updated time.Time `json:"updated,omitempty"` // stripped on export
@@ -243,6 +271,22 @@ type MachinePhase struct {
 	// it delegates to may simply not exist here yet. The phase falls back
 	// to running inline, and says so.
 	Agent string `json:"agent,omitempty"`
+
+	// Pipeline names a stored pipeline that RUNS this phase, by name or
+	// id. Mutually exclusive with Agent, because they are different kinds
+	// of thing: a delegate is another AGENT (its own persona, tools and
+	// memory, deciding its own approach), a pipeline is a RECIPE (fixed
+	// stages, fanout, loop, declared output).
+	//
+	// Same portability posture as Agent: a pipeline that does not exist in
+	// this deployment does not fail the turn, the phase runs inline and
+	// says so.
+	//
+	// A pipeline whose final stage declares the fields this phase declares
+	// costs ONE call: the shape it already produced is taken as the
+	// phase's own. A delegate cannot do that, because an agent answers in
+	// prose and something has to read the fields back out of it.
+	Pipeline string `json:"pipeline,omitempty"`
 }
 
 // MayExitTo reports whether change_phase may move a conversation from
@@ -730,7 +774,23 @@ func (d MachineDef) problems() []string {
 		}
 		declared[p.Name] = fields
 	}
-	if resident == 0 {
+	switch {
+	case d.Unattended && resident > 0:
+		// The inverse of the rule below, and worth its own sentence: a
+		// step that waits for a person, in a run with no person, is a
+		// step the walk enters and cannot leave.
+		probs = append(probs, "this machine RUNS unattended, so no step may wait for the person — "+
+			strings.Join(residentNames(d), ", ")+" would stop the run with nobody there to continue it. "+
+			"Turn off \"the conversation waits here\", or turn off unattended.")
+	case d.Unattended && !d.hasTerminalPhase():
+		// Where a conversational machine ends by handing the turn back,
+		// an unattended one ends by running out of steps. Without a step
+		// that hands off nowhere there is no result to return, and the
+		// run would walk until the backstop.
+		probs = append(probs, "this machine RUNS unattended but no step finishes it — every step hands on to another, "+
+			"so the run has no result and would walk until it hits the "+strconv.Itoa(MaxUnattendedTransitions)+"-step ceiling. "+
+			"Leave \"then go to\" empty on the step that produces the answer.")
+	case !d.Unattended && resident == 0:
 		probs = append(probs, "no step waits for the person — a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies.")
 	}
 	if s := d.StartPhase(); s != "" && !seen[s] {
@@ -748,6 +808,30 @@ func (d MachineDef) problems() []string {
 	return probs
 }
 
+// hasTerminalPhase reports whether any step hands off nowhere: no static
+// next, and no routing field to pick one. That step is where an
+// unattended run finishes and what it returns.
+func (d MachineDef) hasTerminalPhase() bool {
+	for _, p := range d.Phases {
+		if strings.TrimSpace(p.Next) == "" && strings.TrimSpace(p.RoutesBy()) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// residentNames lists the steps that wait, for a message that names them
+// rather than leaving somebody to find them.
+func residentNames(d MachineDef) []string {
+	var out []string
+	for _, p := range d.Phases {
+		if p.Resident {
+			out = append(out, strconv.Quote(p.Name))
+		}
+	}
+	return out
+}
+
 // phaseProblems collects one phase's wiring problems.
 func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared map[string]map[string]PipelineFieldType) []string {
 	var probs []string
@@ -761,13 +845,22 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	default:
 		probs = append(probs, "step "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
 	}
+	if strings.TrimSpace(p.Agent) != "" && strings.TrimSpace(p.Pipeline) != "" {
+		probs = append(probs, "step "+name+" names both an agent and a pipeline — a step is run by one thing. "+
+			"An agent brings its own persona and tools; a pipeline is a fixed recipe. Keep whichever the step is really for.")
+	}
 	if t := strings.TrimSpace(p.Next); t != "" && !seen[t] {
 		probs = append(probs, "step "+name+": next names unknown step "+strconv.Quote(t))
 	}
-	if !p.Resident && strings.TrimSpace(p.Next) == "" && p.RoutesBy() == "" {
+	if !d.Unattended && !p.Resident && strings.TrimSpace(p.Next) == "" && p.RoutesBy() == "" {
 		// A transient phase that hands off nowhere would run and then
 		// strand the turn with no reply. Catch it here rather than
 		// letting the driver degrade at run time.
+		//
+		// Exempt in an UNATTENDED machine, where this is not a dead end
+		// but the finish line: the step that hands off nowhere is where
+		// the run stops and what it returns. The inverse rule (a run must
+		// HAVE one) is checked once for the machine, in problems().
 		probs = append(probs, "step "+name+" passes on but goes nowhere — a step the person never takes a turn in has to hand off somewhere. Set next, or list choices for it to decide between.")
 	}
 	if p.Resident && len(p.Output) > 0 {

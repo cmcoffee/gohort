@@ -355,40 +355,83 @@ func (m turnMachine) Tools(catalog []AgentToolDef) []AgentToolDef {
 	return PhaseTools(m.phase, catalog)
 }
 
-// narrowCatalog is Tools plus what it took away: the names this phase
-// removed, and the names it ASKED for that the catalog never had.
+// machineControlTools are the framework's own control plane: how a turn
+// ends, and how the machine moves. A phase's Tools list is a statement
+// about the agent's REACH — which systems it may touch while it is here —
+// and never about whether the loop still functions, so these survive the
+// narrowing no matter what the phase names.
 //
-// Both are needed because a silent narrowing is indistinguishable, from
-// inside the turn, from a tool that never existed. The model has its own
-// successful calls from an earlier phase in front of it, so when the name
-// stops resolving it concludes it mistyped and retries spellings — and
-// nothing in the log said otherwise, because the full-surface catalog line
-// is printed upstream of this filter and reported the wider set.
+// change_phase is the load-bearing one. A phase that dropped it could not
+// be LEFT: the model had no way out of the step it was standing in, for
+// the rest of the session, and nothing it could say would change that.
+// The others are how a turn reaches an end at all — without them the model
+// can neither answer, plan, decline, nor continue.
+//
+// resolveWorkerTools already force-includes this class past the agent's own
+// allowlist for exactly this reason; the phase filter runs downstream of
+// that decision and must not quietly undo it.
+var machineControlTools = map[string]bool{
+	"change_phase":     true,
+	"plan_set":         true,
+	"respond_directly": true,
+	"stay_silent":      true,
+	"keep_going":       true,
+}
+
+// narrowCatalog is Tools plus what it took away: the names this phase
+// removed, the names it ASKED for that the catalog never had, and whether
+// the ask missed so completely that the narrowing was abandoned.
+//
+// Both lists are needed because a silent narrowing is indistinguishable,
+// from inside the turn, from a tool that never existed. The model has its
+// own successful calls from an earlier phase in front of it, so when the
+// name stops resolving it concludes it mistyped and retries spellings —
+// and nothing in the log said otherwise, because the full-surface catalog
+// line is printed upstream of this filter and reported the wider set.
 //
 // The unmatched list catches the other half: a phase naming a tool by a
 // name the catalog doesn't use (an MCP tool is exposed as
-// "<server>_<tool>", not the raw remote name) silently narrows to nothing
-// instead of reporting that its allow-list missed.
-func (m turnMachine) narrowCatalog(catalog []AgentToolDef) (out []AgentToolDef, dropped, unmatched []string) {
-	out = m.Tools(catalog)
+// "<server>_<tool>", LOWERCASED by sanitizeToolName, never the raw remote
+// name — Atlassian's camelCase getConfluencePage is atlassian_getconfluencepage
+// here) narrows toward nothing instead of reporting that its allow-list missed.
+//
+// fellBack reports the end of that road: a list where NOTHING matched.
+// Read literally that means "this phase may use no tools", but no author
+// writes a list of names to express emptiness — they write it to express a
+// selection, and a selection that resolves to zero is a typo every time.
+// Taken literally it also costs the model its control plane, so the turn
+// ends up unable to answer or advance. We keep the catalog whole and say so
+// instead; a phase that genuinely wants no tools says that by naming none.
+func (m turnMachine) narrowCatalog(catalog []AgentToolDef) (out []AgentToolDef, dropped, unmatched []string, fellBack bool) {
+	narrowed := m.Tools(catalog)
 	if !m.on || len(m.phase.Tools) == 0 {
-		return out, nil, nil
+		return narrowed, nil, nil, false
 	}
-	kept := make(map[string]bool, len(out))
-	for _, td := range out {
+	kept := make(map[string]bool, len(narrowed))
+	for _, td := range narrowed {
 		kept[td.Tool.Name] = true
-	}
-	for _, td := range catalog {
-		if !kept[td.Tool.Name] {
-			dropped = append(dropped, td.Tool.Name)
-		}
 	}
 	for _, n := range m.phase.Tools {
 		if n = strings.TrimSpace(n); n != "" && !kept[n] {
 			unmatched = append(unmatched, n)
 		}
 	}
-	return out, dropped, unmatched
+	if len(narrowed) == 0 {
+		return catalog, nil, unmatched, true
+	}
+	// Rebuilt in CATALOG order rather than appending the exempt tools to the
+	// end: the payload the model sees stays byte-stable across turns, which
+	// is what keeps the prompt cache warm.
+	out = make([]AgentToolDef, 0, len(narrowed)+len(machineControlTools))
+	for _, td := range catalog {
+		switch {
+		case kept[td.Tool.Name], machineControlTools[td.Tool.Name]:
+			out = append(out, td)
+		default:
+			dropped = append(dropped, td.Tool.Name)
+		}
+	}
+	return out, dropped, unmatched, false
 }
 
 // Tier is the phase's model override, feeding AgentLoopConfig.

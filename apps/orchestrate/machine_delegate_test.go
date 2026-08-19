@@ -154,3 +154,93 @@ func diagTrail(t *testing.T, udb Database, agentID, sessionID string) string {
 	}
 	return b.String()
 }
+
+// --- a phase run through a pipeline ------------------------------------
+
+// The one-call path, which is the whole reason to prefer a pipeline over a
+// delegate where a recipe fits: the pipeline's final stage already
+// declared these fields, so nothing has to read them back out of prose.
+func TestPipelinePhaseTakesThePipelinesOwnShape(t *testing.T) {
+	declared := []PipelineField{{Name: "verdict", Type: FieldString}, {Name: "confident", Type: FieldBool}}
+	js, ok := declaredFieldsJSON(declared, map[string]any{
+		"verdict": "it fails under load", "confident": true, "extra": "ignored",
+	})
+	if !ok {
+		t.Fatal("every declared field was present; the shape should have been taken")
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(js), &got); err != nil {
+		t.Fatalf("the decoder has to be able to read what we hand it: %v", err)
+	}
+	if got["verdict"] != "it fails under load" || got["confident"] != true {
+		t.Errorf("values did not survive: %#v", got)
+	}
+	// Only what the phase asked for. A stray field is the pipeline's
+	// business, not the blackboard's.
+	if _, leaked := got["extra"]; leaked {
+		t.Error("a field the phase never declared should not land on it")
+	}
+}
+
+// A partial match is not a shortcut. The missing field would decode as
+// empty and read as "the pipeline had nothing to say", when the truth is
+// that nobody asked it.
+func TestPipelinePhaseFallsBackWhenAFieldIsMissing(t *testing.T) {
+	declared := []PipelineField{{Name: "verdict", Type: FieldString}, {Name: "why", Type: FieldString}}
+	if _, ok := declaredFieldsJSON(declared, map[string]any{"verdict": "yes"}); ok {
+		t.Error("a partial shape should go to the shaping call instead")
+	}
+	if _, ok := declaredFieldsJSON(declared, nil); ok {
+		t.Error("a prose pipeline has no shape to take")
+	}
+}
+
+// Name first, because a machine is portable: the recipe carries the name
+// somebody wrote, while the id belongs to the deployment it was authored in.
+func TestPipelinePhaseResolvesByNameThenID(t *testing.T) {
+	_, udb, user := newTestOrchestrate(t)
+	def := SavePipelineDef(udb, PipelineDef{
+		Owner: user, Name: "Fact check",
+		Stages: []PipelineStage{{Name: "check", Prompt: "check {input}"}},
+	})
+	if got, ok := findPipelineByNameOrID(udb, user, "Fact check"); !ok || got.ID != def.ID {
+		t.Error("a phase should resolve its pipeline by the name an author typed")
+	}
+	if got, ok := findPipelineByNameOrID(udb, user, "fact CHECK"); !ok || got.ID != def.ID {
+		t.Error("the name match should not care about case")
+	}
+	if got, ok := findPipelineByNameOrID(udb, user, def.ID); !ok || got.ID != def.ID {
+		t.Error("an id should still resolve, for machines authored before names were stored")
+	}
+	if _, ok := findPipelineByNameOrID(udb, user, "no such thing"); ok {
+		t.Error("an unknown reference must report itself missing so the phase can run inline")
+	}
+}
+
+// A step is run by ONE thing.
+func TestAPhaseNamingBothAnAgentAndAPipelineIsReported(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "work", Phases: []MachinePhase{
+		{Name: "work", Prompt: "do", Next: "talk", Agent: "ag-1", Pipeline: "Fact check"},
+		{Name: "talk", Prompt: "reply", Resident: true},
+	}}
+	var found bool
+	for _, p := range def.Problems() {
+		if strings.Contains(p, "both an agent and a pipeline") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a step with two runners should be reported: %v", def.Problems())
+	}
+}
+
+// The control is visible when it is usable, and stays visible when a
+// value is stored so it can be taken back out.
+func TestPipelineControlHidesUnderADelegate(t *testing.T) {
+	if got := pipelineShowWhen(MachinePhase{Name: "s"}); got != "!agent" {
+		t.Errorf("an undelegated step should offer the choice, got %q", got)
+	}
+	if got := pipelineShowWhen(MachinePhase{Name: "s", Pipeline: "Fact check"}); got != "" {
+		t.Errorf("a stored pipeline must stay visible so it can be removed, got %q", got)
+	}
+}

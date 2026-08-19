@@ -1422,7 +1422,10 @@
       finish();
     }
 
-    function openSession(id) {
+    // opts.guessed marks an id the PANEL inferred rather than one the
+    // reader picked — see the deep-link bootstrap at the bottom.
+    function openSession(id, opts) {
+      var guessed = !!(opts && opts.guessed);
       currentSessionId = id || '';
       clearTranscript();
       transcript.appendChild(emptyHint);
@@ -1515,6 +1518,18 @@
           transcript.appendChild(exportBtn);
         }
       }).catch(function(err) {
+        // An id we GUESSED at — the page's own ?id=, a stale bookmark —
+        // failing to load is not something the reader did, and reporting
+        // it as an error blames them for opening a page. Fall back to the
+        // new-run state, which is where they were headed anyway.
+        if (guessed) {
+          currentSessionId = '';
+          setSessionTitle('');
+          renderActions(null);
+          setFormVisible(true);
+          mobileTitle.textContent = 'New run';
+          return;
+        }
         transcript.appendChild(el('div', {class: 'ui-chat-error'}, ['Load failed: ' + err.message]));
       });
     }
@@ -1682,13 +1697,21 @@
       // names are always also honored as fallbacks so older
       // bookmarks and shareable links keep working.
       var sid = '';
-      if (cfg.deep_link_param) sid = params.get(cfg.deep_link_param) || '';
-      if (!sid) {
+      if (cfg.deep_link_param) {
+        // An app that NAMES its param means that one, and only that one.
+        // The generic fallbacks below are for links that predate the
+        // setting — but "id" is the most reused name there is: on any
+        // EDITOR page it identifies the record being edited, not a run.
+        // Reading it as a session id made the panel open a session that
+        // never existed and paint "Load failed: 404" over the empty state
+        // on every first load of the pipeline editor.
+        sid = params.get(cfg.deep_link_param) || '';
+      } else {
         sid = params.get('session') || params.get('id') || params.get('run') || '';
       }
       if (sid) {
         if (cfg.reconnect_url) tryReconnect(sid);
-        else openSession(sid);
+        else openSession(sid, {guessed: true});
       }
     } catch (_) {}
 

@@ -258,7 +258,11 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// that list is how every phase's form ended up under the first phase
 	// and the second phase's section showed the "add" button: the menu
 	// and the diagram were right, and the bodies under them were not.
-	spec := machineEditorSpec(def, editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})
+	checklist := machineChecklist(udb, user, def)
+	spec := machineEditorSpec(def, editorCatalog{
+		agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
+		pipelines: pipelineOptions(udb, user), checklist: checklist,
+	})
 	meta, _ := spec["meta"].(ui.FormPanel)
 	panels, _ := spec["phases"].([]ui.Component)
 	add, _ := spec["add"].(ui.ModalButton)
@@ -322,36 +326,6 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 					}}},
 				}},
 			},
-			// Say what should change, against the machine already on
-			// screen. A SECTION rather than a dialog, and that is the
-			// whole point: ModalButton opens a native <dialog> with
-			// showModal(), which renders in the browser's top layer —
-			// above every z-index there is. Anything the framework
-			// raises from inside one (a toast, another modal) lands
-			// underneath it and cannot be seen, so a submit that failed
-			// in there reset its button and told you nothing. On the
-			// page the form is just a form: its errors render inline,
-			// next to the box you typed in.
-			{
-				Title: "Describe a change",
-				Wide:  true,
-				Subtitle: "Say what should be different and the machine is redrafted with that change made, keeping every step and prompt it does not touch. " +
-					"The version you have now is kept, so you can put it back.",
-				Body: ui.Stack{Children: []ui.Component{
-					ui.FormPanel{
-						PostURL:     machineAPIBase(def) + "/revise",
-						SubmitLabel: "Revise it",
-						RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
-						Fields: []ui.FormField{{
-							Field: "description", Type: "textarea", Rows: 4,
-							Label:       "What should change?",
-							Placeholder: "Let triage choose between three lanes — logs, config, and a plain question — and give the config lane its own step before it answers.",
-							Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
-						}},
-					},
-					undoRevisionToolbar(def),
-				}},
-			},
 		},
 	}
 	// One section PER STEP, so the left rail is the list of steps and you
@@ -394,6 +368,36 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Wide:     true,
 			Subtitle: "Hold a rehearsal conversation with it: send a message, watch where it goes, then keep sending — later turns resume the parked step, so you can watch a guard fire or a handoff happen. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 			Body:     machineTryPanel(def),
+		},
+		// Say what should change, against the machine already on
+		// screen. A SECTION rather than a dialog, and that is the
+		// whole point: ModalButton opens a native <dialog> with
+		// showModal(), which renders in the browser's top layer —
+		// above every z-index there is. Anything the framework
+		// raises from inside one (a toast, another modal) lands
+		// underneath it and cannot be seen, so a submit that failed
+		// in there reset its button and told you nothing. On the
+		// page the form is just a form: its errors render inline,
+		// next to the box you typed in.
+		{
+			Title: "Describe a change",
+			Wide:  true,
+			Subtitle: "Say what should be different and the machine is redrafted with that change made, keeping every step and prompt it does not touch. " +
+				"The version you have now is kept, so you can put it back.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					PostURL:     machineAPIBase(def) + "/revise",
+					SubmitLabel: "Revise it",
+					RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
+					Fields: []ui.FormField{{
+						Field: "description", Type: "textarea", Rows: 4,
+						Label:       "What should change?",
+						Placeholder: "Let triage choose between three lanes — logs, config, and a plain question — and give the config lane its own step before it answers.",
+						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
+					}},
+				},
+				undoRevisionToolbar(def),
+			}},
 		},
 		{
 			// Derived, not written: the definition knows exactly which
@@ -454,7 +458,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: "The same findings a save is checked against, as work remaining.",
 			Wide:     true,
 			Body: withRepairButton(def, RepairProblems,
-				ui.Card{HTML: `<div data-machine-checklist>` + checklistHTML(def) + `</div>`}),
+				ui.Card{HTML: `<div data-machine-checklist>` + checklistHTML(def, checklist) + `</div>`}),
 		},
 	}...)
 	page.ServeHTTP(w, r)
@@ -828,8 +832,10 @@ func adviceHTML(def MachineDef) string {
 	return findingsHTML(def, def.Advice(), "Nothing — the steps read as instructions rather than specifications.")
 }
 
-func checklistHTML(def MachineDef) string {
-	probs := def.Problems()
+// checklistHTML renders work remaining. probs is passed in rather than read
+// from def: half of it (do this phase's tool names resolve?) depends on the
+// user's pool and the agents attached to this machine — see machineChecklist.
+func checklistHTML(def MachineDef, probs []string) string {
 	if len(probs) == 0 {
 		return findingsHTML(def, nil, "✓ Nothing outstanding — this machine will run as written.")
 	}

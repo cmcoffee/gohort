@@ -747,12 +747,12 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 	// together: a refresh phrased differently reads as the page changing
 	// its mind rather than as the same list one item shorter.
 	clean := MachineDef{Name: "ok", Start: "s", Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}}
-	goneClean := checklistHTML(clean)
+	goneClean := checklistHTML(clean, clean.Problems())
 	if !strings.Contains(src, "Nothing outstanding — this machine will run as written.") ||
 		!strings.Contains(goneClean, "Nothing outstanding — this machine will run as written.") {
 		t.Error("the empty-checklist sentence should be the same on both sides")
 	}
-	if !strings.Contains(src, "' to fix'") || !strings.Contains(checklistHTML(def), " to fix") {
+	if !strings.Contains(src, "' to fix'") || !strings.Contains(checklistHTML(def, def.Problems()), " to fix") {
 		t.Error("the counted form should be the same on both sides")
 	}
 	if !strings.Contains(src, "the steps read as instructions rather than specifications.") ||
@@ -764,7 +764,7 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 	// several lines of prose, so joining them into one paragraph with
 	// inline bullets made three findings read as one wall — the page
 	// draws <li> per finding, and so must the refresh.
-	if !strings.Contains(checklistHTML(def), "<li>") || strings.Contains(checklistHTML(def), " • ") {
+	if html := checklistHTML(def, def.Problems()); !strings.Contains(html, "<li>") || strings.Contains(html, " • ") {
 		t.Error("the page should draw one finding per line")
 	}
 	if !strings.Contains(src, "ul.className = 'machine-findings'") ||
@@ -888,7 +888,7 @@ func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
 		{Name: "log check", Prompt: "search the logs", Next: "answer"},
 		{Name: "answer", Prompt: "reply", Resident: true},
 	}}
-	html := checklistHTML(def)
+	html := checklistHTML(def, def.Problems())
 	if !strings.Contains(html, `href="#log"`) {
 		t.Errorf("the finding about \"log\" should open it:\n%s", html)
 	}
@@ -900,7 +900,8 @@ func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
 		t.Errorf("the link should be the step name, not the sentence:\n%s", html)
 	}
 	// A finding about the machine rather than a step stays plain text.
-	whole := checklistHTML(MachineDef{Name: "M", Phases: []MachinePhase{{Name: "s", Prompt: "p"}}})
+	wholeDef := MachineDef{Name: "M", Phases: []MachinePhase{{Name: "s", Prompt: "p"}}}
+	whole := checklistHTML(wholeDef, wholeDef.Problems())
 	if strings.Contains(whole, "<a") && !strings.Contains(whole, "step s") {
 		t.Errorf("a machine-level finding has no step to open:\n%s", whole)
 	}

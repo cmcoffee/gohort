@@ -135,7 +135,69 @@ func (T *AppCore) AdvanceMachine(ctx context.Context, def MachineDef, cur *Machi
 		}
 	}
 
-	return T.walk(ctx, def, cur, ph, turn, run, note)
+	ph, _, err = T.walk(ctx, def, cur, ph, turn, run, note)
+	return ph, err
+}
+
+// RunUnattended drives a machine that RUNS rather than converses: start
+// it once, walk until a step hands off nowhere, hand back that step and
+// what it produced.
+//
+// It is the same walk, the same blackboard, and the same breadcrumbs as a
+// conversational turn. What differs is where it stops and what the stop
+// MEANS. AdvanceMachine returns the phase that owes somebody a reply and
+// leaves running it to the host, because the host owns streaming, tools
+// and guardrails for the turn. Nobody is waiting on this one, so the walk
+// runs every phase itself and the last one's text is the answer.
+//
+// cur is the caller's to keep. It carries the blackboard, which is the
+// point of running a machine rather than a pipeline: twenty phases of
+// accumulated findings live there, and a caller that throws the cursor
+// away has thrown away the run's working memory along with it.
+//
+// The error and the text are BOTH returned on a run that stopped early.
+// A scheduled run that quietly hands back half an answer is worse than
+// one that fails, so the ceiling is an error; the partial text comes with
+// it for a caller that would rather show something than nothing.
+func (T *AppCore) RunUnattended(ctx context.Context, def MachineDef, cur *MachineCursor, turn MachineTurn, run PhaseRunner, note func(kind, detail string)) (MachinePhase, string, error) {
+	if !def.Unattended {
+		return MachinePhase{}, "", Error("machine " + def.Name + " is not marked unattended; it expects a conversation")
+	}
+	if cur == nil {
+		return MachinePhase{}, "", Error("machine " + def.Name + ": nil cursor")
+	}
+	if run == nil {
+		return MachinePhase{}, "", Error("machine " + def.Name + ": no phase runner")
+	}
+	if note == nil {
+		note = func(string, string) {}
+	}
+	if cur.State == nil {
+		cur.State = MachineState{}
+	}
+	ph, _, err := def.resume(cur, note)
+	if err != nil {
+		return MachinePhase{}, "", err
+	}
+	final, stop, err := T.walk(ctx, def, cur, ph, turn, run, note)
+	if err != nil {
+		return MachinePhase{}, "", err
+	}
+	text := cur.State[final.Name].Text
+	switch stop {
+	case stopTerminal:
+		return final, text, nil
+	case stopResident:
+		// Validate reports this at save time; reaching it live means the
+		// machine was marked unattended after the fact, or came from an
+		// import. Say which step, because "the run stopped" is not
+		// something anybody can act on.
+		return final, text, Error("machine " + def.Name + ": step " + final.Name +
+			" waits for a person, and an unattended run has nobody to wait for")
+	default:
+		return final, text, Error("machine " + def.Name + ": stopped after " + strconv.Itoa(MaxUnattendedTransitions) +
+			" steps without finishing (last step " + final.Name + ")")
+	}
 }
 
 // ChangePhase moves a session to a named phase MID-TURN and returns the
@@ -183,7 +245,8 @@ func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineC
 	}
 	cur.moveTo(from, target, chooseStr(strings.TrimSpace(turn.Input), "changed mid-turn"), note)
 	note("machine_phase_changed", "moved from step "+from+" to "+target.Name+" mid-turn")
-	return T.walk(ctx, def, cur, target, turn, run, note)
+	ph, _, err := T.walk(ctx, def, cur, target, turn, run, note)
+	return ph, err
 }
 
 // exitNames is where a step may be moved, for a message that has to say
@@ -204,7 +267,25 @@ func exitNames(def MachineDef, from MachinePhase) []string {
 // Shared by the head-of-turn entry (AdvanceMachine) and a mid-turn move
 // (ChangePhase) so there is exactly one implementation of what a
 // transition costs and where it stops.
-func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, ph MachinePhase, turn MachineTurn, run PhaseRunner, note func(kind, detail string)) (MachinePhase, error) {
+// walkStop says WHY the walk stopped, because the two modes hand back
+// phases in opposite states and a caller that confuses them either runs a
+// phase twice or never runs it at all.
+//
+//	stopResident — conversational. The returned phase has NOT run; the
+//	               host runs it as the turn's reply.
+//	stopTerminal — unattended. The returned phase HAS run and its result
+//	               is on the blackboard; it is the run's answer.
+//	stopBudget   — the hop ceiling. Same state as stopResident: the
+//	               phase we stand on has not run this iteration.
+type walkStop int
+
+const (
+	stopResident walkStop = iota
+	stopTerminal
+	stopBudget
+)
+
+func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, ph MachinePhase, turn MachineTurn, run PhaseRunner, note func(kind, detail string)) (MachinePhase, walkStop, error) {
 	// The opening message is remembered once and then never changes, so
 	// a step five turns in can still ask what the person originally
 	// wanted. Recorded here rather than at the call site because every
@@ -213,23 +294,37 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 		cur.Opening = turn.Input
 	}
 	vars := PhaseVars{MachineTurn: turn, Opening: cur.Opening, Machine: def.Name}
+	hopCap := MaxPhaseTransitions
+	if def.Unattended {
+		hopCap = MaxUnattendedTransitions
+	}
 	for hops := 0; ; hops++ {
 		if ph.Resident {
-			return ph, nil
+			// In an unattended run this is an authoring mistake Validate
+			// already reports, and the walk cannot do anything useful with
+			// it: there is no person to hand the turn to. Stop here and let
+			// the caller say so rather than running a phase whose whole
+			// contract is that somebody replies into it.
+			return ph, stopResident, nil
 		}
-		if hops >= MaxPhaseTransitions {
+		if hops >= hopCap {
 			// Reply from where we stand rather than keep walking. The
 			// check sits BEFORE the call deliberately: the phase we
 			// return has not been run this iteration, so the host
 			// running it as the reply is the first time it fires, not a
 			// second.
-			note("machine_transition_cap", "machine "+def.Name+" made "+strconv.Itoa(hops)+" step transitions without reaching a step the conversation waits in; replying from "+ph.Name)
-			return ph, nil
+			if def.Unattended {
+				note("machine_run_cap", "machine "+def.Name+" ran "+strconv.Itoa(hops)+" steps without finishing; stopping at "+ph.Name+
+					". A run that reaches this ceiling is looping — check the guard or routing field that should have ended it.")
+			} else {
+				note("machine_transition_cap", "machine "+def.Name+" made "+strconv.Itoa(hops)+" step transitions without reaching a step the conversation waits in; replying from "+ph.Name)
+			}
+			return ph, stopBudget, nil
 		}
 
 		text, fields, err := T.runPhase(ctx, def, ph, vars, cur.State, run, note)
 		if err != nil {
-			return MachinePhase{}, err
+			return MachinePhase{}, stopBudget, err
 		}
 		cur.State[ph.Name] = PhaseResult{Text: text, Fields: fields}
 		vars.Prev = text
@@ -237,6 +332,13 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 		next, why := def.NextPhase(ph, fields)
 		if why != "" {
 			note("machine_route_fallback", why)
+		}
+		// A step that hands off nowhere ENDS an unattended run, and the
+		// step we just ran is the result. The conversational path treats
+		// the same situation as a dead end to be rescued (below), because
+		// there a turn still owes somebody a reply.
+		if def.Unattended && strings.TrimSpace(next) == "" {
+			return ph, stopTerminal, nil
 		}
 		nph, ok := def.Phase(next)
 		if !ok {
@@ -246,7 +348,7 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			// turn to the phase that exists to reply.
 			nph, ok = def.firstResident()
 			if !ok {
-				return MachinePhase{}, Error("machine " + def.Name + ": step " + ph.Name + " handed off nowhere and no step waits for the person")
+				return MachinePhase{}, stopBudget, Error("machine " + def.Name + ": step " + ph.Name + " handed off nowhere and no step waits for the person")
 			}
 			note("machine_dead_end", "step "+ph.Name+" handed off nowhere; replying from "+nph.Name)
 		}

@@ -112,6 +112,13 @@ choices    (transient) [phase names] this phase may hand to; it DECIDES between 
 next_from  (transient) one of THIS phase's declared string fields, whose value names the next phase.
            Only when the routing value is ALSO a finding worth naming. Overrides choices.
 agent      (transient) delegate this phase to another agent by name or id
+pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not with "agent" —
+           a step is run by one thing. An agent brings judgement, its own tools and its own
+           memory; a pipeline is a fixed recipe (stages, fan out over a list, loop until a
+           field goes true). Reach for a pipeline when the step is a procedure you want run
+           the same way every time. A pipeline whose LAST stage declares the fields this
+           phase declares costs one model call rather than two, because the shape it already
+           produced becomes the phase's own.
 output     [{name, type, desc, required, from}] — validated JSON. Transient phases only.
            A field NAMED after a built-in (original_input, now, user, agent, prev, step, machine)
            IS that built-in: it is filled from what the framework already holds and never asked
@@ -580,6 +587,10 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			// tool could never delegate a step and an existing one lost
 			// its delegate on the next update.
 			Agent: strings.TrimSpace(mapStr(m, "agent")),
+			// Same failure the comment above records, so the same fix: a
+			// field the tool documents and never reads is a field an
+			// author sets once and loses on the next update.
+			Pipeline: strings.TrimSpace(mapStr(m, "pipeline")),
 			Guard:    strings.TrimSpace(mapStr(m, "guard")),
 			GuardTo:  strings.TrimSpace(mapStr(m, "guard_to")),
 			Keep:     mapStrList(m, "keep"),

@@ -43,8 +43,14 @@ import (
 // (for narrowing a step). Bundled so the next externally-sourced list is
 // a field, not a fourth positional slice at twelve call sites.
 type editorCatalog struct {
-	agents []ui.SelectOption
-	tools  []ui.SelectOption
+	agents    []ui.SelectOption
+	tools     []ui.SelectOption
+	pipelines []ui.SelectOption
+	// checklist is work remaining, composed by the caller (machineChecklist)
+	// because part of it — whether a phase's tool names resolve — depends on
+	// the user's own pool and the agents attached to this machine, which the
+	// definition alone cannot know.
+	checklist []string
 }
 
 func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
@@ -55,7 +61,7 @@ func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 		// Validate's own findings, as work remaining rather than as a
 		// refusal. Same function behind both, so the list can never
 		// disagree with what a save will accept.
-		"checklist": def.Problems(),
+		"checklist": cat.checklist,
 		// Kept separate from the checklist: advice is a guess about
 		// intent and must never read as "this is broken".
 		"advice": def.Advice(),
@@ -101,6 +107,16 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 				Help: "Shown wherever someone picks a machine. Say what kind of conversation it is for, not how it works."},
 			{Field: "start", Type: "select", Label: "Starts at", Options: phaseOptions(def, false),
 				Help: "The step a new conversation begins in. Usually the one that decides what kind of turn this is."},
+			// No ReloadOnChange, though this DOES invert the checklist (the
+			// resident rule flips both ways). A meta save already triggers
+			// the page's redraw, which re-fetches the editor spec and
+			// repaints the findings, so the list is right without a rebuild.
+			// Nothing on the page is TITLED by this flag, which is what the
+			// name field's reload is for.
+			{Field: "unattended", Type: "toggle", Label: "This RUNS instead of converses",
+				Help: "OFF: a conversation. Somebody talks to it, and one step waits for their replies. " +
+					"ON: a job. It is started once, works through its steps, and the step that hands off nowhere produces the result — so no step may wait for a person, because nobody is there. " +
+					"Use it for work that takes many steps and no input: a research run, a nightly report."},
 		},
 	}
 }
@@ -202,23 +218,12 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 	out := make([]ui.Component, 0, len(def.Phases))
 	for _, p := range def.Phases {
 		q := base + "/phases?name=" + url_(p.Name)
-		out = append(out, ui.Stack{Children: []ui.Component{
-			ui.FormPanel{Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
-			// What the framework adds around the author's text, rendered
-			// from the function a live turn calls. Collapsed, greyed, and
-			// underneath: it is reference, not input.
-			phasePreview(def, p),
-			// Remove sits WITH the step it removes. It lived on the old
-			// table's row and did not survive the move to per-step
-			// sections, which left an editor that could only ever grow.
-			//
-			// A client action rather than a plain DELETE toolbar button:
-			// the toolbar fires the request and does not refresh, so the
-			// removed step would sit on screen looking removed-but-not.
+		children := []ui.Component{
+			// Order IS the reading order here — the rail, and which waiting
+			// step catches a hand-off — so moving a step is frequent work.
+			// It sat under the collapsed reference block at the very bottom,
+			// which is where you put something nobody needs twice.
 			ui.Toolbar{Actions: []ui.ToolbarAction{{
-				// Order is the rail and the reading order — without these,
-				// add-step appends forever and the machine reads in the
-				// order somebody happened to think of its parts.
 				Label:  "↑ Move up",
 				Title:  "Move " + p.Name + " one place earlier. Order is the reading order and which waiting step catches a step that hands off nowhere. In the map it only swaps steps that sit at the same depth AND come from the same step — everything else is placed under whatever leads to it.",
 				Method: "client",
@@ -230,7 +235,30 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 				Method: "client",
 				URL:    "machine_move_step",
 				Data:   p.Name + "|down",
-			}, {
+			}}},
+			ui.FormPanel{Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
+		}
+		// The tool limit saves on its own, so no other setting on this step
+		// can carry it (see phaseToolFields).
+		if phaseShowsTools(p) {
+			children = append(children, ui.FormPanel{Source: q, PostURL: q, Fields: phaseToolFields(p, cat)})
+		}
+		children = append(children,
+			// What the framework adds around the author's text, rendered
+			// from the function a live turn calls. Collapsed, greyed, and
+			// underneath: it is reference, not input.
+			phasePreview(def, p),
+			// Remove sits WITH the step it removes. It lived on the old
+			// table's row and did not survive the move to per-step
+			// sections, which left an editor that could only ever grow.
+			//
+			// A client action rather than a plain DELETE toolbar button:
+			// the toolbar fires the request and does not refresh, so the
+			// removed step would sit on screen looking removed-but-not.
+			// Alone down here, deliberately: the two controls that used to
+			// share this row are things you click often, and this one is
+			// the one you cannot undo.
+			ui.Toolbar{Actions: []ui.ToolbarAction{{
 				Label:   "Remove this step",
 				Title:   "Delete " + p.Name + " from this machine",
 				Method:  "client",
@@ -239,7 +267,8 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 				Variant: "danger",
 				Confirm: removeStepConfirm(def, p.Name),
 			}}},
-		}})
+		)
+		out = append(out, ui.Stack{Children: children})
 	}
 	return out
 }
@@ -350,6 +379,17 @@ func toolsLabel(p MachinePhase) string {
 // nothing in it to take back out.
 func toolsShowWhen(p MachinePhase) string {
 	if len(p.Tools) > 0 {
+		return ""
+	}
+	return "!agent"
+}
+
+// pipelineShowWhen hides the pipeline choice while a delegate owns the
+// step, and keeps it visible when one is already stored so it can be
+// removed. Same rule as toolsShowWhen, same reason: a stored value behind
+// a control nothing can open is a finding nobody can act on.
+func pipelineShowWhen(p MachinePhase) string {
+	if strings.TrimSpace(p.Pipeline) != "" {
 		return ""
 	}
 	return "!agent"
@@ -551,6 +591,18 @@ func agentOptions(udb Database, user string) []ui.SelectOption {
 	return out
 }
 
+// pipelineOptions lists the user's pipelines so a step picks one rather
+// than somebody typing a name from memory. Stores the NAME, not the id: a
+// machine is portable and an exported recipe should name the pipeline
+// somebody wrote, not the row it happened to live in here.
+func pipelineOptions(udb Database, user string) []ui.SelectOption {
+	out := []ui.SelectOption{{Value: "", Label: "— this agent runs the step —"}}
+	for _, d := range ListPipelineDefs(udb, user) {
+		out = append(out, ui.SelectOption{Value: d.Name, Label: chFirst(d.Name, d.ID), Help: firstLine(d.Description)})
+	}
+	return out
+}
+
 // phaseFieldsFor builds the form for ONE phase, with every choice
 // computed for it: the fields it declares, the phases it can reach, the
 // state it can read. Nothing here is typed from memory.
@@ -594,10 +646,6 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// depends on parts the author cannot see — what the framework
 		// composes around it, and what the other steps already establish.
 		// The endpoint knows all of that (machine_suggest.go).
-		{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp,
-			SuggestURL:   machineAPIBase(def) + "/suggest",
-			AssistPrompt: "Draft the method for this step: how to go about the work, in plain sentences written to a person. Not the output shape, which the declared fields already carry."},
-
 		{Type: "header", Label: "What kind of step is this?",
 			Help: "The one answer everything below depends on. A step the conversation WAITS in replies to the person and cannot record fields — its reply goes to them, not to a decoder. A step that passes through records what it worked out and hands to the next one."},
 		// The sections below are built from this answer, server-side, so
@@ -612,14 +660,32 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			Help: "ON: a turn ENDS here and the person replies into it — this is where a conversation lives, and the sections below change to match. OFF: the step runs, records what it establishes, and passes straight on within the same turn. A machine needs at least one step with this on, or a turn has nowhere to finish."},
 	}
 	if !p.Resident {
-		// Who does the work comes before what it produces and where it
-		// goes — it is a property of the step itself, and the answer
-		// changes how the instructions above should read.
+		// Filed WITH the kind toggle, because it is the same class of
+		// question: both reshape the form rather than fill it in. A
+		// delegate takes over the model, the reasoning and the tools —
+		// which is why those controls disappear under one — so an author
+		// who answers this last has configured three things that stopped
+		// applying while they were doing it.
 		fields = append(fields,
+			ui.FormField{Field: "pipeline", Type: "select", Label: "Or run it through a pipeline",
+				Options: cat.pipelines, ShowWhen: pipelineShowWhen(p),
+				Help: "A pipeline is a RECIPE rather than an agent: fixed stages, fan out over a list, loop until something is true. " +
+					"Reach for it when the step is a procedure you want run the same way every time, and for an agent when it needs judgement and its own tools. " +
+					"A pipeline whose last stage declares the same fields this step declares costs one model call instead of two, because the shape it produced is taken as the step's own."},
 			ui.FormField{Field: "agent", Type: "select", Label: "Who runs this step", Options: cat.agents,
-				Help: "Leave it with this agent, or give it to another one — with its own persona, tools and memory. A delegate gets the instructions above, works, and reports back; what it reports is recorded below. Use it when the work needs different REACH, not different wording. How the step runs — model, reasoning, tools — becomes the delegate's own configuration."},
+				Help: "Leave it with this agent, or give it to another one — with its own persona, tools and memory. A delegate gets the instructions below, works, and reports back; what it reports is recorded further down. Use it when the work needs different REACH, not different wording. How the step runs — model, reasoning, tools — becomes the delegate's own configuration."},
 		)
 	}
+	// The instructions come AFTER the two questions that decide what they
+	// are FOR. Both change this box under the author's hand — its label,
+	// its help, and the whole group beneath it — so a form that asked for
+	// ten lines of prose first was asking somebody to write against a
+	// spec they had not been shown yet.
+	fields = append(fields,
+		ui.FormField{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp,
+			SuggestURL:   machineAPIBase(def) + "/suggest",
+			AssistPrompt: "Draft the method for this step: how to go about the work, in plain sentences written to a person. Not the output shape, which the declared fields already carry."},
+	)
 	if p.Resident {
 		fields = append(fields,
 			// The section keeps its place in the reading order even
@@ -747,7 +813,18 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		}
 	}
 	fields = append(fields,
-		ui.FormField{Type: "header", Label: "How this step runs", Collapsed: true},
+		// State, not runtime. What survives coming back here is about what
+		// this step SEES; it sat with the model select only because both
+		// were leftovers, and it made "How this step runs" mean two things.
+		ui.FormField{Type: "header", Label: "Coming back to this step"},
+		ui.FormField{Field: "keep", Type: "checklist", Label: "On re-entry, keep only", Options: otherPhaseOptions(def, p.Name),
+			Help: "Steps whose findings survive coming BACK here a second time. Choose none to keep everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake."},
+		// NOT collapsed. Which model answers here is a routing decision an
+		// author makes deliberately and re-reads constantly; behind a shut
+		// accordion it reads as a setting nobody has touched. The one thing
+		// that WAS worth hiding — the tool limit — has left this panel
+		// entirely (see phaseToolFields).
+		ui.FormField{Type: "header", Label: "How this step runs"},
 		// Hidden the moment the step is delegated: a delegate runs on its
 		// OWN model, reasoning and tools, so these would be controls
 		// somebody can change and be ignored for. The same rule the
@@ -763,25 +840,58 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			{Value: "on", Label: "On — this step is a judgement"},
 			{Value: "off", Label: "Off — this step is a transform"},
 		}},
-		ui.FormField{Field: "keep", Type: "checklist", Label: "On re-entry, keep only", Options: otherPhaseOptions(def, p.Name),
-			Help: "Steps whose findings survive coming BACK here a second time. Choose none to keep everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake."},
+	)
+	return fields
+}
+
+// phaseToolFields is the tool limit, alone, for its own panel.
+//
+// Alone because a FormPanel with no SubmitLabel auto-saves by POSTing the
+// WHOLE record on every field change (see save() in the form runtime:
+// "PATCH endpoints take just the changed field; POST gets full record").
+// While this control shared a panel with the model select, changing a step
+// to lead posted the tool list along with it — so a save whose intent was
+// "run this step on the precise model" was also the save that wrote what
+// the step may reach. Nothing decided that; the two just travelled in the
+// same request. A separate panel is a separate request, and applyPhaseEdit
+// touches only the keys a body carries, so neither can write the other now.
+//
+// Collapsed, because it is the rare setting and an unopened accordion is
+// the right resting state for one — but the header carries the count, so a
+// step that IS limited says so without being opened. A restriction you
+// cannot see is the whole failure this came out of.
+func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
+	label := toolsLabel(p)
+	if n := len(p.Tools); n > 0 {
+		label += " — " + strconv.Itoa(n) + " selected"
+	}
+	return []ui.FormField{
+		ui.FormField{Type: "header", Label: label, Collapsed: true},
 		// The user's real tool pool, not a box to type names into — the
 		// last thing in this editor that was typed from memory. Checked
 		// none = no narrowing, which is the common case.
-		// Hidden under a delegate, because a delegate works from its own
-		// catalog and the list would be inert — EXCEPT when the step is
-		// already carrying one. Then hiding it is how a finding becomes
-		// unactionable: the checklist says "it names tools AND
-		// delegates, keep one" and one of the two ways to keep one is
-		// behind a control nothing can open. Same rule as a checked
-		// value whose option is gone — what is stored stays visible so
-		// it can be removed.
-		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p), ShowWhen: toolsShowWhen(p),
+		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p),
 			Options:     toolChecklistOptions(cat.tools, p.Tools),
 			Placeholder: "(no tools to offer)",
 			Help:        toolsHelp(p)},
-	)
-	return fields
+	}
+}
+
+// phaseShowsTools decides whether the tool panel is rendered at all.
+//
+// This was a ShowWhen ("!agent") while the control lived beside the
+// delegate field. A ShowWhen reads the values of ITS OWN form, and the
+// delegate is now in the other panel, where this one cannot see it — so the
+// decision moves to the server, which knows the same thing. Costs liveness:
+// setting a delegate hides this on the next render rather than instantly.
+//
+// Hidden under a delegate because a delegate works from its own catalog and
+// the list would be inert — EXCEPT when the step is already carrying one.
+// Then hiding it is how a finding becomes unactionable: the checklist says
+// "it names tools AND delegates, keep one" and one of the two ways to keep
+// one is behind a control nothing can open.
+func phaseShowsTools(p MachinePhase) bool {
+	return len(p.Tools) > 0 || strings.TrimSpace(p.Agent) == ""
 }
 
 // phaseFormFields is the ADD form — a phase that does not exist yet, so
@@ -810,7 +920,10 @@ func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, machineEditorSpec(def, editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)}))
+	writeJSON(w, machineEditorSpec(def, editorCatalog{
+		agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
+		pipelines: pipelineOptions(udb, user), checklist: machineChecklist(udb, user, def),
+	}))
 }
 
 // handleMachineMeta reads and merges the machine-level fields.
@@ -824,7 +937,7 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
 			"name": def.Name, "description": def.Description,
-			"start": def.StartPhase(),
+			"start": def.StartPhase(), "unattended": def.Unattended,
 		})
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -841,6 +954,9 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		if v, ok := body["start"]; ok {
 			def.Start = strings.TrimSpace(fmt.Sprint(v))
 		}
+		if _, ok := body["unattended"]; ok {
+			def.Unattended = BoolArg(body, "unattended")
+		}
 		// Saved even when it does not validate. This is an editor: a
 		// machine half-built is the normal state while somebody is
 		// building it, and refusing to store the third field until the
@@ -848,7 +964,7 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		// says what is still wrong, and enterMachine already degrades to
 		// an ordinary turn rather than breaking a conversation.
 		saved := SaveMachineDef(udb, def)
-		writeJSON(w, map[string]any{"ok": true, "checklist": saved.Problems()})
+		writeJSON(w, map[string]any{"ok": true, "checklist": machineChecklist(udb, user, saved)})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -966,7 +1082,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		// reopen the editor on the step just created. The per-step
 		// panels post here too and ignore them.
 		writeJSON(w, map[string]any{
-			"ok": true, "checklist": saved.Problems(),
+			"ok": true, "checklist": machineChecklist(udb, user, saved),
 			"id": saved.ID, "name": ph.Name, "slug": ui.SectionSlug(ph.Name),
 		})
 
@@ -978,7 +1094,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		rewritten := def.RemoveStep(name)
 		saved := SaveMachineDef(udb, def)
 		Log("[orchestrate.machines] user=%q removed phase %q from %q (rewrote %v)", user, name, def.Name, rewritten)
-		writeJSON(w, map[string]any{"deleted": name, "rewritten": rewritten, "checklist": saved.Problems()})
+		writeJSON(w, map[string]any{"deleted": name, "rewritten": rewritten, "checklist": machineChecklist(udb, user, saved)})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1017,6 +1133,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	}
 	if v, ok := str("agent"); ok {
 		ph.Agent = v
+	}
+	if v, ok := str("pipeline"); ok {
+		ph.Pipeline = v
 	}
 	if v, ok := str("guard"); ok {
 		ph.Guard = v
@@ -1134,6 +1253,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 	return map[string]any{
 		"name": p.Name, "desc": p.Desc, "prompt": p.Prompt,
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
+		"pipeline": p.Pipeline,
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,

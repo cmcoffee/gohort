@@ -7450,7 +7450,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// BETWEEN turns of one session — the phase advances and tools the model
 	// used two turns ago stop resolving. Silently, that reads to the model
 	// as a name it got wrong, and it burns the turn retrying spellings.
-	narrowed, phaseDropped, phaseUnmatched := mach.narrowCatalog(allTools)
+	narrowed, phaseDropped, phaseUnmatched, phaseFellBack := mach.narrowCatalog(allTools)
 	if len(phaseDropped) > 0 {
 		Log("[orchestrate.orch] machine phase %q narrowed the catalog %d → %d tool(s); dropped: %v",
 			mach.Name(), len(allTools), len(narrowed), phaseDropped)
@@ -7461,6 +7461,17 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// looks exactly like a phase that meant to allow fewer tools.
 		Log("[orchestrate.orch] machine phase %q names %d tool(s) not in this agent's catalog: %v",
 			mach.Name(), len(phaseUnmatched), phaseUnmatched)
+	}
+	if phaseFellBack {
+		// Every name missed. The literal reading of that is "no tools", which
+		// is both unlikely to be meant and unsurvivable — it takes the control
+		// plane with it, so the model can neither answer nor leave the phase.
+		Log("[orchestrate.orch] machine phase %q matched NOTHING in this agent's catalog — running the full %d-tool catalog rather than none",
+			mach.Name(), len(narrowed))
+		t.turnDiag("machine_phase_tools_unmatched", fmt.Sprintf(
+			"phase %q allows %v, and NONE of those names exist in this agent's catalog, so the phase ran with the full catalog instead of an empty one. Fix the phase's tool names — they must match the catalog exactly, and a remote MCP tool is exposed as \"<server>_<tool>\" in lowercase (getConfluencePage on the server is atlassian_getconfluencepage here).",
+			mach.Name(), mach.phase.Tools))
+	} else if len(phaseUnmatched) > 0 {
 		t.turnDiag("machine_phase_tool_missing", fmt.Sprintf(
 			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly — a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
 			mach.Name(), mach.phase.Tools, phaseUnmatched))
