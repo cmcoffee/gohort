@@ -66,6 +66,27 @@ type RemotePeer struct {
 	// offer real names without a round trip, and refreshed whenever the
 	// manifest is re-read.
 	Investigable []PeerInvestigable `json:"investigable,omitempty"`
+	// UseTokens opts this peer into the rotating-credential flow (see
+	// peer_token_client.go). Off by default and off for every peer added before
+	// it existed, because the static key in Key keeps working either way and
+	// switching a live link over is the operator's call, not a release's.
+	//
+	// Turned on automatically when the peer's manifest says exchange is
+	// REQUIRED, since at that point the static key is refused and there is
+	// nothing to decide.
+	UseTokens bool `json:"use_tokens,omitempty"`
+	// AccessToken, AccessExpires and RefreshToken are the current lease.
+	//
+	// Persisted so a restart resumes on the credential it already holds rather
+	// than exchanging again — every needless exchange is another token family
+	// on the serving side, and on a rotating grant the pairing code that would
+	// buy one is single use.
+	//
+	// Key is NOT replaced by these. It stays as the fallback and as the pairing
+	// code, which is what makes the whole flow reversible.
+	AccessToken   string `json:"access_token,omitempty"`
+	AccessExpires string `json:"access_expires,omitempty"`
+	RefreshToken  string `json:"refresh_token,omitempty"`
 }
 
 // Offers reports whether this peer can serve a capability.
@@ -137,6 +158,28 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 		return PeerManifest{}, fmt.Errorf("could not read the manifest from %s: %w", base, err)
 	}
 	return m, nil
+}
+
+// adoptPeerTokenFlow decides whether this peer is on rotating credentials.
+//
+// Switched on automatically only when the far side says exchange is REQUIRED,
+// because at that point the static key is refused and there is nothing left to
+// decide. An operator who turned it on by hand keeps it on: the manifest saying
+// "not required" means the static key would ALSO work, not that tokens have
+// stopped working, and silently downgrading a link the operator deliberately
+// hardened is not a decision a refresh should make.
+//
+// Never latches on for a peer that merely offers the endpoint. Doing so would
+// have every existing pairing quietly start rotating on the next refresh, which
+// is precisely the flag day the opt-in exists to avoid.
+func adoptPeerTokenFlow(p RemotePeer, m PeerManifest) bool {
+	if m.Token != nil && m.Token.Required {
+		if !p.UseTokens {
+			Log("[peer] %q now requires credential exchange — switching to rotating tokens", p.Name)
+		}
+		return true
+	}
+	return p.UseTokens
 }
 
 // usableCaps reduces a manifest to what is both served there and granted here.
@@ -237,6 +280,7 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	if m.Search != nil {
 		p.SearchProvider = m.Search.Provider
 	}
+	p.UseTokens = adoptPeerTokenFlow(p, m)
 	// Renderers become local backends immediately. A peer that announces it
 	// offers rendering and then does not appear in the picker is indisputably
 	// broken from the operator's side.
@@ -246,6 +290,19 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	// than at the end of the TTL — an operator who just pasted a rotated key
 	// should not have to wonder whether it took.
 	InvalidatePeerResolution()
+	// Exchange AFTER the record exists: storing a credential writes onto it, so
+	// pairing first would drop the tokens on the floor. Image connectors are
+	// provisioned above against the static key and republished by the exchange,
+	// which is the ordering that leaves no window holding a stale secret.
+	if p.UseTokens {
+		if terr := EnsurePeerToken(ctx, p); terr != nil {
+			p.LastError = terr.Error()
+			RootDB.Set(remotePeersTable, name, p)
+			InvalidatePeerResolution()
+			return p, fmt.Errorf("paired with %s but could not obtain a credential: %w", p.BaseURL, terr)
+		}
+		p, _ = GetRemotePeer(name)
+	}
 	Log("[peer] added remote %q at %s offering %s", name, p.BaseURL, strings.Join(caps, ", "))
 	return p, nil
 }
@@ -258,7 +315,17 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	if !ok {
 		return RemotePeer{}, fmt.Errorf("no peer named %q", name)
 	}
-	m, err := ProbeRemotePeer(ctx, p.BaseURL, p.Key)
+	// Renew before probing rather than after a 401. The manifest is the first
+	// call of every refresh cycle, so if the credential has aged out this is
+	// where it shows, and recovering here keeps the failure off every
+	// capability that would otherwise discover it independently.
+	if p.UseTokens {
+		if terr := EnsurePeerToken(ctx, p); terr != nil {
+			Debug("[peer] %q credential renewal before refresh: %v", p.Name, terr)
+		}
+		p, _ = GetRemotePeer(p.Name)
+	}
+	m, err := ProbeRemotePeer(ctx, p.BaseURL, PeerCredential(p))
 	p.LastChecked = time.Now().Format(time.RFC3339)
 	if err != nil {
 		p.LastError = err.Error()
@@ -269,6 +336,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	p.LastError = ""
 	p.Caps = refreshedCaps(p.Caps, m)
 	p.Instance = m.Instance
+	p.UseTokens = adoptPeerTokenFlow(p, m)
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
 	}
@@ -296,6 +364,16 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	syncPeerImages(&p, m.Images)
 	RootDB.Set(remotePeersTable, p.Name, p)
 	InvalidatePeerResolution()
+	// A peer that has just been switched onto the token flow by its own
+	// manifest has no credential yet. Obtained here rather than left to the
+	// first background renewal, so the refresh the operator is watching either
+	// reports success or says why.
+	if p.UseTokens {
+		if terr := EnsurePeerToken(ctx, p); terr != nil {
+			Log("[peer] %q needs credential exchange and could not get one: %v", p.Name, terr)
+		}
+		p, _ = GetRemotePeer(p.Name)
+	}
 	return p, nil
 }
 
@@ -386,6 +464,7 @@ func DeleteRemotePeer(name string) bool {
 	// the credential holding its key would outlive the reason it existed.
 	teardownPeerImages(p)
 	RootDB.Unset(remotePeersTable, name)
+	forgetPeerTokens(name)
 	InvalidatePeerResolution()
 	Log("[peer] removed remote %q", name)
 	return true
@@ -558,7 +637,7 @@ func resolveEmbeddingPeer(cfg EmbeddingConfig) EmbeddingConfig {
 	}
 	warnPeerResolveOnce(name, "") // clears the warning once the peer is healthy again
 	cfg.Endpoint = p.EmbeddingsURL()
-	cfg.APIKey = p.Key
+	cfg.APIKey = PeerCredential(p)
 	// The MODEL is only overridden when the peer reports one. A peer serving a
 	// single-model backend advertises no model name, and overwriting a
 	// deliberately-set informational value with "" would change EmbedVersion

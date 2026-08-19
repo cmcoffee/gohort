@@ -241,7 +241,7 @@ func resolveTranscribePeer(cfg TranscribeConfig) TranscribeConfig {
 	}
 	warnPeerResolveOnce("transcribe:"+name, "") // clears the warning once the peer is healthy again
 	cfg.Endpoint = p.TranscribeURL()
-	cfg.APIKey = p.Key
+	cfg.APIKey = PeerCredential(p)
 	// The MODEL is only overridden when the peer reports one, matching
 	// resolveEmbeddingPeer: a single-model whisper backend advertises none, and
 	// overwriting a deliberately-set value with "" would send a request with no

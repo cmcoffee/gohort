@@ -525,6 +525,6 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 	}
 	cfg.Provider = "llama.cpp"
 	cfg.Endpoint = p.ModelsURL()
-	cfg.APIKey = p.Key
+	cfg.APIKey = PeerCredential(p)
 	return cfg, nil
 }

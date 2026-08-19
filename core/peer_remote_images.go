@@ -159,7 +159,7 @@ func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, e
 		// a picker invites a binding that the next peer save overwrites
 		// or that breaks when the peer is dropped.
 		Managed: "peer",
-	}, p.Key); err != nil {
+	}, PeerCredential(p)); err != nil {
 		return nil, fmt.Errorf("storing the peer key as a credential: %w", err)
 	}
 

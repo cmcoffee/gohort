@@ -148,7 +148,7 @@ func PeerInvestigate(ctx context.Context, p RemotePeer, applianceID, question st
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, p.Key)
+	req.Header.Set(peerKeyHeader, PeerCredential(p))
 
 	// Timeout matches the server-side cap: a client that gives up sooner than
 	// the far side finishes turns a slow answer into a failure with no way to
@@ -326,7 +326,7 @@ func PeerFetchKnowledge(ctx context.Context, p RemotePeer, applianceID string) (
 		return out, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, p.Key)
+	req.Header.Set(peerKeyHeader, PeerCredential(p))
 
 	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
 	if err != nil {
@@ -489,7 +489,7 @@ func PeerExec(ctx context.Context, p RemotePeer, applianceID, command string) (s
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, p.Key)
+	req.Header.Set(peerKeyHeader, PeerCredential(p))
 
 	resp, err := (&http.Client{Timeout: peerExecTimeout}).Do(req)
 	if err != nil {

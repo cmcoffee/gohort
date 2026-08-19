@@ -131,7 +131,7 @@ func peerBrowseFetch(p RemotePeer, url string, maxChars int) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, p.Key)
+	req.Header.Set(peerKeyHeader, PeerCredential(p))
 
 	resp, err := (&http.Client{Timeout: peerBrowseFetchTimeout}).Do(req)
 	if err != nil {

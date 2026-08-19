@@ -364,6 +364,6 @@ func resolveSearchPeer(cfg WebSearchConfig) WebSearchConfig {
 	warnPeerResolveOnce("search:"+name, "") // clears the warning once the peer is healthy again
 	cfg.Provider = "searxng"
 	cfg.Endpoint = p.SearchURL()
-	cfg.APIKey = p.Key
+	cfg.APIKey = PeerCredential(p)
 	return cfg
 }
