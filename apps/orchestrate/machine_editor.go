@@ -46,6 +46,7 @@ type editorCatalog struct {
 	agents    []ui.SelectOption
 	tools     []ui.SelectOption
 	pipelines []ui.SelectOption
+	machines  []ui.SelectOption
 	// checklist is work remaining, composed by the caller (machineChecklist)
 	// because part of it — whether a phase's tool names resolve — depends on
 	// the user's own pool and the agents attached to this machine, which the
@@ -395,6 +396,16 @@ func pipelineShowWhen(p MachinePhase) string {
 	return "!agent"
 }
 
+// childMachineShowWhen hides the child-run choice while something else
+// already runs the step, and keeps it visible when one is stored so it can
+// be removed. Same rule as its two siblings.
+func childMachineShowWhen(p MachinePhase) string {
+	if strings.TrimSpace(p.Machine) != "" {
+		return ""
+	}
+	return "!agent;!pipeline"
+}
+
 // delegatedShowWhen is the same rule for the single-value settings under
 // a delegate. They are not even inert: when the delegate does not exist
 // in this deployment the phase runs INLINE with exactly these, which is
@@ -603,6 +614,24 @@ func pipelineOptions(udb Database, user string) []ui.SelectOption {
 	return out
 }
 
+// childMachineOptions lists the machines a step may run as a child: the
+// user's own, and only the ones that RUN. A conversational machine offered
+// here would be a choice that cannot work, and finding that out at run time
+// is worse than not being offered it.
+//
+// The machine being edited is excluded. Depth is capped at one, so a
+// machine running itself is a run that could never complete.
+func childMachineOptions(udb Database, user string, self MachineDef) []ui.SelectOption {
+	out := []ui.SelectOption{{Value: "", Label: "— this agent runs the step —"}}
+	for _, d := range ListMachineDefs(udb, user) {
+		if !d.Unattended || d.ID == self.ID {
+			continue
+		}
+		out = append(out, ui.SelectOption{Value: d.Name, Label: chFirst(d.Name, d.ID), Help: firstLine(d.Description)})
+	}
+	return out
+}
+
 // phaseFieldsFor builds the form for ONE phase, with every choice
 // computed for it: the fields it declares, the phases it can reach, the
 // state it can read. Nothing here is typed from memory.
@@ -672,6 +701,12 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Help: "A pipeline is a RECIPE rather than an agent: fixed stages, fan out over a list, loop until something is true. " +
 					"Reach for it when the step is a procedure you want run the same way every time, and for an agent when it needs judgement and its own tools. " +
 					"A pipeline whose last stage declares the same fields this step declares costs one model call instead of two, because the shape it produced is taken as the step's own."},
+			ui.FormField{Field: "machine", Type: "select", Label: "Or run a whole machine for it",
+				Options: cat.machines, ShowWhen: childMachineShowWhen(p),
+				Help: "A CHILD RUN: another machine, started for this step, with its own steps and its own working set, " +
+					"and its result comes back as this step's. Only machines marked \"this RUNS instead of converses\" can be run this way, " +
+					"because nobody is waiting inside a step. Depth is capped at one, so a child may not run a child. " +
+					"Reach for it when the work is a smaller version of the same shape."},
 			ui.FormField{Field: "agent", Type: "select", Label: "Who runs this step", Options: cat.agents,
 				Help: "Leave it with this agent, or give it to another one — with its own persona, tools and memory. A delegate gets the instructions below, works, and reports back; what it reports is recorded further down. Use it when the work needs different REACH, not different wording. How the step runs — model, reasoning, tools — becomes the delegate's own configuration."},
 		)
@@ -772,26 +807,26 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				}},
 
 			ui.FormField{Type: "header", Label: "What it adds to the running lists", Collapsed: true,
-			Help: "Most steps decide something and hand it on. Some CONTRIBUTE to a list the whole run is building — " +
-				"the answers so far, the sources, the questions still open. A list lives under its own name, so several steps can add to one, " +
-				"and it survives coming back here (\"keep only\" prunes step findings, never the lists). Read one in a prompt with {state:LIST}."},
-		ui.FormField{Field: "accumulates", Type: "rows", Label: "", AddLabel: "+ Add to a list",
-			Placeholder: "(this step adds to nothing)",
-			Columns: []ui.FormField{
-				{Field: "name", Type: "text", Label: "List", Width: 3,
-					Help: "The list's own name, e.g. answers. Not the same as any step name — they share the blackboard."},
-				{Field: "from", Type: "select", Label: "Takes", Width: 3, Options: ownFieldOptions(p),
-					Help: "One of THIS step's own output fields. A list field adds its elements; a single value adds itself."},
-				{Field: "mode", Type: "select", Label: "How", Width: 3, Options: []ui.SelectOption{
-					{Value: "", Label: "Append — add to the end"},
-					{Value: "union", Label: "Union — skip what is already there"},
-					{Value: "replace", Label: "Replace — this becomes the list"},
+				Help: "Most steps decide something and hand it on. Some CONTRIBUTE to a list the whole run is building — " +
+					"the answers so far, the sources, the questions still open. A list lives under its own name, so several steps can add to one, " +
+					"and it survives coming back here (\"keep only\" prunes step findings, never the lists). Read one in a prompt with {state:LIST}."},
+			ui.FormField{Field: "accumulates", Type: "rows", Label: "", AddLabel: "+ Add to a list",
+				Placeholder: "(this step adds to nothing)",
+				Columns: []ui.FormField{
+					{Field: "name", Type: "text", Label: "List", Width: 3,
+						Help: "The list's own name, e.g. answers. Not the same as any step name — they share the blackboard."},
+					{Field: "from", Type: "select", Label: "Takes", Width: 3, Options: ownFieldOptions(p),
+						Help: "One of THIS step's own output fields. A list field adds its elements; a single value adds itself."},
+					{Field: "mode", Type: "select", Label: "How", Width: 3, Options: []ui.SelectOption{
+						{Value: "", Label: "Append — add to the end"},
+						{Value: "union", Label: "Union — skip what is already there"},
+						{Value: "replace", Label: "Replace — this becomes the list"},
+					}},
+					{Field: "by", Type: "text", Label: "Same when", Width: 3,
+						Placeholder: "e.g. id",
+						Help: "Union only: the field that decides two entries are the same one. Leave empty to compare whole values."},
 				}},
-				{Field: "by", Type: "text", Label: "Same when", Width: 3,
-					Placeholder: "e.g. id",
-					Help: "Union only: the field that decides two entries are the same one. Leave empty to compare whole values."},
-			}},
-		ui.FormField{Type: "header", Label: "Where it goes next"},
+			ui.FormField{Type: "header", Label: "Where it goes next"},
 			ui.FormField{Field: "next", Type: "select", Label: "Then go to", Options: phaseOptions(def, true),
 				Help: "Where this step hands off when it does not choose."},
 			// Picking the destinations IS the whole routing decision. The
@@ -942,7 +977,8 @@ func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, machineEditorSpec(def, editorCatalog{
 		agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
-		pipelines: pipelineOptions(udb, user), checklist: machineChecklist(udb, user, def),
+		pipelines: pipelineOptions(udb, user), machines: childMachineOptions(udb, user, def),
+		checklist: machineChecklist(udb, user, def),
 	}))
 }
 
@@ -1157,6 +1193,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if v, ok := str("pipeline"); ok {
 		ph.Pipeline = v
 	}
+	if v, ok := str("machine"); ok {
+		ph.Machine = v
+	}
 	if v, ok := str("guard"); ok {
 		ph.Guard = v
 	}
@@ -1313,7 +1352,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 	return map[string]any{
 		"name": p.Name, "desc": p.Desc, "prompt": p.Prompt,
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
-		"pipeline": p.Pipeline, "accumulates": accumulatorRows(p),
+		"pipeline": p.Pipeline, "machine": p.Machine, "accumulates": accumulatorRows(p),
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,

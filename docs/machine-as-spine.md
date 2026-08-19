@@ -1,7 +1,8 @@
 # Machine as spine, pipelines as phases
 
-**Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271);
-Changes 4 and 5 are spec. No entry point yet starts an unattended run, so
+**Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271),
+Change 4 BUILT (v0.6.273) with one part outstanding (see below); Change 5 is
+spec. No entry point yet starts an unattended run, so
 what is built is reachable from Go, from the machine editor, and from the
 `machine` tool, and not from a schedule or a page. Related: `core/machine.go`, `core/machine_def.go`,
 `apps/orchestrate/machine_delegate.go`, `docs/agent-machines.md`,
@@ -144,7 +145,7 @@ Interaction with `Keep` (which prunes prior findings on re-entry) has to be
 explicit: accumulators are NOT pruned by `Keep` unless named, because the whole
 point is that they survive the loop that keeps revisiting them.
 
-## Change 4: a child run, for the recursive case
+## Change 4: a child run, for the recursive case (BUILT, with one part outstanding)
 
 `FillGaps` forks a child research run per detected gap and merges what comes
 back. That is the one phase whose shape is recursion rather than composition.
@@ -168,6 +169,22 @@ Machine string `json:"machine,omitempty"`
 - Fan of children (one per gap) is the pipeline's job, not the machine's:
   the phase names a pipeline whose fanout body runs the child machine per item.
   Which is why `docs/pipeline-fanout-body.md` is a prerequisite for this one.
+
+**What landed (v0.6.273):** `MachinePhase.Machine`, run through the same
+`PhaseRunner` seam as the delegate and the pipeline phase. The child must be
+`Unattended`, gets a fresh cursor and its own blackboard, and its result becomes
+the phase's result, so the phase's own `Accumulates` folds it into the parent's
+working set with no second merge mechanism. Depth rides the CONTEXT
+(`WithMachineDepth` / `MachineDepth`, cap `MaxMachineDepth = 1`), because the
+child runs through the host's same runner and the depth has to travel with the
+call rather than with the caller.
+
+**What is outstanding:** a phase runs ONE child. Fanning children (research's
+gap filler starts one run per gap, in parallel) needs a pipeline stage kind that
+can run a machine, so a fanout body can be a child run. Today the same work is
+expressible SEQUENTIALLY, by routing back to the child-running phase once per
+item, which is correct but not parallel. The missing piece is small and belongs
+with the fanout body work rather than here.
 
 ## Change 5: run-scoped tool state
 

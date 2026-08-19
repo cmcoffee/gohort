@@ -899,3 +899,41 @@ func PhaseTier(ph MachinePhase) LLMTier {
 	}
 	return TierUnset
 }
+
+// --- child runs -------------------------------------------------------
+
+// MaxMachineDepth caps how deep a machine may run machines.
+//
+// One, which means a run may have children and those children may not.
+// The case this exists for is research forking a gap-filling run per gap
+// it finds, and research's own guard is exactly this: a child skips gap
+// filling so the tree cannot grow a third level.
+//
+// A NUMBER rather than a bool because the next case that wants two should
+// be able to argue for two by changing this, rather than by unpicking a
+// design that assumed one.
+const MaxMachineDepth = 1
+
+// machineDepthKey carries the current nesting depth on the context.
+//
+// On the CONTEXT rather than on a struct because the child runs through
+// the host's own PhaseRunner, which is the same closure the parent uses.
+// The depth has to travel with the call rather than with the caller, or a
+// child's phases would look exactly like a parent's and nothing would stop
+// the third level.
+type machineDepthKey struct{}
+
+// WithMachineDepth returns a context carrying d as the nesting depth.
+func WithMachineDepth(ctx context.Context, d int) context.Context {
+	return context.WithValue(ctx, machineDepthKey{}, d)
+}
+
+// MachineDepth reports how many machines deep this call already is. Zero
+// for a top-level run, which is what an absent value means.
+func MachineDepth(ctx context.Context) int {
+	if ctx == nil {
+		return 0
+	}
+	d, _ := ctx.Value(machineDepthKey{}).(int)
+	return d
+}

@@ -119,6 +119,12 @@ pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not wi
            the same way every time. A pipeline whose LAST stage declares the fields this
            phase declares costs one model call rather than two, because the shape it already
            produced becomes the phase's own.
+machine    (transient) run this phase as a CHILD RUN of another machine, by name. Not with
+           "agent" or "pipeline" — one runner per step. The child must be marked unattended (it
+           RUNS rather than converses), gets its own blackboard, and its result becomes this
+           step's, so this step's "accumulates" folds it into the parent's working set. Depth is
+           capped at one: a child may not run a child. Use it for work that is a smaller version
+           of the SAME shape — a run that finds a gap and starts a run to fill it.
 accumulates [{name, from, mode?, by?}] — the run-scoped LISTS this phase adds to. "from" is one of
            THIS phase's declared output fields; a list field contributes its elements, a scalar
            contributes itself. mode: append (default) | replace | union ("by" keys a union on one
@@ -630,6 +636,7 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			// field the tool documents and never reads is a field an
 			// author sets once and loses on the next update.
 			Pipeline:    strings.TrimSpace(mapStr(m, "pipeline")),
+			Machine:     strings.TrimSpace(mapStr(m, "machine")),
 			Accumulates: parseAccumulators(m["accumulates"]),
 			Guard:       strings.TrimSpace(mapStr(m, "guard")),
 			GuardTo:     strings.TrimSpace(mapStr(m, "guard_to")),

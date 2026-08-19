@@ -207,3 +207,56 @@ func anyProblem(probs []string, want string) bool {
 	}
 	return false
 }
+
+// --- child runs -------------------------------------------------------
+
+// Depth travels on the CONTEXT, because a child runs through the host's
+// same PhaseRunner: the depth has to move with the call, or a child's
+// phases look exactly like a parent's and nothing stops the third level.
+func TestMachineDepthTravelsOnTheContext(t *testing.T) {
+	ctx := context.Background()
+	if got := MachineDepth(ctx); got != 0 {
+		t.Errorf("a top-level run is depth %d, want 0", got)
+	}
+	if got := MachineDepth(nil); got != 0 {
+		t.Errorf("a nil context should read as top level, got %d", got)
+	}
+	child := WithMachineDepth(ctx, MachineDepth(ctx)+1)
+	if got := MachineDepth(child); got != 1 {
+		t.Errorf("a child run is depth %d, want 1", got)
+	}
+	// One level of children is what the cap allows, so a child is already
+	// standing at it: this is the comparison the runner makes before it
+	// agrees to start another.
+	if MachineDepth(child) < MaxMachineDepth {
+		t.Errorf("a child at depth 1 is below the cap of %d, so nothing would stop a third level", MaxMachineDepth)
+	}
+	// The parent's own context is untouched, so two children of the same
+	// parent both start from the parent's depth rather than stacking.
+	if got := MachineDepth(ctx); got != 0 {
+		t.Errorf("deriving a child depth mutated the parent's context: %d", got)
+	}
+}
+
+// A child's result is the phase's result, so the phase's own Accumulates
+// carries it into the parent's working set. No second merge mechanism is
+// what makes the recursive case cheap.
+func TestAChildsResultFoldsIntoTheParentsWorkingSet(t *testing.T) {
+	parent := MachinePhase{
+		Name:        "fill_gap",
+		Output:      []PipelineField{{Name: "findings", Type: FieldList}},
+		Accumulates: []MachineAccumulator{{Name: "answers", From: "findings"}},
+	}
+	st := MachineState{"answers": {
+		Text:   "1. what we knew already",
+		Fields: map[string]any{AccumulatorItemsField: []any{"what we knew already"}},
+	}}
+	// What the child run came back with, decoded into the phase's fields
+	// exactly as any other phase's reply would be.
+	MachineDef{}.accumulate(parent, map[string]any{"findings": []any{"and what the child found"}}, st, nil)
+
+	items, _ := st["answers"].Fields[AccumulatorItemsField].([]any)
+	if len(items) != 2 || items[1] != "and what the child found" {
+		t.Errorf("a child's findings should land in the parent's list: %#v", items)
+	}
+}

@@ -288,6 +288,23 @@ type MachinePhase struct {
 	// prose and something has to read the fields back out of it.
 	Pipeline string `json:"pipeline,omitempty"`
 
+	// Machine names another machine this phase runs as a CHILD: its own
+	// blackboard, its own phases, run to completion, and its result comes
+	// back as this phase's. Mutually exclusive with Agent and Pipeline.
+	//
+	// The child must be Unattended. A conversational machine has a step
+	// that waits for a person, and there is nobody inside a phase to wait
+	// for; a phase that named one would enter a step it could never leave.
+	//
+	// This is the recursive shape, and the reason it is a phase rather
+	// than a general facility: research forks a child run per gap it finds
+	// and merges what comes back. The merge needs no new mechanism — the
+	// child's result is this phase's result, so Accumulates carries it
+	// into the parent's working set exactly like any other contribution.
+	//
+	// Depth is capped (MaxMachineDepth): a child may not run a child.
+	Machine string `json:"machine,omitempty"`
+
 	// Accumulates declares the run-scoped lists this phase contributes to.
 	// See machine_accum.go: the contribution lands under the LIST's name
 	// rather than this phase's, which is what lets many phases build one
@@ -867,6 +884,22 @@ func (d MachineDef) accumulatorProblems(taken map[string]bool) []string {
 	return probs
 }
 
+// phaseRunners names the things a phase says should run it. More than one
+// is the error; the list is what makes the message say WHICH.
+func phaseRunners(p MachinePhase) []string {
+	var out []string
+	if strings.TrimSpace(p.Agent) != "" {
+		out = append(out, "an agent")
+	}
+	if strings.TrimSpace(p.Pipeline) != "" {
+		out = append(out, "a pipeline")
+	}
+	if strings.TrimSpace(p.Machine) != "" {
+		out = append(out, "a machine")
+	}
+	return out
+}
+
 // hasTerminalPhase reports whether any step hands off nowhere: no static
 // next, and no routing field to pick one. That step is where an
 // unattended run finishes and what it returns.
@@ -904,9 +937,10 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	default:
 		probs = append(probs, "step "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
 	}
-	if strings.TrimSpace(p.Agent) != "" && strings.TrimSpace(p.Pipeline) != "" {
-		probs = append(probs, "step "+name+" names both an agent and a pipeline — a step is run by one thing. "+
-			"An agent brings its own persona and tools; a pipeline is a fixed recipe. Keep whichever the step is really for.")
+	if runners := phaseRunners(p); len(runners) > 1 {
+		probs = append(probs, "step "+name+" names "+strings.Join(runners, " and ")+" — a step is run by ONE thing. "+
+			"An agent brings its own persona and tools; a pipeline is a fixed recipe; a machine is a whole run of its own. "+
+			"Keep whichever the step is really for.")
 	}
 	if t := strings.TrimSpace(p.Next); t != "" && !seen[t] {
 		probs = append(probs, "step "+name+": next names unknown step "+strconv.Quote(t))

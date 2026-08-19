@@ -261,7 +261,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	checklist := machineChecklist(udb, user, def)
 	spec := machineEditorSpec(def, editorCatalog{
 		agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
-		pipelines: pipelineOptions(udb, user), checklist: checklist,
+		pipelines: pipelineOptions(udb, user), machines: childMachineOptions(udb, user, def),
+		checklist: checklist,
 	})
 	meta, _ := spec["meta"].(ui.FormPanel)
 	panels, _ := spec["phases"].([]ui.Component)

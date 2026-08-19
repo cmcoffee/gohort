@@ -217,20 +217,28 @@ func TestPipelinePhaseResolvesByNameThenID(t *testing.T) {
 	}
 }
 
-// A step is run by ONE thing.
-func TestAPhaseNamingBothAnAgentAndAPipelineIsReported(t *testing.T) {
-	def := MachineDef{Name: "m", Start: "work", Phases: []MachinePhase{
-		{Name: "work", Prompt: "do", Next: "talk", Agent: "ag-1", Pipeline: "Fact check"},
-		{Name: "talk", Prompt: "reply", Resident: true},
-	}}
-	var found bool
-	for _, p := range def.Problems() {
-		if strings.Contains(p, "both an agent and a pipeline") {
-			found = true
-		}
+// A step is run by ONE thing, and the message says WHICH two (or three)
+// it was given, since "keep one" is unactionable without them.
+func TestAPhaseWithMoreThanOneRunnerIsReported(t *testing.T) {
+	cases := map[string]MachinePhase{
+		"an agent and a pipeline": {Name: "work", Prompt: "do", Next: "talk", Agent: "ag-1", Pipeline: "Fact check"},
+		"an agent and a machine":  {Name: "work", Prompt: "do", Next: "talk", Agent: "ag-1", Machine: "Gap filler"},
+		"a pipeline and a machine": {Name: "work", Prompt: "do", Next: "talk",
+			Pipeline: "Fact check", Machine: "Gap filler"},
 	}
-	if !found {
-		t.Errorf("a step with two runners should be reported: %v", def.Problems())
+	for want, ph := range cases {
+		def := MachineDef{Name: "m", Start: "work", Phases: []MachinePhase{
+			ph, {Name: "talk", Prompt: "reply", Resident: true},
+		}}
+		var found bool
+		for _, p := range def.Problems() {
+			if strings.Contains(p, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("a step naming %s should be reported by name: %v", want, def.Problems())
+		}
 	}
 }
 
@@ -242,5 +250,64 @@ func TestPipelineControlHidesUnderADelegate(t *testing.T) {
 	}
 	if got := pipelineShowWhen(MachinePhase{Name: "s", Pipeline: "Fact check"}); got != "" {
 		t.Errorf("a stored pipeline must stay visible so it can be removed, got %q", got)
+	}
+}
+
+// --- a phase that runs a whole machine ---------------------------------
+
+// Only machines that RUN can be offered: a conversational one has a step
+// that waits for a person, and nobody is waiting inside a step. Finding
+// that out at run time is worse than never being offered the choice.
+func TestChildMachineOptionsOfferOnlyRuns(t *testing.T) {
+	_, udb, user := newTestOrchestrate(t)
+	run := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Gap filler", Unattended: true,
+		Phases: []MachinePhase{{Name: "fill", Prompt: "fill"}}})
+	SaveMachineDef(udb, MachineDef{Owner: user, Name: "Chatty",
+		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}})
+	self := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Parent", Unattended: true,
+		Phases: []MachinePhase{{Name: "work", Prompt: "w"}}})
+
+	var labels []string
+	for _, o := range childMachineOptions(udb, user, self) {
+		labels = append(labels, o.Label)
+	}
+	joined := strings.Join(labels, ",")
+	if !strings.Contains(joined, "Gap filler") {
+		t.Errorf("a run should be offered: %v", labels)
+	}
+	if strings.Contains(joined, "Chatty") {
+		t.Errorf("a conversation cannot be run from inside a step: %v", labels)
+	}
+	// A machine running itself could never finish, since depth is capped.
+	if strings.Contains(joined, "Parent") {
+		t.Errorf("a machine should not offer itself: %v", labels)
+	}
+	_ = run
+}
+
+func TestChildMachineResolvesByNameThenID(t *testing.T) {
+	_, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Gap filler", Unattended: true,
+		Phases: []MachinePhase{{Name: "fill", Prompt: "fill"}}})
+
+	if got, ok := findMachineByNameOrID(udb, user, "gap FILLER"); !ok || got.ID != def.ID {
+		t.Error("a phase should resolve its child by the name an author typed, whatever the case")
+	}
+	if got, ok := findMachineByNameOrID(udb, user, def.ID); !ok || got.ID != def.ID {
+		t.Error("an id should still resolve")
+	}
+	if _, ok := findMachineByNameOrID(udb, user, "nothing here"); ok {
+		t.Error("an unknown reference must report itself missing so the step can run inline")
+	}
+}
+
+// The three runners hide each other while only one is in use, and a
+// stored value stays visible so it can be taken back out.
+func TestChildMachineControlHidesBehindTheOtherRunners(t *testing.T) {
+	if got := childMachineShowWhen(MachinePhase{Name: "s"}); got != "!agent;!pipeline" {
+		t.Errorf("the choice should hide once something else runs the step, got %q", got)
+	}
+	if got := childMachineShowWhen(MachinePhase{Name: "s", Machine: "Gap filler"}); got != "" {
+		t.Errorf("a stored child must stay visible so it can be removed, got %q", got)
 	}
 }

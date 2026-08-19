@@ -24,6 +24,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -51,6 +52,9 @@ func (t *chatTurn) phaseRunner() PhaseRunner {
 		// carries the pair anyway.
 		if pipe := strings.TrimSpace(ph.Pipeline); pipe != "" {
 			return t.runPipelinePhase(ctx, ph, pipe, prompt, base)
+		}
+		if child := strings.TrimSpace(ph.Machine); child != "" {
+			return t.runChildMachinePhase(ctx, ph, child, prompt, base)
 		}
 		ref := strings.TrimSpace(ph.Agent)
 		if ref == "" {
@@ -274,4 +278,101 @@ func findPipelineByNameOrID(udb Database, user, ref string) (PipelineDef, bool) 
 		return def, true
 	}
 	return PipelineDef{}, false
+}
+
+// runChildMachinePhase runs one phase as a whole machine of its own.
+//
+// The third runner, and the one that recurses. A delegate is another
+// agent, a pipeline is a recipe, and a child machine is a RUN: its own
+// blackboard, its own phases, its own working set, carried to completion
+// while this phase waits.
+//
+// The case it exists for is a gap-filling pass: a run notices a hole,
+// starts a smaller run to fill it, and folds what comes back into its own
+// lists. Which is why there is no merge mechanism here — the child's
+// result IS this phase's result, so the phase's own Accumulates carries it
+// into the parent's working set like any other contribution.
+func (t *chatTurn) runChildMachinePhase(ctx context.Context, ph MachinePhase, ref, prompt string, base PhaseRunner) (string, error) {
+	// Depth first, because the check is cheap and the alternative is a
+	// tree nobody authored. The child runs through this same runner, so
+	// without a counter on the context its phases would be
+	// indistinguishable from the parent's.
+	if d := MachineDepth(ctx); d >= MaxMachineDepth {
+		t.turnDiag("phase_child_machine_too_deep", "step "+ph.Name+" runs machine "+ref+
+			", but this is already "+strconv.Itoa(d)+" machine(s) deep and the limit is "+strconv.Itoa(MaxMachineDepth)+
+			". The step ran inline instead; if the work genuinely nests further, flatten it into one machine.")
+		return base(ctx, ph, prompt)
+	}
+	child, found := findMachineByNameOrID(t.udb, t.user, ref)
+	if !found {
+		// Broken-dependency posture, the same as a missing delegate or
+		// pipeline: a machine is portable and what it names may not exist
+		// in this deployment.
+		t.turnDiag("phase_child_machine_missing", "step "+ph.Name+" runs machine "+ref+
+			", which does not exist here; this turn ran the step inline instead")
+		return base(ctx, ph, prompt)
+	}
+	if !child.Unattended {
+		// A conversational machine has a step that waits for a person, and
+		// there is nobody inside a phase to wait for. Refusing here beats
+		// entering a step the run can never leave.
+		t.turnDiag("phase_child_machine_conversational", "step "+ph.Name+" runs machine "+chFirst(child.Name, child.ID)+
+			", which is a conversation rather than a run: it has a step that waits for a person, and nobody is waiting inside a step. "+
+			"Turn on \"this RUNS instead of converses\" on that machine, or point this step somewhere else. The step ran inline instead.")
+		return base(ctx, ph, prompt)
+	}
+	t.turnDiag("phase_child_machine", "step "+ph.Name+" ran machine "+chFirst(child.Name, child.ID)+" as a child run")
+
+	// The child's own cursor. Fresh every time: a child run is a piece of
+	// THIS turn's work, not a conversation with a position to resume, and
+	// carrying a cursor between them would leak one gap's findings into
+	// the next one's blackboard.
+	cur := &MachineCursor{}
+	// The same runner, one level deeper. Reusing it is what lets a child's
+	// phases delegate and run pipelines exactly as a parent's do; the depth
+	// on the context is the only thing that differs, and it is what stops
+	// the third level.
+	childCtx := WithMachineDepth(ctx, MachineDepth(ctx)+1)
+	final, text, err := t.app.RunUnattended(childCtx, child, cur, t.machineTurn(prompt), t.phaseRunner(), t.turnDiag)
+	if err != nil {
+		// Falling back to inline would answer the question with something
+		// else wearing the right name. Fail the phase, as a failed delegate
+		// or pipeline does.
+		return "", err
+	}
+	report := strings.TrimSpace(text)
+	if report == "" {
+		return "", Error("step " + ph.Name + " ran machine " + chFirst(child.Name, child.ID) + " and got nothing back")
+	}
+	if len(ph.Output) == 0 {
+		return report, nil
+	}
+	// One call when the shapes line up: the child's last step declared what
+	// this step declares, so those values are taken as they are.
+	if js, ok := declaredFieldsJSON(ph.Output, cur.State[final.Name].Fields); ok {
+		t.turnDiag("phase_child_machine_shape", "step "+ph.Name+" took its fields from the child run's own last step; no second call")
+		return js, nil
+	}
+	return base(ctx, ph, "A separate run was carried out for this task:\n\n"+prompt+
+		"\n\nIt finished with:\n\n"+report+
+		"\n\nRecord what it found in the fields below. Take its findings as given — "+
+		"do not re-do the work, second-guess it, or fill a field it did not address. "+
+		"A field it left unanswered is better left empty than invented.")
+}
+
+// findMachineByNameOrID resolves a phase's child-machine reference, name
+// first for the same reason a pipeline reference resolves that way: an
+// exported recipe carries the name somebody wrote, while the id belongs to
+// the deployment it was authored in.
+func findMachineByNameOrID(udb Database, user, ref string) (MachineDef, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return MachineDef{}, false
+	}
+	for _, d := range ListMachineDefs(udb, user) {
+		if strings.EqualFold(strings.TrimSpace(d.Name), ref) {
+			return d, true
+		}
+	}
+	return LoadMachineDef(udb, user, ref)
 }
