@@ -195,6 +195,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// action registered in web_assets.html.
 					ScheduleCreators: []ui.ScheduleCreator{
 						{Label: "New recurring task", Action: "orchestrate_new_recurring"},
+						machineScheduleCreator(),
 					},
 					// Canonical default wake rule, so the channel editor can offer
 					// "Reset to default" on the gatekeeper rules (source of truth is Go).

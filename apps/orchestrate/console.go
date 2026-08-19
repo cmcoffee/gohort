@@ -252,6 +252,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// runs + recurring tasks, so a schedule is visible within the agent it fires
 	// (any agent, not just controllers).
 	T.HandleFunc("/api/schedules", g(T.handleSchedules))
+	// Making one, rather than only managing what an agent made
+	// (console_machine_schedule.go).
+	T.HandleFunc("/api/console/machine-options", g(T.handleConsoleMachineOptions))
+	T.HandleFunc("/api/console/machine-schedule/create", g(T.handleConsoleMachineScheduleCreate))
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
 	T.HandleFunc("/api/console/recurring", g(T.handleConsoleRecurring))

@@ -6056,6 +6056,109 @@
         m.footer.appendChild(createBtn);
       });
 
+      // Point a schedule at a MACHINE, from the rail. The sibling of the
+      // recurring-task creator above, and deliberately a different form: a
+      // recurring task wants a directive for an agent, this wants a machine,
+      // a subject, and a cadence.
+      window.uiRegisterClientAction('orchestrate_new_machine_run', function(ctx) {
+        var m = openOrchModal('New machine run');
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'Runs a machine on a timetable, with nobody watching. Only machines marked "this RUNS instead of converses" can be scheduled.';
+        m.body.appendChild(help);
+
+        var nameIn = schedTxt('', 'e.g. nightly digest');
+        m.body.appendChild(schedLabeled('Name this schedule', nameIn));
+
+        var machineSel = document.createElement('select');
+        machineSel.className = 'ui-orch-sec-filter';
+        var loading = document.createElement('option');
+        loading.textContent = 'Loading…';
+        machineSel.appendChild(loading);
+        m.body.appendChild(schedLabeled('Which machine', machineSel));
+
+        var subjectIn = schedTxt('', 'what each run is about');
+        m.body.appendChild(schedLabeled('What the run is about', subjectIn));
+
+        // Cadences rather than a raw cron string. The scheduler understands
+        // both, and a person asked to type "FRI 21:30" from memory gets it
+        // wrong in a way they find out about a week later.
+        var CADENCES = [
+          ['30', 'Every 30 minutes'],
+          ['60', 'Hourly'],
+          ['360', 'Every 6 hours'],
+          ['cron:daily 08:00', 'Daily at 8am'],
+          ['cron:weekdays 08:00', 'Weekdays at 8am'],
+          ['cron:MON 09:00', 'Weekly, Monday 9am'],
+        ];
+        var everySel = schedSelect(CADENCES, '60');
+        m.body.appendChild(schedLabeled('How often', everySel));
+
+        var createBtn = document.createElement('button');
+        createBtn.className = 'ui-orch-modal-btn primary';
+        createBtn.textContent = 'Create';
+        createBtn.disabled = true;
+
+        fetch('api/console/machine-options').then(function(r) {
+          return r.ok ? r.json() : [];
+        }).then(function(opts) {
+          machineSel.textContent = '';
+          if (!opts.length) {
+            var none = document.createElement('option');
+            none.value = '';
+            none.textContent = 'No machines are marked to run';
+            machineSel.appendChild(none);
+            help.textContent = 'No machine here is marked "this RUNS instead of converses" yet. Turn that on in a machine\u2019s own page and it becomes schedulable.';
+            return;
+          }
+          opts.forEach(function(o) {
+            var opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            machineSel.appendChild(opt);
+          });
+          createBtn.disabled = false;
+        }).catch(function() {
+          machineSel.textContent = '';
+          var err = document.createElement('option');
+          err.textContent = 'Could not load machines';
+          machineSel.appendChild(err);
+        });
+
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'ui-orch-modal-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = m.close;
+        m.footer.appendChild(cancelBtn);
+
+        createBtn.onclick = function() {
+          var name = (nameIn.value || '').trim();
+          if (!name) { window.uiAlert('Name the schedule.'); return; }
+          if (!machineSel.value) { window.uiAlert('Pick a machine.'); return; }
+          var body = {
+            name: name,
+            machine_id: machineSel.value,
+            mission: (subjectIn.value || '').trim(),
+            agent_id: window.GOHORT_AGENT_ID || '',
+          };
+          var every = everySel.value || '60';
+          if (every.indexOf('cron:') === 0) { body.cron = every.slice(5); }
+          else { body.interval_minutes = parseInt(every, 10); }
+          createBtn.disabled = true;
+          fetch('api/console/machine-schedule/create', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+            m.close();
+            if (ctx && ctx.reload) ctx.reload();
+          }).catch(function(err) {
+            createBtn.disabled = false;
+            window.uiAlert('Create failed: ' + (err && err.message || err));
+          });
+        };
+        m.footer.appendChild(createBtn);
+      });
+
       // Small shared field helpers for the schedule edit modals below.
       function schedLabeled(labelText, inputEl) {
         var wrap = document.createElement('label');

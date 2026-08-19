@@ -271,3 +271,117 @@ func TestAScheduledMachineThatVanishedReportsItself(t *testing.T) {
 		t.Errorf("the skip should name what it could not find: %s", res.Summary)
 	}
 }
+
+// --- making a machine schedule from the page ----------------------------
+
+func machineScheduleReq(t *testing.T, app *OrchestrateApp, user, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest("POST", "/api/console/machine-schedule/create", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	app.handleConsoleMachineScheduleCreate(w, asUser(r, user))
+	return w
+}
+
+func TestAMachineScheduleIsBuiltFromTheForm(t *testing.T) {
+	def := MachineDef{ID: "m-1", Name: "Nightly", Unattended: true}
+
+	sa, err := buildMachineSchedule("alice", "nightly digest", def, "what changed today", "", 60, "ag-1")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if sa.MachineID != "m-1" {
+		t.Errorf("it should point at the machine, got %q", sa.MachineID)
+	}
+	if !sa.TargetsMachine() || sa.TargetsPipeline() || strings.TrimSpace(sa.AgentID) != "" {
+		t.Errorf("exactly one target: %+v", sa)
+	}
+	if sa.IntervalSeconds != 3600 {
+		t.Errorf("the cadence should land in seconds, got %d", sa.IntervalSeconds)
+	}
+	if sa.ReportAgentID != "ag-1" {
+		t.Errorf("it should land on the rail it was made from, got %q", sa.ReportAgentID)
+	}
+	// A cron cadence instead.
+	// The scheduler's own spelling: "{days} {HH:MM}". A cadence the modal
+	// offers has to be one this accepts, which is why the modal offers
+	// choices rather than a box to type one into.
+	if sa, err := buildMachineSchedule("alice", "n", def, "", "daily 08:00", 0, ""); err != nil || sa.Cron != "daily 08:00" {
+		t.Errorf("a cron cadence should survive: %+v / %v", sa, err)
+	}
+}
+
+// The subject reaches the first step as {input}, so an empty one is
+// defaulted rather than sent as nothing.
+func TestAMachineScheduleWithNoSubjectUsesTheMachinesName(t *testing.T) {
+	sa, err := buildMachineSchedule("alice", "n", MachineDef{ID: "m-1", Name: "Nightly", Unattended: true}, "", "", 30, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sa.Mission != "Nightly" {
+		t.Errorf("an empty subject should fall back to the machine's name, got %q", sa.Mission)
+	}
+}
+
+// The refusals happen where somebody is reading, not at four in the morning.
+func TestAMachineScheduleRefusesWhatCannotRun(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	converses := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Chatty", Start: "talk",
+		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}})
+	broken := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Spin", Start: "a", Unattended: true,
+		Phases: []MachinePhase{{Name: "a", Prompt: "x", Next: "b"}, {Name: "b", Prompt: "y", Next: "a"}}})
+
+	cases := map[string]struct{ id, want string }{
+		"a conversation": {converses.ID, "converses rather than runs"},
+		"a broken run":   {broken.ID, "will not run yet"},
+		"nothing at all": {"no-such-id", "no such machine"},
+	}
+	for what, c := range cases {
+		w := machineScheduleReq(t, app, user, `{"name":"x-`+what[:3]+`","machine_id":"`+c.id+`","interval_minutes":60}`)
+		if w.Code == 200 {
+			t.Errorf("%s should be refused", what)
+			continue
+		}
+		if !strings.Contains(w.Body.String(), c.want) {
+			t.Errorf("%s: the refusal should say why, got %s", what, w.Body.String())
+		}
+	}
+}
+
+// A cadence the scheduler cannot read is refused before anything is saved.
+func TestAMachineScheduleNeedsACadenceItUnderstands(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Nightly", Start: "write", Unattended: true,
+		Phases: []MachinePhase{{Name: "write", Prompt: "write it"}}})
+
+	_ = app
+	_ = def
+	if _, err := buildMachineSchedule(user, "none", MachineDef{ID: "m", Name: "N", Unattended: true}, "", "", 0, ""); err == nil {
+		t.Error("a schedule with no cadence should be refused")
+	}
+	if _, err := buildMachineSchedule(user, "bad", MachineDef{ID: "m", Name: "N", Unattended: true}, "", "whenever", 0, ""); err == nil {
+		t.Error("an unreadable cron should be refused")
+	}
+}
+
+// Only machines that can be scheduled are offered.
+func TestMachineOptionsOfferOnlyRuns(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	SaveMachineDef(udb, MachineDef{Owner: user, Name: "Nightly", Unattended: true,
+		Phases: []MachinePhase{{Name: "write", Prompt: "w"}}})
+	SaveMachineDef(udb, MachineDef{Owner: user, Name: "Chatty",
+		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}})
+
+	r := httptest.NewRequest("GET", "/api/console/machine-options", nil)
+	w := httptest.NewRecorder()
+	app.handleConsoleMachineOptions(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("%d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Nightly") {
+		t.Errorf("a machine that runs should be offered: %s", body)
+	}
+	if strings.Contains(body, "Chatty") {
+		t.Errorf("a conversation cannot be scheduled: %s", body)
+	}
+}
