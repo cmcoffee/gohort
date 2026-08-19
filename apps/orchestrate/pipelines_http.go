@@ -402,7 +402,10 @@ func (T *OrchestrateApp) runPipelineHTTP(w http.ResponseWriter, r *http.Request,
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), knowledgeIngestTimeout()*8)
 	defer cancel()
-	out, err := T.RunPipelineDefSync(ctx, def, input, dispatch, nil)
+	out, _, err := T.RunPipelineDefHooks(ctx, def, input, PipelineHooks{
+		Dispatch: dispatch,
+		Machine:  T.pipelineMachineRunner(user),
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

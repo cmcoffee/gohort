@@ -249,7 +249,10 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	dispatch := func(c context.Context, agentID, stageInput string) (string, error) {
 		return app.RunAgentSync(c, sa.Owner, sa.Owner, agentID, stageInput)
 	}
-	out, err := app.RunPipelineDefSync(ctx, def, input, dispatch, nil)
+	out, _, err := app.RunPipelineDefHooks(ctx, def, input, PipelineHooks{
+		Dispatch: dispatch,
+		Machine:  app.pipelineMachineRunner(sa.Owner),
+	})
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
 		return StandingRunResult{

@@ -225,7 +225,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	// asks for a verdict nobody has earned yet. It also put the biggest
 	// button on the page in front of somebody who came to edit one prompt.
 	page.Sections = append(page.Sections, pipelineStageSections(def,
-		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user)})...)
+		editorCatalog{agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
+			machines: childMachineOptions(udb, user, MachineDef{})})...)
 	page.Sections = append(page.Sections,
 		// Run it, here. The streaming endpoints have existed since a
 		// PipelineDef could back an app (core/pipeline_runs.go), and

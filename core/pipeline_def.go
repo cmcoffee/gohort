@@ -94,6 +94,18 @@ const (
 	// arguments come from a saved definition a human wrote and reviewed,
 	// rather than from whatever the model decided to pass this run.
 	StageTool PipelineStageKind = "tool"
+
+	// StageMachine runs a stored MACHINE as a stage: its own phases, its
+	// own blackboard, carried to completion, and its terminal step's
+	// result becomes the stage's.
+	//
+	// The counterpart of the machine's pipeline phase, and the pair is
+	// what makes the two primitives compose in both directions. It exists
+	// for one shape in particular: a fanout body that runs a whole child
+	// run per item. Research finds N gaps and fills each with a smaller
+	// run of its own; a machine phase can only run ONE child, so without
+	// this the fan is sequential.
+	StageMachine PipelineStageKind = "machine"
 )
 
 // loopMaxIterations bounds any single loop stage. A pipeline is
@@ -203,6 +215,10 @@ type PipelineStage struct {
 	// per-user and per-agent, so it can't be checked when the pipeline
 	// is saved.
 	Tool string `json:"tool,omitempty"`
+
+	// Machine names the machine a kind=machine stage runs, by name or id.
+	// The machine must be unattended: a stage has nobody waiting in it.
+	Machine string `json:"machine,omitempty"`
 
 	// Args are the arguments passed to that tool: param name → template,
 	// carrying the full templating vocabulary ({input}, {prev},
@@ -511,6 +527,16 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 			add(validateToolStage(s, done))
 		} else if s.Tool != "" || len(s.Args) > 0 {
 			probs = append(probs, "stage "+s.Name+": tool/args are only valid on kind=tool")
+		}
+		if s.Kind == StageMachine {
+			if strings.TrimSpace(s.Machine) == "" {
+				probs = append(probs, "stage "+s.Name+" is kind=machine but names no machine")
+			}
+			if strings.TrimSpace(s.Agent) != "" {
+				probs = append(probs, "stage "+s.Name+": a machine stage runs a machine, so it does not also name an agent")
+			}
+		} else if strings.TrimSpace(s.Machine) != "" {
+			probs = append(probs, "stage "+s.Name+": machine is only valid on kind=machine")
 		}
 		if p := doubleBraceProblem(s.Name, "prompt", s.Prompt); p != nil {
 			add(p)

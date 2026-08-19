@@ -1,6 +1,8 @@
 # Fanout bodies
 
-**Status:** BUILT v0.6.272. The per-branch block mode and the nested-stage
+**Status:** BUILT v0.6.272. A fanout body may now also run a whole MACHINE per
+item (`kind: machine`, v0.6.276), which is the parallel child-run shape research
+wants. The per-branch block mode and the nested-stage
 EDITOR remain unbuilt: bodies are authored through the `pipeline` tool, an
 import, or a revise, which is the same gap `loop` bodies already had. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
 `docs/pipeline-structured-outputs.md`, `project_pipeline_loop_stage`,

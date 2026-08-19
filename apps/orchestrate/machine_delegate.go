@@ -197,7 +197,14 @@ func (t *chatTurn) runPipelinePhase(ctx context.Context, ph MachinePhase, ref, p
 	// The phase's own catalog is the pipeline's inherited pool, so a stage
 	// that names no tools reaches exactly what the phase may reach, and one
 	// that names some gets that subset. Nothing widens here.
-	out, fields, err := t.app.RunPipelineDefSyncFields(ctx, def, prompt, dispatch, status, t.machineCatalog(ph))
+	out, fields, err := t.app.RunPipelineDefHooks(ctx, def, prompt, PipelineHooks{
+		Dispatch: dispatch,
+		// A stage of that pipeline may itself run a machine. The depth on
+		// the context is what stops that going round forever.
+		Machine: t.app.pipelineMachineRunner(t.user),
+		Status:  status,
+		Tools:   t.machineCatalog(ph),
+	})
 	if err != nil {
 		// Falling back to inline would answer with the wrong thing wearing
 		// the right name. Fail the phase and let the machine report it,

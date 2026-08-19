@@ -33,6 +33,32 @@ import (
 // dispatch hook is a run-time error.
 type PipelineDispatch func(ctx context.Context, agentID, input string) (string, error)
 
+// PipelineMachineRunner runs a stored MACHINE for a kind=machine stage and
+// returns its terminal step's text plus that step's declared fields.
+//
+// A hook for the same reason PipelineDispatch is one: core executes the
+// recipe and knows nothing about whose machines these are. The host
+// resolves the reference against its own store, decides what the run may
+// reach, and enforces its own nesting rules.
+//
+// Nil is not an error until a stage needs it, at which point the stage
+// says so — the same posture a pipeline with agent stages and no dispatch
+// hook already has.
+type PipelineMachineRunner func(ctx context.Context, ref, input string) (string, map[string]any, error)
+
+// PipelineHooks are the host-supplied halves of a run: what a stage needs
+// that the interpreter cannot know by itself.
+//
+// A struct rather than four more parameters, because the entry points that
+// took dispatch, then a status func, then a tool catalog were already at
+// the edge of readable and a fourth would have tipped them over.
+type PipelineHooks struct {
+	Dispatch PipelineDispatch      // kind=agent
+	Machine  PipelineMachineRunner // kind=machine
+	Status   func(string)          // progress lines
+	Tools    []AgentToolDef        // the inherited catalog a worker stage narrows
+}
+
 // RunPipelineDefSync executes a pipeline definition inline and returns
 // the final stage's output. Use when the caller needs the result
 // directly (an LLM tool call that runs a pipeline and uses the
@@ -159,15 +185,34 @@ func (T *AppCore) executePipelineDefVars(ctx context.Context, def PipelineDef, i
 // executePipelineDefRun is executePipelineDefVars plus the run itself, for
 // the one caller that needs more than the final text: the fields behind it.
 func (T *AppCore) executePipelineDefRun(ctx context.Context, def PipelineDef, input string, vars map[string]string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, *pipelineRun, error) {
+	return T.executePipelineHooks(ctx, def, input, vars, sink, PipelineHooks{Dispatch: dispatch, Tools: inheritedTools})
+}
+
+// RunPipelineDefHooks executes a pipeline with every host-supplied half in
+// one place, and returns the final text plus the fields behind it.
+//
+// The entry point to reach for when a pipeline may contain a kind=machine
+// stage; the older Run* signatures have no way to carry that hook and a
+// machine stage refuses cleanly under them.
+func (T *AppCore) RunPipelineDefHooks(ctx context.Context, def PipelineDef, input string, h PipelineHooks) (string, map[string]any, error) {
+	out, r, err := T.executePipelineHooks(ctx, def, input, nil, statusSink(h.Status), h)
+	if err != nil || r == nil {
+		return out, nil, err
+	}
+	return out, r.outputs[r.lastStage].Fields, nil
+}
+
+func (T *AppCore) executePipelineHooks(ctx context.Context, def PipelineDef, input string, vars map[string]string, sink PipelineSink, h PipelineHooks) (string, *pipelineRun, error) {
 	if err := def.Validate(); err != nil {
 		return "", nil, err
 	}
 	r := &pipelineRun{
 		app:       T,
 		input:     input,
-		dispatch:  dispatch,
+		dispatch:  h.Dispatch,
+		machines:  h.Machine,
 		sink:      sink,
-		inherited: inheritedTools,
+		inherited: h.Tools,
 		vars:      vars,
 		outputs:   make(map[string]stageOutput, len(def.Stages)),
 		blockSeq:  new(atomic.Int64),
@@ -184,6 +229,7 @@ type pipelineRun struct {
 	app       *AppCore
 	input     string
 	dispatch  PipelineDispatch
+	machines  PipelineMachineRunner
 	sink      PipelineSink
 	inherited []AgentToolDef
 	// vars are RUN-scoped template values — the submit form's fields, keyed
@@ -226,6 +272,7 @@ func (r *pipelineRun) forBranch() *pipelineRun {
 		app:       r.app,
 		input:     r.input,
 		dispatch:  r.dispatch,
+		machines:  r.machines,
 		sink:      r.sink,
 		inherited: r.inherited,
 		vars:      r.vars,
@@ -560,6 +607,12 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		case StageLoop:
 			// Repeat the body, threading each pass's result into the next.
 			out, err = r.runLoopStage(ctx, stage, prev)
+		case StageMachine:
+			// A whole run as a stage. Computed here rather than handed over
+			// as a `call` closure on purpose: runDeclaredStage repairs a
+			// shape mismatch by calling again, and calling again here would
+			// re-run the entire machine.
+			out, fields, err = r.runMachineStage(ctx, stage, prompt)
 		case StageTool:
 			// Call the named tool with the author's arguments. No model
 			// runs, so there is nothing to prompt and nothing to repair.
@@ -1450,3 +1503,76 @@ func resolveStageTemplate(tmpl, input, prev string, outputs map[string]stageOutp
 	return s
 }
 
+// runMachineStage runs a stored machine as one stage.
+//
+// The counterpart of the machine's pipeline phase, and the pair is what
+// lets the two primitives compose in both directions: a machine step can
+// be a pipeline, and a pipeline stage can be a machine. The shape that
+// wants this is a fanout body whose branch is a whole child run, which is
+// how N gaps get filled at once rather than one after another.
+//
+// The host supplies the runner (PipelineHooks.Machine): resolving the
+// reference, deciding what the run may reach, and enforcing nesting are
+// all its business, not the interpreter's.
+func (r *pipelineRun) runMachineStage(ctx context.Context, stage PipelineStage, prompt string) (string, map[string]any, error) {
+	if r.machines == nil {
+		return "", nil, Error("stage " + stage.Name + " runs machine " + strconv.Quote(stage.Machine) +
+			", but this pipeline was started without a machine runner. Run it from a surface that supplies one (RunPipelineDefHooks).")
+	}
+	out, fields, err := r.machines(ctx, stage.Machine, prompt)
+	if err != nil {
+		return "", nil, Error("stage " + stage.Name + ": machine " + strconv.Quote(stage.Machine) + ": " + err.Error())
+	}
+	out = strings.TrimSpace(out)
+	if len(stage.ModelOutput()) == 0 {
+		return out, nil, nil
+	}
+	// A declared stage takes the child run's own shape when the names line
+	// up, which costs nothing: the machine's last step already produced
+	// validated fields.
+	if kept, ok := declaredSubset(stage.ModelOutput(), fields); ok {
+		return out, kept, nil
+	}
+	// They did not line up. Decoding the text is the one remaining honest
+	// try — a machine whose last step returns JSON prose still satisfies a
+	// contract — and failing that, say which side to fix. There is no
+	// model in this stage to ask again, and re-running the machine to
+	// reshape its answer would be an expensive way to hide a mismatch.
+	decoded, derr := decodeStageOutput(out, stage.ModelOutput())
+	if derr != nil {
+		return "", nil, Error("stage " + stage.Name + ": machine " + strconv.Quote(stage.Machine) +
+			" finished, but its result does not carry the fields this stage declares (" + fieldNameList(stage.ModelOutput()) +
+			"). Declare those fields on the machine's LAST step, or drop the output contract from this stage and read its text.")
+	}
+	return out, decoded, nil
+}
+
+// declaredSubset picks exactly the declared fields out of what a child run
+// produced, and reports whether every one of them was there.
+//
+// Every one, not some: a missing field would decode as empty and read as
+// "the run had nothing to say about it", when the truth is that nobody
+// asked it.
+func declaredSubset(declared []PipelineField, fields map[string]any) (map[string]any, bool) {
+	if len(fields) == 0 {
+		return nil, false
+	}
+	out := make(map[string]any, len(declared))
+	for _, f := range declared {
+		v, ok := fields[f.Name]
+		if !ok {
+			return nil, false
+		}
+		out[f.Name] = v
+	}
+	return out, true
+}
+
+// fieldNameList names a contract's fields for a message about it.
+func fieldNameList(fields []PipelineField) string {
+	names := make([]string, 0, len(fields))
+	for _, f := range fields {
+		names = append(names, f.Name)
+	}
+	return strings.Join(names, ", ")
+}

@@ -43,7 +43,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				"input":       {Type: "string", Description: "(run) The input fed to the pipeline's first stage and available as {input} in every stage prompt."},
 				"stages": {
 					Type:        "array",
-					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE — \"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\" — that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration} — plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field} — that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"tools\" to restrict, \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. **Call action=\"help\" for the full spec** — every field, the caps, and the canonical shapes.",
+					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE — \"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\" — that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration} — plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field} — that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"tools\" to restrict, \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. **Call action=\"help\" for the full spec** — every field, the caps, and the canonical shapes.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -136,6 +136,15 @@ Repeats "body", each pass seeing the last via {prev}. count is required and is t
 
 === BRANCH (control flow, no LLM call) ===
 when = a bool field an EARLIER stage declared. True takes the branch: skip_to jumps to a LATER stage, or omit skip_to to end the pipeline (returning the last stage's output, so a screening stage's rejection IS the answer). Jumps are forward-only; repeating work is what loop is for. Inside a loop body a branch may only skip within the pass — use the loop's until to stop early.
+
+=== MACHINE (a whole run as a stage) ===
+machine = the name of a stored MACHINE, which runs with its own steps and its own working set,
+and its last step's result becomes this stage's. The machine must be marked "this RUNS instead of
+converses" — a stage has nobody waiting in it. Depth is capped: a machine already running this
+pipeline cannot start another. Use it when the work is a smaller version of the same shape, and
+put it in a FANOUT BODY when there is one per item — that is how N gaps get filled at once rather
+than one after another. When the machine's last step declares the fields this stage declares, they
+come straight across with nothing re-read out of prose.
 
 === TOOL (no LLM call, no tokens) ===
 tool = one of the invoking agent's tools; args = {param: template}. For computation rather than judgment: arithmetic, dedup, normalization, a formatting pass, one specific API call. Asking a worker stage to do arithmetic is the classic waste — call the calculator. May declare output to decode a JSON-returning tool, with no repair retry (there is no model to ask again). A missing tool is a run-time error listing what the caller does have.
@@ -632,6 +641,7 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 			SkipTo:  strings.TrimSpace(mapStr(m, "skip_to")),
 			Model:   strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
 			Tool:    strings.TrimSpace(mapStr(m, "tool")),
+			Machine: strings.TrimSpace(mapStr(m, "machine")),
 			Args:    mapStrMap(m, "args"),
 		})
 	}

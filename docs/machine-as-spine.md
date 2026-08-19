@@ -180,12 +180,10 @@ working set with no second merge mechanism. Depth rides the CONTEXT
 child runs through the host's same runner and the depth has to travel with the
 call rather than with the caller.
 
-**What is outstanding:** a phase runs ONE child. Fanning children (research's
-gap filler starts one run per gap, in parallel) needs a pipeline stage kind that
-can run a machine, so a fanout body can be a child run. Today the same work is
-expressible SEQUENTIALLY, by routing back to the child-running phase once per
-item, which is correct but not parallel. The missing piece is small and belongs
-with the fanout body work rather than here.
+**The outstanding part landed in v0.6.276:** `kind: machine` is a pipeline stage
+that runs a whole machine, so a fanout body can be a child run and N gaps are
+filled at once rather than one after another. A phase still runs one child
+directly; fanning them is the pipeline's job, which is where it belongs.
 
 ## Change 5: run-scoped tool state
 

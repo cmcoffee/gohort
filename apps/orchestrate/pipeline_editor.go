@@ -51,6 +51,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			{Value: "loop", Label: "Loop — repeat a body of stages"},
 			{Value: "branch", Label: "Branch — read a bool and skip or stop (no model call)"},
 			{Value: "tool", Label: "Tool — call a tool directly (no model, no tokens)"},
+			{Value: "machine", Label: "Machine — run a whole machine as this stage"},
 		}, Help: "Changing this changes which controls below apply. Anything the new kind does not use stays visible while it still holds a value, so you can clear it."},
 	}
 
@@ -88,6 +89,12 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			ShowWhen: keepWhileSet(s.Tool, "kind:tool"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.tools...),
 			Help:     "Called directly with the arguments you write. For computation rather than judgement: arithmetic, dedup, one specific API call."},
+		ui.FormField{Field: "machine", Type: "select", Label: "Which machine",
+			ShowWhen: keepWhileSet(s.Machine, "kind:machine"),
+			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.machines...),
+			Help: "A whole run as this stage: its own steps, its own working set, and its last step's result becomes this stage's. " +
+				"Only machines marked \"this RUNS instead of converses\" can be used, because a stage has nobody waiting in it. " +
+				"In a fanout body it becomes one child run per item."},
 	)
 
 	// What it returns. Every kind that makes a model call can declare
@@ -222,6 +229,7 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 		{"when", func(v string) { s.When = v }},
 		{"skip_to", func(v string) { s.SkipTo = v }},
 		{"tool", func(v string) { s.Tool = v }},
+		{"machine", func(v string) { s.Machine = v }},
 		{"model", func(v string) { s.Model = v }},
 	} {
 		if v, ok := str(f.key); ok {
