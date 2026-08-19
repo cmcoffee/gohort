@@ -1,6 +1,8 @@
 # Fanout bodies
 
-**Status:** SPEC, not built. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
+**Status:** BUILT v0.6.272. The per-branch block mode and the nested-stage
+EDITOR remain unbuilt: bodies are authored through the `pipeline` tool, an
+import, or a revise, which is the same gap `loop` bodies already had. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
 `docs/pipeline-structured-outputs.md`, `project_pipeline_loop_stage`,
 `project_pipeline_framework_future`.
 

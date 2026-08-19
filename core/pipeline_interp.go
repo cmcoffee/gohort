@@ -170,6 +170,7 @@ func (T *AppCore) executePipelineDefRun(ctx context.Context, def PipelineDef, in
 		inherited: inheritedTools,
 		vars:      vars,
 		outputs:   make(map[string]stageOutput, len(def.Stages)),
+		blockSeq:  new(atomic.Int64),
 	}
 	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
 	return out, r, err
@@ -192,8 +193,46 @@ type pipelineRun struct {
 	// where a refinement pipeline does its work.
 	vars      map[string]string
 	outputs   map[string]stageOutput
-	lastStage string       // the stage whose output the run is returning
-	blockSeq  atomic.Int64 // block ids, unique across parallel fanout branches
+	lastStage string // the stage whose output the run is returning
+	// blockSeq hands out block ids. A POINTER, because a fanout body runs
+	// its branches in child scopes (forBranch) and each one would otherwise
+	// start its own numbering: two branches would both claim "stage-1" and
+	// the transcript would fold their blocks together.
+	blockSeq *atomic.Int64
+	// quiet suppresses this run's own transcript blocks. Set on a fanout
+	// branch: N branches x K body stages of individual blocks would bury a
+	// transcript that reads one entry per stage, and the fanout's joined
+	// block is the artifact somebody wants. Branch PROGRESS still emits, as
+	// status.
+	quiet bool
+}
+
+// forBranch is one fanout branch's scope.
+//
+// Its outputs are its OWN, seeded with a copy of what the parent had
+// established when the fan started. A loop can share the parent's map
+// because its passes are sequential; branches run in parallel, so a shared
+// map is both a data race and a semantic collision — branch 3 writing
+// "analyze" while branch 1 is still reading its own.
+//
+// Everything else is shared on purpose: the sink (one transcript), the id
+// space (see blockSeq), the dispatch hook, and the inherited tools.
+func (r *pipelineRun) forBranch() *pipelineRun {
+	outs := make(map[string]stageOutput, len(r.outputs)+4)
+	for k, v := range r.outputs {
+		outs[k] = v
+	}
+	return &pipelineRun{
+		app:       r.app,
+		input:     r.input,
+		dispatch:  r.dispatch,
+		sink:      r.sink,
+		inherited: r.inherited,
+		vars:      r.vars,
+		outputs:   outs,
+		blockSeq:  r.blockSeq,
+		quiet:     true,
+	}
 }
 
 // status emits a soft progress line. Kept as a method so the interpreter's
@@ -215,7 +254,7 @@ func (r *pipelineRun) emit(ev PipelineEvent) {
 // is what makes a loop legible in the transcript rather than one card that
 // silently rewrites itself.
 func (r *pipelineRun) openBlock(stage PipelineStage, title string) (string, func(body string)) {
-	if r == nil || r.sink == nil {
+	if r == nil || r.sink == nil || r.quiet {
 		return "", func(string) {}
 	}
 	id := fmt.Sprintf("stage-%d", r.blockSeq.Add(1))
@@ -514,8 +553,10 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		case StageFanout:
 			// Run the stage's inner work across each element of the
 			// FanOver stage's JSON-array output, in parallel, then collect
-			// into one labeled block for the next stage to consume.
-			out, err = T.runFanoutStage(ctx, stage, input, prev, outputs, stageTools, dispatch, status)
+			// into one labeled block for the next stage to consume. With a
+			// body, each branch is a small pipeline in its own scope and
+			// the fanout also carries the branches' declared shapes.
+			out, fields, err = r.runFanoutStage(ctx, stage, prev, stageTools, status)
 		case StageLoop:
 			// Repeat the body, threading each pass's result into the next.
 			out, err = r.runLoopStage(ctx, stage, prev)
@@ -1096,14 +1137,15 @@ const FanoutMaxItems = fanoutMaxItems
 // into the stage prompt as {item}. Per-branch errors are non-fatal —
 // the branch records an error marker and the rest proceed — so one bad
 // search doesn't sink the whole fan.
-func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input, prev string, outputs map[string]stageOutput, stageTools []AgentToolDef, dispatch PipelineDispatch, status func(string)) (string, error) {
+func (r *pipelineRun) runFanoutStage(ctx context.Context, stage PipelineStage, prev string, stageTools []AgentToolDef, status func(string)) (string, map[string]any, error) {
+	T, outputs, dispatch, input := r.app, r.outputs, r.dispatch, r.input
 	// Parse uncapped first so we can report honest truncation.
 	items, err := fanoutItems(stage.FanOver, outputs)
 	if err != nil {
-		return "", Error("fanout stage " + stage.Name + ": " + err.Error())
+		return "", nil, Error("fanout stage " + stage.Name + ": " + err.Error())
 	}
 	if len(items) == 0 {
-		return "", Error("fanout stage " + stage.Name + ": fan_over " + stage.FanOver + " produced no list items")
+		return "", nil, Error("fanout stage " + stage.Name + ": fan_over " + stage.FanOver + " produced no list items")
 	}
 	if len(items) > fanoutMaxItems {
 		if status != nil {
@@ -1112,7 +1154,15 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 		items = items[:fanoutMaxItems]
 	}
 	if status != nil {
-		status(fmt.Sprintf("fanout %s: %d branches (parallel %d)", stage.Name, len(items), fanoutParallel))
+		if body := len(stage.Body); body > 0 {
+			// Say the multiplication BEFORE paying it. A body turns N
+			// branches into N x K model calls, and somebody watching a
+			// bill should not have to work that out from a stage count.
+			status(fmt.Sprintf("fanout %s: %d branches x %d stages = %d model calls (parallel %d)",
+				stage.Name, len(items), body, len(items)*body, fanoutParallel))
+		} else {
+			status(fmt.Sprintf("fanout %s: %d branches (parallel %d)", stage.Name, len(items), fanoutParallel))
+		}
 	}
 
 	think := false
@@ -1123,6 +1173,7 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 	agent := strings.TrimSpace(stage.Agent)
 
 	results := make([]string, len(items))
+	collected := make([]map[string]any, len(items))
 	lg := NewLimitGroup(fanoutParallel)
 	for i, item := range items {
 		if ctx.Err() != nil {
@@ -1131,6 +1182,22 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 		lg.Add(1) // blocks until a slot frees, bounding concurrency
 		go func(idx int, it string) {
 			defer lg.Done()
+			// A BODY branch is a small pipeline of its own, in its own
+			// scope. Runs first because it replaces the single call
+			// entirely: the stage's prompt belongs to the body stages.
+			if len(stage.Body) > 0 {
+				out, fields, err := r.runBranchBody(ctx, stage, it, idx, len(items), prev)
+				if err != nil {
+					results[idx] = fmt.Sprintf("(branch error: %v)", err)
+					if status != nil {
+						status(fmt.Sprintf("fanout %s: branch %d/%d failed: %v", stage.Name, idx+1, len(items), err))
+					}
+					return
+				}
+				results[idx] = strings.TrimSpace(out)
+				collected[idx] = fields
+				return
+			}
 			// {item} is the per-branch element; the rest of the templating
 			// vocabulary ({input}/{prev}/{stage:NAME}) resolves as usual.
 			p := resolveStageTemplate(strings.ReplaceAll(stage.Prompt, "{item}", it), input, prev, outputs)
@@ -1160,14 +1227,69 @@ func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input
 	}
 	lg.Wait()
 	if ctx.Err() != nil {
-		return "", ctx.Err()
+		return "", nil, ctx.Err()
 	}
 
 	var b strings.Builder
 	for i, item := range items {
 		fmt.Fprintf(&b, "## Item %d: %s\n%s\n\n", i+1, strings.TrimSpace(item), results[i])
 	}
-	return strings.TrimSpace(b.String()), nil
+	return strings.TrimSpace(b.String()), fanoutFields(items, collected), nil
+}
+
+// runBranchBody runs one branch's body in its own scope and returns what
+// it produced: the last body stage's text, and that stage's declared
+// fields when it declared any.
+//
+// The fields are what makes a fan MERGEABLE. Without them a following
+// stage can only read the joined prose and score it by eye, which is the
+// thing a declared shape exists to stop.
+func (r *pipelineRun) runBranchBody(ctx context.Context, stage PipelineStage, item string, idx, total int, prev string) (string, map[string]any, error) {
+	br := r.forBranch()
+	vars := map[string]string{
+		"{item}":     item,
+		"{branch}":   strconv.Itoa(idx + 1),
+		"{branches}": strconv.Itoa(total),
+	}
+	label := fmt.Sprintf("  %s branch %d/%d", stage.Name, idx+1, total)
+	out, _, err := br.runList(ctx, stage.Body, prev, label, vars)
+	if err != nil {
+		return "", nil, err
+	}
+	// The stage whose text we are returning is the one whose shape we
+	// return with it (runList records it), because a branch that ended on
+	// a skip did not end on the last stage in the list.
+	return out, br.outputs[br.lastStage].Fields, nil
+}
+
+// fanoutFields is the structured half of a fanout's result: one object per
+// branch that produced a declared shape, each carrying its branch number
+// and the item it ran on.
+//
+// Exposed as {stage:NAME.items} so a following stage can rank, filter, or
+// fan over the survivors. Nil unless EVERY surviving branch declared a
+// shape: a half-populated list would silently drop the branches whose body
+// ended in prose, and a reader counting entries would get the wrong total.
+func fanoutFields(items []string, collected []map[string]any) map[string]any {
+	out := make([]any, 0, len(collected))
+	for i, f := range collected {
+		if len(f) == 0 {
+			continue
+		}
+		entry := make(map[string]any, len(f)+2)
+		for k, v := range f {
+			entry[k] = v
+		}
+		entry["branch"] = i + 1
+		if i < len(items) {
+			entry["item"] = items[i]
+		}
+		out = append(out, entry)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return map[string]any{"items": out, "count": len(out)}
 }
 
 // runLoopStage repeats the stage's Body, threading each pass's last

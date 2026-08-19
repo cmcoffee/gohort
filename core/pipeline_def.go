@@ -488,8 +488,13 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		if s.Kind == StageFanout && len(s.Output) > 0 {
 			probs = append(probs, "stage "+s.Name+": output is not valid on kind=fanout (a fanout produces a joined per-branch block, not one JSON object)")
 		}
-		if s.Kind != StageLoop && len(s.Body) > 0 {
-			probs = append(probs, "stage "+s.Name+": body is only valid on kind=loop")
+		if s.Kind != StageLoop && s.Kind != StageFanout && len(s.Body) > 0 {
+			probs = append(probs, "stage "+s.Name+": body is only valid on kind=loop and kind=fanout")
+		}
+		if s.Kind == StageFanout && len(s.Body) > 0 {
+			own, bodyProbs := validateFanoutBody(s, done, inLoop)
+			add(own)
+			probs = append(probs, bodyProbs...)
 		}
 		if s.Kind == StageLoop {
 			own, bodyProbs := validateLoopStage(s, done, inLoop)
@@ -543,6 +548,13 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		if own == nil {
 			own = map[string]PipelineFieldType{}
 		}
+		// A fanout declares no shape of its own, but a fanout whose BODY
+		// ends in a declared stage carries one per branch. Registering it
+		// here is what lets a later stage read {stage:dig.items} and, in
+		// particular, fan over the survivors.
+		for k, v := range fanoutCollectedShape(s) {
+			own[k] = v
+		}
 		done[s.Name] = own
 	}
 	return probs
@@ -590,6 +602,52 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 		}
 	}
 	return nil, bodyProbs
+}
+
+// fanoutCollectedShape is what a fanout exposes beyond its joined text:
+// the per-branch results, when the body ends in a stage that declared a
+// shape to collect. Nil for a single-prompt fan, which has none.
+//
+// The LAST body stage is the terminal one for this purpose. A branch that
+// ended early on a skip did not run it, and that branch simply contributes
+// no entry; the declared TYPE of the collection does not change with it.
+func fanoutCollectedShape(s PipelineStage) map[string]PipelineFieldType {
+	if s.Kind != StageFanout || len(s.Body) == 0 {
+		return nil
+	}
+	if last := s.Body[len(s.Body)-1]; len(last.Output) == 0 {
+		return nil
+	}
+	return map[string]PipelineFieldType{
+		"items": FieldList,
+		"count": FieldNumber,
+	}
+}
+
+// validateFanoutBody checks a fanout that runs several stages per item.
+//
+// A body turns the fan from "one prompt per item" into "a small pipeline
+// per item", which is what makes "investigate each of these properly, then
+// compare what came back" expressible. The rules are the loop's, for the
+// same reasons, plus one of its own about who runs the branch.
+func validateFanoutBody(s PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) (error, []string) {
+	if inLoop {
+		return Error("stage " + s.Name + ": bodies do not nest — one level only. Put the inner work in its own pipeline and call it from a stage."), nil
+	}
+	if strings.TrimSpace(s.Agent) != "" {
+		// Both would have to mean something, and neither reading is
+		// obviously right: run the agent per item and ignore the body, or
+		// run the body and ignore the agent. Refuse instead of choosing.
+		return Error("stage " + s.Name + ": a fanout runs its body OR an agent per item, not both. A body branch is several stages of your own; an agent branch is one dispatch. Keep whichever the fan is really for."), nil
+	}
+	// Body scope starts as a copy of the outer one so a branch can read
+	// what was established before the fan, without leaking its own stage
+	// names back out to anything after it.
+	inner := make(map[string]map[string]PipelineFieldType, len(done)+len(s.Body))
+	for k, v := range done {
+		inner[k] = v
+	}
+	return nil, stageListProblems(s.Body, inner, true)
 }
 
 // untilShape is the one sentence that turns "until is wrong" into "here is what
