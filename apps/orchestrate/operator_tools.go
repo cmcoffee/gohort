@@ -888,6 +888,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
 					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run. Give this OR pipeline_id, not both."},
 					"pipeline_id":      {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow — a nightly research run, a scheduled report — rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
+					"machine_id":       {Type: "string", Description: "Name or id of a stored MACHINE to run. The third target, for work that carries state between its steps: a pipeline is dataflow with nothing kept between stages, a machine has a blackboard and running lists. Reach for it when the task is \"gather, keep what is new, report on what changed\" rather than a straight-through workflow. The machine must be marked \"this RUNS instead of converses\", because a schedule fires with nobody there to answer a step that waits. `mission` becomes the run's input."},
 					"mission":          {Type: "string", Description: "What the agent should do each run."},
 					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM — NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
 					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
@@ -901,14 +902,23 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				cron := strings.TrimSpace(oArgStr(args, "cron"))
 				interval := oArgInt(args, "interval_seconds")
 				pipelineRef := strings.TrimSpace(oArgStr(args, "pipeline_id"))
+				machineRef := strings.TrimSpace(oArgStr(args, "machine_id"))
 				if name == "" {
 					return "", fmt.Errorf("name is required")
 				}
-				if agentID == "" && pipelineRef == "" {
-					return "", fmt.Errorf("give the schedule something to run: agent_id, or pipeline_id for a pipeline")
+				var namedTargets []string
+				for _, t := range []struct{ label, ref string }{
+					{"agent_id", agentID}, {"pipeline_id", pipelineRef}, {"machine_id", machineRef},
+				} {
+					if t.ref != "" {
+						namedTargets = append(namedTargets, t.label)
+					}
 				}
-				if agentID != "" && pipelineRef != "" {
-					return "", fmt.Errorf("name either agent_id or pipeline_id, not both — whichever the runner checked first would be the one that ran")
+				switch {
+				case len(namedTargets) == 0:
+					return "", fmt.Errorf("give the schedule something to run: agent_id, pipeline_id, or machine_id")
+				case len(namedTargets) > 1:
+					return "", fmt.Errorf("name one of %s, not several — whichever the runner checked first would be the one that ran", strings.Join(namedTargets, ", "))
 				}
 				// Resolve the target to its STABLE record id now, and store that.
 				// Agent ids are UUIDs; agent_id here is usually a name/slug. If we
@@ -947,6 +957,26 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					pipelineID = def.ID
 				}
+				// Same posture as the pipeline above: resolve to the stored id
+				// so a rename cannot orphan the schedule, and refuse here what
+				// would otherwise be refused at 3am.
+				machineID := ""
+				if machineRef != "" {
+					if sess == nil || sess.DB == nil {
+						return "", fmt.Errorf("no session store to resolve %q against", machineRef)
+					}
+					def, ok := findMachineByNameOrID(sess.DB, owner, machineRef)
+					if !ok {
+						return "", fmt.Errorf("no machine named %q — machine(action=\"list\") shows the exact names", machineRef)
+					}
+					if !def.Unattended {
+						return "", fmt.Errorf("machine %q converses rather than runs: it has a step that waits for a person, and a schedule fires with nobody there. Turn on unattended on that machine, or schedule something else", def.Name)
+					}
+					if probs := def.Problems(); len(probs) > 0 {
+						return "", fmt.Errorf("machine %q will not run yet — %s (%d outstanding)", def.Name, probs[0], len(probs))
+					}
+					machineID = def.ID
+				}
 				toolWarn := ""
 				if agentID != "" && sess != nil && sess.DB != nil {
 					if target, ok := findAgentByNameOrID(sess.DB, owner, agentID); ok {
@@ -966,11 +996,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// fire time). Default it so a self-directed agent (whose orchestrator
 				// prompt already says what to do each run) still fires cleanly.
 				mission := strings.TrimSpace(oArgStr(args, "mission"))
-				if mission == "" && pipelineID == "" {
+				if mission == "" && pipelineID == "" && machineID == "" {
 					mission = "Run your standing task now."
 				}
 				sa := StandingAgent{
-					Name: name, Owner: owner, AgentID: agentID, PipelineID: pipelineID,
+					Name: name, Owner: owner, AgentID: agentID, PipelineID: pipelineID, MachineID: machineID,
 					Mission: mission, Created: time.Now(),
 					ReportAgentID:   controllerAgentID,
 					ReportSessionID: controllerSession,
@@ -1033,11 +1063,19 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// how somebody concludes the schedule is broken and
 					// deletes a working one.
 					target := strconv.Quote(sa.AgentID)
-					if sa.TargetsPipeline() {
+					switch {
+					case sa.TargetsPipeline():
 						target = "pipeline " + strconv.Quote(sa.PipelineID)
 						if sess != nil && sess.DB != nil {
 							if def, ok := LoadPipelineDef(sess.DB, owner, sa.PipelineID); ok {
 								target = "pipeline " + strconv.Quote(def.Name)
+							}
+						}
+					case sa.TargetsMachine():
+						target = "machine " + strconv.Quote(sa.MachineID)
+						if sess != nil && sess.DB != nil {
+							if def, ok := LoadMachineDef(sess.DB, owner, sa.MachineID); ok {
+								target = "machine " + strconv.Quote(def.Name)
 							}
 						}
 					}

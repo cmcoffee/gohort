@@ -53,8 +53,20 @@ type StandingAgent struct {
 	// lives here") and PipelineID ("a multi-stage RUN lives here") side
 	// by side, for the same reason.
 	PipelineID string `json:"pipeline_id,omitempty"`
-	Mission    string `json:"mission"` // the standing brief handed to the agent each run, or the pipeline's input
-	Cron    string `json:"cron"`    // schedule spec (NextCronOccurrence), e.g. "FRI 21:30"
+	// MachineID targets a stored MachineDef, for the third shape: a RUN
+	// that carries state between its steps. A pipeline is dataflow and a
+	// machine holds a working set, so "gather every night, keep what is
+	// new, report what changed" is a machine and not a pipeline.
+	//
+	// The machine must be marked Unattended. A conversational one has a
+	// step that waits for a person, and a schedule fires at four in the
+	// morning with nobody there; the runner refuses it by name rather
+	// than entering a step the run could never leave.
+	//
+	// Exactly one of AgentID / PipelineID / MachineID is set.
+	MachineID string `json:"machine_id,omitempty"`
+	Mission   string `json:"mission"` // the standing brief handed to the agent each run, or the pipeline's input
+	Cron      string `json:"cron"`    // schedule spec (NextCronOccurrence), e.g. "FRI 21:30"
 	// Interval scheduling — an alternative to Cron for schedules cron can't
 	// express (specific start + arbitrary interval): first run at StartAt (or
 	// now+interval when StartAt is empty/past), then every IntervalSeconds.
@@ -561,6 +573,11 @@ func (sa StandingAgent) TargetsPipeline() bool {
 	return strings.TrimSpace(sa.PipelineID) != ""
 }
 
+// TargetsMachine reports whether this schedule fires a machine.
+func (sa StandingAgent) TargetsMachine() bool {
+	return strings.TrimSpace(sa.MachineID) != ""
+}
+
 // ValidateTarget checks that exactly one target is named.
 //
 // Both is refused rather than resolved by precedence: a record carrying
@@ -569,14 +586,22 @@ func (sa StandingAgent) TargetsPipeline() bool {
 // schedule that fires nothing still fires — it just records an attention
 // entry every time, which is a job that exists to fail.
 func (sa StandingAgent) ValidateTarget() error {
-	agent := strings.TrimSpace(sa.AgentID) != ""
-	pipe := strings.TrimSpace(sa.PipelineID) != ""
+	var named []string
+	if strings.TrimSpace(sa.AgentID) != "" {
+		named = append(named, "an agent")
+	}
+	if strings.TrimSpace(sa.PipelineID) != "" {
+		named = append(named, "a pipeline")
+	}
+	if strings.TrimSpace(sa.MachineID) != "" {
+		named = append(named, "a machine")
+	}
 	switch {
-	case agent && pipe:
-		return Error("a schedule names either an agent or a pipeline, not both — " +
-			"drop one, because whichever the runner happened to check first would be the one that ran")
-	case !agent && !pipe:
-		return Error("a schedule needs something to run: an agent_id or a pipeline_id")
+	case len(named) > 1:
+		return Error("a schedule names " + strings.Join(named, " and ") + " — it fires ONE of them, " +
+			"and whichever the runner happened to check first would be the one that ran. Drop the others.")
+	case len(named) == 0:
+		return Error("a schedule needs something to run: an agent_id, a pipeline_id, or a machine_id")
 	}
 	return nil
 }

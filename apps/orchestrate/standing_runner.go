@@ -33,6 +33,9 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if sa.TargetsPipeline() {
 			return runStandingPipeline(ctx, app, sa)
 		}
+		if sa.TargetsMachine() {
+			return runStandingMachine(ctx, app, sa)
+		}
 		// Never run a sub-agent that's still held for approval. A schedule (or a
 		// delegation) can be set up against an agent before its owner activates
 		// it — running it anyway would defeat the approval gate. Report an
@@ -257,5 +260,100 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	liveRun.Complete(RunStatusCompleted)
 	Log("[orchestrate.standing] user=%q fired pipeline %q (%d stages, %d bytes out)",
 		sa.Owner, def.Name, len(def.Stages), len(out))
+	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out)}
+}
+
+// runStandingMachine fires a schedule whose target is a machine.
+//
+// The third target, and the one the other two could not express: a
+// pipeline is dataflow with no memory between stages, an agent decides
+// its approach afresh each turn, and a machine carries a working set from
+// step to step. "Gather what changed, keep what is new, report on it" is
+// a machine, and a schedule is exactly where such a thing belongs.
+//
+// Same execution the page's Run button uses (handleMachineRun): the
+// owner's tool pool narrowed per step, RunUnattended to the step that
+// hands off nowhere, that step's result as the outcome. A scheduled run
+// that reached further than the same machine reached when clicked would
+// be a surprise nobody asked for.
+func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAgent) StandingRunResult {
+	udb := UserDB(app.DB, sa.Owner)
+	def, ok := findMachineByNameOrID(udb, sa.Owner, sa.MachineID)
+	if !ok {
+		// Attention rather than failure: the schedule is fine, its target
+		// is gone. Somebody repoints it or deletes it; nothing here can
+		// decide which.
+		return StandingRunResult{
+			Status: RunAttention,
+			Summary: "Skipped: no machine " + strconv.Quote(sa.MachineID) +
+				" — it was deleted or renamed. Point this schedule at a machine that exists, or delete it.",
+		}
+	}
+	if !def.Unattended {
+		// The refusal that earns this target its own runner. A machine
+		// with a step that waits for a person, fired at four in the
+		// morning, would enter a step the run could never leave.
+		return StandingRunResult{
+			Status: RunAttention,
+			Summary: "Skipped: machine " + strconv.Quote(def.Name) + " converses rather than runs — it has a step that waits for a person, " +
+				"and a schedule fires with nobody there. Turn on \"this RUNS instead of converses\" on that machine, or point this schedule elsewhere.",
+		}
+	}
+	// A machine can be SAVED with problems (the editor's whole posture is
+	// that a half-built machine is the normal state), so unlike a pipeline
+	// this check is not defensive — it is the common case for a schedule
+	// armed against something still being built.
+	if probs := def.Problems(); len(probs) > 0 {
+		return StandingRunResult{
+			Status: RunAttention,
+			Summary: "Skipped: machine " + strconv.Quote(def.Name) + " will not run yet — " + probs[0] +
+				" (" + strconv.Itoa(len(probs)) + " outstanding). Its page lists them.",
+		}
+	}
+
+	input := strings.TrimSpace(sa.Mission)
+	if input == "" {
+		// The mission is the run's SUBJECT here, the same as a pipeline's
+		// input: it lands in {input} / {original_input}. "Run your standing
+		// task now" would be a worse default than the machine's own name.
+		input = def.Name
+	}
+	display := strings.TrimSpace(sa.Name)
+	if display == "" {
+		display = def.Name
+	}
+	liveRun := app.runsRegistry().Create(sa.Owner, "", "", nil).
+		Describe("standing", display, truncateObs(input, 100))
+	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
+
+	// The owner's pool, narrowed per step by each step's own Tools list.
+	sess := &ToolSession{Username: sa.Owner, DB: AuthDB()}
+	catalog, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
+	if err != nil {
+		Log("[orchestrate.standing] machine %q: tool catalog partly unresolved for %q: %v", def.Name, sa.Owner, err)
+	}
+
+	cur := &MachineCursor{}
+	var notes []string
+	final, out, err := app.RunUnattended(ctx, def, cur, MachineTurn{
+		Input: input,
+		User:  sa.Owner,
+		Now:   time.Now().In(UserLocation(sa.Owner)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
+	}, app.PhaseWorker(catalog),
+		func(kind, detail string) { notes = append(notes, kind+": "+detail) })
+	if err != nil {
+		liveRun.Complete(RunStatusFailed)
+		// The partial result rides along: a run that stopped at step nine
+		// did nine steps of work, and a summary that threw it away would
+		// leave the ledger saying only that something went wrong.
+		summary := "Machine " + strconv.Quote(def.Name) + " stopped: " + err.Error()
+		if partial := strings.TrimSpace(out); partial != "" {
+			summary += "\n\nWhat it had produced:\n" + partial
+		}
+		return StandingRunResult{Status: RunFailed, Summary: summary}
+	}
+	liveRun.Complete(RunStatusCompleted)
+	Log("[orchestrate.standing] user=%q fired machine %q → finished at %s after %d step(s), %d bytes out",
+		sa.Owner, def.Name, final.Name, len(cur.Log)+1, len(out))
 	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out)}
 }

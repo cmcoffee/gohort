@@ -331,13 +331,19 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		// an agent or a pipeline, and the two behave differently enough
 		// that the rail should not make somebody open it to find out.
 		what := "scheduled run"
-		if sa.TargetsPipeline() {
+		switch {
+		case sa.TargetsPipeline():
 			what = "pipeline run"
 			if def, ok := pipelineForUser(user, sa.PipelineID); ok {
 				what = "pipeline · " + def.Name
 				if def.Owner != "" && def.Owner != user {
 					what += " (shared by " + def.Owner + ")"
 				}
+			}
+		case sa.TargetsMachine():
+			what = "machine run"
+			if def, ok := LoadMachineDef(UserDB(T.DB, user), user, sa.MachineID); ok {
+				what = "machine · " + def.Name
 			}
 		}
 		id := url.QueryEscape(sa.Name)
@@ -475,6 +481,23 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 	// be worse than offering nothing: every choice in the list gets
 	// refused by the relink handler.
 	if row := strings.TrimSpace(r.URL.Query().Get("row")); row != "" {
+		if sa, found := GetStandingAgent(RootDB, user, row); found && sa.TargetsMachine() {
+			// A machine schedule relinks to a machine, and only to one that
+			// can be run this way: offering a conversational machine would
+			// be offering a choice the relink handler then refuses.
+			for _, d := range ListMachineDefs(UserDB(T.DB, user), user) {
+				if !d.Unattended {
+					continue
+				}
+				label := strings.TrimSpace(d.Name)
+				if label == "" {
+					label = d.ID
+				}
+				opts = append(opts, opt{Value: d.ID, Label: label})
+			}
+			writeJSON(w, opts)
+			return
+		}
 		if sa, found := GetStandingAgent(RootDB, user, row); found && sa.TargetsPipeline() {
 			for _, d := range ListPipelineDefs(UserDB(T.DB, user), user) {
 				label := strings.TrimSpace(d.Name)
@@ -691,6 +714,29 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 	sa, found := GetStandingAgent(RootDB, user, name)
 	if !found {
 		http.Error(w, "no such standing agent", http.StatusNotFound)
+		return
+	}
+	if sa.TargetsMachine() {
+		def, ok := LoadMachineDef(UserDB(T.DB, user), user, value)
+		if !ok {
+			http.Error(w, "no such machine", http.StatusBadRequest)
+			return
+		}
+		// The same two refusals the runner makes, made HERE instead, so a
+		// repair that would fail at 3am fails now with somebody reading it.
+		if !def.Unattended {
+			http.Error(w, "that machine converses rather than runs: a schedule fires with nobody there to answer a step that waits", http.StatusBadRequest)
+			return
+		}
+		if probs := def.Problems(); len(probs) > 0 {
+			http.Error(w, "that machine will not run yet: "+probs[0], http.StatusBadRequest)
+			return
+		}
+		sa.MachineID = def.ID
+		sa.Broken = false
+		sa.BrokenReason = ""
+		SaveStandingAgent(RootDB, sa)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if sa.TargetsPipeline() {

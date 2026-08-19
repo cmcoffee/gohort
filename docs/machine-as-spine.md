@@ -2,9 +2,10 @@
 
 **Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271),
 Change 4 BUILT (v0.6.273) with one part outstanding (see below); Change 5 is
-spec. An unattended run can be STARTED from the machine page ("Run it",
-v0.6.274), synchronously; a background door (a schedule, or a dispatch target)
-is still to come and can lean on the same RunUnattended. Related: `core/machine.go`, `core/machine_def.go`,
+spec. An unattended run can be STARTED two ways: from the machine page ("Run
+it", v0.6.274), synchronously, and from a SCHEDULE (v0.6.275) —
+`StandingAgent.MachineID`, beside the agent and pipeline targets, which is the
+background door. A dispatch target (an agent asking for a run) is still to come. Related: `core/machine.go`, `core/machine_def.go`,
 `apps/orchestrate/machine_delegate.go`, `docs/agent-machines.md`,
 `docs/pipeline-fanout-body.md`, `project_agent_machines`,
 `project_pipeline_framework_future`.

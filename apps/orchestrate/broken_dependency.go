@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -108,6 +109,20 @@ func standingAgentDependencyError(sa StandingAgent) string {
 	if sa.TargetsPipeline() {
 		if !pipelineExists(sa.Owner, sa.PipelineID) {
 			return "its target pipeline is out of reach — " + pipelineMissingReason(sa.Owner, sa.PipelineID)
+		}
+		return ""
+	}
+	if sa.TargetsMachine() {
+		// Same posture as the pipeline case, plus one reason of its own: a
+		// machine that has been switched back to conversing is still THERE,
+		// and would still fail every fire. Broken-and-visible is the answer
+		// to both, since both are repaired the same way.
+		def, ok := findMachineByNameOrID(UserDB(orchestrateBaseDB, sa.Owner), sa.Owner, sa.MachineID)
+		switch {
+		case !ok:
+			return fmt.Sprintf("its target machine was deleted (id %s)", sa.MachineID)
+		case !def.Unattended:
+			return "its target machine " + strconv.Quote(def.Name) + " converses rather than runs, so a schedule has nobody to answer the step that waits"
 		}
 		return ""
 	}

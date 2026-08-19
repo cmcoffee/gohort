@@ -8,6 +8,7 @@ package orchestrate
 // that was pure plumbing.
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -22,8 +23,15 @@ func TestAScheduleNamesExactlyOneTarget(t *testing.T) {
 	both := StandingAgent{Name: "n", Owner: "u", AgentID: "ag", PipelineID: "pl"}
 	if err := both.ValidateTarget(); err == nil {
 		t.Error("naming an agent AND a pipeline should be refused")
-	} else if !strings.Contains(err.Error(), "not both") {
-		t.Errorf("the refusal should say why: %v", err)
+	} else if !strings.Contains(err.Error(), "an agent and a pipeline") {
+		t.Errorf("the refusal should name what it was given: %v", err)
+	}
+	// The third target joins the same rule, and the message names which
+	// pair it was handed rather than saying "not both" of three.
+	if err := (StandingAgent{Name: "n", Owner: "u", PipelineID: "pl", MachineID: "m"}).ValidateTarget(); err == nil {
+		t.Error("naming a pipeline AND a machine should be refused")
+	} else if !strings.Contains(err.Error(), "a pipeline and a machine") {
+		t.Errorf("the refusal should name what it was given: %v", err)
 	}
 	// Neither is refused too: a schedule that fires nothing still fires,
 	// recording an attention entry every time — a job that exists to fail.
@@ -33,6 +41,7 @@ func TestAScheduleNamesExactlyOneTarget(t *testing.T) {
 	for _, ok := range []StandingAgent{
 		{Name: "n", Owner: "u", AgentID: "ag"},
 		{Name: "n", Owner: "u", PipelineID: "pl"},
+		{Name: "n", Owner: "u", MachineID: "m"},
 	} {
 		if err := ok.ValidateTarget(); err != nil {
 			t.Errorf("%+v should be valid: %v", ok, err)
@@ -201,5 +210,64 @@ func TestDeletingAPipelineMarksTheSchedulesThatRunIt(t *testing.T) {
 	}
 	if agenty, _ := GetStandingAgent(RootDB, user, "agenty"); agenty.Broken {
 		t.Error("an agent schedule was marked broken by a pipeline deletion")
+	}
+}
+
+// --- a schedule that fires a machine ------------------------------------
+
+// The two refusals that earn the machine target its own runner, both made
+// where somebody is reading rather than at whatever hour the schedule is
+// armed for.
+func TestAScheduledMachineMustBeOneThatRuns(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	converses := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Chatty", Start: "talk",
+		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}})
+
+	res := runStandingMachine(context.Background(), app, StandingAgent{
+		Name: "nightly", Owner: user, MachineID: converses.ID,
+	})
+	if res.Status != RunAttention {
+		t.Errorf("a conversational machine should be skipped with attention, got %v", res.Status)
+	}
+	if !strings.Contains(res.Summary, "converses rather than runs") {
+		t.Errorf("the skip should say why: %s", res.Summary)
+	}
+}
+
+// A machine can be SAVED half-built (the editor's whole posture), so a
+// schedule armed against one still being written is the common case, not
+// a defensive one.
+func TestAScheduledMachineWithProblemsIsSkippedNotFired(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	// Unattended, but nothing finishes it.
+	broken := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Spin", Start: "a", Unattended: true,
+		Phases: []MachinePhase{
+			{Name: "a", Prompt: "x", Next: "b"},
+			{Name: "b", Prompt: "y", Next: "a"},
+		}})
+
+	res := runStandingMachine(context.Background(), app, StandingAgent{
+		Name: "nightly", Owner: user, MachineID: broken.ID,
+	})
+	if res.Status != RunAttention {
+		t.Errorf("a machine that will not run should be skipped, got %v", res.Status)
+	}
+	if !strings.Contains(res.Summary, "will not run yet") {
+		t.Errorf("the skip should carry the first problem: %s", res.Summary)
+	}
+}
+
+// A target that has been deleted or renamed is the schedule's problem to
+// report, not something to fail silently at 3am.
+func TestAScheduledMachineThatVanishedReportsItself(t *testing.T) {
+	app, _, user := newTestOrchestrate(t)
+	res := runStandingMachine(context.Background(), app, StandingAgent{
+		Name: "nightly", Owner: user, MachineID: "no-such-machine",
+	})
+	if res.Status != RunAttention {
+		t.Errorf("a missing target should be attention, got %v", res.Status)
+	}
+	if !strings.Contains(res.Summary, "no machine") {
+		t.Errorf("the skip should name what it could not find: %s", res.Summary)
 	}
 }
