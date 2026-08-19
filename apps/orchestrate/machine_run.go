@@ -102,6 +102,10 @@ func (T *OrchestrateApp) handleMachineRun(w http.ResponseWriter, r *http.Request
 		// catalog; carry on with what resolved and say so.
 		Log("[orchestrate.machines] run %q: tool catalog partly unresolved for user=%q: %v", def.Name, user, err)
 	}
+	// One answer per question for the length of the run: a machine whose
+	// steps each search the same landscape pays for it once.
+	cache := NewRunToolCache()
+	catalog = WrapToolsWithRunCache(cache, catalog)
 
 	cur := &MachineCursor{}
 	var notes []string
@@ -127,7 +131,8 @@ func (T *OrchestrateApp) handleMachineRun(w http.ResponseWriter, r *http.Request
 		writeJSON(w, res)
 		return
 	}
-	Log("[orchestrate.machines] user=%q ran %q → finished at %s after %d step(s)", user, def.Name, final.Name, len(cur.Log)+1)
+	Log("[orchestrate.machines] user=%q ran %q → finished at %s after %d step(s), %d cached tool call(s)",
+		user, def.Name, final.Name, len(cur.Log)+1, cache.Hits())
 	res["finished"] = final.Name
 	res["finished_desc"] = strings.TrimSpace(final.Desc)
 	res["output"] = out

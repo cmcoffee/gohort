@@ -1,8 +1,7 @@
 # Machine as spine, pipelines as phases
 
 **Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271),
-Change 4 BUILT (v0.6.273) with one part outstanding (see below); Change 5 is
-spec. An unattended run can be STARTED two ways: from the machine page ("Run
+Change 4 BUILT (v0.6.273), Change 5 BUILT (v0.6.277). All five are built. An unattended run can be STARTED two ways: from the machine page ("Run
 it", v0.6.274), synchronously, and from a SCHEDULE (v0.6.275) —
 `StandingAgent.MachineID`, beside the agent and pipeline targets, which is the
 background door. A dispatch target (an agent asking for a run) is still to come. Related: `core/machine.go`, `core/machine_def.go`,
@@ -185,7 +184,7 @@ that runs a whole machine, so a fanout body can be a child run and N gaps are
 filled at once rather than one after another. A phase still runs one child
 directly; fanning them is the pipeline's job, which is where it belongs.
 
-## Change 5: run-scoped tool state
+## Change 5: run-scoped tool state (BUILT)
 
 `SearchCache` dedupes identical searches across a research run, and
 `filters.go` / `isWeakSource` drop junk consistently. Both are library code

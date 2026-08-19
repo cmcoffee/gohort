@@ -49,6 +49,7 @@ func (T *OrchestrateApp) pipelineMachineRunner(owner string) PipelineMachineRunn
 		if err != nil {
 			Log("[orchestrate.pipelines] machine stage %q: tool catalog partly unresolved for %q: %v", def.Name, owner, err)
 		}
+		catalog = WrapToolsWithRunCache(NewRunToolCache(), catalog)
 		cur := &MachineCursor{}
 		final, out, err := T.RunUnattended(WithMachineDepth(ctx, MachineDepth(ctx)+1), def, cur, MachineTurn{
 			Input: input,

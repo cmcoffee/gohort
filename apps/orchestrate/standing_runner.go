@@ -335,6 +335,8 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	if err != nil {
 		Log("[orchestrate.standing] machine %q: tool catalog partly unresolved for %q: %v", def.Name, sa.Owner, err)
 	}
+	cache := NewRunToolCache()
+	catalog = WrapToolsWithRunCache(cache, catalog)
 
 	cur := &MachineCursor{}
 	var notes []string
@@ -356,7 +358,7 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 		return StandingRunResult{Status: RunFailed, Summary: summary}
 	}
 	liveRun.Complete(RunStatusCompleted)
-	Log("[orchestrate.standing] user=%q fired machine %q → finished at %s after %d step(s), %d bytes out",
-		sa.Owner, def.Name, final.Name, len(cur.Log)+1, len(out))
+	Log("[orchestrate.standing] user=%q fired machine %q → finished at %s after %d step(s), %d bytes out, %d cached tool call(s)",
+		sa.Owner, def.Name, final.Name, len(cur.Log)+1, len(out), cache.Hits())
 	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out)}
 }
