@@ -771,7 +771,27 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 						Placeholder: "e.g. the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
 				}},
 
-			ui.FormField{Type: "header", Label: "Where it goes next"},
+			ui.FormField{Type: "header", Label: "What it adds to the running lists", Collapsed: true,
+			Help: "Most steps decide something and hand it on. Some CONTRIBUTE to a list the whole run is building — " +
+				"the answers so far, the sources, the questions still open. A list lives under its own name, so several steps can add to one, " +
+				"and it survives coming back here (\"keep only\" prunes step findings, never the lists). Read one in a prompt with {state:LIST}."},
+		ui.FormField{Field: "accumulates", Type: "rows", Label: "", AddLabel: "+ Add to a list",
+			Placeholder: "(this step adds to nothing)",
+			Columns: []ui.FormField{
+				{Field: "name", Type: "text", Label: "List", Width: 3,
+					Help: "The list's own name, e.g. answers. Not the same as any step name — they share the blackboard."},
+				{Field: "from", Type: "select", Label: "Takes", Width: 3, Options: ownFieldOptions(p),
+					Help: "One of THIS step's own output fields. A list field adds its elements; a single value adds itself."},
+				{Field: "mode", Type: "select", Label: "How", Width: 3, Options: []ui.SelectOption{
+					{Value: "", Label: "Append — add to the end"},
+					{Value: "union", Label: "Union — skip what is already there"},
+					{Value: "replace", Label: "Replace — this becomes the list"},
+				}},
+				{Field: "by", Type: "text", Label: "Same when", Width: 3,
+					Placeholder: "e.g. id",
+					Help: "Union only: the field that decides two entries are the same one. Leave empty to compare whole values."},
+			}},
+		ui.FormField{Type: "header", Label: "Where it goes next"},
 			ui.FormField{Field: "next", Type: "select", Label: "Then go to", Options: phaseOptions(def, true),
 				Help: "Where this step hands off when it does not choose."},
 			// Picking the destinations IS the whole routing decision. The
@@ -1164,6 +1184,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if v, ok := body["output"]; ok {
 		ph.Output = outputsFromAny(v)
 	}
+	if v, ok := body["accumulates"]; ok {
+		ph.Accumulates = accumulatorsFromAny(v)
+	}
 	// "targets" is not a phase field of its own: it is the allowed-value
 	// set of the field next_from points at. Kept flat in the form because
 	// that is where the choice is made — a person picking where a step can
@@ -1176,6 +1199,43 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if _, ok := body["targets"]; ok {
 		setRoutingTargets(ph, stringSliceFromArgs(body, "targets"))
 	}
+}
+
+// accumulatorsFromAny reads the rows field back into contributions. A row
+// with neither a list nor a field is the empty one the editor leaves
+// behind, not an authoring mistake, so it is dropped in silence.
+func accumulatorsFromAny(v any) []MachineAccumulator {
+	rows, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []MachineAccumulator
+	for _, r := range rows {
+		m, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		acc := MachineAccumulator{
+			Name: strings.TrimSpace(mapStr(m, "name")),
+			From: strings.TrimSpace(mapStr(m, "from")),
+			Mode: strings.ToLower(strings.TrimSpace(mapStr(m, "mode"))),
+			By:   strings.TrimSpace(mapStr(m, "by")),
+		}
+		if acc.Name == "" && acc.From == "" {
+			continue
+		}
+		out = append(out, acc)
+	}
+	return out
+}
+
+// accumulatorRows renders a phase's contributions for the rows editor.
+func accumulatorRows(p MachinePhase) []map[string]any {
+	out := make([]map[string]any, 0, len(p.Accumulates))
+	for _, a := range p.Accumulates {
+		out = append(out, map[string]any{"name": a.Name, "from": a.From, "mode": a.Mode, "by": a.By})
+	}
+	return out
 }
 
 // outputsFromAny reads the rows field back into declared output fields.
@@ -1253,7 +1313,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 	return map[string]any{
 		"name": p.Name, "desc": p.Desc, "prompt": p.Prompt,
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
-		"pipeline": p.Pipeline,
+		"pipeline": p.Pipeline, "accumulates": accumulatorRows(p),
 		"guard": p.Guard, "guard_to": p.GuardTo,
 		"think": p.Think, "tools": p.Tools, "output": rows,
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,

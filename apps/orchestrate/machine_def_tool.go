@@ -119,6 +119,14 @@ pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not wi
            the same way every time. A pipeline whose LAST stage declares the fields this
            phase declares costs one model call rather than two, because the shape it already
            produced becomes the phase's own.
+accumulates [{name, from, mode?, by?}] — the run-scoped LISTS this phase adds to. "from" is one of
+           THIS phase's declared output fields; a list field contributes its elements, a scalar
+           contributes itself. mode: append (default) | replace | union ("by" keys a union on one
+           field of each element). The list lands on the blackboard under ITS OWN name, so many
+           phases build one working set: read it with {state:LIST} (a numbered rendering),
+           {state:LIST.items} (the list), {state:LIST.count}. A list may not share a name with a
+           step. Use it for what a run collects — answers, sources, unanswered questions — and
+           plain "output" for what ONE step decided.
 output     [{name, type, desc, required, from}] — validated JSON. Transient phases only.
            A field NAMED after a built-in (original_input, now, user, agent, prev, step, machine)
            IS that built-in: it is filled from what the framework already holds and never asked
@@ -549,6 +557,37 @@ func (t *chatTurn) findMachine(args map[string]any) (MachineDef, bool) {
 	return MachineDef{}, false
 }
 
+// parseAccumulators decodes a phase's contributions to the working set.
+//
+// Lenient in the same way the rest of this decoder is: a malformed entry is
+// skipped rather than failing the whole authoring call, because Validate
+// reports what is missing in words the author can act on, and refusing the
+// save would lose the nine phases that were right.
+func parseAccumulators(v any) []MachineAccumulator {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []MachineAccumulator
+	for _, it := range list {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		acc := MachineAccumulator{
+			Name: strings.TrimSpace(mapStr(m, "name")),
+			From: strings.TrimSpace(mapStr(m, "from")),
+			Mode: strings.ToLower(strings.TrimSpace(mapStr(m, "mode"))),
+			By:   strings.TrimSpace(mapStr(m, "by")),
+		}
+		if acc.Name == "" && acc.From == "" {
+			continue
+		}
+		out = append(out, acc)
+	}
+	return out
+}
+
 // parseMachinePhases converts the LLM-supplied phases array into typed
 // phases. Reuses parsePipelineFields for "output", so a machine phase
 // and a pipeline stage declare structure identically — one vocabulary to
@@ -590,11 +629,12 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			// Same failure the comment above records, so the same fix: a
 			// field the tool documents and never reads is a field an
 			// author sets once and loses on the next update.
-			Pipeline: strings.TrimSpace(mapStr(m, "pipeline")),
-			Guard:    strings.TrimSpace(mapStr(m, "guard")),
-			GuardTo:  strings.TrimSpace(mapStr(m, "guard_to")),
-			Keep:     mapStrList(m, "keep"),
-			ExitsTo:  mapStrList(m, "exits_to"),
+			Pipeline:    strings.TrimSpace(mapStr(m, "pipeline")),
+			Accumulates: parseAccumulators(m["accumulates"]),
+			Guard:       strings.TrimSpace(mapStr(m, "guard")),
+			GuardTo:     strings.TrimSpace(mapStr(m, "guard_to")),
+			Keep:        mapStrList(m, "keep"),
+			ExitsTo:     mapStrList(m, "exits_to"),
 		})
 	}
 	return out, nil

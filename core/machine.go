@@ -243,7 +243,7 @@ func (T *AppCore) ChangePhase(ctx context.Context, def MachineDef, cur *MachineC
 	if from == target.Name {
 		return target, nil
 	}
-	cur.moveTo(from, target, chooseStr(strings.TrimSpace(turn.Input), "changed mid-turn"), note)
+	cur.moveTo(from, target, chooseStr(strings.TrimSpace(turn.Input), "changed mid-turn"), note, def.accumulatorNames())
 	note("machine_phase_changed", "moved from step "+from+" to "+target.Name+" mid-turn")
 	ph, _, err := T.walk(ctx, def, cur, target, turn, run, note)
 	return ph, err
@@ -327,6 +327,9 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			return MachinePhase{}, stopBudget, err
 		}
 		cur.State[ph.Name] = PhaseResult{Text: text, Fields: fields}
+		// The working set, immediately after this phase's own entry, so a
+		// later phase reading {state:answers} sees this contribution too.
+		def.accumulate(ph, fields, cur.State, note)
 		vars.Prev = text
 
 		next, why := def.NextPhase(ph, fields)
@@ -352,7 +355,7 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			}
 			note("machine_dead_end", "step "+ph.Name+" handed off nowhere; replying from "+nph.Name)
 		}
-		cur.moveTo(ph.Name, nph, chooseStr(why, "routed by "+ph.Name), note)
+		cur.moveTo(ph.Name, nph, chooseStr(why, "routed by "+ph.Name), note, def.accumulatorNames())
 		ph = nph
 	}
 }
@@ -423,7 +426,7 @@ func (d MachineDef) CompleteTurn(cur *MachineCursor, ph MachinePhase, note func(
 		note("machine_dead_end", "step "+ph.Name+" hands off to unknown step "+next+"; staying put")
 		return
 	}
-	cur.moveTo(ph.Name, nph, "handed off after one turn", note)
+	cur.moveTo(ph.Name, nph, "handed off after one turn", note, d.accumulatorNames())
 	note("machine_phase_advance", "step "+ph.Name+" has had its turn; moving to "+nph.Name)
 }
 
@@ -583,7 +586,7 @@ func (d MachineDef) resume(cur *MachineCursor, note func(kind, detail string)) (
 // decomposition is the expensive mistake. Resuming a phase the cursor is
 // already parked in is not a transition and never trims, or a machine
 // with a Keep list would shed state on every ordinary turn.
-func (cur *MachineCursor) moveTo(from string, to MachinePhase, why string, note func(kind, detail string)) {
+func (cur *MachineCursor) moveTo(from string, to MachinePhase, why string, note func(kind, detail string), protected map[string]bool) {
 	cur.Phase = to.Name
 	if from != "" && from != to.Name {
 		cur.Log = append(cur.Log, PhaseHop{From: from, To: to.Name, Why: why, At: time.Now()})
@@ -594,6 +597,12 @@ func (cur *MachineCursor) moveTo(from string, to MachinePhase, why string, note 
 	if from == to.Name || len(to.Keep) == 0 {
 		return
 	}
+	// Keep prunes PHASE findings on re-entry so a re-route cannot leave a
+	// step reading a stale decomposition. An accumulator is the opposite
+	// kind of thing: it exists BECAUSE the run keeps coming back, and a
+	// loop that wiped the answers it just spent twenty phases collecting
+	// would be a data loss nobody could see. Named in Keep, it is kept
+	// like anything else; unnamed, it survives rather than being dropped.
 	if _, again := cur.State[to.Name]; !again {
 		return
 	}
@@ -603,7 +612,7 @@ func (cur *MachineCursor) moveTo(from string, to MachinePhase, why string, note 
 	}
 	var dropped []string
 	for name := range cur.State {
-		if !keep[name] {
+		if !keep[name] && !protected[name] {
 			dropped = append(dropped, name)
 		}
 	}

@@ -336,7 +336,7 @@ func TestPhaseLog_RecordsEveryTransitionBounded(t *testing.T) {
 	cur.Log = nil
 	ph, _ := def.Phase("route")
 	for i := 0; i < maxPhaseLog+20; i++ {
-		cur.moveTo("decompose", ph, "spin", nil)
+		cur.moveTo("decompose", ph, "spin", nil, def.accumulatorNames())
 		cur.Phase = "decompose"
 	}
 	if len(cur.Log) != maxPhaseLog {

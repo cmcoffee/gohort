@@ -434,6 +434,7 @@ func TestTheToolDecodesAndDocumentsEveryPhaseField(t *testing.T) {
 		"choices": []any{"answer"}, "guard": "they moved on", "guard_to": "answer",
 		"keep": []any{"answer"}, "agent": "Log analyst", "exits_to": []any{"answer"},
 		"pipeline": "Fact check",
+		"accumulates": []any{map[string]any{"name": "answers", "from": "parts", "mode": "append"}},
 	}
 	phases, err := parseMachinePhases([]any{one})
 	if err != nil {

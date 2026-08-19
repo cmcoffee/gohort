@@ -287,6 +287,12 @@ type MachinePhase struct {
 	// phase's own. A delegate cannot do that, because an agent answers in
 	// prose and something has to read the fields back out of it.
 	Pipeline string `json:"pipeline,omitempty"`
+
+	// Accumulates declares the run-scoped lists this phase contributes to.
+	// See machine_accum.go: the contribution lands under the LIST's name
+	// rather than this phase's, which is what lets many phases build one
+	// working set.
+	Accumulates []MachineAccumulator `json:"accumulates,omitempty"`
 }
 
 // MayExitTo reports whether change_phase may move a conversation from
@@ -793,6 +799,18 @@ func (d MachineDef) problems() []string {
 	case !d.Unattended && resident == 0:
 		probs = append(probs, "no step waits for the person — a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies.")
 	}
+	// Accumulators join the same namespaces phases live in, so
+	// {state:answers} and {state:answers.count} resolve like any other
+	// reference. Done between the two passes: pass 1 established which
+	// names are taken, pass 2 checks the references that may name these.
+	probs = append(probs, d.accumulatorProblems(seen)...)
+	for _, name := range d.Accumulators() {
+		if seen[name] {
+			continue // reported as a collision below; do not also mask the step
+		}
+		seen[name] = true
+		declared[name] = accumulatorFields()
+	}
 	if s := d.StartPhase(); s != "" && !seen[s] {
 		probs = append(probs, "start names unknown step "+strconv.Quote(s))
 	}
@@ -805,6 +823,47 @@ func (d MachineDef) problems() []string {
 		probs = append(probs, d.phaseProblems(p, seen, declared)...)
 	}
 	probs = append(probs, d.cycleProblems(seen)...)
+	return probs
+}
+
+// accumulatorProblems checks the working set's own wiring: that a list has
+// a name nothing else is using, that the field it takes exists, and that
+// the mode is one the driver knows.
+//
+// taken is the phase-name set as of pass 1, so a collision is reported
+// against the step that owns the name rather than by whichever happened to
+// be written second.
+func (d MachineDef) accumulatorProblems(taken map[string]bool) []string {
+	var probs []string
+	for _, p := range d.Phases {
+		declaredHere := map[string]bool{}
+		for _, f := range p.Output {
+			declaredHere[strings.TrimSpace(f.Name)] = true
+		}
+		for _, a := range p.Accumulates {
+			name := strings.TrimSpace(a.Name)
+			from := strings.TrimSpace(a.From)
+			switch {
+			case name == "":
+				probs = append(probs, "step "+p.Name+": a contribution with no list name — say which list it adds to")
+			case strings.Contains(name, "."):
+				probs = append(probs, "step "+p.Name+": list name "+strconv.Quote(name)+" may not contain a dot, for the same reason a step name may not: {state:a.b} would be ambiguous")
+			case taken[name]:
+				probs = append(probs, "step "+p.Name+": list "+strconv.Quote(name)+" has the same name as a step. They share the blackboard, so one would overwrite the other — rename the list.")
+			}
+			switch {
+			case from == "":
+				probs = append(probs, "step "+p.Name+": contribution to "+strconv.Quote(name)+" says nothing about WHAT it adds — name one of this step's own output fields in \"from\".")
+			case !declaredHere[from]:
+				probs = append(probs, "step "+p.Name+": contributes "+strconv.Quote(from)+" to "+strconv.Quote(name)+", but this step declares no such field. A step can only contribute what it produces.")
+			}
+			switch strings.ToLower(strings.TrimSpace(a.Mode)) {
+			case "", AccumAppend, AccumReplace, AccumUnion:
+			default:
+				probs = append(probs, "step "+p.Name+": contribution mode "+strconv.Quote(a.Mode)+" is not one of append, replace, union")
+			}
+		}
+	}
 	return probs
 }
 

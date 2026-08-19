@@ -539,7 +539,7 @@ func TestMoveTo_ResumingTheSamePhaseNeverTrims(t *testing.T) {
 	}}
 	cur := &MachineCursor{Phase: "reply", State: MachineState{"scan": {Text: "keep me"}}}
 	ph, _ := def.Phase("reply")
-	cur.moveTo("reply", ph, "test", nil)
+	cur.moveTo("reply", ph, "test", nil, def.accumulatorNames())
 	if _, kept := cur.State["scan"]; !kept {
 		t.Error("resuming the phase the cursor is already in is not a transition and must not trim")
 	}

@@ -27,6 +27,7 @@ package core
 
 import (
 	"context"
+	"strconv"
 	"strings"
 )
 
@@ -99,7 +100,7 @@ func (T *AppCore) checkGuard(ctx context.Context, def MachineDef, ph MachinePhas
 		return ph, false
 	}
 	note("machine_guard_tripped", "moving from step "+ph.Name+" to "+target.Name+": "+why)
-	cur.moveTo(ph.Name, target, "guard: "+why, note)
+	cur.moveTo(ph.Name, target, "guard: "+why, note, def.accumulatorNames())
 	return target, true
 }
 
@@ -202,6 +203,25 @@ func (d MachineDef) establishedBlock(ph MachinePhase, st MachineState) string {
 		}
 		b.WriteString("\n")
 		b.WriteString(body)
+		b.WriteString("\n")
+	}
+	// The working set, after the per-step findings. A list six phases have
+	// been building IS what a later phase is working from, and leaving it
+	// out of the established block would mean the one thing the run
+	// accumulated is the one thing the next step cannot see.
+	for _, name := range d.Accumulators() {
+		res, any := st[name]
+		if !any || strings.TrimSpace(res.Text) == "" {
+			continue
+		}
+		count, _ := res.Fields[AccumulatorCountField].(int)
+		b.WriteString("\n### ")
+		b.WriteString(name)
+		if count > 0 {
+			b.WriteString(" (" + strconv.Itoa(count) + " so far)")
+		}
+		b.WriteString("\n")
+		b.WriteString(res.Text)
 		b.WriteString("\n")
 	}
 	return b.String()

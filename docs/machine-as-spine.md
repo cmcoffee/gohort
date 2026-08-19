@@ -1,7 +1,7 @@
 # Machine as spine, pipelines as phases
 
-**Status:** Changes 1 and 2 BUILT (v0.6.270, uncommitted at time of writing);
-Changes 3, 4 and 5 are spec. No entry point yet starts an unattended run, so
+**Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271);
+Changes 4 and 5 are spec. No entry point yet starts an unattended run, so
 what is built is reachable from Go, from the machine editor, and from the
 `machine` tool, and not from a schedule or a page. Related: `core/machine.go`, `core/machine_def.go`,
 `apps/orchestrate/machine_delegate.go`, `docs/agent-machines.md`,
@@ -112,7 +112,7 @@ Unattended bool `json:"unattended,omitempty"`
 Without this change the rest of the spec is decorative: research cannot run as a
 machine at all, whatever its phases are made of.
 
-## Change 3: accumulators on the blackboard
+## Change 3: accumulators on the blackboard (BUILT)
 
 `MachineState` is keyed by phase, one entry each. Research needs lists that
 MANY phases contribute to: `TrackEmptyAnswers` marks, `RetryEmptyAnswers`
