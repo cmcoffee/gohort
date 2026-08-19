@@ -297,10 +297,16 @@ func (p RemotePeer) BrowseURL() string {
 	return strings.TrimRight(p.BaseURL, "/") + "/api/peer/v1/browse"
 }
 
-// ResolveSearchProvider turns a submitted web-search config into the one to
-// store. A peer selection becomes an ordinary searxng-provider config pointed
-// at that peer, with the peer key as the bearer — so tools/websearch keeps
-// working with no knowledge that a peer exists.
+// ResolveSearchProvider validates a submitted web-search config and fills in
+// the fields to store. A peer selection becomes an ordinary searxng-provider
+// config pointed at that peer, with the peer key as the bearer — so
+// tools/websearch keeps working with no knowledge that a peer exists.
+//
+// The endpoint and key it writes are a LAST-KNOWN CACHE, not the operative
+// values: resolveSearchPeer overlays the current peer record on every read (see
+// LoadWebSearchConfig), so a rotated peer key takes effect without anyone
+// editing this form. Source is what survives as the pointer, which is why it is
+// a separate field from Provider.
 func ResolveSearchProvider(cfg WebSearchConfig, provider string) (WebSearchConfig, error) {
 	provider = strings.TrimSpace(provider)
 	if provider == "" || provider == EmbeddingProviderLocal {
@@ -319,4 +325,45 @@ func ResolveSearchProvider(cfg WebSearchConfig, provider string) (WebSearchConfi
 	cfg.Endpoint = p.SearchURL()
 	cfg.APIKey = p.Key
 	return cfg, nil
+}
+
+// resolveSearchPeer overlays the CURRENT peer record onto a stored web-search
+// config whose Source names a peer.
+//
+// Same fix as resolveEmbeddingPeer and resolveTranscribePeer, and search had
+// the sharpest version of the problem: a stale key here fails as an empty
+// result set rather than an error, so every search quietly returns nothing and
+// the agent above it reports that it found no sources.
+//
+// Keyed off Source rather than Provider because ResolveSearchProvider
+// deliberately rewrites Provider to "searxng" — the resolved config IS a
+// searxng config, and Source is the only field still naming where it came from.
+//
+// A peer that has gone missing or stopped offering search keeps the stored
+// fields and logs once, rather than being blanked into a config that searches
+// nowhere.
+func resolveSearchPeer(cfg WebSearchConfig) WebSearchConfig {
+	source := strings.TrimSpace(cfg.Source)
+	if !strings.HasPrefix(source, peerProviderPrefix) {
+		return cfg
+	}
+	name := strings.TrimPrefix(source, peerProviderPrefix)
+	p, ok := lookupPeerCached(name)
+	if !ok {
+		warnPeerResolveOnce("search:"+name, fmt.Sprintf(
+			"web search is configured against peer %q, which is no longer registered — "+
+				"still using its last known endpoint %s", name, cfg.Endpoint))
+		return cfg
+	}
+	if !p.Offers(PeerCapSearch) {
+		warnPeerResolveOnce("search:"+name, fmt.Sprintf(
+			"peer %q no longer offers search (it offers: %s) — "+
+				"still using its last known endpoint %s", name, strings.Join(p.Caps, ", "), cfg.Endpoint))
+		return cfg
+	}
+	warnPeerResolveOnce("search:"+name, "") // clears the warning once the peer is healthy again
+	cfg.Provider = "searxng"
+	cfg.Endpoint = p.SearchURL()
+	cfg.APIKey = p.Key
+	return cfg
 }

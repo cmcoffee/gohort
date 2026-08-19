@@ -279,3 +279,103 @@ func TestPeerSearchRequiresTheKey(t *testing.T) {
 		t.Errorf("unauthenticated search → %d, want 401", w.Code)
 	}
 }
+
+// --- live resolution ---------------------------------------------------------
+
+// searchConfigForTest points LoadWebSearchConfig at a fixed stored config and
+// restores the previous loader. The stored value is what the admin form wrote;
+// LoadWebSearchConfig is where the peer overlay has to happen.
+func searchConfigForTest(t *testing.T, cfg WebSearchConfig) {
+	t.Helper()
+	prev := LoadWebSearchConfigFunc
+	LoadWebSearchConfigFunc = func() WebSearchConfig { return cfg }
+	t.Cleanup(func() { LoadWebSearchConfigFunc = prev })
+}
+
+// TestSearchConfigResolvesThePeerOnEveryRead — search had the nastiest version
+// of the snapshot bug: a stale key fails as an EMPTY RESULT SET rather than an
+// error, so every search quietly returns nothing and the agent above it reports
+// that it could find no sources.
+func TestSearchConfigResolvesThePeerOnEveryRead(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den.example", Key: "first-key",
+		Caps: []string{PeerCapSearch}})
+	InvalidatePeerResolution()
+
+	searchConfigForTest(t, WebSearchConfig{Provider: "searxng", Source: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", APIKey: "first-key"})
+
+	if got := LoadWebSearchConfig(); got.APIKey != "first-key" {
+		t.Fatalf("initial key resolved to %q", got.APIKey)
+	}
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den2.example", Key: "second-key",
+		Caps: []string{PeerCapSearch}})
+	InvalidatePeerResolution()
+
+	got := LoadWebSearchConfig()
+	if got.APIKey != "second-key" {
+		t.Errorf("after rotation the key is still %q — the config snapshotted it", got.APIKey)
+	}
+	if got.Endpoint != "https://den2.example/api/peer/v1" {
+		t.Errorf("after a move the endpoint is still %q", got.Endpoint)
+	}
+	if got.Provider != "searxng" {
+		t.Errorf("the resolved config stopped being a searxng config: %q", got.Provider)
+	}
+}
+
+// TestALocalSearchConfigIsUntouched — a real Brave or Google config must not be
+// touched by the overlay. Source is empty on every config stored before peers
+// existed, and that is the case the overlay must ignore.
+func TestALocalSearchConfigIsUntouched(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	for _, source := range []string{"", EmbeddingProviderLocal} {
+		in := WebSearchConfig{Provider: "brave", Source: source,
+			Endpoint: "", APIKey: "brave-key", CostPerCall: 0.005}
+		searchConfigForTest(t, in)
+		if got := LoadWebSearchConfig(); got != in {
+			t.Errorf("source %q: a local config was altered: %+v", source, got)
+		}
+	}
+}
+
+// TestAMissingSearchPeerKeepsTheLastKnownEndpoint — a deleted peer must leave a
+// config that fails diagnosably rather than one that searches nowhere.
+func TestAMissingSearchPeerKeepsTheLastKnownEndpoint(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	in := WebSearchConfig{Provider: "searxng", Source: PeerProviderValue("gone"),
+		Endpoint: "https://gone.example/api/peer/v1", APIKey: "k"}
+	searchConfigForTest(t, in)
+	if got := LoadWebSearchConfig(); got != in {
+		t.Errorf("a deleted peer altered the config: %+v", got)
+	}
+}
+
+// TestAPeerThatStoppedOfferingSearchKeepsItsKey — search spends a metered
+// third-party key on the far side, so a dropped grant must not be papered over
+// with whatever that peer offers now.
+func TestAPeerThatStoppedOfferingSearchKeepsItsKey(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den.example", Key: "rotated",
+		Caps: []string{PeerCapBrowse}})
+	InvalidatePeerResolution()
+
+	searchConfigForTest(t, WebSearchConfig{Provider: "searxng", Source: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", APIKey: "first-key"})
+
+	if got := LoadWebSearchConfig(); got.APIKey != "first-key" {
+		t.Errorf("a peer that dropped the capability still had its key applied: %q", got.APIKey)
+	}
+}

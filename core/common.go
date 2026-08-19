@@ -727,9 +727,14 @@ var OllamaProxyPortFunc func() int
 var LoadWebSearchConfigFunc func() WebSearchConfig
 
 // LoadWebSearchConfig returns the stored web search configuration.
+// LoadWebSearchConfig returns the stored search configuration with the current
+// peer record overlaid, so a config whose Source names a peer uses that peer's
+// endpoint and key as they are NOW rather than as they were when saved. Every
+// consumer reads through here (tools/websearch, tools/imagefetch, and the peer
+// surface itself), which is what makes the overlay complete.
 func LoadWebSearchConfig() WebSearchConfig {
 	if LoadWebSearchConfigFunc != nil {
-		return LoadWebSearchConfigFunc()
+		return resolveSearchPeer(LoadWebSearchConfigFunc())
 	}
 	return WebSearchConfig{}
 }

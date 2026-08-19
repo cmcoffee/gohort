@@ -71,11 +71,34 @@ func SetTranscribeConfig(cfg TranscribeConfig) {
 	transcribeCfgMu.Unlock()
 }
 
-// GetTranscribeConfig returns the current STT config.
+// TranscribeResolver, when set, gets the chance to rewrite the stored config
+// on every read. The core package installs it at startup so a config whose
+// Provider names a peer picks up that peer's CURRENT endpoint and key instead
+// of the copy taken when the operator saved the form.
+//
+// A function VARIABLE for the same reason GovernedUploadFunc below is one: core
+// imports this package, so this package cannot import core and knows nothing
+// about peers. Nil means the stored config is used verbatim, which is exactly
+// the old behavior.
+//
+// It must be cheap — GetTranscribeConfig sits on the enabled-check path that
+// runs per upload and per page render. The core side caches its peer lookup for
+// a second, which is what makes that true.
+var TranscribeResolver func(TranscribeConfig) TranscribeConfig
+
+// GetTranscribeConfig returns the current STT config, with any registered
+// resolver applied.
 func GetTranscribeConfig() TranscribeConfig {
 	transcribeCfgMu.RLock()
-	defer transcribeCfgMu.RUnlock()
-	return transcribeCfg
+	cfg := transcribeCfg
+	transcribeCfgMu.RUnlock()
+	// Resolved OUTSIDE the lock: the resolver reaches into another package's
+	// state to read a peer record, and holding this mutex across that is how
+	// two independent caches become one deadlock.
+	if TranscribeResolver != nil {
+		cfg = TranscribeResolver(cfg)
+	}
+	return cfg
 }
 
 // LoadTranscribeConfigFromDB reads persisted STT config from the kvlite

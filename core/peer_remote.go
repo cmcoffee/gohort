@@ -356,15 +356,22 @@ func ListRemotePeers() []RemotePeer {
 
 // DeleteRemotePeer forgets a peer.
 //
-// Embeddings, transcription, search and browse configured FROM it keep working:
-// those resolve the endpoint and key at SAVE time, so the consuming config is a
-// complete one that no longer mentions the peer.
+// Nothing configured FROM it resolves at save time any more. Embeddings,
+// transcription and search all keep the peer NAME in their stored config
+// (EmbeddingConfig.Provider, TranscribeConfig.Provider, WebSearchConfig.Source)
+// and overlay the live record on every read — see resolveEmbeddingPeer,
+// resolveTranscribePeer and resolveSearchPeer. Deleting the peer leaves those
+// configs pointed at its last known endpoint, still carrying the key that
+// worked, and each logs once to say so rather than blanking itself.
 //
-// An LLM tier does not. It stores "peer:<name>" and resolves through this
-// lookup on every build (see NewLLMFromConfig), which is what lets a rotated
-// peer key take effect with no edit here — and means deleting a peer a tier
-// points at breaks that tier at the next reload, with an error naming the
+// An LLM tier is stricter: it stores "peer:<name>" with no usable cache
+// alongside it, resolves through this lookup on every build (see
+// NewLLMFromConfig), and so breaks at the next reload with an error naming the
 // missing peer.
+//
+// The shared property, and the one that matters: the peer record is the only
+// place a peer credential lives. That is what lets a rotated key take effect
+// with no edit anywhere, and what a rotating credential scheme would depend on.
 func DeleteRemotePeer(name string) bool {
 	if RootDB == nil {
 		return false

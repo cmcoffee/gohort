@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // peerTranscribeBudget bounds one transcription. Whisper on a busy GPU is
@@ -165,10 +167,17 @@ func (p RemotePeer) TranscribeURL() string {
 	return strings.TrimRight(p.BaseURL, "/") + "/api/peer/v1"
 }
 
-// ResolveTranscribeProvider turns a submitted transcription config into the one
-// to store. When Provider names a peer, the endpoint, model and key come from
-// that peer's record — so the stored config is an ordinary one that Transcribe
-// can use with no peer awareness at all.
+// ResolveTranscribeProvider validates a submitted transcription config and
+// fills in the fields to store. When Provider names a peer, the endpoint, model
+// and key come from that peer's record — so the stored config is an ordinary
+// one that Transcribe can use with no peer awareness at all.
+//
+// The fields it writes are a LAST-KNOWN CACHE, not the operative values:
+// resolveTranscribePeer overlays the current peer record on every read (see
+// GetTranscribeConfig), so a rotated peer key takes effect without anyone
+// editing this form. They are still written because a peer that is later
+// deleted leaves nothing to resolve, and the last endpoint that worked is a
+// better answer than a blank one.
 //
 // Mirrors ResolveEmbeddingProvider down to the failure modes, including
 // refusing an unknown peer rather than falling back to local: a silent fall
@@ -192,4 +201,53 @@ func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (Transcrib
 	cfg.APIKey = p.Key
 	cfg.Enabled = true
 	return cfg, nil
+}
+
+func init() { media.TranscribeResolver = resolveTranscribePeer }
+
+// resolveTranscribePeer overlays the CURRENT peer record onto a stored
+// transcription config whose Provider names a peer.
+//
+// The live half of peer transcription, and the reason it exists is the bug the
+// embeddings side already had: save-time resolution copied the peer's endpoint
+// and key into the stored config, so rotating that peer's key left a
+// configuration that looked correct and answered 401, with nothing on either
+// screen saying which of the two records had gone stale. Reading the peer here
+// makes the stored config a POINTER and leaves one place the key lives — which
+// is also the precondition for peer credentials that rotate on their own.
+//
+// A peer that has gone missing or stopped offering transcription keeps the
+// stored fields — the last endpoint that worked — and logs once. Blanking them
+// would turn every voice note into a silent skip, which reads as "transcription
+// is off" rather than "this peer is gone".
+func resolveTranscribePeer(cfg TranscribeConfig) TranscribeConfig {
+	provider := strings.TrimSpace(cfg.Provider)
+	if !strings.HasPrefix(provider, peerProviderPrefix) {
+		return cfg
+	}
+	name := strings.TrimPrefix(provider, peerProviderPrefix)
+	p, ok := lookupPeerCached(name)
+	if !ok {
+		warnPeerResolveOnce("transcribe:"+name, fmt.Sprintf(
+			"transcription is configured against peer %q, which is no longer registered — "+
+				"still using its last known endpoint %s", name, cfg.Endpoint))
+		return cfg
+	}
+	if !p.Offers(PeerCapTranscribe) {
+		warnPeerResolveOnce("transcribe:"+name, fmt.Sprintf(
+			"peer %q no longer offers transcription (it offers: %s) — "+
+				"still using its last known endpoint %s", name, strings.Join(p.Caps, ", "), cfg.Endpoint))
+		return cfg
+	}
+	warnPeerResolveOnce("transcribe:"+name, "") // clears the warning once the peer is healthy again
+	cfg.Endpoint = p.TranscribeURL()
+	cfg.APIKey = p.Key
+	// The MODEL is only overridden when the peer reports one, matching
+	// resolveEmbeddingPeer: a single-model whisper backend advertises none, and
+	// overwriting a deliberately-set value with "" would send a request with no
+	// model to a server that wants one.
+	if strings.TrimSpace(p.TranscribeModel) != "" {
+		cfg.Model = p.TranscribeModel
+	}
+	return cfg
 }

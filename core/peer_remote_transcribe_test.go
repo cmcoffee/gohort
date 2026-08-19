@@ -80,3 +80,97 @@ func TestResolveTranscribeProviderRefusesAnUnknownPeer(t *testing.T) {
 		t.Errorf("a peer without the grant should be refused by name, got %v", err)
 	}
 }
+
+// --- live resolution ---------------------------------------------------------
+
+// TestTranscribeConfigResolvesThePeerOnEveryRead — transcription used to
+// snapshot the peer's endpoint and key at save time, so rotating that key left
+// a config that looked correct and answered 401. Embeddings had the same bug
+// and was fixed; this is the same fix, and it is the precondition for peer
+// credentials that rotate on their own.
+func TestTranscribeConfigResolvesThePeerOnEveryRead(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+	prev := GetTranscribeConfig()
+	defer SetTranscribeConfig(prev)
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den.example", Key: "first-key",
+		TranscribeModel: "whisper-1", Caps: []string{PeerCapTranscribe}})
+	InvalidatePeerResolution()
+
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", Model: "whisper-1", APIKey: "first-key"})
+
+	if got := GetTranscribeConfig(); got.APIKey != "first-key" {
+		t.Fatalf("initial key resolved to %q", got.APIKey)
+	}
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den2.example", Key: "second-key",
+		TranscribeModel: "whisper-1", Caps: []string{PeerCapTranscribe}})
+	InvalidatePeerResolution()
+
+	got := GetTranscribeConfig()
+	if got.APIKey != "second-key" {
+		t.Errorf("after rotation the key is still %q — the config snapshotted it", got.APIKey)
+	}
+	if got.Endpoint != "https://den2.example/api/peer/v1" {
+		t.Errorf("after a move the endpoint is still %q", got.Endpoint)
+	}
+}
+
+// TestALocalTranscribeConfigIsUntouched — the overlay must not reach a config
+// that never named a peer, which is every config stored before peers existed.
+func TestALocalTranscribeConfigIsUntouched(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+	prev := GetTranscribeConfig()
+	defer SetTranscribeConfig(prev)
+
+	for _, provider := range []string{"", EmbeddingProviderLocal} {
+		in := TranscribeConfig{Enabled: true, Provider: provider,
+			Endpoint: "http://localhost:8080/v1", Model: "whisper-1", APIKey: "k"}
+		SetTranscribeConfig(in)
+		if got := GetTranscribeConfig(); got != in {
+			t.Errorf("provider %q: a local config was altered: %+v", provider, got)
+		}
+	}
+}
+
+// TestAMissingPeerKeepsTheLastKnownTranscribeEndpoint — blanking it would read
+// as "transcription is switched off" rather than "this peer is gone".
+func TestAMissingPeerKeepsTheLastKnownTranscribeEndpoint(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+	prev := GetTranscribeConfig()
+	defer SetTranscribeConfig(prev)
+
+	in := TranscribeConfig{Enabled: true, Provider: PeerProviderValue("gone"),
+		Endpoint: "https://gone.example/api/peer/v1", Model: "whisper-1", APIKey: "k"}
+	SetTranscribeConfig(in)
+	if got := GetTranscribeConfig(); got != in {
+		t.Errorf("a deleted peer altered the config: %+v", got)
+	}
+}
+
+// TestAPeerThatStoppedOfferingTranscriptionKeepsItsKey — a capability dropped
+// from the far side must not silently repoint audio somewhere else.
+func TestAPeerThatStoppedOfferingTranscriptionKeepsItsKey(t *testing.T) {
+	restore := scratchPeerStore(t)
+	defer restore()
+	prev := GetTranscribeConfig()
+	defer SetTranscribeConfig(prev)
+
+	RootDB.Set(remotePeersTable, "den", RemotePeer{
+		Name: "den", BaseURL: "https://den.example", Key: "rotated",
+		Caps: []string{PeerCapEmbeddings}})
+	InvalidatePeerResolution()
+
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: PeerProviderValue("den"),
+		Endpoint: "https://den.example/api/peer/v1", Model: "whisper-1", APIKey: "first-key"})
+
+	if got := GetTranscribeConfig(); got.APIKey != "first-key" {
+		t.Errorf("a peer that dropped the capability still had its key applied: %q", got.APIKey)
+	}
+}
