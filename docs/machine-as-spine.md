@@ -3,7 +3,8 @@
 **Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271),
 Change 4 BUILT (v0.6.273, completed by the machine stage in v0.6.276),
 Change 5 BUILT (v0.6.277). All five are built. An unattended run can be STARTED two ways: from the machine page ("Run
-it", v0.6.274), synchronously, and from a SCHEDULE (v0.6.275) —
+it", v0.6.274, streaming through the framework's run panel since v0.6.282),
+and from a SCHEDULE (v0.6.275) —
 `StandingAgent.MachineID`, beside the agent and pipeline targets, which is the
 background door. A dispatch target (an agent asking for a run) is still to come. Related: `core/machine.go`, `core/machine_def.go`,
 `apps/orchestrate/machine_delegate.go`, `docs/agent-machines.md`,

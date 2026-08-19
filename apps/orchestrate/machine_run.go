@@ -25,8 +25,8 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,126 +42,128 @@ import (
 // and a run that outlives this wants the background door instead.
 const runTimeout = 15 * time.Minute
 
-// handleMachineRun starts an unattended run and returns what it produced.
+// handleMachineRuns serves the panel protocol for one machine's runs.
 //
-//	POST /api/machines/{id}/run  {"input": "..."}
-func (T *OrchestrateApp) handleMachineRun(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !def.Unattended {
+//	POST   runs/stream        → run it, streaming the transcript
+//	GET    runs/sessions      → past runs, newest first
+//	GET    runs/sessions/<id> → one run's stored blocks
+//	DELETE runs/sessions/<id> → drop a run
+//
+// The same protocol a pipeline's runs speak, because it was never about
+// pipelines: a run produces a transcript of blocks and a result, and core
+// serves that for anything that can emit them (RunSurface).
+func (T *OrchestrateApp) handleMachineRuns(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef, sub string) {
+	// The two refusals that are true whether or not a model is configured,
+	// answered before the deployment check for that reason.
+	if !def.Unattended && sub == "stream" {
 		http.Error(w, "this machine converses rather than runs: it has a step that waits for a person, and nobody is waiting here. "+
 			"Use Try it to rehearse it, or attach it to an agent and talk to it.", http.StatusBadRequest)
 		return
 	}
-	var body struct {
-		Input string `json:"input"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if probs := def.Problems(); len(probs) > 0 && sub == "stream" {
+		http.Error(w, "this machine will not run yet — "+probs[0]+" ("+strconv.Itoa(len(probs))+" outstanding). Its checklist lists them.",
+			http.StatusBadRequest)
 		return
 	}
-	input := strings.TrimSpace(body.Input)
-	if input == "" {
-		http.Error(w, "say what this run is about", http.StatusBadRequest)
-		return
-	}
-	// A machine that cannot run says why HERE rather than failing
-	// downstream with the same information in a worse place.
-	if probs := def.Problems(); len(probs) > 0 {
-		writeJSON(w, map[string]any{
-			"blocked":   true,
-			"checklist": probs,
-			"note":      "This machine will not run yet. Fix the list above and start it again.",
-		})
-		return
-	}
-
-	// The deployment check comes AFTER the two refusals above, and the
-	// order is the point: "this machine converses" and "this machine has
-	// four things wrong with it" are true whether or not a model is
-	// configured, and answering either with "worker LLM not configured"
-	// would send somebody to fix the wrong thing. Every step below IS a
-	// model call, so the check still has to happen before one starts.
-	if T.LLM == nil {
+	if T.LLM == nil && sub == "stream" {
 		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
 		return
 	}
+	T.ServeRuns(w, r, RunSurface{
+		DB:      udb,
+		User:    user,
+		OwnerID: def.ID,
+		Timeout: runTimeout,
+		Work: func(ctx context.Context, input string, _ map[string]string, sink PipelineSink) (string, error) {
+			return T.runMachineStreaming(ctx, def, user, input, sink)
+		},
+	}, sub)
+}
 
-	ctx, cancel := context.WithTimeout(r.Context(), runTimeout)
-	defer cancel()
-
-	// The caller's own tool pool, which each step narrows with its own
-	// Tools list (PhaseWorker does the narrowing). A step that names no
-	// tools gets none, which is the transient-step rule everywhere else.
+// runMachineStreaming is one unattended run, narrating itself.
+//
+// A machine has no transcript of its own: the walk produces phase results
+// on a blackboard and breadcrumbs about what the framework decided. This
+// turns both into the events the panel speaks — one block per step, the
+// framework's decisions as status lines — so a long run is watchable
+// rather than a spinner that eventually returns everything at once.
+func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef, user, input string, sink PipelineSink) (string, error) {
 	sess := &ToolSession{Username: user, DB: AuthDB()}
 	catalog, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
 	if err != nil {
-		// One unresolvable name should not cost the run its whole
-		// catalog; carry on with what resolved and say so.
 		Log("[orchestrate.machines] run %q: tool catalog partly unresolved for user=%q: %v", def.Name, user, err)
 	}
-	// One answer per question for the length of the run: a machine whose
-	// steps each search the same landscape pays for it once.
 	cache := NewRunToolCache()
-	catalog = WrapToolsWithRunCache(cache, catalog)
+	base := T.PhaseWorker(WrapToolsWithRunCache(cache, catalog))
+
+	var seq int
+	runner := func(ctx context.Context, ph MachinePhase, prompt string) (string, error) {
+		seq++
+		id := "phase-" + strconv.Itoa(seq)
+		title := ph.Name
+		if d := strings.TrimSpace(ph.Desc); d != "" {
+			title += " — " + d
+		}
+		sink(PipelineEvent{Kind: "block", ID: id, Type: "phase", Title: title})
+		out, err := base(ctx, ph, prompt)
+		if err != nil {
+			sink(PipelineEvent{Kind: "chunk", ID: id, Text: "(this step failed: " + err.Error() + ")"})
+			sink(PipelineEvent{Kind: "block_done", ID: id})
+			return "", err
+		}
+		sink(PipelineEvent{Kind: "chunk", ID: id, Text: strings.TrimSpace(out)})
+		sink(PipelineEvent{Kind: "block_done", ID: id})
+		return out, nil
+	}
 
 	cur := &MachineCursor{}
-	var notes []string
 	final, out, err := T.RunUnattended(ctx, def, cur, MachineTurn{
 		Input: input,
 		User:  user,
 		Now:   time.Now().In(UserLocation(user)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
-	}, T.PhaseWorker(catalog),
-		func(kind, detail string) { notes = append(notes, kind+": "+detail) })
-
-	res := map[string]any{
-		"path":  tryPath(cur, 0),
-		"state": tryState(cur),
-		"notes": notes,
-	}
+	}, runner, func(kind, detail string) {
+		// The framework's own decisions, as status rather than as blocks: they
+		// are about the run rather than part of it, and a breadcrumb that
+		// claimed a step of its own would read as work that happened.
+		sink(PipelineEvent{Kind: "status", Text: detail})
+	})
 	if err != nil {
-		// The partial text comes back WITH the failure, because a run that
-		// stopped at step nine still did nine steps of work and throwing
-		// that away teaches nothing about why it stopped.
-		res["failed"] = err.Error()
-		res["output"] = out
-		Log("[orchestrate.machines] user=%q ran %q: stopped after %d step(s): %v", user, def.Name, len(cur.Log)+1, err)
-		writeJSON(w, res)
-		return
+		return out, err
+	}
+	if hits := cache.Hits(); hits > 0 {
+		sink(PipelineEvent{Kind: "status", Text: strconv.Itoa(hits) + " tool call(s) answered from earlier in this run"})
 	}
 	Log("[orchestrate.machines] user=%q ran %q → finished at %s after %d step(s), %d cached tool call(s)",
 		user, def.Name, final.Name, len(cur.Log)+1, cache.Hits())
-	res["finished"] = final.Name
-	res["finished_desc"] = strings.TrimSpace(final.Desc)
-	res["output"] = out
-	res["cached_calls"] = cache.Hits()
-	writeJSON(w, res)
+	return out, nil
 }
 
-// machineRunPanel is the door itself: a box, a button, and whatever the
-// run produced.
+// machineRunPanel is the framework's run surface, pointed at this machine.
 //
-// Deliberately the same shape as the rehearsal's panel, because they are
-// the same gesture with different stakes, and a second layout for the
-// second one would only make somebody work out which is which.
+// The same panel a pipeline's page mounts: a transcript that arrives as it
+// happens, past runs in a sidebar, cancel, and a record that survives the
+// browser going away. None of that is machine-specific, which is why none
+// of it is written here.
 func machineRunPanel(def MachineDef) ui.Component {
-	return ui.Stack{Children: []ui.Component{
-		ui.Card{HTML: `<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">` +
-			`<input id="machine-run-input" type="text" style="flex:1;min-width:16rem" ` +
-			`placeholder="` + HTMLEscape(runPlaceholder(def)) + `" ` +
-			`aria-label="What this run is about">` +
-			`</div>` +
-			`<div id="machine-run-out" style="margin-top:0.75rem"></div>`},
-		ui.Toolbar{Actions: []ui.ToolbarAction{{
-			Label:   "Start the run",
-			Title:   "Run this machine now, with your tools, to the step that finishes it",
-			Method:  "client",
-			URL:     "machine_run",
-			Variant: "primary",
-		}}},
-	}}
+	base := "api/machines/" + url_(def.ID) + "/runs/"
+	return ui.PipelinePanel{
+		SessionsListURL:  base + "sessions",
+		SessionLoadURL:   base + "sessions/{id}",
+		SessionDeleteURL: base + "sessions/{id}",
+		SubmitURL:        base + "stream",
+		SubmitLabel:      "Start the run",
+		// This page's ?id= is the MACHINE, so the panel is told which param
+		// carries a run or it would open a session that cannot exist.
+		DeepLinkParam: "session",
+		Fields: []ui.PipelineField{{
+			Name: "input", Type: "textarea", Required: true, Rows: 3,
+			Label:       "What is this run about?",
+			Placeholder: runPlaceholder(def),
+		}},
+		Markdown:   true,
+		BulkSelect: true,
+		EmptyText:  "No runs yet. Every step runs for real, with your tools, ending at the step that hands off nowhere.",
+	}
 }
 
 // runPlaceholder asks for the run's subject in the machine's own terms.
@@ -171,99 +173,6 @@ func runPlaceholder(def MachineDef) string {
 	}
 	return "What this run is about"
 }
-
-// machineRunJS posts the input and renders what came back.
-//
-// No streaming: the request is open for the whole run, so the button says
-// it is working and the result arrives at the end. A background door with
-// progress is the next one, not this one.
-const machineRunJS = `function(ctx) {
-  var id  = new URLSearchParams(window.location.search).get('id');
-  var box = document.getElementById('machine-run-input');
-  var out = document.getElementById('machine-run-out');
-  if (!id || !box || !out) return;
-  var input = (box.value || '').trim();
-  if (!input) { box.focus(); return; }
-
-  function el(tag, text, style) {
-    var e = document.createElement(tag);
-    if (text != null) e.textContent = text;
-    if (style) e.setAttribute('style', style);
-    return e;
-  }
-  var MUTE = 'color:var(--text-mute);font-size:0.82rem';
-  var HEAD = 'font-weight:600;margin:0.75rem 0 0.25rem';
-
-  function list(items, style) {
-    var ul = el('ul', null, 'margin:0.25rem 0 0;padding-left:1.1rem;' + (style || ''));
-    items.forEach(function(t) { ul.appendChild(el('li', t)); });
-    return ul;
-  }
-
-  var btn = ctx && ctx.button;
-  var label = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
-  out.textContent = '';
-  out.appendChild(el('div', 'Running. Every step is a model call, so this takes as long as the machine is long.', MUTE));
-
-  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/run', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({input: input}),
-  }).then(function(r) {
-    if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
-    return r.json();
-  }).then(function(d) {
-    out.textContent = '';
-    if (d.blocked) {
-      out.appendChild(el('div', d.note, 'font-weight:600'));
-      out.appendChild(list(d.checklist || []));
-      return;
-    }
-    if (d.failed) {
-      out.appendChild(el('div', 'It stopped: ' + d.failed, 'font-weight:600;color:var(--danger)'));
-    } else {
-      var where = 'Finished at ' + d.finished;
-      if (d.finished_desc) where += ' — ' + d.finished_desc;
-      out.appendChild(el('div', where, 'font-weight:600'));
-    }
-    if (d.output) {
-      out.appendChild(el('div', 'What it produced', HEAD));
-      out.appendChild(el('div', d.output, 'white-space:pre-wrap'));
-    }
-    if (d.cached_calls) {
-      out.appendChild(el('div', d.cached_calls + ' tool call(s) answered from earlier in this run', MUTE));
-    }
-    if (d.path && d.path.length) {
-      out.appendChild(el('div', 'The steps it took', HEAD));
-      out.appendChild(list(d.path));
-    }
-    var state = d.state || {};
-    var steps = Object.keys(state);
-    if (steps.length) {
-      out.appendChild(el('div', 'What it established', HEAD));
-      steps.forEach(function(name) {
-        out.appendChild(el('div', name, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
-        var fields = state[name] || {};
-        var rows = Object.keys(fields).map(function(k) {
-          var v = fields[k];
-          if (v && typeof v === 'object') { try { v = JSON.stringify(v); } catch (e) { v = String(v); } }
-          return k + ': ' + v;
-        });
-        if (rows.length) out.appendChild(list(rows, MUTE));
-      });
-    }
-    if (d.notes && d.notes.length) {
-      out.appendChild(el('div', 'What the framework decided for you', HEAD));
-      out.appendChild(list(d.notes, MUTE));
-    }
-  }).catch(function(err) {
-    out.textContent = '';
-    out.appendChild(el('div', 'It could not run: ' + err.message, 'font-weight:600;color:var(--danger)'));
-  }).then(function() {
-    if (btn) { btn.disabled = false; btn.textContent = label || 'Start the run'; }
-  });
-}`
 
 // unattendedRunSection is the "Run it" section, present only when the
 // machine can actually be run this way.
@@ -277,10 +186,9 @@ func unattendedRunSection(def MachineDef) ui.Section {
 		return ui.Section{}
 	}
 	return ui.Section{
-		Title: "Run it",
-		Wide:  true,
-		Subtitle: "Start it now, for real: your tools, every step run, ending at the step that hands off nowhere. " +
-			"That step's result is the run's result. The request stays open while it works, so a long machine is a long wait.",
-		Body: machineRunPanel(def),
+		Title:    "Run it",
+		Wide:     true,
+		NoChrome: true, // the panel manages its own layout
+		Body:     machineRunPanel(def),
 	}
 }

@@ -291,7 +291,6 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_remove_step", machineRemoveStepJS).
 			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).
-			ClientAction("machine_run", machineRunJS).
 			ClientAction("machine_try_reset", machineTryResetJS).
 			ClientAction("machine_duplicate", machineDuplicateJS).
 			ClientAction("machine_repair", machineRepairJS).

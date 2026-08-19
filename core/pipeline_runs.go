@@ -225,16 +225,53 @@ func PipelineRunSubmission(body []byte) (string, map[string]string) {
 // needs no agent runtime), and Tools is the catalog a stage's declared tool
 // names resolve against. Core decides neither; it just runs what it is handed.
 type PipelineRunSurface struct {
-	DB       Database         // the host's store — runs live where that host keeps them
-	User     string           // whose history this is
-	Def      PipelineDef      // what to run
-	Dispatch PipelineDispatch // agent stages; nil = none available
-	Tools    []AgentToolDef   // catalog a stage's declared tool names resolve against
-	Timeout  time.Duration    // 0 = defaultPipelineRunTimeout
+	DB       Database              // the host's store — runs live where that host keeps them
+	User     string                // whose history this is
+	Def      PipelineDef           // what to run
+	Dispatch PipelineDispatch      // agent stages; nil = none available
+	Machine  PipelineMachineRunner // kind=machine stages; nil = none available
+	Tools    []AgentToolDef        // catalog a stage's declared tool names resolve against
+	Timeout  time.Duration         // 0 = defaultPipelineRunTimeout
 }
 
-// ServePipelineRuns serves the panel's protocol. sub is the path after the
-// host's own prefix: "stream" | "sessions" | "sessions/<id>".
+// ServePipelineRuns is ServeRuns with a pipeline as the thing that runs.
+func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s PipelineRunSurface, sub string) {
+	T.ServeRuns(w, r, RunSurface{
+		DB: s.DB, User: s.User, OwnerID: s.Def.ID, Timeout: s.Timeout,
+		Work: func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error) {
+			// executePipelineHooks, not an exported Run*: the form's fields are
+			// run-scoped template values and this is the only entry point that
+			// carries them. Same package, so no public surface grows for it.
+			out, _, err := T.executePipelineHooks(ctx, s.Def, input, vars, sink,
+				PipelineHooks{Dispatch: s.Dispatch, Machine: s.Machine, Tools: s.Tools})
+			return out, err
+		},
+	}, sub)
+}
+
+// RunWork is one execution of whatever the host is running. It reports its
+// progress through the sink in PipelineEvents, and returns the final text.
+//
+// The seam that makes this surface general: a pipeline is one thing that
+// runs, and a machine is another. Both produce a transcript of blocks and
+// a result, which is all the panel protocol below knows about.
+type RunWork func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error)
+
+// RunSurface is the panel protocol's host-supplied half, for any kind of run.
+//
+// OwnerID keys the history: a pipeline's id, a machine's id, whatever the
+// runs belong to. The store does not care which, and calling it anything
+// more specific would have meant a second copy of everything below.
+type RunSurface struct {
+	DB      Database      // the host's store — runs live where that host keeps them
+	User    string        // whose history this is
+	OwnerID string        // what ran: the id its past runs are listed under
+	Work    RunWork       // the run itself
+	Timeout time.Duration // 0 = defaultPipelineRunTimeout
+}
+
+// ServeRuns serves the PipelinePanel protocol for any RunSurface. sub is the
+// path after the host's own prefix: "stream" | "sessions" | "sessions/<id>".
 //
 //	POST   stream        → run it, streaming the transcript
 //	GET    sessions      → past runs, newest first
@@ -243,10 +280,10 @@ type PipelineRunSurface struct {
 //
 // The host owns authentication and routing; by the time this is called, User is
 // already decided.
-func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s PipelineRunSurface, sub string) {
+func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface, sub string) {
 	switch {
 	case sub == "stream":
-		T.streamPipelineRun(w, r, s)
+		T.streamRun(w, r, s)
 	case sub == "sessions":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -259,7 +296,7 @@ func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s Pi
 		// lowercase, so every row arrived with an undefined id, title and date —
 		// a sidebar of blank entries that could not be clicked, which reads as
 		// "it never saved my runs" when every run was stored correctly.
-		runs := ListPipelineRuns(s.DB, s.User, s.Def.ID)
+		runs := ListPipelineRuns(s.DB, s.User, s.OwnerID)
 		out := make([]PipelineSessionRow, 0, len(runs))
 		for _, run := range runs {
 			out = append(out, PipelineSessionRow{ID: run.ID, Title: run.Title, Date: run.Date})
@@ -272,11 +309,11 @@ func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s Pi
 			return
 		}
 		if r.Method == http.MethodDelete {
-			DeletePipelineRun(s.DB, s.User, s.Def.ID, runID)
+			DeletePipelineRun(s.DB, s.User, s.OwnerID, runID)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		run, ok := LoadPipelineRun(s.DB, s.User, s.Def.ID, runID)
+		run, ok := LoadPipelineRun(s.DB, s.User, s.OwnerID, runID)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -290,10 +327,10 @@ func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s Pi
 	}
 }
 
-// streamPipelineRun runs a pipeline and streams its transcript in the shape
+// streamRun runs the surface's work and streams its transcript in the shape
 // PipelinePanel speaks. The run is recorded as it goes, so closing the tab
 // loses the live view but not the result.
-func (T *AppCore) streamPipelineRun(w http.ResponseWriter, r *http.Request, s PipelineRunSurface) {
+func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -315,7 +352,7 @@ func (T *AppCore) streamPipelineRun(w http.ResponseWriter, r *http.Request, s Pi
 
 	run := PipelineRun{
 		ID:         UUIDv4()[:12],
-		PipelineID: s.Def.ID,
+		PipelineID: s.OwnerID,
 		Title:      PipelineRunTitle(input),
 		Date:       time.Now(),
 		Running:    true,
@@ -358,10 +395,7 @@ func (T *AppCore) streamPipelineRun(w http.ResponseWriter, r *http.Request, s Pi
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	// executePipelineDefVars, not the exported RunPipelineDefSyncWithSink: the
-	// form's fields are run-scoped template values, and this is the only entry
-	// point that carries them. Same package, so no public surface grows for it.
-	out, runErr := T.executePipelineDefVars(ctx, s.Def, input, vars, s.Dispatch, sink, s.Tools)
+	out, runErr := s.Work(ctx, input, vars, sink)
 
 	mu.Lock()
 	run.Running = false

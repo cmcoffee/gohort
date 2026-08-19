@@ -4,7 +4,7 @@ package orchestrate
 // what it cannot.
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,9 +50,9 @@ func TestRunRefusesAConversationalMachine(t *testing.T) {
 	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Chatty", Start: "talk",
 		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}})
 
-	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/run", strings.NewReader(`{"input":"go"}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/runs/stream", strings.NewReader(`{"input":"go"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineRun(w, asUser(r, user), udb, user, def)
+	app.handleMachineRuns(w, asUser(r, user), udb, user, def, "stream")
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d: %s", w.Code, w.Body.String())
@@ -73,22 +73,33 @@ func TestRunReportsTheChecklistRatherThanFailing(t *testing.T) {
 			{Name: "b", Prompt: "y", Next: "a"},
 		}})
 
-	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/run", strings.NewReader(`{"input":"go"}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/runs/stream", strings.NewReader(`{"input":"go"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineRun(w, asUser(r, user), udb, user, def)
+	app.handleMachineRuns(w, asUser(r, user), udb, user, def, "stream")
 
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want a refusal naming the problem, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "will not run yet") {
+		t.Errorf("the refusal should carry the first problem: %s", w.Body.String())
+	}
+}
+
+// Past runs are listed even for a machine that could not start a new one:
+// the history is the record of what it did, not a control.
+func TestRunSessionsListIsServedForAnyMachine(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Chatty", Start: "talk",
+		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}})
+
+	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/runs/sessions", nil)
+	w := httptest.NewRecorder()
+	app.handleMachineRuns(w, asUser(r, user), udb, user, def, "sessions")
 	if w.Code != 200 {
-		t.Fatalf("want a reported blockage, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("want an empty list, got %d: %s", w.Code, w.Body.String())
 	}
-	var got map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["blocked"] != true {
-		t.Errorf("a machine that cannot run should be reported as blocked: %v", got)
-	}
-	if list, _ := got["checklist"].([]any); len(list) == 0 {
-		t.Errorf("the blockage should carry the checklist that explains it: %v", got)
+	if strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Errorf("a machine with no runs should list none, got %s", w.Body.String())
 	}
 }
 
@@ -103,5 +114,48 @@ func TestRunSectionOnlyForMachinesThatRun(t *testing.T) {
 		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}}
 	if s := unattendedRunSection(converses); s.Title != "" || s.Body != nil {
 		t.Errorf("a conversation should have no run door at all, got %+v", s)
+	}
+}
+
+// A run narrates itself: one block per step, the framework's own
+// decisions as status. Without that the panel is a spinner that returns
+// everything at once, which is the thing streaming exists to fix.
+func TestAStreamedRunEmitsABlockPerStep(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{Owner: user, Name: "Nightly", Start: "gather", Unattended: true,
+		Phases: []MachinePhase{
+			{Name: "gather", Desc: "Collect what changed.", Prompt: "gather", Next: "write"},
+			{Name: "write", Desc: "Write it up.", Prompt: "write"},
+		}})
+
+	var kinds, titles []string
+	sink := func(ev PipelineEvent) {
+		kinds = append(kinds, ev.Kind)
+		if ev.Kind == "block" {
+			titles = append(titles, ev.Title)
+		}
+	}
+	// No LLM in a test binary, so the run fails at its first step. What is
+	// asserted is the NARRATION: the step opened a block and closed it,
+	// which is what the panel renders.
+	_, _ = app.runMachineStreaming(context.Background(), def, user, "go", sink)
+
+	if len(titles) == 0 || !strings.Contains(titles[0], "gather") {
+		t.Fatalf("the first step should open a block named for itself: %v", titles)
+	}
+	if !strings.Contains(titles[0], "Collect what changed") {
+		t.Errorf("the block title should carry the step's own description: %q", titles[0])
+	}
+	var opened, closed int
+	for _, k := range kinds {
+		switch k {
+		case "block":
+			opened++
+		case "block_done":
+			closed++
+		}
+	}
+	if opened == 0 || opened != closed {
+		t.Errorf("every block opened must be closed: %d opened, %d closed (%v)", opened, closed, kinds)
 	}
 }
