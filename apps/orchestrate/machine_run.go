@@ -177,9 +177,13 @@ func runPlaceholder(def MachineDef) string {
 // unattendedRunSection is the "Run it" section, present only when the
 // machine can actually be run this way.
 //
-// An empty ui.Section renders as nothing, which is how a conversational
-// machine simply does not have this door rather than having one that
-// refuses. The alternative (a visible button that always says no) teaches
+// A conversational machine gets an EMPTY section, which the page then
+// drops (withoutEmptySections). It is not invisible on its own: the nav
+// rail names an untitled section by its position, so an empty one shows up
+// as "Section 8", a menu entry that opens nothing. Returning empty and
+// filtering keeps the decision here and the page's reading order intact.
+//
+// The point of skipping it at all: a button that always refuses teaches
 // somebody that the page lies to them.
 func unattendedRunSection(def MachineDef) ui.Section {
 	if !def.Unattended {

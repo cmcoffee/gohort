@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // A rehearsal must not read as evidence for the one thing it cannot
@@ -103,7 +104,11 @@ func TestRunSessionsListIsServedForAnyMachine(t *testing.T) {
 	}
 }
 
-// The door exists only where it can work.
+// The door exists only where it can work — and "no door" has to mean no
+// ENTRY, not an empty section. The rail names an untitled section by its
+// position, so an empty one is a "Section 8" menu item that opens
+// nothing. This asserts the page, not the helper, because the helper's
+// empty return was exactly the assumption that was wrong.
 func TestRunSectionOnlyForMachinesThatRun(t *testing.T) {
 	runs := MachineDef{Name: "Nightly", Unattended: true,
 		Phases: []MachinePhase{{Name: "write", Prompt: "w"}}}
@@ -112,8 +117,31 @@ func TestRunSectionOnlyForMachinesThatRun(t *testing.T) {
 	}
 	converses := MachineDef{Name: "Chatty",
 		Phases: []MachinePhase{{Name: "talk", Prompt: "hi", Resident: true}}}
-	if s := unattendedRunSection(converses); s.Title != "" || s.Body != nil {
-		t.Errorf("a conversation should have no run door at all, got %+v", s)
+	kept := withoutEmptySections([]ui.Section{
+		{Title: "Try it", Body: ui.Card{}},
+		unattendedRunSection(converses),
+		{Title: "What a turn costs", Subtitle: "cheap"},
+	})
+	for _, s := range kept {
+		if strings.TrimSpace(s.Title) == "" {
+			t.Errorf("an untitled section survives as a menu entry that opens nothing: %+v", kept)
+		}
+	}
+	if len(kept) != 2 {
+		t.Errorf("the empty door should be dropped, got %d section(s)", len(kept))
+	}
+}
+
+// A section with a title and no body is legitimate (the cost section is
+// one), so the filter must not take those with it.
+func TestOnlyWhollyEmptySectionsAreDropped(t *testing.T) {
+	kept := withoutEmptySections([]ui.Section{
+		{Title: "What a turn costs", Subtitle: "two model calls"},
+		{Subtitle: "untitled but says something"},
+		{},
+	})
+	if len(kept) != 2 {
+		t.Errorf("only the wholly empty one should go, got %d: %+v", len(kept), kept)
 	}
 }
 

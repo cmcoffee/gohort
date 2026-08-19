@@ -371,13 +371,10 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Body:     machineTryPanel(def),
 		},
 		// The real thing, next to the rehearsal, and only for a machine
-		// that RUNS. A conversational machine has nowhere for this to
-		// land, and offering a button that always refuses is worse than
-		// not offering one.
-		//
-		// Synchronous: the request stays open for the whole run. Right
-		// for a machine somebody is building and watching, wrong for a
-		// long one, which is what the next door (a schedule) is for.
+		// that RUNS: a conversational machine has nowhere for this to
+		// land, and a button that always refuses is worse than no button.
+		// Empty for those, and dropped below rather than rendered — see
+		// withoutEmptySections.
 		unattendedRunSection(def),
 		// Say what should change, against the machine already on
 		// screen. A SECTION rather than a dialog, and that is the
@@ -471,7 +468,26 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 				ui.Card{HTML: `<div data-machine-checklist>` + checklistHTML(def, checklist) + `</div>`}),
 		},
 	}...)
+	page.Sections = withoutEmptySections(page.Sections)
 	page.ServeHTTP(w, r)
+}
+
+// withoutEmptySections drops sections that hold nothing.
+//
+// A section is skipped by building it empty rather than by branching
+// around it in the middle of a slice literal, which keeps the page's
+// reading order visible in one place. The rail, though, names an untitled
+// section by its POSITION — "Section 8" — so an empty one is not invisible
+// at all: it is a menu entry that opens nothing. Hence this pass.
+func withoutEmptySections(in []ui.Section) []ui.Section {
+	out := in[:0]
+	for _, s := range in {
+		if strings.TrimSpace(s.Title) == "" && s.Body == nil && strings.TrimSpace(s.Subtitle) == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // withRepairButton puts a fix-it button under a findings list, and only
