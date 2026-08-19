@@ -40,7 +40,44 @@ func peerFromRequest(r *http.Request) (PeerKey, bool) {
 	if secret == "" {
 		return PeerKey{}, false
 	}
-	return LookupPeerKey(secret)
+	// Access tokens first, and by a keyed lookup rather than a scan — a peer on
+	// the token flow presents one on every call, so this is the hot path.
+	if k, ok := peerKeyFromAccessToken(secret); ok {
+		return k, true
+	}
+	k, ok := LookupPeerKey(secret)
+	if !ok {
+		return k, false
+	}
+	// A rotating grant's key is a PAIRING CODE, not a credential. Accepting it
+	// here would leave the long-lived bearer secret the token flow exists to
+	// retire, and would do it silently: everything would keep working and
+	// nothing would be rotating. peerAuthorize turns this into a 401 that says
+	// where to go instead.
+	if k.Rotating {
+		return PeerKey{}, false
+	}
+	return k, true
+}
+
+// peerIsUnexchangedPairingCode reports whether a presented secret is a rotating
+// grant's pairing code — the one authentication failure with a specific remedy,
+// so peerAuthorize can name it instead of answering "unrecognized key" to a
+// credential the operator can see is correct.
+func peerIsUnexchangedPairingCode(r *http.Request) bool {
+	secret := strings.TrimSpace(r.Header.Get(peerKeyHeader))
+	if secret == "" {
+		if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+			if lower := strings.ToLower(auth); strings.HasPrefix(lower, "bearer ") {
+				secret = strings.TrimSpace(auth[len("bearer "):])
+			}
+		}
+	}
+	if secret == "" {
+		return false
+	}
+	k, ok := LookupPeerKey(secret)
+	return ok && k.Rotating
 }
 
 // peerDeny writes a JSON error. Peers are machines: the body says what is wrong
@@ -66,6 +103,12 @@ func peerAuthorize(w http.ResponseWriter, r *http.Request, capability string) (P
 	k, ok := peerFromRequest(r)
 	if !ok {
 		peerNoteAuthFailure(r)
+		if peerIsUnexchangedPairingCode(r) {
+			peerDeny(w, http.StatusUnauthorized,
+				"this key is a pairing code, not a credential — POST it to /api/peer/v1/token as "+
+					`{"grant_type":"pairing_code","pairing_code":"..."} and use the access token it returns`)
+			return PeerKey{}, false
+		}
 		peerDeny(w, http.StatusUnauthorized, "unrecognized or disabled peer key")
 		return PeerKey{}, false
 	}
@@ -94,7 +137,12 @@ func peerAuthorize(w http.ResponseWriter, r *http.Request, capability string) (P
 type PeerManifest struct {
 	Instance     string              `json:"instance"`
 	Capabilities []PeerManifestEntry `json:"capabilities"`
-	Embeddings   *PeerEmbeddingsInfo `json:"embeddings,omitempty"`
+	// Token describes credential exchange. Always present, because a consuming
+	// instance needs to know the endpoint exists BEFORE it is required to use
+	// it — a peer that discovers the token flow only when its static key starts
+	// being refused has already broken.
+	Token      *PeerTokenInfo      `json:"token,omitempty"`
+	Embeddings *PeerEmbeddingsInfo `json:"embeddings,omitempty"`
 	// Images lists the renderers on offer. The consuming side turns each into
 	// a local backend entry, so this carries what that entry needs to be
 	// truthful — whether it edits, and how many source photos it takes.
@@ -215,6 +263,14 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if k.Allows(PeerCapModels) && peerCapServed(PeerCapModels) {
 		m.Models = peerModelsInfo("/api/peer/v1")
+	}
+	// Reported per KEY, not per instance: whether the caller must exchange is a
+	// property of its own grant, and two peers on one instance can legitimately
+	// be on different sides of the switch during a migration.
+	m.Token = &PeerTokenInfo{
+		Path:      "/api/peer/v1/token",
+		Required:  k.Rotating,
+		ExpiresIn: int(peerAccessTTL / time.Second),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(m)

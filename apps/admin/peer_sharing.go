@@ -33,6 +33,19 @@ type peerKeyRow struct {
 	Created  string   `json:"created"`
 	LastSeen string   `json:"last_seen"`
 	Calls    int64    `json:"calls"`
+	// Rotating and Key together are what the operator reads to know whether the
+	// Key column is a standing credential or a one-shot pairing code. Shown as
+	// a toggle rather than buried in a modal because it changes what that
+	// column MEANS, and a secret whose meaning is not on screen next to it is
+	// the kind of thing that gets pasted into the wrong field.
+	Rotating bool `json:"rotating"`
+	// Paired is empty until a rotating code is exchanged. Rendered as the key's
+	// state so a code sitting unused looks different from one already spent —
+	// the difference between "the peer has not connected yet" and "somebody
+	// else may have taken this".
+	// No omitempty: the table binds a column to this field, and a key the row
+	// JSON omits reads to the renderer as a column bound to nothing.
+	Paired string `json:"paired"`
 }
 
 // peerKeysJSON renders the issued keys for the table.
@@ -44,6 +57,7 @@ func peerKeysJSON() []byte {
 			ID: k.ID, Label: k.Label, Caps: k.Caps, Key: k.Key,
 			Enabled: !k.Disabled, RatePerM: k.RatePerM,
 			Created: k.Created, LastSeen: k.LastSeen, Calls: k.Calls,
+			Rotating: k.Rotating, Paired: k.Paired,
 		})
 	}
 	b, _ := json.Marshal(rows)
@@ -151,11 +165,35 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/peer-keys/")
+	// A trailing segment names an ACTION on the key rather than a field of it.
+	// Re-pairing is not an edit to a value the table shows — it replaces the
+	// secret and revokes what was issued against it — so it gets a verb of its
+	// own instead of another optional field on the PUT body.
+	action := ""
 	if i := strings.IndexByte(id, '/'); i >= 0 {
-		id = id[:i]
+		id, action = id[:i], strings.Trim(id[i+1:], "/")
 	}
 	if id == "" {
 		http.Error(w, "missing key id", http.StatusBadRequest)
+		return
+	}
+	if action != "" {
+		if action != "repair" {
+			http.Error(w, "unknown action "+action, http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost && r.Method != http.MethodPut {
+			http.Error(w, "POST to re-pair", http.StatusMethodNotAllowed)
+			return
+		}
+		pk, rerr := RepairPeerKey(id)
+		if rerr != nil {
+			http.Error(w, rerr.Error(), http.StatusBadRequest)
+			return
+		}
+		Log("[admin] user %q re-paired peer key %q", AuthCurrentUser(r), pk.Label)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "key": pk.Key})
 		return
 	}
 	switch r.Method {
@@ -184,11 +222,21 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 			Caps       *[]string `json:"caps"`
 			Owner      *string   `json:"owner"`
 			Appliances *[]string `json:"appliances"`
+			Rotating   *bool     `json:"rotating"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-			(req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil) {
-			http.Error(w, "expected {\"enabled\": bool}, {\"caps\": [...]}, or {\"owner\", \"appliances\"}", http.StatusBadRequest)
+			(req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil &&
+				req.Rotating == nil) {
+			http.Error(w, "expected {\"enabled\": bool}, {\"caps\": [...]}, {\"owner\", \"appliances\"}, or {\"rotating\": bool}", http.StatusBadRequest)
 			return
+		}
+		if req.Rotating != nil {
+			pk, rerr := SetPeerKeyRotating(id, *req.Rotating)
+			if rerr != nil {
+				http.Error(w, rerr.Error(), http.StatusBadRequest)
+				return
+			}
+			Log("[admin] user %q set peer key %q rotating=%v", AuthCurrentUser(r), pk.Label, *req.Rotating)
 		}
 		if req.Caps != nil {
 			pk, cerr := SetPeerKeyCaps(id, *req.Caps)
@@ -635,12 +683,17 @@ func peerSharingSections() []ui.Section {
 					{Field: "label", Label: "Issued to", Flex: 2},
 					{Field: "caps", Label: "Granted", Type: "pills", Flex: 2},
 					{Field: "key", Label: "Key", Flex: 3, Mute: true},
+					{Field: "paired", Label: "Paired", Format: "reltime", Mute: true},
 					{Field: "last_seen", Label: "Last used", Format: "reltime", Mute: true},
 					{Field: "calls", Label: "Calls", Format: "thousands", Mute: true},
 				},
 				RowActions: []ui.RowAction{
 					{Type: "toggle", Field: "enabled", Label: "Enabled",
 						PostTo: "api/peer-keys/{id}", Method: "PUT", Leading: true},
+					// Rotation. Off is what every key minted before this shipped
+					// has, and what keeps a live pairing working untouched.
+					{Type: "toggle", Field: "rotating", Label: "Rotating",
+						PostTo: "api/peer-keys/{id}", Method: "PUT"},
 					// Re-granting an existing key, rather than delete-and-mint.
 					// The secret survives, so a peer already holding it picks up
 					// a newly-shipped capability without anything being
@@ -663,6 +716,14 @@ func peerSharingSections() []ui.Section {
 									"Leave empty and an Investigate grant reaches nothing."},
 						},
 					}),
+					// The replacement for re-displaying a secret that no longer
+					// exists: once a rotating code is spent there is nothing
+					// current to show, and what the operator actually wants is
+					// this peer connected again.
+					{Type: "button", Label: "Re-pair", PostTo: "api/peer-keys/{id}/repair", Method: "POST",
+						Compact: true,
+						Confirm: "Issue a new pairing code? The peer's current credentials stop working immediately " +
+							"and it must be given the new code before it can reconnect. Capabilities and scope are kept."},
 					{Type: "button", Label: "Delete", PostTo: "api/peer-keys/{id}", Method: "DELETE",
 						Variant: "danger", Compact: true,
 						Confirm: "Delete this peer key? The peer using it loses access immediately and the key cannot be recovered."},

@@ -1112,6 +1112,13 @@ func ServeDashboard(addr string) error {
 	RegisterPublicPath("/api/peer/v1/models")
 	mux.HandleFunc("/api/peer/v1/models", HandlePeerModels)
 
+	// Credential exchange. Public like the rest of the peer surface, and
+	// unauthenticated in the peerAuthorize sense on purpose: the credential
+	// being presented is in the body, and a peer whose access token has just
+	// expired has nothing to authenticate WITH until this answers.
+	RegisterPublicPath("/api/peer/v1/token")
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
+
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.
 	QueueRestore()

@@ -141,6 +141,22 @@ type PeerKey struct {
 	// appliance, including the ones that do not exist yet" is a decision nobody
 	// can review, and a list of ids can be read.
 	Appliances []string `json:"appliances,omitempty"`
+	// Rotating switches this grant to the token flow (see peer_token.go): the
+	// Key stops being accepted as a bearer and becomes a single-use pairing
+	// code, exchanged at /api/peer/v1/token for a short-lived access token and
+	// a refresh token that rotates on every use.
+	//
+	// Opt-in per grant, and false for every key minted before it existed,
+	// because flipping it globally would break every live pairing at the next
+	// restart. See SetPeerKeyRotating.
+	Rotating bool `json:"rotating,omitempty"`
+	// Paired stamps when the pairing code was exchanged, and is what makes it
+	// single use. Empty means "not yet"; RepairPeerKey clears it along with
+	// issuing a new code.
+	//
+	// Only consulted for a Rotating grant: on an ordinary one the key is a
+	// standing credential and exchanging it changes nothing about its validity.
+	Paired string `json:"paired,omitempty"`
 }
 
 // AllowsAppliance reports whether this key may investigate one appliance.
@@ -368,6 +384,14 @@ func SetPeerKeyDisabled(id string, disabled bool) bool {
 	}
 	pk.Disabled = disabled
 	RootDB.Set(peerKeysTable, id, pk)
+	// Revocation has to reach credentials already handed out. Without this a
+	// disabled key kept working for the life of its access token, which is the
+	// gap between "revoked" on screen and revoked in fact.
+	if disabled {
+		if n := RevokePeerGrantTokens(id); n > 0 {
+			Log("[peer] key %q disabled — revoked %d issued token(s)", pk.Label, n)
+		}
+	}
 	Log("[peer] key %q disabled=%v", pk.Label, disabled)
 	return true
 }
@@ -382,6 +406,9 @@ func DeletePeerKey(id string) bool {
 		return false
 	}
 	RootDB.Unset(peerKeysTable, id)
+	// Tokens outlive their grant otherwise: the record they point at is gone,
+	// so nothing in the admin table can show them and nothing would revoke them.
+	RevokePeerGrantTokens(id)
 	Log("[peer] deleted key %q", pk.Label)
 	return true
 }
