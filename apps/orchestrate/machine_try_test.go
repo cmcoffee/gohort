@@ -132,6 +132,42 @@ func TestRunSectionOnlyForMachinesThatRun(t *testing.T) {
 	}
 }
 
+// A machine marked to run but not able to yet says so where somebody is
+// looking, rather than offering a button that refuses on press. The
+// refusal used to arrive as a toast over an inert panel, which reads as
+// "the button is broken".
+func TestAMachineThatCannotRunYetExplainsItselfInTheSection(t *testing.T) {
+	// Unattended, but its steps still wait for a person: the exact state
+	// somebody lands in by flipping the toggle on a conversation.
+	converted := MachineDef{Name: "Triage", Start: "look", Unattended: true,
+		Phases: []MachinePhase{
+			{Name: "look", Prompt: "look", Next: "answer"},
+			{Name: "answer", Prompt: "answer", Resident: true},
+		}}
+	sec := unattendedRunSection(converted)
+	if sec.Title != "Run it" {
+		t.Fatalf("the section should still be there to explain itself, got %+v", sec)
+	}
+	card, ok := sec.Body.(ui.Card)
+	if !ok {
+		t.Fatalf("a blocked run should show the reasons, not the panel: %T", sec.Body)
+	}
+	if !strings.Contains(card.HTML, "no step may wait") {
+		t.Errorf("the blockage should name what is wrong:\n%s", card.HTML)
+	}
+	if !strings.Contains(sec.Subtitle, "finishes it") {
+		t.Errorf("and the subtitle should say what a run needs: %q", sec.Subtitle)
+	}
+
+	// The same machine, converted properly, gets the panel.
+	converted.Phases[1].Resident = false
+	if sec := unattendedRunSection(converted); sec.Body == nil {
+		t.Error("a machine that can run should get the run panel")
+	} else if _, blocked := sec.Body.(ui.Card); blocked {
+		t.Error("a machine that can run should not be showing a blockage")
+	}
+}
+
 // A section with a title and no body is legitimate (the cost section is
 // one), so the filter must not take those with it.
 func TestOnlyWhollyEmptySectionsAreDropped(t *testing.T) {

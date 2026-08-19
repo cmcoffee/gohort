@@ -116,8 +116,11 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 			// name field's reload is for.
 			{Field: "unattended", Type: "toggle", Label: "This RUNS instead of converses",
 				Help: "OFF: a conversation. Somebody talks to it, and one step waits for their replies. " +
-					"ON: a job. It is started once, works through its steps, and the step that hands off nowhere produces the result — so no step may wait for a person, because nobody is there. " +
-					"Use it for work that takes many steps and no input: a research run, a nightly report."},
+					"ON: a job, started once, with nobody watching. Two things change, and they are the inverse of a conversation: " +
+					"NO step may wait for the person (turn off \"the conversation waits here\" on every one), and ONE step must finish it " +
+					"by handing off nowhere — that step's result is the run's result. " +
+					"An existing conversational machine will not simply flip: its waiting steps are what a run cannot use. " +
+					"Use it for work that takes many steps and no input: an overnight investigation, a nightly report."},
 		},
 	}
 }

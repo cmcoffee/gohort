@@ -189,10 +189,43 @@ func unattendedRunSection(def MachineDef) ui.Section {
 	if !def.Unattended {
 		return ui.Section{}
 	}
+	// A machine marked to run but not yet able to says so HERE, instead of
+	// offering a button that refuses on press.
+	//
+	// The refusal was reaching the reader as a toast: a sentence that
+	// appears for three seconds over a panel which then sits there looking
+	// inert. That reads as "the button is broken", not as "this machine has
+	// a step that waits and a run has nobody to wait for" — and the second
+	// is a sentence somebody can act on.
+	//
+	// Problems() exactly, not the page's fuller checklist: this has to be
+	// the same list the stream endpoint refuses on, or the section and the
+	// button would disagree about whether the thing can run.
+	if probs := def.Problems(); len(probs) > 0 {
+		return ui.Section{
+			Title: "Run it",
+			Wide:  true,
+			Subtitle: "Not yet. A machine that RUNS needs no step that waits for a person, and one step that finishes it " +
+				"(no \"then go to\"). Fix these and the run panel appears here.",
+			Body: ui.Card{HTML: blockedRunHTML(probs)},
+		}
+	}
 	return ui.Section{
 		Title:    "Run it",
 		Wide:     true,
 		NoChrome: true, // the panel manages its own layout
 		Body:     machineRunPanel(def),
 	}
+}
+
+// blockedRunHTML lists what is stopping a run, in the machine's own words.
+func blockedRunHTML(probs []string) string {
+	var b strings.Builder
+	b.WriteString(`<div class="machine-findings-count">` + strconv.Itoa(len(probs)) + ` to fix before it can run</div>`)
+	b.WriteString(`<ul class="machine-findings">`)
+	for _, p := range probs {
+		b.WriteString("<li>" + HTMLEscape(p) + "</li>")
+	}
+	b.WriteString("</ul>")
+	return b.String()
 }
