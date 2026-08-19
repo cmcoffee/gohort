@@ -2,7 +2,8 @@
 
 **Status:** BUILT v0.6.272. A fanout body may now also run a whole MACHINE per
 item (`kind: machine`, v0.6.276), which is the parallel child-run shape research
-wants. The per-branch block mode and the nested-stage
+wants. Bodies are EDITABLE on the page as of v0.6.278 (a section per body step,
+addressed by path); the per-branch block mode remains unbuilt. The per-branch block mode and the nested-stage
 EDITOR remain unbuilt: bodies are authored through the `pipeline` tool, an
 import, or a revise, which is the same gap `loop` bodies already had. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
 `docs/pipeline-structured-outputs.md`, `project_pipeline_loop_stage`,
@@ -190,18 +191,24 @@ are visible in the joined text is more useful than an aborted run.
 - `docs/pipeline-surfaces.md` and the `pipeline` tool's help text need the new
   shape described, since the tool is how bodies are authored today.
 
-## Authoring surface
+## Authoring surface (BUILT v0.6.278)
 
-Worth stating plainly: **the pipeline editor cannot author a body at all.**
-`applyStageEdit` handles no `body` key, so loop bodies today come from the
-`pipeline` tool, an import, or a revise. Fanout bodies would inherit that gap
-rather than create it.
+This shipped with the gap stated: the pipeline editor could not author a body at
+all, so loop AND fanout bodies came only from the `pipeline` tool, an import, or
+a revise.
 
-A body editor (nested stage rows inside a stage panel) is real work and serves
-`loop` equally, so it belongs in its own change. Until it exists, this feature
-is reachable to Builder and to import, and invisible on the page. That is an
-acceptable first landing, and it should be a stated known-gap rather than a
-surprise.
+Closed in v0.6.278. A body step is addressed by PATH ("outer.inner"), which is
+unambiguous because a stage name may not contain a dot, and gets its own
+indented section with the same form a top-level stage uses — minus the kinds a
+body may not be, since offering a choice that gets refused on save arrives after
+somebody wrote the prompt for it. Rename and removal are SCOPED to the body:
+siblings' references are rewritten, and a removal is refused by a sibling that
+reads it, because nothing outside may name a body step anyway.
+
+The trick that kept it small: a body IS a list of stages, and every operation on
+a list of stages already existed. `bodyScope` wraps one as a `PipelineDef` so
+`RenameStage` and `RemoveStage` apply unchanged, rather than a second copy of
+those rules drifting from the first.
 
 ## What this does not solve
 

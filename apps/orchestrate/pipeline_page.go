@@ -472,6 +472,13 @@ func stageSectionTitle(i int, name string) string {
 	return strconv.Itoa(i+1) + ". " + name
 }
 
+// bodyStageSectionTitle names a step INSIDE a body. Prefixed with its
+// parent because the rail lists every section flat, and two bodies may
+// both hold a step called "check".
+func bodyStageSectionTitle(parent, name string) string {
+	return parent + " › " + name
+}
+
 // pipelineStageSections is one section per stage, in order, so the rail
 // is the stage list and you read the pipeline the way it runs.
 //
@@ -508,6 +515,10 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 			Subtitle: stageSubtitle(s),
 			Body:     ui.Stack{Children: body},
 		})
+		// A loop repeats these and a fanout may run one set per item, so
+		// they are the stage's substance rather than a detail of it: each
+		// gets its own section, indented, in the order it runs.
+		out = append(out, pipelineBodySections(def, s, base, cat)...)
 	}
 	// The add form, last, so the rail ends where a new stage would go.
 	out = append(out, ui.Section{
@@ -697,3 +708,73 @@ const pipelineStageCSS = `
 .machine-findings > li:last-child { margin-bottom: 0; }
 .machine-findings-none { color: var(--text-mute); }
 `
+
+// pipelineBodySections renders the stages inside one body-bearing stage,
+// plus the form that adds another.
+//
+// Nothing for a stage that holds no body, and nothing for a kind that
+// cannot: an "add a step" control under a worker stage would be an
+// invitation to a refusal.
+func pipelineBodySections(def PipelineDef, parent PipelineStage, base string, cat editorCatalog) []ui.Section {
+	if parent.Kind != StageLoop && parent.Kind != StageFanout {
+		return nil
+	}
+	out := make([]ui.Section, 0, len(parent.Body)+1)
+	for _, b := range parent.Body {
+		path := url_(parent.Name) + "." + url_(b.Name)
+		out = append(out, ui.Section{
+			Title:    bodyStageSectionTitle(parent.Name, b.Name),
+			Wide:     true,
+			Indent:   1,
+			Subtitle: bodyStageSubtitle(parent, b),
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					Source:  base + "?name=" + path,
+					PostURL: base + "?name=" + path,
+					Fields:  bodyStageFormFields(def, b, cat),
+				},
+				ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label:   "Remove this step",
+					Title:   "Delete it from " + parent.Name + "'s body. Refused while another step in the same body reads it.",
+					Method:  "DELETE",
+					URL:     "/orchestrate/" + base + "?name=" + path,
+					Variant: "danger",
+					Confirm: "Remove " + strconv.Quote(b.Name) + " from " + strconv.Quote(parent.Name) + "?",
+				}}},
+			}},
+		})
+	}
+	out = append(out, ui.Section{
+		Title:    bodyStageSectionTitle(parent.Name, "add a step"),
+		Wide:     true,
+		Indent:   1,
+		Subtitle: "It lands at the end of " + strconv.Quote(parent.Name) + "'s body. Wire it up afterwards, where every option is real.",
+		Body: ui.FormPanel{
+			PostURL:        base + "?parent=" + url_(parent.Name),
+			SubmitLabel:    "Add it",
+			RedirectURL:    "/orchestrate/pipeline?id=" + url_(def.ID),
+			RedirectTarget: "_self",
+			Fields: []ui.FormField{
+				{Field: "name", Type: "text", Label: "Name",
+					Help: "How the other steps in this body address it: {stage:NAME}. Unique within the body; lowercase, no dots."},
+				{Field: "kind", Type: "select", Label: "What it does", Options: bodyKindOptions()},
+				{Field: "prompt", Type: "textarea", Rows: 3, Label: "What it should do",
+					Help: "Wire the rest of it afterwards, in its own section."},
+			},
+		},
+	})
+	return out
+}
+
+// bodyStageSubtitle says what a body step is and what it can see, which
+// differs from a top-level stage in one way worth stating every time.
+func bodyStageSubtitle(parent, b PipelineStage) string {
+	sub := stageSubtitle(b)
+	switch parent.Kind {
+	case StageFanout:
+		sub += " Runs once per item: {item} is the element, {branch} its number. What it produces is this branch's alone."
+	case StageLoop:
+		sub += " Runs every pass: {iteration} is the pass number, {prev} what the last one produced."
+	}
+	return strings.TrimSpace(sub)
+}

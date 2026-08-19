@@ -36,6 +36,24 @@ import (
 )
 
 // stageFormFields is the controls for one stage.
+// bodyStageFormFields is the stage form for a step INSIDE a body: the
+// same controls, minus the kinds a body may not be.
+//
+// Not a separate form. A body step declares output, narrows tools, pins a
+// model and reads {stage:...} exactly as any other stage does, and a
+// second form would drift from this one within a month.
+func bodyStageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.FormField {
+	fields := stageFormFields(def, s, cat)
+	for i := range fields {
+		if fields[i].Field == "kind" {
+			fields[i].Options = bodyKindOptions()
+			fields[i].Help = "Bodies do not nest, so a loop or a fanout is not offered here. " +
+				"Put inner work in its own pipeline and call it with a machine step, or flatten it."
+		}
+	}
+	return fields
+}
+
 func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.FormField {
 	kind := strings.TrimSpace(string(s.Kind))
 	if kind == "" {
@@ -268,22 +286,20 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 //	POST   /api/pipelines/{id}/stages        → add a stage (name in body)
 //	DELETE /api/pipelines/{id}/stages?name=X → remove it
 func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
+	// name is a PATH: "stage" at the top level, "outer.inner" for a stage
+	// inside a body. A stage name may not contain a dot, so the two can
+	// never be confused (pipeline_body_editor.go).
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	idx := -1
-	for i, s := range def.Stages {
-		if strings.TrimSpace(s.Name) == name {
-			idx = i
-			break
-		}
-	}
+	slot := resolveStagePath(&def, name)
+	idx := slot.idx
 
 	switch r.Method {
 	case http.MethodGet:
-		if idx < 0 {
+		if !slot.found() {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, stageRecord(def.Stages[idx]))
+		writeJSON(w, stageRecord(slot.stage()))
 
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -291,7 +307,7 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if name != "" && idx < 0 {
+		if name != "" && !slot.found() {
 			// A form still addressing a stage that was renamed or
 			// removed. Treating its save as a create would resurrect the
 			// old stage beside the new one.
@@ -300,14 +316,23 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			return
 		}
 		var stage PipelineStage
-		if idx >= 0 {
-			stage = def.Stages[idx]
+		if slot.found() {
+			stage = slot.stage()
 		} else {
 			stage = PipelineStage{Kind: StageWorker}
 		}
 		applyStageEdit(&stage, body)
 		if strings.TrimSpace(stage.Name) == "" {
 			http.Error(w, "give the stage a name", http.StatusBadRequest)
+			return
+		}
+		// A stage inside a body: same form, same validator, scoped
+		// rename and scoped uniqueness. Handled before the top-level
+		// paths below because everything they do reads def.Stages.
+		if parentRef := strings.TrimSpace(r.URL.Query().Get("parent")); parentRef != "" || slot.parent != nil {
+			if err := T.savePipelineBodyStage(w, udb, user, def, slot, parentRef, stage); err != nil {
+				return // savePipelineBodyStage wrote the refusal
+			}
 			return
 		}
 		if idx >= 0 {
@@ -349,8 +374,25 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			"slug": ui.SectionSlug(stageSectionTitle(indexOfStage(saved, stage.Name), stage.Name))})
 
 	case http.MethodDelete:
-		if idx < 0 {
+		if !slot.found() {
 			http.NotFound(w, r)
+			return
+		}
+		if slot.parent != nil {
+			// Refused by a SIBLING that reads it, not by anything
+			// outside: nothing outside may name a body stage.
+			_, child := splitStagePath(name)
+			if err := removeFromBody(slot.parent, child); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := def.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			saved := SavePipelineDef(udb, def)
+			Log("[orchestrate.pipelines] user=%q removed body stage %q from %q", user, name, saved.Name)
+			writeJSON(w, map[string]any{"deleted": name, "id": saved.ID})
 			return
 		}
 		if err := def.RemoveStage(name); err != nil {
