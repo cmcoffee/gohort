@@ -41,17 +41,27 @@ const maxAdvertisedPipelines = 12
 // validateDispatchTarget checks that exactly one target is named.
 //
 // Ported from StandingAgent.ValidateTarget deliberately, reasoning included:
-// this is the same question about the same pair of targets, and answering it
-// differently in two places is how the two surfaces drift.
-func validateDispatchTarget(agent, pipeline string) error {
-	hasAgent := strings.TrimSpace(agent) != ""
-	hasPipeline := strings.TrimSpace(pipeline) != ""
+// this is the same question about the same targets, and answering it
+// differently in two places is how the two surfaces drift. It grew a third
+// member the same day the schedule's did, which is the argument for having
+// ported it rather than written a second one.
+func validateDispatchTarget(agent, pipeline, machine string) error {
+	var named []string
+	if strings.TrimSpace(agent) != "" {
+		named = append(named, "agent=")
+	}
+	if strings.TrimSpace(pipeline) != "" {
+		named = append(named, "pipeline=")
+	}
+	if strings.TrimSpace(machine) != "" {
+		named = append(named, "machine=")
+	}
 	switch {
-	case hasAgent && hasPipeline:
-		return errors.New("agents(run) takes either agent= or pipeline=, not both — " +
-			"drop one, because whichever this checked first would be the one that ran")
-	case !hasAgent && !hasPipeline:
-		return errors.New("agents(run) needs something to run: agent= for a conversation with a fleet agent, or pipeline= for a saved multi-stage workflow")
+	case len(named) > 1:
+		return errors.New("agents(run) names " + strings.Join(named, " and ") + " — it runs ONE of them, " +
+			"and whichever this checked first would be the one that ran. Drop the others")
+	case len(named) == 0:
+		return errors.New("agents(run) needs something to run: agent= for a conversation with a fleet agent, pipeline= for a saved multi-stage workflow, or machine= for a saved step-by-step procedure")
 	}
 	return nil
 }
@@ -373,7 +383,7 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 	// The caller's rules travel INTO the run, so a worker stage's tool calls
 	// are judged the way the caller's own would be. Withheld output is a
 	// redaction; a blocked action is the only guard that prevents.
-	ctx = t.guardedPipelineContext(ctx)
+	ctx = t.guardedRunContext(ctx)
 
 	status := func(s string) {
 		t.emitStatus("[" + def.Name + "] " + s)
@@ -418,7 +428,7 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 
 	ctx = withDispatchedPipeline(ctx, def.ID)
 	ctx = withParentRun(ctx, liveRun.ID)
-	ctx = t.guardedPipelineContext(ctx) // as inline; see agentsRunPipelineAction
+	ctx = t.guardedRunContext(ctx) // as inline; see agentsRunPipelineAction
 
 	Log("[orchestrate.agents.run] %s handed off pipeline %q%s (%d stages)", t.agent.ID, def.Name, pipelineOwnerNote(t, def), len(def.Stages))
 	// nil status: the live run above is what carries progress here, and the

@@ -1,4 +1,4 @@
-// The warden at a PIPELINE boundary.
+// The warden at a DISPATCH boundary — a pipeline's, or a machine's.
 //
 // Guardrails belong to an AGENT: the rules live on AgentRecord, the enabled
 // hooks are resolved from it, and every enforcement point in the agent loop
@@ -8,7 +8,8 @@
 // scheduled fire runs as the owner with no agent anywhere in the picture.
 //
 // Dispatch is the exception, and it is the one that matters. `agents(run,
-// pipeline=…)` lets a GOVERNED agent hand a request to a multi-stage run and
+// pipeline=…)` — and, since machines became a dispatch target, `agents(run,
+// machine=…)` — lets a GOVERNED agent hand a request to a multi-stage run and
 // take the result back into its own context, and nothing in the interpreter
 // touches a guardrail — core.runWorkerStage builds an AgentLoopConfig with no
 // Guardrail* fields at all. Without this file, an agent whose warden forbids a
@@ -16,6 +17,13 @@
 // reading the answer back: an agent-shaped surface that skips governance, which
 // is precisely what the hooks exist to prevent. What binds an agent has to bind
 // what it delegates.
+//
+// A MACHINE is the same shape and takes the same guards. It is a recipe with a
+// position rather than a recipe with a dataflow, its steps run through the same
+// core.runWorkerStageConfirm, and it has no rules of its own for exactly the
+// same reason — which is why the functions below name a KIND and a NAME rather
+// than a PipelineDef. Two boundary guards that had drifted apart would be the
+// bug this file exists to prevent, arriving through the newer door.
 //
 // WHOSE rules. The CALLER's. A pipeline has no persona to be judged as, and the
 // caller is who reads the output, so both ends are judged with the rules of the
@@ -67,9 +75,11 @@ func (t *chatTurn) stageGuardrails(ctx context.Context) StageGuardrails {
 	}
 }
 
-// guardedPipelineContext is the one call a site needs to make: it puts the
-// caller's rules on the context a pipeline run will use.
-func (t *chatTurn) guardedPipelineContext(ctx context.Context) context.Context {
+// guardedRunContext is the one call a site needs to make: it puts the caller's
+// rules on the context a dispatched run will use. Pipeline stages and machine
+// steps both reach them from there — they share core.runWorkerStageConfirm, so
+// governing one governs the other with no second wiring.
+func (t *chatTurn) guardedRunContext(ctx context.Context) context.Context {
 	return WithStageGuardrails(ctx, t.stageGuardrails(ctx))
 }
 
@@ -91,6 +101,18 @@ func (t *chatTurn) guardedPipelineContext(ctx context.Context) context.Context {
 // in Preflight, once in Detached), and the warden is a model call that must not
 // be paid for twice to answer one question.
 func (t *chatTurn) guardPipelineInput(ctx context.Context, def PipelineDef, msg string) error {
+	return t.guardDispatchInput(ctx, "pipeline", def.Name, msg)
+}
+
+// guardMachineInput is the same guard at the machine door.
+func (t *chatTurn) guardMachineInput(ctx context.Context, def MachineDef, msg string) error {
+	return t.guardDispatchInput(ctx, "machine", def.Name, msg)
+}
+
+// guardDispatchInput is the implementation both doors share. kind is the tool
+// parameter the caller named ("pipeline" / "machine"), so the refusal speaks
+// about the thing the model actually asked for.
+func (t *chatTurn) guardDispatchInput(ctx context.Context, kind, name, msg string) error {
 	e := t.guardrailEnforcerCtx(ctx)
 	if e.Check == nil {
 		return nil // no rules, or no hooks enabled — inert, and free
@@ -98,16 +120,16 @@ func (t *chatTurn) guardPipelineInput(ctx context.Context, def PipelineDef, msg 
 	if dec := e.Check(guardHookPreInput, msg); dec.Blocked {
 		// e.Check has already filed the block and written its own breadcrumb;
 		// this one adds WHERE, which is the part a reader needs to understand
-		// why a pipeline they expected to see run never appears in the trail.
-		t.turnDiag("guardrail-input-blocked", "A guardrail refused to hand this request to pipeline "+strconv.Quote(def.Name)+"; it was not run.")
-		Log("[orchestrate.pipeline.guardrail] agent=%s pre_input BLOCKED dispatch of pipeline %q", t.agent.ID, def.Name)
+		// why a run they expected to see never appears in the trail.
+		t.turnDiag("guardrail-input-blocked", "A guardrail refused to hand this request to "+kind+" "+strconv.Quote(name)+"; it was not run.")
+		Log("[orchestrate.%s.guardrail] agent=%s pre_input BLOCKED dispatch of %s %q", kind, t.agent.ID, kind, name)
 		// Names no rule, quotes no reason, and names no mechanism. This text
 		// goes back to the model that asked, and every block message in this
 		// package is held to the same line: telling an agent it is inside a
 		// checking system invites it to reason about the system, which is both
 		// slow and the last thing that should surface in a reply.
-		return errors.New("agents(run, pipeline=" + strconv.Quote(def.Name) +
-			") did not run — a constraint on you covers this request, and handing it to a pipeline does not put it outside that constraint. " +
+		return errors.New("agents(run, " + kind + "=" + strconv.Quote(name) +
+			") did not run — a constraint on you covers this request, and handing it to a " + kind + " does not put it outside that constraint. " +
 			"Do not route it through another target. Answer within it, or say plainly that you can't.")
 	}
 	return nil
@@ -123,14 +145,24 @@ func (t *chatTurn) guardPipelineInput(ctx context.Context, def PipelineDef, msg 
 // summarised, and never described — a caller told what it nearly received has
 // received it.
 func (t *chatTurn) guardPipelineOutput(ctx context.Context, def PipelineDef, out string) (string, error) {
+	return t.guardDispatchOutput(ctx, "pipeline", def.Name, out)
+}
+
+// guardMachineOutput is the same guard at the machine door.
+func (t *chatTurn) guardMachineOutput(ctx context.Context, def MachineDef, out string) (string, error) {
+	return t.guardDispatchOutput(ctx, "machine", def.Name, out)
+}
+
+// guardDispatchOutput is the implementation both doors share.
+func (t *chatTurn) guardDispatchOutput(ctx context.Context, kind, name, out string) (string, error) {
 	e := t.guardrailEnforcerCtx(ctx)
 	if e.Check == nil || out == "" {
 		return out, nil
 	}
 	if dec := e.Check(guardHookPreOutput, out); dec.Blocked {
-		t.turnDiag("guardrail-output-withheld", "Pipeline "+strconv.Quote(def.Name)+" ran to completion, but a guardrail withheld its output — the pipeline could not be asked to revise it, so nothing was delivered.")
-		Log("[orchestrate.pipeline.guardrail] agent=%s pre_output WITHHELD %d bytes from pipeline %q", t.agent.ID, len(out), def.Name)
-		return "", errors.New("pipeline " + strconv.Quote(def.Name) +
+		t.turnDiag("guardrail-output-withheld", "The "+kind+" "+strconv.Quote(name)+" ran to completion, but a guardrail withheld its output — it could not be asked to revise it, so nothing was delivered.")
+		Log("[orchestrate.%s.guardrail] agent=%s pre_output WITHHELD %d bytes from %s %q", kind, t.agent.ID, len(out), kind, name)
+		return "", errors.New(kind + " " + strconv.Quote(name) +
 			" finished, but its output cannot be given to you — a constraint on you covers what it produced. " +
 			"You have not seen it. Do not run it again to try, and do not describe or guess at what it said.")
 	}

@@ -249,9 +249,17 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	def, found := LoadMachineDef(udb, user, id)
+	// Own, or one somebody shared (machine_sharing.go). A recipient gets a
+	// READ-ONLY page rather than this one: every section here is a form that
+	// writes, and the endpoints behind them now refuse a non-owner, so building
+	// them for somebody who cannot use them is a page that lies twice.
+	def, defOwner, mine, found := resolveMachineFor(user, udb, id)
 	if !found {
 		http.NotFound(w, r)
+		return
+	}
+	if !mine {
+		T.serveSharedMachinePage(w, r, def, defOwner)
 		return
 	}
 	// The pieces by NAME, not by position in a flat list. Indexing into
@@ -468,6 +476,94 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 				ui.Card{HTML: `<div data-machine-checklist>` + checklistHTML(def, checklist) + `</div>`}),
 		},
 	}...)
+	// Share with users — the owner's decision, so the section exists only on
+	// the owner's page. A recipient gets the note on theirs instead.
+	page.Sections = append(page.Sections, ui.Section{
+		Title: "Share with users",
+		Subtitle: "Let specific other users read and run this machine. They run YOUR procedure against THEIR agents, tools and credentials — nothing of yours travels with the share, and nothing of theirs comes back. " +
+			"Editing stays yours: a recipient can run it, put it on a timetable, hand it to their agents, and take a copy — not change it. Empty = private to you. An admin can audit or revoke shares.",
+		Body: ui.ACLPicker(ui.ACLPickerConfig{
+			OptionsSource: "api/user-candidates",
+			RecordSource:  "api/machines/" + url_(def.ID),
+			Field:         "allowed_users",
+			PostTo:        "api/machines/" + url_(def.ID) + "/share",
+			Method:        "POST",
+			Noun:          "user",
+			Intro:         "Users who may run this machine.",
+			EmptyText:     "No other users to share with yet.",
+		}),
+	})
+	page.Sections = withoutEmptySections(page.Sections)
+	page.ServeHTTP(w, r)
+}
+
+// serveSharedMachinePage is what a RECIPIENT sees: the same machine, with
+// everything that writes taken out.
+//
+// Reading what a machine does is most of why it was shared, so the steps are
+// still here — as the composed block each one actually receives (phasePreview),
+// which is the honest read-only form of a step and already exists for the
+// author's own preview. What is gone is every form: the meta panel, the per-step
+// editors, add-a-step, the checklist and the advice, all of which post to
+// endpoints that refuse a non-owner.
+//
+// Run it and Try it stay, because those are the share. Duplicate stays, because
+// taking a copy is how a recipient makes a procedure their own — the copy is
+// re-owned, and from then on it is theirs to edit.
+func (T *OrchestrateApp) serveSharedMachinePage(w http.ResponseWriter, r *http.Request, def MachineDef, owner string) {
+	page := ui.Page{
+		Title:      def.Name,
+		ShowTitle:  true,
+		BackURL:    "/gateways",
+		Nav:        HubNav("/gateways"),
+		MaxWidth:   "100%",
+		SectionNav: true,
+		Sticky:     machineMapCard(def),
+		Head: ui.NewHead().CSS(machineMapCSS).
+			JS(machineMapHereJS).
+			JS(machineTryEnterJS).
+			ClientAction("machine_try", machineTryJS).
+			ClientAction("machine_try_reset", machineTryResetJS).
+			ClientAction("machine_duplicate", machineDuplicateJS),
+		Sections: []ui.Section{{
+			Title: "Shared with you",
+			Wide:  true,
+			Subtitle: owner + " shared this machine with you. You can run it, put it on a timetable, let your agents dispatch it, and duplicate it; " +
+				"the definition stays theirs, and every run happens against your own agents, tools and credentials rather than " + owner + "'s.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Card{HTML: `<p style="margin:0">` + HTMLEscape(chFirst(def.Description, "No description.")) + `</p>`},
+				ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label:  "Export",
+					Title:  "Download this machine's portable recipe",
+					Method: "GET",
+					URL:    "/orchestrate/api/machines/" + url_(def.ID) + "/export",
+				}, {
+					Label:  "Duplicate",
+					Title:  "Make your own copy, which you can then edit",
+					Method: "client",
+					URL:    "machine_duplicate",
+					Data:   def.ID,
+				}}},
+			}},
+		}},
+	}
+	forks := branchAlternatives(def)
+	for _, p := range def.Phases {
+		page.Sections = append(page.Sections, ui.Section{
+			Title:    p.Name,
+			Wide:     true,
+			Indent:   len(forks[p.Name]),
+			Subtitle: phaseSubtitle(p) + forkNote(forks[p.Name]),
+			Body:     phasePreview(def, p),
+		})
+	}
+	page.Sections = append(page.Sections, ui.Section{
+		Title:    "Try it",
+		Wide:     true,
+		Subtitle: "Hold a rehearsal conversation with it: send a message and watch where it goes. Real driver, no tools, and the step it lands in is not run — it shows the PATH, not the answer.",
+		Body:     machineTryPanel(def),
+	})
+	page.Sections = append(page.Sections, unattendedRunSection(def))
 	page.Sections = withoutEmptySections(page.Sections)
 	page.ServeHTTP(w, r)
 }

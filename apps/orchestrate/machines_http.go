@@ -111,6 +111,12 @@ type machineRow struct {
 	// chiefly what is deliberately NOT drawn. Comes from the same
 	// adapter as the picture so the two can never disagree.
 	Legend []string `json:"legend,omitempty"`
+	// Mine / Owner / SharedWith carry the peer-share facts, the same three
+	// a pipeline row carries: whether this user owns it, whose it is when
+	// they don't, and who they have given it to when they do.
+	Mine       bool   `json:"mine,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	SharedWith string `json:"shared_with,omitempty"`
 }
 
 // handleMachines serves the collection routes: GET list, POST create.
@@ -148,6 +154,23 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 				UsedByText: usedByText(users[d.ID]),
 				Status:     machineStatusText(d),
 				EditURL:    "/orchestrate/machine?id=" + d.ID,
+				Mine:       true,
+				SharedWith: strings.Join(d.AllowedUsers, ", "),
+			})
+		}
+		// Machines other people shared, after the user's own and labelled with
+		// whose they are. Listed at all because a share nobody can find is a
+		// share that did not happen; listed LAST because your own work is what
+		// you came to this page for.
+		for _, sm := range sharedMachinesFor(user) {
+			rows = append(rows, machineRow{
+				ID: sm.Def.ID, Name: sm.Def.Name, Description: sm.Def.Description,
+				Phases: len(sm.Def.Phases), PhaseNames: sm.Def.PhaseNames(),
+				Start:   sm.Def.StartPhase(),
+				Legend:  sm.Def.Graph().Legend,
+				Status:  "shared by " + sm.Owner,
+				EditURL: "/orchestrate/machine?id=" + sm.Def.ID,
+				Owner:   sm.Owner,
 			})
 		}
 		writeJSON(w, map[string]any{"machines": rows})
@@ -161,6 +184,10 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		// assert id/owner on create.
 		def.ID = ""
 		def.Owner = user
+		// Sharing is its own door (/share). A create that could assert a
+		// recipient list would be a second way to grant, and the two would
+		// eventually disagree about what a grant means.
+		def.AllowedUsers = nil
 		if err := def.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -226,7 +253,10 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	def, found := LoadMachineDef(udb, user, id)
+	// Own first, then one somebody shared with this user (machine_sharing.go).
+	// mine is what every write below gates on: a recipient reads, runs and
+	// copies; the definition stays the owner's.
+	def, defOwner, mine, found := resolveMachineFor(user, udb, id)
 	if !found {
 		http.NotFound(w, r)
 		return
@@ -246,15 +276,22 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		case http.MethodGet:
 			writeJSON(w, def)
 		case http.MethodPut:
+			if !machineOwnerOnly(w, mine, defOwner, "edit") {
+				return
+			}
 			var body MachineDef
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 			// Identity stays the server's: keep id/owner/created from the
-			// loaded record, take everything else from the body.
+			// loaded record, take everything else from the body. The recipient
+			// list is identity too — an edit form must not be able to widen or
+			// clear who a machine is shared with, which is why /share is its
+			// own door.
 			body.ID = def.ID
 			body.Owner = user
+			body.AllowedUsers = def.AllowedUsers
 			body.Created = def.Created
 			if err := body.Validate(); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -264,6 +301,9 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			Log("[orchestrate.machines] user=%q updated machine %q (id=%s)", user, saved.Name, saved.ID)
 			writeJSON(w, saved)
 		case http.MethodDelete:
+			if !machineOwnerOnly(w, mine, defOwner, "delete") {
+				return
+			}
 			// Detach from every agent first — same as the tool's delete,
 			// through the same function, so an agent is never left
 			// pointing at a machine that isn't there.
@@ -286,8 +326,14 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// what is still missing plus the components that edit it.
 		T.handleMachineEditor(w, r, udb, user, def)
 	case "meta":
+		if !machineOwnerOnly(w, mine, defOwner, "edit") {
+			return
+		}
 		T.handleMachineMeta(w, r, udb, user, def)
 	case "phases":
+		if !machineOwnerOnly(w, mine, defOwner, "edit") {
+			return
+		}
 		T.handleMachinePhases(w, r, udb, user, def)
 	case "try":
 		T.handleMachineTry(w, r, udb, user, def)
@@ -301,6 +347,13 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		dup := def
 		dup.ID = ""
+		// A copy of somebody else's machine is YOURS: re-owned, and shared with
+		// nobody until you say so. Carrying their recipient list into your
+		// store would re-share their work under your name. Previous goes too —
+		// an undo of an edit you did not make is not an undo.
+		dup.Owner = user
+		dup.AllowedUsers = nil
+		dup.Previous = nil
 		dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
 		saved := SaveMachineDef(udb, dup)
 		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
@@ -309,8 +362,14 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// Describe a change against the machine already on screen
 		// (machine_revise.go). Undoable, because a revision can rewrite
 		// every prompt in it.
+		if !machineOwnerOnly(w, mine, defOwner, "revise") {
+			return
+		}
 		T.handleMachineRevise(w, r, udb, user, def)
 	case "undo":
+		if !machineOwnerOnly(w, mine, defOwner, "undo a change to") {
+			return
+		}
 		T.handleMachineUndo(w, r, udb, user, def)
 	case "repair":
 		// Settle the findings that have exactly one right answer. The
@@ -331,6 +390,9 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		case RepairAll, RepairProblems, RepairAdvice:
 		default:
 			http.Error(w, "unknown repair kind", http.StatusBadRequest)
+			return
+		}
+		if !machineOwnerOnly(w, mine, defOwner, "repair") {
 			return
 		}
 		fixed := def.Repair(kind)
@@ -356,6 +418,9 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		if err := json.NewDecoder(r.Body).Decode(&mv); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if !machineOwnerOnly(w, mine, defOwner, "reorder") {
 			return
 		}
 		idx := -1
@@ -391,10 +456,50 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// unattached machine does nothing, and the only place to attach
 		// one used to be a different surface (the chat toolbar's
 		// Configure → Machines).
+		//
+		// Owner-only, and not merely for symmetry: AgentRecord.Machine is
+		// resolved in the AGENT owner's store on every turn, so pointing your
+		// agent's brain at somebody else's machine would be a pointer their
+		// session cannot follow. Duplicate it and attach the copy.
+		if !machineOwnerOnly(w, mine, defOwner, "attach") {
+			return
+		}
 		T.handleMachineAgents(w, r, udb, user, def)
+	case "share":
+		// The recipient list, and ONLY the recipient list. The ACLPicker posts
+		// the whole record back (record mode), and this reads one field out of
+		// it — so a picker save cannot rewrite a step, and the ordinary edit
+		// path cannot rewrite the ACL.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !machineOwnerOnly(w, mine, defOwner, "change who can see") {
+			return
+		}
+		var body struct {
+			AllowedUsers []string `json:"allowed_users"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		before := def.AllowedUsers
+		def.Owner = user
+		def.AllowedUsers = normalizeShareList(body.AllowedUsers, user)
+		saved := SaveMachineDef(udb, def)
+		// Anybody dropped from the list loses it now, including any schedule
+		// they had armed against it — a share taken back has to take back
+		// everything it enabled, not just the next page load.
+		breakMachineSchedulesForLostRecipients(saved, before)
+		Log("[orchestrate.machines] user=%q shared machine %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
+		writeJSON(w, saved)
 	case "suggest":
 		// Drafting one step's instructions, grounded in the machine
 		// around it (machine_suggest.go).
+		if !machineOwnerOnly(w, mine, defOwner, "draft a step for") {
+			return
+		}
 		T.handleMachineSuggest(w, r, udb, user, def)
 	case "graph":
 		// The picture (docs/workflow-graph.md). With ?session=<id> it
@@ -442,6 +547,16 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// machineOwnerOnly refuses a write to a machine somebody else shared with this
+// user, in the words that say what to do instead. Mirrors pipelineOwnerOnly.
+func machineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) bool {
+	if mine {
+		return true
+	}
+	http.Error(w, "this machine is shared with you by "+owner+", so you can run and copy it but not "+verb+" it — ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
+	return false
 }
 
 // usedByText says who runs a machine, or says plainly that nobody does.

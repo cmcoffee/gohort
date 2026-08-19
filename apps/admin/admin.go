@@ -524,6 +524,45 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	})
 
+	// The machine twin of the two above. Same enumerate-and-revoke; no publish,
+	// for the reason the pipeline route states.
+	sub.HandleFunc("/api/user-machines", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			rows := []UserOwnedMachineRow{}
+			if AdminListUserOwnedMachines != nil {
+				rows = AdminListUserOwnedMachines(a.db)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if owner == "" || id == "" {
+				http.Error(w, "owner and id required", http.StatusBadRequest)
+				return
+			}
+			if r.URL.Query().Get("action") != "revoke_share" {
+				http.Error(w, "action must be revoke_share", http.StatusBadRequest)
+				return
+			}
+			if AdminRevokeMachineShare == nil {
+				http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+				return
+			}
+			if err := AdminRevokeMachineShare(a.db, owner, id); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// API: promotion requests — the bottom-up publish queue. Users request that
 	// their own resource be published deployment-wide; the admin approves (runs the
 	// kind-specific side effect) or denies. Today only tool promotion is wired:

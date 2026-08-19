@@ -280,16 +280,21 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 // that reached further than the same machine reached when clicked would
 // be a surprise nobody asked for.
 func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAgent) StandingRunResult {
-	udb := UserDB(app.DB, sa.Owner)
-	def, ok := findMachineByNameOrID(udb, sa.Owner, sa.MachineID)
+	// Their own, else one somebody shared with them (machine_sharing.go). A
+	// schedule can fire a shared machine for the reason it can fire a shared
+	// pipeline: somebody sat down and armed it, against a definition they could
+	// read, and it runs in THEIR namespace against THEIR tools. What the
+	// widening needs is that a schedule cannot outlive its permission, which is
+	// what the revoke and delete paths handle.
+	def, ok := machineForUser(sa.Owner, sa.MachineID)
 	if !ok {
 		// Attention rather than failure: the schedule is fine, its target
 		// is gone. Somebody repoints it or deletes it; nothing here can
 		// decide which.
 		return StandingRunResult{
 			Status: RunAttention,
-			Summary: "Skipped: no machine " + strconv.Quote(sa.MachineID) +
-				" — it was deleted or renamed. Point this schedule at a machine that exists, or delete it.",
+			Summary: "Skipped: " + machineMissingReason(sa.Owner, sa.MachineID) +
+				". Point this schedule at a machine you can reach, or delete it.",
 		}
 	}
 	if !def.Unattended {

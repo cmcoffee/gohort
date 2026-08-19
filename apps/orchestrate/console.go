@@ -346,8 +346,11 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			}
 		case sa.TargetsMachine():
 			what = "machine run"
-			if def, ok := LoadMachineDef(UserDB(T.DB, user), user, sa.MachineID); ok {
+			if def, ok := machineForUser(user, sa.MachineID); ok {
 				what = "machine · " + def.Name
+				if def.Owner != "" && def.Owner != user {
+					what += " (shared by " + def.Owner + ")"
+				}
 			}
 		}
 		id := url.QueryEscape(sa.Name)
@@ -498,6 +501,20 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 					label = d.ID
 				}
 				opts = append(opts, opt{Value: d.ID, Label: label})
+			}
+			// A schedule can fire a machine somebody shared, so relinking one
+			// has to be able to CHOOSE it. Labelled with the sharer: two people
+			// can name a machine the same thing, and a picker that cannot tell
+			// them apart is how a schedule gets pointed at the wrong one.
+			for _, sm := range sharedMachinesFor(user) {
+				if !sm.Def.Unattended {
+					continue
+				}
+				label := strings.TrimSpace(sm.Def.Name)
+				if label == "" {
+					label = sm.Def.ID
+				}
+				opts = append(opts, opt{Value: sm.Def.ID, Label: label + " (shared by " + sm.Owner + ")"})
 			}
 			writeJSON(w, opts)
 			return
@@ -721,7 +738,10 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		return
 	}
 	if sa.TargetsMachine() {
-		def, ok := LoadMachineDef(UserDB(T.DB, user), user, value)
+		// The same resolver the picker offered from, so a choice the picker
+		// listed cannot be refused here — an offer the handler rejects is
+		// worse than no offer.
+		def, ok := machineForUser(user, value)
 		if !ok {
 			http.Error(w, "no such machine", http.StatusBadRequest)
 			return
@@ -744,7 +764,9 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		return
 	}
 	if sa.TargetsPipeline() {
-		def, ok := LoadPipelineDef(UserDB(T.DB, user), user, value)
+		// pipelineForUser, not the own-store load: the picker above offers
+		// pipelines somebody shared, and this refused every one of them.
+		def, ok := pipelineForUser(user, value)
 		if !ok {
 			http.Error(w, "no such pipeline", http.StatusBadRequest)
 			return

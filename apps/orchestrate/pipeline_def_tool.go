@@ -534,7 +534,7 @@ func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, 
 	// synthesis is judged on the way back out. This path inherits the caller's
 	// whole tool catalog, so it is the one where an ungoverned stage could act
 	// with the most reach.
-	ctx := t.guardedPipelineContext(t.ctx)
+	ctx := t.guardedRunContext(t.ctx)
 	// Status callback fans out to BOTH the activity pane (SSE chip)
 	// AND the diag log. Without the Log fan-out, pipeline stage events
 	// vanished from gohort.log — making "did the pipeline actually run

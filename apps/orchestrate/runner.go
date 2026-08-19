@@ -989,7 +989,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 			listed[id] = true
 		}
 	}
-	if mode == dispatchOnly && len(listed) == 0 && !t.dispatchListNamesAPipeline() {
+	if mode == dispatchOnly && len(listed) == 0 && !t.dispatchListNamesARunnable() {
 		mode = dispatchAll // self-heal: every allowlisted target was deleted
 	}
 	var available []AgentRecord
@@ -5932,20 +5932,30 @@ func (t *chatTurn) turnRouting() (pin LLMTier, routeKey string) {
 	return pin, orchestratorRouteKey(t.agent.ID, lead)
 }
 
-// dispatchListNamesAPipeline reports whether this agent's dispatch list names a
-// pipeline that still exists.
+// dispatchListNamesARunnable reports whether this agent's dispatch list names a
+// non-agent target that still exists — a pipeline or a machine.
 //
 // It exists to stop the deleted-target self-heal from firing on a list that is
 // perfectly healthy. That heal reads "no listed AGENT still exists" as "this
 // allowlist is stale, fall back to Allow all" — which was right while the list
 // could only hold agents, and became a privilege escalation the moment it could
-// hold pipelines: an owner who allowed exactly one pipeline and no agents would
-// have been granted the entire fleet.
-func (t *chatTurn) dispatchListNamesAPipeline() bool {
+// hold anything else: an owner who allowed exactly one pipeline and no agents
+// would have been granted the entire fleet.
+//
+// Machines joined the list the moment they became dispatch targets, and this is
+// the function that had to be told. It is the second time the same lesson has
+// been paid for: whenever a shared identifier list gains a new kind of member,
+// re-check every place that reasons about the list being "empty" or "stale".
+func (t *chatTurn) dispatchListNamesARunnable() bool {
 	if len(t.agent.AllowedDispatchTargets) == 0 {
 		return false
 	}
 	for _, d := range ListPipelineDefs(t.udb, t.user) {
+		if dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name) {
+			return true
+		}
+	}
+	for _, d := range ListMachineDefs(t.udb, t.user) {
 		if dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name) {
 			return true
 		}

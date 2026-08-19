@@ -40,7 +40,7 @@ import (
 // authoring-intent routing sends control right back here). Builder
 // delegates execution via plan_set workers instead.
 func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
-	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back — to a named agent for its judgement, or to a named pipeline to run a saved multi-stage workflow). Single entry point for agent operations — pick the action that matches the intent."
+	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back — to a named agent for its judgement, to a named pipeline to run a saved multi-stage workflow, or to a named machine to run a saved step-by-step procedure). Single entry point for agent operations — pick the action that matches the intent."
 	if !allowRun {
 		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY — dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
 	}
@@ -66,7 +66,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		}
 		params["agent"] = ToolParam{
 			Type:        "string",
-			Description: "(run) Name or id of the agent to dispatch to. Give either this or `pipeline`, never both.",
+			Description: "(run) Name or id of the agent to dispatch to. Give exactly one of `agent`, `pipeline` or `machine`.",
 		}
 		// Naming the reachable pipelines here, for the same reason servitor's
 		// ask_system names the systems it reaches: an agent that cannot see
@@ -80,6 +80,16 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			pipeDesc += " Pipelines you can run: " + strings.Join(names, "; ") + "."
 		}
 		params["pipeline"] = ToolParam{Type: "string", Description: pipeDesc}
+		// The third target. Named here for the same reason the pipelines are:
+		// a machine is never attached as a tool, so this description is the
+		// only place it appears in the catalog, and an agent that cannot see
+		// its own reach answers "I can't do that" about a procedure it holds.
+		machDesc := "(run) Name or id of a saved MACHINE to run — a procedure that walks its own steps, carrying what each one established into the next, and hands back the result of the step that finishes it. " +
+			"Use it when the work has a shape that has to be REMEMBERED as it goes (investigate, then test the hunch, then report) rather than a fixed set of stages; use `pipeline` for a fixed workflow, and `agent` when you want another agent's judgement. Give exactly one of the three."
+		if names := t.dispatchableMachineNames(maxAdvertisedMachines); len(names) > 0 {
+			machDesc += " Machines you can run: " + strings.Join(names, "; ") + "."
+		}
+		params["machine"] = ToolParam{Type: "string", Description: machDesc}
 		params["message"] = ToolParam{
 			Type:        "string",
 			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base, and it re-threads your prior dispatches to it this session (ephemeral continuity), so a follow-up can be brief without repeating earlier context.",
@@ -233,7 +243,7 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			}
 			// One call, two kinds of target. Which one is named decides the
 			// path; naming both or neither is refused before either runs.
-			if err := validateDispatchTarget(stringArg(args, "agent"), stringArg(args, "pipeline")); err != nil {
+			if err := validateDispatchTarget(stringArg(args, "agent"), stringArg(args, "pipeline"), stringArg(args, "machine")); err != nil {
 				return "", err
 			}
 			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
@@ -241,6 +251,11 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 				// and dispatch agents whose tools reach the network, so the
 				// output can carry attacker-influenced content.
 				return fenceAgentsOutput(t.agentsRunPipelineAction(args))
+			}
+			if strings.TrimSpace(stringArg(args, "machine")) != "" {
+				// Fenced for the same reason: a machine's steps run workers
+				// with tools, and one of them may delegate to an agent.
+				return fenceAgentsOutput(t.agentsRunMachineAction(args))
 			}
 			return fenceAgentsOutput(t.agentsRunAction(args))
 		case "run_tool":
@@ -315,6 +330,21 @@ func (a dispatchAuthority) allowsPipeline(def PipelineDef) bool {
 	}
 }
 
+// allowsMachine is allows() for the third kind of dispatch target. Same modes,
+// same reading; a machine answers to its id or its name.
+func (a dispatchAuthority) allowsMachine(def MachineDef) bool {
+	switch a.Mode {
+	case dispatchNone:
+		return false
+	case dispatchOnly:
+		return dispatchListNames(a.Targets, def.ID, def.Name)
+	case dispatchExcept:
+		return !dispatchListNames(a.Targets, def.ID, def.Name)
+	default: // dispatchAll
+		return true
+	}
+}
+
 // originAuthority returns the authority that bounds any dispatch this turn
 // makes. A sub-run reports the ORIGINATOR's authority, carried unchanged; a
 // root turn reports its own, which is what gets stamped onto the first hop.
@@ -360,7 +390,7 @@ func agentsToolHelp(allowRun, allowRunTool bool) string {
 	if allowRun {
 		base += `
   action="run"    — dispatch work and get the result back as the
-                    tool result. Name ONE target, never both:
+                    tool result. Name exactly ONE target:
 
                       agent=<name|id>    — another fleet agent
                         answers in its own persona, with its own
@@ -373,8 +403,18 @@ func agentsToolHelp(allowRun, allowRunTool bool) string {
                         about which to take — reach for it when a
                         workflow for this work already exists.
 
+                      machine=<name|id>  — a saved procedure walks
+                        its own steps, carrying what each one
+                        established into the next and deciding
+                        where to go, then hands back the result of
+                        the step that finishes it. Reach for it
+                        when the work has to REMEMBER as it goes.
+                        Only machines that RUN can be dispatched;
+                        one that converses has a step that waits
+                        for a person, and nobody is waiting here.
+
                     Required: message, plus exactly one of agent /
-                    pipeline.
+                    pipeline / machine.
 `
 	} else {
 		base += `
@@ -1241,11 +1281,15 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// Which target kind was named decides which gate refuses it.
 			// Running the agent gate over a pipeline dispatch would reject
 			// every one of them for naming no agent.
-			if err := validateDispatchTarget(stringArg(args, "agent"), stringArg(args, "pipeline")); err != nil {
+			if err := validateDispatchTarget(stringArg(args, "agent"), stringArg(args, "pipeline"), stringArg(args, "machine")); err != nil {
 				return err
 			}
 			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
 				_, _, err := t.pipelineDispatchGate(args)
+				return err
+			}
+			if strings.TrimSpace(stringArg(args, "machine")) != "" {
+				_, _, err := t.machineDispatchGate(args)
 				return err
 			}
 			_, _, err := t.agentsRunGate(args)
@@ -1258,6 +1302,13 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 					return "", err
 				}
 				return fenceAgentsOutput(t.runDetachedPipeline(d, def, msg))
+			}
+			if strings.TrimSpace(stringArg(args, "machine")) != "" {
+				def, msg, err := t.machineDispatchGate(args)
+				if err != nil {
+					return "", err
+				}
+				return fenceAgentsOutput(t.runDetachedMachine(d, def, msg))
 			}
 			target, msg, err := t.agentsRunGate(args)
 			if err != nil {
@@ -1291,6 +1342,9 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// after the colon, which reads as a broken dispatch.
 			if p := strings.TrimSpace(stringArg(args, "pipeline")); p != "" {
 				return "agents run pipeline: " + truncateObs(p, 40)
+			}
+			if m := strings.TrimSpace(stringArg(args, "machine")); m != "" {
+				return "agents run machine: " + truncateObs(m, 40)
 			}
 			return "agents run: " + truncateObs(stringArg(args, "agent"), 40)
 		},

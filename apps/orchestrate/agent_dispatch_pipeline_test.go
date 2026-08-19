@@ -45,19 +45,40 @@ func savePipeline(t *testing.T, udb Database, name string, global bool) Pipeline
 // the handler checked first would be the one that ran forever, and which one
 // depends on the order of an if.
 func TestDispatchTargetIsExactlyOne(t *testing.T) {
-	if err := validateDispatchTarget("Comedian", "Nightly"); err == nil {
-		t.Error("naming an agent AND a pipeline should be refused")
-	} else if !strings.Contains(err.Error(), "not both") {
-		t.Errorf("refusal should say both were named; got: %v", err)
+	// Every pair, and the triple: a refusal that only knew about two of the
+	// three kinds would let the third ride through whichever if came first.
+	for _, c := range []struct{ agent, pipeline, machine string }{
+		{"Comedian", "Nightly", ""},
+		{"Comedian", "", "Investigation"},
+		{"", "Nightly", "Investigation"},
+		{"Comedian", "Nightly", "Investigation"},
+	} {
+		err := validateDispatchTarget(c.agent, c.pipeline, c.machine)
+		if err == nil {
+			t.Errorf("naming more than one target (%q/%q/%q) should be refused", c.agent, c.pipeline, c.machine)
+			continue
+		}
+		// It has to say WHICH were named, or the caller cannot tell which one
+		// to drop.
+		for _, want := range []struct {
+			given, token string
+		}{{c.agent, "agent="}, {c.pipeline, "pipeline="}, {c.machine, "machine="}} {
+			if want.given != "" && !strings.Contains(err.Error(), want.token) {
+				t.Errorf("refusal should name %s; got: %v", want.token, err)
+			}
+		}
 	}
-	if err := validateDispatchTarget("", "  "); err == nil {
-		t.Error("naming neither target should be refused")
+	if err := validateDispatchTarget("", "  ", ""); err == nil {
+		t.Error("naming no target should be refused")
 	}
-	if err := validateDispatchTarget("Comedian", ""); err != nil {
-		t.Errorf("an agent alone is a valid target; got: %v", err)
-	}
-	if err := validateDispatchTarget("", "Nightly"); err != nil {
-		t.Errorf("a pipeline alone is a valid target; got: %v", err)
+	for _, c := range []struct{ agent, pipeline, machine string }{
+		{"Comedian", "", ""},
+		{"", "Nightly", ""},
+		{"", "", "Investigation"},
+	} {
+		if err := validateDispatchTarget(c.agent, c.pipeline, c.machine); err != nil {
+			t.Errorf("exactly one target is valid (%q/%q/%q); got: %v", c.agent, c.pipeline, c.machine, err)
+		}
 	}
 }
 
@@ -340,11 +361,11 @@ func TestPipelineOnlyListDoesNotLookStale(t *testing.T) {
 	})
 	turn.agent.DispatchMode = dispatchOnly
 	turn.agent.AllowedDispatchTargets = []string{def.ID}
-	if !turn.dispatchListNamesAPipeline() {
+	if !turn.dispatchListNamesARunnable() {
 		t.Fatal("a list naming a live pipeline must not read as an emptied allowlist")
 	}
 	turn.agent.AllowedDispatchTargets = []string{"deleted-agent-id"}
-	if turn.dispatchListNamesAPipeline() {
+	if turn.dispatchListNamesARunnable() {
 		t.Error("a list naming nothing that exists must still read as stale")
 	}
 }

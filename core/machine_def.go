@@ -105,6 +105,21 @@ type MachineDef struct {
 	// person is a step this run can never leave.
 	Unattended bool `json:"unattended,omitempty"`
 
+	// AllowedUsers is the peer-share recipient set: which OTHER users of
+	// this deployment may read and run this machine. Empty (the default,
+	// and what every machine was before this) means private to the owner.
+	//
+	// Deliberately the same field, name and rule PipelineDef.AllowedUsers
+	// and AgentRecord.AllowedUsers carry: the recipe travels, the
+	// authority does not. A recipient runs the OWNER's definition against
+	// THEIR own agents, tools, credentials and guardrails, so nothing of
+	// the owner's travels with the share.
+	//
+	// Stripped on export, like the owner stamp — a recipe that arrived in
+	// somebody else's deployment naming users of yours would be asserting
+	// a grant across a boundary it cannot see.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+
 	Created time.Time `json:"created,omitempty"` // stripped on export
 	Updated time.Time `json:"updated,omitempty"` // stripped on export
 
@@ -1187,8 +1202,21 @@ func SaveMachineDef(udb Database, d MachineDef) MachineDef {
 	}
 	d.Updated = time.Now()
 	udb.Set(MachineDefsTable, d.ID, d)
+	// Every save path funnels through here — the editor, the machine tool,
+	// revise, undo, import, duplicate, repair — which is why the share
+	// index is synced from a hook rather than at each of those call sites.
+	// A grant that silently fails to register on one path is a grant the
+	// owner believes they made.
+	if MachineSavedHook != nil {
+		MachineSavedHook(d)
+	}
 	return d
 }
+
+// MachineSavedHook, when set by an app that keeps an index over machines,
+// is called after every save with the stored record. Mirrors
+// PipelineSavedHook, for the same reason and with the same contract.
+var MachineSavedHook func(def MachineDef)
 
 // LoadMachineDef reads a machine def by ID. ok=false when absent or when
 // the record's owner doesn't match (defensive — a guessed ID from
@@ -1233,8 +1261,21 @@ func DeleteMachineDef(udb Database, id string) {
 	if udb == nil || id == "" {
 		return
 	}
+	def, existed := LoadMachineDef(udb, "", id)
 	udb.Unset(MachineDefsTable, id)
+	// Tell whoever depends on it, exactly as deleting a pipeline does. A
+	// schedule can target a machine and so can an agent's dispatch list,
+	// and without this their only notice is the next fire.
+	if existed && MachineDeletedHook != nil {
+		MachineDeletedHook(def.Owner, def.ID, def.Name)
+	}
 }
+
+// MachineDeletedHook, when set by an app that owns dependents, is called
+// after a machine is removed: owner, id, and the name it had (the name is
+// gone from storage by then, and a reason reading "runs deleted machine
+// \"\"" helps nobody).
+var MachineDeletedHook func(owner, id, name string)
 
 // --- export / import (portable recipe) ------------------------------
 
@@ -1244,6 +1285,10 @@ func DeleteMachineDef(udb Database, id string) {
 // agent+machine bundle land with its wiring intact.
 func ExportMachine(d MachineDef) MachineDef {
 	d.Owner = ""
+	// Who it was shared WITH is this deployment's fact about this record,
+	// not part of the recipe. Carrying it would either name strangers or
+	// assert a grant in a deployment that never made it.
+	d.AllowedUsers = nil
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
 	// A recipe carries a machine, not its history — and an undo snapshot
@@ -1278,6 +1323,11 @@ func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, e
 		}
 	}
 	recipe.Owner = owner
+	// A recipe arriving with a recipient list on it would assert a grant the
+	// importer never made — and one naming users of a deployment it came from.
+	// Export strips it; this strips it again, because an import door has to
+	// hold on its own against a hand-written file.
+	recipe.AllowedUsers = nil
 	recipe.Created = time.Time{}
 	recipe.Updated = time.Time{}
 	return SaveMachineDef(udb, recipe), nil

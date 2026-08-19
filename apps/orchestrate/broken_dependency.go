@@ -117,10 +117,15 @@ func standingAgentDependencyError(sa StandingAgent) string {
 		// machine that has been switched back to conversing is still THERE,
 		// and would still fail every fire. Broken-and-visible is the answer
 		// to both, since both are repaired the same way.
-		def, ok := findMachineByNameOrID(UserDB(orchestrateBaseDB, sa.Owner), sa.Owner, sa.MachineID)
+		//
+		// Reachable, not merely present — machineForUser, the same resolver
+		// the fire path uses, so a machine somebody shared counts and one
+		// whose share was withdrawn does not. Two answers to that question
+		// would let the schedule list and the 3am run disagree.
+		def, ok := machineForUser(sa.Owner, sa.MachineID)
 		switch {
 		case !ok:
-			return fmt.Sprintf("its target machine was deleted (id %s)", sa.MachineID)
+			return "its target machine is out of reach — " + machineMissingReason(sa.Owner, sa.MachineID)
 		case !def.Unattended:
 			return "its target machine " + strconv.Quote(def.Name) + " converses rather than runs, so a schedule has nobody to answer the step that waits"
 		}
@@ -177,10 +182,12 @@ func wireDependencyGuards() {
 	StandingAgentDependencyError = standingAgentDependencyError
 	CredentialDeletedHook = credentialDeleted
 	PipelineDeletedHook = pipelineDeleted
-	// Not a dependency guard, but the same family and the same moment: a save
-	// hook whose whole job is keeping an index true. Wired here so there is one
-	// place to look for "what happens when a pipeline is written".
+	MachineDeletedHook = machineDeleted
+	// Not dependency guards, but the same family and the same moment: save
+	// hooks whose whole job is keeping an index true. Wired here so there is
+	// one place to look for "what happens when one of these is written".
 	PipelineSavedHook = syncPipelineShareIndex
+	MachineSavedHook = syncMachineShareIndex
 }
 
 // scheduleOwners is every user whose schedules might point at a just-deleted
@@ -241,11 +248,22 @@ func pipelineDeleted(owner, id, name string) {
 			MarkStandingAgentBroken(RootDB, u, sa.Name, why)
 		}
 	}
-	// A pipeline can be named on an agent's dispatch target list, so deleting
-	// one leaves the same dangling id that deleting an AGENT does — and the
-	// agent path already prunes those. Left in place, the entry is a grant to
-	// nothing that a later pipeline could inherit by reusing the id, and it
-	// keeps an Only-mode list looking populated when it is not.
+	pruneDispatchTarget(owner, id)
+}
+
+// pruneDispatchTarget removes a deleted target's id from every one of this
+// owner's agents' dispatch lists.
+//
+// A pipeline or a machine can be named on an agent's dispatch target list, so
+// deleting one leaves the same dangling id that deleting an AGENT does — and
+// the agent path already prunes those. Left in place, the entry is a grant to
+// nothing that a later record could inherit by reusing the id, and it keeps an
+// Only-mode list looking populated when it is not.
+//
+// Shared by both deletions rather than written twice: the list holds TARGETS,
+// and a pruner that knew which kind it was pruning would be a pruner that has
+// to be extended for the next kind.
+func pruneDispatchTarget(owner, id string) {
 	db := UserDB(RootDB, owner)
 	if db == nil {
 		return
@@ -269,4 +287,44 @@ func pipelineDeleted(owner, id, name string) {
 			_, _ = saveAgent(db, other)
 		}
 	}
+}
+
+// machineDeleted is pipelineDeleted for the third kind of target: every
+// schedule that fires a just-deleted machine is marked broken immediately, the
+// share index is dropped, and the id stops being a grant on anybody's dispatch
+// list. Wired into core.MachineDeletedHook.
+//
+// A machine's schedule is matched by NAME as well as id, unlike a pipeline's:
+// StandingAgent.MachineID holds whatever the picker or the tool gave it, and
+// findMachineByNameOrID has always resolved a schedule's target by name first.
+// Matching on id alone would leave every name-armed schedule looking healthy.
+func machineDeleted(owner, id, name string) {
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(id) == "" {
+		return
+	}
+	label := strings.TrimSpace(name)
+	if label == "" {
+		label = id
+	}
+	// A deleted machine is shared with nobody. Dropped first: everything below
+	// takes a moment, and a recipient resolving it in between would find the
+	// index pointing at a record that is already gone.
+	dropMachineShareIndex(id)
+	gone := MachineDef{ID: id, Name: name}
+	// Every user's schedules, not just the owner's — a shared machine can be
+	// fired by somebody else's schedule, and the person who broke it never sees
+	// the thing they broke.
+	for _, u := range scheduleOwners(owner) {
+		for _, sa := range ListStandingAgents(RootDB, u) {
+			if !machineScheduleTargets(sa, gone) {
+				continue
+			}
+			why := fmt.Sprintf("runs deleted machine %q", label)
+			if u != owner {
+				why = fmt.Sprintf("runs machine %q, which %s deleted", label, owner)
+			}
+			MarkStandingAgentBroken(RootDB, u, sa.Name, why)
+		}
+	}
+	pruneDispatchTarget(owner, id)
 }

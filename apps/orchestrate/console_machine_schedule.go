@@ -53,6 +53,19 @@ func (T *OrchestrateApp) handleConsoleMachineOptions(w http.ResponseWriter, r *h
 		}
 		opts = append(opts, opt{Value: d.ID, Label: label})
 	}
+	// And the ones somebody shared, labelled with whose they are: a share that
+	// cannot be armed is a share that stops at reading, and two people can name
+	// a machine the same thing.
+	for _, sm := range sharedMachinesFor(user) {
+		if !sm.Def.Unattended {
+			continue
+		}
+		label := strings.TrimSpace(sm.Def.Name)
+		if label == "" {
+			label = sm.Def.ID
+		}
+		opts = append(opts, opt{Value: sm.Def.ID, Label: label + " (shared by " + sm.Owner + ")"})
+	}
 	writeJSON(w, opts)
 }
 
@@ -61,7 +74,7 @@ func (T *OrchestrateApp) handleConsoleMachineOptions(w http.ResponseWriter, r *h
 //	POST /api/console/machine-schedule/create
 //	{name, machine_id, mission, cron | interval_minutes, agent_id}
 func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
+	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -90,7 +103,7 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 		http.Error(w, "a schedule called "+name+" already exists", http.StatusBadRequest)
 		return
 	}
-	def, found := findMachineByNameOrID(udb, user, strings.TrimSpace(body.MachineID))
+	def, found := machineForUser(user, strings.TrimSpace(body.MachineID))
 	if !found {
 		http.Error(w, "no such machine", http.StatusBadRequest)
 		return

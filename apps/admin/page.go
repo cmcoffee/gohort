@@ -1530,6 +1530,35 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "User-owned machines",
+				Subtitle: "Machines users author and (optionally) peer-share — the third kind in the user plane, and governed exactly like the other two. A shared machine is a PROCEDURE: recipients run the owner's definition against their own agents, tools and credentials, and cannot edit it. A machine marked Runs can be put on a timetable or dispatched by an agent; the rest are only ever reached by a person talking to them. Revoke clears the recipient list; the owner keeps the machine.",
+				Body: ui.Table{
+					Source: "api/user-machines",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "owner", Flex: 0, Label: "Owner"},
+						{Field: "name", Flex: 1},
+						{Field: "steps", Flex: 0, Label: "Steps"},
+						{Field: "shared_with", Flex: 2, Mute: true, Label: "Shared with"},
+						{Field: "unattended", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Runs", Color: "success"},
+						}},
+						{Field: "shared", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Shared", Color: "info"},
+						}},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Revoke share",
+							PostTo:  "api/user-machines?action=revoke_share&owner={owner}&id={id}",
+							Method:  "POST",
+							Confirm: "Revoke this machine's sharing? Its recipients lose access — including any schedule they armed against it, which is marked broken rather than left to fail. The owner keeps the machine.",
+							OnlyIf:  "shared",
+							Variant: "danger"},
+					},
+					EmptyText: "No user-owned machines yet. When a user authors one, it appears here.",
+				},
+			},
+			{
 				Title:    "Pending promotions",
 				Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page); Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
 				Body: ui.Table{

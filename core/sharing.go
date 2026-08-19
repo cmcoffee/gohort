@@ -119,6 +119,30 @@ var (
 	AdminRevokePipelineShare    func(db Database, owner, id string) error
 )
 
+// UserOwnedMachineRow is one user-owned machine for the same governance
+// console. The pipeline row with Steps for Stages, plus Unattended: whether a
+// machine RUNS or converses is what decides where a share can be spent — a
+// recipient can put an unattended one on a timetable or hand it to an agent,
+// while a conversational one is only ever reached by a person talking to it.
+type UserOwnedMachineRow struct {
+	ID         string `json:"id"`
+	Owner      string `json:"owner"`
+	Name       string `json:"name"`
+	SharedWith string `json:"shared_with,omitempty"`
+	Shared     bool   `json:"shared"`
+	Steps      int    `json:"steps"`
+	Unattended bool   `json:"unattended"`
+}
+
+// AdminListUserOwnedMachines / AdminRevokeMachineShare are the machine half of
+// the same pair, wired by orchestrate in the same init. Three shareable kinds
+// now exist in the user plane, and an admin who can audit two of them has a
+// console that is quietly wrong about the third.
+var (
+	AdminListUserOwnedMachines func(db Database) []UserOwnedMachineRow
+	AdminRevokeMachineShare    func(db Database, owner, id string) error
+)
+
 // CanManageShared reports whether reqUser may change sharing / edit / delete a
 // record with the given owner: the owner, or an admin. Non-owners of a shared
 // record can use it but not manage it. An empty owner is a legacy record with no

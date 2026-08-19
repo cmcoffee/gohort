@@ -1841,6 +1841,21 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				}
 				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
 			}
+			// Machines that RUN, for the same reason: they are dispatch
+			// targets, so a list that decides which targets are reachable has
+			// to be able to name them. A machine that CONVERSES is left out —
+			// dispatch refuses it whatever the list says, and offering it would
+			// be a tick that changes nothing.
+			for _, d := range ListMachineDefs(udb, user) {
+				if !d.Unattended {
+					continue
+				}
+				desc := "Machine"
+				if s := strings.TrimSpace(d.Description); s != "" {
+					desc += " — " + s
+				}
+				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(out)
 			return

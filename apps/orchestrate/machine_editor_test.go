@@ -288,8 +288,13 @@ func TestEditorCoversEveryMachineField(t *testing.T) {
 	// for it would be an editor inside an editor. It DOES have a
 	// surface: the Undo the revision button, which appears exactly when
 	// there is one (TestARevisionCanBeTakenBack pins that).
+	//
+	// "allowed_users" is identity rather than content, and it has its own door:
+	// the ACLPicker on the page posts to /share, and the record-saving forms
+	// deliberately cannot touch it (machines_http.go). A control for it HERE
+	// would be a second way to grant, and the two would drift.
 	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true,
-		"phases": true, "previous": true}
+		"phases": true, "previous": true, "allowed_users": true}
 
 	check := func(what string, typ reflect.Type) {
 		for i := 0; i < typ.NumField(); i++ {
