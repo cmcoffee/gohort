@@ -283,6 +283,10 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		T.handleMachinePhases(w, r, udb, user, def)
 	case "try":
 		T.handleMachineTry(w, r, udb, user, def)
+	case "run":
+		// The real thing, for a machine that RUNS: not a rehearsal, and
+		// not attached to an agent. See machine_run.go.
+		T.handleMachineRun(w, r, udb, user, def)
 	case "duplicate":
 		// Iterating on a working machine in place is how the working one
 		// stops working. A copy makes the experiment safe, and landing in

@@ -291,6 +291,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_remove_step", machineRemoveStepJS).
 			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).
+			ClientAction("machine_run", machineRunJS).
 			ClientAction("machine_try_reset", machineTryResetJS).
 			ClientAction("machine_duplicate", machineDuplicateJS).
 			ClientAction("machine_repair", machineRepairJS).
@@ -370,6 +371,15 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: "Hold a rehearsal conversation with it: send a message, watch where it goes, then keep sending — later turns resume the parked step, so you can watch a guard fire or a handoff happen. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 			Body:     machineTryPanel(def),
 		},
+		// The real thing, next to the rehearsal, and only for a machine
+		// that RUNS. A conversational machine has nowhere for this to
+		// land, and offering a button that always refuses is worse than
+		// not offering one.
+		//
+		// Synchronous: the request stays open for the whole run. Right
+		// for a machine somebody is building and watching, wrong for a
+		// long one, which is what the next door (a schedule) is for.
+		unattendedRunSection(def),
 		// Say what should change, against the machine already on
 		// screen. A SECTION rather than a dialog, and that is the
 		// whole point: ModalButton opens a native <dialog> with
