@@ -99,6 +99,27 @@ func peerUnspentPairingCode(r *http.Request) (PeerKey, bool) {
 	return k, true
 }
 
+// peerManifestRefusal words a rejected manifest call for the operator who will
+// read it three screens away, on the OTHER machine.
+//
+// Three states reach here and only one of them means what the generic message
+// says. A spent code is the interesting one: it is the normal state of a peer
+// that has already paired, so presenting it means the consuming side lost its
+// credentials — a restore from backup, a refresh family expired while the peer
+// was off, a re-key that half-completed. There is exactly one way out and it is
+// not "check you pasted it right".
+func peerManifestRefusal(r *http.Request) string {
+	secret := peerPresentedSecret(r)
+	if secret == "" {
+		return "no peer key presented"
+	}
+	if k, known := LookupPeerKey(secret); known && strings.TrimSpace(k.Paired) != "" {
+		return "that pairing code was already exchanged, on " + k.Paired + " — it is single use, and the peer that spent it holds the credentials. " +
+			"If that peer has lost them, re-issue this key here (Resource Sharing → Re-issue key) and give it the new one; nothing else can re-pair it"
+	}
+	return "unrecognized or disabled peer key"
+}
+
 // peerDeny writes a JSON error. Peers are machines: the body says what is wrong
 // in a form a log will keep, and the status distinguishes "who are you" from
 // "not for you" from "slow down".
@@ -228,7 +249,12 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		peerNoteAuthFailure(r)
-		peerDeny(w, http.StatusUnauthorized, "unrecognized or disabled peer key")
+		// SPENT is a different answer from UNKNOWN and they need opposite
+		// actions from the reader. "That key was not recognized — check it came
+		// from this instance" sends somebody hunting for a paste error in a
+		// string that is correct and simply used up. This is the one place that
+		// can tell them apart, because it is the only side that knows.
+		peerDeny(w, http.StatusUnauthorized, peerManifestRefusal(r))
 		return
 	}
 	if !peerRateAllow(k) {

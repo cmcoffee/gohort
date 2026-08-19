@@ -605,3 +605,131 @@ func TestTheSchedulerLabelsThePeer(t *testing.T) {
 		t.Fatal("upstream was never reached")
 	}
 }
+
+// A peer-backed model client must read its credential at SEND time.
+//
+// Seen live: a peer was re-paired successfully and every LLM turn through it
+// then answered 401. The client is built once and lives for the process; the
+// credential it captured lasts fifteen minutes, and a re-key kills one
+// instantly. This is the same snapshot bug that bit embeddings, search and
+// transcription — in the one consumer that had no read-time path at all.
+func TestAPeerModelRequestCarriesTheCredentialOfTheMoment(t *testing.T) {
+	defer scratchPeerStore(t)()
+	k := grantFor(t)
+	RootDB.Set(remotePeersTable, "gpu-box", RemotePeer{
+		Name: "gpu-box", BaseURL: "https://den.example", Key: k.Key,
+		Caps: []string{PeerCapModels}, UseTokens: true,
+	})
+	InvalidatePeerResolution()
+
+	first, err := mintPeerTokenPair(k.ID, UUIDv4())
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	storePeerTokens("gpu-box", peerTokens{
+		Access: first.AccessToken, Refresh: first.RefreshToken,
+		Expires: time.Now().Add(time.Duration(first.ExpiresIn) * time.Second),
+	})
+
+	auth := peerModelAuth("gpu-box")
+	sent := func() string {
+		r := httptest.NewRequest(http.MethodPost, "https://den.example/api/peer/v1/chat/completions", nil)
+		auth(r)
+		return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
+	if got := sent(); got != first.AccessToken {
+		t.Fatalf("first request carried %q, want the current access token", got)
+	}
+
+	// The credential rotates under a client that has already been built.
+	second, err := mintPeerTokenPair(k.ID, UUIDv4())
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	storePeerTokens("gpu-box", peerTokens{
+		Access: second.AccessToken, Refresh: second.RefreshToken,
+		Expires: time.Now().Add(time.Duration(second.ExpiresIn) * time.Second),
+	})
+	if got := sent(); got != second.AccessToken {
+		t.Errorf("after a rotation the request still carried %q — a built client is holding a dead credential", got)
+	}
+
+	// A peer that is gone sends NOTHING rather than a stale secret: an empty
+	// header earns a clean 401, and a stale one is a secret on the wire.
+	DeleteRemotePeer("gpu-box")
+	InvalidatePeerResolution()
+	if got := sent(); got != "" {
+		t.Errorf("a forgotten peer still received %q", got)
+	}
+}
+
+// The seam is worthless unless the builder uses it. This pins the wiring: a
+// peer-backed provider gets the per-request resolver, and a local one does not.
+func TestOnlyAPeerBackedProviderResolvesPerRequest(t *testing.T) {
+	if got := peerNameFromProvider("peer:den"); got != "den" {
+		t.Errorf("peerNameFromProvider(peer:den) = %q", got)
+	}
+	for _, p := range []string{"llama.cpp", "anthropic", "", "openai"} {
+		if got := peerNameFromProvider(p); got != "" {
+			t.Errorf("provider %q read as peer %q", p, got)
+		}
+	}
+}
+
+// The end-to-end version of the test above: a client BUILT from a peer-backed
+// config, making a real call, must present the credential of that moment.
+//
+// The unit test proves the resolver works; this proves the builder installs it.
+// Both halves are needed — the live failure was not a broken resolver, it was a
+// working one nothing called.
+func TestABuiltPeerModelClientPresentsTheLiveCredential(t *testing.T) {
+	defer scratchPeerStore(t)()
+	k := grantFor(t)
+
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	RootDB.Set(remotePeersTable, "gpu-box", RemotePeer{
+		Name: "gpu-box", BaseURL: srv.URL, Key: k.Key,
+		Caps: []string{PeerCapModels}, UseTokens: true,
+	})
+	InvalidatePeerResolution()
+	first, _ := mintPeerTokenPair(k.ID, UUIDv4())
+	storePeerTokens("gpu-box", peerTokens{
+		Access: first.AccessToken, Refresh: first.RefreshToken,
+		Expires: time.Now().Add(time.Duration(first.ExpiresIn) * time.Second),
+	})
+
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "peer:gpu-box", Model: "local"})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if _, err := llm.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Rotate under the built client, exactly as the fifteen-minute renewal does.
+	second, _ := mintPeerTokenPair(k.ID, UUIDv4())
+	storePeerTokens("gpu-box", peerTokens{
+		Access: second.AccessToken, Refresh: second.RefreshToken,
+		Expires: time.Now().Add(time.Duration(second.ExpiresIn) * time.Second),
+	})
+	if _, err := llm.Chat(t.Context(), []Message{{Role: "user", Content: "again"}}); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	if len(got) < 2 {
+		t.Fatalf("expected two calls, saw %d", len(got))
+	}
+	if got[0] != first.AccessToken {
+		t.Errorf("first call carried %q, want the token of the moment", got[0])
+	}
+	if got[len(got)-1] != second.AccessToken {
+		t.Errorf("after a rotation the built client still sent %q — every turn 401s from here", got[len(got)-1])
+	}
+}

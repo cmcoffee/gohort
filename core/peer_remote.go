@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"sort"
@@ -120,6 +121,20 @@ func NormalizePeerBaseURL(raw string) string {
 	return strings.TrimRight(u, "/")
 }
 
+// peerErrorBody reads the {"error": "..."} a peer endpoint answers with.
+// Bounded, because this is an error path reading a body from another machine
+// and a peer that answers a megabyte of HTML should cost one line in a log
+// rather than a buffer.
+func peerErrorBody(body io.Reader) string {
+	var e struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 8<<10)).Decode(&e); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(e.Error)
+}
+
 // ProbeRemotePeer asks an instance what it offers, without storing anything.
 // Used both to validate a peer being added and to refresh an existing one.
 func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, error) {
@@ -147,6 +162,13 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
+		// The far side's own words, when it gave any. It is the only side that
+		// can tell a spent pairing code from an unknown one, and replacing its
+		// answer with a guess ("check it was not revoked") sent an operator
+		// looking for a paste error in a string that was correct and used up.
+		if why := peerErrorBody(resp.Body); why != "" {
+			return PeerManifest{}, fmt.Errorf("%s refused that key: %s", base, why)
+		}
 		return PeerManifest{}, fmt.Errorf("%s did not recognize that key — check it was not revoked, and that it came from THAT instance", base)
 	case http.StatusNotFound:
 		return PeerManifest{}, fmt.Errorf("%s has no peer endpoint — it may be an older build, or the address may point at something else", base)
@@ -331,7 +353,18 @@ func UpdateRemotePeerKey(ctx context.Context, name, key string) (RemotePeer, err
 	if !ok {
 		return RemotePeer{}, fmt.Errorf("no peer named %q is registered", name)
 	}
-	// THE NEW KEY GOES ON THE RECORD FIRST, and the order is the whole point.
+	// EXCLUSIVE for the whole re-key. Ordering alone was not enough: clearing
+	// the credential makes every reader notice, and a background renewal that
+	// starts in that window spends the operator's brand-new pairing code — it
+	// is single use, so the probe below then finds it already exchanged and
+	// reports that the far side did not recognize a key that was perfectly
+	// good. Seen live. The lock is what makes "paste a new code" an operation
+	// rather than a race, and the renewal gives up rather than joining in.
+	release := lockPeerCredential(name)
+	defer release()
+	// THE NEW KEY GOES ON THE RECORD FIRST, and the order still matters — the
+	// lock keeps our own renewals out, not a reader on another node or a
+	// restart mid-way.
 	//
 	// Clearing the credential is what makes the re-pair take effect — the old
 	// access token is dead the moment the far side re-issues, but it is not

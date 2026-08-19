@@ -509,6 +509,43 @@ func (p RemotePeer) ModelsURL() string {
 // key leaves this config pointing at the old one, and the symptom is a 401 from
 // a config that looks correct. Same shape as ResolveEmbeddingProvider, and the
 // same fix applies to both — resolve at use time rather than at save time.
+// peerModelAuth authorizes ONE request to a peer-backed model endpoint, reading
+// the credential at the moment it is sent.
+//
+// The LLM client is built once and lives for the process; its credential does
+// not. An access token is good for fifteen minutes and a re-key invalidates
+// everything immediately, so a client that captured a string at construction
+// starts answering 401 to every turn — which is what happened live, minutes
+// after a peer was successfully re-paired. Baking a rotating credential into a
+// long-lived client is the same snapshot bug that bit embeddings, search and
+// transcription, in the one consumer that had no read-time path at all.
+//
+// Returns a function rather than a string for exactly that reason: snugforge's
+// APIClient calls AuthFunc per request, so the token is resolved on the way out
+// the door and a rotation between two turns costs nothing.
+func peerModelAuth(name string) func(*http.Request) {
+	return func(req *http.Request) {
+		p, ok := lookupPeerCached(name)
+		if !ok {
+			// The peer was forgotten while a built client still points at it.
+			// Sending nothing earns a clean 401 rather than a stale secret.
+			return
+		}
+		if cred := strings.TrimSpace(PeerCredential(p)); cred != "" {
+			req.Header.Set("Authorization", "Bearer "+cred)
+		}
+	}
+}
+
+// peerNameFromProvider returns the peer a provider string names, or "".
+func peerNameFromProvider(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if !strings.HasPrefix(provider, peerProviderPrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(provider, peerProviderPrefix)
+}
+
 func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderConfig, error) {
 	provider = strings.TrimSpace(provider)
 	if provider == "" || !strings.HasPrefix(provider, peerProviderPrefix) {

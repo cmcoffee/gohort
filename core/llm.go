@@ -1429,12 +1429,22 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	// the config is the bug that already bit embeddings: rotating a peer key
 	// left a config that looked correct and 401'd, with nothing on screen to
 	// suggest which of the two records was stale.
+	// Captured BEFORE resolution, which rewrites Provider to the concrete one.
+	peerName := peerNameFromProvider(cfg.Provider)
 	resolved, err := ResolveModelProvider(cfg, cfg.Provider)
 	if err != nil {
 		return nil, Error(err.Error())
 	}
 	cfg = resolved
 	api := newLLMAPIClient(cfg)
+	if peerName != "" {
+		// Per REQUEST, not per build. Resolution above fills cfg.APIKey with the
+		// credential of this moment, and the client outlives it: an access token
+		// lasts fifteen minutes and a re-key kills one instantly. AuthFunc wins
+		// over StaticToken inside APIClient, so the value the constructors below
+		// stamp in is only ever a fallback for the build that has no peer.
+		api.AuthFunc = peerModelAuth(peerName)
+	}
 	var inner LLM
 
 	switch cfg.Provider {

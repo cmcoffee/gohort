@@ -93,13 +93,41 @@ func TestSaveRemotePeerRefusesAKeyThatGrantsNothingUsable(t *testing.T) {
 // The probe's failures have to be distinguishable — an operator seeing "could
 // not reach" goes to the network, "did not recognize that key" goes to the
 // other instance's key list. A single "failed to connect" sends them to both.
+// peerGrantOnly returns the single grant a fake peer server minted.
+func peerGrantOnly(t *testing.T) (PeerKey, bool) {
+	t.Helper()
+	keys := ListPeerKeys()
+	if len(keys) != 1 {
+		return PeerKey{}, false
+	}
+	return keys[0], true
+}
+
 func TestProbeDistinguishesItsFailures(t *testing.T) {
 	base, key := peerServer(t, PeerCapEmbeddings)
 
+	// The FAR SIDE's words, because it is the only one that can tell an unknown
+	// key from a spent pairing code — and those need opposite actions from the
+	// reader. Replacing its answer with a guess sent an operator hunting for a
+	// paste error in a code that was correct and already used.
 	if _, err := ProbeRemotePeer(t.Context(), base, "not-a-real-key"); err == nil {
 		t.Error("a bad key should fail")
-	} else if !strings.Contains(err.Error(), "did not recognize that key") {
-		t.Errorf("bad key error should name the key, got: %v", err)
+	} else if !strings.Contains(err.Error(), "unrecognized or disabled peer key") {
+		t.Errorf("bad key error should carry the far side's reason, got: %v", err)
+	}
+
+	// A SPENT code says so, and says what to do about it.
+	pk, ok := peerGrantOnly(t)
+	if !ok {
+		t.Fatal("expected the fake server's grant")
+	}
+	markPeerKeyPaired(pk.ID)
+	if _, err := ProbeRemotePeer(t.Context(), base, pk.Key); err == nil {
+		t.Error("a spent pairing code should fail")
+	} else if !strings.Contains(err.Error(), "already exchanged") {
+		t.Errorf("a spent code should say it is spent, got: %v", err)
+	} else if !strings.Contains(err.Error(), "Re-issue") {
+		t.Errorf("a spent code should name the way out, got: %v", err)
 	}
 
 	if _, err := ProbeRemotePeer(t.Context(), "gpu-box.example", key); err == nil {
@@ -558,5 +586,60 @@ func TestARekeyNeverExposesTheOldCode(t *testing.T) {
 	}
 	if _, live := peerKeyFromAccessToken(PeerCredential(p)); !live {
 		t.Error("the peer is not holding a live token after the re-key")
+	}
+}
+
+// A re-key must not lose a race with the renewal it provokes.
+//
+// Seen live, twice. Clearing the credential makes every reader notice there is
+// none, and a background renewal starting in that window reads the record and
+// spends the operator's brand-new pairing code — which is SINGLE USE, so the
+// re-key's own probe then finds it already exchanged and reports that the far
+// side "did not recognize that key". The operator's paste was correct both
+// times. The lock is what makes this an operation rather than a race.
+func TestARekeyIsNotRacedByTheRenewalItProvokes(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	pk, ok := peerGrantOnly(t)
+	if !ok {
+		t.Fatal("expected one grant")
+	}
+	reissued, err := RepairPeerKey(pk.ID)
+	if err != nil {
+		t.Fatalf("re-issue: %v", err)
+	}
+
+	// Readers hammering the credential throughout, which is what a live
+	// deployment does — every page render and every capability check asks.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if p, ok := GetRemotePeer("gpu-box"); ok {
+					_ = PeerCredential(p) // schedules a renewal whenever there is no token
+				}
+			}
+		}
+	}()
+	_, uerr := UpdateRemotePeerKey(t.Context(), "gpu-box", reissued.Key)
+	close(stop)
+	<-done
+	waitPeerTokenIdle()
+
+	if uerr != nil {
+		t.Fatalf("re-key lost the race with a renewal: %v", uerr)
+	}
+	p, _ := GetRemotePeer("gpu-box")
+	if cred := PeerCredential(p); cred == "" || cred == reissued.Key {
+		t.Errorf("the peer is not holding a token after the re-key: %q", cred)
+	} else if _, live := peerKeyFromAccessToken(cred); !live {
+		t.Error("the credential after a contested re-key is not live")
 	}
 }

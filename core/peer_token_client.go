@@ -57,10 +57,56 @@ const (
 // the same refresh token, one of them arriving after the other has consumed it.
 // The grace window on the far side is the second line of defense; this is the
 // first, and it is the one that should be doing the work.
+// peerTokenFlight serializes every operation that spends or replaces a peer's
+// credential, one peer at a time.
+//
+// A MUTEX rather than a sync.Once, and the difference is the bug it was written
+// for. Once has join-the-one-already-running semantics, which is right for a
+// renewal (a second one is redundant) and catastrophically wrong for a re-key,
+// which must always run its own work. Worse, nothing serialized the two against
+// each other at all: re-keying cleared the credential, a reader noticed and
+// started a renewal, that renewal spent the operator's brand-new SINGLE-USE
+// pairing code, and the re-key's own probe then found it already exchanged and
+// reported that the far side "did not recognize that key".
+//
+// So: a re-key takes the lock and holds it across probe and exchange. A renewal
+// TRIES the lock and gives up if it cannot have it — something else is already
+// putting this peer right, and the renewal exists to fix neglect, not to race.
 var peerTokenFlight = struct {
 	mu sync.Mutex
-	in map[string]*sync.Once
-}{in: map[string]*sync.Once{}}
+	in map[string]*sync.Mutex
+}{in: map[string]*sync.Mutex{}}
+
+// peerOpMutex returns the per-peer lock, creating it on first use.
+func peerOpMutex(name string) *sync.Mutex {
+	key := strings.ToLower(strings.TrimSpace(name))
+	peerTokenFlight.mu.Lock()
+	defer peerTokenFlight.mu.Unlock()
+	m, ok := peerTokenFlight.in[key]
+	if !ok {
+		m = new(sync.Mutex)
+		peerTokenFlight.in[key] = m
+	}
+	return m
+}
+
+// lockPeerCredential blocks until this peer's credential is nobody else's
+// business, and returns the release. For work that MUST happen: a re-key.
+func lockPeerCredential(name string) func() {
+	m := peerOpMutex(name)
+	m.Lock()
+	return m.Unlock
+}
+
+// tryLockPeerCredential is the same lock for work that is only worth doing if
+// nothing else is doing it. Returns ok=false when the peer is busy.
+func tryLockPeerCredential(name string) (func(), bool) {
+	m := peerOpMutex(name)
+	if !m.TryLock() {
+		return func() {}, false
+	}
+	return m.Unlock, true
+}
 
 // peerTokenBackground counts renewals running detached from any caller.
 //
@@ -223,20 +269,15 @@ func PeerCredential(p RemotePeer) string {
 // renewPeerTokenAsync runs one exchange in the background, at most one per peer.
 func renewPeerTokenAsync(name string) {
 	key := strings.ToLower(strings.TrimSpace(name))
-	peerTokenFlight.mu.Lock()
-	once, running := peerTokenFlight.in[key]
-	if !running {
-		once = new(sync.Once)
-		peerTokenFlight.in[key] = once
+	release, got := tryLockPeerCredential(key)
+	if !got {
+		// Somebody is already replacing this peer's credential — most likely an
+		// operator part-way through a re-key, whose pairing code is single use
+		// and would be spent by this. Renewal is for neglect; this is not that.
+		return
 	}
-	peerTokenFlight.mu.Unlock()
-
-	once.Do(func() {
-		defer func() {
-			peerTokenFlight.mu.Lock()
-			delete(peerTokenFlight.in, key)
-			peerTokenFlight.mu.Unlock()
-		}()
+	defer release()
+	func() {
 		p, ok := GetRemotePeer(key)
 		if !ok || !p.UseTokens {
 			return
@@ -265,7 +306,7 @@ func renewPeerTokenAsync(name string) {
 			return
 		}
 		warnPeerResolveOnce("token:"+key, "")
-	})
+	}()
 }
 
 // --- exchange ----------------------------------------------------------------
