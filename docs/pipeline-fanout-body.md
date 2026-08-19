@@ -1,11 +1,10 @@
 # Fanout bodies
 
 **Status:** BUILT v0.6.272. A fanout body may now also run a whole MACHINE per
-item (`kind: machine`, v0.6.276), which is the parallel child-run shape research
-wants. Bodies are EDITABLE on the page as of v0.6.278 (a section per body step,
-addressed by path); the per-branch block mode remains unbuilt. The per-branch block mode and the nested-stage
-EDITOR remain unbuilt: bodies are authored through the `pipeline` tool, an
-import, or a revise, which is the same gap `loop` bodies already had. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
+item (`kind: machine`, v0.6.276), which is the parallel child-run shape a
+branching investigation wants. Bodies became EDITABLE on the page in v0.6.278
+(a section per body step, addressed by path). The per-branch block mode remains
+unbuilt. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
 `docs/pipeline-structured-outputs.md`, `project_pipeline_loop_stage`,
 `project_pipeline_framework_future`.
 
@@ -30,11 +29,12 @@ piece that never landed. Today:
 | Rank what the branches found | prose scoring off a joined blob | a declared list, scored by a normal stage |
 | Re-fan over the survivors | not expressible | `fan_over: NAME.items` |
 
-The multi-role debate shape is already expressible (roles are `agent` stages,
-rounds are `loop`, a judge panel is `fanout`, the closer is `synthesize`). The
-research shape is not, because every branch of a research fan is itself a small
-pipeline. This closes that half. It does NOT close recursion; see
-"What this does not solve".
+An adversarial shape — several roles arguing in rounds, a panel scoring them, a
+closer — is already expressible: roles are `agent` stages, rounds are `loop`, the
+panel is `fanout`, the closer is `synthesize`. An INVESTIGATIVE shape is not,
+because every branch of such a fan is itself a small pipeline: search this
+sub-question, read what came back, then judge it. This closes that half. It does
+NOT close recursion; see "What this does not solve".
 
 ## Data model
 
@@ -212,16 +212,18 @@ those rules drifting from the first.
 
 ## What this does not solve
 
-Recursion. A research pass that finds a gap, forks a child investigation, and
+UNBOUNDED recursion. A pass that finds a gap, forks a child investigation, and
 lets THAT child fork again is a tree of unknown depth. Depth-capped fanout
 bodies give one level of composite branching, which covers "investigate each
 sub-question properly and merge", and does not cover "keep going until the
 question is answered".
 
-The Phase 2 primitive for that is a `pipeline` stage kind: run a NAMED pipeline
-as a stage, with a depth counter carried in the context and a hard ceiling.
-That is a different change with its own risks (cycles, budget, whose dispatch
-ACL applies), and pretending this one covers it would set up exactly the
+One level of it landed after this shipped, in a different form than predicted
+here: `kind: machine` (v0.6.276) runs a whole machine as a stage, so a fanout
+body can be a child RUN — one per item, in parallel, with a depth counter on the
+context and a hard ceiling. Going deeper than that is still refused, and
+deliberately: cycles, budget, and whose permissions a nested run carries are
+each their own argument. Pretending this one covers it would set up exactly the
 disappointment worth avoiding.
 
 ## Testing
