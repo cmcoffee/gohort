@@ -1,7 +1,8 @@
 # Machine as spine, pipelines as phases
 
 **Status:** Changes 1 and 2 BUILT (v0.6.270), Change 3 BUILT (v0.6.271),
-Change 4 BUILT (v0.6.273), Change 5 BUILT (v0.6.277). All five are built. An unattended run can be STARTED two ways: from the machine page ("Run
+Change 4 BUILT (v0.6.273, completed by the machine stage in v0.6.276),
+Change 5 BUILT (v0.6.277). All five are built. An unattended run can be STARTED two ways: from the machine page ("Run
 it", v0.6.274), synchronously, and from a SCHEDULE (v0.6.275) —
 `StandingAgent.MachineID`, beside the agent and pipeline targets, which is the
 background door. A dispatch target (an agent asking for a run) is still to come. Related: `core/machine.go`, `core/machine_def.go`,
@@ -9,9 +10,11 @@ background door. A dispatch target (an agent asking for a run) is still to come.
 `docs/pipeline-fanout-body.md`, `project_agent_machines`,
 `project_pipeline_framework_future`.
 
-Deep research is 22 phases (`private/research/pipeline.go:80-220`) that mutate a
-working set: `Subs`, `Answers`, `Unanswered`, `LandscapeSources`. Phases mark,
-refill, promote, and merge into those lists as the run proceeds.
+The shape this is written against is a long investigative run: twenty-odd
+phases that mutate a WORKING SET rather than passing a value along. It decomposes
+a question, answers the parts, marks the thin ones, refills them, promotes what
+survived review, and merges a sub-investigation's findings into the same lists.
+Any app of that kind has one; ours is one instance of it.
 
 A pipeline cannot hold that. It is dataflow: stage outputs are immutable, keyed
 by stage name, and a reference to a loop body stage from outside is rejected
@@ -83,7 +86,8 @@ This is the actual blocker, and it is not obvious from the outside.
 A machine is built for turn-taking. `walk()` stops at the first resident phase,
 `MaxPhaseTransitions` caps a turn at 4 hops, and `Problems()` refuses a machine
 with no resident phase at all ("a machine with nowhere for a turn to land is a
-pipeline, not a machine"). Research is 22 phases with nobody waiting.
+pipeline, not a machine"). An investigative run is twenty-odd phases with
+nobody waiting.
 
 So a machine needs a second way to run:
 
@@ -99,7 +103,7 @@ Unattended bool `json:"unattended,omitempty"`
   TERMINAL phase (no `next`, no `choices`) and may have no resident phase.
 - The hop budget comes from the run, not the turn: `MaxPhaseTransitions` (4) is a
   conversational courtesy, meaningless here. Replace with a per-run ceiling
-  (100 is a reasonable first number, since research is 22), plus wall clock and
+  (100 is a reasonable first number, since a long run is twenty-odd), plus wall clock and
   a token ceiling, refused at save time if the graph can cycle without a guard
   that reads a declared field.
 - Entry points are a schedule, a standing agent, an app page, or a dispatch, not
@@ -110,14 +114,14 @@ Unattended bool `json:"unattended,omitempty"`
 - The result is the terminal phase's output, which is what a dispatcher or a
   schedule collects.
 
-Without this change the rest of the spec is decorative: research cannot run as a
-machine at all, whatever its phases are made of.
+Without this change the rest of the spec is decorative: a run of that kind
+cannot be a machine at all, whatever its phases are made of.
 
 ## Change 3: accumulators on the blackboard (BUILT)
 
-`MachineState` is keyed by phase, one entry each. Research needs lists that
-MANY phases contribute to: `TrackEmptyAnswers` marks, `RetryEmptyAnswers`
-refills, `ApplyPromotions` rewrites, `mergeGapResults` appends a child's
+`MachineState` is keyed by phase, one entry each. The working set needs lists
+that MANY phases contribute to: one phase marks the thin answers, another
+refills them, a review pass rewrites some, and a sub-investigation appends its
 findings to the parent's own.
 
 Phase-keyed state cannot express that. A phase can read `{state:PHASE.field}`,
@@ -145,9 +149,9 @@ Interaction with `Keep` (which prunes prior findings on re-entry) has to be
 explicit: accumulators are NOT pruned by `Keep` unless named, because the whole
 point is that they survive the loop that keeps revisiting them.
 
-## Change 4: a child run, for the recursive case (BUILT, with one part outstanding)
+## Change 4: a child run, for the recursive case (BUILT)
 
-`FillGaps` forks a child research run per detected gap and merges what comes
+A gap-filling pass forks a child run per hole it finds and merges what comes
 back. That is the one phase whose shape is recursion rather than composition.
 
 The narrow version, rather than a general recursion facility:
@@ -160,13 +164,13 @@ Machine string `json:"machine,omitempty"`
 ```
 
 - Depth is capped, and the cap is a number rather than a boolean, so a later
-  case that genuinely needs two can raise it without a redesign. Research's own
-  guard is a `ParentID` check that stops a child from filling gaps again, so
-  depth 1 is exactly what it uses today.
+  case that genuinely needs two can raise it without a redesign. An app doing
+  this by hand guards it the same way — a parent marker that stops a child from
+  gap-filling again — so depth 1 is what the shape actually uses.
 - The child's terminal output merges into the parent through the same
   `Accumulates` declaration as any other phase. There is no second merge
   mechanism.
-- Fan of children (one per gap) is the pipeline's job, not the machine's:
+- Fan of children (one per hole) is the pipeline's job, not the machine's:
   the phase names a pipeline whose fanout body runs the child machine per item.
   Which is why `docs/pipeline-fanout-body.md` is a prerequisite for this one.
 
@@ -186,9 +190,9 @@ directly; fanning them is the pipeline's job, which is where it belongs.
 
 ## Change 5: run-scoped tool state (BUILT)
 
-`SearchCache` dedupes identical searches across a research run, and
-`filters.go` / `isWeakSource` drop junk consistently. Both are library code
-inside the app today.
+An app that fans out over sub-questions ends up carrying its own search cache,
+and a source-quality filter beside it. Both are library code inside the app,
+written again by each app that needs them.
 
 Eight parallel fanout branches searching the same landscape pay eight times for
 the overlap. A run-scoped cache keyed by (tool, args) with the run's lifetime,
@@ -201,10 +205,9 @@ immediately in cost.
 
 ## What this does not change
 
-The presentation. `researchBridge` translates run events into debate clusters,
-framing placeholders, and per-round headings; the descendants view shows a run's
-children; the email has its own formatting. That is roughly the 4k of
-`private/research/web.go`, and it stays app code. A custom app's `html` section
+The presentation. Translating run events into an app's own typed blocks, a
+view of a run's children, an emailed report with its own formatting: several
+thousand lines in an app of this kind, and it stays app code. A custom app's `html` section
 can render the finished record, but typed blocks streaming DURING a run are an
 app-level concern by design (see `CLAUDE.md`: the four registries).
 
@@ -216,7 +219,7 @@ app-level concern by design (see `CLAUDE.md`: the four registries).
 | Change 2, unattended machines | any long non-conversational run | nothing |
 | Change 1, pipeline phases | the spine calling the muscle | fanout bodies (to be worth it) |
 | Change 3, accumulators | a working set that survives 20 phases | Change 2 |
-| Change 4, child runs | `FillGaps` | Changes 1 and 3 |
+| Change 4, child runs | a gap-filling pass | Changes 1 and 3 |
 | Change 5, run cache | cost | nothing |
 
 Changes 2 and 5 are independently useful and could land first. Change 3 is the
