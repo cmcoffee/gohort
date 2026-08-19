@@ -136,6 +136,7 @@ func (T *OrchestrateApp) handleMachineRun(w http.ResponseWriter, r *http.Request
 	res["finished"] = final.Name
 	res["finished_desc"] = strings.TrimSpace(final.Desc)
 	res["output"] = out
+	res["cached_calls"] = cache.Hits()
 	writeJSON(w, res)
 }
 
@@ -230,13 +231,27 @@ const machineRunJS = `function(ctx) {
       out.appendChild(el('div', 'What it produced', HEAD));
       out.appendChild(el('div', d.output, 'white-space:pre-wrap'));
     }
+    if (d.cached_calls) {
+      out.appendChild(el('div', d.cached_calls + ' tool call(s) answered from earlier in this run', MUTE));
+    }
     if (d.path && d.path.length) {
       out.appendChild(el('div', 'The steps it took', HEAD));
       out.appendChild(list(d.path));
     }
-    if (d.state && d.state.length) {
+    var state = d.state || {};
+    var steps = Object.keys(state);
+    if (steps.length) {
       out.appendChild(el('div', 'What it established', HEAD));
-      out.appendChild(list(d.state, MUTE));
+      steps.forEach(function(name) {
+        out.appendChild(el('div', name, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
+        var fields = state[name] || {};
+        var rows = Object.keys(fields).map(function(k) {
+          var v = fields[k];
+          if (v && typeof v === 'object') { try { v = JSON.stringify(v); } catch (e) { v = String(v); } }
+          return k + ': ' + v;
+        });
+        if (rows.length) out.appendChild(list(rows, MUTE));
+      });
     }
     if (d.notes && d.notes.length) {
       out.appendChild(el('div', 'What the framework decided for you', HEAD));
