@@ -9,6 +9,7 @@ package filestore
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -55,6 +56,28 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						SubmitLabel: "Save changes",
 						Fields:      storeFormFields(),
 					}),
+					// Who may reach it, picked from the accounts that exist
+					// rather than typed from memory. Its own action because
+					// the candidate list is LIVE: the section is built once at
+					// startup, so a list baked into the form above would be the
+					// users who existed when the process started. The picker
+					// fetches instead, and a user added this morning is there.
+					//
+					// ui.ACLPicker is the shared shape for exactly this — the
+					// same editor credentials, tools and shared agents use, so
+					// "+ Add user" means one thing across the admin page.
+					ui.Expand("Assigned to", ui.ACLPicker(ui.ACLPickerConfig{
+						OptionsSource: "/admin/api/user-candidates",
+						RecordSource:  "/filestore/api/stores?slug={slug}",
+						Field:         "allowed_users",
+						PostTo:        "/filestore/api/stores",
+						Method:        "POST",
+						Noun:          "user",
+						Intro: "Who may reach this store. Empty means EVERY user — a folder of customer captures is rarely something every account should hold, " +
+							"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
+							"Applies to admins too: admin manages the list, membership decides reach.",
+						EmptyText: "No approved users to assign yet.",
+					})),
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/filestore/api/stores?slug={slug}",
 						Variant:    "danger",
@@ -134,8 +157,6 @@ func storeFormFields() []ui.FormField {
 			Help: "Shown in the agent's Sources picker and in the tool descriptions an attached agent reads. The tool NAMES come from a handle minted from this name the first time the store is saved (\"Support bundles\" → search_support_bundles), and that handle does not change afterwards: RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES. It has to work that way — the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
 		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/bundles",
 			Help: "Absolute path on this server. The folder itself is what an agent attaches to; its subfolders (if any) are what a search can be scoped to. Read-only: nothing here ever writes to it."},
-		{Field: "allowed_users", Type: "tags", Label: "Assigned to",
-			Help: "Usernames who may reach this store. Leave EMPTY for every user. A folder of customer captures is rarely something every account should hold, and configuring a store is already admin-only — without this the cheap half was gated and the reading was not. Applies to admins too: admin manages the list, membership decides reach."},
 		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
 			Help: "Off by default. Reaching a store and WRITING into it are different grants: the common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
 		{Field: "retention_days", Type: "number", Label: "Delete folders older than (days)", Min: 0,
@@ -190,8 +211,28 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, T.storeRows())
 	case http.MethodPost:
-		var st Store
-		if err := json.NewDecoder(r.Body).Decode(&st); err != nil {
+		// Decoded ONTO the stored record, not into a blank one. Two editors
+		// now write this record — the form (name, path, retention…) and the
+		// assignment picker (allowed_users) — and neither sends the other's
+		// fields. Into a blank Store, whichever saved second would silently
+		// erase what the first had just set: json.Unmarshal leaves absent
+		// keys alone, so starting from what is stored makes a partial save
+		// mean "change these", which is what both callers intend.
+		//
+		// A key that IS present still wins, empty included, so unticking the
+		// last user clears the list rather than being read as "unchanged".
+		raw, err := io.ReadAll(io.LimitReader(r.Body, maxStoreBodyBytes))
+		if err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		st := Store{}
+		if s := storeSlugOf(raw, slug); s != "" {
+			if existing, found := LoadStore(T.DB, s); found {
+				st = existing
+			}
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -212,6 +253,27 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// maxStoreBodyBytes caps a store save. A store is a handful of short fields;
+// anything past this is a mistake or an attempt, and neither deserves memory.
+const maxStoreBodyBytes = 1 << 20
+
+// storeSlugOf finds which store a save is FOR: the query parameter when the
+// caller addressed one (?slug=), otherwise the slug carried in the body (the
+// edit form posts it as a hidden field). Empty means a new store, which has
+// nothing to merge onto.
+func storeSlugOf(body []byte, fromQuery string) string {
+	if s := strings.TrimSpace(fromQuery); s != "" {
+		return s
+	}
+	var probe struct {
+		Slug string `json:"slug"`
+	}
+	if json.Unmarshal(body, &probe) == nil {
+		return strings.TrimSpace(probe.Slug)
+	}
+	return ""
 }
 
 // storeRows renders the admin table. Its own method because the row is
