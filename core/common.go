@@ -1490,6 +1490,17 @@ type CategorizedTool interface {
 // ToolCategory returns the category a tool claims, or "" when it claims none —
 // in which case the caller falls back to ToolGroup.Members and then to the
 // capability label, in that order.
+// ChatToolCaps is what a tool declares it can DO, or nil when it declares
+// nothing. One accessor, because "read the optional interface if it is there"
+// is the kind of three-line idiom that gets written five times and then
+// disagrees with itself in one of them.
+func ChatToolCaps(ct ChatTool) []Capability {
+	if c, ok := ct.(CapabilityTool); ok {
+		return c.Caps()
+	}
+	return nil
+}
+
 func ToolCategory(t ChatTool) string {
 	if c, ok := t.(CategorizedTool); ok {
 		return strings.TrimSpace(c.Category())

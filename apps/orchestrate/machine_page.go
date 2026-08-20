@@ -457,7 +457,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Subtitle: "Nothing here refuses a save. It is what the machine looks like it might not have meant.",
 			Wide:     true,
 			Body: withRepairButton(def, RepairAdvice,
-				ui.Card{HTML: `<div data-machine-advice>` + adviceHTML(def) + `</div>`}),
+				ui.Card{HTML: `<div data-machine-advice>` + adviceHTML(udb, user, def) + `</div>`}),
 		},
 		{
 			Title: "What is still missing",
@@ -950,8 +950,17 @@ func findingStep(def MachineDef, line string) string {
 	return best
 }
 
-func adviceHTML(def MachineDef) string {
-	return findingsHTML(def, def.Advice(), "Nothing — the steps read as instructions rather than specifications.")
+func adviceHTML(udb Database, user string, def MachineDef) string {
+	return findingsHTML(def, machineAdvice(udb, user, def),
+		"Nothing — the steps read as instructions rather than specifications.")
+}
+
+// machineAdvice is the soft list every surface shows: what the definition
+// works out about itself, plus what only the catalog can say — a step naming
+// tools where a reach would survive better. One function, for the reason
+// machineChecklist is one.
+func machineAdvice(udb Database, user string, def MachineDef) []string {
+	return append(def.Advice(), reachAdvice(udb, user, def)...)
 }
 
 // checklistHTML renders work remaining. probs is passed in rather than read

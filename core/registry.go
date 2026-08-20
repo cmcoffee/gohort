@@ -175,10 +175,7 @@ func ChatToolToAgentToolDef(ct ChatTool) AgentToolDef {
 	if c, ok := ct.(ConfirmableTool); ok {
 		confirm = c.NeedsConfirm()
 	}
-	var caps []Capability
-	if c, ok := ct.(CapabilityTool); ok {
-		caps = c.Caps()
-	}
+	caps := ChatToolCaps(ct)
 	trusted := false
 	if to, ok := ct.(TrustedOutputTool); ok {
 		trusted = to.TrustedOutput()

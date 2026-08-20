@@ -90,6 +90,70 @@ func knownAgentToolNames(udb Database, user string, def MachineDef) map[string]b
 	return known
 }
 
+// agentToolNames is what ONE agent can reach, by name.
+//
+// knownAgentToolNames answers a different question — "does anybody running
+// this machine hold this name" — which is the right generosity for a save-time
+// typo check and the wrong one for attaching: the moment that matters is when
+// a machine meets a PARTICULAR agent, and a name three other agents hold does
+// this one no good at all.
+//
+// Attached sources are resolved from the record rather than from a turn, so
+// this can answer before any turn exists. That is the whole point of a
+// preflight: the alternative is finding out on the first message.
+func agentToolNames(udb Database, user string, ag AgentRecord) map[string]bool {
+	known := make(map[string]bool, 256)
+	for n := range machineControlTools {
+		known[n] = true
+	}
+	for _, o := range availableWorkerToolOptions(user) {
+		known[o.Value] = true
+	}
+	for _, ct := range RegisteredChatTools() {
+		known[ct.Name()] = true
+	}
+	sess := &ToolSession{Username: user}
+	for _, td := range Secure().BuildTools(sess) {
+		known[td.Tool.Name] = true
+	}
+	for _, td := range AgentProvidedTools(sess, user, ag.ID) {
+		known[td.Tool.Name] = true
+	}
+	// What THIS agent's attachments mint — the names no picker offers and
+	// the ones most likely to differ between two agents.
+	for _, ref := range ag.AttachedSources {
+		for _, td := range ReferenceItemTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)) {
+			known[td.Tool.Name] = true
+		}
+	}
+	return known
+}
+
+// machineAttachGaps reports what this machine's steps name that this agent
+// cannot reach — the preflight for attaching one to the other.
+//
+// Attaching is the moment the question becomes answerable and the moment
+// somebody is looking. Before this, the first report was a turnDiag on the
+// first message, hours later, phrased as a tool that had gone missing.
+func machineAttachGaps(udb Database, user string, def MachineDef, ag AgentRecord) []string {
+	known := agentToolNames(udb, user, ag)
+	var out []string
+	for _, p := range def.Phases {
+		var missing []string
+		for _, n := range p.Tools {
+			if n = strings.TrimSpace(n); n == "" || n == NoToolsMarker || known[n] {
+				continue
+			}
+			missing = append(missing, n)
+		}
+		if len(missing) > 0 {
+			out = append(out, "step "+p.Name+" names "+strings.Join(missing, ", ")+
+				", which "+chFirst(ag.Name, ag.ID)+" does not carry")
+		}
+	}
+	return out
+}
+
 // unknownPhaseToolFindings reports phase tool names nothing in the catalog
 // answers to, one checklist line each, with the likely correction when the
 // name is recoverable.
@@ -175,4 +239,133 @@ func didYouMeanTool(name string, known map[string]bool) string {
 // how a check added in one place quietly failed to exist in the others.
 func machineChecklist(udb Database, user string, def MachineDef) []string {
 	return append(def.Problems(), unknownPhaseToolFindings(udb, user, def)...)
+}
+
+// reachAdvice suggests the coarse control to a step that is approximating it
+// with a list of names.
+//
+// Not a rewrite, and deliberately not phrased as one: a reach and a name list
+// are not the same statement. "read" grants every read tool the agent has, and
+// a step that named three of them on purpose is narrower BY DESIGN. So this
+// fires only where the list is paying the fragility without buying the
+// precision — where what it names is a class the author could have said in a
+// word.
+//
+// Two triggers, both about what the names DEPEND on rather than what they say:
+//
+//   - The list is entirely read-only tools. Then "reach: read" expresses the
+//     same intent, and keeps expressing it when this machine is carried to
+//     another agent, another deployment, or the same agent after an MCP server
+//     reconnects under different names.
+//   - The list names a tool that exists only while something else is true — an
+//     MCP server is connected, an attachment is in place. Those are the names
+//     that stop resolving with nobody having edited the machine.
+//
+// Silent otherwise, which is most steps. Advice that fires on a correct
+// configuration is advice people learn to scroll past, and it takes the
+// findings that matter down with it.
+func reachAdvice(udb Database, user string, def MachineDef) []string {
+	named := false
+	for _, p := range def.Phases {
+		if len(p.Tools) > 0 && PhaseReach(p) == ReachAll {
+			named = true
+			break
+		}
+	}
+	if !named {
+		return nil
+	}
+	caps, dynamic := toolCapIndex(user, def)
+	var out []string
+	for _, p := range def.Phases {
+		if len(p.Tools) == 0 || PhaseReach(p) != ReachAll {
+			continue
+		}
+		allRead, anyDynamic, known := true, false, 0
+		var fragile []string
+		for _, n := range p.Tools {
+			n = strings.TrimSpace(n)
+			if n == "" || n == NoToolsMarker {
+				continue
+			}
+			cs, ok := caps[n]
+			if !ok {
+				continue // a name nothing answers to is the other check's business
+			}
+			known++
+			if !capsAreReadOnly(cs) {
+				allRead = false
+			}
+			if dynamic[n] {
+				anyDynamic = true
+				fragile = append(fragile, n)
+			}
+		}
+		if known == 0 {
+			continue
+		}
+		switch {
+		case anyDynamic:
+			out = append(out, "step "+p.Name+" names "+strings.Join(fragile, ", ")+
+				" — names that exist only while the server or attachment behind them does. A reach "+
+				"(\"read\", \"none\") says what the step may DO without depending on what happens to be connected.")
+		case allRead && known > 1:
+			out = append(out, "step "+p.Name+" names "+strconv.Itoa(known)+
+				" tools that all only read. If what you mean is \"this step may look, not act\", reach \"read\" "+
+				"says it in a word and keeps saying it on another agent — the list grants exactly these and "+
+				"nothing else, which is narrower, so keep it if that is the point.")
+		}
+	}
+	return out
+}
+
+// toolCapIndex maps a tool name to its declared capabilities, and marks the
+// ones whose existence is conditional — minted by an MCP server that has to be
+// connected, or by an attachment on one agent.
+//
+// Both halves come from the same walk, because they answer one question about
+// each name: what does it let a step do, and will it still be there tomorrow.
+func toolCapIndex(user string, def MachineDef) (map[string][]Capability, map[string]bool) {
+	caps := make(map[string][]Capability, 256)
+	dynamic := map[string]bool{}
+	for _, ct := range RegisteredChatTools() {
+		caps[ct.Name()] = ChatToolCaps(ct)
+		// An MCP proxy is registered like anything else, and disappears the
+		// same way its server does.
+		if strings.HasPrefix(ToolCategory(ct), MCPToolCategory("")+":") {
+			dynamic[ct.Name()] = true
+		}
+	}
+	sess := &ToolSession{Username: user}
+	for _, td := range Secure().BuildTools(sess) {
+		caps[td.Tool.Name] = td.Tool.Caps
+	}
+	// Attachment-minted names: per agent, so a machine carried elsewhere may
+	// not find them at all.
+	for _, g := range ReferenceGroups(user) {
+		for _, it := range g.Items {
+			for _, td := range ReferenceItemTools(user, g.Kind, it.ID) {
+				caps[td.Tool.Name] = td.Tool.Caps
+				dynamic[td.Tool.Name] = true
+			}
+		}
+	}
+	return caps, dynamic
+}
+
+// capsAreReadOnly reports whether a tool only reads. An UNANNOTATED tool
+// (empty Caps) is not read-only for this purpose: the whole point of the
+// advice is that the author can trust the word, and guessing "probably fine"
+// about a tool nobody classified is how a step that posts ends up inside
+// "this step may look, not act".
+func capsAreReadOnly(cs []Capability) bool {
+	if len(cs) == 0 {
+		return false
+	}
+	for _, c := range cs {
+		if c != CapRead {
+			return false
+		}
+	}
+	return true
 }

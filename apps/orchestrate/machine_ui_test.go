@@ -756,7 +756,7 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 		t.Error("the counted form should be the same on both sides")
 	}
 	if !strings.Contains(src, "the steps read as instructions rather than specifications.") ||
-		!strings.Contains(adviceHTML(clean), "the steps read as instructions rather than specifications.") {
+		!strings.Contains(adviceHTML(nil, "u", clean), "the steps read as instructions rather than specifications.") {
 		t.Error("the empty-advice sentence should be the same on both sides")
 	}
 
@@ -894,8 +894,8 @@ func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
 	if !strings.Contains(html, `href="#log"`) {
 		t.Errorf("the finding about \"log\" should open it:\n%s", html)
 	}
-	if !strings.Contains(adviceHTML(def), `href="#log-check"`) {
-		t.Errorf("and the advice about \"log check\" should open THAT step:\n%s", adviceHTML(def))
+	if !strings.Contains(adviceHTML(nil, "u", def), `href="#log-check"`) {
+		t.Errorf("and the advice about \"log check\" should open THAT step:\n%s", adviceHTML(nil, "u", def))
 	}
 	// The label is only the step, not the whole finding.
 	if !strings.Contains(html, `>step log</a>`) {

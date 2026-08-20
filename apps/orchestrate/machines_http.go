@@ -639,7 +639,17 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 			}
 			Log("[orchestrate.machines] user=%q machine %q: %s %q", user, def.Name,
 				chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
-			writeJSON(w, map[string]any{"ok": true})
+			// Said on the way IN only: detaching cannot leave a gap, and a
+			// warning attached to the act of removing something reads as an
+			// objection to removing it.
+			gaps := []string{}
+			if *one.On {
+				gaps = machineAttachGaps(udb, user, def, ag)
+				for _, g := range gaps {
+					Log("[orchestrate.machines] preflight: %s", g)
+				}
+			}
+			writeJSON(w, map[string]any{"ok": true, "gaps": gaps})
 			return
 		}
 		var body struct {
@@ -773,8 +783,39 @@ func machineAgentPills(udb Database, user string, def MachineDef) map[string]any
 			"key": ag.ID, "label": label, "on": ag.Machine == def.ID,
 		})
 	}
-	return map[string]any{
-		"items": items,
-		"note":  "An agent runs one machine at a time, so switching one on moves it off whatever it was running. Sessions already open keep the machine they started with.",
+	note := "An agent runs one machine at a time, so switching one on moves it off whatever it was running. Sessions already open keep the machine they started with."
+	// The preflight. The pills reload after every toggle, so attaching a
+	// machine to an agent that cannot reach what its steps name says so
+	// immediately — where the decision is being made, by the person making
+	// it. The alternative was a turnDiag on the first message, hours later,
+	// phrased as a tool that had gone missing.
+	if gaps := machineAttachGapsForAll(udb, user, def); len(gaps) > 0 {
+		note += "\n\n⚠ " + strings.Join(gaps, "\n⚠ ")
 	}
+	return map[string]any{"items": items, "note": note}
+}
+
+// machineAttachGapsForAll is the preflight over every agent currently
+// attached. One line per (step, agent) pair that cannot work, and nothing at
+// all when they all can — a warning that appears on healthy configurations is
+// one people learn to scroll past.
+func machineAttachGapsForAll(udb Database, user string, def MachineDef) []string {
+	named := false
+	for _, p := range def.Phases {
+		if len(p.Tools) > 0 {
+			named = true
+			break
+		}
+	}
+	if !named {
+		return nil // nothing names a tool; nothing can be missing one
+	}
+	var out []string
+	for _, ag := range listAgents(udb, user) {
+		if ag.Machine != def.ID {
+			continue
+		}
+		out = append(out, machineAttachGaps(udb, user, def, ag)...)
+	}
+	return out
 }

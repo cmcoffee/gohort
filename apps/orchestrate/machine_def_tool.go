@@ -365,7 +365,7 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 // Same functions behind both surfaces, so the tool cannot report a
 // different machine than the page does.
 func (t *chatTurn) machineFindingsNote(def MachineDef) string {
-	return machineFindingsText(unknownPhaseToolFindings(t.udb, t.user, def), def.Advice())
+	return machineFindingsText(unknownPhaseToolFindings(t.udb, t.user, def), machineAdvice(t.udb, t.user, def))
 }
 
 // machineFindingsText is the wording, split from the gathering so the
