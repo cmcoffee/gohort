@@ -515,6 +515,51 @@ func attachedSourceToolOptions(user string) []ui.SelectOption {
 	return out
 }
 
+// approvableToolOptions is the pool worth PRE-APPROVING: the tools that would
+// otherwise stop and ask.
+//
+// Read-only tools never prompt, so listing one grants nothing and reads as
+// though it did. Filtering them out is not tidiness — it is the difference
+// between a list of decisions somebody made and a list that also contains
+// seven that had no effect.
+//
+// A tool declaring NO capabilities stays in. The point of this list is
+// unattended execution, and "nobody classified it" is not evidence that it is
+// safe to run at 3am without asking.
+func approvableToolOptions(user string) []ui.SelectOption {
+	caps, _ := toolCapIndex(user)
+	var out []ui.SelectOption
+	for _, o := range availableWorkerToolOptions(user) {
+		if cs, known := caps[o.Value]; known && capsAreReadOnly(cs) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// keepUnofferedValues appends an option for every stored value the offered
+// list does not carry, so a checklist cannot silently drop what it cannot
+// show. The broken-dependency posture, in the one place all the checklists
+// share: keep it, label it, and let somebody untick it on purpose.
+func keepUnofferedValues(offered []ui.SelectOption, current []string, group, help string) []ui.SelectOption {
+	known := make(map[string]bool, len(offered))
+	for _, o := range offered {
+		known[o.Value] = true
+	}
+	out := offered
+	for _, name := range current {
+		if name = strings.TrimSpace(name); name == "" || known[name] {
+			continue
+		}
+		known[name] = true
+		out = append(out[:len(out):len(out)], ui.SelectOption{
+			Value: name, Label: name, Group: group, Help: help,
+		})
+	}
+	return out
+}
+
 // phaseToolOptions is the pool a PHASE or a pipeline STAGE may narrow to:
 // the worker catalog plus what this user's attached sources mint.
 //

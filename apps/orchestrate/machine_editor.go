@@ -204,23 +204,9 @@ func toolChecklistOptions(offered []ui.SelectOption, current []string) []ui.Sele
 		Group: "Nothing",
 		Help:  "This step only decides or reshapes what it was given. Wins over anything else ticked below.",
 	}}, offered...)
-	known := make(map[string]bool, len(offered))
-	for _, o := range offered {
-		known[o.Value] = true
-	}
-	out := offered
-	for _, name := range current {
-		if name = strings.TrimSpace(name); name == "" || known[name] {
-			continue
-		}
-		known[name] = true
-		out = append(out[:len(out):len(out)], ui.SelectOption{
-			Value: name, Label: name,
-			Group: "Named by this machine, not available here",
-			Help:  "kept so a save does not lose it; uncheck to drop it",
-		})
-	}
-	return out
+	return keepUnofferedValues(offered, current,
+		"Named by this machine, not available here",
+		"kept so a save does not lose it; uncheck to drop it")
 }
 
 // phasePanels builds one editing panel per phase, each carrying the

@@ -324,7 +324,7 @@ func reachAdvice(udb Database, user string, def MachineDef) []string {
 	if !named {
 		return nil
 	}
-	caps, dynamic := toolCapIndex(user, def)
+	caps, dynamic := toolCapIndex(user)
 	var out []string
 	for _, p := range def.Phases {
 		if len(p.Tools) == 0 || PhaseReach(p) != ReachAll {
@@ -372,9 +372,13 @@ func reachAdvice(udb Database, user string, def MachineDef) []string {
 // ones whose existence is conditional — minted by an MCP server that has to be
 // connected, or by an attachment on one agent.
 //
+// Scoped to the USER rather than to any one machine or agent: what a name is
+// allowed to DO is a property of the tool, and every caller asking that
+// question wants the same answer.
+//
 // Both halves come from the same walk, because they answer one question about
 // each name: what does it let a step do, and will it still be there tomorrow.
-func toolCapIndex(user string, def MachineDef) (map[string][]Capability, map[string]bool) {
+func toolCapIndex(user string) (map[string][]Capability, map[string]bool) {
 	caps := make(map[string][]Capability, 256)
 	dynamic := map[string]bool{}
 	for _, ct := range RegisteredChatTools() {

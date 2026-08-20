@@ -1394,8 +1394,16 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 								Placeholder: "e.g. Calendar, Moltbook, Research",
 								Suggestions: knownToolCategories(AuthDB(), user),
 								Help:        "Reuse an existing name to add to that category, or type a new one."},
-							{Field: "tools", Type: "tags", Label: "Tools",
-								Help: "Tool names to file under it. You can also fill it from the Choose tools action once it exists."},
+							// Ticked, not typed: these are tools that already
+							// exist, and a name that misses files nothing under
+							// the category — which then does not appear at all,
+							// because a category exists only where tools point
+							// at it. The failure is a category that seems not to
+							// have saved.
+							{Field: "tools", Type: "checklist", Label: "Tools",
+								Options:     userToolCheckOptions(user),
+								Placeholder: "(you have no tools to file yet)",
+								Help:        "Tick what belongs under this heading. At least one — a category with nothing pointing at it has nothing to show. You can change the set later from Choose tools."},
 						},
 						Invalidate: []string{"api/tool-categories", "api/tools"},
 					},
@@ -1870,6 +1878,72 @@ const toolAccessPillsJS = `function(ctx){
 // or the categories people actually want never get created; the suggestion
 // list only exists so the same category doesn't get coined three times with
 // three spellings.
+// toolPick is one tool as a picker offers it: its name, and where it sits now.
+type toolPick struct{ Name, Desc string }
+
+// userPickableTools is every tool this user could file under a category, sorted
+// by name, with the category it currently belongs to folded into the
+// description — so moving one between categories is a visible choice rather
+// than a silent steal.
+//
+// One walk, two renderings: the live options endpoint the row picker fetches,
+// and the checklist on the create form. They named the same set through two
+// pieces of code before, which is how a tool ends up offered in one place and
+// missing from the other.
+func userPickableTools(user, exceptCategory string) []toolPick {
+	var out []toolPick
+	seen := map[string]bool{}
+	add := func(n, desc, cat string) {
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		if c := strings.TrimSpace(cat); c != "" && !strings.EqualFold(c, exceptCategory) {
+			desc = strings.TrimSpace("currently in " + c + " · " + desc)
+		}
+		out = append(out, toolPick{Name: n, Desc: desc})
+	}
+	// Shared rows here; agent-scoped rows below (same unified store — the seen
+	// map would dedup either way, but keep the sourcing symmetric with the
+	// category listers).
+	for _, p := range SharedUserTools(AuthDB(), user) {
+		add(p.Tool.Name, p.Tool.Description, p.Tool.Category)
+	}
+	for _, st := range ListScopedTools(user) {
+		if st.Shadowed || st.Scope != ScopeAgentTool {
+			continue
+		}
+		add(st.Tool.Name, st.Tool.Description, st.Tool.Category)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+// userToolCheckOptions is that list as a form checklist.
+func userToolCheckOptions(user string) []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, t := range userPickableTools(user, "") {
+		out = append(out, ui.SelectOption{Value: t.Name, Label: t.Name, Help: firstLineOf(t.Desc)})
+	}
+	return out
+}
+
+// firstLineOf clips a tool description to its lede: a checklist row is one
+// line, and a paragraph in it pushes the next tool off the screen.
+func firstLineOf(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			if len(ln) > 120 {
+				return ln[:120] + "…"
+			}
+			return ln
+		}
+	}
+	return ""
+}
+
 func knownToolCategories(db Database, user string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -2008,34 +2082,9 @@ func (T *Gateways) handleUserToolCategories(w http.ResponseWriter, r *http.Reque
 				Desc  string `json:"desc,omitempty"`
 			}
 			opts := []opt{}
-			seen := map[string]bool{}
-			addOpt := func(n, desc, cat string) {
-				if n == "" || seen[n] {
-					return
-				}
-				seen[n] = true
-				// Show where a tool currently sits, so moving one between
-				// categories is a visible choice rather than a silent steal.
-				if c := strings.TrimSpace(cat); c != "" && !strings.EqualFold(c, name) {
-					desc = strings.TrimSpace("currently in " + c + " · " + desc)
-				}
-				opts = append(opts, opt{Value: n, Label: n, Desc: desc})
+			for _, t := range userPickableTools(user, name) {
+				opts = append(opts, opt{Value: t.Name, Label: t.Name, Desc: t.Desc})
 			}
-			// Shared rows here; agent-scoped rows come from ListScopedTools
-			// below (same unified store — addOpt's seen map would dedup, but
-			// keep the sourcing symmetric with the category listers).
-			for _, p := range SharedUserTools(AuthDB(), user) {
-				addOpt(p.Tool.Name, p.Tool.Description, p.Tool.Category)
-			}
-			for _, st := range ListScopedTools(user) {
-				if st.Shadowed || st.Scope != ScopeAgentTool {
-					continue
-				}
-				addOpt(st.Tool.Name, st.Tool.Description, st.Tool.Category)
-			}
-			sort.Slice(opts, func(i, j int) bool {
-				return strings.ToLower(opts[i].Label) < strings.ToLower(opts[j].Label)
-			})
 			writeJSON(w, opts)
 			return
 		}

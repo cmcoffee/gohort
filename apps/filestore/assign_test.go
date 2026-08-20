@@ -106,3 +106,46 @@ func TestUntickingTheLastUserClearsTheList(t *testing.T) {
 		t.Error("with nobody assigned, everybody reaches it")
 	}
 }
+
+// An action is added from the store's own row, so the handle comes from the
+// row rather than being read off another column and retyped. The URL is what
+// says which store; a body that disagrees loses.
+func TestAnActionTakesItsStoreFromTheURL(t *testing.T) {
+	app := assignFixture(t)
+	body, _ := json.Marshal(map[string]any{
+		// No slug in the body at all — the form no longer asks for one.
+		"name": "decrypt", "label": "Decrypt bundle", "command": "/bin/true",
+	})
+	r := httptest.NewRequest("POST", "/filestore/api/actions?slug=support_bundles", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+	app.handleActions(w, asStoreAdmin(t, r))
+	if w.Code != http.StatusOK {
+		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
+	}
+	acts := actionsOf(app, "support_bundles")
+	if len(acts) != 1 || acts[0].Name != "decrypt" {
+		t.Fatalf("the action should be filed under the store from the URL: %+v", acts)
+	}
+
+	// And a body naming a different store does not win: the row somebody
+	// clicked is the more explicit statement of which store this is for.
+	other, _ := json.Marshal(map[string]any{
+		"slug": "somewhere_else", "name": "redact", "label": "Redact", "command": "/bin/true",
+	})
+	r2 := httptest.NewRequest("POST", "/filestore/api/actions?slug=support_bundles", strings.NewReader(string(other)))
+	app.handleActions(httptest.NewRecorder(), asStoreAdmin(t, r2))
+	if got := actionsOf(app, "support_bundles"); len(got) != 2 {
+		t.Errorf("the URL's store should have taken it, got %d action(s)", len(got))
+	}
+}
+
+// actionsOf is the store's actions, since the lister is deployment-wide.
+func actionsOf(app *FileStoreApp, slug string) []StoreAction {
+	var out []StoreAction
+	for _, a := range ListStoreActions(app.DB) {
+		if a.Slug == slug {
+			out = append(out, a)
+		}
+	}
+	return out
+}

@@ -268,7 +268,21 @@ func credentialFormFields() []ui.FormField {
 		// honored by the runtime fallback.)
 		{Field: "insecure_skip_tls", Label: "Allow self-signed / skip TLS verification", Type: "toggle", Help: "Turn ON only for LAN appliances with self-signed certs or hosts addressed by IP (e.g. an OPNsense box at https://192.168.0.1, where no cert can validate). Disables certificate checking for THIS credential's requests only. Leave OFF for public internet APIs."},
 		{Field: "denied_url_patterns", Label: "Denied URL patterns", Type: "tags", Help: "Optional explicit denies, checked before the allow pattern."},
-		{Field: "allowed_methods", Label: "Allowed methods", Type: "tags", Help: "e.g. GET, POST. Blank = all methods allowed."},
+		// A closed set, so it is ticked rather than typed. As free text it
+		// invited "Get" and "POST " — values that match nothing, narrowing a
+		// credential to less than the admin believed while reading as though
+		// they had granted it.
+		{Field: "allowed_methods", Label: "Allowed methods", Type: "checklist",
+			Options: []ui.SelectOption{
+				{Value: "GET", Label: "GET", Help: "read"},
+				{Value: "HEAD", Label: "HEAD", Help: "read, headers only"},
+				{Value: "OPTIONS", Label: "OPTIONS", Help: "read, capability probe"},
+				{Value: "POST", Label: "POST", Help: "create or invoke"},
+				{Value: "PUT", Label: "PUT", Help: "replace"},
+				{Value: "PATCH", Label: "PATCH", Help: "modify"},
+				{Value: "DELETE", Label: "DELETE", Help: "remove"},
+			},
+			Help: "Which HTTP methods this credential may use. NONE CHECKED = all of them, which is the default — tick some to narrow it, most usefully to the read-only three when a credential exists to fetch and nothing else."},
 		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},
 		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one dispatched call through this credential, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "The escalation tier. ON: every agent call through this credential renders an Allow once / Deny card in the chat and waits for the session owner; headless runs (channel wakes, schedules) are denied outright. Use for services that reach real people (messaging) or spend money. OFF: calls dispatch silently — right for an agent's own low-stakes accounts."},

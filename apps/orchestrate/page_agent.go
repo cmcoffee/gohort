@@ -242,8 +242,18 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		leadModelField(T.HasDistinctLead() && !leadModelLocked),
 		{Type: "header", Label: "Autonomous runs", Collapsed: true,
 			Help: "What this agent may do on a scheduled/standing fire, when no one is present to click Approve."},
-		{Field: "auto_approve_tools", Type: "tags", Label: "Pre-approved tools",
-			Help: "Tool names this agent — and its sub-agents, by inheritance — may call on a SCHEDULED/standing run WITHOUT a per-call approval prompt. Add the consequential tools you trust it to run unattended (a credential-backed tool, a channel send). Anything not listed is refused on the first unattended fire and queued in the Permissions pane (approving it there adds it here). Read-only tools never prompt, so you don't need to list them."},
+		// Ticked, not typed. A misspelling here grants nothing and looks
+		// exactly like a grant: the tool is refused on the first unattended
+		// fire, at whatever hour that run is scheduled for, and the list in
+		// front of the person still reads as though they had allowed it.
+		//
+		// Only the tools that WOULD stop and ask are offered. Read-only ones
+		// never prompt, so listing one is a decision with no effect, and a
+		// list of those is harder to read than a short one.
+		{Field: "auto_approve_tools", Type: "checklist", Label: "Pre-approved tools",
+			Options:     approvableToolOptions(user),
+			Placeholder: "(nothing here prompts for approval)",
+			Help:        "What this agent — and its sub-agents, by inheritance — may call on a SCHEDULED or standing run WITHOUT a per-call approval prompt. Tick the consequential tools you trust it to run unattended (a credential-backed tool, a channel send). Anything unticked is refused on the first unattended fire and queued in the Permissions pane, and approving it there ticks it here. Read-only tools never prompt and are not listed."},
 	}
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST

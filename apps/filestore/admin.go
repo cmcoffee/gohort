@@ -66,6 +66,16 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// ui.ACLPicker is the shared shape for exactly this — the
 					// same editor credentials, tools and shared agents use, so
 					// "+ Add user" means one thing across the admin page.
+					// Added from the STORE it belongs to, so the handle comes
+					// from the row. It used to be a page-level button whose
+					// first field asked for the handle, with help telling you
+					// to read it off the Agent tools column and copy it — a
+					// value already on screen, retyped, and wrong when mistyped.
+					ui.Expand("Add action", ui.FormPanel{
+						PostURL:     "/filestore/api/actions?slug={slug}",
+						SubmitLabel: "Add action",
+						Fields:      actionFormFields(),
+					}),
 					ui.Expand("Assigned to", ui.ACLPicker(ui.ACLPickerConfig{
 						OptionsSource: "/admin/api/user-candidates",
 						RecordSource:  "/filestore/api/stores?slug={slug}",
@@ -102,18 +112,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						Confirm:    "Remove this action? The binary is left alone; the button for it disappears.",
 						Optimistic: true},
 				},
-				EmptyText: "No actions yet. An action is a command that runs against ONE folder — decrypt it, redact it, unpack a proprietary container, build an index — after which the files are ready to read.",
-			},
-			ui.ModalButton{
-				Label:    "Add action",
-				Title:    "Add a file action",
-				Subtitle: "A command that runs against one folder of a store. It receives the folder as its first argument, and (for a two-phase action) whatever the person supplies as its second. No shell: nothing in either argument can become syntax.",
-				Width:    "560px",
-				Body: ui.FormPanel{
-					PostURL:     "/filestore/api/actions",
-					SubmitLabel: "Add action",
-					Fields:      actionFormFields(),
-				},
+				EmptyText: "No actions yet — add one from a store's row above. An action is a command that runs against ONE folder — decrypt it, redact it, unpack a proprietary container, build an index — after which the files are ready to read.",
 			},
 			ui.ModalButton{
 				Label:    "Add file store",
@@ -134,8 +133,6 @@ func (T *FileStoreApp) adminSection() ui.Section {
 // actionFormFields is the add form for a store action.
 func actionFormFields() []ui.FormField {
 	return []ui.FormField{
-		{Field: "slug", Type: "text", Label: "Store (handle)", Placeholder: "support_bundles",
-			Help: "The store's handle, from the Agent tools column above — not its display name."},
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "decrypt",
 			Help: "Short handle for the action, snake_case. It is how the endpoint names it."},
 		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Decrypt bundle",
@@ -374,6 +371,14 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
+		}
+		// The store comes from the ROW the action is being added on, so
+		// nobody types a handle. A body slug still works — the API is
+		// addressable on its own — but the URL wins, because a caller that
+		// named a store in the path has said which one more explicitly than
+		// a field carried along inside the payload.
+		if s := strings.TrimSpace(r.URL.Query().Get("slug")); s != "" {
+			a.Slug = s
 		}
 		saved, err := SaveStoreAction(T.DB, a)
 		if err != nil {
