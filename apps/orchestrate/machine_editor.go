@@ -958,14 +958,32 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 		// where it can act: with the reach set to nothing there is
 		// nothing left to narrow, and a control that cannot do anything
 		// is a control somebody will spend time on anyway.
-		ui.FormField{Type: "header", Label: "Narrow by name (advanced)",
-			ShowWhen: "reach:!none"},
+		//
+		// Folded away while it holds nothing, so the reach above it reads
+		// as the control and a hundred-row checklist does not bury it —
+		// and OPEN the moment it holds something, because a restriction
+		// you cannot see is the failure this whole panel came out of.
+		// Same rule the groups inside it follow.
+		ui.FormField{Type: "header", Label: nameNarrowingLabel(p),
+			Collapsed: len(p.Tools) == 0,
+			ShowWhen:  "reach:!none"},
 		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p),
 			ShowWhen:    "reach:!none",
 			Options:     toolChecklistOptions(cat.tools, p.Tools),
 			Placeholder: "(no tools to offer)",
 			Help:        toolsHelp(p)},
 	}
+}
+
+// nameNarrowingLabel titles the by-name section, carrying its count when
+// it has one. A collapsed header that says only "advanced" is a drawer
+// with no label on the front; one that says "3 named" is a statement
+// about this step that can be read without opening anything.
+func nameNarrowingLabel(p MachinePhase) string {
+	if n := len(p.Tools); n > 0 {
+		return "Narrow by name — " + strconv.Itoa(n) + " named"
+	}
+	return "Narrow by name (advanced)"
 }
 
 // phaseShowsTools decides whether the tool panel is rendered at all.

@@ -1764,3 +1764,42 @@ func TestRoutingIsExposedAndTheToolLimitCollapses(t *testing.T) {
 		t.Errorf("a collapsed limit must still say it is set: %q", head.Label)
 	}
 }
+
+// The by-name checklist is the advanced half of the tool panel: folded away
+// while it holds nothing, so the reach selector above it reads as the control
+// rather than as a preamble to a hundred rows. But a step that HAS named tools
+// is a step under a restriction, and a restriction nobody can see is the
+// failure the whole panel came out of — so it opens, and its header says how
+// many even before you look.
+func TestByNameNarrowingFoldsAwayUntilItHoldsSomething(t *testing.T) {
+	find := func(p MachinePhase) ui.FormField {
+		for _, f := range phaseToolFields(p, editorCatalog{}) {
+			if f.Type == "header" && strings.Contains(f.Label, "Narrow by name") {
+				return f
+			}
+		}
+		t.Fatalf("the by-name header is missing from the panel")
+		return ui.FormField{}
+	}
+
+	empty := find(MachinePhase{Name: "scan"})
+	if !empty.Collapsed {
+		t.Error("an empty name list should start folded")
+	}
+	if !strings.Contains(empty.Label, "advanced") {
+		t.Errorf("an empty one should read as the advanced option: %q", empty.Label)
+	}
+
+	named := find(MachinePhase{Name: "scan", Tools: []string{"read_file", "web_search"}})
+	if named.Collapsed {
+		t.Error("a step that names tools is restricted; that must not be hidden behind a caret")
+	}
+	if !strings.Contains(named.Label, "2 named") {
+		t.Errorf("the header should say what it holds: %q", named.Label)
+	}
+
+	// And it stays out of the way entirely where it cannot act.
+	if got := find(MachinePhase{Name: "triage"}).ShowWhen; got != "reach:!none" {
+		t.Errorf("the section should be gated on the reach, got %q", got)
+	}
+}

@@ -666,33 +666,9 @@
  * generic ui-checklist-group is a single line header; we add an
  * orchestrate-specific override that turns it into a clickable row
  * with a caret + master checkbox alongside the label. */
-.ui-checklist-section { margin-top: 0.4rem; }
-.ui-checklist-section:first-child { margin-top: 0; }
-.ui-checklist-group-collapsible {
-  display: flex; align-items: center; gap: 0.4rem;
-  cursor: pointer; user-select: none;
-  padding: 0.35rem 0.3rem;
-  border-radius: 3px;
-  margin-top: 0; margin-bottom: 0;
-  font-size: 0.78rem;
-  text-transform: none; letter-spacing: 0;
-  color: var(--text);
-}
-.ui-checklist-group-collapsible:hover { background: var(--bg-1); }
-.ui-checklist-caret {
-  width: 0.9rem; text-align: center;
-  color: var(--text-mute); font-size: 0.7rem;
-  flex-shrink: 0;
-}
-.ui-checklist-master { margin: 0; flex-shrink: 0; }
-.ui-checklist-group-name {
-  color: var(--text-hi); font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.04em;
-  font-size: 0.72rem;
-}
-.ui-checklist-section-body {
-  padding-left: 1.4rem; /* indent rows under their group header */
-}
+/* The tree's own rules now live in core/ui/assets/runtime.css, where the
+ * generic checklist field builds the same shape from the same class names.
+ * Only what is specific to THIS modal stays here. */
 
 /* Standing-agent / monitor report card — a message that arrived on its own
  * (not a back-and-forth turn) reads as a distinct titled card, not a chat

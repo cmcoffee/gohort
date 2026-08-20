@@ -2158,6 +2158,7 @@
             if (selected[String(o.value)]) out.push(o.value);
           });
           refreshCount();
+          refreshGroups();
           save(f.field, out);
         }
         var toolbar = el('div', {class: 'ui-checklist-toolbar'});
@@ -2174,21 +2175,31 @@
           filterBox.style.cssText = 'flex:1;min-width:8rem;font-size:0.8rem;padding:0.2rem 0.5rem';
           filterBox.addEventListener('input', function() {
             var q = filterBox.value.trim().toLowerCase();
-            var visibleByHeader = new Map();
             rowIndex.forEach(function(e) {
-              var show = !q || e.text.indexOf(q) >= 0;
-              e.row.style.display = show ? '' : 'none';
-              if (e.header) visibleByHeader.set(e.header, (visibleByHeader.get(e.header) || false) || show);
+              e.row.style.display = (!q || e.text.indexOf(q) >= 0) ? '' : 'none';
             });
-            // A header with nothing under it is noise, not orientation.
-            visibleByHeader.forEach(function(any, h) { h.style.display = any ? '' : 'none'; });
+            // A group with nothing under it is noise, not orientation — the
+            // whole section goes, header and body together. And while a
+            // query is live every surviving group opens: filtering to find
+            // something and then having to open the group it is in is the
+            // search done twice.
+            groups.forEach(function(g) {
+              var any = g.entries.some(function(en) { return en.row.style.display !== 'none'; });
+              g.header.parentNode.style.display = any ? '' : 'none';
+              if (any && q) setGroupOpen(g, true);
+              if (!q) setGroupOpen(g, g.entries.some(function(en) { return selected[en.value]; }));
+            });
           });
         }
         var allBtn = el('button', {type: 'button', class: 'ui-checklist-toolbtn'}, ['Select all']);
         var noneBtn = el('button', {type: 'button', class: 'ui-checklist-toolbtn'}, ['Clear']);
-        // Both act on the rows you can SEE. With no filter that is all
-        // of them, the old behaviour; with one, "Select all" must not
+        // Both act on the rows the FILTER left standing. With no filter that
+        // is all of them, the old behaviour; with one, "Select all" must not
         // check a hundred hidden rows the person never looked at.
+        //
+        // Collapsing deliberately does NOT count as hidden. A closed group is
+        // a reading choice, and "collapse everything, press Select all,
+        // nothing happens" would be a control quietly doing nothing.
         function eachVisible(fn) {
           rowIndex.forEach(function(e) {
             if (e.row.style.display !== 'none') fn(e);
@@ -2208,35 +2219,73 @@
         toolbar.appendChild(countEl);
         input.appendChild(toolbar);
 
-        // groupToggle is the header's own select-all. One connected MCP
-        // server publishes dozens of tools under its own name, so the
-        // global "Select all" is the wrong grain and filtering to reach
-        // it is two steps for something the header can do in one. Acts
-        // on the group's VISIBLE rows, same rule the toolbar follows.
-        function groupToggle(header) {
-          var btn = el('button', {type: 'button', class: 'ui-checklist-toolbtn ui-checklist-grouptoggle'}, ['all']);
-          btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            var mine = [];
-            rowIndex.forEach(function(en) {
-              if (en.header === header && en.row.style.display !== 'none') mine.push(en);
+        // A group is a TREE NODE: caret, tri-state master, name, count, and
+        // a body holding its rows. One connected MCP server publishes dozens
+        // of tools under its own name, so a flat list is a scroll where this
+        // is a glance — and the same shape the agent Tools modal built by
+        // hand in its own package, which is the sign it belonged here.
+        //
+        // Groups with something selected start OPEN, the rest closed. A
+        // restriction you cannot see without opening something is the whole
+        // failure this control came out of; a group you have not touched is
+        // just noise until you go looking for it.
+        var groups = []; // {header, body, caret, master, entries[], open}
+        function refreshGroup(g) {
+          var on = 0;
+          g.entries.forEach(function(en) { if (selected[en.value]) on++; });
+          if (g.master) {
+            g.master.checked = on === g.entries.length && on > 0;
+            g.master.indeterminate = on > 0 && on < g.entries.length;
+          }
+          if (g.count) g.count.textContent = on ? on + ' / ' + g.entries.length : '';
+        }
+        function refreshGroups() { groups.forEach(refreshGroup); }
+        function setGroupOpen(g, open) {
+          g.open = open;
+          g.body.style.display = open ? '' : 'none';
+          g.caret.textContent = open ? '▾' : '▸';
+        }
+        function makeGroup(name) {
+          var caret = el('span', {class: 'ui-checklist-caret'}, ['▸']);
+          var master = el('input', {type: 'checkbox', class: 'ui-checklist-cb ui-checklist-master'});
+          var count = el('span', {class: 'ui-checklist-group-count'});
+          var header = el('div', {class: 'ui-checklist-group ui-checklist-group-collapsible'}, [
+            caret, master, el('span', {class: 'ui-checklist-group-name'}, [name]), count]);
+          var body = el('div', {class: 'ui-checklist-section-body'});
+          var section = el('div', {class: 'ui-checklist-section'}, [header, body]);
+          var g = {header: header, body: body, caret: caret, master: master,
+            count: count, entries: [], open: true};
+          // The master takes the whole group, VISIBLE rows only — same rule
+          // the toolbar follows, so filtering never checks a row nobody saw.
+          master.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            var want = master.checked;
+            g.entries.forEach(function(en) {
+              if (en.row.style.display === 'none') return;
+              selected[en.value] = want;
+              en.cb.checked = want;
             });
-            var anyOff = mine.some(function(en) { return !selected[en.value]; });
-            mine.forEach(function(en) { selected[en.value] = anyOff; en.cb.checked = anyOff; });
             persist();
           });
-          return btn;
+          header.addEventListener('click', function(ev) {
+            if (ev.target === master) return;
+            setGroupOpen(g, !g.open);
+          });
+          groups.push(g);
+          input.appendChild(section);
+          return g;
         }
         var lastGroup = '__init__';
         var lastHeader = null;
+        var currentGroup = null;
         checkOpts.forEach(function(o) {
           var grp = o.group || '';
           if (grp !== lastGroup) {
             lastHeader = null;
+            currentGroup = null;
             if (grp) {
-              lastHeader = el('div', {class: 'ui-checklist-group'}, [el('span', {}, [grp])]);
-              lastHeader.appendChild(groupToggle(lastHeader));
-              input.appendChild(lastHeader);
+              currentGroup = makeGroup(grp);
+              lastHeader = currentGroup.header;
             }
             lastGroup = grp;
           }
@@ -2258,8 +2307,22 @@
             lbl.appendChild(el('span', {class: 'ui-checklist-help'}, [o.help]));
           }
           row.appendChild(lbl);
-          input.appendChild(row);
+          if (currentGroup) {
+            currentGroup.entries.push(entry);
+            currentGroup.body.appendChild(row);
+          } else {
+            // Ungrouped rows keep the flat shape: a checklist whose options
+            // carry no group is a list, and wrapping it in one anonymous
+            // node would indent it for nothing.
+            input.appendChild(row);
+          }
         });
+        // Open only what is already in use. Done after the rows exist so the
+        // decision is made on the real state rather than on the option list.
+        groups.forEach(function(g) {
+          setGroupOpen(g, g.entries.some(function(en) { return selected[en.value]; }));
+        });
+        refreshGroups();
         refreshCount();
       } else if (t === 'number') {
         input = el('input', {type: 'number', class: 'ui-form-input', placeholder: f.placeholder || ''});

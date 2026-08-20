@@ -219,9 +219,13 @@ func TestChecklistIsTheGroupedRendererWithAFilter(t *testing.T) {
 		t.Fatalf("expected exactly one checklist branch, found %d — a second one shadows the first", n)
 	}
 	for _, want := range []string{"ui-checklist-group", "ui-checklist-toolbar", "ui-checklist-count",
-		// A connected MCP server publishes dozens of tools under one
-		// group; the header has to be able to take them all in one go.
-		"ui-checklist-grouptoggle"} {
+		// A connected MCP server publishes dozens of tools under one group,
+		// so a group is a tree node — caret, tri-state master, count, and a
+		// body that collapses. The same shape the agent Tools modal built by
+		// hand before this was generic.
+		"ui-checklist-group-collapsible", "ui-checklist-caret",
+		"ui-checklist-master", "ui-checklist-section-body",
+		"setGroupOpen"} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the grouped renderer should be the live one; missing %q", want)
 		}
@@ -554,5 +558,32 @@ func TestAStackCanLayItsChildrenInARow(t *testing.T) {
 	}
 	if !strings.Contains(block, "justify-content: center") {
 		t.Errorf("alternatives on a line sit centred, not jammed against the left:\n%s", block)
+	}
+}
+
+// A group in the checklist has to answer, from its header alone, how much of
+// it is on — and open itself when the answer is "some of it". The control's
+// whole reason for existing is that a restriction nobody can see reads as a
+// tool that went missing, and a tree that hides its selections behind a caret
+// reintroduces exactly that.
+func TestChecklistGroupsCollapseButNeverHideASelection(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	// Selected-count on the header, computed from the live selection rather
+	// than from the option list.
+	if !strings.Contains(src, "ui-checklist-group-count") {
+		t.Error("a collapsed group must still say how many of its rows are on")
+	}
+	// Opened from the selection at build time, not defaulted shut.
+	if !strings.Contains(src, "g.entries.some(function(en) { return selected[en.value]; })") {
+		t.Error("groups holding a selection should start open")
+	}
+	// The master is tri-state: a partly-selected group must not read as off.
+	if !strings.Contains(src, "indeterminate") {
+		t.Error("a partly-selected group needs an indeterminate master")
+	}
+	// Filtering forces groups open — searching and then having to open the
+	// group the hit is in is the search done twice.
+	if !strings.Contains(src, "if (any && q) setGroupOpen(g, true)") {
+		t.Error("a live filter should open the groups that still have matches")
 	}
 }
