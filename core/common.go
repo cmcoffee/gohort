@@ -987,6 +987,14 @@ func (T *AppCore) DelegateAgent(name string, args ...string) (string, error) {
 // thinking override configured for that stage, it is applied here so
 // direct worker-session calls respect the same setting as lead-routed calls.
 func (T *AppCore) WorkerChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	// A deployment with no worker LLM configured is a real state — the
+	// machine rehearsal already checks for it by hand — and every path that
+	// forgot to check reached this line and segfaulted three frames down
+	// from the call it was really about. An error names the missing piece;
+	// a nil dereference names the last function to touch it.
+	if T == nil || T.LLM == nil {
+		return nil, Error("no worker LLM is configured")
+	}
 	var probe ChatConfig
 	for _, opt := range opts {
 		opt(&probe)

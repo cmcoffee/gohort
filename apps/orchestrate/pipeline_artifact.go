@@ -183,19 +183,36 @@ func (p *pipelineArtifact) pipelineRecipeDeps(db Database, d PipelineDef, owner 
 		seen[key] = true
 		out = append(out, ArtifactSel{Type: typ, Name: name, Owner: owner})
 	}
-	for _, s := range d.Stages {
-		if ref := strings.TrimSpace(s.Agent); ref != "" {
-			if a, ok := findAgentByNameOrID(udb, owner, ref); ok {
-				if a.OwnedBy != "" {
-					if parent, pok := loadAgent(udb, a.OwnedBy); pok {
-						a = parent
-					}
-				}
-				add("agent", strings.TrimSpace(a.Name))
-			} else if inBundle != nil && inBundle("agent", ref) {
-				add("agent", ref)
-			}
+	// Flattened, because a loop's or a fanout's body holds real stages with
+	// real references. A dependency does not stop being one by sitting a
+	// level down, and until this walk descended, importing a pipeline whose
+	// LOOP dispatched to an agent left that agent behind.
+	agentRef := func(ref string) {
+		if ref = strings.TrimSpace(ref); ref == "" {
+			return
 		}
+		if a, ok := findAgentByNameOrID(udb, owner, ref); ok {
+			if a.OwnedBy != "" {
+				if parent, pok := loadAgent(udb, a.OwnedBy); pok {
+					a = parent
+				}
+			}
+			add("agent", strings.TrimSpace(a.Name))
+			return
+		}
+		if inBundle != nil && inBundle("agent", ref) {
+			add("agent", ref)
+		}
+		// Otherwise it is a panel ROLE — a label the worker answers as,
+		// which has nothing to carry and must not be reported as a missing
+		// agent on the far side.
+	}
+	for _, s := range flattenStages(d.Stages) {
+		// A panel's voices are agent references wherever they resolve to one.
+		for _, v := range s.Panel {
+			agentRef(v)
+		}
+		agentRef(s.Agent)
 		for _, tn := range s.Tools {
 			tn = strings.TrimSpace(tn)
 			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {

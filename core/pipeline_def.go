@@ -106,6 +106,24 @@ const (
 	// run of its own; a machine phase can only run ONE child, so without
 	// this the fan is sequential.
 	StageMachine PipelineStageKind = "machine"
+
+	// StagePanel puts SEVERAL voices on the SAME question, in parallel,
+	// optionally over several rounds where each round reads what the last
+	// one said.
+	//
+	// The shape fanout and loop between them cannot express. Fanout is
+	// breadth over DATA — one prompt, N items, each branch blind to the
+	// others — and a loop is depth over TIME with one voice. A panel is
+	// breadth over PERSPECTIVE on one question: the disagreement is the
+	// product, which is why the voices have to see each other and why the
+	// stage keeps every round rather than only the last.
+	//
+	// It composes rather than concludes. There is no built-in judge: a
+	// panel emits a labeled transcript and the NEXT stage reads it, the
+	// same way decompose → fanout → synthesize works. Baking the
+	// synthesis in would make the one interesting decision — how
+	// disagreement resolves — the framework's rather than the author's.
+	StagePanel PipelineStageKind = "panel"
 )
 
 // loopMaxIterations bounds any single loop stage. A pipeline is
@@ -114,6 +132,23 @@ const (
 // this at save time, so the ceiling is a definition error rather than a
 // run-time surprise.
 const loopMaxIterations = 25
+
+// Panel bounds. Voices and rounds MULTIPLY — six voices over three rounds is
+// eighteen model calls before anything has been synthesized — so both caps are
+// deliberately small, and the stage says the multiplication out loud before it
+// pays it. Eight is more voices than a person can read the disagreement
+// between; four rounds is past where a debate stops moving.
+const (
+	panelMaxVoices = 8
+	panelMaxRounds = 4
+)
+
+// PanelMaxVoices and PanelMaxRounds are the caps as an editor states them, so
+// a form's own limits and the validator's cannot drift.
+const (
+	PanelMaxVoices = panelMaxVoices
+	PanelMaxRounds = panelMaxRounds
+)
 
 // PipelineStage is one step of a pipeline. Stages run in order; each
 // stage's output is captured under its Name and made available to
@@ -169,6 +204,16 @@ type PipelineStage struct {
 	// stages; agent stages honor their dispatched agent's own think
 	// configuration.
 	Think *bool `json:"think,omitempty"`
+	// Panel names the voices a kind="panel" stage puts on the question.
+	//
+	// An entry that resolves to one of your agents dispatches to it — its
+	// persona, its memory, its tools. An entry that does not is a ROLE: the
+	// worker answers as it, with the label substituted into the prompt as
+	// {voice}. That mixture is deliberate. A panel of perspectives ("the
+	// pessimist", "the customer") is the common case and must not require
+	// authoring three agents first; a panel of real agents is what you reach
+	// for when the perspectives need their own tools and memory.
+	Panel []string `json:"panel,omitempty"`
 	// FanOver names a prior stage whose output is a JSON array; the
 	// fanout stage runs once per element, in parallel. Phase 2.
 	// Accepts "NAME" (the whole stage output, parsed as a list) or
@@ -204,6 +249,12 @@ type PipelineStage struct {
 	// Count is how many times a loop runs: required for kind="loop",
 	// 1..loopMaxIterations. With Until set this is the CEILING rather
 	// than the exact count, which is what guarantees termination.
+	//
+	// On a kind="panel" stage it is the number of ROUNDS: how many times
+	// the voices answer, each round reading what the last one said. One
+	// (the default) is a poll; two is the smallest thing that can be
+	// called a debate, because nobody has replied to anybody until the
+	// second.
 	Count int `json:"count,omitempty"`
 
 	// Until optionally ends a loop early, as a "NAME.field" reference to
@@ -516,6 +567,33 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		// resolved tools) and dispatches only when it names an agent — so
 		// the agent is optional. What it MUST have is something to fan
 		// over.
+		if s.Kind == StagePanel {
+			switch {
+			case len(s.Panel) < 2:
+				// A panel of one is an agent stage (or a worker stage)
+				// wearing a heavier word. Say which, because the fix is to
+				// change the kind rather than to add a voice nobody wanted.
+				probs = append(probs, "stage "+s.Name+": a panel needs at least two voices — with one, use kind \"agent\" (or \"worker\") instead")
+			case len(s.Panel) > panelMaxVoices:
+				probs = append(probs, "stage "+s.Name+": "+strconv.Itoa(len(s.Panel))+" voices is past the cap of "+
+					strconv.Itoa(panelMaxVoices)+" — every voice is a model call per round")
+			}
+			if len(s.Output) > 0 {
+				probs = append(probs, "stage "+s.Name+": a panel produces several voices, not one declared shape — "+
+					"declare the output on the stage that reads it instead")
+			}
+			if len(s.Body) > 0 {
+				probs = append(probs, "stage "+s.Name+": a panel voice is one contribution, so it takes no body — "+
+					"for multi-step branches use kind \"fanout\"")
+			}
+			if s.Count > panelMaxRounds {
+				probs = append(probs, "stage "+s.Name+": "+strconv.Itoa(s.Count)+" rounds is past the cap of "+
+					strconv.Itoa(panelMaxRounds))
+			}
+		}
+		if s.Kind != StagePanel && len(s.Panel) > 0 {
+			probs = append(probs, "stage "+s.Name+": only a kind \"panel\" stage has voices")
+		}
 		if s.Kind == StageFanout && s.FanOver == "" {
 			probs = append(probs, "stage "+s.Name+" is kind=fanout but names no fan_over stage")
 		}

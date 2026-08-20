@@ -66,6 +66,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			{Value: "worker", Label: "Worker — one model call"},
 			{Value: "agent", Label: "Agent — dispatch to one of your agents"},
 			{Value: "fanout", Label: "Fanout — run once per item of an earlier list, in parallel"},
+			{Value: "panel", Label: "Panel — several voices on the same question, over rounds"},
 			{Value: "loop", Label: "Loop — repeat a body of stages"},
 			{Value: "branch", Label: "Branch — read a bool and skip or stop (no model call)"},
 			{Value: "tool", Label: "Tool — call a tool directly (no model, no tokens)"},
@@ -148,6 +149,16 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 		// invoked by whichever agent attached it, so the catalog it
 		// inherits differs between callers and a name list describes one
 		// of them. Same three settings a machine step carries.
+		ui.FormField{Field: "panel", Type: "tags", Label: "The voices",
+			ShowWhen:    keepWhileList(s.Panel, "kind:panel"),
+			Placeholder: "Optimist, Skeptic, Cost",
+			Help: "Two to eight. A name that matches one of your agents IS that agent — its persona, its memory, its tools. " +
+				"One that does not is a role the worker answers as, which is how a panel of perspectives runs without authoring three agents first. " +
+				"Write the prompt to whoever is answering and place {voice}; {panel} is everything said so far, and goes at the end on its own if you leave it out."},
+		ui.FormField{Field: "count", Type: "number", Label: "Rounds", Min: 1, Max: PanelMaxRounds,
+			ShowWhen: keepWhileSet(chIf(s.Kind == StagePanel && s.Count > 0, strconv.Itoa(s.Count), ""), "kind:panel"),
+			Help: "One round is a poll — nobody has replied to anybody. Two is the smallest thing worth calling a debate. " +
+				"Voices times rounds is model calls, so three voices over three rounds is nine before anything is synthesized."},
 		ui.FormField{Field: "reach", Type: "select", Label: "Tools this stage may reach",
 			ShowWhen: keepWhileSet(StageReach(s), "kind:worker|fanout"),
 			Options: []ui.SelectOption{
@@ -243,7 +254,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"agent": s.Agent, "fan_over": s.FanOver, "count": s.Count,
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
 		"tool": s.Tool, "model": s.Model, "think": thinkValue(s.Think),
-		"reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
+		"panel": s.Panel, "reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
 	}
 }
 
@@ -301,6 +312,9 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 	}
 	if v, ok := body["reach"]; ok {
 		s.Reach = strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+	}
+	if _, ok := body["panel"]; ok {
+		s.Panel = stringSliceFromArgs(body, "panel")
 	}
 	if _, ok := body["tools"]; ok {
 		s.Tools = stringSliceFromArgs(body, "tools")

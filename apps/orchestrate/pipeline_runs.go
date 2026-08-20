@@ -30,6 +30,14 @@ func (T *OrchestrateApp) pipelineRunSurface(ctx context.Context, user string, de
 		// agent stages never calls it, which is why core can take it as a hook
 		// and stay ignorant of the whole concept.
 		Dispatch: func(ctx context.Context, agentID, stageInput string) (string, error) {
+			// A panel's voices are agent names OR plain roles, and the
+			// interpreter cannot tell which — so say so here, where the
+			// agent store is. Anything that does resolve dispatches as
+			// before; a name that does not comes back as ErrNoSuchAgent and
+			// the stage answers it as a role on the worker.
+			if _, found := findAgentByNameOrID(UserDB(T.DB, user), user, agentID); !found {
+				return "", ErrNoSuchAgent
+			}
 			return T.RunAgentSync(ctx, user, user, agentID, stageInput)
 		},
 		Tools:   T.pipelineStandaloneTools(ctx, user, def),

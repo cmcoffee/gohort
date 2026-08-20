@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -604,6 +605,10 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			// body, each branch is a small pipeline in its own scope and
 			// the fanout also carries the branches' declared shapes.
 			out, fields, err = r.runFanoutStage(ctx, stage, prev, stageTools, status)
+		case StagePanel:
+			// Several voices on the same question, in parallel, over as many
+			// rounds as the stage asks for — each round reading the last.
+			out, fields, err = r.runPanelStage(ctx, stage, prev, stageTools, status)
 		case StageLoop:
 			// Repeat the body, threading each pass's result into the next.
 			out, err = r.runLoopStage(ctx, stage, prev)
@@ -1288,6 +1293,191 @@ func (r *pipelineRun) runFanoutStage(ctx context.Context, stage PipelineStage, p
 		fmt.Fprintf(&b, "## Item %d: %s\n%s\n\n", i+1, strings.TrimSpace(item), results[i])
 	}
 	return strings.TrimSpace(b.String()), fanoutFields(items, collected), nil
+}
+
+// ErrNoSuchAgent is how a host tells the interpreter that a name it was asked
+// to dispatch to is not one of its agents.
+//
+// It exists for the panel, where a voice is EITHER an agent or a role and the
+// interpreter has no way to tell them apart — it does not know what an agent
+// is, which is the property that keeps the interpreter portable. A host that
+// never returns it simply has no roles: every voice must name something real,
+// and one that does not is reported as a gap rather than answered by a worker
+// wearing its name.
+var ErrNoSuchAgent = Error("no such agent")
+
+// panelParallel bounds how many voices speak at once. Same shape as the
+// fanout cap and for the same reason: a stage that opens N connections to a
+// worker LLM is a stage that can take the deployment down with one save.
+const panelParallel = 6
+
+// runPanelStage puts every voice on the SAME question, in parallel, for as
+// many rounds as the stage asks — each round reading what the last one said.
+//
+// The two properties that make it a panel rather than a fan:
+//
+//   - Every voice gets the same context. A fanout's branches each get their
+//     own item and never meet; here the item IS the question, and what
+//     differs is who is answering.
+//   - Rounds are sequential and cumulative. Round one is a poll — nobody has
+//     replied to anybody. Round two is where a voice can say "that is wrong
+//     because", which is the whole reason to run a panel instead of asking
+//     one worker for three opinions in one call. Within a round the voices
+//     are parallel and blind to each other, so nobody answers first and sets
+//     the frame.
+//
+// The product is the labeled transcript of EVERY round, not a verdict and not
+// the last round alone: what a synthesizer needs is who said what and where
+// they moved. Judging is the next stage's job.
+//
+// A voice that fails is recorded and the round continues, the same
+// non-fatal rule a fanout branch follows: a panel that collapses because one
+// agent timed out is worse than a panel with a gap in it, and the gap is
+// visible in the transcript.
+func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, prev string, stageTools []AgentToolDef, status func(string)) (string, map[string]any, error) {
+	T, outputs, dispatch, input := r.app, r.outputs, r.dispatch, r.input
+	voices := make([]string, 0, len(stage.Panel))
+	for _, v := range stage.Panel {
+		if v = strings.TrimSpace(v); v != "" {
+			voices = append(voices, v)
+		}
+	}
+	if len(voices) < 2 {
+		return "", nil, Error("panel stage " + stage.Name + ": needs at least two voices")
+	}
+	if len(voices) > panelMaxVoices {
+		if status != nil {
+			status(fmt.Sprintf("panel %s: %d voices, capping at %d", stage.Name, len(voices), panelMaxVoices))
+		}
+		voices = voices[:panelMaxVoices]
+	}
+	rounds := stage.Count
+	if rounds < 1 {
+		rounds = 1
+	}
+	if rounds > panelMaxRounds {
+		rounds = panelMaxRounds
+	}
+	if status != nil {
+		// The multiplication, before it is paid. Voices times rounds is the
+		// number nobody works out from a stage count, and it is the number
+		// that shows up on a bill.
+		status(fmt.Sprintf("panel %s: %d voices x %d round(s) = %d model calls (parallel %d)",
+			stage.Name, len(voices), rounds, len(voices)*rounds, panelParallel))
+	}
+
+	think := false
+	if stage.Think != nil {
+		think = *stage.Think
+	}
+	tier := stageTier(stage)
+
+	var transcript []panelSaid
+	var b strings.Builder
+	for round := 1; round <= rounds; round++ {
+		if ctx.Err() != nil {
+			return "", nil, ctx.Err()
+		}
+		// What the previous rounds said, handed to every voice as {panel}.
+		// Empty on round one, which is what makes round one a poll — and the
+		// prompt can say so, because the author can see the same emptiness.
+		sofar := renderPanel(transcript)
+		results := make([]string, len(voices))
+		lg := NewLimitGroup(panelParallel)
+		for i, v := range voices {
+			if ctx.Err() != nil {
+				break
+			}
+			lg.Add(1)
+			go func(idx int, voice string) {
+				defer lg.Done()
+				p := resolveStageTemplate(panelPrompt(stage.Prompt, voice, round, rounds, sofar), input, prev, outputs)
+				var out string
+				var err error
+				// A voice that names one of your agents IS that agent: its
+				// persona, its memory, its tools. One that does not is a
+				// ROLE, and the worker answers as it.
+				//
+				// The host decides which, by returning ErrNoSuchAgent — and
+				// ONLY that. Falling back on any error would let an agent
+				// that timed out be silently impersonated by a worker
+				// wearing its name, which is worse than the gap: the
+				// transcript would read as the agent's own words.
+				out, err = "", ErrNoSuchAgent
+				if dispatch != nil {
+					out, err = dispatch(WithoutStageGuardrails(ctx), voice, p)
+				}
+				if errors.Is(err, ErrNoSuchAgent) {
+					out, err = T.runWorkerStage(ctx, p, stageTools, think, false, tier)
+				}
+				if err != nil {
+					results[idx] = fmt.Sprintf("(no answer: %v)", err)
+					if status != nil {
+						status(fmt.Sprintf("panel %s: %s did not answer in round %d: %v", stage.Name, voice, round, err))
+					}
+					return
+				}
+				results[idx] = strings.TrimSpace(out)
+			}(i, v)
+		}
+		lg.Wait()
+		if ctx.Err() != nil {
+			return "", nil, ctx.Err()
+		}
+		for i, v := range voices {
+			transcript = append(transcript, panelSaid{Voice: v, Text: results[i]})
+			if rounds > 1 {
+				fmt.Fprintf(&b, "## Round %d — %s\n%s\n\n", round, v, results[i])
+				continue
+			}
+			fmt.Fprintf(&b, "## %s\n%s\n\n", v, results[i])
+		}
+	}
+	// Declared shape for the stage that reads this: who spoke, and how many
+	// times they were asked. A synthesizer fanning over the voices is the
+	// obvious next move and should not have to parse the headings back out.
+	names := make([]any, 0, len(voices))
+	for _, v := range voices {
+		names = append(names, v)
+	}
+	return strings.TrimSpace(b.String()), map[string]any{"voices": names, "rounds": rounds}, nil
+}
+
+// panelPrompt layers the panel's own vocabulary over the stage prompt:
+// {voice} is who is answering, {panel} is what has been said so far, and
+// {iteration}/{iterations} are the round and the total — the same two names a
+// loop uses, because they mean the same thing and a second vocabulary for it
+// would be a second thing to learn.
+func panelPrompt(prompt, voice string, round, rounds int, sofar string) string {
+	p := strings.ReplaceAll(prompt, "{voice}", voice)
+	p = strings.ReplaceAll(p, "{iteration}", strconv.Itoa(round))
+	p = strings.ReplaceAll(p, "{iterations}", strconv.Itoa(rounds))
+	if strings.Contains(p, "{panel}") {
+		return strings.ReplaceAll(p, "{panel}", sofar)
+	}
+	// The author did not place it, so the framework does — at the end, and
+	// only when there is something to say. A voice that cannot see the round
+	// before it is not on a panel, and losing that to a forgotten placeholder
+	// would make the difference between a panel and a poll a typo.
+	if strings.TrimSpace(sofar) == "" {
+		return p
+	}
+	return p + "\n\n## Already said, by the others\n" + sofar +
+		"\nAnswer as yourself. Where you agree, say so briefly and add what is missing; where you disagree, say which claim is wrong and why."
+}
+
+// panelSaid is one contribution: who, and what.
+type panelSaid struct{ Voice, Text string }
+
+// renderPanel is the transcript as a voice reads it — plainer than the block
+// the next STAGE gets, because a voice is being asked to reply to people
+// rather than to parse a document.
+func renderPanel(said []panelSaid) string {
+	var b strings.Builder
+	for _, s := range said {
+		fmt.Fprintf(&b, "%s: %s\n\n", s.Voice, strings.TrimSpace(s.Text))
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // runBranchBody runs one branch's body in its own scope and returns what
