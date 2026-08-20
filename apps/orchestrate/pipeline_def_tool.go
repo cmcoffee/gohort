@@ -43,7 +43,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				"input":       {Type: "string", Description: "(run) The input fed to the pipeline's first stage and available as {input} in every stage prompt."},
 				"stages": {
 					Type:        "array",
-					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE — \"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\" — that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration} — plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field} — that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"tools\" to restrict, \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. **Call action=\"help\" for the full spec** — every field, the caps, and the canonical shapes.",
+					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE — \"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\" — that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration} — plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field} — that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"\"|\"read\"|\"none\") to restrict — prefer it to naming tools, since it survives a different caller — \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. **Call action=\"help\" for the full spec** — every field, the caps, and the canonical shapes.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -100,7 +100,15 @@ name       unique label; also the key later stages read as {stage:NAME}. No dots
 kind       worker (default) | agent | fanout | loop | branch | tool
 prompt     the instruction (not used by branch or tool)
 agent      agent name/id — for kind=agent, optionally for kind=fanout
-tools      restrict a worker stage to a subset of the caller's catalog; [] = none
+reach      how much of the caller's catalog a worker stage may touch: "" = all of it, "read" =
+           only tools that read (nothing that writes, runs a command, or reaches the network),
+           "none" = nothing, which is right for a synthesizer that should not go and fetch.
+           PREFER THIS over naming tools. A pipeline is invoked by whichever agent attached it,
+           so the catalog it inherits differs between callers — and an MCP server publishes its
+           tools when it connects, a credential mints its own per session. A name list describes
+           one caller at one moment; a capability is true for all of them.
+tools      restrict a worker stage BY NAME, on top of what reach allowed. An EMPTY list inherits
+           (it does not mean none — say none with reach). Names must match the catalog exactly.
 think      true on stages that genuinely reason (synthesis, verification, decomposition)
 model      "worker" (default) | "lead" — the precision tier
 output     [{name, type, desc, required, enum?, from?}] — declare a validated JSON result.
@@ -128,7 +136,7 @@ Every reference is checked when the pipeline is SAVED, so a typo is an authoring
 Give a stage "output": [{"name": lowercase_key, "type": "string"|"number"|"bool"|"list"|"object", "desc": what goes in it, "required": bool}] and it is asked for JSON with those keys, validated, and each field becomes {stage:NAME.field} downstream. Use it when a later stage needs ONE PIECE of an earlier result — a list to fan over, a count, a verdict, a title. This is what makes fan_over-a-field, loop until, and branch when possible. A stage that declares output renders its own {stage:NAME} as JSON, so point fan_over at the field ("plan.queries"). Nested fields go one level deep. Not valid on fanout, loop, or branch. Skip it for prose stages (a draft, a summary) — wrapping prose in a JSON envelope buys nothing. NEVER ask for JSON in the prompt as well: declaring the fields IS the mechanism, so a prompt that also specifies a format is two sets of formatting rules, and the usual result is a JSON string nested inside a JSON field. Say what to FIND; the framework handles the shape.
 
 === FANOUT (breadth) ===
-Runs its prompt once PER ELEMENT of an earlier list, in parallel, then collects into one labeled block. Point fan_over at the stage (whose prompt emits a JSON array) or at a declared list field, and use {item}. A branch runs as a worker over the stage's tools by default; name an agent to dispatch each one instead. Capped at 12 items / 6 concurrent; per-branch errors are non-fatal. Canonical: decompose (emits JSON list) -> fanout (worker[web_search,fetch_url], "Research: {item}") -> synthesize (tools=[], think).
+Runs its prompt once PER ELEMENT of an earlier list, in parallel, then collects into one labeled block. Point fan_over at the stage (whose prompt emits a JSON array) or at a declared list field, and use {item}. A branch runs as a worker over the stage's tools by default; name an agent to dispatch each one instead. Capped at 12 items / 6 concurrent; per-branch errors are non-fatal. Canonical: decompose (emits JSON list) -> fanout (worker[web_search,fetch_url], "Research: {item}") -> synthesize (reach="none", think).
 A fanout may instead carry a "body" of stages, run ONCE PER ITEM in its own scope — for when each item needs several steps rather than one prompt ("search it, read it, then judge it"). Body stages see {item}, {branch}, {branches}, everything established BEFORE the fan, and each other WITHIN their own branch; two branches running a stage of the same name never see each other's value, and nothing after the fanout may reference a body stage by name. Body OR agent, not both. Bodies do not nest (no loop or fanout inside one). When the LAST body stage declares output, the fanout also carries the per-branch results as {stage:NAME.items} — one object per branch plus "branch" and "item" — which is how you rank what came back, or fan over the survivors with fan_over:"NAME.items". Mind the multiplication: 12 items x a 4-stage body is 48 model calls.
 
 === LOOP (depth) ===
@@ -150,7 +158,7 @@ come straight across with nothing re-read out of prose.
 tool = one of the invoking agent's tools; args = {param: template}. For computation rather than judgment: arithmetic, dedup, normalization, a formatting pass, one specific API call. Asking a worker stage to do arithmetic is the classic waste — call the calculator. May declare output to decode a JSON-returning tool, with no repair retry (there is no model to ask again). A missing tool is a run-time error listing what the caller does have.
 
 === TIERS + TOOLS ===
-Worker stages INHERIT the calling agent's catalog — a pipeline invoked from an agent with web_search/fetch_url has them automatically. Set "tools" to restrict (a synthesis stage that shouldn't fetch sets tools=[]). model="lead" puts a stage on the precision tier; use it on decompose / synthesize / judge and leave transforms on worker, because lead everywhere is how a cheap pipeline stops being cheap. think defaults false — turn it on selectively, not everywhere.`
+Worker stages INHERIT the calling agent's catalog — a pipeline invoked from an agent with web_search/fetch_url has them automatically. Set "reach" to restrict: "read" for a stage that gathers, "none" for a synthesis stage that should not fetch. (tools=[] does NOT do that — an empty list inherits. Naming tools narrows further, but names describe one caller's catalog and a reach describes every caller's.) model="lead" puts a stage on the precision tier; use it on decompose / synthesize / judge and leave transforms on worker, because lead everywhere is how a cheap pipeline stops being cheap. think defaults false — turn it on selectively, not everywhere.`
 
 // pipelineCreateOrUpdate parses the stages array and saves a PipelineDef.
 // On update, loads the existing def (by id or name) and overwrites the
@@ -375,7 +383,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	// already produce) a mistake this surface is the most likely to
 	// produce. The machine tool says the same thing about the same
 	// mistake, from the same function.
-	msg += pipelineAdviceNote(saved)
+	msg += pipelineAdviceNote(t.udb, t.user, saved)
 	return msg, nil
 }
 
@@ -419,14 +427,19 @@ func (t *chatTurn) pipelineGet(args map[string]any) (string, error) {
 	// is the only place its findings can reach anybody.
 	if b, ok := args["full"].(bool); ok && b {
 		full, _ := json.Marshal(def)
-		return string(full) + pipelineAdviceNote(def), nil
+		return string(full) + pipelineAdviceNote(t.udb, t.user, def), nil
 	}
-	return string(slimPipelineJSON(def)) + pipelineAdviceNote(def), nil
+	return string(slimPipelineJSON(def)) + pipelineAdviceNote(t.udb, t.user, def), nil
 }
 
 // pipelineAdviceNote is the soft half, in the words both tools use.
-func pipelineAdviceNote(def PipelineDef) string {
-	adv := def.Advice()
+//
+// Takes the checklist rather than Advice alone, so an authoring agent is told
+// about a tool name that will not resolve at the moment it writes one — the
+// same reply the machine tool has always carried. Without it the only report
+// was a run-time absence on a turn nobody was watching.
+func pipelineAdviceNote(udb Database, user string, def PipelineDef) string {
+	adv := pipelineChecklist(udb, user, def)
 	if len(adv) == 0 {
 		return ""
 	}
@@ -630,6 +643,7 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 			Prompt:  mapStr(m, "prompt"),
 			Agent:   strings.TrimSpace(mapStr(m, "agent")),
 			FanOver: strings.TrimSpace(mapStr(m, "fan_over")),
+			Reach:   strings.ToLower(strings.TrimSpace(mapStr(m, "reach"))),
 			Tools:   mapStrList(m, "tools"),
 			Think:   mapBoolPtr(m, "think"),
 			Output:  fields,

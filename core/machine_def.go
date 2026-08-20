@@ -973,9 +973,7 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	default:
 		probs = append(probs, "step "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
 	}
-	switch strings.ToLower(strings.TrimSpace(p.Reach)) {
-	case ReachAll, ReachRead, ReachNone:
-	default:
+	if !validReach(p.Reach) {
 		probs = append(probs, "step "+name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(p.Reach))
 	}
 	if runners := phaseRunners(p); len(runners) > 1 {

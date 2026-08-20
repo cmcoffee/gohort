@@ -535,7 +535,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		var stageTools []AgentToolDef
 		if stage.Kind == StageWorker || stage.Kind == StageSynthesize || stage.Kind == StageTool ||
 			(stage.Kind == StageFanout && strings.TrimSpace(stage.Agent) == "") {
-			stageTools = resolveStageTools(stage.Tools, inheritedTools)
+			stageTools = StageTools(stage, inheritedTools)
 			if len(stageTools) > 0 {
 				names := make([]string, 0, len(stageTools))
 				for _, td := range stageTools {
@@ -1469,6 +1469,39 @@ const NoToolsMarker = "__none__"
 // NoToolsMarker anywhere in the list wins over everything else in it: a
 // list holding the marker AND a name is a control somebody left in two
 // states, and the reading that grants less is the safe one.
+// StageTools narrows an inherited catalog to what a stage may reach: the
+// reach first (a capability class, which is true for every caller), then
+// the stage's own names on top of what is left (exact strings, which
+// describe one caller's catalog at one moment).
+//
+// The counterpart of PhaseTools, deliberately identical in behaviour: a
+// pipeline stage and a machine step are the two places an author writes
+// this, and an author who learned one has learned the other.
+func StageTools(stage PipelineStage, inherited []AgentToolDef) []AgentToolDef {
+	switch StageReach(stage) {
+	case ReachNone:
+		return nil
+	case ReachRead:
+		inherited = FilterToolsByCaps(inherited, ReachAllowsCaps(ReachRead))
+	}
+	return resolveStageTools(stage.Tools, inherited)
+}
+
+// StageReach is the stage's reach, reading the legacy marker as the
+// setting it always meant — the same back-compat PhaseReach gives a step
+// saved before the field existed.
+func StageReach(stage PipelineStage) string {
+	if r := strings.TrimSpace(stage.Reach); r != "" {
+		return r
+	}
+	for _, n := range stage.Tools {
+		if strings.TrimSpace(n) == NoToolsMarker {
+			return ReachNone
+		}
+	}
+	return ReachAll
+}
+
 func resolveStageTools(stageTools []string, inheritedTools []AgentToolDef) []AgentToolDef {
 	if len(stageTools) == 0 {
 		return inheritedTools

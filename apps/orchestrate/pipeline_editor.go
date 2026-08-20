@@ -144,13 +144,41 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 				{Value: "on", Label: "On — this stage is a judgement"},
 				{Value: "off", Label: "Off — this stage is a transform"},
 			}},
+		// The coarse control, and the one that stays true: a pipeline is
+		// invoked by whichever agent attached it, so the catalog it
+		// inherits differs between callers and a name list describes one
+		// of them. Same three settings a machine step carries.
+		ui.FormField{Field: "reach", Type: "select", Label: "Tools this stage may reach",
+			ShowWhen: keepWhileSet(StageReach(s), "kind:worker|fanout"),
+			Options: []ui.SelectOption{
+				{Value: ReachAll, Label: "Everything the calling agent has",
+					Help: "The default. A pipeline attached to an agent with web_search inherits it."},
+				{Value: ReachRead, Label: "Read-only — nothing that writes or reaches the network",
+					Help: "For a stage that gathers and reports. Searching, listing and reading stay; posting, running and fetching go."},
+				{Value: ReachNone, Label: "Nothing — this stage only reshapes what it was handed",
+					Help: "For a synthesizer or a formatter that should not be tempted to go and fetch."},
+			},
+			Help: "Prefer this to naming tools. A pipeline is run by whatever agent attached it, and its catalog is assembled fresh each turn — an MCP server publishes its tools when it connects, a credential mints its own per session — so a name can stop resolving without anybody changing this pipeline."},
+		ui.FormField{Type: "header", Label: stageNameNarrowingLabel(s),
+			Collapsed: len(s.Tools) == 0,
+			ShowWhen:  "kind:worker|fanout;reach:!none"},
 		ui.FormField{Field: "tools", Type: "checklist", Label: "Only these tools",
-			ShowWhen:    keepWhileList(s.Tools, "kind:worker|fanout"),
+			ShowWhen:    keepWhileList(s.Tools, "kind:worker|fanout;reach:!none"),
 			Options:     toolChecklistOptions(cat.tools, s.Tools),
 			Placeholder: "(no tools to offer)",
-			Help:        "Check tools to NARROW what this stage can reach; none checked means it inherits the calling agent's whole catalog. A stage that must reach the web has to keep those tools. For a stage that only reshapes what it was handed, tick \"No tools at all\"."},
+			Help:        "Names on TOP of the reach above; none checked means the reach alone decides. A stage that must reach one particular thing and not its neighbours is what this is for."},
 	)
 	return fields
+}
+
+// stageNameNarrowingLabel titles the by-name section, carrying its count
+// when it has one — so a collapsed header still states the restriction.
+// Same rule the machine editor's steps follow.
+func stageNameNarrowingLabel(s PipelineStage) string {
+	if n := len(s.Tools); n > 0 {
+		return "Narrow by name — " + strconv.Itoa(n) + " named"
+	}
+	return "Narrow by name (advanced)"
 }
 
 // keepWhileSet is the hidden-control rule: gate on kind, unless the
@@ -215,7 +243,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"agent": s.Agent, "fan_over": s.FanOver, "count": s.Count,
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
 		"tool": s.Tool, "model": s.Model, "think": thinkValue(s.Think),
-		"tools": s.Tools, "output": stageOutputRecord(s),
+		"reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
 	}
 }
 
@@ -270,6 +298,9 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 		default:
 			s.Think = nil
 		}
+	}
+	if v, ok := body["reach"]; ok {
+		s.Reach = strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
 	}
 	if _, ok := body["tools"]; ok {
 		s.Tools = stringSliceFromArgs(body, "tools")

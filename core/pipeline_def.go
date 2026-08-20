@@ -132,14 +132,29 @@ type PipelineStage struct {
 	Kind   PipelineStageKind `json:"kind"`            // worker | agent | fanout | synthesize
 	Prompt string            `json:"prompt"`          // instruction, with {input}/{prev}/{stage:NAME} templating
 	Agent  string            `json:"agent,omitempty"` // agent id/name for kind=agent (and kind=fanout's inner agent)
+	// Reach is the coarse tool scope: "" inherits everything the caller
+	// has, "read" keeps only what reads, "none" keeps nothing.
+	//
+	// The control to prefer, and the same one a machine's step carries
+	// (MachinePhase.Reach — the two authoring surfaces share a
+	// vocabulary on purpose). Tools below names EXACT strings against a
+	// catalog assembled per turn out of things that move under it: an
+	// MCP server publishes its tools when it connects, a credential
+	// mints its own per session, an attachment mints more per agent. A
+	// pipeline is invoked by whatever agent attached it, so the catalog
+	// it inherits is not even stable between two callers — which makes a
+	// name list a description of one of them. A capability does not
+	// move: "this stage may look, not act" is true for every caller.
+	Reach string `json:"reach,omitempty"`
 	// Tools optionally overrides what this stage's worker has access
-	// to. Empty (default) = inherit the caller's tool catalog so a
-	// pipeline invoked from an agent with web_search / fetch_url
-	// inherits those without any per-stage configuration. Set
-	// explicitly to RESTRICT (e.g. a pure synthesizer stage that
-	// should not be tempted to fetch) or to OVERRIDE inherited tools
-	// for a specific stage. Only applies to kind="worker" stages; agent
-	// stages get their dispatched agent's full catalog regardless.
+	// to, BY NAME, on top of whatever Reach allowed. Empty (default) =
+	// inherit the caller's tool catalog so a pipeline invoked from an
+	// agent with web_search / fetch_url inherits those without any
+	// per-stage configuration. Set explicitly to RESTRICT (e.g. a pure
+	// synthesizer stage that should not be tempted to fetch) or to
+	// OVERRIDE inherited tools for a specific stage. Only applies to
+	// kind="worker" stages; agent stages get their dispatched agent's
+	// full catalog regardless.
 	Tools []string `json:"tools,omitempty"`
 	// Think optionally enables/disables thinking for this stage. nil
 	// (default) = use the framework default (off, cheap). &true enables
@@ -479,6 +494,9 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 			continue
 		case done[s.Name] != nil || badOutput[s.Name]:
 			probs = append(probs, "duplicate stage name: "+s.Name)
+			continue
+		case !validReach(s.Reach):
+			probs = append(probs, "stage "+s.Name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(s.Reach))
 			continue
 		case strings.Contains(s.Name, "."):
 			// A dot would make {stage:a.b} ambiguous between a stage

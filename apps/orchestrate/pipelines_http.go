@@ -75,6 +75,9 @@ func pipelineStatusText(d PipelineDef) string {
 		}
 	}
 	out := strings.Join(parts, ", ")
+	// Advice alone, not the whole checklist: this is a per-ROW summary in a
+	// list, and the tool-name half walks the agent table. The row says how
+	// much the pipeline says about itself; opening it runs the full check.
 	if n := len(d.Advice()); n > 0 {
 		if out != "" {
 			out += " · "

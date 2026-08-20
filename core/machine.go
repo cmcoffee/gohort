@@ -904,6 +904,17 @@ func ReachAllowsCaps(reach string) []Capability {
 	return nil
 }
 
+// validReach reports whether a stored reach names one of the three
+// settings. Shared by the two authoring surfaces so neither can accept a
+// value the other refuses.
+func validReach(reach string) bool {
+	switch strings.ToLower(strings.TrimSpace(reach)) {
+	case ReachAll, ReachRead, ReachNone:
+		return true
+	}
+	return false
+}
+
 // PhaseReach is the phase's reach, reading the legacy marker as the
 // setting it always meant. A stored ["__none__"] predates the Reach
 // field and says exactly what ReachNone says.

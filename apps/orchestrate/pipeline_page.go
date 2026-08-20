@@ -323,7 +323,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Title:    "Worth a look",
 			Wide:     true,
 			Subtitle: "Nothing here refuses a save. It is what the pipeline looks like it might not have meant.",
-			Body:     ui.Card{HTML: findingsHTMLPlain(def.Advice(), "Nothing — the stages read as instructions rather than specifications.")},
+			Body:     ui.Card{HTML: findingsHTMLPlain(pipelineChecklist(udb, user, def), "Nothing — the stages read as instructions rather than specifications.")},
 		},
 	)
 	// Share with users — the owner's decision, so the section exists only for
