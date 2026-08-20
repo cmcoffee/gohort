@@ -112,6 +112,17 @@ type Response struct {
 	// own web UI displays. PromptPerSecond is prefill throughput.
 	PredictedPerSecond float64
 	PromptPerSecond    float64
+	// PromptTokensPrefilled is how many of the prompt's tokens the server
+	// actually had to process this call (llama.cpp's timings.prompt_n);
+	// PrefillMS is the wall-time it spent doing it. InputTokens minus
+	// PromptTokensPrefilled is what the KV cache supplied for free, which
+	// is the only direct read on whether the prefix is being REUSED. It is
+	// the number that settles "is the prompt stable across turns" — a
+	// question that has twice cost days of guessing because the answer was
+	// parsed off the wire and then discarded. Zero on backends that do not
+	// report it (everything but llama.cpp today).
+	PromptTokensPrefilled int
+	PrefillMS             float64
 	// Tier reports which LLM tier actually served this response.
 	// Populated by WorkerChat (always WORKER), LeadChat (LEAD on
 	// native success, WORKER when the routing config or fallback

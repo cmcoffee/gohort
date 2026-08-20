@@ -770,6 +770,31 @@ func (c *openAIClient) warmupContext() {
 	Debug("[ollama] context warmup: num_ctx=%d", numCtx)
 }
 
+// logPrefillReuse reports how much of the prompt the server had to
+// re-process, which is the live read on prompt-cache reuse.
+//
+// The framework's worst latency bugs have all been the same shape: a byte
+// somewhere in the prefix moves between turns, the server's KV cache misses,
+// and a turn that should cost ~200ms pays a full multi-second prefill. Every
+// one of them was found by hand-diffing request bodies against llama-server's
+// own log. The server has been reporting the answer all along in
+// timings.prompt_n; it was parsed and dropped. This puts it in gohort's log so
+// "did the prefix hold?" is a grep, not an investigation.
+//
+// Silent on backends that don't report timings, and on the first call of a
+// conversation where a full prefill is simply correct.
+func logPrefillReuse(provider string, r *Response) {
+	if r == nil || r.PromptTokensPrefilled <= 0 || r.InputTokens <= 0 {
+		return
+	}
+	cached := r.InputTokens - r.PromptTokensPrefilled
+	if cached < 0 {
+		cached = 0
+	}
+	Debug("[%s] prefill: %d of %d prompt tokens processed (%d%% served from cache) in %.0fms",
+		provider, r.PromptTokensPrefilled, r.InputTokens, cached*100/r.InputTokens, r.PrefillMS)
+}
+
 type oaiTool struct {
 	Type     string      `json:"type"`
 	Function oaiFunction `json:"function"`
@@ -1900,7 +1925,10 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if result.Timings != nil {
 		out.PredictedPerSecond = result.Timings.PredictedPerSecond
 		out.PromptPerSecond = result.Timings.PromptPerSecond
+		out.PromptTokensPrefilled = result.Timings.PromptN
+		out.PrefillMS = result.Timings.PromptMS
 	}
+	logPrefillReuse(c.provider(), out)
 	return out, nil
 }
 
@@ -2048,7 +2076,8 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	var reasoning strings.Builder
 	var model string
 	var inputTokens, outputTokens, reasoningTokens int
-	var predictedPerSecond, promptPerSecond float64
+	var predictedPerSecond, promptPerSecond, promptMS float64
+	var promptN int
 
 	// Accumulate tool call fragments by index.
 	toolCallBuilders := make(map[int]*struct {
@@ -2104,6 +2133,8 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		if chunk.Timings != nil {
 			predictedPerSecond = chunk.Timings.PredictedPerSecond
 			promptPerSecond = chunk.Timings.PromptPerSecond
+			promptN = chunk.Timings.PromptN
+			promptMS = chunk.Timings.PromptMS
 		}
 
 		if len(chunk.Choices) > 0 {
@@ -2253,7 +2284,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		return nil, &APIError{Message: fmt.Sprintf("empty LLM response: finish_reason=length after %d output tokens (raise max_tokens or disable thinking for this call)", outputTokens), Provider: c.provider()}
 	}
 
-	return &Response{
+	streamed := &Response{
 		Content:            full.String(),
 		Reasoning:          reasoning.String(),
 		ToolCalls:          toolCalls,
@@ -2263,9 +2294,14 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		ReasoningTokens:    reasoningTokens,
 		PredictedPerSecond: predictedPerSecond,
 		PromptPerSecond:    promptPerSecond,
+
+		PromptTokensPrefilled: promptN,
+		PrefillMS:             promptMS,
 		// See the non-streaming path: finish_reason reached the Debug
 		// line and nowhere else, leaving StopReason empty for every
 		// OpenAI-compatible backend.
 		StopReason: finishReason,
-	}, nil
+	}
+	logPrefillReuse(c.provider(), streamed)
+	return streamed, nil
 }

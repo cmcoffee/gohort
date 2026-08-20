@@ -1618,10 +1618,56 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	return resp, history, err
 }
 
+// promptReuseNote renders the prompt-cache read for the round breadcrumb, or
+// nothing at all when the backend doesn't report one. It rides the existing
+// "LLM returned" line rather than adding a line of its own: the question it
+// answers — did this round re-prefill the whole prompt? — is only meaningful
+// next to how long the round took, and the pair is what turns a latency
+// report into a diagnosis.
+func promptReuseNote(resp *Response) string {
+	if resp == nil || resp.PromptTokensPrefilled <= 0 || resp.InputTokens <= 0 {
+		return ""
+	}
+	cached := resp.InputTokens - resp.PromptTokensPrefilled
+	if cached < 0 {
+		cached = 0
+	}
+	return fmt.Sprintf(", prefilled=%d/%d prompt tokens (%d%% cached, %.0fms)",
+		resp.PromptTokensPrefilled, resp.InputTokens, cached*100/resp.InputTokens, resp.PrefillMS)
+}
+
 func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
 	if T.LLM == nil {
 		return nil, messages, fmt.Errorf("LLM is not configured")
 	}
+
+	// Turn-time split. Everything the loop spends that is NOT waiting on a
+	// provider is gohort's own overhead — prompt assembly, knowledge
+	// injection, tool resolution, guardrails, and the tool calls themselves.
+	// Until now that number could only be inferred by subtracting a separate
+	// direct-to-provider probe from a wall-clock stopwatch, so "is the
+	// framework adding latency?" was never answerable from a running
+	// deployment. The provider span is measured between the two existing
+	// LLM breadcrumbs; a round that errors out mid-call leaves its span
+	// uncounted, which biases the report toward OVER-reporting gohort's
+	// share on a failed turn — the safe direction for a diagnostic.
+	turnStarted := time.Now()
+	var llmWall time.Duration
+	var llmCalls int
+	defer func() {
+		total := time.Since(turnStarted)
+		own := total - llmWall
+		if own < 0 {
+			own = 0
+		}
+		pct := 0
+		if total > 0 {
+			pct = int(own * 100 / total)
+		}
+		Log("[agent_loop] turn time: %s total = %s in %d LLM call(s) + %s gohort (%d%%)",
+			total.Round(time.Millisecond), llmWall.Round(time.Millisecond), llmCalls,
+			own.Round(time.Millisecond), pct)
+	}()
 
 	maxRounds := cfg.MaxRounds
 	if maxRounds <= 0 {
@@ -2499,6 +2545,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// the provider — needs a per-call hard timeout or the
 		// provider's endpoint is wedged.
 		Log("[agent_loop] round %d: → LLM call (history=%d msgs)", round, len(history))
+		llmStarted := time.Now()
 		// Assert the tool-result adjacency invariant before we hand the history
 		// to a provider. Violating it is a hard 400 from the chat template
 		// tens of seconds later, with an error that names a line in a Jinja
@@ -2685,7 +2732,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// anything logged before the call would only be what was intended. It
 		// is the direct answer to "did this really run on the lead", which no
 		// amount of reading the routing config can settle.
-		Log("[agent_loop] round %d: ← LLM returned (tier=%v, content=%d, tools=%d)", round, resp.Tier, len(resp.Content), len(resp.ToolCalls))
+		llmWall += time.Since(llmStarted)
+		llmCalls++
+		Log("[agent_loop] round %d: ← LLM returned in %s (tier=%v, content=%d, tools=%d%s)", round, time.Since(llmStarted).Round(time.Millisecond), resp.Tier, len(resp.Content), len(resp.ToolCalls), promptReuseNote(resp))
 
 		// DIAGNOSTIC: collapse-ish round — the model wrote a large reasoning
 		// block but little visible content and called no tool. The existing
