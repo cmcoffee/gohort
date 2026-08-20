@@ -201,6 +201,21 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 		seen["machine\x00"+id] = true
 		out = append(out, ArtifactSel{Type: "machine", Name: id, Owner: owner})
 	}
+	// The attachments. The one thing an agent points at that CANNOT travel —
+	// a store is a path on this host, an appliance is somebody else's box —
+	// which is exactly why it has to be declared: the far side gets an agent
+	// whose picker shows the attachment and whose tools are silently absent
+	// unless something says so. See core/reference_source_artifact.go.
+	sources := func(sels []ReferenceSelection) {
+		for _, ref := range sels {
+			name := RefSourceSelName(ref.Kind, ref.ItemID)
+			if name == ":" || seen["reference_source\x00"+name] {
+				continue
+			}
+			seen["reference_source\x00"+name] = true
+			out = append(out, ArtifactSel{Type: "reference_source", Name: name, Owner: owner})
+		}
+	}
 	skills := func(ids []string) {
 		for _, sid := range ids {
 			sid = strings.TrimSpace(sid)
@@ -216,12 +231,14 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 	pipelines(exp.AttachedPipelines)
 	skills(exp.AllowedSkills)
 	machine(exp.Machine)
+	sources(exp.AttachedSources)
 	for _, s := range exp.SubAgents {
 		consider(s.AllowedTools)
 		collections(s.AttachedCollections)
 		pipelines(s.AttachedPipelines)
 		skills(s.AllowedSkills)
 		machine(s.Machine)
+		sources(s.AttachedSources)
 	}
 	return out
 }

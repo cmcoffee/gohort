@@ -178,3 +178,47 @@ func TestTheRehearsalSaysWhenThereIsNoAgentToResolveAgainst(t *testing.T) {
 		t.Errorf("the reason should be stated, not left as an empty list: %q", note)
 	}
 }
+
+// The one dependency an agent recipe carried without declaring. Its tools, its
+// machine, its pipelines, its skills and its collections all travel or are
+// warned about; an attachment rode along as two strings pointing at a store
+// that exists on the exporting box and nowhere else. The agent then landed
+// looking complete — the picker showed the attachment, and the tools it was
+// supposed to mint were simply absent, which reads as tools that went missing
+// rather than as a source nobody has.
+func TestAnAgentsAttachedSourceTravelsAsADeclaredDependency(t *testing.T) {
+	withBundleSource(t)
+	exp := agentExport{AgentRecord: AgentRecord{
+		Name:            "Wren",
+		AttachedSources: []ReferenceSelection{{Kind: "testfiles", ItemID: "support_bundles"}},
+	}}
+
+	deps := agentExportDeps(nil, exp, "u", nil)
+	var found bool
+	for _, d := range deps {
+		if d.Type == "reference_source" && d.Name == "testfiles:support_bundles" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the agent's attachment should be declared so an import can warn about it: %+v", deps)
+	}
+
+	// A sub-agent's attachments count too: the parent's recipe recreates the
+	// whole tree, so a source only the child holds is still a source the
+	// bundle depends on.
+	withSub := agentExport{
+		AgentRecord: AgentRecord{Name: "Wren"},
+		SubAgents: []AgentRecord{{Name: "Scout",
+			AttachedSources: []ReferenceSelection{{Kind: "testfiles", ItemID: "support_bundles"}}}},
+	}
+	if deps := agentExportDeps(nil, withSub, "u", nil); len(deps) == 0 {
+		t.Error("a sub-agent's attachment is still the bundle's dependency")
+	}
+
+	// And an agent attached to nothing declares nothing — a bundle that warned
+	// about a source no agent asked for is a bundle people stop reading.
+	if deps := agentExportDeps(nil, agentExport{AgentRecord: AgentRecord{Name: "Plain"}}, "u", nil); len(deps) != 0 {
+		t.Errorf("nothing attached, nothing to declare: %+v", deps)
+	}
+}

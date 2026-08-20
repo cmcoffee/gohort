@@ -25,6 +25,10 @@ func init() {
 	RegisterArtifactType(customAppArtifact{})
 	RegisterArtifactType(sourceHookArtifact{})
 	RegisterArtifactType(monitorArtifact{})
+	// Not materializable, registered anyway: declaring it is what lets the
+	// bundle machinery answer "is this attachment satisfied here" instead of
+	// letting an agent land pointing at a source nobody has.
+	RegisterArtifactType(referenceSourceArtifact{})
 }
 
 // ---- connector -------------------------------------------------------------
