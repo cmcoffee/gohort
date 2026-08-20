@@ -49,6 +49,30 @@ func (s *SecureAPI) SaveUserToken(name, user string, tok CredOAuthToken) error {
 	return nil
 }
 
+// RevokeUserTokens drops every stored OAuth token belonging to user, across
+// every credential they had connected. Returns how many were removed.
+//
+// Keys are "<credential>__usertok__<user>", so the sweep is a suffix match
+// rather than a lookup per credential — which also catches tokens left behind
+// by a credential that has since been deleted.
+func (s *SecureAPI) RevokeUserTokens(user string) int {
+	user = strings.TrimSpace(user)
+	if !s.ready() || user == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	suffix := "__usertok__" + user
+	n := 0
+	for _, k := range s.db.Keys(secureAPITable) {
+		if strings.HasSuffix(k, suffix) {
+			s.db.Unset(secureAPITable, k)
+			n++
+		}
+	}
+	return n
+}
+
 func (s *SecureAPI) loadUserToken(name, user string) (CredOAuthToken, bool) {
 	tok, ok := s.loadUserTokenRaw(name, user)
 	return tok, ok && tok.AccessToken != ""

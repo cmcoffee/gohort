@@ -378,9 +378,38 @@ func toInt(v any) (int, bool) {
 const alwaysAllowTable = "ssh_always_allow"
 const notesTable = "ssh_notes"
 
+// pendingConfirm is one session's operator-approval channel plus the two facts
+// needed to route an answer INTO it safely: whose session it is, and whether a
+// person is the one answering.
+//
+// Both exist because the answer arrives on a shared endpoint that cannot say
+// which session it belongs to. The confirm card's id is generated per event by
+// the bridge (see translateProbeEvent) and is not the session id, so the
+// handler has to select a channel rather than address one. Selecting without
+// these two fields is what let any servitor user answer any other user's
+// pending command.
+type pendingConfirm struct {
+	// ch carries the decision to the waiting runSession. Buffered (size 1), so
+	// a click that lands before the run blocks on the read still delivers.
+	ch chan bool
+	// owner is the user whose session this is. Empty NEVER matches, which is
+	// the same fail-closed posture LiveEntry.MaskedLabel takes with an untagged
+	// session: a channel nobody can be shown to own is a channel nobody may
+	// answer.
+	owner string
+	// interactive marks a channel a PERSON answers. The read-only paths (guide
+	// investigations, workspace drills) register a channel too, but a goroutine
+	// feeds theirs a standing denial to keep the run from mutating anything. An
+	// operator's "allow" must never land in one of those, and sync.Map.Range
+	// visits in unspecified order, so excluding them by construction is the
+	// only reliable way to keep a click on one session's card from flipping a
+	// different session's auto-deny to allow.
+	interactive bool
+}
+
 var (
 	probeSessions     = NewLiveSessionMap[probeEvent](0)
-	confirmChans      sync.Map // session_id -> chan bool
+	confirmChans      sync.Map // session_id -> pendingConfirm
 	pendingCmds       sync.Map // session_id -> command string currently awaiting confirmation
 	termBuffers       sync.Map // "userID:applianceID" -> *termBuffer; persistent command+output log mirrored to any connected terminal WebSocket
 	sessionAppliances sync.Map // session_id -> applianceID (for building resume URLs in the dashboard live-sessions panel)
@@ -1133,7 +1162,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	probeSessions.Register(sid, label, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
-	confirmChans.Store(sid, ch)
+	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: userID, interactive: true})
 
 	var hist []Message
 	for _, h := range req.History {
@@ -1166,7 +1195,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	// installs OnRoundStart). Servitor doesn't gate by owner today —
 	// RequireUser in handleInject confirms the requester is logged in,
 	// no per-queue cross-check — so the registration leaves Owner empty.
-	RegisterInjectionQueue(sid, "", "")
+	RegisterInjectionQueue(sid, userID, "")
 
 	go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, false)
 
@@ -1186,7 +1215,8 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 // deleted — those return 410 Gone. Edit-locked notes stay in the queue but
 // are skipped by Drain so the orchestrator can't grab them mid-edit.
 func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -1205,6 +1235,21 @@ func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
 	}
 	q := LookupInjectionQueue(req.ID)
 	if q == nil {
+		http.Error(w, "session not found or not interjectable", http.StatusNotFound)
+		return
+	}
+	// Only into your own run, the same check orchestrate's handleInject makes
+	// on the same contract (see apps/orchestrate/interjections.go). This copy
+	// dropped it, and registered its queues with an empty owner, so any session
+	// id was enough: a note pushed here is read by the orchestrator on its next
+	// decision, which made it a way to put words in front of somebody else's
+	// agent mid-investigation, on an appliance the sender may have no way to
+	// reach themselves. The same id also reads and edits the queue, so this
+	// sits above the switch and covers every method. An empty Owner now matches
+	// nobody rather than everybody.
+	if q.Owner == "" || q.Owner != user {
+		// Same answer as "no such session": whether someone else is running
+		// something is not the caller's business.
 		http.Error(w, "session not found or not interjectable", http.StatusNotFound)
 		return
 	}
@@ -1319,7 +1364,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 	probeSessions.Register(sid, "Refreshing "+appliance.Name, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
-	confirmChans.Store(sid, ch)
+	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: userID, interactive: true})
 
 	if appliance.Type == "command" {
 		// Command-type appliances: map the command's CLI structure. The
@@ -1397,7 +1442,7 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 	probeSessions.Register(sid, "Mapping "+req.Command+" on "+appliance.Name, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
-	confirmChans.Store(sid, ch)
+	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: userID, interactive: true})
 
 	// saveProfile=false: an SSH appliance's profile is the system
 	// reconnaissance — a single CLI's reference must not replace it.

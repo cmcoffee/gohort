@@ -124,3 +124,30 @@ func TestNoPhaseNamesToolsMeansNoCatalogWork(t *testing.T) {
 		t.Errorf("nothing to check should cost nothing, got %d name(s)", len(known))
 	}
 }
+
+// The tool's reply has to carry the catalog findings, not just the advice.
+// A model authoring a machine through machine(action="update") never sees
+// the editor's checklist, so this reply is the only place the mistake that
+// runs a step with the whole catalog can reach the author who made it.
+func TestMachineFindingsTextLeadsWithTheCatalogFindings(t *testing.T) {
+	got := machineFindingsText(
+		[]string{`step investigate: tool "jira" is not a tool this agent can reach`},
+		[]string{"step investigate: it names tools AND delegates."},
+	)
+	if !strings.Contains(got, `tool "jira" is not a tool`) {
+		t.Fatalf("the catalog finding is missing from the tool's reply: %q", got)
+	}
+	if !strings.Contains(got, "nothing will tell you again at run time") {
+		t.Errorf("the catalog half needs its own heading — advice wording reads as optional: %q", got)
+	}
+	if strings.Index(got, "jira") > strings.Index(got, "names tools AND delegates") {
+		t.Errorf("catalog findings must lead; a reader stops at the first list: %q", got)
+	}
+}
+
+// Nothing to say stays silent — the note is appended unconditionally.
+func TestMachineFindingsTextEmptyWhenClean(t *testing.T) {
+	if got := machineFindingsText(nil, nil); got != "" {
+		t.Errorf("want empty, got %q", got)
+	}
+}

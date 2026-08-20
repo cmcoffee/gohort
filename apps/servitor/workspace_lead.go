@@ -75,8 +75,8 @@ func (T *Servitor) memberInvestigation(ctx context.Context, parentID, reqUser st
 	probeSessions.Register(sid, label, cancel).SetOwner(reqUser)
 	sessionAppliances.Store(sid, m.ID)
 	confirm := make(chan bool, 1)
-	confirmChans.Store(sid, confirm)
-	RegisterInjectionQueue(sid, "", "")
+	confirmChans.Store(sid, pendingConfirm{ch: confirm, owner: reqUser})
+	RegisterInjectionQueue(sid, reqUser, "")
 	// Read-only: feed a denial to every confirmation request for the life of the
 	// drill. A workspace question fans out across hosts, so there is no coherent
 	// way to ask the operator to approve three concurrent commands — and no

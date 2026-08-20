@@ -197,7 +197,10 @@ func sortedParamNames(p map[string]ToolParam) []string {
 // answer "can you talk to lab-box?" — the connection was real but invisible,
 // and the model guessed no. The provider passes the list already sorted, so
 // the description is byte-stable across turns and the prompt prefix caches.
-func RequestCapabilityToolDef(udb Database, chat FactChatFunc, owner, agentID string, connected []Appliance) AgentToolDef {
+// sess carries the turn's cancelable context: working out the command for
+// a machine is an LLM round-trip, and a stopped turn should not leave one
+// in flight. Nil-safe.
+func RequestCapabilityToolDef(sess *ToolSession, udb Database, chat FactChatFunc, owner, agentID string, connected []Appliance) AgentToolDef {
 	desc := "Ask for a new ability on one of the owner's systems, described in plain words — \"restart the web server\", \"tail the app log\", \"deploy a given version\". " +
 		"Servitor works out the exact command for THAT machine and stores it as a proposal for the owner to approve. " +
 		"Nothing runs now, and nothing runs later without their approval. " +
@@ -218,7 +221,7 @@ func RequestCapabilityToolDef(udb Database, chat FactChatFunc, owner, agentID st
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			return RequestCapability(context.Background(), udb, chat, owner, agentID, RequestCapabilityArgs{
+			return RequestCapability(sess.Context(), udb, chat, owner, agentID, RequestCapabilityArgs{
 				System: StringArg(args, "system"),
 				Intent: StringArg(args, "intent"),
 			})

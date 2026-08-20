@@ -157,22 +157,40 @@ func cursorDiffers(sess *ChatSession, cur *MachineCursor) bool {
 	return false
 }
 
-// machineCatalog is the tool pool a transient phase draws from.
+// machineCatalog is the tool pool a transient phase draws from: the
+// agent's whole catalog, which PhaseWorker then narrows to whatever the
+// step named (see PhaseTools).
 //
-// ST1 GIVES IT NOTHING, deliberately. A transient phase runs during
-// system-prompt assembly, before the turn has built its ToolSession, and
-// the live catalog is wired to that session (GetAgentToolsWithSession) —
-// tools that stage files, attach images, and hold per-turn state. Handing
-// a phase a half-wired copy would be worse than handing it none.
+// UNCHECKED MEANS EVERYTHING, the same as it does while a conversation
+// waits in a resident phase. The two used to disagree — an empty list
+// inherited the catalog in one and revoked it in the other — and the
+// disagreement was invisible, because it is the same control in the same
+// editor and the only thing that flips its meaning is a toggle three
+// fields up. What that cost is a step written to go and look running with
+// nothing to look with, then reporting, accurately, that it had not been
+// given what it was sent to fetch. A step that genuinely wants no catalog
+// says so with the marker (phaseWantsNoTools) rather than by leaving a
+// control empty.
 //
-// It costs nothing today: the phases this exists to serve (decompose,
-// route, classify) are prompt-in-JSON-out work, and a phase that names
-// tools it can't reach takes the tool-less path, the same degradation a
-// pipeline stage takes (see resolveStageTools). The seam is here, and
-// filling it is what moves transient phases onto the real catalog when a
-// machine turns up that needs one.
+// The pool is built at most once per turn and only when a step actually
+// runs, which is what keeps the flip affordable: a machine whose steps
+// decompose and route pays one catalog build for the turn, not one per
+// step. It is a real cost where there used to be none, and it buys a
+// control that means the same thing in both places it appears.
+//
+// A transient phase runs during system-prompt assembly, before the turn
+// has built its ToolSession, and the live catalog is wired to that
+// session (GetAgentToolsWithSession) — tools that stage files, attach
+// images, and hold per-turn state. That is why this builds a session of
+// the step's OWN rather than waiting for the turn's, and why the tools it
+// hands out are wired rather than half-wired.
 func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
-	if len(ph.Tools) == 0 {
+	// The one way to say "no tools" now that unchecked means everything.
+	// Kept as a real setting rather than inferred from an empty list,
+	// because both ends of the control have to be sayable: a step that
+	// only decides or reshapes what it was given wants no catalog at all,
+	// and it should not have to tick every box to express the opposite.
+	if PhaseReach(ph) == ReachNone {
 		return nil
 	}
 	if t.machineTools == nil {
@@ -190,15 +208,91 @@ func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
 			t.turnDiag("machine_tools_unavailable", "step "+ph.Name+" names tools but the catalog could not be resolved ("+err.Error()+"); it ran without them")
 			return nil
 		}
+		// The agent's ATTACHED reach, on the same footing as the turn's
+		// own catalog has it.
+		//
+		// resolveWorkerTools assembles the registered pool; attached
+		// sources and attached pipelines are appended by the turn's
+		// catalog build (runPlan) and by nothing else, so a step naming
+		// search_<store> or run_<pipeline> narrowed to nothing and ran
+		// tool-less — reporting, truthfully, that it had not been given
+		// the thing it was sent to fetch. The step that goes and looks is
+		// the whole reason a step names tools at all, and the things it
+		// looks IN are attachments.
+		pool = append(pool, t.buildAttachedSourceToolDefs(sess)...)
+		pool = append(pool, t.buildAttachedPipelineToolDefs()...)
 		// Prefixed so the activity pane reads as what it is: work done
 		// inside a step, before the turn's own answer began.
 		t.machineTools = t.wrapToolsForActivity(sess, pool, "↳ [step] ")
+		t.noteStepToolCalls(t.machineTools)
 		// Kept because the approval hook reads it: which credential a
 		// call rides on is session state, so the gate has to be built
 		// against the SAME session the tools were.
 		t.machineSess = sess
 	}
+	t.reportUnreachableStepTools(ph)
 	return t.machineTools
+}
+
+// reportUnreachableStepTools says which of a step's named tools the pool
+// does not carry.
+//
+// The resident path reports this (narrowCatalog's unmatched list, and its
+// refusal to resolve a total miss to nothing); a transient step had
+// neither. It gets exactly what it named and no more, so a name that
+// misses is subtracted in silence — and a step whose whole list missed
+// runs with no tools at all, then answers from the prompt alone. That is
+// how "the logs were not provided" comes back from a step written to go
+// and read them.
+//
+// Reported, not repaired: a step is a bounded transform with nobody
+// waiting on its control plane, so running it tool-less is survivable in
+// a way the resident case is not. What was missing is the part nothing
+// said.
+func (t *chatTurn) reportUnreachableStepTools(ph MachinePhase) {
+	if len(ph.Tools) == 0 {
+		return
+	}
+	// Judged against what the step will ACTUALLY be handed — the pool
+	// after its own reach — so a name the reach dropped is reported as
+	// the step's two controls disagreeing rather than as a tool nobody
+	// has.
+	reachable := PhaseTools(ph, t.machineTools)
+	have := make(map[string]bool, len(reachable))
+	for _, td := range reachable {
+		have[td.Tool.Name] = true
+	}
+	inPool := make(map[string]bool, len(t.machineTools))
+	for _, td := range t.machineTools {
+		inPool[td.Tool.Name] = true
+	}
+	var missing []string
+	for _, n := range ph.Tools {
+		n = strings.TrimSpace(n)
+		if n == "" || n == NoToolsMarker || have[n] {
+			continue
+		}
+		if inPool[n] {
+			missing = append(missing, n+" (dropped by this step's reach)")
+			continue
+		}
+		missing = append(missing, n)
+	}
+	if len(missing) == 0 {
+		return
+	}
+	Log("[orchestrate.orch] step %q names %d tool(s) this turn's catalog does not carry: %v",
+		ph.Name, len(missing), missing)
+	detail := "step " + ph.Name + " names " + strings.Join(missing, ", ") +
+		", which this agent's catalog does not carry under those names, so the step ran without them. " +
+		"Names must match the catalog exactly — an attached source mints its own (search_<store>), " +
+		"and a remote MCP tool is published as \"<server>_<tool>\" in lowercase."
+	if len(missing) == len(ph.Tools) {
+		detail = "step " + ph.Name + " reached NONE of the tools it names (" + strings.Join(missing, ", ") +
+			"), so it ran with no tools at all and could only answer from its prompt. " +
+			"Check the names against the agent's catalog, and check the agent is attached to the source they come from."
+	}
+	t.turnDiag("machine_step_tools_missing", detail)
 }
 
 // machineConfirm is the approval gate a step's tools go through: the
@@ -370,6 +464,98 @@ func (m turnMachine) Tools(catalog []AgentToolDef) []AgentToolDef {
 // resolveWorkerTools already force-includes this class past the agent's own
 // allowlist for exactly this reason; the phase filter runs downstream of
 // that decision and must not quietly undo it.
+// noteStepToolCalls makes a step's tool calls visible to anything that
+// asks what this TURN did.
+//
+// A step runs before the turn's loop exists, on a session of its own, so
+// the loop's accounting never sees it — and the end-of-turn judge, which
+// asks whether the reply is true about the turn's work, read a turn whose
+// step went and searched as a turn that sat still. It then convicted the
+// reply for opening "based on the Confluence research", which was exactly
+// what had happened. Reported live as a false positive, and it is the
+// whole class: any turn whose work was done by a step rather than by the
+// model answering.
+//
+// Wrapped here rather than counted in the runner because this is the one
+// place that knows a call is a STEP's: the same catalog is handed to
+// every step of the turn.
+func (t *chatTurn) noteStepToolCalls(tools []AgentToolDef) {
+	for i := range tools {
+		name, inner := tools[i].Tool.Name, tools[i].Handler
+		if inner == nil {
+			continue
+		}
+		tools[i].Handler = func(args map[string]any) (string, error) {
+			out, err := inner(args)
+			// Only what SUCCEEDED. A failed call is not work the reply
+			// may claim, and handing the judge a name that errored would
+			// excuse the one reply it exists to catch.
+			if err == nil {
+				t.notePriorWork("a step ran " + name)
+			}
+			return out, err
+		}
+	}
+}
+
+// notePriorWork records one piece of work done for this turn before the
+// turn's own loop began. Shares the tool ledger's lock: same turn, same
+// contention, and a step's tools run on their own goroutines.
+func (t *chatTurn) notePriorWork(what string) {
+	if strings.TrimSpace(what) == "" {
+		return
+	}
+	t.toolMu.Lock()
+	defer t.toolMu.Unlock()
+	t.priorWork = append(t.priorWork, what)
+}
+
+// priorWorkForJudge is the AgentLoopConfig.PriorWork hook: what ran for
+// this turn outside the loop, as the judge is given it.
+func (t *chatTurn) priorWorkForJudge() []string {
+	t.toolMu.Lock()
+	defer t.toolMu.Unlock()
+	return append([]string(nil), t.priorWork...)
+}
+
+// noteAttachedTools records what an attachment minted this turn, so the
+// phase filter can tell a GRANT apart from a selection. Additive: the
+// sources build and the pipelines build both call it.
+func (t *chatTurn) noteAttachedTools(defs []AgentToolDef) {
+	if len(defs) == 0 {
+		return
+	}
+	if t.attachedToolNames == nil {
+		t.attachedToolNames = make(map[string]bool, len(defs))
+	}
+	for _, td := range defs {
+		if n := td.Tool.Name; n != "" {
+			t.attachedToolNames[n] = true
+		}
+	}
+}
+
+// phaseGovernsAttachments reports whether this phase's Tools list is a
+// statement about the agent's ATTACHMENTS, which is true only when it
+// names one of their tools.
+//
+// The rule the whole exemption turns on. A list that names none of them
+// is a selection out of the worker pool — the pool the picker offers, and
+// the only one the author was choosing from — so it says nothing either
+// way about a source somebody attached in a different picker for a
+// different reason. A list that names even one has clearly been written
+// with attachments in mind, and from there the author gets exactly what
+// they wrote: naming one source and not the other has to be able to mean
+// "that one, not this one", or the control is no control at all.
+func (m turnMachine) phaseGovernsAttachments(attached map[string]bool) bool {
+	for _, n := range m.phase.Tools {
+		if attached[strings.TrimSpace(n)] {
+			return true
+		}
+	}
+	return false
+}
+
 var machineControlTools = map[string]bool{
 	"change_phase":     true,
 	"plan_set":         true,
@@ -402,20 +588,58 @@ var machineControlTools = map[string]bool{
 // Taken literally it also costs the model its control plane, so the turn
 // ends up unable to answer or advance. We keep the catalog whole and say so
 // instead; a phase that genuinely wants no tools says that by naming none.
-func (m turnMachine) narrowCatalog(catalog []AgentToolDef) (out []AgentToolDef, dropped, unmatched []string, fellBack bool) {
+func (m turnMachine) narrowCatalog(catalog []AgentToolDef, attached map[string]bool) (out []AgentToolDef, dropped, unmatched []string, fellBack bool) {
 	narrowed := m.Tools(catalog)
-	if !m.on || len(m.phase.Tools) == 0 {
+	if !m.on || (len(m.phase.Tools) == 0 && PhaseReach(m.phase) == ReachAll) {
 		return narrowed, nil, nil, false
+	}
+	// The explicit "nothing": the control plane and the agent's
+	// attachments, and not one tool more. Handled before the name match so
+	// the marker is never reported as a name the catalog is missing, and
+	// never triggers the total-miss rescue below — this IS the case where
+	// emptiness was meant.
+	if PhaseReach(m.phase) == ReachNone {
+		for _, td := range catalog {
+			if machineControlTools[td.Tool.Name] || attached[td.Tool.Name] {
+				out = append(out, td)
+				continue
+			}
+			dropped = append(dropped, td.Tool.Name)
+		}
+		return out, dropped, nil, false
+	}
+	// An attachment is a grant, not a selection — see the field comment on
+	// chatTurn.attachedToolNames. Unless this phase names one of their
+	// tools, they pass through the filter the way the control plane does.
+	if m.phaseGovernsAttachments(attached) {
+		attached = nil
 	}
 	kept := make(map[string]bool, len(narrowed))
 	for _, td := range narrowed {
 		kept[td.Tool.Name] = true
 	}
-	for _, n := range m.phase.Tools {
-		if n = strings.TrimSpace(n); n != "" && !kept[n] {
-			unmatched = append(unmatched, n)
-		}
+	inCatalog := make(map[string]bool, len(catalog))
+	for _, td := range catalog {
+		inCatalog[td.Tool.Name] = true
 	}
+	for _, n := range m.phase.Tools {
+		n = strings.TrimSpace(n)
+		if n == "" || n == NoToolsMarker || kept[n] {
+			continue
+		}
+		// Two different mistakes wearing one word. A name the catalog
+		// HAS, dropped by the reach, is a step whose two controls argue
+		// with each other — say which one won, or the author reads it as
+		// the tool having gone missing and goes looking for it.
+		if inCatalog[n] {
+			unmatched = append(unmatched, n+" (dropped by this step's reach)")
+			continue
+		}
+		unmatched = append(unmatched, n)
+	}
+	// A total miss is still a total miss even when attachments would have
+	// carried the turn: the list was written to express a selection, and one
+	// that resolves to nothing is a typo whatever else survives it.
 	if len(narrowed) == 0 {
 		return catalog, nil, unmatched, true
 	}
@@ -425,7 +649,7 @@ func (m turnMachine) narrowCatalog(catalog []AgentToolDef) (out []AgentToolDef, 
 	out = make([]AgentToolDef, 0, len(narrowed)+len(machineControlTools))
 	for _, td := range catalog {
 		switch {
-		case kept[td.Tool.Name], machineControlTools[td.Tool.Name]:
+		case kept[td.Tool.Name], machineControlTools[td.Tool.Name], attached[td.Tool.Name]:
 			out = append(out, td)
 		default:
 			dropped = append(dropped, td.Tool.Name)

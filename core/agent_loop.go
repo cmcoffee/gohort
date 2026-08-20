@@ -1031,9 +1031,9 @@ type AgentLoopConfig struct {
 	// that have poor or no native tool support (e.g. Gemma via Ollama).
 	PromptTools bool
 
-	// DisableToolMentionCorrection turns off the no-arg-tool-mention nudge
-	// (the loop otherwise re-prompts when the model names a known no-arg tool
-	// in prose but emits no call). Set this when the model is EXPECTED to name
+	// DisableToolMentionCorrection turns off the tool-mention nudge (the
+	// loop otherwise re-prompts when the model names a known tool in prose
+	// but emits no call). Set this when the model is EXPECTED to name
 	// its own tools legitimately — chiefly a code-analysis session whose
 	// SUBJECT is a codebase that defines those same tools (e.g. servitor
 	// pointed at an agent framework), where "the code defines store_fact" is
@@ -1214,6 +1214,16 @@ type AgentLoopConfig struct {
 	// honest about what the turn actually did — the backstop for the shapes the
 	// phrase-list guards above do not know about. See turn_judge.go.
 	TurnClaimJudge TurnClaimJudge
+
+	// PriorWork reports work already done FOR this turn before the loop
+	// started, which the loop therefore cannot observe: a machine step that
+	// searched, a delegated step, a pipeline phase. One entry per piece of
+	// work, naming what ran.
+	//
+	// The host supplies it because only the host knows what it ran on the
+	// turn's behalf; the loop's own accounting begins when the loop does.
+	// Nil, and the empty result, both read as "nothing ran before this".
+	PriorWork func() []string
 
 	// TurnGroundingJudge reads the finished turn and reports whether the reply
 	// states an unchecked claim as established fact. Separate from
@@ -3070,19 +3080,23 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				continue
 			}
 
-			// No-arg-tool-mention correction: the model named a KNOWN
-			// zero-argument tool in its reply (e.g. "let me get_joke") but
-			// emitted no structured call. parseNaturalToolCall can't rescue a
-			// no-arg tool from prose (there are no args to extract), so the tool
-			// silently never runs and the model may narrate a result it never
-			// got. Nudge once to either issue the real call or answer plainly.
+			// Tool-mention correction: the model named a KNOWN tool in its
+			// reply (e.g. "let me get_joke", or "I can't reach
+			// read_support_bundles") but emitted no structured call.
+			// parseNaturalToolCall rescues a narration only when arguments
+			// are readable off the prose, so a no-arg tool (nothing to
+			// extract) and a tool merely TALKED about both fall through it
+			// — the tool silently never runs, and the model either narrates
+			// a result it never got or reports an inability that isn't one.
+			// Nudge once to either issue the real call or answer plainly.
 			// FAR narrower than the disabled actionPromiseCorrection above: it
 			// fires ONLY on an exact, token-bounded, snake_case tool NAME (those
 			// don't occur in ordinary prose), only when NO tool fired this turn,
-			// is capped by its own correction budget, and the nudge gives an
-			// explicit "if you didn't mean to, answer directly" out. Flip the
-			// const to disable if it ever proves noisy.
-			const noArgToolMentionCorrection = true
+			// only on a reply short enough to be a lead-in, is capped by its own
+			// correction budget, and the nudge gives an explicit "if you didn't
+			// mean to, answer directly" out. Flip the const to disable if it
+			// ever proves noisy.
+			const toolMentionCorrection = true
 			// Full-reply gate (double-emit prevention). This correction fires by
 			// re-prompting, and re-prompting a round whose content ALREADY
 			// streamed to the client makes the retry stream a SECOND time — the
@@ -3098,17 +3112,27 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// lossless — a skipped correction leaves the full answer standing.
 			const noArgCorrectionMaxContentLen = 600
 			contentIsPreamble := len(strings.TrimSpace(resp.Content)) <= noArgCorrectionMaxContentLen
-			if noArgToolMentionCorrection && contentIsPreamble && !cfg.DisableToolMentionCorrection && !toolFiredThisTurn {
-				name := mentionedNoArgTool(resp.Content, handlers, toolDefs)
+			if toolMentionCorrection && contentIsPreamble && !cfg.DisableToolMentionCorrection && !toolFiredThisTurn {
+				name, needsArgs := mentionedUncalledTool(resp.Content, handlers, toolDefs)
 				if name != "" && !(corrections.available(correctionToolMention) && round < maxRounds) {
-					noteUncorrected(correctionToolMention, "The reply again named a no-arg tool in prose without calling it; no further re-prompt was left to spend.")
+					noteUncorrected(correctionToolMention, "The reply again named a tool in prose without calling it; no further re-prompt was left to spend.")
 				} else if name != "" {
-					Debug("[agent_loop] no-arg tool %q named in prose without a call, re-prompting: correction %d/%d", name, corrections.spend(correctionToolMention), maxCorrectionsPerKind)
+					Debug("[agent_loop] tool %q named in prose without a call (needs_args=%v), re-prompting: correction %d/%d", name, needsArgs, corrections.spend(correctionToolMention), maxCorrectionsPerKind)
 					emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
 					settleRound() // finalize the preamble so the retry doesn't concatenate into it
+					// Two different reasons nothing ran, and the model can only
+					// fix the one it is told about. The parameterized wording
+					// also has to say the tool IS available: the reply that
+					// triggers this is often a refusal ("I don't have access to
+					// those files"), and repeating the nudge without correcting
+					// the premise just gets the refusal restated.
+					why := "it takes no arguments, so there was nothing to run"
+					if needsArgs {
+						why = "naming a tool in text does not run it — the arguments have to travel in a real structured call"
+					}
 					history = append(history, Message{
 						Role:    "user",
-						Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (it takes no arguments, so there was nothing to run). If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name),
+						Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (%s). That tool IS available to you on this turn — do not say you lack access to what it reaches. If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name, why),
 					})
 					continue
 				}
@@ -3279,6 +3303,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				Request:       LatestUserContent(messages),
 				Reply:         resp.Content,
 				ToolCalls:     turnToolCalls,
+				PriorWork:     cfg.priorWork(),
 				ToolErrors:    cumulativeToolErrors,
 				LastToolError: lastToolError,
 				Delivered:     cfg.deliveredCount(),
@@ -4665,6 +4690,15 @@ func (c AgentLoopConfig) deliveredCount() int {
 	return c.DeliveredCount()
 }
 
+// priorWork is the host's account of what ran for this turn before the loop
+// began. Nil-safe, because most hosts have nothing to report.
+func (c AgentLoopConfig) priorWork() []string {
+	if c.PriorWork == nil {
+		return nil
+	}
+	return c.PriorWork()
+}
+
 func (c AgentLoopConfig) backgrounded() bool {
 	return c.Backgrounded != nil && c.Backgrounded()
 }
@@ -5751,7 +5785,7 @@ func coerceArgValue(v string) any {
 // with a tool named "image" put the word through here every time the model
 // DESCRIBED a photo to the user. Substring matching would also have fired
 // it inside "images"/"imagery". A tool name is only evidence of a call when
-// it can't equally be evidence of English — see mentionedNoArgTool, which
+// it can't equally be evidence of English — see mentionedUncalledTool, which
 // has held the same two guards since the actionPromiseCorrection fallout.
 func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *ToolCall {
 	lower := strings.ToLower(content)
@@ -5847,37 +5881,52 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	}
 }
 
-// mentionedNoArgTool returns the name of a known ZERO-required-argument tool
-// that appears as a standalone token in content, or "" if none. It's the
-// re-prompt trigger for no-arg tools that parseNaturalToolCall can't rescue: a
-// model that names such a tool in prose without emitting a structured call would
-// otherwise have it silently dropped. Deliberately conservative to avoid the
-// false positives that got actionPromiseCorrection disabled:
-//   - only tools with NO required args (a bare mention could be a valid call),
+// mentionedUncalledTool returns the name of a known tool that appears as a
+// standalone token in content, and whether that tool takes parameters —
+// or "" if no tool is named. It's the re-prompt trigger for a call the
+// model NAMED but never emitted.
+//
+// parseNaturalToolCall rescues a narration only when it can read arguments
+// off the prose, so two shapes fall through it in silence: a no-arg tool
+// (there is nothing to extract) and a parameterized one the model merely
+// talked ABOUT ("I don't have access to read_support_bundles") rather than
+// wrote out as a call. Both end the turn on the model's own account of
+// what it did or couldn't do, while the tool sat in the catalog the whole
+// time — the reported symptom being an agent that insists it cannot reach
+// files it was holding the tools for.
+//
+// Deliberately conservative to avoid the false positives that got
+// actionPromiseCorrection disabled:
 //   - only snake_case names (an underscore) — single common words like a
 //     hypothetical "help" tool would false-match ordinary prose,
-//   - token-bounded match so "image" doesn't fire inside "images".
-func mentionedNoArgTool(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) string {
+//   - token-bounded match so "image" doesn't fire inside "images",
+//   - the caller fires only on a SHORT reply that ran no tool this turn,
+//     which is what separates a lead-in or a refusal from an answer that
+//     names a tool in passing.
+//
+// needsArgs distinguishes the two shapes for the nudge, which has to say
+// why nothing ran: a no-arg tool had nothing to extract, a parameterized
+// one needs its arguments written into a real structured call. It is the
+// widening that retired the old zero-parameter restriction — that test
+// kept the correction off exactly the tools whose narration costs the most
+// (a search or a read the answer then claims was impossible), and the
+// descriptive-mention risk it was guarding lives in the caller's length
+// gate and in DisableToolMentionCorrection.
+func mentionedUncalledTool(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) (name string, needsArgs bool) {
 	lower := strings.ToLower(content)
-	best := ""
 	for _, td := range toolDefs {
-		// "No-arg" means literally zero parameters — the only case where
-		// there is nothing to extract from prose and the mention can't be a
-		// real call. Keying off Required instead would match parameterized
-		// tools that merely mark everything optional (e.g. tool_def, which
-		// validates in-handler, not via the schema), so a purely DESCRIPTIVE
-		// mention ("I wrap APIs via tool_def") would trip the correction.
-		if td.Name == "" || len(td.Parameters) != 0 || !strings.Contains(td.Name, "_") {
+		if td.Name == "" || !strings.Contains(td.Name, "_") {
 			continue
 		}
 		if _, ok := handlers[td.Name]; !ok {
 			continue
 		}
-		if mentionsToken(lower, strings.ToLower(td.Name)) && len(td.Name) > len(best) {
-			best = td.Name
+		if mentionsToken(lower, strings.ToLower(td.Name)) && len(td.Name) > len(name) {
+			name = td.Name
+			needsArgs = len(td.Parameters) != 0
 		}
 	}
-	return best
+	return name, needsArgs
 }
 
 // mentionsToken reports whether needle occurs in haystack bounded by

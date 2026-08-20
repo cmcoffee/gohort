@@ -99,6 +99,9 @@ func (T *HelloAgent) handleEcho(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
         return
     }
+    if _, _, ok := RequireUser(w, r, T.DB); !ok {
+        return
+    }
     var body struct{ Name string }
     if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
         http.Error(w, err.Error(), http.StatusBadRequest)
@@ -447,10 +450,44 @@ A `<style>` block in `Page.ExtraHeadHTML` alongside your `<script>`. Namespace y
 
 Every app gets a sub-mux scoped to its prefix (`/<app-name>/`). Inside `RegisterRoutes` you mount handlers on the sub. The framework:
 
-- Gates everything behind the user auth check (`RequireUser`)
+- Requires a valid session, and checks the viewer has access to your app (`AuthMiddleware`)
 - Provides a per-user kvlite store (`T.DB`)
 - Mounts the runtime CSS/JS at `/_ui/ui.css` and `/_ui/ui.js` (auto-injected by `Page.ServeHTTP`)
 - Mounts your sub at `<prefix>/`
+
+### What the framework does NOT do: identify the caller
+
+This used to say the framework "gates everything behind `RequireUser`". It does
+not, and reading it that way is how several handlers shipped with no identity
+check at all. `AuthMiddleware` answers *is this a logged-in user who may reach
+this app* — a question about the app, not about the request. **Every handler
+calls `RequireUser` itself**, and the answer is not a gate, it is a key:
+
+```go
+func (T *MyApp) handleRecord(w http.ResponseWriter, r *http.Request) {
+    user, udb, ok := RequireUser(w, r, T.DB)   // resolve the caller
+    if !ok {
+        return
+    }
+    rec, found := loadRecord(udb, r.URL.Query().Get("id"))   // ...and USE them
+    if !found {
+        http.NotFound(w, r)   // "not yours" and "no such thing" get one answer
+        return
+    }
+    // ...
+}
+```
+
+The failure worth naming is the middle ground: resolving the caller and then
+looking the record up in a store that is not scoped to them. That reads like a
+check, passes review, and serves every user's data to every user. If you take
+an id off a request — a session id, a record id, a run id — either load it from
+that user's own store (`udb`, which `RequireUser` hands you), or compare an
+owner field against `user` before you touch it. Answer 404 rather than 403 for
+someone else's id, so a probe cannot confirm it exists.
+
+`apps/hello/agent.go` is the worked example: `demoStore`'s methods all take a
+user, so a handler that forgets to resolve one does not compile.
 
 A typical `RegisterRoutes`:
 

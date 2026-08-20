@@ -175,7 +175,7 @@ func TestOnlyApprovedToolsBecomeDefs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	defs := ApplianceToolDefs(udb, "craig", "wren", labBox())
+	defs := ApplianceToolDefs(nil, udb, "craig", "wren", labBox())
 	if len(defs) != 1 || defs[0].Tool.Name != "restart_web" {
 		t.Fatalf("only the approved tool should be offered, got %d: %+v", len(defs), defs)
 	}
@@ -194,4 +194,15 @@ func TestOnlyApprovedToolsBecomeDefs(t *testing.T) {
 	if !writes {
 		t.Error("an appliance tool must declare CapWrite")
 	}
+}
+
+// The three agent-facing servitor tools all dispatch work that outlives a
+// function call — an investigation, a command on the box, an LLM round to
+// draft a capability. Each takes the turn's session so a Stop reaches
+// them; this locks the source that makes that possible, since the wiring
+// is invisible at the call site and a refactor that drops the parameter
+// would compile fine and silently detach the work again.
+func TestServitorSourceIsSessionAware(t *testing.T) {
+	var _ SessionReferenceToolProvider = servitorSource{}
+	var _ ReferenceToolProvider = servitorSource{}
 }

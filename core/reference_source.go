@@ -86,6 +86,29 @@ type ReferenceToolProvider interface {
 	ItemTools(user, itemID string) []AgentToolDef
 }
 
+// SessionReferenceToolProvider is ReferenceToolProvider with the calling
+// turn's session in hand. Implement this INSTEAD of ItemTools when a
+// source's tools do work that OUTLIVES a single function call — spawn a
+// sub-run, drive an SSH session, poll a remote job.
+//
+// The reason is cancellation, and it is not cosmetic. A tool handler's
+// signature carries no context, so a handler that starts its own run has
+// nothing to root it on and reaches for context.Background(); that run is
+// then detached from the turn that asked for it. Stopping the agent ends
+// the agent and leaves the investigation it dispatched running against
+// the live system, reporting to nobody. Observed exactly that way: cancel
+// the calling agent, and the servitor investigation it had dispatched
+// carried on.
+//
+// sess.Context() is the turn's cancelable context, and it is nil-safe —
+// a caller with no session (an app that never wired one, a background
+// gather) falls back to context.Background() and behaves as before.
+//
+// A source may implement both; the session-aware form wins.
+type SessionReferenceToolProvider interface {
+	ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef
+}
+
 // NetworkReferenceSource is an optional interface a ReferenceSource implements to
 // declare that resolving its content (List/Fetch) reaches out over the network —
 // e.g. a remote MCP document source. A consumer gathering in a private/offline
@@ -180,12 +203,28 @@ func FetchReference(ctx context.Context, user, kind, itemID, query string) strin
 //     "any source", not "SSH only".
 //
 // Empty when the kind is unknown or the item isn't available to user.
+// Callers with a session in hand should use ReferenceItemToolsWithSession
+// instead, so the tools they mint can be canceled with the turn.
 func ReferenceItemTools(user, kind, itemID string) []AgentToolDef {
+	return ReferenceItemToolsWithSession(nil, user, kind, itemID)
+}
+
+// ReferenceItemToolsWithSession is ReferenceItemTools with the calling
+// turn's session, so a source whose tools spawn their own work can root it
+// on a context that a Stop actually reaches. See
+// SessionReferenceToolProvider. A nil session is legal and gives exactly
+// the old behavior.
+func ReferenceItemToolsWithSession(sess *ToolSession, user, kind, itemID string) []AgentToolDef {
 	refSourcesMu.RLock()
 	s := refSources[kind]
 	refSourcesMu.RUnlock()
 	if s == nil {
 		return nil
+	}
+	// Session-aware first: a source implementing both means "give me the
+	// session when there is one", and the plain form is its own fallback.
+	if tp, ok := s.(SessionReferenceToolProvider); ok {
+		return tp.ItemToolsWithSession(sess, user, itemID)
 	}
 	if tp, ok := s.(ReferenceToolProvider); ok {
 		return tp.ItemTools(user, itemID)
@@ -220,7 +259,10 @@ func ReferenceItemTools(user, kind, itemID string) []AgentToolDef {
 		},
 		Handler: func(args map[string]any) (string, error) {
 			q := strings.TrimSpace(fmt.Sprint(args["query"]))
-			txt := s.Fetch(context.Background(), user, item, q)
+			// The turn's context, not Background: this Fetch may be a
+			// network round-trip to a remote source, and a stopped turn
+			// should stop waiting on it. Nil-safe.
+			txt := s.Fetch(sess.Context(), user, item, q)
 			if strings.TrimSpace(txt) == "" {
 				return fmt.Sprintf("No results from %s for %q.", name, q), nil
 			}

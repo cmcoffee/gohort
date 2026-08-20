@@ -203,12 +203,23 @@ func uitoa(n uint64) string {
 // snapshot+poll pattern so reconnects after a page reload replay
 // buffered events and pick up new ones live.
 func (T *Servitor) handleChatEvents(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	// Resolving the caller is not the same as checking the session is theirs,
+	// and this handler used to do only the first. What streams below is an
+	// appliance investigation: the commands run on someone's box and the
+	// output they returned. Every servitor session is tagged at Register, so
+	// the framework's own rule is the whole check. 404 rather than 403, so a
+	// probe cannot learn that somebody else's session exists.
+	if !probeSessions.MayView(user, id) {
+		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 	events, done := probeSessions.SnapshotEvents(id)

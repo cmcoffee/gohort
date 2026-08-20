@@ -886,10 +886,12 @@ func TestKeptToolNamesDoNotLeakBetweenSteps(t *testing.T) {
 		}
 		return
 	}
-	if strings.Join(got(a), ",") != "search_web,only_in_a" {
+	// The explicit-nothing row leads every list; the pool follows, then
+	// whatever only this step names.
+	if strings.Join(got(a), ",") != noToolsSentinel+",search_web,only_in_a" {
 		t.Errorf("step A options wrong: %v", got(a))
 	}
-	if strings.Join(got(b), ",") != "search_web,only_in_b" {
+	if strings.Join(got(b), ",") != noToolsSentinel+",search_web,only_in_b" {
 		t.Errorf("step B options wrong: %v", got(b))
 	}
 }
@@ -1758,7 +1760,7 @@ func TestRoutingIsExposedAndTheToolLimitCollapses(t *testing.T) {
 	if head.Type != "header" || !head.Collapsed {
 		t.Fatalf("the tool limit should open collapsed, got %+v", head)
 	}
-	if !strings.Contains(head.Label, "2 selected") {
+	if !strings.Contains(head.Label, "2 named") {
 		t.Errorf("a collapsed limit must still say it is set: %q", head.Label)
 	}
 }

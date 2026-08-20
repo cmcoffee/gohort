@@ -97,6 +97,19 @@ func isSupersededWorkerTool(name string) bool {
 }
 
 func availableWorkerToolOptions(user string) []ui.SelectOption {
+	// AuthDB is a hook the binary installs at start-up, so it is nil
+	// wherever this app is exercised without one. Every other caller in
+	// core nil-checks it and this function did not, which turned "list
+	// the names a phase could legitimately name" into a segfault the
+	// moment anything but the web editor asked. Both uses below are
+	// ADDITIONS to the registered tools gathered here — the shared
+	// temp-tool pool, and the group labels — so a nil store degrades to
+	// a shorter, plainer list rather than a wrong one.
+	var authDB Database
+	if AuthDB != nil {
+		authDB = AuthDB()
+	}
+
 	pool := FilterChatTools(BlockedTools)
 	defs := make([]AgentToolDef, 0, len(pool))
 	for _, t := range pool {
@@ -126,7 +139,7 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 	if user != "" {
 		// Shared rows only — agent-scoped rows belong to specific agents' kits
 		// and must not surface as user-wide picker options.
-		for _, p := range SharedUserTools(AuthDB(), user) {
+		for _, p := range SharedUserTools(authDB, user) {
 			// Carry the tool's self-declared Category so it groups under that
 			// header; default the user's OWN Builder-authored tools to a clear
 			// "My Tools" group instead of the generic "Other" bucket, where they
@@ -161,7 +174,7 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 	// Management" header; tools in no group fall back to their
 	// capability label ("Network", "Read", …).
 	memberToGroup := map[string]string{}
-	for _, g := range LoadToolGroups(AuthDB()) {
+	for _, g := range LoadToolGroups(authDB) {
 		for _, m := range g.Members {
 			if _, already := memberToGroup[m]; already {
 				continue // first group wins on overlap
@@ -327,7 +340,13 @@ func firstLine(s string) string {
 // item deleted — contributes nothing and is logged rather than erroring the
 // turn: an agent that cannot start because one of five attachments went missing
 // is worse than one that runs with four.
-func (t *chatTurn) buildAttachedSourceToolDefs() []AgentToolDef {
+//
+// sess is the turn's session and is passed straight through: a source
+// whose tools dispatch their own sub-run (servitor's investigate_<system>)
+// roots it on sess.Context(), so stopping this turn stops the work it sent
+// out. Without it the sub-run is detached and a cancel reaches the agent
+// but not the investigation it started.
+func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef {
 	if t == nil || len(t.agent.AttachedSources) == 0 {
 		return nil
 	}
@@ -338,7 +357,7 @@ func (t *chatTurn) buildAttachedSourceToolDefs() []AgentToolDef {
 		if kind == "" || item == "" {
 			continue
 		}
-		defs := ReferenceItemTools(t.user, kind, item)
+		defs := ReferenceItemToolsWithSession(sess, t.user, kind, item)
 		if len(defs) == 0 {
 			// A BREADCRUMB, not just a server log. The attachment is a
 			// frozen {kind, item_id}; when that id stops resolving — the
@@ -440,4 +459,70 @@ func renderReferenceSources(user string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// attachedSourceToolOptions lists the tools an attached reference source
+// contributes, as options a phase's / stage's Tools list may name.
+//
+// These names exist NOWHERE in availableWorkerToolOptions: an attached
+// source's tools are minted per agent at turn time (see
+// buildAttachedSourceToolDefs) and are in no global registry, so every
+// picker that offers "the tools a step may name" was offering a catalog
+// that omitted them — while the runtime filter those lists feed
+// (narrowCatalog) ran against a catalog that HAS them. A phase that named
+// any tool therefore stripped every attached source from the turn, and
+// the author had no way to put them back: the name they needed was not
+// on the list they were ticking.
+//
+// Reported live: an agent attached to a file store, standing in a phase
+// with a Tools list, said its "Diagnostic logs" tools were not in its
+// catalog — correctly, and for a reason no surface stated.
+//
+// Grouped by source label, and the ITEM is named in the help rather than
+// the group, because two stores mint three tools each and what the author
+// needs to see is which store a name belongs to.
+//
+// Offered whether or not any given agent is attached to the item: a
+// machine is portable and is edited without an agent in hand, and the
+// runtime narrowing is a name match either way. An unattached name simply
+// matches nothing, which is the same cost as any other unticked box.
+func attachedSourceToolOptions(user string) []ui.SelectOption {
+	if strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []ui.SelectOption
+	seen := map[string]bool{}
+	for _, g := range ReferenceGroups(user) {
+		for _, it := range g.Items {
+			for _, td := range ReferenceItemTools(user, g.Kind, it.ID) {
+				name := td.Tool.Name
+				if name == "" || seen[name] {
+					continue
+				}
+				seen[name] = true
+				// Grouped per ITEM, not per source kind. One header for
+				// "File stores" puts three stores' nine tools in one
+				// undifferentiated run, and which store a name belongs to
+				// is the only thing the author is actually choosing by.
+				out = append(out, ui.SelectOption{
+					Value: name, Label: name,
+					Group: g.Label + " · " + chFirst(it.Name, it.ID),
+					Help:  firstLine(td.Tool.Description),
+				})
+			}
+		}
+	}
+	return out
+}
+
+// phaseToolOptions is the pool a PHASE or a pipeline STAGE may narrow to:
+// the worker catalog plus what this user's attached sources mint.
+//
+// Distinct from availableWorkerToolOptions, which the AGENT editor uses.
+// The two lists answer different questions: the agent's list decides what
+// the agent CARRIES (attached sources are chosen in the Sources picker,
+// not there), while a phase's list decides what it may REACH out of
+// whatever the turn assembled — and that assembly includes its sources.
+func phaseToolOptions(user string) []ui.SelectOption {
+	return append(availableWorkerToolOptions(user), attachedSourceToolOptions(user)...)
 }

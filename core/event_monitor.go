@@ -20,6 +20,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -352,13 +353,22 @@ func FindEventMonitorByToken(db Database, token string) (EventMonitor, bool) {
 	if db == nil || strings.TrimSpace(token) == "" {
 		return EventMonitor{}, false
 	}
+	// Constant-time, every record checked. This token is the ONLY thing
+	// guarding /api/operator/event/<token>, which wakes an agent, so the
+	// comparison gets the same treatment core/peer_key.go gives a peer key
+	// rather than the == it had.
+	var found EventMonitor
+	ok := false
 	for _, k := range db.Keys(eventMonitorsTable) {
 		var m EventMonitor
-		if db.Get(eventMonitorsTable, k, &m) && m.Token == token {
-			return m, true
+		if !db.Get(eventMonitorsTable, k, &m) || m.Token == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(m.Token), []byte(token)) == 1 {
+			found, ok = m, true
 		}
 	}
-	return EventMonitor{}, false
+	return found, ok
 }
 
 // DeleteEventMonitor removes a definition and cancels its poll task.

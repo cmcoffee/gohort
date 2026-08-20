@@ -190,11 +190,14 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}
 
 	// Gate the entire sub-mux behind per-user app permission.
-	// Loopback requests bypass the check so internal inter-app RPCs
-	// aren't blocked by the server's own gate. Unauthorized external
+	// Internal inter-app calls bypass the check so the server's own RPCs
+	// aren't blocked by its own gate — they carry proof they came from
+	// inside (NewInternalRequest), rather than being recognized by
+	// arriving on loopback, which behind a bare reverse proxy is what
+	// every request in the world looks like. Unauthorized external
 	// requests get 404 to conceal the app's existence.
 	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !IsLoopbackRequest(r) && !UserHasAppAccess(r, "/techwriter") {
+		if !IsInternalRequest(r) && !UserHasAppAccess(r, "/techwriter") {
 			http.NotFound(w, r)
 			return
 		}

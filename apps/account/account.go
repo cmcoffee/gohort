@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -468,9 +469,33 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// Swept here rather than on a timer: the list is the only place the
+		// rows are read, so it is the moment the cleanup is owed, and it keeps
+		// this file free of a goroutine whose failure mode is silent.
+		SweepExpiredAccountTokens()
 		writeJSON(w, ListAccountTokens(user))
 	case http.MethodPost:
 		// action=scope rescopes an existing key; default POST mints a new one.
+		if strings.TrimSpace(r.URL.Query().Get("action")) == "expiry" {
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			var body struct {
+				ExpiresDays int `json:"expires_days"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			var ttl time.Duration
+			if body.ExpiresDays > 0 {
+				ttl = time.Duration(body.ExpiresDays) * 24 * time.Hour
+			}
+			if !SetAccountTokenExpiry(user, id, ttl) {
+				http.Error(w, "token not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if strings.TrimSpace(r.URL.Query().Get("action")) == "scope" {
 			id := strings.TrimSpace(r.URL.Query().Get("id"))
 			var body struct {
@@ -488,8 +513,11 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var req struct {
-			Name  string      `json:"name"`
-			Scope *TokenScope `json:"scope"`
+			Name string `json:"name"`
+			// ExpiresDays bounds the key's life. 0 = no deadline, which is
+			// what every key had before the field existed.
+			ExpiresDays int         `json:"expires_days"`
+			Scope       *TokenScope `json:"scope"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		// New keys are minted deny-by-default: an explicit (possibly empty)
@@ -499,7 +527,11 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 		if scope == nil {
 			scope = &TokenScope{}
 		}
-		writeJSON(w, MintAccountTokenScoped(user, req.Name, scope)) // secret returned once
+		var ttl time.Duration
+		if req.ExpiresDays > 0 {
+			ttl = time.Duration(req.ExpiresDays) * 24 * time.Hour
+		}
+		writeJSON(w, MintAccountTokenExpiring(user, req.Name, scope, ttl)) // secret returned once
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
@@ -721,6 +753,28 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     return { node: wrap, collect: collect };
   }
 
+  // Age of a key's last use, in words. A key nobody has used is the one worth
+  // revoking, and it was impossible to tell before because nothing recorded it.
+  function lastUsed(t){
+    if(!t.last_seen) return 'never used';
+    var days = Math.floor((Date.now() - Date.parse(t.last_seen)) / 86400000);
+    if(isNaN(days)) return 'never used';
+    if(days <= 0) return 'used today';
+    if(days === 1) return 'used yesterday';
+    if(days < 60) return 'used '+days+' days ago';
+    return 'unused for '+Math.floor(days/30)+' months';
+  }
+
+  // Deadline text, and whether it is close enough to say so loudly.
+  function expiryText(t){
+    if(!t.expires) return 'no expiry';
+    var days = Math.ceil((Date.parse(t.expires) - Date.now()) / 86400000);
+    if(isNaN(days)) return 'no expiry';
+    if(days <= 0) return 'expired';
+    if(days === 1) return 'expires tomorrow';
+    return 'expires in '+days+' days';
+  }
+
   // One-line summary of a key's scope for the row.
   function scopeSummary(t){
     if(!t.scope){ return null; } // legacy: rendered as a badge instead
@@ -737,14 +791,40 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       var nameRow = el('div',{class:'acct-tok-name'},[ document.createTextNode(t.name || '(unnamed)') ]);
       if(!t.scope){ nameRow.appendChild(el('span',{class:'acct-tok-badge warn',text:'Unrestricted'})); }
       var subKids = [ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  ·  created '+String(t.created||'').slice(0,10)) ];
+      subKids.push(document.createTextNode('  ·  '+lastUsed(t)));
+      var exp = expiryText(t);
+      if(t.expires){
+        var expDays = Math.ceil((Date.parse(t.expires) - Date.now()) / 86400000);
+        subKids.push(el('span',{class:'acct-tok-badge'+(expDays<=7?' warn':''),text:exp}));
+      }
       var sum = scopeSummary(t);
       if(sum){ subKids.push(document.createTextNode('  ·  '+sum)); }
       else if(!t.scope){ subKids.push(document.createTextNode('  ·  reaches everything (set a scope to restrict)')); }
       var meta = el('div',{class:'acct-tok-meta'},[ nameRow, el('div',{class:'acct-tok-sub'}, subKids) ]);
 
       var scopeBtn = el('button',{class:'acct-tok-btn',style:'color:var(--text-mute)',text:'Scope'});
+      var expBtn = el('button',{class:'acct-tok-btn',style:'color:var(--text-mute)',text:'Expiry'});
       var del = el('button',{class:'acct-tok-btn',text:'Revoke'});
-      var rowEl = el('div',{class:'acct-tok'},[meta,scopeBtn,del]);
+      var rowEl = el('div',{class:'acct-tok'},[meta,expBtn,scopeBtn,del]);
+      expBtn.addEventListener('click',function(){
+        var existing = holder.querySelector('.acct-tok-exp');
+        if(existing){ existing.parentNode.removeChild(existing); return; }
+        var sel = el('select',{class:'acct-tok-input'});
+        [['0','No expiry'],['30','30 days'],['90','90 days'],['180','180 days'],['365','1 year']].forEach(function(o){
+          var opt=el('option',{value:o[0],text:o[1]}); sel.appendChild(opt);
+        });
+        var save = el('button',{class:'acct-tok-create',text:'Set expiry'});
+        save.addEventListener('click',function(){
+          save.disabled=true; save.textContent='Saving…';
+          fetch('api/tokens?action=expiry&id='+encodeURIComponent(t.id),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({expires_days: parseInt(sel.value,10)})})
+            .then(function(r){ if(r.status===204){ load(); } else { save.disabled=false; save.textContent='Set expiry'; } })
+            .catch(function(){ save.disabled=false; save.textContent='Set expiry'; });
+        });
+        holder.appendChild(el('div',{class:'acct-tok-scope acct-tok-exp'},[
+          el('div',{class:'acct-tok-sub',text:'Counted from now. Clearing it back to No expiry makes the key permanent again.'}),
+          sel, save
+        ]));
+      });
       var holder = el('div',{},[rowEl]); // row + (optional) inline editor
       del.addEventListener('click',function(){
         var go = window.uiConfirm ? window.uiConfirm('Revoke this API key? Any client using it stops working.') : Promise.resolve(true);
@@ -769,6 +849,10 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 
     // Create row: name + a "Configure access" expander (deny-by-default), then Create.
     var nameInput = el('input',{type:'text',class:'acct-tok-input',placeholder:'Name (e.g. Claude Desktop)'});
+    var expSel = el('select',{class:'acct-tok-input',title:'How long this key stays valid'});
+    [['0','No expiry'],['30','Expires in 30 days'],['90','Expires in 90 days'],['365','Expires in 1 year']].forEach(function(o){
+      expSel.appendChild(el('option',{value:o[0],text:o[1]}));
+    });
     var create = el('button',{class:'acct-tok-create',text:'Create key'});
     var newHolder = el('div',{});
     var pendingScope = null;
@@ -783,11 +867,11 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       // Deny-by-default: an empty scope reaches nothing until the user ticks options.
       var scope = pendingScope ? pendingScope.collect() : {features:[], targets:[]};
       create.disabled=true; create.textContent='Creating…';
-      fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameInput.value.trim(), scope: scope})})
+      fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameInput.value.trim(), expires_days: parseInt(expSel.value,10), scope: scope})})
         .then(function(r){return r.json();}).then(function(t){ load().then(function(){ reveal(t); }); })
         .catch(function(){ create.disabled=false; create.textContent='Create key'; });
     });
-    root.appendChild(el('div',{class:'acct-tok-newrow'},[nameInput,cfgBtn,create]));
+    root.appendChild(el('div',{class:'acct-tok-newrow'},[nameInput,expSel,cfgBtn,create]));
     root.appendChild(newHolder);
   }
   function reveal(t){

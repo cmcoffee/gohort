@@ -136,7 +136,10 @@ func riskRank(c RiskCategory) int {
 //
 // Each handler closes over the appliance and stamps the acting agent, so the
 // grant lookup downstream cannot be fooled by anything the model passes.
-func ApplianceToolDefs(udb Database, userID, agentID string, appliance Appliance) []AgentToolDef {
+// sess carries the turn's cancelable context so a stopped turn stops the
+// command it sent to the machine, instead of the dispatch running on
+// detached time with nobody left to read the result. Nil-safe.
+func ApplianceToolDefs(sess *ToolSession, udb Database, userID, agentID string, appliance Appliance) []AgentToolDef {
 	var out []AgentToolDef
 	// One listing per root per catalog build, not per tool: several tools
 	// on the same machine usually scope to the same store, and this runs
@@ -156,7 +159,7 @@ func ApplianceToolDefs(udb Database, userID, agentID string, appliance Appliance
 				Caps:        []Capability{CapWrite},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				return DispatchApplianceTool(WithActingAgent(context.Background(), agentID), udb,
+				return DispatchApplianceTool(WithActingAgent(sess.Context(), agentID), udb,
 					ApplianceDispatch{Appliance: app, ToolName: tool.Name, Args: args, AgentID: agentID, UserID: userID})
 			},
 		})

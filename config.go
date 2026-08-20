@@ -555,7 +555,7 @@ func setup_fuzz() {
 	webmenu.IntVar(&webLockoutMinutes, "Lockout Duration (minutes)", webLockoutMinutes, "How long an IP is locked out after max failed attempts.", 1, 1440)
 	webmenu.ToggleVar(&webAllowSignup, "Allow New User Signup", webAllowSignup)
 	webmenu.StringVar(&webAdminIPs, "Admin Allowed IPs", webAdminIPs, "Comma-separated CIDR/IP allowlist for /admin (empty = no IP restriction).")
-	webmenu.SecretVar(&webAPIKey, "API Key", webAPIKey, "Shared key for machine-to-machine access (e.g. third-party API calls). Pass as ?key= query param to bypass login.")
+	webmenu.SecretVar(&webAPIKey, "API Key", webAPIKey, "Deployment-wide key for machine-to-machine access. Send it as the X-Gohort-Key header; the ?key= query form still works but puts the credential in URLs and logs. It bypasses login and per-app access for every route (never admin, which needs a session cookie) — prefer a per-user token from the Account page where one will do. Blank this field to revoke it.")
 	webmenu.StringVar(&webExternalURL, "External URL", webExternalURL, "Public-facing URL for email notification links (e.g. https://gohort.example.com). Leave blank to use listen address.")
 	webmenu.StringVar(&webServiceName, "Service Name", webServiceName, "Name used in notification email subjects (default: Gohort).")
 	webmenu.StringVar(&webNotifyFrom, "Notification From Address", webNotifyFrom, "From address for notification emails (default: uses mail config).")
@@ -777,8 +777,19 @@ func setup_fuzz() {
 	// admin UI; not an operator-deploy-time decision.
 	global.db.Set(WebTable, "allow_signup", webAllowSignup)
 	global.db.Set(WebTable, "session_days", webSessionDays)
+	// Blanking the field REVOKES the key. It used to be write-only — an empty
+	// value meant "keep what is there" — so a blanket auth bypass, once set,
+	// could not be turned off from the only screen that could set it. Clearing
+	// is the more important of the two operations for a credential; keeping is
+	// what you get by not touching the field.
 	if webAPIKey != "" {
 		global.db.CryptSet(WebTable, "api_key", webAPIKey)
+	} else {
+		var existing string
+		if global.db.Get(WebTable, "api_key", &existing); existing != "" {
+			global.db.Unset(WebTable, "api_key")
+			Log("[config] deployment API key cleared — the ?key= / X-Gohort-Key bypass is now off")
+		}
 	}
 	global.db.Set(WebTable, "external_url", webExternalURL)
 	global.db.Set(WebTable, "service_name", webServiceName)

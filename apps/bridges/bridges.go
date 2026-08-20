@@ -17,6 +17,7 @@ package bridges
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"sort"
@@ -456,13 +457,46 @@ func (T *Bridges) bridgeKeyOwner(secret string) (string, bool) {
 	if secret == "" || T.DB == nil {
 		return "", false
 	}
+	// Constant-time, and every record is checked. Returning on the first
+	// match leaks through timing how much of a guessed key was right, and the
+	// scan is over the operator's own short list, so the cost is nothing next
+	// to the property. Same reasoning core/peer_key.go's LookupPeerKey writes
+	// down; bridge keys authenticate the same kind of caller and had been
+	// comparing with ==.
+	owner, found := "", false
 	for _, id := range T.DB.Keys(bridgeKeysTable) {
 		var k BridgeKey
-		if T.DB.Get(bridgeKeysTable, id, &k) && k.Key == secret && k.Owner != "" {
-			return k.Owner, true
+		if !T.DB.Get(bridgeKeysTable, id, &k) || k.Owner == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(k.Key), []byte(secret)) == 1 {
+			owner, found = k.Owner, true
 		}
 	}
-	return "", false
+	return owner, found
+}
+
+// bridgeKeyRevoker destroys a departing user's bridge keys. Core cannot know
+// what a bridge key is, so deletion reaches this through the revoker registry
+// (see core/revoke.go). Without it a removed account's keys kept authenticating
+// the iMessage hook and the desktop WS bridge indefinitely.
+type bridgeKeyRevoker struct{ app *Bridges }
+
+func (bridgeKeyRevoker) CredentialKind() string { return "bridge keys" }
+
+func (r bridgeKeyRevoker) RevokeUserCredentials(user string) int {
+	if r.app == nil || r.app.DB == nil || strings.TrimSpace(user) == "" {
+		return 0
+	}
+	n := 0
+	for _, id := range r.app.DB.Keys(bridgeKeysTable) {
+		var k BridgeKey
+		if r.app.DB.Get(bridgeKeysTable, id, &k) && k.Owner == user {
+			r.app.DB.Unset(bridgeKeysTable, id)
+			n++
+		}
+	}
+	return n
 }
 
 // validateBridgeKey resolves a secret to its key record, stamping LastSeen so
@@ -472,13 +506,24 @@ func (T *Bridges) validateBridgeKey(secret string) (BridgeKey, bool) {
 	if secret == "" {
 		return BridgeKey{}, false
 	}
+	// Constant-time and no early exit, as in bridgeKeyOwner above. The
+	// LastSeen write is deferred out of the loop so the matching branch does
+	// no more work than a non-matching one.
+	var match BridgeKey
+	found := false
 	for _, id := range T.DB.Keys(bridgeKeysTable) {
 		var k BridgeKey
-		if T.DB.Get(bridgeKeysTable, id, &k) && k.Key == secret {
-			k.LastSeen = now()
-			T.DB.Set(bridgeKeysTable, k.ID, k)
-			return k, true
+		if !T.DB.Get(bridgeKeysTable, id, &k) {
+			continue
 		}
+		if subtle.ConstantTimeCompare([]byte(k.Key), []byte(secret)) == 1 {
+			match, found = k, true
+		}
+	}
+	if found {
+		match.LastSeen = now()
+		T.DB.Set(bridgeKeysTable, match.ID, match)
+		return match, true
 	}
 	// Accept the core desktop key — the gohort-desktop daemon's auto-negotiated
 	// credential — as the iMessage bridge, so the existing daemon authenticates

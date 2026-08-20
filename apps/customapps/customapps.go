@@ -767,11 +767,48 @@ type dsInFlight struct {
 	err  error
 }
 
+// maxDSCacheEntries bounds the output cache.
+//
+// The key includes the query params, and on the anonymous capability surface
+// those come from whoever holds the link — so varying one param per request
+// both missed the cache every time AND wrote a fresh entry, and the map was
+// only ever swept opportunistically at the end of a run. Attacker-controlled
+// input growing a map without a ceiling is the shape of every memory-exhaustion
+// bug; the ceiling is small because the cache exists to collapse a burst of
+// identical loads, not to remember much.
+const maxDSCacheEntries = 512
+
 var (
 	dsCacheMu       sync.Mutex
 	dsCache         = map[string]dsCacheEntry{}
 	dsInFlightCalls = map[string]*dsInFlight{}
 )
+
+// trimDSCache drops expired entries and then enforces the hard ceiling.
+// Caller holds dsCacheMu.
+//
+// Two steps because they answer different problems. The sweep is housekeeping:
+// a record write changes the key, so churned entries accumulate. The ceiling is
+// the safety property: the sweep only removes what has EXPIRED, so a caller
+// varying a query param faster than the 8s TTL grows the map without bound
+// however often the sweep runs. Dropping arbitrary live entries is fine here —
+// a miss costs a recompute, which is the normal path anyway.
+//
+// Split out so the ceiling is testable without standing up a script runner. A
+// test of the constant alone would not notice the enforcement disappearing.
+func trimDSCache(now time.Time) {
+	for k, e := range dsCache {
+		if now.After(e.expires) {
+			delete(dsCache, k)
+		}
+	}
+	for k := range dsCache {
+		if len(dsCache) <= maxDSCacheEntries {
+			break
+		}
+		delete(dsCache, k)
+	}
+}
 
 // dsCacheKey identifies one data-source computation by everything its output
 // depends on: the owner, the app, the source's NAME **and script/language/caps**
@@ -832,13 +869,7 @@ func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource
 		dsCache[key] = dsCacheEntry{out: out, expires: time.Now().Add(dataSourceCacheTTL)}
 	}
 	delete(dsInFlightCalls, key)
-	// Opportunistic sweep: a record write changes the key, so churned entries
-	// would otherwise accumulate. Cheap at this cardinality.
-	for k, e := range dsCache {
-		if now.After(e.expires) {
-			delete(dsCache, k)
-		}
-	}
+	trimDSCache(now)
 	dsCacheMu.Unlock()
 	close(call.done)
 	return out, err
@@ -1201,6 +1232,21 @@ func (T *CustomApps) handlePublishApp(w http.ResponseWriter, r *http.Request, us
 	writeJSON(w, map[string]any{"ok": true, "public": false})
 }
 
+// Ceilings for the anonymous capability surface. A published app is meant to
+// be read by people, so these are generous for that and bounded against a
+// script; the script ceiling is the tighter one because a data-source run is a
+// sandboxed SUBPROCESS on the owner's machine, and the query params that key
+// its cache come from whoever holds the link.
+const (
+	publicRequestsPerMinute = 120
+	publicScriptsPerMinute  = 30
+)
+
+var (
+	publicAppRequests = NewRateLimiter(publicRequestsPerMinute, time.Minute)
+	publicAppScripts  = NewRateLimiter(publicScriptsPerMinute, time.Minute)
+)
+
 // handlePublic serves the anonymous capability-URL surface:
 // /custom/pub/<token>/… . The token (validated against the public index) is the
 // sole credential — this subtree is a registered public path, so the cookie
@@ -1209,6 +1255,14 @@ func (T *CustomApps) handlePublishApp(w http.ResponseWriter, r *http.Request, us
 // with query-param input, "records" is always empty (no anonymous store), and
 // every write / action-fire / chat endpoint is refused.
 func (T *CustomApps) handlePublic(w http.ResponseWriter, r *http.Request, rest string) {
+	// Anonymous and unauthenticated, so the ceiling is the only thing between
+	// a copied link and as much work as requests can be issued. Applied to the
+	// whole subtree rather than just the data path: an unknown token still
+	// costs an index lookup, and the page render is not free either.
+	if !publicAppRequests.Allow(RequestSource(r)) {
+		TooManyRequests(w, time.Minute, "too many requests — slow down")
+		return
+	}
 	rest = strings.Trim(rest, "/")
 	parts := strings.SplitN(rest, "/", 2)
 	token := parts[0]
@@ -1392,6 +1446,16 @@ func publicizeSessionPanels(page map[string]any) {
 // if the owner's own script computes and emits it. Reuses the same cache +
 // single-flight as the authenticated path.
 func (T *CustomApps) handlePublicData(w http.ResponseWriter, r *http.Request, spec AppSpec, name string) {
+	// A second, tighter ceiling on the one action that spawns a process.
+	// Keyed on the APP, not the caller: the cost lands on the owner's machine
+	// whoever asks, and a link shared widely is exactly the case where
+	// per-source limiting does nothing. The page and the empty records/actions
+	// responses stay under the looser subtree limit above.
+	if !publicAppScripts.Allow(spec.Owner + "/" + spec.Slug) {
+		Warn("[customapps] public app %q hit its script ceiling (%d/min) — refusing further runs this minute", spec.Slug, publicScriptsPerMinute)
+		TooManyRequests(w, time.Minute, "this app is being asked for data too quickly — try again shortly")
+		return
+	}
 	var ds *AppDataSource
 	for i := range spec.DataSources {
 		if spec.DataSources[i].Name == name {

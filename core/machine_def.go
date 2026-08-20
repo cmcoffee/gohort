@@ -160,10 +160,31 @@ type MachinePhase struct {
 	// (ResolvePhaseTemplate).
 	Prompt string `json:"prompt"`
 
-	// Tools narrows the agent's catalog while in this phase. Empty
-	// inherits the full catalog — the same semantics as
-	// PipelineStage.Tools (see resolveStageTools), so an author who
-	// learned one has learned the other.
+	// Reach is the coarse tool scope: "" inherits everything, "read"
+	// keeps only what reads, "none" keeps nothing.
+	//
+	// The control most authors want, and the only one that stays true.
+	// Tools below names EXACT strings, and a catalog is assembled per
+	// turn from things that move under it — an MCP server publishes its
+	// tools when it connects, a credential mints its own per session, an
+	// attachment mints more per agent, and a machine is portable across
+	// all three. A name list written against one deployment describes
+	// another one badly. A capability does not move: "this step may look,
+	// not act" means the same thing on every agent that ever runs it.
+	//
+	// A string rather than a pair of bools, because gob drops a false
+	// pointer and an empty string is a legible "not set" in JSON, an
+	// export, and the editor alike.
+	Reach string `json:"reach,omitempty"`
+
+	// Tools narrows the agent's catalog while in this phase, BY NAME, on
+	// top of whatever Reach already allowed. Empty inherits — the same
+	// semantics as PipelineStage.Tools (see resolveStageTools), so an
+	// author who learned one has learned the other.
+	//
+	// The precise instrument, and the fragile one: see Reach above for
+	// why it is no longer the primary control. Reach for it when a step
+	// must use one particular thing and not its neighbours.
 	Tools []string `json:"tools,omitempty"`
 
 	// Model pins the tier for turns spent here ("worker" | "lead"), and
@@ -646,10 +667,10 @@ func (d MachineDef) Advice() []string {
 			out = append(out, "step "+name+": it names tools AND delegates. A delegate works from its own catalog, "+
 				"so the list here does nothing — narrow the delegate itself, or drop the delegate and let this step do the work.")
 		}
-		if !p.Resident && len(p.Tools) == 0 && strings.TrimSpace(p.Agent) == "" && wantsToLook(p.Prompt) {
-			out = append(out, "step "+name+": the instructions send it looking, but it names no tools and it is not delegated — "+
-				"a step that passes on runs before the turn has a catalog, so it reaches exactly what it names and otherwise nothing. "+
-				"Tick its tools under \"How this step runs\", or give the step to an agent that already has them.")
+		if PhaseReach(p) == ReachNone && strings.TrimSpace(p.Agent) == "" && wantsToLook(p.Prompt) {
+			out = append(out, "step "+name+": the instructions send it looking, but its reach is set to nothing — "+
+				"it will answer from the prompt alone. Change its reach under \"How this step runs\", or give the step to an "+
+				"agent that already has what it needs.")
 		}
 		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
 			out = append(out, promptFormatAdvice(name))
@@ -951,6 +972,11 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	case "", "on", "off":
 	default:
 		probs = append(probs, "step "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Reach)) {
+	case ReachAll, ReachRead, ReachNone:
+	default:
+		probs = append(probs, "step "+name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(p.Reach))
 	}
 	if runners := phaseRunners(p); len(runners) > 1 {
 		probs = append(probs, "step "+name+" names "+strings.Join(runners, " and ")+" — a step is run by ONE thing. "+

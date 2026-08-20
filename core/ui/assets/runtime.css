@@ -1513,6 +1513,18 @@ select:-webkit-autofill {
   padding-left: 0.1rem;
 }
 .ui-checklist-group:first-child { margin-top: 0; }
+/* The header's own select-all. Held quiet until the row is hovered:
+   a long list of groups should read as headings, not as a column of
+   buttons competing with the checkboxes underneath them. */
+.ui-checklist-group {
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.ui-checklist-grouptoggle {
+  opacity: 0; transition: opacity 0.12s ease;
+  font-size: 0.68rem; text-transform: none; letter-spacing: 0;
+}
+.ui-checklist-group:hover .ui-checklist-grouptoggle,
+.ui-checklist-grouptoggle:focus-visible { opacity: 1; }
 .ui-checklist-row {
   display: flex; align-items: flex-start; gap: 0.55rem;
   padding: 0.3rem 0.3rem;

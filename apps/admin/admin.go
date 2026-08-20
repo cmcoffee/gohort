@@ -728,6 +728,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				} else {
 					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				}
+			case "revoke-sessions":
+				if r.Method == http.MethodPost {
+					a.handleRevokeSessions(w, r, username)
+				} else {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				}
 			default:
 				http.NotFound(w, r)
 			}
@@ -4603,6 +4609,25 @@ func (a *AdminApp) handleRejectUser(w http.ResponseWriter, r *http.Request, user
 	json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
 }
 
+// handleRevokeSessions signs a user out of every browser they are logged into,
+// leaving the account itself alone.
+//
+// There was no way to do this at all: sessions were only ever ended by the
+// person holding them clicking Log out, so "their laptop was stolen" had no
+// answer short of deleting the account and making a new one. Sliding renewal
+// makes waiting for expiry a non-answer too, since a session in use keeps
+// pushing its own expiry out.
+func (a *AdminApp) handleRevokeSessions(w http.ResponseWriter, r *http.Request, username string) {
+	if _, ok := AuthGetUser(a.db, username); !ok {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	n := AuthRevokeUserSessions(a.db, username)
+	Log("[admin] user %q signed %q out of %d session(s)", AuthCurrentUser(r), username, n)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"revoked": n})
+}
+
 func (a *AdminApp) handleDeleteUser(w http.ResponseWriter, r *http.Request, username string) {
 	// Prevent deleting yourself.
 	current := AuthCurrentUser(r)
@@ -4974,6 +4999,11 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	a.db.Get(WebTable, "notify_from", &notify_from)
 	a.db.Get(WebTable, "ollama_proxy_enabled", &ollama_proxy_enabled)
 	a.db.Get(WebTable, "ollama_proxy_port", &ollama_proxy_port)
+	var ollama_proxy_bind string
+	a.db.Get(WebTable, "ollama_proxy_bind", &ollama_proxy_bind)
+	if ollama_proxy_bind == "" {
+		ollama_proxy_bind = "127.0.0.1" // matches the proxy's own default
+	}
 	a.db.Get(WebTable, "fetch_cache_quota_mb", &fetch_cache_quota_mb)
 	if fetch_cache_quota_mb == 0 {
 		fetch_cache_quota_mb = 100
@@ -4991,9 +5021,15 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		lockout_minutes = 15
 	}
 	// Build the proxy URL from the configured port and external host (if set).
+	// A loopback-bound proxy answers on localhost and nowhere else, so showing
+	// the deployment's external hostname there would hand the operator a URL
+	// that cannot work and read as the endpoint being broken.
 	var proxy_url string
 	if ollama_proxy_port > 0 {
 		host := "localhost"
+		if ollama_proxy_bind == "127.0.0.1" {
+			external_url = ""
+		}
 		if external_url != "" {
 			// Strip scheme and path, keep just the hostname.
 			h := strings.TrimRight(external_url, "/")
@@ -5034,6 +5070,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"default_apps":          AuthGetDefaultApps(a.db),
 		"ollama_proxy_enabled":  ollama_proxy_enabled,
 		"ollama_proxy_port":     ollama_proxy_port,
+		"ollama_proxy_bind":     ollama_proxy_bind,
 		"ollama_proxy_url":      proxy_url,
 		"ollama_active":         ollama_active,
 		"fetch_cache_quota_mb":  fetch_cache_quota_mb,
@@ -5068,6 +5105,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		DefaultApps         *[]string `json:"default_apps,omitempty"`
 		OllamaProxyEnabled  *bool     `json:"ollama_proxy_enabled,omitempty"`
 		OllamaProxyPort     *int      `json:"ollama_proxy_port,omitempty"`
+		OllamaProxyBind     *string   `json:"ollama_proxy_bind,omitempty"`
 		FetchCacheQuotaMB   *int      `json:"fetch_cache_quota_mb,omitempty"`
 		ChannelWakeRules    *string   `json:"channel_wake_rules,omitempty"`
 		UITheme             *string   `json:"ui_theme,omitempty"`
@@ -5133,6 +5171,24 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.OllamaProxyPort != nil && *req.OllamaProxyPort >= 0 && *req.OllamaProxyPort <= 65535 {
 		a.db.Set(WebTable, "ollama_proxy_port", *req.OllamaProxyPort)
 		Log("[admin] user %q set ollama_proxy_port=%d", current, *req.OllamaProxyPort)
+	}
+	if req.OllamaProxyBind != nil {
+		bind := strings.TrimSpace(*req.OllamaProxyBind)
+		// Only the two answers the form offers. A free-typed address that does
+		// not parse would silently fail to bind at next start, and the operator
+		// would find out from a missing endpoint rather than from this form.
+		if bind != "127.0.0.1" && bind != "0.0.0.0" {
+			http.Error(w, "ollama_proxy_bind must be 127.0.0.1 (this machine only) or 0.0.0.0 (all interfaces)", http.StatusBadRequest)
+			return
+		}
+		a.db.Set(WebTable, "ollama_proxy_bind", bind)
+		// Logged at Warn when it widens: this is the one setting on the page
+		// that turns a local endpoint into a network-reachable one.
+		if bind == "0.0.0.0" {
+			Warn("[admin] user %q exposed the Ollama proxy on all interfaces — requests from off-box now require an API key", current)
+		} else {
+			Log("[admin] user %q set ollama_proxy_bind=%s", current, bind)
+		}
 	}
 	if req.FetchCacheQuotaMB != nil && *req.FetchCacheQuotaMB >= 0 && *req.FetchCacheQuotaMB <= 10240 {
 		a.db.Set(WebTable, "fetch_cache_quota_mb", *req.FetchCacheQuotaMB)

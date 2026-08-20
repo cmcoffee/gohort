@@ -411,11 +411,20 @@ func TestPhaseRunnerAnnouncesBeforeItRuns(t *testing.T) {
 func TestAStepThatNamesToolsGetsThem(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
 
-	// Naming none costs nothing: no session is built, no catalog resolved.
-	if got := turn.machineCatalog(MachinePhase{Name: "triage"}); got != nil {
-		t.Errorf("a step that names no tools should draw nothing, got %d", len(got))
+	// Naming none inherits the catalog, the same as it does while a
+	// conversation waits in a resident phase. The two rules used to
+	// disagree, on the same control in the same editor.
+	if got := turn.machineCatalog(MachinePhase{Name: "triage"}); len(got) == 0 {
+		t.Error("a step that names no tools should inherit the agent's catalog")
 	}
-	if turn.machineTools != nil {
+
+	// The marker is how a step says it wants none — a decompose or route
+	// step that only reshapes what it was given.
+	bare, _ := machineTurnFixture(t, residentMachine())
+	if got := bare.machineCatalog(MachinePhase{Name: "triage", Tools: []string{noToolsSentinel}}); got != nil {
+		t.Errorf("the no-tools marker should draw nothing, got %d", len(got))
+	}
+	if bare.machineTools != nil {
 		t.Error("and should not have built a catalog to find that out")
 	}
 
@@ -446,9 +455,10 @@ func TestAStepThatNamesToolsGetsThem(t *testing.T) {
 func TestAStepsToolsGoThroughTheTurnsApprovalGate(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
 
-	// No tools named: nothing to gate, and no session built to gate with.
-	if turn.machineCatalog(MachinePhase{Name: "triage"}) != nil || turn.machineConfirm() != nil {
-		t.Error("a step with no tools should need no gate")
+	// The marker: nothing to gate, and no session built to gate with.
+	if turn.machineCatalog(MachinePhase{Name: "triage", Tools: []string{noToolsSentinel}}) != nil ||
+		turn.machineConfirm() != nil {
+		t.Error("a step that wants no tools should need no gate")
 	}
 
 	// Tools named: the gate exists and is built against the SAME session

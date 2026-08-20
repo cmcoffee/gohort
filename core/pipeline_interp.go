@@ -1447,15 +1447,36 @@ func fanoutItems(ref string, outputs map[string]stageOutput) ([]string, error) {
 	return items, nil
 }
 
+// NoToolsMarker is the reserved name a tool list holds to say "none at
+// all", as distinct from an empty list, which everywhere in the framework
+// means "inherit whatever the caller has".
+//
+// A list needs both ends sayable. Reading emptiness as "nothing" is the
+// tempting shortcut and it costs the far more common case: a step or stage
+// left alone is one nobody has narrowed, not one somebody silenced. So the
+// deliberate "nothing" gets a name of its own and survives a save, a
+// reload, and an export — the same reason an agent's own tool list has
+// carried this marker since long before a phase could.
+const NoToolsMarker = "__none__"
+
 // resolveStageTools picks the tool set a worker stage gets. Stage's
 // own Tools field is the override: when set, returns the intersection
 // of those names with the inherited pool (so the stage can name a
 // subset). When stage.Tools is empty, returns the inherited pool
 // verbatim — the natural "inherit caller's catalog" default. When
 // both are empty, returns nil so the cheap tool-less path fires.
+//
+// NoToolsMarker anywhere in the list wins over everything else in it: a
+// list holding the marker AND a name is a control somebody left in two
+// states, and the reading that grants less is the safe one.
 func resolveStageTools(stageTools []string, inheritedTools []AgentToolDef) []AgentToolDef {
 	if len(stageTools) == 0 {
 		return inheritedTools
+	}
+	for _, n := range stageTools {
+		if strings.TrimSpace(n) == NoToolsMarker {
+			return nil
+		}
 	}
 	if len(inheritedTools) == 0 {
 		return nil // stage named tools but caller didn't supply a catalog to pick from

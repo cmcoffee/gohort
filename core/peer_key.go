@@ -27,7 +27,6 @@ package core
 import (
 	"crypto/subtle"
 	"fmt"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -575,13 +574,7 @@ type peerFailWindow struct {
 // the very limit this imposes. Behind a reverse proxy every peer therefore
 // shares the proxy's address — which is the safe direction: it throttles
 // harder, never less.
-func peerRequestSource(r *http.Request) string {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err != nil || host == "" {
-		return strings.TrimSpace(r.RemoteAddr)
-	}
-	return host
-}
+func peerRequestSource(r *http.Request) string { return RequestSource(r) }
 
 // peerSourceThrottled reports whether this source has spent its failure
 // allowance. Cheap: one map lookup, no database read — which is the point.

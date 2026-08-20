@@ -24,7 +24,29 @@ type AccountToken struct {
 	Owner    string `json:"owner"`
 	Token    string `json:"token,omitempty"` // full secret: returned once at mint; masked on list
 	Created  string `json:"created"`
+	// LastSeen is the last time this key authenticated anything, to the hour.
+	//
+	// The field existed from the start and nothing ever wrote it, so every key
+	// read as never-used and the one question that makes expiry actionable —
+	// which of these is nobody using? — had no answer. Written lazily (see
+	// touchAccountToken): once an hour per key, not once per request, so the
+	// O(1) lookup this store was designed around stays that way.
 	LastSeen string `json:"last_seen,omitempty"`
+	// Expires bounds the key's life. RFC3339; EMPTY MEANS NEVER, which is what
+	// every key minted before this field held, and changing that silently
+	// would log people out of integrations they had no warning about.
+	//
+	// A bearer secret with no expiry is only ever revoked by somebody
+	// remembering to. The peer surface solved the same problem with 15-minute
+	// access tokens and a rotating refresh family, which is more machinery
+	// than a key pasted into a client config wants; an optional deadline plus
+	// an honest last-used date is the version that fits here.
+	//
+	// One trap, since "" is the meaningful cleared state: kvlite encodes
+	// through gob, which omits zero values, so a Get that decodes a cleared
+	// deadline into a REUSED struct leaves the old date in place. Every reader
+	// here declares a fresh AccountToken per record; keep it that way.
+	Expires string `json:"expires,omitempty"`
 
 	// Scope narrows what a key may do at an outward-facing surface (the OpenAI
 	// /v1 endpoint). NIL = LEGACY UNRESTRICTED: a key minted before scoping
@@ -115,6 +137,27 @@ func containsFold(list []string, want string) bool {
 	return false
 }
 
+// Expired reports whether the key's deadline has passed. A key with no
+// deadline never expires.
+func (t *AccountToken) Expired() bool {
+	if t == nil || strings.TrimSpace(t.Expires) == "" {
+		return false
+	}
+	deadline, err := time.Parse(time.RFC3339, t.Expires)
+	if err != nil {
+		// An unparseable deadline is treated as expired. The alternative is a
+		// key that outlives a corrupted date field forever, and failing closed
+		// on a credential costs a re-mint rather than an open door.
+		return true
+	}
+	return time.Now().After(deadline)
+}
+
+// accountTokenTouchInterval is how stale LastSeen may get before a request
+// writes it. An hour is fine enough to answer "is anyone still using this?"
+// and coarse enough that the write is nowhere near the hot path.
+const accountTokenTouchInterval = time.Hour
+
 const accountTokenTable = "account_tokens"
 
 func init() { RegisterAPIKeyValidator(lookupAccountTokenOwner) }
@@ -145,14 +188,66 @@ func MintAccountToken(owner, name string) AccountToken {
 // go through here so they are deny-by-default from birth; pass an empty (non-
 // nil) TokenScope for "reaches nothing yet", to be filled in by the editor.
 func MintAccountTokenScoped(owner, name string, scope *TokenScope) AccountToken {
+	return MintAccountTokenExpiring(owner, name, scope, 0)
+}
+
+// MintAccountTokenExpiring mints a key that stops working after ttl. A ttl of
+// zero or less means no deadline, which is what every key had before this
+// existed.
+func MintAccountTokenExpiring(owner, name string, scope *TokenScope, ttl time.Duration) AccountToken {
 	t := MintAccountToken(owner, name)
 	if scope != nil {
 		t.Scope = scope
-		if RootDB != nil {
-			RootDB.Set(accountTokenTable, t.Token, t)
-		}
+	}
+	if ttl > 0 {
+		t.Expires = time.Now().UTC().Add(ttl).Format(time.RFC3339)
+	}
+	if RootDB != nil {
+		RootDB.Set(accountTokenTable, t.Token, t)
 	}
 	return t
+}
+
+// SetAccountTokenExpiry sets or clears the deadline on one of owner's keys.
+// A ttl of zero or less clears it (back to never). Owner-scoped, so a user can
+// never re-date another user's key. Returns true when a key matched.
+func SetAccountTokenExpiry(owner, id string, ttl time.Duration) bool {
+	if RootDB == nil {
+		return false
+	}
+	for _, secret := range RootDB.Keys(accountTokenTable) {
+		var t AccountToken
+		if !RootDB.Get(accountTokenTable, secret, &t) || t.Owner != owner || t.ID != id {
+			continue
+		}
+		if ttl > 0 {
+			t.Expires = time.Now().UTC().Add(ttl).Format(time.RFC3339)
+		} else {
+			t.Expires = ""
+		}
+		RootDB.Set(accountTokenTable, secret, t)
+		return true
+	}
+	return false
+}
+
+// SweepExpiredAccountTokens removes keys past their deadline and returns how
+// many went. Expiry is enforced at lookup regardless (see
+// lookupAccountTokenOwner); this just keeps the table and the account page
+// free of rows that only mean "this stopped working a while ago".
+func SweepExpiredAccountTokens() int {
+	if RootDB == nil {
+		return 0
+	}
+	n := 0
+	for _, secret := range RootDB.Keys(accountTokenTable) {
+		var t AccountToken
+		if RootDB.Get(accountTokenTable, secret, &t) && t.Expired() {
+			RootDB.Unset(accountTokenTable, secret)
+			n++
+		}
+	}
+	return n
 }
 
 // SetAccountTokenScope replaces the scope on one of owner's tokens (by ID).
@@ -184,7 +279,7 @@ func AccountTokenFromRequest(r *http.Request) *AccountToken {
 		return nil
 	}
 	var t AccountToken
-	if RootDB.Get(accountTokenTable, secret, &t) && t.Owner != "" {
+	if RootDB.Get(accountTokenTable, secret, &t) && t.Owner != "" && !t.Expired() {
 		return &t
 	}
 	return nil
@@ -244,10 +339,37 @@ func lookupAccountTokenOwner(secret string) (string, bool) {
 		return "", false
 	}
 	var t AccountToken
-	if RootDB.Get(accountTokenTable, secret, &t) && t.Owner != "" {
-		return t.Owner, true
+	if !RootDB.Get(accountTokenTable, secret, &t) || t.Owner == "" {
+		return "", false
 	}
-	return "", false
+	if t.Expired() {
+		// Removed on sight rather than left to a sweep: a sweep that has not
+		// run yet must never be the difference between a credential being
+		// valid and not. Same rule peerKeyFromAccessToken applies.
+		RootDB.Unset(accountTokenTable, secret)
+		Log("[account] key %q (%s) expired at %s — removed", t.Name, t.ID, t.Expires)
+		return "", false
+	}
+	touchAccountToken(secret, t)
+	return t.Owner, true
+}
+
+// touchAccountToken records that a key was used, at most once an hour.
+//
+// The comment here used to explain that this function deliberately did not
+// exist, to keep authentication a single Get. That reasoning held for the
+// read; what it missed is that a key nobody can tell is unused is a key nobody
+// ever revokes, which is a worse cost than one write an hour.
+func touchAccountToken(secret string, t AccountToken) {
+	now := time.Now().UTC()
+	if t.LastSeen != "" {
+		if seen, err := time.Parse(time.RFC3339, t.LastSeen); err == nil &&
+			now.Sub(seen) < accountTokenTouchInterval {
+			return
+		}
+	}
+	t.LastSeen = now.Format(time.RFC3339)
+	RootDB.Set(accountTokenTable, secret, t)
 }
 
 // maskAccountToken renders a non-secret hint of a token for display.

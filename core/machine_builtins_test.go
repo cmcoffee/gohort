@@ -511,11 +511,19 @@ func TestAdviceOnToolsThatCannotApply(t *testing.T) {
 		t.Errorf("a delegated step already has reach: %v", def.Advice())
 	}
 
-	// Drop the delegate and the other advisory takes over.
+	// Drop the delegate and naming nothing is FINE — the step inherits
+	// the agent's catalog, the same as a step the conversation waits in.
 	def.Phases[0].Agent = ""
 	def.Phases[0].Tools = nil
-	if !strings.Contains(strings.Join(def.Advice(), "\n"), "the instructions send it looking") {
-		t.Errorf("a step told to look with nothing to look with should be flagged: %v", def.Advice())
+	if strings.Contains(strings.Join(def.Advice(), "\n"), "the instructions send it looking") {
+		t.Errorf("a step that names nothing inherits the catalog and can look: %v", def.Advice())
+	}
+
+	// Setting its reach to nothing is what takes that away, so that is
+	// what the advisory now catches.
+	def.Phases[0].Reach = ReachNone
+	if !strings.Contains(strings.Join(def.Advice(), "\n"), "its reach is set to nothing") {
+		t.Errorf("a step told to look with its reach set to nothing should be flagged: %v", def.Advice())
 	}
 }
 

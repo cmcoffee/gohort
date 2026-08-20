@@ -155,6 +155,13 @@ func (T *HelloAgent) handleEcho(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Even an endpoint that only echoes resolves the caller first. This file is
+	// the scaffold, so the shape it shows is the shape that gets copied — and
+	// "it does not return anything sensitive" is a judgement about today's
+	// handler, not a property of the route.
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 	}

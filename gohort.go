@@ -171,6 +171,11 @@ func main() {
 		global.db.Get(WebTable, "ollama_proxy_port", &port)
 		return port
 	}
+	OllamaProxyBindFunc = func() string {
+		var bind string
+		global.db.Get(WebTable, "ollama_proxy_bind", &bind)
+		return bind
+	}
 
 	// Wire up LLM routing lookup. Reads per-stage setting from db.
 	LookupRouteFunc = func(key string) string {

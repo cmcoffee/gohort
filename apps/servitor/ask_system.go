@@ -35,7 +35,14 @@ const askSystemTimeout = 5 * time.Minute
 // connected is the provider's sorted appliance list, named in the description
 // for the same reason request_capability names it: an agent that cannot see
 // its reach answers "no I can't" to a machine it holds.
-func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance, via map[string]string) AgentToolDef {
+// sess is the calling turn's session, and it is what makes a Stop mean
+// something here: the handler dispatches a whole investigation (lead +
+// SSH worker, tens of seconds) and a tool handler's signature carries no
+// context of its own. Rooted on context.Background() that run survived the
+// turn that asked for it — cancel the agent and the probe kept going
+// against the live machine. Nil-safe; sess.Context() falls back to
+// Background for a caller that has no session.
+func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, connected []Appliance, via map[string]string) AgentToolDef {
 	// "Servitor" appears by name because that is the word the OWNER uses. The
 	// description described the capability perfectly and never named the thing
 	// it belonged to, so an agent holding this tool answered "I have no
@@ -84,7 +91,10 @@ func AskSystemToolDef(udb Database, owner, agentID string, connected []Appliance
 			// comes from InvestigateSync's own destructive-command denial, not
 			// from the grant ladder. Logged so "who asked" survives anyway.
 			Log("[servitor] agent %q asking %s: %s", agentID, appliance.ID, question)
-			ctx, cancel := context.WithTimeout(context.Background(), askSystemTimeout)
+			// The turn's context under the timeout, so BOTH bounds apply:
+			// a wedged SSH session still ends at askSystemTimeout, and a
+			// stopped turn ends it immediately.
+			ctx, cancel := context.WithTimeout(sess.Context(), askSystemTimeout)
 			defer cancel()
 			answer, err := servitorRef.InvestigateSync(ctx, owner, appliance.ID, question)
 			if err != nil {

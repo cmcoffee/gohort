@@ -56,8 +56,10 @@ func knownAgentToolNames(udb Database, user string, def MachineDef) map[string]b
 		known[n] = true
 	}
 	// The curation picker's own pool: registered tools filtered by capability,
-	// plus this user's shared persistent temp tools.
-	for _, o := range availableWorkerToolOptions(user) {
+	// plus this user's shared persistent temp tools — and the tools this
+	// user's attached reference sources mint, which live in no registry and
+	// would otherwise be reported as typos every time an author named one.
+	for _, o := range phaseToolOptions(user) {
 		known[o.Value] = true
 	}
 	// Everything registered, including what the picker hides on purpose —
@@ -104,8 +106,8 @@ func phaseToolFindings(def MachineDef, known map[string]bool) []string {
 		matched := 0
 		var missing []string
 		for _, n := range p.Tools {
-			if n = strings.TrimSpace(n); n == "" {
-				continue
+			if n = strings.TrimSpace(n); n == "" || n == noToolsSentinel {
+				continue // the explicit "nothing" is a setting, not a name
 			}
 			if known[n] {
 				matched++

@@ -1021,7 +1021,9 @@ type FormField struct {
 	// ShowWhen gates this field on the form's current values; it is
 	// rendered (and saves are wired) only while the expression holds.
 	// Grammar: "field" (truthy), "!field" (falsy/empty), "field:value",
-	// "field:v1|v2" (membership); clauses joined by ";" must ALL match.
+	// "field:v1|v2" (membership), "field:!v1|v2" (NOT one of those —
+	// the only way to write a condition that holds while the field is
+	// still untouched); clauses joined by ";" must ALL match.
 	// Use to collapse irrelevant configuration when a master toggle is
 	// off — e.g. hide a whisper URL until `enabled` is on. Updates
 	// immediately when the gating field changes.

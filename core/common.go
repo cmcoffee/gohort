@@ -723,6 +723,17 @@ var OllamaProxyEnabledFunc func() bool
 // should listen on. Returns 0 when unset or not configured.
 var OllamaProxyPortFunc func() int
 
+// OllamaProxyBindFunc returns the interface the Ollama proxy binds to.
+// Empty means the safe default, 127.0.0.1.
+//
+// It exists because the proxy is a SEPARATE http.Server on its own port, so
+// nothing the dashboard does — AuthMiddleware, the admin IP allowlist, TLS —
+// reaches it. It used to bind ":port", which is every interface, which on a
+// host with a public address is an open inference endpoint. The bind is now a
+// deliberate choice, and exposing it beyond loopback additionally requires a
+// key (see the proxy's own gate).
+var OllamaProxyBindFunc func() string
+
 // LoadWebSearchConfigFunc is set by the application to load search settings from the database.
 var LoadWebSearchConfigFunc func() WebSearchConfig
 

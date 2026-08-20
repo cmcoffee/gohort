@@ -98,6 +98,12 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Registered here, at route time, because T.DB must be live (not init()).
 	RegisterAPIKeyValidator(T.bridgeKeyOwner)
 
+	// The other half of that: a key resolving to an owner is only safe while
+	// the owner exists. Deleting a user now reaches in here and destroys their
+	// bridge keys. Registered at route time for the same reason as above —
+	// T.DB has to be live.
+	RegisterUserCredentialRevoker(bridgeKeyRevoker{app: T})
+
 	// Server half of the messaging_bridge connector kind: ensure a routing
 	// BridgeKey exists for a service and reflect the connector's enabled state.
 	RegisterBridgeProvisioner(T.ensureServiceBridge)

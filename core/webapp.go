@@ -3,8 +3,12 @@ package core
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	httppprof "net/http/pprof"
@@ -764,6 +768,77 @@ func InternalURL(path string) string {
 	return scheme + "://" + WebListenAddr + path
 }
 
+// --- internal inter-app calls ------------------------------------------------
+//
+// One gohort subsystem sometimes reaches another over HTTP rather than by a
+// direct call: the blogger scheduler drives /blogger/api/auto-blog, research
+// asks blogger for keywords, and so on. Those requests loop back to this same
+// process and have no user behind them, so they need a way past the session
+// gate.
+//
+// That way used to be inference: a request whose TCP peer was loopback and
+// which carried no X-Forwarded-For was treated as one of ours. The trouble is
+// that "carries no forwarding header" is a property of the OPERATOR'S REVERSE
+// PROXY, not of gohort. nginx does not add X-Forwarded-For on its own — a plain
+// `location / { proxy_pass http://127.0.0.1:8181; }`, which is what most people
+// write first, forwards nothing of the sort. Behind one of those, every request
+// in the world arrives on loopback with nothing to disqualify it, and any
+// client that does not look like a browser walks straight past authentication.
+// The safety of the whole deployment rested on a config file gohort does not
+// own and cannot see.
+//
+// So an internal call now PROVES it is one. The token below is minted per
+// process, never stored, and never leaves except on requests this process
+// makes to itself; no proxy configuration can produce it by accident, and
+// nothing an external client can send will match it.
+
+// internalAuthHeader carries the per-process secret on inter-app calls.
+const internalAuthHeader = "X-Gohort-Internal"
+
+// internalAuthToken is minted once per process. Deliberately not persisted:
+// it needs to be unguessable, not durable, and a restart invalidating it costs
+// nothing because both ends restart together.
+var internalAuthToken = func() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Failing closed here would disable inter-app calls entirely on a
+		// system with no entropy, which is not a state worth shipping a
+		// silent degradation for.
+		panic("gohort: cannot generate internal auth token: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}()
+
+// NewInternalRequest builds a request to this instance's own HTTP surface,
+// carrying the proof that it came from inside. Use it for every inter-app
+// call; a request built by hand reaches the same endpoint as an anonymous
+// stranger and is refused.
+func NewInternalRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, InternalURL(path), body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(internalAuthHeader, internalAuthToken)
+	return req, nil
+}
+
+// IsInternalRequest reports whether a request is one this process made to
+// itself.
+//
+// Both halves are required. The token is what a reverse proxy cannot forge;
+// the loopback check means a leaked token is still useless from off-box. The
+// comparison is constant-time for the same reason LookupPeerKey's is.
+func IsInternalRequest(r *http.Request) bool {
+	presented := r.Header.Get(internalAuthHeader)
+	if presented == "" {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(internalAuthToken)) != 1 {
+		return false
+	}
+	return IsGenuineLocalRequest(r)
+}
+
 func ServeDashboard(addr string) error {
 	WebListenAddr = addr
 	DefaultPleaseWait()
@@ -1176,13 +1251,7 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		if isStreamingPath(path) || strings.HasSuffix(path, "/api/poll") {
 			return
 		}
-		// Include the query string when present — diagnostics like
-		// "why is this 404?" usually hinge on the query params (agent_id,
-		// session_id, format, etc.) that the bare path strips.
-		fullPath := path
-		if raw := r.URL.RawQuery; raw != "" {
-			fullPath = path + "?" + raw
-		}
+		fullPath := accessLogPath(r)
 		ip := ClientIP(r)
 		ip_str := "-"
 		if ip != nil {
@@ -1197,6 +1266,71 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		}
 		httpLog("[http] %s %s %s %d (%s)", ip_str, r.Method, fullPath, lw.status, time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// accessLogPath renders the path (and query) for one access-log line.
+//
+// Split out of the middleware so the guarantee is testable: a test that only
+// exercised redactQuerySecrets would keep passing if the log line stopped
+// calling it, which is the failure that matters. The query string is kept
+// because diagnostics like "why is this 404?" usually hinge on the params
+// (agent_id, session_id, format) that the bare path strips; secrets are taken
+// out first, because this line goes to a file that outlives the request, and a
+// credential in a URL is a credential in every log that URL touches.
+func accessLogPath(r *http.Request) string {
+	if raw := r.URL.RawQuery; raw != "" {
+		return r.URL.Path + "?" + redactQuerySecrets(raw)
+	}
+	return r.URL.Path
+}
+
+// secretQueryParams names query parameters whose VALUES must never reach a
+// log. Matched case-insensitively on the whole name.
+//
+// The deployment-wide API key travels as ?key= and is a blanket auth bypass,
+// so every use of it was writing the master credential to the access log in
+// plaintext — the log then being a file that outlives the request, gets
+// rotated, backed up, and read by anyone debugging. The others are here
+// because the same mistake is one careless endpoint away, and a redaction list
+// that only covers the case someone already found is not much of a list.
+var secretQueryParams = map[string]bool{
+	"key": true, "api_key": true, "apikey": true, "token": true,
+	"access_token": true, "refresh_token": true, "secret": true,
+	"password": true, "passwd": true, "pw": true, "code": true,
+	"client_secret": true, "signature": true, "sig": true,
+}
+
+// redactQuerySecrets rewrites a raw query string, replacing the value of any
+// parameter named in secretQueryParams with "REDACTED".
+//
+// Operates on the RAW string rather than parsing and re-encoding, so a
+// malformed query is logged as close to what arrived as possible — the point
+// of the line is diagnosis, and re-encoding would hide the malformation that
+// is often the thing being diagnosed.
+func redactQuerySecrets(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	parts := strings.Split(raw, "&")
+	changed := false
+	for i, p := range parts {
+		eq := strings.IndexByte(p, '=')
+		if eq <= 0 {
+			continue
+		}
+		name, err := url.QueryUnescape(p[:eq])
+		if err != nil {
+			name = p[:eq]
+		}
+		if secretQueryParams[strings.ToLower(name)] {
+			parts[i] = p[:eq] + "=REDACTED"
+			changed = true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	return strings.Join(parts, "&")
 }
 
 // loggingWriter captures the response status code for access logging.
@@ -1639,6 +1773,61 @@ func (s *LiveSession[T]) SetOwner(user string) *LiveSession[T] {
 	return s
 }
 
+// OwnerOf returns the user a session belongs to and whether the session exists
+// at all. Reads under the map's lock, so it is the safe way to ask; reaching
+// through Get and touching s.Owner races with SetOwner.
+func (m *LiveSessionMap[T]) OwnerOf(id string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok {
+		return "", false
+	}
+	return s.Owner, true
+}
+
+// MayView reports whether viewer may read or stop the work in session id.
+//
+// A session id is not a capability. It appears in every /api/live payload,
+// which is global and untenanted on purpose, so the id of somebody else's run
+// is ordinary public knowledge — the events behind it are not. This is the
+// check that keeps those two facts apart, and every handler that takes an id
+// off a query string has to run it.
+//
+// Three rules, in order:
+//
+//   - Auth not configured (no users) means a single-tenant deployment where
+//     there is no one to be protected from. Everything is visible, which is
+//     also what AuthMiddleware and RequestIsAdmin already do in that state.
+//   - A session with NO owner is visible to nobody, including the person who
+//     actually started it. Same fail-closed direction as MaskedLabel: a
+//     provider that has not been taught to call SetOwner shows a generic label
+//     rather than leaking one, and by the same reasoning it must not hand over
+//     a transcript either. In practice the untagged sessions are spawned
+//     children whose events are forwarded into the parent's stream, so the
+//     person entitled to the content still has a supported way to watch it.
+//   - Otherwise the owner, and only the owner. Deliberately no admin bypass:
+//     these labels and events are user content (the question asked, the
+//     command run), not operational data, and live_mask_test.go already
+//     asserts that being an admin does not entitle you to read them.
+//
+// A missing session answers false as well, so a handler can give one answer to
+// "no such session" and "not yours" and disclose neither.
+func (m *LiveSessionMap[T]) MayView(viewer, id string) bool {
+	if AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	owner, exists := m.OwnerOf(id)
+	if !exists || owner == "" {
+		return false
+	}
+	return owner == viewer
+}
+
 // UpdateCancel replaces the cancel function for a session.
 func (m *LiveSessionMap[T]) UpdateCancel(id string, cancel context.CancelFunc) {
 	m.mu.Lock()
@@ -1745,6 +1934,12 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 		id := r.URL.Query().Get("id")
 		if id == "" {
 			http.Error(w, "id parameter required", http.StatusBadRequest)
+			return
+		}
+		if !m.MayView(AuthCurrentUser(r), id) {
+			// 404, not 403: whether somebody else is running something is not
+			// this viewer's business either.
+			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
 		m.mu.Lock()
@@ -1995,10 +2190,21 @@ func (m *LiveSessionMap[T]) ActiveSessions() []LiveEntry {
 }
 
 // HandleLive returns an http.HandlerFunc that lists active and queued sessions as JSON.
+//
+// Labels are masked for everyone but their owner, exactly as the global
+// /api/live does. This endpoint used to encode them raw, which made the
+// per-app copy of the ribbon a way around the masking the global one applies:
+// /research/api/live handed every user's research question to anyone with
+// research access. Same entries, same reach, one of them honest about whose
+// work it was showing.
 func (m *LiveSessionMap[T]) HandleLive() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := m.ActiveSessions()
 		entries = append(entries, GlobalQueue().QueuedEntries()...)
+		viewer := AuthCurrentUser(r)
+		for i := range entries {
+			entries[i].Label = entries[i].MaskedLabel(viewer)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(entries)
 	}
@@ -2009,6 +2215,10 @@ func (m *LiveSessionMap[T]) HandleLive() http.HandlerFunc {
 func (m *LiveSessionMap[T]) HandleEvents() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
+		if !m.MayView(AuthCurrentUser(r), id) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
 		events, _ := m.SnapshotEvents(id)
 		if events == nil {
 			http.Error(w, "session not found", http.StatusNotFound)
@@ -2024,6 +2234,13 @@ func (m *LiveSessionMap[T]) HandleEvents() http.HandlerFunc {
 func (m *LiveSessionMap[T]) HandleReconnect() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
+		// Checked ONCE, here, rather than inside the tail loop below: the
+		// stream is bound to the viewer it was opened for, and ownership does
+		// not change mid-session.
+		if !m.MayView(AuthCurrentUser(r), id) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
 		events, done := m.SnapshotEvents(id)
 		if events == nil {
 			http.Error(w, "session not found", http.StatusNotFound)

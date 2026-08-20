@@ -97,7 +97,7 @@ func TestAttachedSourceToolsDedupeByName(t *testing.T) {
 			{Kind: "system", ItemID: "x"},
 		},
 	}}
-	defs := turn.buildAttachedSourceToolDefs()
+	defs := turn.buildAttachedSourceToolDefs(nil)
 	seen := map[string]bool{}
 	for _, d := range defs {
 		if seen[d.Tool.Name] {
@@ -111,7 +111,7 @@ func TestAttachedSourceToolsDedupeByName(t *testing.T) {
 // no complaint, since that is every agent that has not opted in.
 func TestNoAttachedSourcesIsNotAnError(t *testing.T) {
 	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "a1"}}
-	if defs := turn.buildAttachedSourceToolDefs(); len(defs) != 0 {
+	if defs := turn.buildAttachedSourceToolDefs(nil); len(defs) != 0 {
 		t.Errorf("an agent with no attached sources built %d tools", len(defs))
 	}
 }

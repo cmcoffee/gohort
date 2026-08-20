@@ -11,11 +11,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,17 +57,40 @@ func StartOllamaServer(port int) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) { p.handleTags(w) })
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		if !p.allow(w, r) {
+			return
+		}
+		p.handleTags(w)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
+			// The liveness probe every Ollama client makes before it will
+			// talk to an endpoint. Left open on purpose: it discloses nothing
+			// beyond "something is listening", which the TCP handshake
+			// already said, and gating it means a client cannot even discover
+			// it needs a key.
 			w.Header().Set("Content-Type", "text/plain")
 			w.Write([]byte("Ollama is running"))
+			return
+		}
+		if !p.allow(w, r) {
 			return
 		}
 		p.handle(w, r)
 	})
 
-	addr := fmt.Sprintf(":%d", port)
+	// Bind deliberately. This used to be ":port" — every interface — on a
+	// server with no authentication of any kind, which on a host with a public
+	// address is an open inference endpoint. Loopback is the default now, and
+	// reaching past it is a choice the operator makes and can see.
+	host := strings.TrimSpace(defaultBind)
+	if OllamaProxyBindFunc != nil {
+		if b := strings.TrimSpace(OllamaProxyBindFunc()); b != "" {
+			host = b
+		}
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
@@ -78,15 +101,68 @@ func StartOllamaServer(port int) {
 	}()
 
 	go func() {
-		Log("Ollama Proxy: http://localhost%s  (model: gohort)\n", addr)
+		// Say what is actually exposed, not just that it started. An operator
+		// reading "Ollama Proxy: http://localhost:11435" while the thing is
+		// bound to every interface has been told the reassuring half.
+		if isLoopbackBind(host) {
+			Log("Ollama Proxy: http://%s  (model: gohort, loopback only)\n", addr)
+		} else {
+			Warn("Ollama Proxy listening on %s — reachable from the network, and every request needs an API key (X-API-Key or Authorization: Bearer). Bind it to 127.0.0.1 in Admin if you did not mean to expose it.", addr)
+		}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			Warn("ollama proxy: %v", err)
 		}
 	}()
 }
 
+// defaultBind is where the proxy listens when the operator has not said.
+// Loopback, because an inference endpoint with no authentication is not a
+// thing to expose by omission.
+const defaultBind = "127.0.0.1"
+
+// isLoopbackBind reports whether a bind address reaches only this machine.
+// The empty string means Go's "all interfaces", which it does not.
+func isLoopbackBind(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 type ollamaProxy struct {
 	client *http.Client
+}
+
+// allow is the proxy's entire access control, and it has to be its own: this
+// is a separate http.Server on its own port, so AuthMiddleware, the admin IP
+// allowlist and the session cookie never see these requests.
+//
+// The rule is the one the rest of gohort already uses. A request that genuinely
+// arrives on loopback is inside the trust boundary a local tool assumes, and
+// Ollama clients speak no authentication at all — requiring a key there would
+// break the ordinary case for no gain, since anyone on the box can reach the
+// model server directly anyway. Anything from further away presents a
+// credential: a personal access token, a desktop key, a bridge key, whatever
+// the registered validators recognize.
+//
+// Checked per REQUEST as well as at bind, so the two cannot disagree. A bind
+// widened without the operator thinking about it still needs keys, and a
+// loopback bind reached through some forwarding arrangement still gets asked.
+func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
+	if IsLoopbackRequest(r) {
+		return true
+	}
+	if user := APIKeyUser(r); user != "" {
+		return true
+	}
+	Warn("[ollama-proxy] refused unauthenticated request from %s %s %s", directPeer(r), r.Method, r.URL.Path)
+	w.Header().Set("WWW-Authenticate", `Bearer realm="gohort"`)
+	http.Error(w, "this endpoint needs a gohort personal access token in X-API-Key or Authorization: Bearer (create one on your Account page)", http.StatusUnauthorized)
+	return false
 }
 
 func (p *ollamaProxy) handle(w http.ResponseWriter, r *http.Request) {
@@ -615,12 +691,19 @@ func backendRoot(backend string) string {
 	return u.String()
 }
 
-func callerIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if ip := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0]); ip != "" {
-			return ip
-		}
-	}
+// callerIP identifies the caller for the fair-queue scheduler.
+//
+// X-Forwarded-For is deliberately NOT honored. The returned value is the key
+// the scheduler round-robins on, so trusting a caller-supplied header let one
+// client present a fresh identity per request and take as many slots as it
+// liked while everyone else waited their turn. The same reasoning
+// peerRequestSource documents in core/peer_key.go: behind a proxy every caller
+// then shares one key, which schedules them together rather than not at all,
+// and that is the safe direction to be wrong in.
+func callerIP(r *http.Request) string { return directPeer(r) }
+
+// directPeer returns the real TCP peer address, ignoring forwarding headers.
+func directPeer(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

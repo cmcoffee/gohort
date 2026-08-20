@@ -425,7 +425,7 @@ func TestTheToolDecodesAndDocumentsEveryPhaseField(t *testing.T) {
 	// as a zero value rather than as a guess about which mattered.
 	one := map[string]any{
 		"name": "step_one", "desc": "what it does", "prompt": "do it",
-		"tools": []any{"read_file"}, "model": "lead", "think": "on",
+		"reach": "read", "tools": []any{"read_file"}, "model": "lead", "think": "on",
 		"output": []any{map[string]any{
 			"name": "found", "type": "string", "desc": "what turned up",
 			"required": true, "from": "{now}", "enum": []any{"answer"},

@@ -224,3 +224,29 @@ func TestMachineryStandsAloneFromTheClaim(t *testing.T) {
 		t.Errorf("both findings must survive: %+v", v)
 	}
 }
+
+// The evidence message has to SAY that work happened outside the loop, not
+// merely omit the contradiction: the judge reads "TOOLS THE TURN RAN: none"
+// two lines above and will weigh it.
+func TestEvidenceNamesWorkDoneBeforeTheLoop(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request:   "what does the runbook say about failover?",
+		Reply:     "Based on the Confluence research, here's the answer:",
+		PriorWork: []string{"step research ran as a delegate (Confluence reader)", "a step ran confluence_search"},
+	})
+	for _, want := range []string{"BEFORE THE ASSISTANT ANSWERED", "confluence_search", "must be answered KEPT"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the judge is not told about the step's work (%q missing):\n%s", want, msg)
+		}
+	}
+	// A turn with nothing before it says nothing about it — an extra line
+	// claiming no prior work would invite the judge to weigh an absence.
+	plain := turnJudgeEvidenceMessage(TurnClaimEvidence{Request: "hi", Reply: "hello"})
+	if strings.Contains(plain, "BEFORE THE ASSISTANT ANSWERED") {
+		t.Errorf("nothing ran before this turn; the evidence should not mention it:\n%s", plain)
+	}
+	// And the trigger label stops calling it "no tools ran" when a step ran.
+	if got := judgeTrigger(TurnClaimEvidence{PriorWork: []string{"a step ran confluence_search"}}); got == "no tools ran" {
+		t.Error("a turn whose step ran should not be labelled as having run nothing")
+	}
+}

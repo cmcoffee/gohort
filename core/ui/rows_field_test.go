@@ -218,7 +218,10 @@ func TestChecklistIsTheGroupedRendererWithAFilter(t *testing.T) {
 	if n := strings.Count(src, "else if (t === 'checklist')"); n != 1 {
 		t.Fatalf("expected exactly one checklist branch, found %d — a second one shadows the first", n)
 	}
-	for _, want := range []string{"ui-checklist-group", "ui-checklist-toolbar", "ui-checklist-count"} {
+	for _, want := range []string{"ui-checklist-group", "ui-checklist-toolbar", "ui-checklist-count",
+		// A connected MCP server publishes dozens of tools under one
+		// group; the header has to be able to take them all in one go.
+		"ui-checklist-grouptoggle"} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the grouped renderer should be the live one; missing %q", want)
 		}

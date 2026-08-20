@@ -43,6 +43,18 @@ type TurnClaimEvidence struct {
 	// ToolCalls names every tool this turn ran, in order, with duplicates —
 	// three image calls are three attempts and the judge should see all three.
 	ToolCalls []string
+	// PriorWork is work done FOR this turn before its loop began, which the
+	// loop therefore never sees: a machine step that searched, a delegated
+	// step, a pipeline phase. Each entry names what ran.
+	//
+	// Without it the judge convicts a reply for reporting work that genuinely
+	// happened. A machine's step runs during system-prompt assembly, on a
+	// session of its own, and hands its findings to the turn as state — so a
+	// reply that opens "Based on the Confluence research" is TRUE, while the
+	// loop's own tool list is empty and every arm of the evidence says nothing
+	// happened. Reported live, and it is the whole class: any turn whose work
+	// was done by a step rather than by the model answering.
+	PriorWork []string
 	// ToolErrors counts the calls that failed.
 	ToolErrors int
 	// LastToolError is the most recent failure text, so the judge can tell a
@@ -109,6 +121,13 @@ type TurnClaimJudge func(TurnClaimEvidence) (TurnClaimVerdict, bool)
 // It is also evidence-shaped rather than wording-shaped, which is the whole
 // point. Gating the judge on the same phrases the guards use would hand it
 // exactly the turns they already catch and hide the ones they miss.
+// TurnDidWork reports whether anything ran for this turn at all, in the loop
+// or before it. The distinction the pre-filter and the trigger label both need:
+// "no tools ran" is a reason to look closer only when nothing ran ANYWHERE.
+func (ev TurnClaimEvidence) TurnDidWork() bool {
+	return len(ev.ToolCalls) > 0 || len(ev.PriorWork) > 0
+}
+
 func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	if strings.TrimSpace(ev.Reply) == "" {
 		return false
@@ -129,7 +148,12 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	// Said something, did nothing. The largest class by far, and the one the
 	// guards keep half-missing: "Wiwee, try again" answered in 66 characters
 	// with zero tool calls.
-	if len(ev.ToolCalls) == 0 {
+	//
+	// Work done BEFORE the loop counts as having done something — a turn
+	// whose step went and searched is not a turn that sat still, and putting
+	// it in front of the judge on those grounds is asking a question whose
+	// premise is already false.
+	if !ev.TurnDidWork() {
 		return true
 	}
 	// Did something and it failed. A reply after a failed tool is either an

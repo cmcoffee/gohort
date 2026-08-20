@@ -214,14 +214,35 @@ func (s servitorSource) fetchFull(udb Database, a Appliance) string {
 	return out
 }
 
-// ItemTools makes servitorSource a core.ReferenceToolProvider: an appliance the
-// user attached to a guide (or any consumer) becomes three concrete, per-system
-// tools in the agent's catalog rather than a generic pull_reference target. Two
-// are read-only over the knowledge servitor already gathered; the third reaches
+// ItemTools keeps the plain core.ReferenceToolProvider shape for callers
+// that have no session to give. Everything it mints is rooted on
+// context.Background(), so an investigation it dispatches cannot be
+// canceled — which is why every caller inside a turn should be reaching
+// for ItemToolsWithSession instead.
+func (s servitorSource) ItemTools(user, itemID string) []AgentToolDef {
+	return s.ItemToolsWithSession(nil, user, itemID)
+}
+
+// ItemToolsWithSession makes servitorSource a
+// core.SessionReferenceToolProvider: an appliance the user attached to a
+// guide (or any consumer) becomes three concrete, per-system tools in the
+// agent's catalog rather than a generic pull_reference target. Two are
+// read-only over the knowledge servitor already gathered; the third reaches
 // the LIVE system. Names are slugged from the appliance so multiple attached
 // systems don't collide. Returns nil when the appliance can't be resolved — the
 // consumer then falls back to the flat Fetch/pull_reference path.
-func (s servitorSource) ItemTools(user, itemID string) []AgentToolDef {
+//
+// The session is here for ONE reason, and it is the third tool.
+// investigate_<system> dispatches a whole sub-run — a lead investigator
+// plus an SSH worker, tens of seconds of live work — and a tool handler's
+// signature carries no context to root it on. Rooted on
+// context.Background() that run outlives the turn that asked for it:
+// stopping the agent stopped the agent, and the investigation carried on
+// against the live system with nobody left to report to. sess.Context() is
+// the turn's own context, so a Stop now travels all the way down. Nil-safe
+// — a caller without a session gets the old detached behavior rather than
+// a panic.
+func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
 	if s.app == nil || s.app.DB == nil || user == "" || itemID == "" {
 		return nil
 	}
@@ -255,7 +276,7 @@ func (s servitorSource) ItemTools(user, itemID string) []AgentToolDef {
 		},
 		Handler: func(args map[string]any) (string, error) {
 			query := strings.TrimSpace(fmt.Sprint(args["query"]))
-			txt := s.Fetch(context.Background(), user, id, query)
+			txt := s.Fetch(sess.Context(), user, id, query)
 			if strings.TrimSpace(txt) == "" {
 				return fmt.Sprintf("No gathered knowledge matches %q for %s. Try investigate_%s to gather it from the live system, or broaden the query.", query, name, slug), nil
 			}
@@ -289,7 +310,7 @@ func (s servitorSource) ItemTools(user, itemID string) []AgentToolDef {
 			if question == "" {
 				return "", fmt.Errorf("question is required")
 			}
-			return s.app.InvestigateSync(context.Background(), user, id, question)
+			return s.app.InvestigateSync(sess.Context(), user, id, question)
 		},
 	}
 
@@ -352,8 +373,8 @@ func (T *Servitor) InvestigateSync(ctx context.Context, user, applianceID, quest
 	probeSessions.Register(sid, label, cancel).SetOwner(user)
 	sessionAppliances.Store(sid, appliance.ID)
 	confirm := make(chan bool, 1)
-	confirmChans.Store(sid, confirm)
-	RegisterInjectionQueue(sid, "", "")
+	confirmChans.Store(sid, pendingConfirm{ch: confirm, owner: user})
+	RegisterInjectionQueue(sid, user, "")
 	// Auto-deny: feed `false` whenever runSession asks to confirm a destructive
 	// command, so the investigation stays strictly read-only. The goroutine exits
 	// with the run (buffered size 1; at most one denial sits queued at a time).

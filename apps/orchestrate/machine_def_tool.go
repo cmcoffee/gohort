@@ -43,7 +43,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"full":        {Type: "boolean", Description: "(get) When true, return every phase's full prompt. Default false previews them to save context."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"tools\" (subset of the agent's catalog), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -153,11 +153,24 @@ exits_to   [phase names] this phase may be MOVED to by change_phase (the agent d
            phase offers every other phase, so a conversation can cross from one arm to the other.
            Bounds the agent only — this phase's own next, and its guard's target, are always allowed.
 keep       [phase names] whose state survives RE-ENTRY into this phase; empty keeps everything
-tools      what this phase may use. A RESIDENT phase runs as the turn itself, so this NARROWS the
-           agent's catalog and empty inherits all. A TRANSIENT phase runs before the turn has a
-           catalog, so it reaches exactly what it names and empty means NO tools — right for a
-           phase that only decides or reshapes, wrong for one told to go and look. A phase needing
+reach      how much of the agent's catalog this phase may touch: empty = all of it, "read" = only
+           tools that read (nothing that writes, runs a command, or reaches the network), "none" =
+           nothing, which is right for a phase that only decides or reshapes what it was given.
+           PREFER THIS over naming tools. A catalog is assembled per turn out of things that move —
+           an MCP server publishes its tools when it connects, a credential mints its own per
+           session, an attachment mints more per agent — and a machine is portable across all of
+           them, so a name list written here describes one deployment and misdescribes the next.
+           A capability travels.
+tools      what this phase may use, BY NAME, on top of whatever reach allowed. Empty INHERITS, in a
+           resident and a transient phase alike. Naming any tool narrows to those — plus the workflow controls,
+           which never go away, plus whatever the agent's attached SOURCES grant, which attaching
+           is what granted; name one of a source's own tools and the list governs those too. For a
+           phase that only decides or reshapes what it was given, list the single name "__none__":
+           it reaches nothing and skips building a catalog it will not use. A phase needing
            different REACH (its own persona, memory, tools) should be delegated with "agent".
+           Names must match the agent's catalog EXACTLY — a phase naming a tool nobody has reaches
+           nothing under that name, so use list_reference_sources / the agent's own tool list
+           rather than a plausible-looking guess.
 model      "worker" | "lead"    think   "on" | "off"
 
 === TRANSIENT vs RESIDENT ===
@@ -316,34 +329,62 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 	if len(unknown) > 0 {
 		fmt.Fprintf(&b, " No agent found named: %s.", strings.Join(unknown, ", "))
 	}
-	b.WriteString(machineFindingsNote(saved))
+	b.WriteString(t.machineFindingsNote(saved))
 	return b.String(), nil
 }
 
-// machineFindingsNote reports the advice the editor's "worth a look"
-// panel shows, in the tool's reply.
+// machineFindingsNote reports what the editor's checklist and its
+// "worth a look" panel show, in the tool's reply.
 //
-// Advice only, and that is not an omission: Validate refuses anything
-// with Problems before this line is reached, so the checklist half is
-// always empty here. What survives a save is the softer half — what the
-// machine looks like it might not have meant.
+// Two halves, and the second one is why this is a method rather than a
+// function on the definition. Advice() is what the machine looks like it
+// might not have meant, and it is pure — a MachineDef can compute it
+// alone. The tool-name findings cannot: whether "jira" is a tool depends
+// on the catalog this user's agents actually assemble, so answering needs
+// the database and the user, which only the turn has.
 //
-// The page has shown it since the editor existed; the tool showed
-// nothing, which is backwards. The author on this path is a MODEL, and
-// the most common finding — "the prompt asks for JSON, but this step
+// Leaving the second half out was a real hole, not a tidy split. Validate
+// refuses anything with Problems, so the RULES half is genuinely always
+// empty here — but a phase tool name that resolves to nothing is not a
+// problem by that definition, and it is the most expensive mistake on
+// this path. The step keeps running; it just silently runs UNNARROWED,
+// with the whole catalog, which is the opposite of what the list was
+// written for. Observed: a phase naming [servitor jira confluence gitlab]
+// — four systems, not four tools — ran with 115 tools and the model spent
+// the turn insisting it could not reach files it was holding the tools
+// for. The web editor said so in two lines; the tool, which is where a
+// MODEL authors, said nothing.
+//
+// The page has shown the advice half since the editor existed; the tool
+// showed nothing, which is backwards. The author on this path is a MODEL,
+// and the most common finding — "the prompt asks for JSON, but this step
 // already declares fields" — is a mistake only a model makes. The help
 // text warns about it in advance, at the top of a long spec, and then
 // nothing checked afterwards.
 //
-// Same function behind both surfaces, so the tool cannot report a
+// Same functions behind both surfaces, so the tool cannot report a
 // different machine than the page does.
-func machineFindingsNote(def MachineDef) string {
-	adv := def.Advice()
-	if len(adv) == 0 {
-		return ""
+func (t *chatTurn) machineFindingsNote(def MachineDef) string {
+	return machineFindingsText(unknownPhaseToolFindings(t.udb, t.user, def), def.Advice())
+}
+
+// machineFindingsText is the wording, split from the gathering so the
+// reply can be tested against findings written out by hand rather than
+// against whatever the process has registered.
+//
+// Catalog findings lead. They are the half with a consequence at RUN
+// time, and a reader stops at the first list.
+func machineFindingsText(catalog, advice []string) string {
+	var out string
+	if len(catalog) > 0 {
+		out += "\n\nThese tool names do not resolve, and nothing will tell you again at run time:\n- " +
+			strings.Join(catalog, "\n- ")
 	}
-	return "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
-		strings.Join(adv, "\n- ")
+	if len(advice) > 0 {
+		out += "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
+			strings.Join(advice, "\n- ")
+	}
+	return out
 }
 
 // attachMachineToAgents points each named agent at a machine. Returns
@@ -473,7 +514,7 @@ func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 				len(fixable), def.Name)
 		}
 	}
-	out += machineFindingsNote(def)
+	out += t.machineFindingsNote(def)
 	return out, nil
 }
 
@@ -503,7 +544,7 @@ func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 		out += fmt.Sprintf("\n\nStill outstanding (%d), each because it has more than one defensible answer:\n- %s",
 			len(probs), strings.Join(probs, "\n- "))
 	}
-	return out + machineFindingsNote(saved), nil
+	return out + t.machineFindingsNote(saved), nil
 }
 
 func (t *chatTurn) machineDelete(args map[string]any) (string, error) {
@@ -620,6 +661,7 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			Name:     strings.TrimSpace(mapStr(m, "name")),
 			Desc:     strings.TrimSpace(mapStr(m, "desc")),
 			Prompt:   mapStr(m, "prompt"),
+			Reach:    strings.ToLower(strings.TrimSpace(mapStr(m, "reach"))),
 			Tools:    mapStrList(m, "tools"),
 			Model:    strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
 			Think:    normalizePhaseThink(m["think"]),

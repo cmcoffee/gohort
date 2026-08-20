@@ -136,7 +136,7 @@ func judgeTrigger(ev TurnClaimEvidence) string {
 	switch {
 	case ev.Backgrounded:
 		return "background job started"
-	case len(ev.ToolCalls) == 0:
+	case !ev.TurnDidWork():
 		return "no tools ran"
 	case ev.ToolErrors > 0:
 		return "tool errors"
@@ -170,6 +170,15 @@ func turnJudgeEvidenceMessage(ev TurnClaimEvidence) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "USER ASKED:\n%s\n\n", truncateObs(strings.TrimSpace(ev.Request), 800))
 	fmt.Fprintf(&b, "TOOLS THE TURN RAN: %s\n", ran)
+	// Work the model answering did not do itself, and cannot be convicted for
+	// reporting. A machine step runs before the turn's own loop exists, so its
+	// searching never reaches the list above — and a reply that opens "based on
+	// the Confluence research" is then true about work every other line of this
+	// evidence says did not happen.
+	if len(ev.PriorWork) > 0 {
+		fmt.Fprintf(&b, "ALSO DONE FOR THIS TURN, BEFORE THE ASSISTANT ANSWERED: %s\n", strings.Join(ev.PriorWork, "; "))
+		b.WriteString("That work IS this turn's work: a reply reporting or building on its findings is TRUE and must be answered KEPT, even though the tools above show none.\n")
+	}
 	fmt.Fprintf(&b, "TOOL CALLS THAT FAILED: %d\n", ev.ToolErrors)
 	if ev.LastToolError != "" {
 		fmt.Fprintf(&b, "MOST RECENT TOOL ERROR: %s\n", truncateObs(oneLineError(ev.LastToolError, 300), 300))

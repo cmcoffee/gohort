@@ -221,48 +221,90 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 // handleChatConfirm is the AgentLoopPanel-facing confirm endpoint.
 // The runtime POSTs {id, value} when the operator clicks one of
 // the confirm card's action buttons. We translate the value
-// (allow/always/deny) back to the boolean signal the legacy
+// (allow/always/deny) back to the boolean signal the waiting
 // runSession's confirm channel expects.
+//
+// The routing is by OWNER, and it has to be. The card's id is generated per
+// event by the bridge and carries no session, so this endpoint cannot address
+// a channel — it selects one. It used to select the first channel in the whole
+// process that would accept, on the reasoning that "servitor has at most one
+// in-flight session per user at a time". That is true per user and false per
+// process: with two people working at once, either one's click answered
+// whichever session the map happened to visit first. Since the thing being
+// answered is the approval gate for running a destructive command over SSH,
+// that made one user's Allow able to release another user's command, recorded
+// against the other user.
+//
+// So the candidate set is now the caller's OWN interactive sessions, which is
+// what the original reasoning assumed it was. Within that set the ambiguity
+// the old comment described does survive: a user with two chat sessions both
+// waiting gets the answer delivered to whichever Range reaches first. Closing
+// that needs the session id carried in the confirm event itself, which is a
+// change to the bridge's event shape rather than to this handler.
 func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// The runtime POSTs JSON {id, value}; the legacy handler at
-	// /api/confirm uses query-param form. Translate by forwarding.
-	if err := r.ParseForm(); err == nil {
-		// no-op
+	// Identity first: it is the routing key, not just a gate.
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
 	}
 	var body struct {
 		ID    string `json:"id"`
 		Value string `json:"value"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	// Look up the active session and route the answer through the
-	// existing confirm-channel infrastructure. The confirm_id from
-	// the AgentLoopPanel is the translator-generated one, not the
-	// session id; we need the active session id to route. For now,
-	// use the same heuristic as the demo: route to any pending
-	// session that has a confirm channel waiting. The legacy
-	// handler reads from confirmChans keyed by session id.
-	//
-	// In practice servitor has at most one in-flight session per
-	// user at a time, so this is unambiguous. A future revision
-	// could carry the session id in the confirm event's id for
-	// tighter routing.
-	confirmChans.Range(func(_, val any) bool {
-		ch := val.(chan bool)
-		select {
-		case ch <- body.Value == "allow" || body.Value == "always":
-			return false // stop after first match
-		default:
+	allow := body.Value == "allow" || body.Value == "always"
+
+	delivered := deliverConfirm(user, allow)
+	if delivered == "" {
+		// Say so rather than answering 204. A silent success settles the card
+		// as answered while the run stays blocked, which reads as servitor
+		// ignoring the click; the runtime's catch re-enables the buttons.
+		http.Error(w, "no pending confirmation on any of your sessions — it may have already been answered, or the run may have ended", http.StatusConflict)
+		return
+	}
+	Log("[servitor] %s answered confirm on session %s: allow=%v", user, delivered, allow)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deliverConfirm hands one operator decision to a session that user owns and
+// returns the session id it went to, or "" when none was waiting.
+//
+// Split out of the handler because this is the whole of the access decision:
+// which channels a given user may write to. Keeping it a plain function of
+// (user, allow) is what lets the rule be tested without standing up a session
+// cookie, which is the difference between a rule that is checked and a rule
+// that is merely written down.
+func deliverConfirm(user string, allow bool) string {
+	if strings.TrimSpace(user) == "" {
+		return "" // no identity, no candidates — never fall through to "any"
+	}
+	delivered := ""
+	confirmChans.Range(func(key, val any) bool {
+		p, ok := val.(pendingConfirm)
+		if !ok || p.ch == nil || !p.interactive {
 			return true
 		}
+		// Empty owner never matches, so an untagged channel is unanswerable
+		// rather than answerable by everyone.
+		if p.owner == "" || p.owner != user {
+			return true
+		}
+		select {
+		case p.ch <- allow:
+			delivered, _ = key.(string)
+			return false // stop after the first match
+		default:
+			return true // nothing waiting on this one; keep looking
+		}
 	})
-	w.WriteHeader(http.StatusNoContent)
+	return delivered
 }
 
 // handleProfile returns the saved system profile for an appliance

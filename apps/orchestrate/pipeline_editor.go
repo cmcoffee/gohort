@@ -148,7 +148,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			ShowWhen:    keepWhileList(s.Tools, "kind:worker|fanout"),
 			Options:     toolChecklistOptions(cat.tools, s.Tools),
 			Placeholder: "(no tools to offer)",
-			Help:        "Check tools to NARROW what this stage can reach; none checked means it inherits the calling agent's whole catalog. A stage that must reach the web has to keep those tools."},
+			Help:        "Check tools to NARROW what this stage can reach; none checked means it inherits the calling agent's whole catalog. A stage that must reach the web has to keep those tools. For a stage that only reshapes what it was handed, tick \"No tools at all\"."},
 	)
 	return fields
 }

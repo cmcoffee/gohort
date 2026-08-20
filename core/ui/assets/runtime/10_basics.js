@@ -1185,6 +1185,7 @@
     //   "!field"               — show when current[field] is falsy/empty
     //   "field:value"          — show when current[field] === value
     //   "field:v1|v2"          — show when current[field] ∈ {v1, v2}
+    //   "field:!v1|v2"         — show when current[field] ∉ {v1, v2}
     // Multiple conditions can be chained with ";" and ALL must match.
     // Backward compatible: a plain "field" still works.
     function matchesShowWhen(expr) { return matchesWhen(expr, current); }
@@ -1223,13 +1224,22 @@
         }
         var fld = c.substring(0, colon);
         var rhs = c.substring(colon + 1);
+        // Leading "!" negates the membership test. Needed because an
+        // UNSET field cannot be matched positively: a select whose
+        // default is the empty string reads as undefined until somebody
+        // touches it, so "show unless it says none" is the only way to
+        // write the condition that survives the untouched state.
+        var negate = rhs.charAt(0) === '!';
+        if (negate) rhs = rhs.substring(1);
         var actual = current[fld];
+        // null/undefined is the empty value, not the string "undefined".
+        var actualStr = (actual == null) ? '' : String(actual);
         var opts = rhs.split('|');
         var hit = false;
         for (var j = 0; j < opts.length; j++) {
-          if (String(actual) === opts[j]) { hit = true; break; }
+          if (actualStr === opts[j]) { hit = true; break; }
         }
-        if (!hit) return false;
+        if (hit === negate) return false;
       }
       return true;
     }
@@ -2198,13 +2208,36 @@
         toolbar.appendChild(countEl);
         input.appendChild(toolbar);
 
+        // groupToggle is the header's own select-all. One connected MCP
+        // server publishes dozens of tools under its own name, so the
+        // global "Select all" is the wrong grain and filtering to reach
+        // it is two steps for something the header can do in one. Acts
+        // on the group's VISIBLE rows, same rule the toolbar follows.
+        function groupToggle(header) {
+          var btn = el('button', {type: 'button', class: 'ui-checklist-toolbtn ui-checklist-grouptoggle'}, ['all']);
+          btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            var mine = [];
+            rowIndex.forEach(function(en) {
+              if (en.header === header && en.row.style.display !== 'none') mine.push(en);
+            });
+            var anyOff = mine.some(function(en) { return !selected[en.value]; });
+            mine.forEach(function(en) { selected[en.value] = anyOff; en.cb.checked = anyOff; });
+            persist();
+          });
+          return btn;
+        }
         var lastGroup = '__init__';
         var lastHeader = null;
         checkOpts.forEach(function(o) {
           var grp = o.group || '';
           if (grp !== lastGroup) {
-            lastHeader = grp ? el('div', {class: 'ui-checklist-group'}, [grp]) : null;
-            if (lastHeader) input.appendChild(lastHeader);
+            lastHeader = null;
+            if (grp) {
+              lastHeader = el('div', {class: 'ui-checklist-group'}, [el('span', {}, [grp])]);
+              lastHeader.appendChild(groupToggle(lastHeader));
+              input.appendChild(lastHeader);
+            }
             lastGroup = grp;
           }
           var row = el('label', {class: 'ui-checklist-row'});

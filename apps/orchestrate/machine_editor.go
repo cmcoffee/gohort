@@ -196,6 +196,14 @@ func machineAPIBase(def MachineDef) string { return "api/machines/" + url_(def.I
 // dropped by the next save. Broken-dependency posture: keep it, label
 // it, and let the person uncheck it on purpose.
 func toolChecklistOptions(offered []ui.SelectOption, current []string) []ui.SelectOption {
+	// The explicit "nothing", first, because it is the one choice an empty
+	// list can no longer express: unchecked means everything here, in both
+	// kinds of step, and a control that can only widen is half a control.
+	offered = append([]ui.SelectOption{{
+		Value: noToolsSentinel, Label: "No tools at all",
+		Group: "Nothing",
+		Help:  "This step only decides or reshapes what it was given. Wins over anything else ticked below.",
+	}}, offered...)
 	known := make(map[string]bool, len(offered))
 	for _, o := range offered {
 		known[o.Value] = true
@@ -445,11 +453,14 @@ func toolsHelp(p MachinePhase) string {
 	}
 	if p.Resident {
 		return "Check tools to narrow the agent's catalog while the conversation waits here; none checked = everything it normally has. " +
+			"What the agent's attached SOURCES grant comes along either way — attaching is what granted those, and this list picks from the worker pool. " +
+			"Tick one of a source's tools and this list governs them too, so you can say \"that source, not the others\". " +
 			"Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."
 	}
-	return "A step that passes on runs BEFORE the turn has a catalog, so it reaches exactly what you tick here and nothing otherwise — " +
-		"none checked means no tools at all, which is right for a step that only decides or reshapes what it was given. " +
-		"Tick tools for a step that has to go and look. For work that needs a whole different reach, delegate the step to an agent instead (above)."
+	return "Check tools to narrow what this step may reach; none checked = everything the agent normally has, the same rule a step that waits here follows. " +
+		"What the agent's attached SOURCES grant comes along either way, unless you tick one of their tools and take charge of them here. " +
+		"For a step that only decides or reshapes what it was given, tick \"No tools at all\" — it runs before the turn has a catalog, so that also spares it the cost of building one. " +
+		"For work that needs a whole different reach, delegate the step to an agent instead (above)."
 }
 
 // builtinNameExpr is the row condition "this field IS a built-in",
@@ -920,15 +931,37 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 // cannot see is the whole failure this came out of.
 func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 	label := toolsLabel(p)
-	if n := len(p.Tools); n > 0 {
-		label += " — " + strconv.Itoa(n) + " selected"
+	switch {
+	case PhaseReach(p) == ReachNone:
+		label += " — nothing"
+	case PhaseReach(p) == ReachRead:
+		label += " — read-only"
+	case len(p.Tools) > 0:
+		label += " — " + strconv.Itoa(len(p.Tools)) + " named"
 	}
 	return []ui.FormField{
 		ui.FormField{Type: "header", Label: label, Collapsed: true},
-		// The user's real tool pool, not a box to type names into — the
-		// last thing in this editor that was typed from memory. Checked
-		// none = no narrowing, which is the common case.
+		// The primary control, and the only part of this panel that stays
+		// true when the machine is run by a different agent or carried to
+		// another deployment. A capability travels; a tool name does not.
+		ui.FormField{Field: "reach", Type: "select", Label: "Tools this step may reach",
+			Options: []ui.SelectOption{
+				{Value: ReachAll, Label: "Everything the agent has",
+					Help: "The default. What the agent carries is what this step can use."},
+				{Value: ReachRead, Label: "Read-only — nothing that writes or reaches the network",
+					Help: "For a step that gathers and reports. Searching, listing and reading stay; posting, running and fetching go."},
+				{Value: ReachNone, Label: "Nothing — this step only decides",
+					Help: "For a step that routes, classifies, or reshapes what it was handed. Also spares it building a catalog it will not use."},
+			},
+			Help: "Says what KIND of thing this step may do. Prefer it to naming tools: a catalog is assembled fresh every turn — an MCP server publishes its tools when it connects, a credential mints its own per session, an attachment mints more per agent — so a name can stop resolving without anybody changing this machine."},
+		// The precise instrument, below the coarse one and shown only
+		// where it can act: with the reach set to nothing there is
+		// nothing left to narrow, and a control that cannot do anything
+		// is a control somebody will spend time on anyway.
+		ui.FormField{Type: "header", Label: "Narrow by name (advanced)",
+			ShowWhen: "reach:!none"},
 		ui.FormField{Field: "tools", Type: "checklist", Label: toolsLabel(p),
+			ShowWhen:    "reach:!none",
 			Options:     toolChecklistOptions(cat.tools, p.Tools),
 			Placeholder: "(no tools to offer)",
 			Help:        toolsHelp(p)},
@@ -979,7 +1012,7 @@ func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, machineEditorSpec(def, editorCatalog{
-		agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
+		agents: agentOptions(udb, user), tools: phaseToolOptions(user),
 		pipelines: pipelineOptions(udb, user), machines: childMachineOptions(udb, user, def),
 		checklist: machineChecklist(udb, user, def),
 	}))
@@ -1220,6 +1253,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if _, ok := body["resident"]; ok {
 		ph.Resident = BoolArg(body, "resident")
 	}
+	if v, ok := str("reach"); ok {
+		ph.Reach = strings.ToLower(strings.TrimSpace(v))
+	}
 	if _, ok := body["tools"]; ok {
 		ph.Tools = stringSliceFromArgs(body, "tools")
 	}
@@ -1357,7 +1393,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"pipeline": p.Pipeline, "machine": p.Machine, "accumulates": accumulatorRows(p),
 		"guard": p.Guard, "guard_to": p.GuardTo,
-		"think": p.Think, "tools": p.Tools, "output": rows,
+		"think": p.Think, "reach": PhaseReach(p), "tools": p.Tools, "output": rows,
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,
 		"choices": p.Choices,
 	}

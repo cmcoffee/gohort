@@ -885,7 +885,9 @@ func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
 		// A transient step that goes nowhere, and one whose name is a
 		// prefix of the other's — longest match or the link lands wrong.
 		{Name: "log", Prompt: "look"},
-		{Name: "log check", Prompt: "search the logs", Next: "answer"},
+		// Reach "none" plus instructions that send it looking is what
+		// the advisory catches, and the link to it is what is under test.
+		{Name: "log check", Prompt: "search the logs", Next: "answer", Reach: ReachNone},
 		{Name: "answer", Prompt: "reply", Resident: true},
 	}}
 	html := checklistHTML(def, def.Problems())

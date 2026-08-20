@@ -50,17 +50,31 @@ func (t *chatTurn) phaseRunner() PhaseRunner {
 		// A pipeline first: Validate refuses a phase that names both, so
 		// the order only decides which one wins on an imported phase that
 		// carries the pair anyway.
+		// Whatever runs the step, the work is this TURN's — and none of
+		// these paths is visible to the loop's own accounting, which
+		// begins later and on a different session. Recorded on success
+		// only, and before the result is read, so the end-of-turn judge
+		// can tell a reply built on a step's findings from one that
+		// invented them. See noteStepToolCalls for the class.
+		note := func(kind, what string) func(string, error) (string, error) {
+			return func(out string, err error) (string, error) {
+				if err == nil {
+					t.notePriorWork("step " + ph.Name + " ran as a " + kind + " (" + what + ")")
+				}
+				return out, err
+			}
+		}
 		if pipe := strings.TrimSpace(ph.Pipeline); pipe != "" {
-			return t.runPipelinePhase(ctx, ph, pipe, prompt, base)
+			return note("pipeline", pipe)(t.runPipelinePhase(ctx, ph, pipe, prompt, base))
 		}
 		if child := strings.TrimSpace(ph.Machine); child != "" {
-			return t.runChildMachinePhase(ctx, ph, child, prompt, base)
+			return note("machine", child)(t.runChildMachinePhase(ctx, ph, child, prompt, base))
 		}
 		ref := strings.TrimSpace(ph.Agent)
 		if ref == "" {
 			return base(ctx, ph, prompt)
 		}
-		return t.runDelegatedPhase(ctx, ph, ref, prompt, base)
+		return note("delegate", ref)(t.runDelegatedPhase(ctx, ph, ref, prompt, base))
 	}
 }
 

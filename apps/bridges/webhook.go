@@ -32,6 +32,7 @@ package bridges
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -291,8 +292,11 @@ func (graphProvider) verify(_ *http.Request, body []byte, secret string) error {
 	if len(p.Value) == 0 {
 		return fmt.Errorf("no notifications in payload")
 	}
+	// Constant-time: clientState is a shared secret Graph echoes back, so a
+	// byte-by-byte == leaks how much of a guess was right. Slack's half of
+	// this file already uses hmac.Equal for the same reason.
 	for _, v := range p.Value {
-		if v.ClientState != secret {
+		if subtle.ConstantTimeCompare([]byte(v.ClientState), []byte(secret)) != 1 {
 			return fmt.Errorf("clientState mismatch")
 		}
 	}

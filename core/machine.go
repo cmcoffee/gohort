@@ -751,11 +751,29 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 	// name the model got wrong. It then retries spellings — a refused call
 	// per round — instead of working with what this phase actually has.
 	//
+	// The rule it states is "judge by your catalog", NOT "judge by this
+	// list". A host may keep things past the narrowing that the list does
+	// not name — the workflow controls always, and whatever the agent's
+	// attachments granted, which are somebody's separate deliberate grant
+	// rather than a selection out of the pool this list picks from. A block
+	// that said "anything else is out of scope" talked the model out of
+	// tools it could see and was entitled to use.
+	//
 	// Static per phase, so it costs the cache nothing.
-	if len(ph.Tools) > 0 {
+	if len(ph.Tools) > 0 || PhaseReach(ph) != ReachAll {
 		b.WriteString("\n## Tools in this phase\n")
-		b.WriteString("This phase is scoped to: " + strings.Join(ph.Tools, ", ") + ".\n")
-		b.WriteString("Anything else is OUT OF SCOPE here, not misnamed — including tools you used earlier in this conversation, under a phase that allowed them. Don't retry those names. Work with the list above, or change_phase if the job has genuinely moved to a phase that carries what you need.\n")
+		if PhaseReach(ph) == ReachRead {
+			b.WriteString("This phase may only READ. Nothing that writes, runs a command, or reaches the network is available here — that is the step's design, not a fault.\n")
+		}
+		if PhaseReach(ph) == ReachNone {
+			// The author's explicit "nothing". Saying it plainly beats
+			// printing the marker, which reads as a tool called __none__.
+			b.WriteString("This phase reaches no tools. Answer from what you were given and what is already in this conversation.\n")
+			b.WriteString("If the job genuinely needs one, change_phase to a step that carries it rather than describing a call you cannot make.\n")
+		} else if len(ph.Tools) > 0 {
+			b.WriteString("This phase narrows what you may reach to: " + strings.Join(ph.Tools, ", ") + " — alongside your workflow controls and anything your attachments grant.\n")
+			b.WriteString("Go by what is IN your catalog. A tool you used earlier in this conversation, under a phase that allowed it, and can no longer see is out of scope HERE — not misnamed. Don't retry those names. Work with what you have, or change_phase if the job has genuinely moved to a phase that carries what you need.\n")
+		}
 	}
 
 	// Unless the prompt placed {established} itself — then the author
@@ -867,10 +885,54 @@ func renderPhaseFindings(p MachinePhase, res PhaseResult) string {
 	return b.String()
 }
 
-// PhaseTools narrows a catalog to what a phase may reach. Empty Tools
-// inherits the whole catalog, matching resolveStageTools so the two
-// authoring surfaces behave the same.
+// Reach values for MachinePhase.Reach — the coarse tool scope, and the
+// only part of a phase's tool setting that survives being carried to
+// another agent or another deployment. See the field's own comment.
+const (
+	ReachAll  = ""     // inherit the agent's whole catalog
+	ReachRead = "read" // only what reads: nothing that writes, runs, or reaches the network
+	ReachNone = "none" // nothing at all; the step decides or reshapes and hands on
+)
+
+// ReachAllowsCaps is the capability set a reach permits, or nil for "no
+// restriction". One definition, so the filter and anything that explains
+// the filter cannot disagree about what "read-only" means.
+func ReachAllowsCaps(reach string) []Capability {
+	if strings.TrimSpace(reach) == ReachRead {
+		return []Capability{CapRead}
+	}
+	return nil
+}
+
+// PhaseReach is the phase's reach, reading the legacy marker as the
+// setting it always meant. A stored ["__none__"] predates the Reach
+// field and says exactly what ReachNone says.
+func PhaseReach(ph MachinePhase) string {
+	if r := strings.TrimSpace(ph.Reach); r != "" {
+		return r
+	}
+	for _, n := range ph.Tools {
+		if strings.TrimSpace(n) == NoToolsMarker {
+			return ReachNone
+		}
+	}
+	return ReachAll
+}
+
+// PhaseTools narrows a catalog to what a phase may reach: the reach
+// first (a capability class, which travels), then the phase's own names
+// on top of what is left (exact strings, which do not).
+//
+// Empty Tools inherits whatever the reach allowed — matching
+// resolveStageTools, so an author who learned one surface has learned
+// the other.
 func PhaseTools(ph MachinePhase, catalog []AgentToolDef) []AgentToolDef {
+	switch PhaseReach(ph) {
+	case ReachNone:
+		return nil
+	case ReachRead:
+		catalog = FilterToolsByCaps(catalog, ReachAllowsCaps(ReachRead))
+	}
 	return resolveStageTools(ph.Tools, catalog)
 }
 

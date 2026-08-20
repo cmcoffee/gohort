@@ -154,7 +154,7 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 		chat = servitorRef.WorkerChat
 	}
 	out := []AgentToolDef{
-		RequestCapabilityToolDef(udb, chat, owner, agentID, enabled),
+		RequestCapabilityToolDef(sess, udb, chat, owner, agentID, enabled),
 	}
 	// The question route: open-ended "what's the state of X?" goes to the
 	// per-appliance investigator (read-only, via InvestigateSync) rather
@@ -166,7 +166,7 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	// whose only honest answer is "there is nothing you may ask about"
 	// teaches the model to stop reading its own catalog.
 	if len(askable) > 0 {
-		out = append(out, AskSystemToolDef(udb, owner, agentID, askable, viaWorkspace))
+		out = append(out, AskSystemToolDef(sess, udb, owner, agentID, askable, viaWorkspace))
 	}
 	for _, a := range enabled {
 		// Only a machine the agent is connected to IN ITS OWN RIGHT contributes
@@ -175,7 +175,7 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 		if !applianceEnabledForAgent(udb, agentID, a.ID) {
 			continue
 		}
-		out = append(out, ApplianceToolDefs(udb, owner, agentID, a)...)
+		out = append(out, ApplianceToolDefs(sess, udb, owner, agentID, a)...)
 	}
 	return out
 }

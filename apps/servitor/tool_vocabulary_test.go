@@ -21,7 +21,7 @@ func vocabAppliances() []Appliance {
 // TestTheQuestionToolNamesServitor — the owner says "ask Servitor"; the tool has
 // to contain that word for the agent to make the connection.
 func TestTheQuestionToolNamesServitor(t *testing.T) {
-	def := AskSystemToolDef(nil, "craig", "a1", vocabAppliances(), nil)
+	def := AskSystemToolDef(nil, nil, "craig", "a1", vocabAppliances(), nil)
 	desc := def.Tool.Description
 	if !strings.Contains(desc, "Servitor") {
 		t.Errorf("ask_system never names Servitor, so an agent cannot map the owner's word "+
@@ -58,8 +58,8 @@ func TestAWorkspaceIsNotDescribedAsAMachine(t *testing.T) {
 // and the two lists drifting is how one tool learns about workspaces and the
 // other does not.
 func TestBothToolsShareOneList(t *testing.T) {
-	ask := AskSystemToolDef(nil, "craig", "a1", vocabAppliances(), nil)
-	req := RequestCapabilityToolDef(nil, nil, "owner", "a1", vocabAppliances())
+	ask := AskSystemToolDef(nil, nil, "craig", "a1", vocabAppliances(), nil)
+	req := RequestCapabilityToolDef(nil, nil, nil, "owner", "a1", vocabAppliances())
 	list := connectedSystemList(vocabAppliances(), nil)
 	for name, desc := range map[string]string{
 		"ask_system":         ask.Tool.Description,

@@ -232,18 +232,25 @@ func TestInvestigationRecipeSaysHunchNeedsItsTools(t *testing.T) {
 	if err := json.Unmarshal(raw, &def); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !strings.Contains(def.Description, "tick the tools") {
-		t.Error("the recipe should tell whoever opens it what its last mile is")
+	// It used to have a last mile: tick the hunch step's tools, or it
+	// could reason but not look. A step that names nothing now inherits
+	// the agent's catalog, so the recipe runs as shipped and says what it
+	// searches with instead of what you must do first.
+	if strings.Contains(def.Description, "tick the tools") {
+		t.Error("the recipe still describes the last mile that no longer exists")
 	}
 	advice := strings.Join(def.Advice(), "\n")
-	if !strings.Contains(advice, "step hunch") || !strings.Contains(advice, "names no tools") {
-		t.Errorf("the advisor should name the step that cannot look: %v", def.Advice())
+	if advice != "" {
+		t.Errorf("the shipped recipe should need no advice: %v", def.Advice())
 	}
-	// And it must not fire on the steps that are fine: the resident ones
-	// have the agent's whole catalog, and triage only decides.
-	for _, name := range []string{"step verify", "step answer", "step triage"} {
-		if strings.Contains(advice, name+": the instructions send it looking") {
-			t.Errorf("%s does not need tools ticked: %v", name, def.Advice())
+	// triage only decides, and says so with its reach rather than by
+	// being silently tool-less.
+	for _, ph := range def.Phases {
+		if ph.Name == "triage" && PhaseReach(ph) != ReachNone {
+			t.Error("triage should declare that it reaches nothing")
+		}
+		if ph.Name == "hunch" && PhaseReach(ph) != ReachAll {
+			t.Error("hunch searches with whatever the agent carries")
 		}
 	}
 }

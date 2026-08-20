@@ -268,7 +268,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// and the diagram were right, and the bodies under them were not.
 	checklist := machineChecklist(udb, user, def)
 	spec := machineEditorSpec(def, editorCatalog{
-		agents: agentOptions(udb, user), tools: availableWorkerToolOptions(user),
+		agents: agentOptions(udb, user), tools: phaseToolOptions(user),
 		pipelines: pipelineOptions(udb, user), machines: childMachineOptions(udb, user, def),
 		checklist: checklist,
 	})

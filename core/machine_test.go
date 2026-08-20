@@ -824,6 +824,27 @@ func TestPhaseBlock_EmptyStateRendersJustTheDirective(t *testing.T) {
 
 // --- host-facing helpers ----------------------------------------------
 
+// Empty means inherit, the marker means nothing, and both rules are the
+// pipeline's rules too — one vocabulary across the two authoring surfaces.
+func TestNoToolsMarkerBeatsAnEmptyList(t *testing.T) {
+	catalog := []AgentToolDef{{Tool: Tool{Name: "read_file"}}, {Tool: Tool{Name: "web_search"}}}
+
+	if got := PhaseTools(MachinePhase{}, catalog); len(got) != len(catalog) {
+		t.Errorf("an empty list inherits the catalog, got %d", len(got))
+	}
+	if got := PhaseTools(MachinePhase{Tools: []string{NoToolsMarker}}, catalog); got != nil {
+		t.Errorf("the marker means none at all, got %+v", got)
+	}
+	// Left in two states by an author who ticked both: the reading that
+	// grants less is the safe one.
+	if got := PhaseTools(MachinePhase{Tools: []string{"read_file", NoToolsMarker}}, catalog); got != nil {
+		t.Errorf("the marker wins over anything else in the list, got %+v", got)
+	}
+	if got := resolveStageTools([]string{NoToolsMarker}, catalog); got != nil {
+		t.Errorf("a pipeline stage reads the marker the same way, got %+v", got)
+	}
+}
+
 func TestPhaseToolsAndTier(t *testing.T) {
 	catalog := []AgentToolDef{
 		{Tool: Tool{Name: "web_search"}},
@@ -904,10 +925,27 @@ func TestPhaseBlockNamesToolScope(t *testing.T) {
 	blk := MachineDef{Name: "triage"}.PhaseBlock(
 		MachinePhase{Name: "gather", Tools: []string{"web_search", "fetch_url"}},
 		MachineState{}, PhaseVars{})
-	for _, want := range []string{"web_search", "fetch_url", "OUT OF SCOPE"} {
+	for _, want := range []string{"web_search", "fetch_url", "out of scope HERE"} {
 		if !strings.Contains(blk, want) {
 			t.Errorf("phase block missing %q:\n%s", want, blk)
 		}
+	}
+	// It must NOT claim the list is everything the model may use. A host
+	// keeps things past the narrowing that the list does not name — the
+	// workflow controls always, and whatever the agent's attachments
+	// granted — so a block that said "anything else is out of scope"
+	// talked the model out of tools it could see and was entitled to use.
+	if strings.Contains(blk, "Anything else is OUT OF SCOPE") {
+		t.Errorf("the block should scope by the CATALOG, not by the list alone:\n%s", blk)
+	}
+
+	// The explicit "nothing" says so in words. Printing the marker would
+	// read as a tool called __none__ and get called.
+	none := MachineDef{Name: "triage"}.PhaseBlock(
+		MachinePhase{Name: "decide", Tools: []string{NoToolsMarker}},
+		MachineState{}, PhaseVars{})
+	if !strings.Contains(none, "reaches no tools") || strings.Contains(none, NoToolsMarker) {
+		t.Errorf("a no-tools phase should say so plainly:\n%s", none)
 	}
 	// A phase that names no tools inherits everything, so saying anything
 	// about scope there would be false.

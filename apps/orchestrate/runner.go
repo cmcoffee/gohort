@@ -331,6 +331,19 @@ type chatTurn struct {
 	// held because the approval hook reads session state to find which
 	// credential a call rides on.
 	machineSess *ToolSession
+	// attachedToolNames is what this turn's ATTACHMENTS minted: the tools
+	// of the agent's attached sources and pipelines, by name.
+	//
+	// Tracked because a phase's Tools list must not silently revoke them.
+	// The list is a selection out of the worker pool — that is the pool
+	// the picker offers and the only one an author is choosing from — and
+	// an attachment is a separate, deliberate grant made in the Sources
+	// picker. Subtracting one because it was not on a list it was never
+	// offered on is a decision nobody made. See narrowCatalog.
+	attachedToolNames map[string]bool
+	// priorWork is what ran for this turn BEFORE its loop began — machine
+	// steps, and whatever a step delegated. Guarded by toolMu.
+	priorWork []string
 	// detach is this TURN's background-job ledger, shared by every session the
 	// turn mints. It has to live here rather than on a session because a plan
 	// runs each step on its OWN session (runWorkerStep), so a per-session cap
@@ -6927,13 +6940,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if attachedPipes := t.buildAttachedPipelineToolDefs(); len(attachedPipes) > 0 {
 		t.wrapToolsForActivity(sess, attachedPipes)
 		allTools = append(allTools, attachedPipes...)
+		t.noteAttachedTools(attachedPipes)
 		Log("[orchestrate.tools] surfaced %d attached pipeline tool(s) for agent=%s", len(attachedPipes), t.agent.ID)
 	}
 	// Attached reference sources (servitor systems, workspaces, connected doc
 	// spaces). Same treatment as pipelines: curated, few, surfaced directly.
-	if attachedSrc := t.buildAttachedSourceToolDefs(); len(attachedSrc) > 0 {
+	if attachedSrc := t.buildAttachedSourceToolDefs(sess); len(attachedSrc) > 0 {
 		t.wrapToolsForActivity(sess, attachedSrc)
 		allTools = append(allTools, attachedSrc...)
+		t.noteAttachedTools(attachedSrc)
 		Log("[orchestrate.tools] surfaced %d attached source tool(s) for agent=%s", len(attachedSrc), t.agent.ID)
 	}
 	// Private-mode backstop for dynamically built AgentToolDefs (the
@@ -7460,7 +7475,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// BETWEEN turns of one session — the phase advances and tools the model
 	// used two turns ago stop resolving. Silently, that reads to the model
 	// as a name it got wrong, and it burns the turn retrying spellings.
-	narrowed, phaseDropped, phaseUnmatched, phaseFellBack := mach.narrowCatalog(allTools)
+	narrowed, phaseDropped, phaseUnmatched, phaseFellBack := mach.narrowCatalog(allTools, t.attachedToolNames)
 	if len(phaseDropped) > 0 {
 		Log("[orchestrate.orch] machine phase %q narrowed the catalog %d → %d tool(s); dropped: %v",
 			mach.Name(), len(allTools), len(narrowed), phaseDropped)
@@ -7559,6 +7574,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
 		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		// What ran for this turn BEFORE the loop did — the machine steps. The
+		// loop cannot see them (they run during system-prompt assembly, on a
+		// session of their own), so without this the judge reads a turn whose
+		// step did the searching as a turn that did nothing and convicts the
+		// reply for reporting it.
+		PriorWork: t.priorWorkForJudge,
 		// And whether the reply KNOWS what it asserts. Scope is the notes the
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.
@@ -8267,6 +8288,12 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
 		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		// What ran for this turn BEFORE the loop did — the machine steps. The
+		// loop cannot see them (they run during system-prompt assembly, on a
+		// session of their own), so without this the judge reads a turn whose
+		// step did the searching as a turn that did nothing and convicts the
+		// reply for reporting it.
+		PriorWork: t.priorWorkForJudge,
 		// And whether the reply KNOWS what it asserts. Scope is the notes the
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.

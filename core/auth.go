@@ -856,11 +856,30 @@ func AuthRejectUser(db Database, username string) {
 			"["+ServiceName()+"] Your account request",
 			fmt.Sprintf("Your account request on %s was not approved at this time.\n", DashboardURL()))
 	}
+	// Same sweep as a delete. A pending user cannot have logged in, but the
+	// signup/invite flow can have left them a live reset link, which is a way
+	// back into an account that was just refused.
+	RevokeUserCredentials(db, username)
 	db.Unset(AuthTable, "user:"+username)
 }
 
-// AuthDeleteUser removes a user account.
+// AuthDeleteUser removes a user account AND everything that authenticates as
+// them: sessions, reset links, personal access tokens, desktop keys, connected
+// OAuth accounts, and whatever apps have registered a revoker for.
+//
+// Unsetting the user record alone left every one of those working, which is the
+// difference between an account being gone from the list and being gone. The
+// revocation runs FIRST so a failure part-way through leaves the account
+// present and the operator able to see something is wrong, rather than an
+// account that has vanished while its keys still open doors.
 func AuthDeleteUser(db Database, username string) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return
+	}
+	if revoked := FormatRevocation(RevokeUserCredentials(db, username)); revoked != "" {
+		Log("[auth] deleting %q — revoked %s", username, revoked)
+	}
 	db.Unset(AuthTable, "user:"+username)
 }
 
@@ -1042,6 +1061,22 @@ func AuthValidateSession(db Database, token string) (string, bool) {
 		return "", false
 	}
 
+	// The account still has to exist, and still be approved. AuthDeleteUser
+	// sweeps sessions directly, so this is the backstop rather than the
+	// mechanism — it catches a record removed by some other path, and it means
+	// a restart clears out any session whose user is gone, since the cache
+	// starts empty and every session comes back through here once.
+	//
+	// Checked HERE and not on the cache hit above on purpose. The cache exists
+	// so an authenticated request costs no database read; putting a user lookup
+	// in front of every request would undo that, and on a deployment whose
+	// store is on network storage it would be felt. Once per session per
+	// process is free.
+	if user, ok := AuthGetUser(db, sess.User); !ok || user.Pending {
+		db.Unset(AuthSessionTable, token)
+		return "", false
+	}
+
 	// Cache it.
 	sessionMu.Lock()
 	sessionCache[token] = &sess
@@ -1157,6 +1192,28 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// deploymentKeyHeader is the preferred way to present the deployment-wide API
+// key. See the bypass in AuthMiddleware for why the ?key= spelling is worse.
+const deploymentKeyHeader = "X-Gohort-Key"
+
+var deploymentKeyWarnOnce sync.Once
+
+// warnDeploymentKeyInQuery says once, per process, that the deployment key
+// arrived in a URL.
+//
+// Once rather than per request: a caller doing this is doing it on every call,
+// and a warning per request is a flood that gets filtered out, which is the
+// same as not warning. The path is named without its query so the line itself
+// does not become the leak it is complaining about.
+func warnDeploymentKeyInQuery(r *http.Request) {
+	deploymentKeyWarnOnce.Do(func() {
+		Warn("[auth] the deployment API key arrived in the URL (?key=) on %s — "+
+			"a credential in a URL reaches browser history, Referer headers, and every proxy log in between. "+
+			"Send it as the %s header instead; ?key= still works but will not always.",
+			r.URL.Path, deploymentKeyHeader)
+	})
+}
+
 func AuthMiddleware(db Database, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Login/logout/signup/forgot/reset endpoints are always accessible.
@@ -1172,32 +1229,63 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 			return
 		}
 
-		// Allow genuine local requests -- internal inter-app HTTP calls loop
-		// back over localhost. Keys on the real TCP peer, NOT ClientIP: an
-		// external client could otherwise send "X-Forwarded-For: 127.0.0.1" and
-		// bypass auth entirely (ClientIP trusts that header).
+		// Internal inter-app calls loop back over localhost with no user
+		// behind them, so they need a way past this gate. They now PROVE they
+		// are ours (see NewInternalRequest): a per-process token plus a
+		// genuinely loopback TCP peer.
 		//
-		// Browsers are excluded. The bypass exists for internal RPCs, but at
-		// the TCP layer a person browsing to 127.0.0.1 looks exactly like one,
-		// so without this qualifier anyone with local access — including
-		// anyone who can `ssh -L`, since a forwarded connection also arrives
-		// on loopback with no forwarding header — gets an unauthenticated
-		// admin session. Internal callers are Go clients that send no Fetch
-		// Metadata headers, so they keep the bypass; a browser now falls
-		// through to the session-cookie check and lands on /login. This is
-		// also what gohort-desktop's proxy already assumes: it strips
-		// X-Forwarded-For specifically so logged-out webview requests get
-		// redirected to /login rather than tripping this bypass.
-		if IsGenuineLocalRequest(r) && !IsBrowserRequest(r) {
+		// This used to infer it instead — loopback peer, no forwarding header,
+		// does not look like a browser. Each of those is checking something
+		// real, and together they were still the wrong shape, because "no
+		// X-Forwarded-For" describes the OPERATOR'S REVERSE PROXY rather than
+		// this request. nginx does not add that header on its own, so behind a
+		// bare `proxy_pass` every request in the world arrived on loopback
+		// with nothing to disqualify it, and anything that did not look like a
+		// browser — curl's default behaviour — skipped authentication. The
+		// deployment's safety rested on a config file gohort does not own.
+		//
+		// The browser check is kept as a second line rather than deleted. It
+		// is no longer what stops a person at 127.0.0.1, since they cannot
+		// produce the token, but it costs one comparison and it means an
+		// unexpected way of obtaining the token still does not hand over a
+		// logged-in browser session.
+		if IsInternalRequest(r) && !IsBrowserRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// API key bypass for machine-to-machine endpoints.
-		if key := r.URL.Query().Get("key"); key != "" && AuthAPIKey != nil {
-			if configured := AuthAPIKey(); configured != "" && key == configured {
-				next.ServeHTTP(w, r)
-				return
+		// Deployment-wide API key: a blanket bypass for machine-to-machine
+		// access, configured from the CLI setup menu.
+		//
+		// Accepted from a header FIRST, and from ?key= only as the legacy
+		// spelling. A credential in a URL ends up everywhere the URL does —
+		// the access log (redacted at the log line now, but that is a patch
+		// over the shape), browser history, Referer headers on any outbound
+		// link, and the logs of every proxy in between. The header has none of
+		// those problems, so a caller that can send one should.
+		//
+		// Narrower than it looks in one respect worth stating: this skips the
+		// session check and the per-app grant, but AuthIsAdmin reads a session
+		// cookie and nothing else, so no ?key= request is ever an admin. Most
+		// handlers then call RequireUser and answer 401 regardless.
+		if AuthAPIKey != nil {
+			if configured := strings.TrimSpace(AuthAPIKey()); configured != "" {
+				presented := strings.TrimSpace(r.Header.Get(deploymentKeyHeader))
+				fromQuery := false
+				if presented == "" {
+					presented = strings.TrimSpace(r.URL.Query().Get("key"))
+					fromQuery = presented != ""
+				}
+				// Constant-time: a byte-by-byte == on a blanket auth bypass
+				// leaks how much of a guess was right.
+				if presented != "" &&
+					subtle.ConstantTimeCompare([]byte(presented), []byte(configured)) == 1 {
+					if fromQuery {
+						warnDeploymentKeyInQuery(r)
+					}
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 		}
 

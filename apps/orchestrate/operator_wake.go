@@ -334,6 +334,24 @@ func registerOperatorWake(app *OrchestrateApp) {
 	StartEventMonitorScheduler()
 }
 
+// Ceilings for the public webhook. Generous for an integration reporting real
+// events, tight against anything systematic — the point is to bound what one
+// token can spend, not to police a busy monitor.
+const (
+	operatorEventPerMinute = 12
+	// maxOperatorEventBody caps the POST. A summary and a detail paragraph;
+	// anything larger is not an event report.
+	maxOperatorEventBody = 64 << 10
+	// operatorEventFailMax bounds unrecognized-token attempts per source, each
+	// of which costs a scan of every monitor before it can be refused.
+	operatorEventFailMax = 20
+)
+
+var (
+	operatorEventFires    = NewRateLimiter(operatorEventPerMinute, time.Minute)
+	operatorEventFailures = NewRateLimiter(operatorEventFailMax, time.Minute)
+)
+
 // handleOperatorEvent is the public webhook endpoint external watchers POST to:
 //
 //	POST /api/operator/event/<token>   body: {"summary": "...", "detail": "..."}
@@ -362,7 +380,31 @@ func (T *OrchestrateApp) handleOperatorEvent(w http.ResponseWriter, r *http.Requ
 	}
 	m, ok := FindEventMonitorByToken(RootDB, token)
 	if !ok || m.Kind != EventKindWebhook {
+		// Throttled on failure as well as success. A token that resolves to
+		// nothing still cost a scan of every monitor, and an unauthenticated
+		// caller must not be able to buy that repeatedly.
+		if !operatorEventFailures.Allow(RequestSource(r)) {
+			TooManyRequests(w, time.Minute, "too many failed attempts from this address")
+			return
+		}
 		http.NotFound(w, r)
+		return
+	}
+	// Per-monitor ceiling. Everything past this point is expensive: the body
+	// becomes prompt text and FireEventMonitor runs a full Operator turn on a
+	// detached goroutine. Unbounded, one leaked webhook token was unbounded
+	// LLM spend and unbounded goroutine fan-out, which is a bigger lever than
+	// the token was ever meant to be.
+	//
+	// Keyed on the MONITOR rather than the caller: the token is the thing that
+	// authorizes the work, so it is the thing that should carry the budget. A
+	// source-keyed limit would let the same token be driven from many
+	// addresses, and would throttle a legitimate integration behind a shared
+	// NAT for someone else's traffic.
+	if !operatorEventFires.Allow(m.Owner + ":" + m.Name) {
+		Warn("[operator] event monitor %q hit its rate ceiling (%d/min) — refusing further wakes this minute",
+			m.Name, operatorEventPerMinute)
+		TooManyRequests(w, time.Minute, "this monitor is firing too often — slow down")
 		return
 	}
 	if m.Paused {
@@ -374,7 +416,10 @@ func (T *OrchestrateApp) handleOperatorEvent(w http.ResponseWriter, r *http.Requ
 		Summary string `json:"summary"`
 		Detail  string `json:"detail"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// Bounded. The decoded text goes straight into an Operator prompt, so an
+	// unbounded read was both a memory question and a token-spend one; every
+	// peer endpoint wraps its decoder the same way.
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, maxOperatorEventBody)).Decode(&body)
 	summary := strings.TrimSpace(body.Summary)
 	if summary == "" {
 		summary = "(event fired with no summary)"

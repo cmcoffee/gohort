@@ -593,7 +593,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Users",
-				Subtitle: "Approve pending signups, grant or revoke admin, manage app access, or delete accounts. Pending users see a placeholder page until approved.",
+				Subtitle: "Approve pending signups, grant or revoke admin, manage app access, sign someone out of every browser, or delete accounts. Deleting revokes every credential the account holds — sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
 				Body: ui.Table{
 					Source: "api/users",
 					RowKey: "username",
@@ -656,10 +656,19 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							a.Compact = true
 							return a
 						}(),
+						// Sign out everywhere — ends every live session without
+						// touching the account. The answer to a lost laptop, which
+						// previously had none: a session only ended when the person
+						// holding it clicked Log out, and sliding renewal means one
+						// in use keeps pushing its own expiry out.
+						{Type: "button", Label: "Sign out everywhere", Method: "POST",
+							PostTo:  "api/users/{username}/revoke-sessions",
+							Confirm: "Sign this user out of every browser? They keep their account and can log back in.",
+							Compact: true, HideIf: "pending"},
 						// Delete with confirm — danger variant.
 						{Type: "button", Label: "Delete", PostTo: "api/users/{username}",
 							Method:  "DELETE",
-							Confirm: "Delete this user permanently? Their sessions and apps assignment go with them.",
+							Confirm: "Delete this user permanently? Their sessions, access tokens, desktop and bridge keys, and connected accounts are all revoked with them.",
 							Variant: "danger"},
 					},
 					EmptyText: "No users yet.",
@@ -1002,7 +1011,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Ollama Proxy",
-				Subtitle: "Expose gohort as a fair-queued Ollama endpoint. Point Ollama clients at gohort's port instead of Ollama's; they share the local model scheduler. Requires restart when port changes.",
+				Subtitle: "Expose gohort as a fair-queued Ollama endpoint. Point Ollama clients at gohort's port instead of Ollama's; they share the local model scheduler. This is a separate listener on its own port — it is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Requires restart when the port or interface changes.",
 				Body: ui.FormPanel{
 					Source: "api/settings",
 					Fields: []ui.FormField{
@@ -1012,6 +1021,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Help:        "TCP port the proxy listens on. Default suggestion: 11435.",
 							ShowWhen:    "ollama_proxy_enabled",
 							Placeholder: "11435"},
+						{Field: "ollama_proxy_bind", Label: "Reachable from", Type: "select",
+							Options: []ui.SelectOption{
+								{Value: "127.0.0.1", Label: "This machine only (127.0.0.1)"},
+								{Value: "0.0.0.0", Label: "Any machine on the network (0.0.0.0)",
+									Confirm: "Expose the Ollama proxy on every network interface? It is not behind the dashboard login. Off-box requests will be refused without a personal access token, but the port becomes reachable."},
+							},
+							Help:     "This machine only is the default and needs no credential, the same trust gohort extends to anything else running on the box. Choosing the network means every request from off-box must carry a personal access token in X-API-Key or Authorization: Bearer — check your Ollama client can send a header before switching, because most cannot.",
+							ShowWhen: "ollama_proxy_enabled"},
 					},
 				},
 			},

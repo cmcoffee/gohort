@@ -535,9 +535,14 @@ func (T *OrchestrateApp) migrateLegacyOrchestratorMode() {
 // "admin explicitly disabled all optional tools." The framework
 // distinguishes this from a bare empty list (which means "use the
 // default pool") so the user's intent survives a save → reload cycle
-// in the Tools modal. The actual string is irrelevant; "__none__"
-// reads well in JSON and is unlikely to collide with a real tool name.
-const noToolsSentinel = "__none__"
+// in the Tools modal.
+//
+// It IS core.NoToolsMarker, not a second marker that happens to match: a
+// phase's tool list and an agent's make the same statement, and a machine
+// exported from one deployment and imported into another has to keep
+// meaning it. Two literals a package apart would drift the first time one
+// of them was reconsidered.
+const noToolsSentinel = NoToolsMarker
 
 // isNoToolsSentinel reports whether AllowedTools is the explicit
 // no-optional-tools marker. Exported via the package so runner.go's

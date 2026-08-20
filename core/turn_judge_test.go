@@ -155,3 +155,33 @@ func TestMissingEvidenceReadsTheSuspiciousWay(t *testing.T) {
 		t.Error("absent background signal must not excuse a promise")
 	}
 }
+
+// The false positive this exists to stop: a machine step went and searched,
+// the reply reported what it found, and the loop's own tool list was empty —
+// because a step runs before the loop, on a session of its own. Every arm of
+// the evidence said nothing happened, so the judge convicted a reply that was
+// true and the turn retracted it.
+func TestWorkDoneByAStepCountsAsTheTurnsWork(t *testing.T) {
+	stepOnly := TurnClaimEvidence{
+		Reply:     "Based on the Confluence research, here's the answer:",
+		PriorWork: []string{"a step ran confluence_search"},
+	}
+	if !stepOnly.TurnDidWork() {
+		t.Error("a turn whose step searched did work, whatever the loop saw")
+	}
+	if turnClaimWorthJudging(stepOnly) {
+		t.Error("the \"said something, did nothing\" arm must not fire on a turn that did something")
+	}
+
+	// And the arm still fires when nothing ran anywhere, which is the class
+	// it was written for.
+	if !turnClaimWorthJudging(TurnClaimEvidence{Reply: "Here you go!"}) {
+		t.Error("a reply with no work behind it anywhere is still worth a look")
+	}
+
+	// A step that FAILED is not work the reply may claim: the host records
+	// only what succeeded, so an empty PriorWork keeps the arm live.
+	if !turnClaimWorthJudging(TurnClaimEvidence{Reply: "Based on the research…", PriorWork: nil}) {
+		t.Error("no recorded step work means the turn is still worth judging")
+	}
+}

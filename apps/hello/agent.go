@@ -45,33 +45,113 @@ type demoSession struct {
 	confirmCh chan string
 }
 
-var (
-	demoMu       sync.Mutex
-	demoSessions = map[string]*demoSession{}
-)
+// demoStore holds every user's demo conversations, keyed by user and then by
+// session id.
+//
+// The nesting is the point, and it is why this is a type with methods rather
+// than the bare map it used to be. Every method NAMES a user, so there is no
+// way to reach a session without saying whose it is — a copied handler that
+// forgets to resolve the caller does not compile rather than serving everyone's
+// conversations to everyone. That is the property to carry into a real app.
+//
+// Kept in memory because this is a demo and a demo should be readable. A real
+// app does not hand-roll this at all: RequireUser returns a per-user Database
+// alongside the username (see UserDB), and storing there gets tenancy AND
+// persistence without a store of your own. Reach for that first.
+type demoStore struct {
+	mu sync.Mutex
+	// byUser[user][sessionID]
+	byUser map[string]map[string]*demoSession
+}
+
+var demoSessions = &demoStore{byUser: map[string]map[string]*demoSession{}}
 
 func nextID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
-func getOrCreateSession(id string) *demoSession {
-	demoMu.Lock()
-	defer demoMu.Unlock()
-	if id == "" {
-		s := &demoSession{
-			ID:     nextID("s"),
-			Title:  "New conversation",
-			LastAt: time.Now().UTC().Format(time.RFC3339),
+// List returns user's sessions, without message bodies — the sidebar only
+// needs id, title and timestamp.
+func (d *demoStore) List(user string) []demoSession {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []demoSession{}
+	for _, s := range d.byUser[user] {
+		out = append(out, demoSession{ID: s.ID, Title: s.Title, LastAt: s.LastAt})
+	}
+	return out
+}
+
+// Get returns one of user's sessions. A session belonging to somebody else is
+// indistinguishable from one that does not exist, which is what lets the
+// handler answer 404 to both and disclose neither.
+func (d *demoStore) Get(user, id string) (*demoSession, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.byUser[user][id]
+	return s, ok
+}
+
+// Delete removes one of user's sessions, reporting whether it was theirs.
+func (d *demoStore) Delete(user, id string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.byUser[user][id]; !ok {
+		return false
+	}
+	delete(d.byUser[user], id)
+	return true
+}
+
+// GetOrCreate returns user's session by id, creating it when the id is empty
+// or unknown. An id belonging to another user creates a fresh session under
+// the caller instead of reaching theirs.
+func (d *demoStore) GetOrCreate(user, id string) *demoSession {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.byUser[user] == nil {
+		d.byUser[user] = map[string]*demoSession{}
+	}
+	if id != "" {
+		if s, ok := d.byUser[user][id]; ok {
+			return s
 		}
-		demoSessions[s.ID] = s
-		return s
 	}
-	if s, ok := demoSessions[id]; ok {
-		return s
+	if id == "" {
+		id = nextID("s")
 	}
-	s := &demoSession{ID: id, LastAt: time.Now().UTC().Format(time.RFC3339)}
-	demoSessions[id] = s
+	s := &demoSession{
+		ID:     id,
+		Title:  "New conversation",
+		LastAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	d.byUser[user][id] = s
 	return s
+}
+
+// AnswerConfirm hands an operator's decision to whichever of USER'S OWN
+// sessions is waiting on one, and reports whether it landed.
+//
+// The old version ranged over every session in the process and fed the first
+// one with a pending channel, with a comment calling that fine because the
+// demo has one user. It is the shape servitor copied, where the sessions were
+// SSH investigations and either user's Allow released the other's command.
+// Scoped to the caller, the shortcut is sound; unscoped it is a hole, and a
+// scaffold should not be teaching the version that needs a caveat.
+func (d *demoStore) AnswerConfirm(user, value string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, s := range d.byUser[user] {
+		if s.confirmCh == nil {
+			continue
+		}
+		select {
+		case s.confirmCh <- value:
+			return true
+		default:
+		}
+	}
+	return false
 }
 
 // --- routes ------------------------------------------------------------------
@@ -128,36 +208,42 @@ func (T *HelloAgent) handleAgentPage(w http.ResponseWriter, r *http.Request) {
 
 // --- session list / load / delete -------------------------------------------
 
+// Every handler below opens the same way: resolve the caller, then use that
+// identity as the KEY into the store, not merely as a gate in front of it.
+// Authenticating and then ignoring who it was is the mistake worth naming,
+// because it looks like a check and is not one.
 func (T *HelloAgent) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
-	demoMu.Lock()
-	defer demoMu.Unlock()
-	out := []demoSession{}
-	for _, s := range demoSessions {
-		// Strip messages from the listing payload — sidebar only
-		// needs ID / Title / LastAt.
-		out = append(out, demoSession{ID: s.ID, Title: s.Title, LastAt: s.LastAt})
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	json.NewEncoder(w).Encode(demoSessions.List(user))
 }
 
 func (T *HelloAgent) handleAgentSession(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/agent/sessions/")
 	if id == "" {
 		http.NotFound(w, r)
 		return
 	}
 	if r.Method == http.MethodDelete {
-		demoMu.Lock()
-		delete(demoSessions, id)
-		demoMu.Unlock()
+		if !demoSessions.Delete(user, id) {
+			http.NotFound(w, r)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	demoMu.Lock()
-	s, ok := demoSessions[id]
-	demoMu.Unlock()
-	if !ok {
+	s, found := demoSessions.Get(user, id)
+	if !found {
+		// 404 for "not yours" as well as "no such thing": the two are the
+		// same answer from outside, and distinguishing them would confirm
+		// that somebody else's session exists.
 		http.NotFound(w, r)
 		return
 	}
@@ -197,10 +283,10 @@ func demoTools(s *demoSession) []AgentToolDef {
 				if strings.TrimSpace(text) == "" {
 					return "", fmt.Errorf("text is required")
 				}
-				demoMu.Lock()
+				demoSessions.mu.Lock()
 				s.Notes = append(s.Notes, text)
 				count := len(s.Notes)
-				demoMu.Unlock()
+				demoSessions.mu.Unlock()
 				return fmt.Sprintf("note saved (%d total)", count), nil
 			},
 		},
@@ -212,6 +298,10 @@ func demoTools(s *demoSession) []AgentToolDef {
 func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -232,7 +322,9 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	stopKA := sse.StartKeepalive(15 * time.Second)
 	defer stopKA()
 
-	s := getOrCreateSession(req.SessionID)
+	// Scoped to the caller: a session_id from someone else's conversation
+	// starts a new one under this user rather than appending to theirs.
+	s := demoSessions.GetOrCreate(user, req.SessionID)
 	if (s.Title == "" || s.Title == "New conversation") && req.Message != "" {
 		t := req.Message
 		if len(t) > 60 {
@@ -302,10 +394,10 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	// operator answers via /api/agent/confirm.
 	confirmFn := func(toolName, argsSummary string) bool {
 		confirmID := nextID("c")
-		demoMu.Lock()
+		demoSessions.mu.Lock()
 		s.confirmCh = make(chan string, 1)
 		ch := s.confirmCh
-		demoMu.Unlock()
+		demoSessions.mu.Unlock()
 
 		sse.Send(map[string]any{
 			"kind":   "confirm",
@@ -326,9 +418,9 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 		case <-time.After(120 * time.Second):
 			choice = "deny"
 		}
-		demoMu.Lock()
+		demoSessions.mu.Lock()
 		s.confirmCh = nil
-		demoMu.Unlock()
+		demoSessions.mu.Unlock()
 		return choice == "allow"
 	}
 
@@ -382,6 +474,10 @@ func (T *HelloAgent) handleAgentConfirm(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	var body struct {
 		ID    string `json:"id"`
 		Value string `json:"value"`
@@ -390,19 +486,15 @@ func (T *HelloAgent) handleAgentConfirm(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Demo's confirm-id is per-session, but the simple lookup just
-	// finds any session with a pending channel. A production app
-	// would key by confirm id → session for safety against
-	// concurrent prompts.
-	demoMu.Lock()
-	defer demoMu.Unlock()
-	for _, s := range demoSessions {
-		if s.confirmCh != nil {
-			select {
-			case s.confirmCh <- body.Value:
-			default:
-			}
-		}
+	// Routed within the CALLER'S OWN sessions. The confirm card's id is
+	// generated per prompt and does not name a session, so this picks one
+	// rather than addressing it — which is only safe once the candidates are
+	// limited to the person answering. A production app with several prompts
+	// in flight at once should carry the session id in the confirm event and
+	// address it directly.
+	if !demoSessions.AnswerConfirm(user, body.Value) {
+		http.Error(w, "no pending confirmation on any of your sessions", http.StatusConflict)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -411,5 +503,11 @@ func (T *HelloAgent) handleAgentConfirm(w http.ResponseWriter, r *http.Request) 
 // r.Context() cancellation; closing the SSE stream via the
 // AbortController on the client side closes that context.
 func (T *HelloAgent) handleAgentCancel(w http.ResponseWriter, r *http.Request) {
+	// Requires a user even though it does nothing. An endpoint that skips the
+	// check because it happens to be harmless today is one nobody re-examines
+	// when it stops being harmless.
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

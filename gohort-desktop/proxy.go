@@ -308,13 +308,18 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		req.Host = host
 		req.Header.Set("X-Forwarded-For-Desktop", "gohort-desktop")
 		// Suppress the X-Forwarded-For this local proxy would otherwise
-		// stamp on (= 127.0.0.1, the webview's loopback connection to us).
-		// If that 127.0.0.1 reaches gohort, its "loopback = trusted
-		// internal call, skip auth" bypass fires: logged-out requests
-		// then hit the app directly and come back 401 instead of being
-		// redirected to /login. Setting the header to nil tells
-		// httputil.ReverseProxy to omit it, so the REAL reverse proxy in
-		// front of gohort fills in the actual client IP.
+		// stamp on (= 127.0.0.1, the webview's loopback connection to us),
+		// so the REAL reverse proxy in front of gohort fills in the actual
+		// client IP instead of ours.
+		//
+		// This used to matter for authentication too: gohort treated a
+		// loopback request with no forwarding header as a trusted internal
+		// call and skipped auth, so leaving 127.0.0.1 in place made
+		// logged-out requests hit apps directly and come back 401 rather
+		// than redirecting to /login. That inference is gone — an internal
+		// call now proves itself with a per-process token (see
+		// core.NewInternalRequest) — so this line is about the client IP
+		// alone now.
 		req.Header["X-Forwarded-For"] = nil
 		// Inject cookies from our jar. Strip any Cookie header the
 		// webview might have set (it normally can't, but if Wails ever
