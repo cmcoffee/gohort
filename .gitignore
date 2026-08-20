@@ -1,6 +1,9 @@
 # Compiled binary
 gohort
 
+# Release output: the binary plus the notices that must ship beside it
+build/
+
 # Phantom bridge build artifacts (Mac binary, source lives in apps/phantom/_bridge/)
 apps/phantom/_bridge/agent
 apps/phantom/_bridge/build/

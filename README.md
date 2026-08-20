@@ -153,6 +153,10 @@ On deck:
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
+`make release` builds the binary with `GOWORK=off` and writes
+`THIRD_PARTY_NOTICES` beside it, generated from the modules actually linked —
+that file, `LICENSE` and `NOTICE` are what a distributed binary has to carry.
+
 Versions before v0.6.314 were released under the MIT License and stay available
 under those terms; the change applies from that version onward. Apache 2.0 was
 chosen for its express patent grant, which MIT does not provide.
