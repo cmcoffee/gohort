@@ -192,6 +192,16 @@ func stageNameNarrowingLabel(s PipelineStage) string {
 	return "Narrow by name (advanced)"
 }
 
+// keepWhileMap is keepWhileSet for a map-valued field: show the control while
+// it HOLDS something, whatever the gate says, so a value cannot be stranded
+// behind a condition that has since changed.
+func keepWhileMap(stored map[string]string, expr string) string {
+	if len(stored) > 0 {
+		return ""
+	}
+	return expr
+}
+
 // keepWhileSet is the hidden-control rule: gate on kind, unless the
 // field is already holding something.
 //

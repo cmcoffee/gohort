@@ -4,6 +4,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -221,4 +222,86 @@ func TestAnAgentsAttachedSourceTravelsAsADeclaredDependency(t *testing.T) {
 	if deps := agentExportDeps(nil, agentExport{AgentRecord: AgentRecord{Name: "Plain"}}, "u", nil); len(deps) != 0 {
 		t.Errorf("nothing attached, nothing to declare: %+v", deps)
 	}
+}
+
+// The cheap runner, end to end: a step that names a tool calls it, with the
+// author's keys and templated values, and hands the result on — no model, no
+// tokens, no catalog assembled for a decision nobody has to make.
+func TestAToolStepCallsTheToolAndHandsOnItsResult(t *testing.T) {
+	udb, user := preflightFixture(t)
+	var gotArgs map[string]any
+	RegisterChatTool(&fakeEchoTool{name: "pf_echo", onRun: func(a map[string]any) { gotArgs = a }})
+
+	def := MachineDef{ID: "m1", Name: "fetch", Owner: user, Phases: []MachinePhase{
+		{Name: "grab", Tool: "pf_echo", Args: map[string]string{"what": "{prev}", "fixed": "yes"}, Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	ag := AgentRecord{ID: "a1", Name: "Wren", Owner: user, Machine: "m1", OrchestratorPrompt: "You are Wren."}
+	if _, err := saveAgent(udb, ag); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	turn := &chatTurn{app: &OrchestrateApp{}, ctx: context.Background(), user: user, udb: udb, agent: ag}
+
+	ph, _ := def.Phase("grab")
+	out, err := turn.runToolPhase(context.Background(), ph, "pf_echo", "what the last step said")
+	if err != nil {
+		t.Fatalf("tool step: %v", err)
+	}
+	if !strings.Contains(out, "pf_echo ran") {
+		t.Errorf("the tool's result should be the step's result: %q", out)
+	}
+	// {prev} carries the step before it; a literal stays literal.
+	if gotArgs["what"] != "what the last step said" || gotArgs["fixed"] != "yes" {
+		t.Errorf("args should template values and keep the author's keys: %+v", gotArgs)
+	}
+}
+
+// A machine can name a tool the agent running it does not carry — it is
+// portable, and the far side's catalog is not its business. That has to be
+// said rather than failing as a bare error nobody can act on.
+func TestAToolStepSaysWhenTheAgentLacksTheTool(t *testing.T) {
+	udb, user := preflightFixture(t)
+	ag := AgentRecord{ID: "a2", Name: "Wren", Owner: user, OrchestratorPrompt: "You are Wren."}
+	if _, err := saveAgent(udb, ag); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	sess := &ChatSession{ID: "s1", AgentID: "a2"}
+	if stored, err := saveChatSession(udb, *sess); err == nil {
+		*sess = stored
+	}
+	turn := &chatTurn{app: &OrchestrateApp{}, ctx: context.Background(), user: user, udb: udb,
+		agent: ag, session: sess}
+
+	ph := MachinePhase{Name: "grab", Tool: "nothing_provides_this"}
+	if _, err := turn.runToolPhase(context.Background(), ph, "nothing_provides_this", ""); err == nil {
+		t.Fatal("calling a tool the agent lacks should fail the step")
+	}
+	var diags []SessionDiag
+	udb.Get(sessionDiagTable, "a2:"+sess.ID, &diags)
+	var found bool
+	for _, d := range diags {
+		if strings.Contains(d.Detail, "nothing_provides_this") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the step should leave a breadcrumb naming what it could not call: %+v", diags)
+	}
+}
+
+// fakeEchoTool is a registered tool that records what it was called with.
+type fakeEchoTool struct {
+	name  string
+	onRun func(map[string]any)
+}
+
+func (f *fakeEchoTool) Name() string                 { return f.name }
+func (f *fakeEchoTool) Desc() string                 { return "echoes" }
+func (f *fakeEchoTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
+func (f *fakeEchoTool) Caps() []Capability           { return []Capability{CapRead} }
+func (f *fakeEchoTool) Run(args map[string]any) (string, error) {
+	if f.onRun != nil {
+		f.onRun(args)
+	}
+	return f.name + " ran", nil
 }

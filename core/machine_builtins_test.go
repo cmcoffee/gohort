@@ -698,3 +698,51 @@ func TestRemovingTheStartWritesTheNewOne(t *testing.T) {
 		t.Errorf("and reported: %v", rewritten)
 	}
 }
+
+// A tool step runs no model at all — the cheap runner. Everything that
+// configures a model is therefore a control that cannot act, and a control
+// that cannot act is one somebody sets and then wonders about.
+func TestAToolStepRefusesWhatCannotApplyToIt(t *testing.T) {
+	probs := func(p MachinePhase) string {
+		p.Name = "fetch"
+		d := MachineDef{Name: "m", Start: "fetch", Phases: []MachinePhase{
+			p, {Name: "answer", Prompt: "reply", Resident: true},
+		}}
+		return strings.Join(d.Problems(), "\n")
+	}
+	base := MachinePhase{Tool: "http_get", Args: map[string]string{"url": "{state:plan.url}"}, Next: "answer"}
+
+	if got := probs(base); got != "" {
+		t.Fatalf("a plain tool step should validate: %q", got)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*MachinePhase)
+		want string
+	}{
+		{"prompt", func(p *MachinePhase) { p.Prompt = "fetch it please" }, "takes args, not instructions"},
+		{"resident", func(p *MachinePhase) { p.Resident = true }, "cannot be where the conversation waits"},
+		{"think", func(p *MachinePhase) { p.Think = "on" }, "no model runs"},
+		{"reach", func(p *MachinePhase) { p.Reach = ReachRead }, "reach does not apply"},
+		{"tools", func(p *MachinePhase) { p.Tools = []string{"web_search"} }, "names the ONE tool it calls"},
+	} {
+		p := base
+		tc.edit(&p)
+		if got := probs(p); !strings.Contains(got, tc.want) {
+			t.Errorf("%s on a tool step should be refused (%q): %q", tc.name, tc.want, got)
+		}
+	}
+
+	// Args without a tool are arguments to nothing.
+	orphan := MachinePhase{Prompt: "do it", Args: map[string]string{"url": "x"}, Next: "answer"}
+	if got := probs(orphan); !strings.Contains(got, "args belong to a tool step") {
+		t.Errorf("args with no tool should be reported: %q", got)
+	}
+
+	// And a step is run by ONE thing: a tool is a runner like the others.
+	both := base
+	both.Agent = "Log analyst"
+	if got := probs(both); !strings.Contains(got, "a tool") || !strings.Contains(got, "run by ONE thing") {
+		t.Errorf("naming a tool AND an agent should be refused: %q", got)
+	}
+}

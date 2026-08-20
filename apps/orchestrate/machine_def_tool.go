@@ -113,7 +113,7 @@ next_from  (transient) one of THIS phase's declared string fields, whose value n
            Only when the routing value is ALSO a finding worth naming. Overrides choices.
 agent      (transient) delegate this phase to another agent by name or id
 pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not with "agent" —
-           a step is run by one thing. An agent brings judgement, its own tools and its own
+           a step is run by one thing. A TOOL runs no model at all. An agent brings judgement, its own tools and its own
            memory; a pipeline is a fixed recipe (stages, fan out over a list, loop until a
            field goes true). Reach for a pipeline when the step is a procedure you want run
            the same way every time. A pipeline whose LAST stage declares the fields this
@@ -153,6 +153,11 @@ exits_to   [phase names] this phase may be MOVED to by change_phase (the agent d
            phase offers every other phase, so a conversation can cross from one arm to the other.
            Bounds the agent only — this phase's own next, and its guard's target, are always allowed.
 keep       [phase names] whose state survives RE-ENTRY into this phase; empty keeps everything
+tool       a tool this step CALLS DIRECTLY, with "args", and no model runs at all. The cheap step:
+           every other runner thinks first, so "fetch this one thing and carry on" cost a model
+           call to decide to do the only thing it could do. Args are templated ({input}, {prev},
+           {state:PHASE.field}) — a placeholder fills a VALUE and can never become a key. A runner
+           like agent/pipeline/machine, so it excludes them, and it cannot be resident.
 reach      how much of the agent's catalog this phase may touch: empty = all of it, "read" = only
            tools that read (nothing that writes, runs a command, or reaches the network), "none" =
            nothing, which is right for a phase that only decides or reshapes what it was given.
@@ -677,6 +682,8 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			// Same failure the comment above records, so the same fix: a
 			// field the tool documents and never reads is a field an
 			// author sets once and loses on the next update.
+			Tool:        strings.TrimSpace(mapStr(m, "tool")),
+			Args:        mapStrMap(m, "args"),
 			Pipeline:    strings.TrimSpace(mapStr(m, "pipeline")),
 			Machine:     strings.TrimSpace(mapStr(m, "machine")),
 			Accumulates: parseAccumulators(m["accumulates"]),

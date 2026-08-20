@@ -195,6 +195,12 @@ func (p MachinePhase) ID() string { return p.Name }
 // that change how a phase behaves and would otherwise be invisible.
 func phaseTags(p MachinePhase) []string {
 	var tags []string
+	// A tool step spends nothing, which is the one property worth seeing
+	// from the picture: the tags below all describe a model call this step
+	// does not make.
+	if tool := strings.TrimSpace(p.Tool); tool != "" {
+		return append(tags, "calls "+tool, "no model")
+	}
 	if m := strings.ToLower(strings.TrimSpace(p.Model)); m == "lead" || m == "worker" {
 		tags = append(tags, m)
 	}

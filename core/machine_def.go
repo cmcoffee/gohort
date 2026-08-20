@@ -160,6 +160,27 @@ type MachinePhase struct {
 	// (ResolvePhaseTemplate).
 	Prompt string `json:"prompt"`
 
+	// Tool names a tool this step CALLS DIRECTLY, with Args, and no model
+	// runs at all.
+	//
+	// The cheap step. A machine's other runners all think first — an agent,
+	// a pipeline, a child machine, or the step's own worker — so "fetch this
+	// one thing and carry on" cost a model call and a round of tokens to
+	// decide to do the only thing it could do. A pipeline stage has had
+	// kind="tool" for exactly this; the asymmetry was arbitrary.
+	//
+	// It is a RUNNER, so it excludes the others: a step is run by one thing.
+	Tool string `json:"tool,omitempty"`
+
+	// Args are the tool's arguments, each templated with the same vocabulary
+	// a prompt gets — {input}, {prev}, {state:PHASE.field} — so a step can
+	// pass what an earlier one worked out.
+	//
+	// Values only. A placeholder can fill an argument and can never become
+	// one: the KEYS are the author's, written here, and nothing a model
+	// produced upstream can add or rename one.
+	Args map[string]string `json:"args,omitempty"`
+
 	// Reach is the coarse tool scope: "" inherits everything, "read"
 	// keeps only what reads, "none" keeps nothing.
 	//
@@ -933,6 +954,9 @@ func phaseRunners(p MachinePhase) []string {
 	if strings.TrimSpace(p.Machine) != "" {
 		out = append(out, "a machine")
 	}
+	if strings.TrimSpace(p.Tool) != "" {
+		out = append(out, "a tool")
+	}
 	return out
 }
 
@@ -972,6 +996,28 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	case "", "on", "off":
 	default:
 		probs = append(probs, "step "+name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(p.Think))
+	}
+	// A tool step runs no model, so everything that configures one is a
+	// control that cannot act — and a control that cannot act is one
+	// somebody will set and then wonder about.
+	if tool := strings.TrimSpace(p.Tool); tool != "" {
+		if strings.TrimSpace(p.Prompt) != "" {
+			probs = append(probs, "step "+name+": a tool step takes args, not instructions — there is no model to instruct. Put the values in args.")
+		}
+		if p.Resident {
+			probs = append(probs, "step "+name+": a tool step cannot be where the conversation waits — it calls a tool and hands on. Give the reply to a step that answers.")
+		}
+		if strings.TrimSpace(p.Think) != "" || strings.TrimSpace(p.Model) != "" {
+			probs = append(probs, "step "+name+": think and model do not apply to a tool step — no model runs")
+		}
+		if PhaseReach(p) != ReachAll {
+			probs = append(probs, "step "+name+": reach does not apply to a tool step — it calls "+strconv.Quote(tool)+" and nothing else")
+		}
+		if len(p.Tools) > 0 {
+			probs = append(probs, "step "+name+": a tool step names the ONE tool it calls in \"tool\"; the tools list narrows a step that decides which to use, which this one does not")
+		}
+	} else if len(p.Args) > 0 {
+		probs = append(probs, "step "+name+": args belong to a tool step — name the tool it calls, or drop them")
 	}
 	if !validReach(p.Reach) {
 		probs = append(probs, "step "+name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(p.Reach))

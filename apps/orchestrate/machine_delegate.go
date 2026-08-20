@@ -64,6 +64,13 @@ func (t *chatTurn) phaseRunner() PhaseRunner {
 				return out, err
 			}
 		}
+		// A tool step first: no model, no tokens, no catalog to assemble.
+		// Checked before the others because Validate refuses a step naming
+		// two runners, so the order only decides which wins on an imported
+		// step that carries both anyway.
+		if tool := strings.TrimSpace(ph.Tool); tool != "" {
+			return note("tool", tool)(t.runToolPhase(ctx, ph, tool, prompt))
+		}
 		if pipe := strings.TrimSpace(ph.Pipeline); pipe != "" {
 			return note("pipeline", pipe)(t.runPipelinePhase(ctx, ph, pipe, prompt, base))
 		}
@@ -95,6 +102,62 @@ func phaseStatusLine(ph MachinePhase) string {
 		return ph.Name + ": " + strings.TrimRight(d, ".") + "…"
 	}
 	return "Working through " + ph.Name + "…"
+}
+
+// runToolPhase calls one tool and hands its result on, with no model in the
+// loop at all.
+//
+// The arguments are the AUTHOR'S keys with templated values: a placeholder can
+// fill an argument and can never become one, so nothing an earlier step
+// produced can add or rename a parameter. The same rule a minted command tool
+// follows, for the same reason.
+//
+// It goes through the turn's own approval gate. The step's tool NAME is the
+// author's, but its ARGUMENTS are templated from what earlier steps produced,
+// which is model-written — "the owner wrote the machine" establishes which tool
+// runs, not what it is about to be told to do.
+func (t *chatTurn) runToolPhase(ctx context.Context, ph MachinePhase, tool, prompt string) (string, error) {
+	// The step's own catalog, which is the turn's: a tool step reaches
+	// exactly what the agent running the machine holds. A name that is not
+	// there is the machine naming a tool this agent does not carry, which is
+	// what the attach preflight warns about before the first turn.
+	pool := t.machineCatalog(MachinePhase{Name: ph.Name, Tools: []string{tool}})
+	var handler ToolHandlerFunc
+	var needsConfirm bool
+	for _, td := range pool {
+		if td.Tool.Name == tool {
+			handler, needsConfirm = td.Handler, td.NeedsConfirm
+			break
+		}
+	}
+	if handler == nil {
+		t.turnDiag("machine_step_tool_missing", "step "+ph.Name+" calls "+tool+
+			", which this agent does not carry — attach what provides it, or point the step at a tool it has.")
+		return "", Error("step " + ph.Name + ": tool " + tool + " is not available to this agent")
+	}
+	// Templated with the machine's own vocabulary, so a step can pass what an
+	// earlier one worked out — {input}, {prev}, {state:PHASE.field}.
+	// {prev} carries what the step before this one handed on, which is the
+	// argument a tool step most often wants.
+	vars := PhaseVars{MachineTurn: t.machineTurn("")}
+	vars.Prev = prompt
+	args := make(map[string]any, len(ph.Args))
+	for k, tmpl := range ph.Args {
+		args[k] = ResolvePhaseTemplate(tmpl, vars, t.machine.currentState())
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if confirm := t.machineConfirm(); confirm != nil && needsConfirm {
+		if !confirm(tool, formatToolCall(tool, args)) {
+			return "", Error("step " + ph.Name + ": " + tool + " was not approved")
+		}
+	}
+	out, err := handler(args)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 // runDelegatedPhase dispatches one phase to another agent.

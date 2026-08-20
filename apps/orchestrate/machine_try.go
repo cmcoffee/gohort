@@ -165,6 +165,13 @@ func tryReach(udb Database, user string, def MachineDef, cur *MachineCursor, lan
 	var out []map[string]any
 	for _, ph := range touchedPhases(def, cur, landed, prior) {
 		row := map[string]any{"step": ph.Name, "reach": PhaseReach(ph)}
+		// A tool step reaches exactly one thing, whatever the reach says —
+		// there is no model to give a catalog to.
+		if tool := strings.TrimSpace(ph.Tool); tool != "" {
+			row["summary"] = "calls " + tool + " directly — no model, nothing else"
+			out = append(out, row)
+			continue
+		}
 		switch PhaseReach(ph) {
 		case ReachNone:
 			row["summary"] = "nothing — it answers from what it was handed"
