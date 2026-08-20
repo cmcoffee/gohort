@@ -123,6 +123,7 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	Log("[orchestrate.machines] user=%q dry-ran %q → landed in %s after %d hop(s)",
 		user, def.Name, landed.Name, len(cur.Log))
 
+	reach, reachNote := tryReach(udb, user, def, cur, landed, priorHops)
 	writeJSON(w, map[string]any{
 		"landed":      landed.Name,
 		"landed_desc": strings.TrimSpace(landed.Desc),
@@ -130,10 +131,116 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 		"handed_on":   tryState(cur),
 		"notes":       notes,
 		"cursor":      cur,
+		// What the steps this turn touched WOULD have reached, resolved
+		// against the agent that runs this machine. The run itself stays
+		// tool-less; this is the question the run cannot answer and the
+		// editor previously could not answer either.
+		"reach":      reach,
+		"reach_note": reachNote,
 		// Stated every time. Somebody reading a thin answer should know
 		// which of the reasons it is.
 		"caveat": tryCaveat(def),
 	})
+}
+
+// tryReach answers the question a tool-less rehearsal otherwise leaves open:
+// what WOULD these steps have had in front of them.
+//
+// The rehearsal has no agent by design — it exists so a machine can be watched
+// before anything is attached to it — but "what may this step reach" is not a
+// question about the run, it is a question about the machine meeting an agent.
+// So it is answered separately, against the agent that actually runs this
+// machine, and it does not pretend to be part of the traversal.
+//
+// Scoped to the steps THIS turn touched. A static dump of every step's catalog
+// is a different feature (and a longer page); what somebody rehearsing wants
+// is the reach of the steps that just ran, next to what they produced.
+func tryReach(udb Database, user string, def MachineDef, cur *MachineCursor, landed MachinePhase, prior int) ([]map[string]any, string) {
+	ag, ok := machineRunner(udb, user, def)
+	if !ok {
+		return nil, "No agent runs this machine yet, so there is no catalog to resolve a step against. " +
+			"Attach one under \"Which agents run this\" and rehearse again to see what each step would reach."
+	}
+	catalog := agentCatalogPreview(user, ag)
+	var out []map[string]any
+	for _, ph := range touchedPhases(def, cur, landed, prior) {
+		row := map[string]any{"step": ph.Name, "reach": PhaseReach(ph)}
+		switch PhaseReach(ph) {
+		case ReachNone:
+			row["summary"] = "nothing — it answers from what it was handed"
+		default:
+			names := make([]string, 0, 16)
+			for _, td := range PhaseTools(ph, catalog) {
+				names = append(names, td.Tool.Name)
+			}
+			row["count"] = len(names)
+			row["tools"] = names
+			// The names a step ASKED for and would not have got. The same
+			// two-controls-disagree case narrowCatalog reports at run time,
+			// said here where it can still be fixed cheaply.
+			row["missing"] = namesNotIn(ph.Tools, names)
+		}
+		out = append(out, row)
+	}
+	return out, "Resolved against " + chFirst(ag.Name, ag.ID) +
+		", the agent that runs this machine. A live turn assembles its catalog with per-turn state this cannot see, " +
+		"so treat the NAMES as the answer and the count as close."
+}
+
+// machineRunner picks the agent a rehearsal resolves against: one that runs
+// this machine. First by name order, and only one — a preview that showed
+// three agents' catalogs would be answering a question nobody asked, and the
+// attach preflight already covers "they do not all agree".
+func machineRunner(udb Database, user string, def MachineDef) (AgentRecord, bool) {
+	for _, ag := range listAgents(udb, user) {
+		if ag.Machine == def.ID && !isAppAgent(ag.ID) && !ag.Hidden {
+			return ag, true
+		}
+	}
+	return AgentRecord{}, false
+}
+
+// touchedPhases is the steps this turn passed through, in order, plus the one
+// it stopped in. Deduped: a loop back into a step it already visited is one
+// step with one catalog, not two identical rows.
+func touchedPhases(def MachineDef, cur *MachineCursor, landed MachinePhase, prior int) []MachinePhase {
+	if prior > len(cur.Log) {
+		prior = len(cur.Log)
+	}
+	seen := map[string]bool{}
+	var out []MachinePhase
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		if ph, ok := def.Phase(name); ok {
+			seen[name] = true
+			out = append(out, ph)
+		}
+	}
+	for _, h := range cur.Log[prior:] {
+		add(h.From)
+		add(h.To)
+	}
+	add(landed.Name)
+	return out
+}
+
+// namesNotIn reports which of the names a step asked for are absent from what
+// it would actually get — a phase naming a tool the agent lacks, or one its
+// own reach took away.
+func namesNotIn(asked []string, got []string) []string {
+	have := make(map[string]bool, len(got))
+	for _, n := range got {
+		have[n] = true
+	}
+	var out []string
+	for _, n := range asked {
+		if n = strings.TrimSpace(n); n != "" && n != NoToolsMarker && !have[n] {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // tryCaveat says what THIS machine's rehearsal cannot show.
@@ -148,7 +255,8 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 // worth saying so: they are judged by the driver, before the step runs,
 // so a rehearsal does exercise them.
 func tryCaveat(def MachineDef) string {
-	base := "A dry run has no tools and does not run the step it lands in — it shows where a turn would GO, not what it would say."
+	base := "A dry run has no tools and does not run the step it lands in — it shows where a turn would GO, not what it would say. " +
+		"What each step WOULD have reached is resolved separately, above."
 	bounded := false
 	for _, p := range def.Phases {
 		if len(p.ExitsTo) > 0 {
@@ -334,6 +442,29 @@ const machineTryJS = `function(ctx) {
         turn.appendChild(rows.length ? list(rows, 'font-size:0.85rem')
                                      : el('div', '(nothing)', MUTE));
       });
+    }
+
+    // What these steps would have had in front of them. The run itself is
+    // tool-less, so this is the half a rehearsal could never show: a reach
+    // set in the editor was only observable on a live turn, in a log.
+    var reach = d.reach || [];
+    if (reach.length || d.reach_note) {
+      turn.appendChild(el('div', 'What each step would reach', HEAD));
+      reach.forEach(function(r) {
+        var head = r.step + ' — ' + (r.summary ? r.summary
+          : (r.reach === 'read' ? 'read-only, ' : '') + r.count + ' tool' + (r.count === 1 ? '' : 's'));
+        turn.appendChild(el('div', head, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
+        if ((r.tools || []).length) {
+          turn.appendChild(el('div', r.tools.join(', '), MUTE + ';margin-left:0.2rem'));
+        }
+        // The two-controls-disagree case, said where it is still cheap to
+        // fix rather than as a turnDiag on somebody's first real message.
+        if ((r.missing || []).length) {
+          turn.appendChild(el('div', '⚠ names it asks for and would not get: ' + r.missing.join(', '),
+            'color:var(--danger);font-size:0.82rem;margin-left:0.2rem'));
+        }
+      });
+      if (d.reach_note) turn.appendChild(el('div', d.reach_note, MUTE + ';margin-top:0.4rem'));
     }
 
     if ((d.notes || []).length) {

@@ -108,3 +108,73 @@ func TestUnclassifiedToolsAreNotTreatedAsReadOnly(t *testing.T) {
 		t.Error("reaching the network is not only reading")
 	}
 }
+
+// The rehearsal is tool-less by design — it exists so a machine can be watched
+// before anything is attached to it — which left one question it could not
+// answer at all: what would this step have had in front of it. A reach set in
+// the editor was observable only on a live turn, in a log.
+func TestTheRehearsalResolvesWhatEachStepWouldReach(t *testing.T) {
+	udb, user := preflightFixture(t)
+	withBundleSource(t)
+
+	def := MachineDef{ID: "m1", Name: "diag", Owner: user, Phases: []MachinePhase{
+		{Name: "scan", Prompt: "look", Reach: ReachRead, Next: "answer"},
+		{Name: "decide", Prompt: "route", Reach: ReachNone},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	ag := AgentRecord{ID: "a1", Name: "Wren", Owner: user, Machine: "m1",
+		OrchestratorPrompt: "You are Wren.",
+		AttachedSources:    []ReferenceSelection{{Kind: "testfiles", ItemID: "support_bundles"}}}
+	if _, err := saveAgent(udb, ag); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+
+	cur := &MachineCursor{Phase: "scan", Log: []PhaseHop{{From: "scan", To: "answer"}}}
+	landed, _ := def.Phase("answer")
+	rows, note := tryReach(udb, user, def, cur, landed, 0)
+
+	if !strings.Contains(note, "Wren") {
+		t.Errorf("the preview must say whose catalog it resolved: %q", note)
+	}
+	byStep := map[string]map[string]any{}
+	for _, r := range rows {
+		byStep[r["step"].(string)] = r
+	}
+	// Only what this turn touched: decide was never entered.
+	if _, ran := byStep["decide"]; ran {
+		t.Error("a step this turn never entered should not be reported")
+	}
+	scan := byStep["scan"]
+	if scan == nil {
+		t.Fatalf("the step that ran should be reported: %+v", rows)
+	}
+	tools, _ := scan["tools"].([]string)
+	if len(tools) == 0 {
+		t.Fatal("a read-only step on an agent with a file store should reach its read tools")
+	}
+	for _, n := range tools {
+		if n == "fetch_url" || n == "run_shell" {
+			t.Errorf("a read-only step reached %q", n)
+		}
+	}
+	if !strings.Contains(strings.Join(tools, ","), "search_support_bundles") {
+		t.Errorf("the agent's attachment should be in what the step reaches: %v", tools)
+	}
+}
+
+// With nothing attached there is no catalog to resolve against, and saying so
+// beats an empty section that reads as "this step reaches nothing".
+func TestTheRehearsalSaysWhenThereIsNoAgentToResolveAgainst(t *testing.T) {
+	udb, user := preflightFixture(t)
+	def := MachineDef{ID: "m9", Name: "orphan", Owner: user,
+		Phases: []MachinePhase{{Name: "answer", Prompt: "reply", Resident: true}}}
+	landed, _ := def.Phase("answer")
+
+	rows, note := tryReach(udb, user, def, &MachineCursor{Phase: "answer"}, landed, 0)
+	if rows != nil {
+		t.Errorf("nothing to resolve against means nothing to report: %+v", rows)
+	}
+	if !strings.Contains(note, "No agent runs this machine") {
+		t.Errorf("the reason should be stated, not left as an empty list: %q", note)
+	}
+}

@@ -102,31 +102,80 @@ func knownAgentToolNames(udb Database, user string, def MachineDef) map[string]b
 // this can answer before any turn exists. That is the whole point of a
 // preflight: the alternative is finding out on the first message.
 func agentToolNames(udb Database, user string, ag AgentRecord) map[string]bool {
-	known := make(map[string]bool, 256)
-	for n := range machineControlTools {
-		known[n] = true
-	}
-	for _, o := range availableWorkerToolOptions(user) {
-		known[o.Value] = true
-	}
-	for _, ct := range RegisteredChatTools() {
-		known[ct.Name()] = true
-	}
-	sess := &ToolSession{Username: user}
-	for _, td := range Secure().BuildTools(sess) {
+	defs := agentCatalogPreview(user, ag)
+	known := make(map[string]bool, len(defs))
+	for _, td := range defs {
 		known[td.Tool.Name] = true
-	}
-	for _, td := range AgentProvidedTools(sess, user, ag.ID) {
-		known[td.Tool.Name] = true
-	}
-	// What THIS agent's attachments mint — the names no picker offers and
-	// the ones most likely to differ between two agents.
-	for _, ref := range ag.AttachedSources {
-		for _, td := range ReferenceItemTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)) {
-			known[td.Tool.Name] = true
-		}
 	}
 	return known
+}
+
+// agentCatalogPreview is what one agent would carry into a turn, resolved
+// WITHOUT running one.
+//
+// A preview, and honest about being one: the live catalog is assembled by
+// resolveWorkerTools against a real ToolSession, with per-turn state, Private
+// mode, and lazily-loaded sets this cannot know about. What it does reproduce
+// is the part every question here turns on — which NAMES are present, and what
+// each one is allowed to do — from the same four sources the turn draws them
+// from: the registered pool the agent is allowed, the credential tools its
+// user holds, whatever apps contribute for this agent, and what its own
+// attachments mint.
+//
+// One walk feeding both consumers (the attach preflight and the rehearsal's
+// reach preview), so the answer somebody is shown and the answer somebody is
+// warned about cannot disagree.
+func agentCatalogPreview(user string, ag AgentRecord) []AgentToolDef {
+	sess := &ToolSession{Username: user}
+	var out []AgentToolDef
+	seen := map[string]bool{}
+	add := func(defs ...AgentToolDef) {
+		for _, td := range defs {
+			if n := td.Tool.Name; n != "" && !seen[n] {
+				seen[n] = true
+				out = append(out, td)
+			}
+		}
+	}
+	// The framework's own control plane survives every narrowing, so it is
+	// present whatever the agent's list says.
+	for n := range machineControlTools {
+		if ct, ok := FindChatTool(n); ok {
+			add(ChatToolToAgentToolDefWithSession(ct, nil))
+			continue
+		}
+		add(AgentToolDef{Tool: Tool{Name: n}})
+	}
+	// The agent's own allowlist decides the registered pool. An empty list is
+	// the default pool, and the sentinel is an explicit none — the same three
+	// states resolveWorkerTools reads.
+	explicit := len(ag.AllowedTools) > 0 && !isNoToolsSentinel(ag.AllowedTools)
+	allow := make(map[string]bool, len(ag.AllowedTools))
+	for _, n := range ag.AllowedTools {
+		allow[canonicalToolName(n)] = true
+	}
+	if !isNoToolsSentinel(ag.AllowedTools) {
+		for _, ct := range RegisteredChatTools() {
+			if explicit && !allow[ct.Name()] {
+				continue
+			}
+			add(ChatToolToAgentToolDefWithSession(ct, nil))
+		}
+		for _, td := range Secure().BuildTools(sess) {
+			if explicit && !allow[td.Tool.Name] {
+				continue
+			}
+			add(td)
+		}
+	}
+	// App-contributed and attachment-minted tools are grants rather than
+	// selections — they arrive because somebody attached something, not
+	// because a list named them, so the allowlist does not gate them.
+	add(AgentProvidedTools(sess, user, ag.ID)...)
+	for _, ref := range ag.AttachedSources {
+		add(ReferenceItemTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID))...)
+	}
+	return out
 }
 
 // machineAttachGaps reports what this machine's steps name that this agent
