@@ -174,12 +174,11 @@ func stageTags(s PipelineStage) []string {
 	if m := strings.ToLower(strings.TrimSpace(s.Model)); m == "lead" || m == "worker" {
 		tags = append(tags, m)
 	}
-	if s.Think != nil {
-		if *s.Think {
-			tags = append(tags, "thinks")
-		} else {
-			tags = append(tags, "no thinking")
-		}
+	switch StageThinkMode(s) {
+	case "on":
+		tags = append(tags, "thinks")
+	case "off":
+		tags = append(tags, "no thinking")
 	}
 	if len(s.Tools) > 0 {
 		tags = append(tags, strconv.Itoa(len(s.Tools))+" tools")

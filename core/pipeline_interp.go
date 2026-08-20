@@ -576,10 +576,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			// Resolve per-stage think: nil = default off, &true = on,
 			// &false = explicitly off (same as default but
 			// self-documenting).
-			think := false
-			if stage.Think != nil {
-				think = *stage.Think
-			}
+			think := StageThinks(stage)
 			// JSON mode only helps the tool-less path — see runWorkerStage.
 			jsonMode := len(stage.ModelOutput()) > 0
 			tier := stageTier(stage)
@@ -1223,10 +1220,7 @@ func (r *pipelineRun) runFanoutStage(ctx context.Context, stage PipelineStage, p
 		}
 	}
 
-	think := false
-	if stage.Think != nil {
-		think = *stage.Think
-	}
+	think := StageThinks(stage)
 	tier := stageTier(stage)
 	agent := strings.TrimSpace(stage.Agent)
 
@@ -1366,10 +1360,7 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 			stage.Name, len(voices), rounds, len(voices)*rounds, panelParallel))
 	}
 
-	think := false
-	if stage.Think != nil {
-		think = *stage.Think
-	}
+	think := StageThinks(stage)
 	tier := stageTier(stage)
 
 	var transcript []panelSaid

@@ -30,6 +30,7 @@
 package core
 
 import (
+	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,6 +132,88 @@ const (
 // LLM calls until the context is cancelled. Count is validated against
 // this at save time, so the ceiling is a definition error rather than a
 // run-time surprise.
+// StageThinks reports whether a stage deliberates: its own setting, or the
+// framework default (off) when it has none. THE accessor — nothing should read
+// the fields directly, because there are two of them for one setting and only
+// this knows which wins.
+func StageThinks(s PipelineStage) bool { return StageThinkMode(s) == "on" }
+
+// StageThinkMode is the stage's setting as the editor states it: "on", "off",
+// or "" for inherit. Reads the legacy *bool when the string is unset, so a
+// pipeline written before the change keeps the deliberation it was given.
+func StageThinkMode(s PipelineStage) string {
+	if m := strings.ToLower(strings.TrimSpace(s.ThinkMode)); m != "" {
+		return m
+	}
+	if s.Think != nil {
+		if *s.Think {
+			return "on"
+		}
+		// Unreachable through the store — gob never gave a false pointer
+		// back — but reachable from a legacy JSON recipe, which could
+		// always carry think:false.
+		return "off"
+	}
+	return ""
+}
+
+// normalizeStageThink folds the legacy field into the string one, in place and
+// recursively, so everything downstream reads one field. Called on every load
+// and every decode: a record migrates the first time it is touched, and is
+// written back in the new shape the next time it is saved.
+func normalizeStageThink(stages []PipelineStage) {
+	for i := range stages {
+		if stages[i].ThinkMode == "" && stages[i].Think != nil {
+			stages[i].ThinkMode = StageThinkMode(stages[i])
+		}
+		stages[i].Think = nil
+		normalizeStageThink(stages[i].Body)
+	}
+}
+
+// UnmarshalJSON accepts the "think" key as either the string it is now or the
+// boolean it used to be — an exported recipe outlives the field it was written
+// against, and an import that failed on it would reject a pipeline that is
+// perfectly good.
+func (s *PipelineStage) UnmarshalJSON(data []byte) error {
+	type alias PipelineStage // no methods, so no recursion
+	aux := struct {
+		Think json.RawMessage `json:"think"`
+		*alias
+	}{alias: (*alias)(s)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	// The shallower field wins the "think" key, so ThinkMode is untouched
+	// above and set from the raw value here.
+	s.ThinkMode = thinkModeFromJSON(aux.Think)
+	return nil
+}
+
+// thinkModeFromJSON reads the two shapes "think" has ever had.
+func thinkModeFromJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var asString string
+	if json.Unmarshal(raw, &asString) == nil {
+		switch m := strings.ToLower(strings.TrimSpace(asString)); m {
+		case "on", "off":
+			return m
+		default:
+			return ""
+		}
+	}
+	var asBool bool
+	if json.Unmarshal(raw, &asBool) == nil {
+		if asBool {
+			return "on"
+		}
+		return "off"
+	}
+	return ""
+}
+
 const loopMaxIterations = 25
 
 // Panel bounds. Voices and rounds MULTIPLY — six voices over three rounds is
@@ -191,19 +274,35 @@ type PipelineStage struct {
 	// kind="worker" stages; agent stages get their dispatched agent's
 	// full catalog regardless.
 	Tools []string `json:"tools,omitempty"`
-	// Think optionally enables/disables thinking for this stage. nil
-	// (default) = use the framework default (off, cheap). &true enables
-	// thinking for stages that genuinely benefit from deliberation —
-	// synthesis stages reconciling multiple sources, verification
-	// stages doing careful cross-reference, decomposition stages
-	// planning how to split a complex query. &false disables explicitly
-	// (same as default; useful for self-documenting "this stage doesn't
-	// need to think"). Pure transforms / format conversions / cheap
-	// paraphrases should leave think nil (or set to false) — they don't
-	// benefit from a deliberation budget. Only applies to kind="worker"
-	// stages; agent stages honor their dispatched agent's own think
-	// configuration.
-	Think *bool `json:"think,omitempty"`
+	// ThinkMode enables or disables deliberation for this stage: "on",
+	// "off", or "" to inherit the framework default (off, cheap).
+	//
+	// Turn it ON for stages that genuinely benefit — synthesis reconciling
+	// several sources, verification cross-referencing, decomposition
+	// planning a split. Pure transforms, format conversions and cheap
+	// paraphrases should leave it alone. Only applies to kind="worker"
+	// stages; an agent stage honors its dispatched agent's own setting.
+	//
+	// A STRING, and that is the whole point of the field. It used to be a
+	// *bool, which cannot express "off" through the store at all: gob
+	// encodes a false pointer as nothing, so it decoded back as nil, and
+	// "off" silently became "inherit" on the next read. An author picked
+	// "Off — this stage is a transform", saved, reopened, and found it
+	// unset, with the run behaving as though they had never chosen. The
+	// same reason MachinePhase.Think is a string, and now the two agree.
+	ThinkMode string `json:"think,omitempty"`
+
+	// Think is the pre-string field, kept ONLY so records written before
+	// the change still decode — gob matches on field NAME, so removing it
+	// would fail the whole record rather than one field, and renaming it
+	// would drop the "on" that older stages legitimately carry.
+	//
+	// Never written and never read directly: normalizeStageThink folds it
+	// into ThinkMode on load and clears it. json:"-" because the wire
+	// format has always been the "think" key, which ThinkMode now holds.
+	//
+	// Deprecated: read StageThinks(stage) instead.
+	Think *bool `json:"-"`
 	// Panel names the voices a kind="panel" stage puts on the question.
 	//
 	// An entry that resolves to one of your agents dispatches to it — its
@@ -546,6 +645,8 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		case done[s.Name] != nil || badOutput[s.Name]:
 			probs = append(probs, "duplicate stage name: "+s.Name)
 			continue
+		case StageThinkMode(s) != "" && StageThinkMode(s) != "on" && StageThinkMode(s) != "off":
+			probs = append(probs, "stage "+s.Name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(s.ThinkMode))
 		case !validReach(s.Reach):
 			probs = append(probs, "stage "+s.Name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(s.Reach))
 			continue
@@ -846,7 +947,7 @@ func validateToolStage(s PipelineStage, done map[string]map[string]PipelineField
 	if strings.TrimSpace(s.Agent) != "" {
 		return Error("stage " + s.Name + ": agent does not apply to a tool stage — use kind=agent to dispatch, or kind=tool to call a tool directly")
 	}
-	if s.Think != nil {
+	if StageThinkMode(s) != "" {
 		return Error("stage " + s.Name + ": think does not apply to a tool stage — no model runs")
 	}
 	// Every {stage:...} in an argument is a real reference and gets the
@@ -1157,6 +1258,10 @@ func SavePipelineDef(udb Database, d PipelineDef) PipelineDef {
 		d.Created = time.Now()
 	}
 	d.Updated = time.Now()
+	// Written in the new shape whatever came in: the legacy field is
+	// cleared here, so a record migrates permanently the first time it is
+	// saved rather than being folded on every read forever.
+	normalizeStageThink(d.Stages)
 	udb.Set(PipelineDefsTable, d.ID, d)
 	// Every save path funnels through here — the HTTP editor, the pipeline
 	// tool, revise, undo, import, duplicate — which is why the share index is
@@ -1184,6 +1289,11 @@ func LoadPipelineDef(udb Database, owner, id string) (PipelineDef, bool) {
 	if !udb.Get(PipelineDefsTable, id, &d) {
 		return PipelineDef{}, false
 	}
+	// Migrate on read: a record written before think became a string folds
+	// its legacy field in here, once, and is written back in the new shape
+	// the next time it is saved. Doing it at the door means nothing
+	// downstream has to know there were ever two fields.
+	normalizeStageThink(d.Stages)
 	if owner != "" && d.Owner != "" && d.Owner != owner {
 		return PipelineDef{}, false
 	}
@@ -1205,6 +1315,7 @@ func ListPipelineDefs(udb Database, owner string) []PipelineDef {
 		if owner != "" && d.Owner != "" && d.Owner != owner {
 			continue
 		}
+		normalizeStageThink(d.Stages)
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })

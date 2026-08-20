@@ -39,7 +39,10 @@ func TestParsePipelineStages_LoopRoundTrip(t *testing.T) {
 	}
 	// Nested stages keep the fields the flat parser handles, including the
 	// two that used to vanish silently.
-	if s.Body[0].Agent != "debater" || s.Body[0].Think == nil || !*s.Body[0].Think {
+	// Think reads as a string now: as a *bool the store could not carry
+	// "off" at all (gob drops a false pointer), so "off" became "inherit"
+	// on the next read.
+	if s.Body[0].Agent != "debater" || StageThinkMode(s.Body[0]) != "on" {
 		t.Errorf("body stage fields dropped: %+v", s.Body[0])
 	}
 	if len(s.Body[1].Output) != 1 || s.Body[1].Output[0].Type != FieldBool {

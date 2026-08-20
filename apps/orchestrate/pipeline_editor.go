@@ -139,7 +139,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			},
 			Help: "A transform or a routing decision is worker work; a stage that commits to an explanation is usually lead."},
 		ui.FormField{Field: "think", Type: "select", Label: "Reasoning",
-			ShowWhen: keepWhileSet(thinkValue(s.Think), "kind:worker|fanout"),
+			ShowWhen: keepWhileSet(StageThinkMode(s), "kind:worker|fanout"),
 			Options: []ui.SelectOption{
 				{Value: "", Label: "Inherit"},
 				{Value: "on", Label: "On — this stage is a judgement"},
@@ -214,17 +214,6 @@ func keepWhileList(stored []string, expr string) string {
 	return expr
 }
 
-// thinkValue renders the tri-state pointer as the select's value.
-func thinkValue(t *bool) string {
-	if t == nil {
-		return ""
-	}
-	if *t {
-		return "on"
-	}
-	return "off"
-}
-
 // laterStageOptions is the stages a branch may jump to: forward only,
 // which is what Validate enforces anyway.
 func laterStageOptions(def PipelineDef, from string) []ui.SelectOption {
@@ -253,7 +242,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"name": s.Name, "kind": kind, "prompt": s.Prompt,
 		"agent": s.Agent, "fan_over": s.FanOver, "count": s.Count,
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
-		"tool": s.Tool, "model": s.Model, "think": thinkValue(s.Think),
+		"tool": s.Tool, "model": s.Model, "think": StageThinkMode(s),
 		"panel": s.Panel, "reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
 	}
 }
@@ -299,16 +288,11 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 		}
 	}
 	if v, ok := str("think"); ok {
-		switch v {
-		case "on":
-			yes := true
-			s.Think = &yes
-		case "off":
-			no := false
-			s.Think = &no
-		default:
-			s.Think = nil
-		}
+		// "off" is a REAL setting now and survives the save. As a *bool it
+		// could not: gob dropped the false pointer, so picking "Off — this
+		// stage is a transform" read back as inherit.
+		s.ThinkMode = normalizePhaseThink(v)
+		s.Think = nil
 	}
 	if v, ok := body["reach"]; ok {
 		s.Reach = strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))

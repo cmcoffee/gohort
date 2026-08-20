@@ -657,18 +657,21 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 			FanOver: strings.TrimSpace(mapStr(m, "fan_over")),
 			Reach:   strings.ToLower(strings.TrimSpace(mapStr(m, "reach"))),
 			Tools:   mapStrList(m, "tools"),
-			Think:   mapBoolPtr(m, "think"),
-			Output:  fields,
-			Body:    body,
-			Count:   mapInt(m, "count"),
-			Until:   strings.TrimSpace(mapStr(m, "until")),
-			Collect: strings.ToLower(strings.TrimSpace(mapStr(m, "collect"))),
-			When:    strings.TrimSpace(mapStr(m, "when")),
-			SkipTo:  strings.TrimSpace(mapStr(m, "skip_to")),
-			Model:   strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
-			Tool:    strings.TrimSpace(mapStr(m, "tool")),
-			Machine: strings.TrimSpace(mapStr(m, "machine")),
-			Args:    mapStrMap(m, "args"),
+			// normalizePhaseThink, the same reader a machine step uses: it
+			// takes the tri-state string the field is AND the boolean a
+			// model reaches for anyway.
+			ThinkMode: normalizePhaseThink(m["think"]),
+			Output:    fields,
+			Body:      body,
+			Count:     mapInt(m, "count"),
+			Until:     strings.TrimSpace(mapStr(m, "until")),
+			Collect:   strings.ToLower(strings.TrimSpace(mapStr(m, "collect"))),
+			When:      strings.TrimSpace(mapStr(m, "when")),
+			SkipTo:    strings.TrimSpace(mapStr(m, "skip_to")),
+			Model:     strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
+			Tool:      strings.TrimSpace(mapStr(m, "tool")),
+			Machine:   strings.TrimSpace(mapStr(m, "machine")),
+			Args:      mapStrMap(m, "args"),
 		})
 	}
 	return out, nil
