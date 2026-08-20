@@ -149,11 +149,72 @@ func flattenStages(stages []PipelineStage) []PipelineStage {
 	return out
 }
 
+// stageReachAdvice is reachAdvice for a pipeline's stages, flattened so a
+// loop's or a fanout's body is judged like any other stage.
+//
+// A stage needs this MORE than a step does. A machine runs for whichever agent
+// carries it; a pipeline runs for whichever agent ATTACHED it, and several can,
+// so a list of exact names describes one caller's catalog and misdescribes the
+// next one's.
+func stageReachAdvice(user string, def PipelineDef) []string {
+	stages := flattenStages(def.Stages)
+	units := make([]toolScopeUnit, 0, len(stages))
+	for _, s := range stages {
+		units = append(units, toolScopeUnit{Label: "stage " + s.Name, Reach: StageReach(s), Tools: s.Tools})
+	}
+	return reachAdviceFor(units, user)
+}
+
+// panelVoiceFindings reports a panel whose voices are PART agents and part
+// not, because that mixture is where a misspelled agent name hides.
+//
+// A voice that matches no agent is a ROLE the worker answers as — a real
+// option, and the reason a panel of perspectives works on a deployment where
+// nobody has authored three agents. So an unmatched name is not an error and
+// must never be reported as one. But resolution is case-insensitive, which
+// means the names that fall through to roles are genuine misspellings, and
+// "Skpetic" quietly becomes a worker impersonating your Skeptic agent — same
+// transcript, different thinking, nothing said.
+//
+// FIRES ONLY ON A MIX. An all-role panel is deliberate and an all-agent panel
+// is fine; naming two agents and one stranger is the shape that is usually a
+// typo. Advice that fires on a correct configuration is advice people learn to
+// scroll past, and it takes the real findings with it.
+func panelVoiceFindings(udb Database, user string, def PipelineDef) []string {
+	var out []string
+	for _, s := range flattenStages(def.Stages) {
+		if s.Kind != StagePanel || len(s.Panel) < 2 {
+			continue
+		}
+		var agents, roles []string
+		for _, v := range s.Panel {
+			if v = strings.TrimSpace(v); v == "" {
+				continue
+			}
+			if _, ok := findAgentByNameOrID(udb, user, v); ok {
+				agents = append(agents, v)
+				continue
+			}
+			roles = append(roles, v)
+		}
+		if len(agents) == 0 || len(roles) == 0 {
+			continue
+		}
+		out = append(out, "stage "+s.Name+" mixes agents and roles: "+strings.Join(agents, ", ")+
+			" resolve to agents, and "+strings.Join(roles, ", ")+" do not, so the worker will answer as them. "+
+			"That is a real option — a role needs no agent. Check the spelling if one of those was meant to be an agent, "+
+			"because a name that misses becomes a role rather than an error.")
+	}
+	return out
+}
+
 // pipelineChecklist is what every pipeline surface shows as work remaining:
 // the soft advice the definition works out for itself, then the tool names
 // that will not resolve. One function, for the reason machineChecklist is
 // one: a check added in one place must not quietly fail to exist in the
 // others.
 func pipelineChecklist(udb Database, user string, def PipelineDef) []string {
-	return append(def.Advice(), unknownStageToolFindings(udb, user, def)...)
+	out := append(def.Advice(), unknownStageToolFindings(udb, user, def)...)
+	out = append(out, panelVoiceFindings(udb, user, def)...)
+	return append(out, stageReachAdvice(user, def)...)
 }

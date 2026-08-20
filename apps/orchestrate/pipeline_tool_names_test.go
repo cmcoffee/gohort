@@ -5,7 +5,27 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
+
+// panelFindingFixture gives a user with two agents to resolve voices against.
+func panelFindingFixture(t *testing.T) (Database, string) {
+	t.Helper()
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:u", AuthUser{Username: "u"})
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prev })
+	for _, name := range []string{"Skeptic", "Analyst"} {
+		if _, err := saveAgent(udb, AgentRecord{ID: "a-" + name, Name: name, Owner: "u",
+			OrchestratorPrompt: "You are " + name + "."}); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	return udb, "u"
+}
 
 // A stage's tool list is the same exact-name filter a machine step's is —
 // literally the same function — and the machine editor has caught a typo in
@@ -69,5 +89,74 @@ func TestAStageNamingAToolNobodyHasIsReportedAtSaveTime(t *testing.T) {
 	}}
 	if got := stageToolFindings(quiet, known); got != nil {
 		t.Errorf("a pipeline that names no tools has nothing to check: %v", got)
+	}
+}
+
+// A voice that matches no agent is a ROLE — a real option, and the reason a
+// panel of perspectives works without authoring three agents first. So it is
+// never an error. But resolution is case-insensitive, so the names that fall
+// through to roles are genuine misspellings, and "Skpetic" quietly becomes a
+// worker impersonating your Skeptic agent: same transcript, different
+// thinking, nothing said.
+func TestAPanelThatMixesAgentsAndRolesSaysSo(t *testing.T) {
+	udb, user := panelFindingFixture(t)
+
+	mixed := PipelineDef{Name: "review", Owner: user, Stages: []PipelineStage{
+		{Name: "debate", Kind: StagePanel, Prompt: "argue", Panel: []string{"Skeptic", "Skpetic"}},
+	}}
+	got := strings.Join(panelVoiceFindings(udb, user, mixed), "\n")
+	if !strings.Contains(got, "Skpetic") || !strings.Contains(got, "stage debate") {
+		t.Fatalf("a mix should be reported, naming which side each voice fell on: %q", got)
+	}
+	if !strings.Contains(got, "real option") {
+		t.Errorf("it must not read as an error — a role is legitimate: %q", got)
+	}
+
+	// All roles is a deliberate panel of perspectives. Silence.
+	roles := PipelineDef{Name: "review", Owner: user, Stages: []PipelineStage{
+		{Name: "debate", Kind: StagePanel, Prompt: "argue", Panel: []string{"Optimist", "Pessimist", "Cost"}},
+	}}
+	if got := panelVoiceFindings(udb, user, roles); len(got) != 0 {
+		t.Errorf("an all-role panel is normal and should say nothing: %v", got)
+	}
+
+	// All agents is fine too.
+	agents := PipelineDef{Name: "review", Owner: user, Stages: []PipelineStage{
+		{Name: "debate", Kind: StagePanel, Prompt: "argue", Panel: []string{"Skeptic", "Analyst"}},
+	}}
+	if got := panelVoiceFindings(udb, user, agents); len(got) != 0 {
+		t.Errorf("an all-agent panel is normal and should say nothing: %v", got)
+	}
+
+	// Case is not a miss: resolution is case-insensitive, so reporting one
+	// would be crying wolf about a name that works.
+	cased := PipelineDef{Name: "review", Owner: user, Stages: []PipelineStage{
+		{Name: "debate", Kind: StagePanel, Prompt: "argue", Panel: []string{"skeptic", "ANALYST"}},
+	}}
+	if got := panelVoiceFindings(udb, user, cased); len(got) != 0 {
+		t.Errorf("case drift resolves and must not be flagged: %v", got)
+	}
+}
+
+// The reach advice reads the same on both surfaces, because it is the same
+// judgement — an author who learned it on a machine step has learned it.
+func TestStagesGetTheSameReachAdviceStepsDo(t *testing.T) {
+	_, user := panelFindingFixture(t)
+	withBundleSource(t)
+
+	def := PipelineDef{Name: "diag", Owner: user, Stages: []PipelineStage{
+		{Name: "gather", Kind: StageWorker, Prompt: "look", Tools: []string{"search_support_bundles"}},
+	}}
+	got := strings.Join(stageReachAdvice(user, def), "\n")
+	if !strings.Contains(got, "stage gather") || !strings.Contains(got, "reach") {
+		t.Errorf("a stage naming attachment-minted tools should be nudged: %q", got)
+	}
+
+	// And a stage that already declares one has made the choice.
+	settled := def
+	settled.Stages = []PipelineStage{{Name: "gather", Kind: StageWorker, Prompt: "look",
+		Reach: ReachRead, Tools: []string{"search_support_bundles"}}}
+	if got := stageReachAdvice(user, settled); len(got) != 0 {
+		t.Errorf("a stage with a reach set needs no advice about reaches: %v", got)
 	}
 }

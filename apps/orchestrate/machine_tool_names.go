@@ -314,9 +314,28 @@ func machineChecklist(udb Database, user string, def MachineDef) []string {
 // configuration is advice people learn to scroll past, and it takes the
 // findings that matter down with it.
 func reachAdvice(udb Database, user string, def MachineDef) []string {
-	named := false
+	units := make([]toolScopeUnit, 0, len(def.Phases))
 	for _, p := range def.Phases {
-		if len(p.Tools) > 0 && PhaseReach(p) == ReachAll {
+		units = append(units, toolScopeUnit{Label: "step " + p.Name, Reach: PhaseReach(p), Tools: p.Tools})
+	}
+	return reachAdviceFor(units, user)
+}
+
+// toolScopeUnit is one thing that narrows tools: a machine's step, or a
+// pipeline's stage. They carry the same two controls for the same reasons, so
+// the advice about choosing between them is written once and reads the same on
+// both surfaces — an author who learned it in one place has learned it.
+type toolScopeUnit struct {
+	Label string // "step scan" / "stage gather" — how the finding names it
+	Reach string
+	Tools []string
+}
+
+// reachAdviceFor is the judgement, over whichever surface gathered the units.
+func reachAdviceFor(units []toolScopeUnit, user string) []string {
+	named := false
+	for _, u := range units {
+		if len(u.Tools) > 0 && u.Reach == ReachAll {
 			named = true
 			break
 		}
@@ -326,8 +345,8 @@ func reachAdvice(udb Database, user string, def MachineDef) []string {
 	}
 	caps, dynamic := toolCapIndex(user)
 	var out []string
-	for _, p := range def.Phases {
-		if len(p.Tools) == 0 || PhaseReach(p) != ReachAll {
+	for _, p := range units {
+		if len(p.Tools) == 0 || p.Reach != ReachAll {
 			continue
 		}
 		allRead, anyDynamic, known := true, false, 0
@@ -355,13 +374,13 @@ func reachAdvice(udb Database, user string, def MachineDef) []string {
 		}
 		switch {
 		case anyDynamic:
-			out = append(out, "step "+p.Name+" names "+strings.Join(fragile, ", ")+
+			out = append(out, p.Label+" names "+strings.Join(fragile, ", ")+
 				" — names that exist only while the server or attachment behind them does. A reach "+
-				"(\"read\", \"none\") says what the step may DO without depending on what happens to be connected.")
+				"(\"read\", \"none\") says what it may DO without depending on what happens to be connected.")
 		case allRead && known > 1:
-			out = append(out, "step "+p.Name+" names "+strconv.Itoa(known)+
-				" tools that all only read. If what you mean is \"this step may look, not act\", reach \"read\" "+
-				"says it in a word and keeps saying it on another agent — the list grants exactly these and "+
+			out = append(out, p.Label+" names "+strconv.Itoa(known)+
+				" tools that all only read. If what you mean is \"this may look, not act\", reach \"read\" "+
+				"says it in a word and keeps saying it for another caller — the list grants exactly these and "+
 				"nothing else, which is narrower, so keep it if that is the point.")
 		}
 	}
