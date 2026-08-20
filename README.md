@@ -8,7 +8,7 @@
 
 # Gohort
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Single binary](https://img.shields.io/badge/deploy-single%20binary-success)](#quick-start)
 [![Local-first](https://img.shields.io/badge/LLM-local--first-6366f1)](#what-makes-it-different)
@@ -151,7 +151,11 @@ On deck:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Versions before v0.6.314 were released under the MIT License and stay available
+under those terms; the change applies from that version onward. Apache 2.0 was
+chosen for its express patent grant, which MIT does not provide.
 
 ## Dependencies
 

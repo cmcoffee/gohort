@@ -1,0 +1,11 @@
+gohort
+Copyright 2026 Craig M. Coffee
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Releases before this version were licensed under the MIT License, and remain
+available under those terms. This change applies to this version onward.
+
+This product depends on third-party software distributed under its own terms,
+including the MIT, BSD and Apache 2.0 licenses. Compiled distributions carry
+those notices alongside this one.
