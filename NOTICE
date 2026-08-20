@@ -3,9 +3,31 @@ Copyright 2026 Craig M. Coffee
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
-Releases before this version were licensed under the MIT License, and remain
-available under those terms. This change applies to this version onward.
+Releases before v0.6.314 were licensed under the MIT License, and remain
+available under those terms. This change applies from that version onward.
 
-This product depends on third-party software distributed under its own terms,
-including the MIT, BSD and Apache 2.0 licenses. Compiled distributions carry
-those notices alongside this one.
+--------------------------------------------------------------------------
+Third-party code included IN THIS SOURCE TREE
+--------------------------------------------------------------------------
+
+The following is not gohort's own work. It is redistributed here under its
+own license, which is not changed by gohort's.
+
+pigo — core/pigo/
+    Copyright (c) 2018 Endre Simo
+    MIT License. Full text: core/pigo/LICENSE
+    Upstream: github.com/esimov/pigo (v1.4.6)
+
+Wails JavaScript runtime — gohort-desktop/frontend/wailsjs/
+    Copyright (c) Lea Anthony and the Wails contributors
+    MIT License. Upstream: github.com/wailsapp/wails
+    Generated into this tree by the Wails toolchain.
+
+--------------------------------------------------------------------------
+Dependencies resolved at build time
+--------------------------------------------------------------------------
+
+gohort also depends on third-party modules that are NOT in this tree; they
+are fetched at build time and carry their own terms, variously MIT, BSD and
+Apache 2.0. A compiled distribution contains their object code, so it must
+carry their notices alongside this file.
