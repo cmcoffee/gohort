@@ -320,6 +320,12 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			},
 		},
 		ui.Section{
+			Title:    "What it will do",
+			Wide:     true,
+			Subtitle: "Worked out from the definition, without running anything — the order, what each stage is handed, and what a run costs before you pay for one.",
+			Body:     ui.Card{HTML: planHTML(def)},
+		},
+		ui.Section{
 			Title:    "Worth a look",
 			Wide:     true,
 			Subtitle: "Nothing here refuses a save. It is what the pipeline looks like it might not have meant.",
@@ -777,4 +783,57 @@ func bodyStageSubtitle(parent, b PipelineStage) string {
 		sub += " Runs every pass: {iteration} is the pass number, {prev} what the last one produced."
 	}
 	return strings.TrimSpace(sub)
+}
+
+// planHTML renders PipelineDef.Plan for the page.
+//
+// Two facts per stage, because they are the two a definition hides: what feeds
+// it, and what it costs. The first is the one that bites — nothing
+// auto-supplies a stage with the work before it, so a prompt with no
+// placeholder sees its own text and nothing else, and the symptom at run time
+// is a fluent answer to the wrong question rather than an error.
+func planHTML(def PipelineDef) string {
+	plan := def.Plan()
+	if len(plan.Steps) == 0 {
+		return `<div class="ui-mute">No stages yet — add one and this fills in.</div>`
+	}
+	var b strings.Builder
+	b.WriteString(`<div style="font-weight:600;margin-bottom:0.5rem">` + HTMLEscape(plan.Summary()) + `</div>`)
+	for _, s := range plan.Steps {
+		indent := s.Depth * 18
+		b.WriteString(`<div style="margin:0.35rem 0 0.35rem ` + strconv.Itoa(indent) + `px">`)
+		b.WriteString(`<span style="font-weight:600">` + HTMLEscape(s.Name) + `</span>`)
+		b.WriteString(`<span class="ui-mute"> — ` + HTMLEscape(s.RunBy) + `</span>`)
+		if s.Max > 0 {
+			calls := strconv.Itoa(s.Min)
+			if s.Max != s.Min {
+				calls = strconv.Itoa(s.Min) + "–" + strconv.Itoa(s.Max)
+			}
+			b.WriteString(`<span class="ui-mute"> · ` + calls + ` call` + HTMLEscape(pluralOf(s.Max)) + `</span>`)
+		}
+		b.WriteString(`<div class="ui-mute" style="font-size:0.82rem">`)
+		if len(s.Reads) == 0 && s.Kind != StageTool && s.Kind != StageBranch {
+			// The finding, stated where the shape is being read rather than
+			// filed away in a checklist somebody opens separately.
+			b.WriteString(`<span style="color:var(--danger)">reads nothing — its prompt places no {input}, {prev} or {stage:…}, so it sees only its own text</span>`)
+		} else if len(s.Reads) > 0 {
+			b.WriteString(`reads ` + HTMLEscape(strings.Join(s.Reads, ", ")))
+		}
+		if s.Note != "" {
+			if len(s.Reads) > 0 || s.Kind == StageTool || s.Kind == StageBranch {
+				b.WriteString(` · `)
+			}
+			b.WriteString(HTMLEscape(s.Note))
+		}
+		b.WriteString(`</div></div>`)
+	}
+	return b.String()
+}
+
+// pluralOf is the s, for a count rendered beside a noun.
+func pluralOf(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
