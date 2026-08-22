@@ -1,0 +1,35 @@
+{
+  "name": "Plan Steps",
+  "description": "Run a list of plan steps in parallel and report what each one found. Give it a numbered list of steps, one per line, and it works them at the same time rather than in sequence, then collects the findings and says which steps came back empty. Used by the \"Plan and Execute\" machine, and usable on its own wherever you already have the plan and just want it worked.",
+  "stages": [
+    {
+      "name": "steps",
+      "kind": "worker",
+      "reach": "none",
+      "think": "off",
+      "prompt": "The plan below is already decided. Your only job is to repeat it as data.\n\nOne entry per step, in the order given, each entry saying what the step is and what would count as having done it. Change nothing: do not merge two steps, do not split one, do not add a step that reads like a sensible next thing, and do not drop a step because it looks hard. A step you rewrite here is a step nobody agreed to.\n\nIf a line is not a step (a heading, a note about the goal, a blank), leave it out.\n\nThe plan:\n\n{input}",
+      "output": [
+        {"name": "items", "type": "list", "required": true, "desc": "one entry per plan step, verbatim in intent: what the step is, and what would count as having done it"}
+      ]
+    },
+    {
+      "name": "work",
+      "kind": "fanout",
+      "fan_over": "steps.items",
+      "think": "off",
+      "prompt": "Do ONE step of a larger plan. The whole plan is being worked at the same time, so the other steps are somebody else's problem — do this one and report.\n\nYour step:\n\n{item}\n\nGo and get the actual answer with the tools you have. Then report in this shape:\n\nFOUND — what you actually established, specifically. Name the source: the file, the URL, the command, the record. \"The retry limit is 5, set in config/app.yaml\" is a finding. \"Retry behaviour was investigated\" is not — it describes your afternoon rather than the answer.\n\nNOTHING — you looked and there is nothing there. Say where you looked. A step that came back empty is a real result and the next stage needs it stated, not softened into a paragraph that sounds like a finding.\n\nBLOCKED — you could not look: no access, no tool for it, the thing is unreachable. Say which, in one line. Do not report BLOCKED because the step was hard or slow; that is NOTHING with more work left in it.\n\nDo not answer the overall goal here, do not summarise the other steps, and do not invent what another step will probably find. One step, what it found, where it came from."
+    },
+    {
+      "name": "collect",
+      "kind": "synthesize",
+      "reach": "none",
+      "think": "on",
+      "prompt": "Below is what came back from each step of the plan, worked in parallel.\n\nCollect it. Keep every finding with the source it named — a finding whose source you drop cannot be checked by anyone afterwards, which is most of what it was worth. Where two steps found the same thing, say it once. Where two steps CONTRADICT each other, keep both and say they disagree; that disagreement is usually the most useful thing on the page and averaging it away destroys it.\n\nList separately the steps that came back with nothing and the steps that were blocked, with the reason each gave. Those are not failures to tidy up — they are what the next stage has to decide about and what the final answer has to admit.\n\nWhat came back:\n\n{prev}",
+      "output": [
+        {"name": "findings", "type": "list", "required": true, "desc": "what the plan established, one entry per finding, each carrying the source it came from"},
+        {"name": "empty", "type": "list", "desc": "steps that looked and found nothing, with where they looked"},
+        {"name": "blocked", "type": "list", "desc": "steps that could not be done, each with the reason given"}
+      ]
+    }
+  ]
+}

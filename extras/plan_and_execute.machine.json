@@ -1,0 +1,71 @@
+{
+  "name": "Plan and Execute",
+  "description": "Turn a goal into a plan, work every step of it at the same time, then answer from what came back. For work that needs several results that build into one answer, and that nobody is sitting and watching — a scheduled brief, a dispatched piece of research, a question with five parts. It runs its steps in PARALLEL, so the plan it writes is a set of independent questions rather than a sequence; anything that turned out to depend on an earlier answer is picked up in the one gap-filling pass before the report. Needs the \"Plan Steps\" pipeline imported alongside it, and tools to actually look things up — its planning and reporting steps deliberately reach for nothing, and the looking happens inside the pipeline.",
+  "start": "decompose",
+  "unattended": true,
+  "phases": [
+    {
+      "name": "decompose",
+      "desc": "Turn the goal into a plan of independent steps.",
+      "think": "on",
+      "reach": "none",
+      "prompt": "Turn the request below into a plan. Do not start working on it — write the plan and stop.\n\nFirst say, in one sentence, what a good answer to this actually is. Everything after this is judged against that sentence, and a plan written without it tends to answer a nearby question well.\n\nThen write the steps. Three to eight of them. Each step says what to find out and what would count as having found it, in one or two lines.\n\nThe thing that makes this plan different from a to-do list: **the steps all run at the same time**. Nobody hands one step's answer to the next. So each step has to stand on its own and be answerable from what is available now. A step that begins \"then, using what step 2 found\" cannot be worked, and it will come back empty.\n\nWhen the work genuinely has a second layer — you cannot know what to look up until the first answers are in — do not fake it with a dependent step. Plan the first layer here. There is a pass after the results come back that adds what the answers turned out to require, and that is where the second layer belongs.\n\nPrefer narrow steps to broad ones. \"What does the changelog say changed in 4.2\" is a step. \"Understand the product\" is a heading. A narrow step comes back with a source attached; a broad one comes back with a paragraph.\n\nThe request:\n\n{input}",
+      "next": "execute",
+      "output": [
+        {"name": "goal", "type": "string", "required": true, "desc": "in one sentence, what a good answer to this actually is"},
+        {"name": "plan", "type": "list", "required": true, "desc": "the steps, each saying what to find out and what would count as having found it — each answerable on its own, with no step depending on another's answer"}
+      ]
+    },
+    {
+      "name": "execute",
+      "desc": "Work every step of the plan at once.",
+      "pipeline": "Plan Steps",
+      "prompt": "{state:decompose.plan}",
+      "next": "review",
+      "output": [
+        {"name": "findings", "type": "list", "required": true, "desc": "what the plan established, each carrying the source it came from"},
+        {"name": "empty", "type": "list", "desc": "steps that looked and found nothing, with where they looked"},
+        {"name": "blocked", "type": "list", "desc": "steps that could not be done, each with the reason"}
+      ],
+      "accumulates": [
+        {"name": "findings", "from": "findings", "mode": "append"},
+        {"name": "gaps", "from": "blocked", "mode": "append"}
+      ]
+    },
+    {
+      "name": "review",
+      "desc": "Is this enough to answer, or is one more pass worth it?",
+      "think": "on",
+      "reach": "none",
+      "prompt": "The plan has been worked. Decide one thing: is what came back enough to answer the goal, or is one more pass worth paying for?\n\nOne more pass is worth it when the results opened something that could not have been planned for at the start — an answer that names a thing nobody knew to ask about, two findings that contradict each other and need a third to settle, a second layer that only became askable once the first answers existed. That is what this pass is for and it is the whole reason the plan was allowed to be shallow.\n\nIt is NOT worth it because the findings are thin, because a step came back empty, or because more would always be better. A step that looked and found nothing has answered its question. Sending the same question again produces the same nothing, one pass later, and the report is no better for it.\n\nIf you send it round again, write the missing steps the same way the plan was written: each one standing on its own, each saying what would count as having found it. Write only the steps the results actually created the need for.\n\nThere is exactly one of these passes. What is not asked for now goes into the report as something that was not established.\n\nThe goal:\n\n{state:decompose.goal}\n\nWhat came back:\n\n{established}",
+      "choices": ["fill_gaps", "report"],
+      "next": "report",
+      "output": [
+        {"name": "missing", "type": "list", "desc": "the further steps the results created the need for — empty when what came back is enough to answer with"}
+      ]
+    },
+    {
+      "name": "fill_gaps",
+      "desc": "Work the steps the first pass turned out to need.",
+      "pipeline": "Plan Steps",
+      "prompt": "{state:review.missing}",
+      "next": "report",
+      "output": [
+        {"name": "findings", "type": "list", "required": true, "desc": "what this pass established, each carrying the source it came from"},
+        {"name": "empty", "type": "list", "desc": "steps that looked and found nothing, with where they looked"},
+        {"name": "blocked", "type": "list", "desc": "steps that could not be done, each with the reason"}
+      ],
+      "accumulates": [
+        {"name": "findings", "from": "findings", "mode": "append"},
+        {"name": "gaps", "from": "blocked", "mode": "append"}
+      ]
+    },
+    {
+      "name": "report",
+      "desc": "Answer the goal from what was actually established.",
+      "think": "on",
+      "reach": "none",
+      "prompt": "Write the answer. Nobody is going to read a transcript of the work — this is the only thing they see, so it has to stand alone.\n\nAnswer the goal directly, in the first line or two. Not \"here is what I found about X\" — the answer to X.\n\nThen the substance, organised the way the answer needs rather than the way the plan happened to be split. The steps were a way of dividing the looking; they are not an outline, and a report with one section per step makes the reader reassemble it themselves.\n\nKeep the sources. A finding that names where it came from can be checked by the person reading it, and a finding stripped of its source has to be taken on trust — which is most of what it was worth. Where the findings contradicted each other, say so and say which you would believe; do not average two incompatible things into a smooth sentence.\n\nEnd with what was NOT established, plainly labelled. Every step that was blocked or came back empty belongs there, in its own words. This is not a disclaimer and it is not modesty: the answer is worth trusting because the holes in it are visible, and an answer that quietly omits its gaps reads exactly like one that had none.\n\nThe goal:\n\n{state:decompose.goal}\n\nWhat was established:\n\n{state:findings}\n\nWhat could not be done:\n\n{state:gaps}"
+    }
+  ]
+}
