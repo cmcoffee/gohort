@@ -1,30 +1,50 @@
-package core
+package sandbox
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/deps"
 )
 
 // resetGohortLibDir clears the process-level cache so a test controls the lib
 // dir rather than inheriting whatever an earlier test populated.
 func resetGohortLibDir(t *testing.T) {
 	t.Helper()
-	// Restore afterwards: these are process-wide, and a later test that runs a
-	// real sandbox would otherwise bind a temp dir this one has already
-	// deleted.
-	prev := WorkspacesDir()
-	t.Cleanup(func() {
-		SetWorkspacesDir(prev)
-		gohortLibDirMu.Lock()
-		gohortLibDirPath = ""
-		gohortLibDirMu.Unlock()
-	})
-	SetWorkspacesDir(filepath.Join(t.TempDir(), "workspaces"))
-	gohortLibDirMu.Lock()
-	gohortLibDirPath = ""
-	gohortLibDirMu.Unlock()
+	// The host facts this package reads are hooks now, so a test supplies them
+	// directly instead of reaching into the broker's cache. Restored afterwards:
+	// they are process-wide, and a later test running a real sandbox would
+	// otherwise bind a temp dir this one has already deleted.
+	prevWS, prevLib := WorkspacesDir, GohortLibDir
+	t.Cleanup(func() { WorkspacesDir, GohortLibDir = prevWS, prevLib })
+
+	base := filepath.Join(t.TempDir(), "workspaces")
+	WorkspacesDir = func() string { return base }
+
+	// A stand-in for what the broker deploys. These tests are about whether the
+	// mechanics MOUNT the helper and name it in PYTHONPATH and PATH, not about
+	// what is in it — but the shapes they look for have to be there: the python
+	// package, and executable shims in bin. That the REAL ones get written is
+	// core's test (TestEnsureGohortLibDirWritesShims), which is where the
+	// writing now lives.
+	lib := filepath.Join(t.TempDir(), "_gohort-lib")
+	if err := os.MkdirAll(filepath.Join(lib, "gohort"), 0o755); err != nil {
+		t.Fatalf("stage helper dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(lib, "gohort", "__init__.py"), []byte("# test stand-in\n"), 0o644); err != nil {
+		t.Fatalf("stage helper package: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(lib, "bin"), 0o755); err != nil {
+		t.Fatalf("stage shim dir: %v", err)
+	}
+	for _, shim := range []string{"fetch_url", "fetch_via", "browse_page"} {
+		if err := os.WriteFile(filepath.Join(lib, "bin", shim), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("stage shim %s: %v", shim, err)
+		}
+	}
+	GohortLibDir = func() string { return lib }
 }
 
 // Without bwrap nothing is bind-mounted, so PYTHONPATH must name the HOST
@@ -45,9 +65,9 @@ func TestSandboxPythonPathPointsAtRealDirsWithoutBwrap(t *testing.T) {
 	if got == "" {
 		t.Fatal("no PYTHONPATH at all — `from gohort import fetch_url` cannot resolve")
 	}
-	if strings.Contains(got, SandboxGohortLibMountPath) {
+	if strings.Contains(got, GohortLibMountPath) {
 		t.Errorf("PYTHONPATH names the in-sandbox mount %q with no sandbox to mount it: %q",
-			SandboxGohortLibMountPath, got)
+			GohortLibMountPath, got)
 	}
 
 	// Every entry must exist, and one of them must actually hold the package.
@@ -76,7 +96,7 @@ func TestSandboxPythonPathUsesMountPathsUnderBwrap(t *testing.T) {
 	resetGohortLibDir(t)
 
 	got := sandboxPythonPath(true, "")
-	for _, want := range []string{SandboxGohortLibMountPath, SandboxPyDepsMountPath} {
+	for _, want := range []string{GohortLibMountPath, deps.SandboxPyDepsMountPath} {
 		if !strings.Contains(got, want) {
 			t.Errorf("PYTHONPATH %q missing the sandbox mount %q", got, want)
 		}
@@ -96,7 +116,7 @@ func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {
 	if dir == "" {
 		t.Fatal("no shim bin dir — fetch_url / browse_page are unreachable as commands")
 	}
-	if dir == SandboxGohortBinMountPath {
+	if dir == GohortBinMountPath {
 		t.Fatalf("returned the in-sandbox mount %q with no sandbox to mount it", dir)
 	}
 	for _, shim := range []string{"fetch_url", "fetch_via", "browse_page"} {
@@ -116,8 +136,8 @@ func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {
 func TestSandboxShimBinDirUsesMountPathUnderBwrap(t *testing.T) {
 	resetGohortLibDir(t)
 
-	if dir := sandboxShimBinDir(true); dir != SandboxGohortBinMountPath {
-		t.Errorf("shim bin dir = %q, want the mount %q", dir, SandboxGohortBinMountPath)
+	if dir := sandboxShimBinDir(true); dir != GohortBinMountPath {
+		t.Errorf("shim bin dir = %q, want the mount %q", dir, GohortBinMountPath)
 	}
 }
 
@@ -131,7 +151,7 @@ func TestSandboxPythonPathKeepsCallerEntries(t *testing.T) {
 		t.Errorf("caller PYTHONPATH dropped: %q", got)
 	}
 	// Framework entries come first so a caller cannot shadow `gohort`.
-	if strings.Index(got, SandboxGohortLibMountPath) > strings.Index(got, "/caller/libs") {
+	if strings.Index(got, GohortLibMountPath) > strings.Index(got, "/caller/libs") {
 		t.Errorf("caller entry precedes the framework helper, so it can shadow it: %q", got)
 	}
 }
@@ -142,21 +162,10 @@ func TestSandboxPythonPathKeepsCallerEntries(t *testing.T) {
 // context. It is also the one context where that is completely silent:
 // a pipe has no workspace to inspect and nobody sitting next to it.
 func TestPipeArgvCarriesTheHelperMounts(t *testing.T) {
-	dir := t.TempDir()
-	prev := WorkspacesDir()
-	SetWorkspacesDir(filepath.Join(dir, "workspaces"))
-	gohortLibDirMu.Lock()
-	gohortLibDirPath, gohortLibWarned = "", false
-	gohortLibDirMu.Unlock()
-	t.Cleanup(func() {
-		SetWorkspacesDir(prev)
-		gohortLibDirMu.Lock()
-		gohortLibDirPath, gohortLibWarned = "", false
-		gohortLibDirMu.Unlock()
-	})
+	resetGohortLibDir(t)
 
 	argv := strings.Join(bwrapPipeArgv("cat"), " ")
-	if !strings.Contains(argv, SandboxGohortLibMountPath) {
+	if !strings.Contains(argv, GohortLibMountPath) {
 		t.Errorf("pipe argv never mounts the gohort helper:\n%s", argv)
 	}
 	// The mount must land BEFORE the "--" separator, or bwrap tries to
@@ -165,7 +174,7 @@ func TestPipeArgvCarriesTheHelperMounts(t *testing.T) {
 	if sep < 0 {
 		t.Fatal("pipe argv lost its -- separator")
 	}
-	if strings.Index(argv, SandboxGohortLibMountPath) > sep {
+	if strings.Index(argv, GohortLibMountPath) > sep {
 		t.Error("the mount landed after --, where bwrap reads it as the command")
 	}
 	// And the command itself is still the last thing on the line.

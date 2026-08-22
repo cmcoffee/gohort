@@ -27,7 +27,7 @@ Three numbers per candidate, in the order they kill an idea:
 
 | cluster | files | lines | pinned | type edges | func+value edges | verdict |
 |---|---|---|---|---|---|---|
-| `sandbox*` | 4 | 3,195 | 0 | **3** — Error, NetworkConnector, ToolSession | 18 | best candidate |
+| `sandbox*` | 4 | 3,195 | 0 | **3** — Error, NetworkConnector, ToolSession | 18 | **DONE v0.6.339**, see below |
 | `vector*` | 2 | 1,652 | 0 | 3 — Database, EmbeddingConfig, MemoryProvenance | 11 | good, smaller |
 | `workspace*` | 6 | 1,335 | 0 | 4 — Database, TempTool, ToolSession, TunableSpec | 15 | good |
 | `mcp_*` | 3 | 2,224 | 0 | 8 | 17 | possible |
@@ -69,3 +69,37 @@ a fourteenth `peer_` file to core a decision rather than the default — the hub
 `AppCore` and the shared vocabulary live, so that is where everything lands. A ceiling test
 (fail the build when package `core` passes N files or M exported symbols) turns the drift
 into a prompt at the moment someone is choosing, which is the only point where it is cheap.
+
+## What the sandbox cut actually looked like (v0.6.339)
+
+The prefix was four files; the cut was three, and the line it was cut along is worth more
+than the lines it removed.
+
+`sandbox_hook.go` is not sandbox plumbing. It is the **capability broker**: it decides
+whether a confined script may read a secret, dispatch through a secured credential, or
+fetch a URL, and it enforces that against the SecureAPI, the session's denials and the
+secured-binding rules. Its coupling to `Secure()` runs through unexported methods
+(`sec.loadSecret`), which cutmap cannot see — it skips selector expressions on purpose, and
+a method call on a type from another file looks like nothing at all. **That is the tool's
+remaining blind spot, and it is the same shape as method pinning.**
+
+So the boundary became a question rather than a prefix: *how do we confine a process*
+(backend selection, exec, seatbelt profile, mounts, PATH shims) versus *what may the
+confined process ask the host for* (credentials, secrets, fetch_via). The first left as
+`core/sandbox`; the second stayed beside the SecureAPI that answers it.
+
+Cost: three hook vars (`WorkspacesDir`, `BulkStagingDir`, `GohortLibDir`), one interface
+(`HookServer` — `Path()` and `Close()`, which is everything the mechanics need of a broker),
+and `sess any` for a session this package passes through and never reads. `Error` became a
+local type; `NetworkConnector` disappeared entirely because `NetworkAllowedFromContext`
+already lived in `core/netgate`. The two in-sandbox mount paths moved to the leaf and are
+re-exported under their old names, so the broker's own file did not change.
+
+A nil hook here fails toward LESS: no broker means no socket, so a script can ask the host
+for nothing. That direction is not automatic and is the thing to check on every hook in
+security-adjacent code.
+
+Six test files followed the code, and four had to be SPLIT because they tested both halves
+(`path_scope_enforce`, `sandbox_shim`, `sandbox_hook_path`, `sandbox_hook_lib`,
+`sandbox_watch_probe`). A test that spans the seam is usually the seam telling you where it
+really is.

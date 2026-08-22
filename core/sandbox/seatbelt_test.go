@@ -1,4 +1,4 @@
-package core
+package sandbox
 
 import (
 	"context"
@@ -223,7 +223,7 @@ func TestSeatbeltDoesNotClaimToRemapPaths(t *testing.T) {
 		t.Error("seatbelt does not claim to confine")
 	}
 	// And the helpers must then hand back HOST paths, not mount points.
-	if got := sandboxPythonPath(sb.remapsPaths(), ""); strings.Contains(got, SandboxGohortLibMountPath) {
+	if got := sandboxPythonPath(sb.remapsPaths(), ""); strings.Contains(got, GohortLibMountPath) {
 		t.Errorf("PYTHONPATH points at a bubblewrap mount that does not exist on macOS: %q", got)
 	}
 }

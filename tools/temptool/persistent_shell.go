@@ -323,7 +323,7 @@ func startBwrapShell(ctx context.Context, workspaceDir, openCmd string) (*bwrapS
 	return &bwrapShell{cmd: c, stdin: stdin, stdout: stdoutR}, nil
 }
 
-// persistentBwrapArgv mirrors core/sandbox_exec.go's bwrapArgv shape.
+// persistentBwrapArgv mirrors core/sandbox/exec.go's bwrapArgv shape.
 // Duplicated here because the core function is unexported AND because
 // persistent shells will diverge in phase 2 (per-tool credential
 // bind-mounts). For now: same isolation posture as one-shot shell.
@@ -341,7 +341,7 @@ func persistentBwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []str
 	}
 	// PYTHONPATH so `from gohort import fetch` resolves against the
 	// deployed gohort.py from any subdir of the workspace. Same
-	// rationale as the one-shot path in core/sandbox_exec.go.
+	// rationale as the one-shot path in core/sandbox/exec.go.
 	if workspaceDir != "" {
 		args = append(args, "--setenv", "PYTHONPATH", workspaceDir)
 	}

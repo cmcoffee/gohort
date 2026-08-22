@@ -101,7 +101,7 @@ takes base64 JSON, extracts, chunks, embeds, and makes the result reachable via
 **Generic workspace and file primitives exist in core, deliberately out of
 reach.** `core/workspace.go:68` and `:102` give per-user sandbox roots with
 traversal and symlink validation; `tools/workspace`, `tools/files`,
-`tools/localexec`, and `core/sandbox_exec.go` give a bwrap-sandboxed shell and
+`tools/localexec`, and `core/sandbox/exec.go` give a bwrap-sandboxed shell and
 file verbs. Servitor never sets `WorkspaceDir`, and `tool_guard.go:23` excludes
 all of them, because the worker tier is pinned local and every tool it can call
 must be proven not to reach a third party. Bundle tools have to be built to that

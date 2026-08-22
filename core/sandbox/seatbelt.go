@@ -32,7 +32,7 @@
 //   - No tmpfs. /tmp is the real /tmp, writable, shared with the host.
 //   - Metadata is readable filesystem-wide (see seatbeltProfile). Contents are
 //     not. A command can learn that a path exists without reading it.
-package core
+package sandbox
 
 import (
 	"bytes"
@@ -44,6 +44,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // seatbeltProbeTimeout bounds the startup probe. Generous for spawning
@@ -163,8 +166,8 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	// That field is gone: an unrendered list of paths reads as a constraint in
 	// force, and it was the reason run.ReadOnly went missing here without
 	// anybody noticing.
-	EnsureGohortLibDir()
-	EnsurePyDepsDir()
+	gohortLibDir()
+	deps.EnsurePyDepsDir()
 
 	profile := seatbeltProfile(spec)
 	var argv []string
@@ -297,7 +300,7 @@ func seatbeltDenyRules() string {
 	// The deployment's own store: credentials, peer keys, every user's data. A
 	// shell tool has no business reading the database that holds the secrets it
 	// is being denied elsewhere.
-	for _, d := range []string{WorkspacesDir(), BulkStagingDir()} {
+	for _, d := range []string{workspacesDir(), bulkStagingDir()} {
 		if strings.TrimSpace(d) == "" {
 			continue
 		}
@@ -368,12 +371,12 @@ func seatbeltProbe(binary string, runner func(profile string) error) bool {
 		return false
 	}
 	if err := runner(seatbeltProfile(seatbeltSpec{})); err != nil {
-		Log("[sandbox] WARNING: %s is present but refused a probe profile (%v) — "+
+		nfo.Log("[sandbox] WARNING: %s is present but refused a probe profile (%v) — "+
 			"falling back to unconfined execution. Shell tools run with gohort user permissions.",
 			binary, err)
 		return false
 	}
-	Debug("[sandbox] seatbelt probe passed — shell tools are OS-sandboxed")
+	nfo.Debug("[sandbox] seatbelt probe passed — shell tools are OS-sandboxed")
 	return true
 }
 

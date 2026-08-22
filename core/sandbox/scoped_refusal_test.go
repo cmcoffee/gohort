@@ -1,4 +1,4 @@
-package core
+package sandbox
 
 // The third rule: refuse rather than degrade.
 //

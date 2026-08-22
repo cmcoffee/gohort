@@ -24,13 +24,15 @@
 // ModuleNotFoundError on the first line of every hook-using script. It is now
 // asked as remapsPaths(), so the next backend answers it correctly by
 // construction rather than by remembering.
-package core
+package sandbox
 
 import (
 	"context"
 	"os/exec"
 	"runtime"
 	"sync"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // sandboxRunKind distinguishes the three shapes a sandboxed run takes. They
@@ -205,10 +207,10 @@ func detectSandboxFor(goos string, look func(string) (string, error), probe func
 	switch goos {
 	case "linux":
 		if p, err := look("bwrap"); err == nil {
-			Debug("[sandbox] bubblewrap at %s — shell tools are OS-sandboxed", p)
+			nfo.Debug("[sandbox] bubblewrap at %s — shell tools are OS-sandboxed", p)
 			return bwrapSandbox{path: p}
 		}
-		Debug("[sandbox] bwrap not found on PATH — shell tools will run unconfined")
+		nfo.Debug("[sandbox] bwrap not found on PATH — shell tools will run unconfined")
 	case "darwin":
 		// Deliberately NOT falling through to a bwrap lookup: it can never
 		// succeed on darwin, and pretending to try is what produced the
@@ -220,13 +222,13 @@ func detectSandboxFor(goos string, look func(string) (string, error), probe func
 		// assuming it does would break every shell tool on the Mac at once.
 		if p, err := look(seatbeltBinary); err == nil {
 			if probe(p) {
-				Debug("[sandbox] seatbelt at %s — shell tools are OS-sandboxed", p)
+				nfo.Debug("[sandbox] seatbelt at %s — shell tools are OS-sandboxed", p)
 				return seatbeltSandbox{path: p}
 			}
 		}
-		Debug("[sandbox] no usable sandbox backend on macOS — shell tools will run unconfined")
+		nfo.Debug("[sandbox] no usable sandbox backend on macOS — shell tools will run unconfined")
 	default:
-		Debug("[sandbox] no sandbox backend for %s — shell tools will run unconfined", goos)
+		nfo.Debug("[sandbox] no sandbox backend for %s — shell tools will run unconfined", goos)
 	}
 	return noSandbox{}
 }
@@ -296,7 +298,7 @@ var sandboxWarnOnce sync.Once
 // running unconfined.
 func warnUnsandboxed(what string) {
 	sandboxWarnOnce.Do(func() {
-		Log("[sandbox] WARNING: no OS sandbox on this host (%s) — %s run with gohort user permissions. %s Set GOHORT_SANDBOX_REQUIRED=1 to refuse unsandboxed execution instead.",
+		nfo.Log("[sandbox] WARNING: no OS sandbox on this host (%s) — %s run with gohort user permissions. %s Set GOHORT_SANDBOX_REQUIRED=1 to refuse unsandboxed execution instead.",
 			runtime.GOOS, what, unsandboxedAdvice())
 	})
 }

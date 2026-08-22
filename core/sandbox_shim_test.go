@@ -55,27 +55,3 @@ func TestEnsureGohortLibDirWritesShims(t *testing.T) {
 // reaches it at the mount point; without remapping nothing is mounted, and
 // prepending the mount path there left the shims unreachable on every host
 // with no bubblewrap — which is every macOS host.
-func TestSandboxEnvPrependsShimBin(t *testing.T) {
-	pathFor := func(remaps bool) string {
-		t.Helper()
-		for _, kv := range sandboxEnv(remaps) {
-			if strings.HasPrefix(kv, "PATH=") {
-				return kv[len("PATH="):]
-			}
-		}
-		t.Fatal("sandboxEnv produced no PATH")
-		return ""
-	}
-
-	if path := pathFor(true); !strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
-		t.Errorf("with remapping, PATH %q not prefixed with the shim mount %q", path, SandboxGohortBinMountPath)
-	}
-
-	path := pathFor(false)
-	if strings.HasPrefix(path, SandboxGohortBinMountPath+":") {
-		t.Errorf("without remapping, PATH leads with the unmounted %q: %q", SandboxGohortBinMountPath, path)
-	}
-	if want := sandboxShimBinDir(false); want != "" && !strings.HasPrefix(path, want+":") {
-		t.Errorf("without remapping, PATH %q should lead with the host shim dir %q", path, want)
-	}
-}

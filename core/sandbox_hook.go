@@ -1089,24 +1089,11 @@ func randomHookToken() (string, error) {
 
 // --- Python helper ---
 
-// SandboxGohortLibMountPath is the in-sandbox path where the gohort
-// helper package is bind-mounted (read-only). Scripts get this path
-// in PYTHONPATH so `from gohort import fetch` resolves regardless
-// of where the running script lives within the workspace.
-const SandboxGohortLibMountPath = "/opt/gohort-lib"
-
-// SandboxGohortBinMountPath is a shim bin dir under the RO-mounted gohort
-// lib, prepended to PATH inside every sandbox. It holds tiny executables
-// (fetch_url / fetch_via / browse_page) so a script can call gohort's
-// fetch family as ORDINARY COMMANDS instead of subprocessing an LLM tool
-// name (fetch_url_<cred>, send_message, ...) — which is not a shell binary
-// and only fails with FileNotFoundError, the exact footgun that sent
-// authored watch scripts down a "the API is impossible" rewrite spiral.
-// The shims proxy to the SAME hook that `from gohort import ...` uses, so
-// the hook still enforces this tool's granted capabilities: an ungranted
-// credential is denied at the hook, not the shim. No new privilege — just
-// symmetry between "call the tool" and "shell out to the tool".
-const SandboxGohortBinMountPath = SandboxGohortLibMountPath + "/bin"
+// The two in-sandbox mount paths those shims are reached through
+// (SandboxGohortLibMountPath / SandboxGohortBinMountPath) moved out with the
+// confinement mechanics — where something is mounted inside a sandbox is a fact
+// about the sandbox, and the mount args are built there. core.go re-exports them
+// under the same names, so this file's use of them is unchanged.
 
 // sandboxToolShim is one executable file dropped into the bin dir.
 type sandboxToolShim struct {

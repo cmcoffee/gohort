@@ -16,7 +16,7 @@
 // at first use so the operator knows the sandbox is degraded. Tools
 // keep working — they just aren't OS-sandboxed.
 
-package core
+package sandbox
 
 import (
 	"bytes"
@@ -25,6 +25,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // sandboxWaitDelay bounds how long Run() will keep blocking AFTER ctx is
@@ -67,16 +71,16 @@ func sandboxRequired() bool {
 // testable — the whole point is what happens on a machine whose sandbox does
 // not remap paths, which is not the machine the tests run on.
 func sandboxPythonPath(remaps bool, existing string) string {
-	libPath, depsPath := SandboxGohortLibMountPath, SandboxPyDepsMountPath
+	libPath, depsPath := GohortLibMountPath, deps.SandboxPyDepsMountPath
 	if !remaps {
 		// Ensure* both deploys the helper and reports where it landed. On this
 		// path it is also the only thing that deploys it at all: it used to run
 		// solely as a side effect of building the bwrap argv.
-		libPath, depsPath = EnsureGohortLibDir(), EnsurePyDepsDir()
+		libPath, depsPath = gohortLibDir(), deps.EnsurePyDepsDir()
 	}
 	// Prepend rather than clobber so a caller-supplied PYTHONPATH stays
 	// searchable; empty entries are dropped.
-	return PrependPythonPath(existing, libPath, depsPath)
+	return deps.PrependPythonPath(existing, libPath, depsPath)
 }
 
 // sandboxShimBinDir returns the directory holding the fetch_url / fetch_via /
@@ -88,9 +92,9 @@ func sandboxPythonPath(remaps bool, existing string) string {
 // and the hook, and they went wrong the same way for the same reason.
 func sandboxShimBinDir(remaps bool) string {
 	if remaps {
-		return SandboxGohortBinMountPath
+		return GohortBinMountPath
 	}
-	libDir := EnsureGohortLibDir()
+	libDir := gohortLibDir()
 	if libDir == "" {
 		return ""
 	}
@@ -145,13 +149,16 @@ func RunSandboxedShell(ctx context.Context, command, workspaceDir string) Sandbo
 // author registers credentials properly before shipping the tool.
 //
 // sess is forwarded to the hook (needed for fetch_via session-aware
-// dispatch). nil sess is fine — fetch/log/browse_page don't need it.
+// dispatch). nil sess is fine — fetch/log/browse_page don't need it. It is typed
+// `any` because this package hands it straight to the broker and never reads it;
+// the broker knows what a session is, and keeping that knowledge out of here is
+// what lets confinement and credential enforcement live apart.
 //
 // Returns the same shape as RunSandboxedShell. On hook-start failure
 // (rare — would mean the workspace dir is unwritable), falls back to
 // the no-hook path so the run still completes; the script will then
 // see the HookError on attempt and the operator gets a Log line.
-func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string, sess *ToolSession, capabilities []string) SandboxedShellResult {
+func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string, sess any, capabilities []string) SandboxedShellResult {
 	return RunSandboxedShellWithHookEnv(ctx, command, workspaceDir, sess, capabilities, nil)
 }
 
@@ -160,7 +167,7 @@ func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string
 // (shell $VAR / Python os.environ). The hook path always wins over a colliding
 // caller key. Used by workspace(action="run", env={...}) so a manual debug run
 // can pass variables — the same way a registered shell tool receives its params.
-func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir string, sess *ToolSession, capabilities []string, extraEnv map[string]string) SandboxedShellResult {
+func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir string, sess any, capabilities []string, extraEnv map[string]string) SandboxedShellResult {
 	merge := func(hookPath string) map[string]string {
 		env := map[string]string{}
 		for k, v := range extraEnv {
@@ -177,10 +184,10 @@ func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir str
 		}
 		return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(""))
 	}
-	hook, err := NewSandboxHook(workspaceDir, capabilities, sess)
+	hook, err := newHook(workspaceDir, capabilities, sess)
 	if err != nil || hook == nil {
 		if err != nil {
-			Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
+			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
 		}
 		if len(extraEnv) == 0 {
 			return RunSandboxedShell(ctx, command, workspaceDir)
@@ -188,7 +195,7 @@ func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir str
 		return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(""))
 	}
 	defer hook.Close()
-	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(hook.SocketPath))
+	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(hook.Path()))
 }
 
 // RunSandboxedShellWithEnv is the env-extended variant: extraEnv maps
@@ -218,9 +225,9 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 // them but one.
 func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
 	sb := activeSandbox()
-	allowNetwork := NetworkAllowedFromContext(ctx)
+	allowNetwork := netgate.NetworkAllowedFromContext(ctx)
 
-	// PYTHONPATH := SandboxGohortLibMountPath so `from gohort import
+	// PYTHONPATH := GohortLibMountPath so `from gohort import
 	// fetch` resolves against the bind-mounted gohort helper package
 	// (which lives OUTSIDE the workspace — see EnsureGohortLibDir).
 	// Without this, a script at any depth under workspaceDir can't
@@ -280,12 +287,12 @@ func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir strin
 	// these two lines tells us exec is wedged versus the wrapper code
 	// upstream. argv-count distinguishes "tiny argv → exec failed
 	// early" from "fat argv → bind-mount setup stuck".
-	Debug("[sandbox] spawn: backend=%s argv=%d allowNet=%v workspace=%s", sb.name(), len(c.Args), allowNetwork, workspaceDir)
+	nfo.Debug("[sandbox] spawn: backend=%s argv=%d allowNet=%v workspace=%s", sb.name(), len(c.Args), allowNetwork, workspaceDir)
 	t0 := time.Now()
 	err := c.Run()
 	dur := time.Since(t0)
 	timedOut := ctx.Err() == context.DeadlineExceeded
-	Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", err, timedOut, buf.Len(), dur)
+	nfo.Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", err, timedOut, buf.Len(), dur)
 	return SandboxedShellResult{
 		Output:   explainMissingGohortModule(buf.String(), sb.remapsPaths()),
 		Err:      err,
@@ -312,7 +319,7 @@ func explainMissingGohortModule(out string, remaps bool) string {
 		!strings.Contains(out, "No module named \"gohort\"") {
 		return out
 	}
-	libDir := EnsureGohortLibDir()
+	libDir := gohortLibDir()
 	note := "\n[gohort] The `gohort` helper package could not be deployed on this host, so it is " +
 		"not present in the sandbox. This is a DEPLOYMENT fault, not a problem with the arguments " +
 		"you passed, and no retry or different argument will get around it — say so plainly and do " +
@@ -322,7 +329,7 @@ func explainMissingGohortModule(out string, remaps bool) string {
 	} else {
 		note += "The package is on disk at " + libDir + "/gohort/__init__.py"
 		if remaps {
-			note += " and should be mounted at " + SandboxGohortLibMountPath +
+			note += " and should be mounted at " + GohortLibMountPath +
 				"; it is not, so the bind mount is the thing to check."
 		} else {
 			note += "; this host does not remap paths, so PYTHONPATH should name that directory directly."
@@ -434,7 +441,7 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 		"--chdir", workspaceDir,
 	)
 	// Bind the host-side gohort helper library RO into the sandbox at
-	// a fixed mount point (SandboxGohortLibMountPath). PYTHONPATH is
+	// a fixed mount point (GohortLibMountPath). PYTHONPATH is
 	// set to this path in the env so `from gohort import fetch`
 	// resolves regardless of the running script's location. The mount
 	// is RO: no shell escape inside the sandbox can modify the helper
@@ -442,15 +449,15 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 	// Best-effort: if EnsureGohortLibDir failed (e.g., WorkspacesDir
 	// unset), skip the bind — the script's gohort import will fail
 	// loudly with ModuleNotFoundError, which is the right shape.
-	if libDir := EnsureGohortLibDir(); libDir != "" {
-		args = append(args, "--ro-bind", libDir, SandboxGohortLibMountPath)
+	if libDir := gohortLibDir(); libDir != "" {
+		args = append(args, "--ro-bind", libDir, GohortLibMountPath)
 	}
 	// Managed python deps (openpyxl, python-docx, ...) live in a host
 	// dir populated by EnsurePyDeps; bind RO so `import openpyxl`
-	// resolves. PYTHONPATH is extended to include SandboxPyDepsMountPath
+	// resolves. PYTHONPATH is extended to include deps.SandboxPyDepsMountPath
 	// by the caller (RunSandboxedShellWithEnv).
-	if pyDir := EnsurePyDepsDir(); pyDir != "" {
-		args = append(args, "--ro-bind", pyDir, SandboxPyDepsMountPath)
+	if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
+		args = append(args, "--ro-bind", pyDir, deps.SandboxPyDepsMountPath)
 	}
 	args = append(args,
 		"--ro-bind", "/usr", "/usr",
@@ -563,11 +570,11 @@ func bwrapPipeArgv(shellCmd string) []string {
 	// Same two RO binds the shell path gets, and the same best-effort
 	// posture: a deployment that could not write them still runs, the
 	// imports just fail.
-	if libDir := EnsureGohortLibDir(); libDir != "" {
-		args = append(args, "--ro-bind", libDir, SandboxGohortLibMountPath)
+	if libDir := gohortLibDir(); libDir != "" {
+		args = append(args, "--ro-bind", libDir, GohortLibMountPath)
 	}
-	if pyDir := EnsurePyDepsDir(); pyDir != "" {
-		args = append(args, "--ro-bind", pyDir, SandboxPyDepsMountPath)
+	if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
+		args = append(args, "--ro-bind", pyDir, deps.SandboxPyDepsMountPath)
 	}
 	return append(args, "--", "sh", "-c", shellCmd)
 }
@@ -612,8 +619,8 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 	// that imports openpyxl / python-docx / python-pptx failed on a host where
 	// the packages were provisioned and present.
 	if !sb.remapsPaths() {
-		if pyDir := EnsurePyDepsDir(); pyDir != "" {
-			c.Env = append(c.Env, "PYTHONPATH="+PrependPythonPath("", pyDir))
+		if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
+			c.Env = append(c.Env, "PYTHONPATH="+deps.PrependPythonPath("", pyDir))
 		}
 	}
 	c.Stdin = strings.NewReader(stdinData)
@@ -660,10 +667,10 @@ func bwrapScriptArgv(interpreter, script string) []string {
 	// generator scripts (xlsx/docx/pptx) can import their libraries even
 	// though this sandbox keeps --unshare-net and a read-only /usr. The
 	// packages were provisioned host-side by EnsurePyDeps.
-	if pyDir := EnsurePyDepsDir(); pyDir != "" {
+	if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
 		args = append(args,
-			"--ro-bind", pyDir, SandboxPyDepsMountPath,
-			"--setenv", "PYTHONPATH", SandboxPyDepsMountPath,
+			"--ro-bind", pyDir, deps.SandboxPyDepsMountPath,
+			"--setenv", "PYTHONPATH", deps.SandboxPyDepsMountPath,
 		)
 	}
 	args = append(args, "--", interpreter, "-c", script)

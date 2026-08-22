@@ -25,6 +25,7 @@ import (
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/provenance"
 	"github.com/cmcoffee/gohort/core/pushsub"
+	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/gohort/core/sources"
@@ -202,6 +203,66 @@ var (
 	SandboxPythonAuthoringNote = deps.SandboxPythonAuthoringNote
 )
 
+// --- sandbox (how a process is confined: backend, exec, seatbelt profile) -----
+//
+// The split with what stays here is deliberate and is not the filename prefix:
+// core/sandbox answers "how do we run somebody else's code without letting it
+// reach the machine", and sandbox_hook.go answers "what may that code then ask
+// the host for" — which is credential enforcement, and belongs beside the
+// SecureAPI that decides it. The seam is sandbox.NewHook, wired below: the
+// mechanics start a broker they know nothing about and thread its socket in.
+
+type (
+	SandboxedShellResult  = sandbox.SandboxedShellResult
+	SandboxedScriptResult = sandbox.SandboxedScriptResult
+	SandboxStatus         = sandbox.SandboxStatus
+)
+
+const (
+	SandboxGohortLibMountPath = sandbox.GohortLibMountPath
+	SandboxGohortBinMountPath = sandbox.GohortBinMountPath
+)
+
+var (
+	RunSandboxedShell            = sandbox.RunSandboxedShell
+	RunSandboxedShellWithEnv     = sandbox.RunSandboxedShellWithEnv
+	RunSandboxedShellScoped      = sandbox.RunSandboxedShellScoped
+	RunSandboxedShellPipe        = sandbox.RunSandboxedShellPipe
+	RunSandboxedShellWithHook    = sandbox.RunSandboxedShellWithHook
+	RunSandboxedShellWithHookEnv = sandbox.RunSandboxedShellWithHookEnv
+	RunSandboxedScript           = sandbox.RunSandboxedScript
+	GetSandboxStatus             = sandbox.GetSandboxStatus
+)
+
+// hookServer adapts the broker to the two things the mechanics need of it. The
+// adapter exists rather than methods on SandboxHook because those two are all
+// that crosses the seam, and naming them here says so.
+type hookServer struct{ h *SandboxHook }
+
+func (s hookServer) Path() string { return s.h.SocketPath }
+func (s hookServer) Close()       { s.h.Close() }
+
+func init() {
+	// Runtime values the mechanics need from the host. Init-time REGISTRATION
+	// would belong on this side of the seam too (a leaf's init runs first, so a
+	// leaf registering through a hook registers into nil — v0.5.867); these are
+	// all reads, so a func var is the right shape.
+	sandbox.WorkspacesDir = WorkspacesDir
+	sandbox.BulkStagingDir = BulkStagingDir
+	sandbox.GohortLibDir = EnsureGohortLibDir
+	// The broker. Typed adapter rather than a plain assignment: the mechanics
+	// take the session as `any` (they never read it) while NewSandboxHook wants
+	// the real thing, and Go function types are invariant.
+	sandbox.NewHook = func(workspaceDir string, capabilities []string, sess any) (sandbox.HookServer, error) {
+		ts, _ := sess.(*ToolSession)
+		h, err := NewSandboxHook(workspaceDir, capabilities, ts)
+		if err != nil || h == nil {
+			return nil, err
+		}
+		return hookServer{h}, nil
+	}
+}
+
 // --- geo (reverse geocoding: offline GeoNames DB + Nominatim) ----------------
 
 var (
@@ -322,7 +383,7 @@ var (
 // --- sections (admin/account page surfaces an app contributes) ---------------
 
 type (
-	AdminSectionEntry   = sections.AdminSectionEntry
+	AdminSectionEntry     = sections.AdminSectionEntry
 	AccountSectionEntry   = sections.AccountSectionEntry
 	ExtensionSectionEntry = sections.ExtensionSectionEntry
 )
