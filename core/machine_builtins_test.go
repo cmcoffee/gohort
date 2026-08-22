@@ -491,6 +491,44 @@ func TestRenamingAStepRewritesEveryReference(t *testing.T) {
 	}
 }
 
+// The advisory reads instructions, so it has to read them as WORDS. It used to
+// substring-match, and "research the product" contains "search the product" —
+// so a planning step deliberately given no tools was told its instructions sent
+// it looking. An advisory that is wrong is worse than no advisory: it teaches
+// people to skim past the ones that are right.
+func TestGoAndLookAdviceMatchesWholeWords(t *testing.T) {
+	planner := func(prompt string) MachineDef {
+		return MachineDef{Name: "m", Start: "plan", Phases: []MachinePhase{
+			{Name: "plan", Prompt: prompt, Reach: ReachNone, Next: "reply"},
+			{Name: "reply", Prompt: "Answer.", Resident: true},
+		}}
+	}
+	sentLooking := func(def MachineDef) bool {
+		return strings.Contains(strings.Join(def.Advice(), "\n"), "the instructions send it looking")
+	}
+	// The words that carry a looking phrase INSIDE them are not that phrase.
+	for _, prompt := range []string{
+		"Write the plan. \"Research the product\" is a heading, not a step.",
+		"Say what a researcher would need, and stop.",
+		"Do not prefetch anything.",
+	} {
+		if sentLooking(planner(prompt)) {
+			t.Errorf("fired on a word that merely contains the phrase: %q", prompt)
+		}
+	}
+	// And the real instructions still fire, wherever they sit in the sentence.
+	for _, prompt := range []string{
+		"Search the changelog for what changed.",
+		"Then search the changelog for what changed.",
+		"(search the tickets first)",
+		"Go and look for the cause.",
+	} {
+		if !sentLooking(planner(prompt)) {
+			t.Errorf("missed an instruction to go looking: %q", prompt)
+		}
+	}
+}
+
 // What a step costs, and what it cannot do, both follow from its shape.
 // These two advisories cover the shapes where a control silently does
 // nothing — the editor hides them, but the JSON door and the machine

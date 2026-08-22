@@ -764,6 +764,12 @@ func (d MachineDef) PromptRewrites() []MachineRewrite {
 // on instructions to GO somewhere, not on every mention of a source. A
 // step that says "explain what the log showed" is working from what it
 // was handed and is fine.
+//
+// The phrases match at a WORD BOUNDARY. A plain substring test read
+// "research the product" as "search the product" and told a planning
+// step with no tools that its instructions sent it looking — an
+// advisory that is wrong teaches people to stop reading advisories,
+// and "research" is a word a planning prompt is very likely to use.
 func wantsToLook(prompt string) bool {
 	l := strings.ToLower(prompt)
 	for _, sign := range []string{
@@ -778,11 +784,38 @@ func wantsToLook(prompt string) bool {
 		"check the system",
 		"fetch ",
 	} {
-		if strings.Contains(l, sign) {
+		if containsWord(l, sign) {
 			return true
 		}
 	}
 	return false
+}
+
+// containsWord reports whether sign appears in s starting where a word
+// starts — the character before it is not one a word continues with.
+//
+// Byte-wise on purpose: any leading byte of a multi-byte rune is >= 0x80
+// and reads as a boundary here, which errs toward FIRING. For an
+// advisory that is the right way to be wrong, and the phrases it is
+// given are all ASCII.
+func containsWord(s, sign string) bool {
+	for at := 0; at < len(s); {
+		i := strings.Index(s[at:], sign)
+		if i < 0 {
+			return false
+		}
+		i += at
+		if i == 0 || !isWordByte(s[i-1]) {
+			return true
+		}
+		at = i + 1
+	}
+	return false
+}
+
+// isWordByte reports whether a word continues through this byte.
+func isWordByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
 }
 
 // asksForRawJSON spots a prompt hand-rolling the structured output the
