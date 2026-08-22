@@ -35,7 +35,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"     pattern=\"fixed\" (default) — fires every interval_minutes (>=1).\n" +
 				"     pattern=\"random\" — random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
 				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Schedules run INDEFINITELY by default — until cancelled (a task that goes ~90 days doing no useful work is reaped). Do NOT set max_fires unless the user explicitly asked for a bounded number of runs. Optional `to` picks where its reports land (default above); a re-issue that omits `to` keeps the task where it already reports.\n" +
-				"  To CHANGE an existing task's timing, re-issue action=\"schedule\" with the SAME prompt and the new timing — it REPLACES the matching task in place instead of creating a duplicate. Keep the prompt identical when you mean to edit.\n" +
+				"  To CHANGE an existing task, re-issue action=\"schedule\" with the SAME name and the new timing / directive — it EDITS that task in place (keeping its run history and the thread it reports to) instead of creating a duplicate. The NAME is what identifies it, across every thread of this agent; a task with no name is matched by an identical prompt instead. Reusing a name is how you edit — pick a new name only when you actually want a second task. recurring(action=\"list\") shows the existing names.\n" +
 				"  action=\"list\" — show this agent's active tasks (id, cadence, fire count, prompt, and WHERE each posts: this session, the Cortex mind, another session, or background). Call before scheduling to avoid duplicates.\n" +
 				"  action=\"cancel\" — stop one. Required: id (from schedule or list).\n" +
 				"  action=\"move\" — retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread — good for background engagement cycles the user shouldn't wade through in a conversation) to=\"session\" (this current conversation — or a SPECIFIC thread via session_id, e.g. one you created with open_session to give a schedule's reports their own home), or to=\"background\" (it still runs; nothing is posted to a thread). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
@@ -99,6 +99,24 @@ func recurringSurfaceArg(args map[string]any, agentHasCortex bool) (string, erro
 	}
 }
 
+// recurringEditTarget reports whether an existing task is the one a re-issued
+// schedule EDITS rather than sits beside. The NAME identifies a task — a re-issue
+// almost never reproduces a multi-sentence directive verbatim — and an identical
+// prompt still matches the tasks that carry no name.
+//
+// Notice what it does NOT take: the session. Matching used to require the task to
+// be homed in the thread the call came from, which meant a task living in the
+// cortex — where a cortex agent's own conversation runs, and where
+// recurring(move) puts one — was invisible to every later edit, and each retime
+// banked another copy under the same name.
+func recurringEditTarget(p orchUpdatePayload, name, prompt string) bool {
+	if n := strings.TrimSpace(name); n != "" && strings.EqualFold(strings.TrimSpace(p.Name), n) {
+		return true
+	}
+	prompt = strings.TrimSpace(prompt)
+	return prompt != "" && strings.TrimSpace(p.Prompt) == prompt
+}
+
 func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	if t.session == nil || t.session.ID == "" {
 		return "", errors.New("recurring(schedule) requires an active session — start a turn first")
@@ -151,25 +169,41 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Update, don't duplicate: if this session already runs a task with the SAME
-	// directive, remove it first so re-issuing a schedule for that directive with
-	// new timing edits it in place instead of stacking a second copy. An edit that
-	// doesn't say `to` inherits the task's existing destination rather than
-	// re-defaulting it, so a retime never silently relocates the reports.
-	replaced, priorSurface := false, ""
-	for _, task := range ListScheduledTasks(OrchestrateScheduledUpdateKind) {
-		var p orchUpdatePayload
-		if json.Unmarshal(task.Payload, &p) != nil {
+	// Update, don't duplicate: a re-issue that names (or restates) a task this
+	// agent already runs REPLACES it rather than stacking a second copy.
+	//
+	// Scoped to the AGENT, not to this session, and matched on the task's NAME
+	// before its directive. Both of those were how one task became three:
+	// session-scoped matching cannot see a task homed in the cortex — where a
+	// cortex agent's own conversation lives, and where recurring(move) puts one —
+	// so every retime from a conversation made a new copy under the same name;
+	// and directive matching needed the model to reproduce a multi-sentence
+	// prompt verbatim, which a reworded edit never does.
+	prior, replaced := (*orchUpdatePayload)(nil), false
+	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+		p := rt.Payload
+		if !recurringEditTarget(p, spec.Name, spec.Prompt) {
 			continue
 		}
-		if p.SessionID == t.session.ID && strings.TrimSpace(p.Prompt) == spec.Prompt {
-			UnscheduleTask(task.ID)
-			replaced = true
-			priorSurface = strings.TrimSpace(p.Surface)
+		// Every match goes, not just the first — duplicates already banked by the
+		// old session-scoped matching collapse back into one on the next edit.
+		UnscheduleTask(rt.TaskID)
+		replaced = true
+		if prior == nil {
+			kept := p
+			prior = &kept
 		}
 	}
-	if chosen == "" {
-		chosen = priorSurface
+	if prior != nil {
+		// An edit keeps the task's identity: its home thread (so a retime never
+		// relocates the reports to whichever conversation authored the edit), its
+		// run history, and its destination unless `to` says otherwise.
+		spec.SessionID = prior.SessionID
+		spec.FireCount = prior.FireCount
+		spec.CreatedAt = prior.CreatedAt
+		if chosen == "" {
+			chosen = strings.TrimSpace(prior.Surface)
+		}
 	}
 	spec.Surface = scheduleSurfaceDefault(chosen, t.agent.Cortex)
 	id, err := ScheduleOrchestrateUpdate(spec)
@@ -178,7 +212,7 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	}
 	verb, note := "SCHEDULED_OK", ""
 	if replaced {
-		verb, note = "UPDATED_OK", " (replaced the existing task with this same directive — no duplicate created)"
+		verb, note = "UPDATED_OK", " (edited the existing task in place — no duplicate created; its run history and home thread carried over)"
 	}
 	out := fmt.Sprintf("%s id=%s%s — a recurring TASK now runs %s, appending its reply into %s each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor), SAY WHERE ITS REPORTS WILL APPEAR, and don't send them to the Bridges app. Move it with recurring(action=\"move\"); manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), surfaceDestLabel(spec.Surface), id)
 	// Unattended fires answer to gates an interactive turn never meets — a tool

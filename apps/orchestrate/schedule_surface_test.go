@@ -70,3 +70,36 @@ func TestRecurringSurfaceArg(t *testing.T) {
 		t.Error("an unknown destination should error rather than fall through to a default")
 	}
 }
+
+// The reported failure: editing a schedule kept producing a SECOND task with the
+// same name. Two causes, one test each below — matching required the task to be
+// homed in the calling thread (a cortex-homed task is invisible from a
+// conversation), and it compared the whole directive (a reworded edit never
+// matches).
+func TestARenamedRetimeEditsTheCortexHomedTaskInsteadOfDuplicatingIt(t *testing.T) {
+	// The task as it lives after being created in — or moved to — the cortex.
+	homed := orchUpdatePayload{
+		AgentID:   "wiwee",
+		SessionID: cortexSessionID("wiwee"),
+		Name:      "build watch",
+		Prompt:    "Check the build. Post only if it is red, with the failing job.",
+		Surface:   "cortex",
+	}
+	// A re-issue from an ordinary conversation, same name, reworded directive.
+	if !recurringEditTarget(homed, "Build Watch", "check the build and tell me when it breaks") {
+		t.Error("a re-issue under the same name did not match the cortex-homed task — this is the duplicate-per-edit bug")
+	}
+	// A task with no name still matches on an identical directive.
+	unnamed := orchUpdatePayload{AgentID: "wiwee", SessionID: "sess-9", Prompt: "poll the queue depth"}
+	if !recurringEditTarget(unnamed, "", " poll the queue depth ") {
+		t.Error("an unnamed task should still be matched by its identical prompt")
+	}
+	// And a genuinely different task is left alone.
+	if recurringEditTarget(homed, "deploy watch", "watch the deploy") {
+		t.Error("a different name and a different directive must create a second task, not replace this one")
+	}
+	// An empty prompt matches nothing — it must not sweep up an unnamed task.
+	if recurringEditTarget(unnamed, "", "   ") {
+		t.Error("an empty directive matched a task; a schedule call with no prompt should replace nothing")
+	}
+}
