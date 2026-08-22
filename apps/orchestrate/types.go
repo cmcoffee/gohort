@@ -711,6 +711,21 @@ type AgentRecord struct {
 	// the preMortemPlanningBlock system-prompt section.
 	PreMortem bool `json:"pre_mortem,omitempty"`
 
+	// WorkPlan gives the agent a TRACKED plan: set_plan commits to a checklist,
+	// each step is marked in progress, then closed with findings or blocked with
+	// a reason, and report_gaps hands back everything unfinished so the answer
+	// states it instead of quietly dropping it. The checklist is visible to the
+	// user while it runs and survives the turn, so a plan begun in one message
+	// is still the plan in the next.
+	//
+	// It REPLACES plan_set for this agent rather than joining it. The two are
+	// different animals — plan_set fans one turn out to fresh-context workers and
+	// ends the round; this is a durable list the agent works itself — and an
+	// agent holding both spends every hard turn deciding which kind of plan it
+	// meant. Off by default: a plan is worth its overhead only when the work has
+	// several results that build on each other.
+	WorkPlan bool `json:"work_plan,omitempty"`
+
 	// Guardrails are owner-authored COMPLIANCE rules enforced by an
 	// INDEPENDENT warden — a separate, fresh-context model call that judges a
 	// candidate action or output against these rules — not merely prepended to
@@ -964,8 +979,15 @@ type ChatSession struct {
 	Title    string         `json:"Title"`
 	Messages []ChatMessage  `json:"Messages,omitempty"`
 	Plans    []PlanSnapshot `json:"Plans,omitempty"`
-	Created  time.Time      `json:"Created"`
-	LastAt   time.Time      `json:"LastAt"`
+
+	// WorkPlan is the tracked checklist (AgentRecord.WorkPlan), persisted so a
+	// plan committed to in one message is still the plan in the next. Nil until
+	// the agent sets one. Distinct from Plans above, which is the per-turn
+	// plan_set fan-out's history.
+	WorkPlan *WorkPlan `json:"work_plan,omitempty"`
+
+	Created time.Time `json:"Created"`
+	LastAt  time.Time `json:"LastAt"`
 
 	// Participants is the thread's membership (channel model — see
 	// docs/channel-model.md). Stage 1 holds only the single lead agent; the

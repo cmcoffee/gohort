@@ -218,6 +218,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			SuggestURL:  "../api/agents/suggest"},
 		{Field: "gap_check", Type: "toggle", Label: "Gap detection",
 			Help: "Post-plan review pass that fills structural gaps before synthesis. Worth it for research; off for chat."},
+		{Field: "work_plan", Type: "toggle", Label: "Tracked plan",
+			Help: "The agent commits to a visible checklist and works it: each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next. Replaces this agent's plan_set (which fans a single turn out to workers and ends the round) — worth it for work with several results that build on each other, overhead for questions one call answers."},
 		{Type: "header", Label: "Reasoning", Collapsed: true,
 			Help: "Override the LLM's reasoning mode for this agent's turns."},
 		{Field: "think", Type: "select", Label: "Think mode",

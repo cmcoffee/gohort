@@ -1,6 +1,10 @@
 package servitor
 
-import "testing"
+import (
+	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+)
 
 // Chat must be able to launch a real investigation on a FOLLOW-UP. Before this,
 // the plan group was built inside the Map branch only, so chat had read_doc,
@@ -100,7 +104,7 @@ func TestEachInvestigationGetsItsOwnPlanBlock(t *testing.T) {
 	// Through the real bridge: distinct plans must produce distinct block ids,
 	// and every event of ONE plan must keep landing on that same card.
 	blockID := func(planID, kind string) string {
-		out := translateProbeEvent(probeEvent{Kind: kind, PlanID: planID, Plan: []PlanStep{{ID: 1, Title: "x"}}})
+		out := translateProbeEvent(probeEvent{Kind: kind, PlanID: planID, Plan: []WorkPlanStep{{ID: 1, Title: "x"}}})
 		id, _ := out["id"].(string)
 		return id
 	}

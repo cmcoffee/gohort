@@ -2058,6 +2058,7 @@ var patchAgentFields = map[string]bool{
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
 	"evals": true, "intake_form": true, "owned_by": true,
+	"work_plan": true,
 }
 
 // patchAgent merges a partial update into an existing agent.

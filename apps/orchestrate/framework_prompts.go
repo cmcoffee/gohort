@@ -231,7 +231,10 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// mechanics block is the shared contract for that tool.
 	add(hasPlanSet && !isBuilderAgent(agent.ID), "framework.how_to_decide", howToDecideSectionHeading, frameworkHowToDecideBlock)
 	// plan_set guidance — only where the surface actually offers plan_set.
-	add(hasPlanSet, "framework.plan_set", planSetSectionHeading, frameworkPlanSetBlock)
+	// Not for an agent carrying a TRACKED plan: it holds the work-plan group
+	// instead of plan_set (see runPlan), and a block describing a tool the
+	// catalog does not have is an instruction to reach for nothing.
+	add(hasPlanSet && !agent.WorkPlan, "framework.plan_set", planSetSectionHeading, frameworkPlanSetBlock)
 	// Clarifying-questions guidance — ask_user rides the same interactive-web
 	// signal as plan_set; a dispatch/worker surface can't prompt the user.
 	add(hasPlanSet && !isBuilderAgent(agent.ID), "framework.clarifying", clarifyingSectionHeading, frameworkClarifyingBlock)

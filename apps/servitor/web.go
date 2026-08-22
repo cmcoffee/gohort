@@ -345,7 +345,7 @@ type probeEvent struct {
 	Text   string     `json:"text,omitempty"`
 	Reason string     `json:"reason,omitempty"` // destructive reason for confirm events
 	IDs    []string   `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
-	Plan   []PlanStep `json:"plan,omitempty"`   // plan_set / plan_step: snapshot of the current plan for the UI to render
+	Plan   []WorkPlanStep `json:"plan,omitempty"`   // plan_set / plan_step: snapshot of the current plan for the UI to render
 	// PlanID identifies WHICH investigation's plan this snapshot belongs to.
 	// The UI keys blocks by id, and the plan block used to use a constant one —
 	// so a second investigation in the same session updated the first
@@ -4549,7 +4549,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
 			invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
 			invMsg.WriteString("  4. Move to the next pending step\n\n")
-			invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", PlanRevisionLimit))
+			invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
 			invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
 			invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
 
@@ -4575,7 +4575,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			stepResetCb := func() bool {
 				cur := 0
 				for _, s := range plan.Snapshot() {
-					if s.Status == PlanStepInProgress {
+					if s.Status == WorkStepInProgress {
 						cur = s.ID
 						break
 					}
@@ -4596,7 +4596,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			pendingPlanWork := func() int {
 				n := 0
 				for _, s := range plan.Snapshot() {
-					if s.Status == PlanStepPending || s.Status == PlanStepInProgress {
+					if s.Status == WorkStepPending || s.Status == WorkStepInProgress {
 						n++
 					}
 				}
@@ -4629,7 +4629,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				curStep := 0
 				stepTitle := ""
 				for _, s := range plan.Snapshot() {
-					if s.Status == PlanStepInProgress {
+					if s.Status == WorkStepInProgress {
 						curStep = s.ID
 						stepTitle = s.Title
 						break

@@ -17,7 +17,7 @@ func TestPatchAllowlistCoversTheEditorsFields(t *testing.T) {
 	for _, f := range []string{
 		"name", "description", "orchestrator_prompt", "plan_guidance", "rules",
 		"triggers", "allowed_tools", "max_plan_steps", "max_worker_rounds",
-		"think", "think_budget", "gap_check", "lead_model", "memory_mode",
+		"think", "think_budget", "gap_check", "work_plan", "lead_model", "memory_mode",
 		"context_depth", "channel", "fleet", "author", "exposed", "hidden",
 		"dispatch_mode", "intake_form", "evals",
 	} {

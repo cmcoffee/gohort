@@ -327,6 +327,9 @@ type chatTurn struct {
 	// when a step runs, so this is a session of the step's own — the
 	// same shape a pipeline sub-run uses.
 	machineTools []AgentToolDef
+	// workPlan is this turn's tracked-plan group (AgentRecord.WorkPlan),
+	// built at most once because the six tools close over ONE plan.
+	workPlan *WorkPlanToolSet
 	// machineSess is the session those tools were resolved against —
 	// held because the approval hook reads session state to find which
 	// credential a call rides on.
@@ -6753,7 +6756,19 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// model to do BOTH — stream the answer AND call respond_directly with
 	// the same text — producing a double reply. Workers never had it
 	// (runWorkerStep builds its own catalog), so this is lead-path only.
-	controlTools := []AgentToolDef{planTool, askTool, formTool}
+	controlTools := []AgentToolDef{askTool, formTool}
+	// One plan mechanism per agent. plan_set fans this turn out to fresh-context
+	// workers and ends the round; a TRACKED plan (AgentRecord.WorkPlan) is a
+	// durable checklist the agent works itself across turns. Offering both would
+	// leave the model deciding which kind of plan it meant on exactly the turns
+	// that are already hard. The framework's plan_set prompt block is gated on
+	// the same flag, so the persona cannot promise a tool that is not there.
+	if planTools := t.workPlanTools(); len(planTools) > 0 {
+		controlTools = append(controlTools, planTools...)
+		t.restoreWorkPlanCard()
+	} else {
+		controlTools = append(controlTools, planTool)
+	}
 	t.wrapToolsForActivity(nil, controlTools, t.agent)
 	// Three orthogonal layers; each gates its own tool group:
 	//

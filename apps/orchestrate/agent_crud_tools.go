@@ -657,6 +657,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"think_budget":             {Type: "integer", Description: "Max thinking tokens per LLM call; applies only when thinking is on. 0 (default) = deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER it."},
 		"lead_model":               {Type: "boolean", Description: "When true, MAIN reasoning (plan + synthesis) escalates to the lead/precision LLM; per-step workers stay on the worker model. Ignored when no distinct lead is configured, or when force_private or the Private toggle is on. Default false."},
 		"gap_check":                {Type: "boolean", Description: "When true, the runner runs a structural-gap review pass after the plan finishes (research-style quality bar). Default false."},
+		"work_plan":                {Type: "boolean", Description: "When true, the agent gets a TRACKED plan: it commits to a visible checklist, marks each step in progress, closes it with findings or blocks it with a reason, and states anything unfinished in its answer. The checklist survives the turn. Replaces plan_set for that agent. Default false — set it for work with several results that build on each other, leave it off for question-answering."},
 		"disable_explicit":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Explicit Memory (store_fact / list_facts / forget_fact + the always-in-prompt facts block). For agents that should hold no standing state. Orthogonal to disable_inferred. Default false.")},
 		"disable_inferred":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Reference Memory: memory_save / memory_search / memory_forget stripped from the catalog, derived chunks excluded from recall. For agents that must answer from authoritative sources only. The per-turn Clean toggle is this switch scoped to one turn. Default false.")},
 		"memory_mode":              {Type: "string", Description: rewriteMemoryToolNames("Explicit Memory framing: \"agent\" (default) or \"chatbot\". agent = store_fact holds generalized lessons only; specifics go to Reference Memory via memory_save. chatbot = those PLUS user personalization and conversation-coherence notes. chatbot for conversational agents, agent for task-focused ones. No-op when disable_explicit is true.")},
@@ -732,6 +733,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["gap_check"].(bool); ok {
 		rec.GapCheck = v
+	}
+	if v, ok := args["work_plan"].(bool); ok {
+		rec.WorkPlan = v
 	}
 	if v, ok := args["disable_explicit"].(bool); ok {
 		rec.DisableExplicit = v
@@ -870,6 +874,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["gap_check"].(bool); ok {
 		rec.GapCheck = v
+	}
+	if v, ok := args["work_plan"].(bool); ok {
+		rec.WorkPlan = v
 	}
 	if v, ok := args["disable_explicit"].(bool); ok {
 		rec.DisableExplicit = v
