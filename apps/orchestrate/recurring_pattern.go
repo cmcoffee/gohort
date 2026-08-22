@@ -52,6 +52,12 @@ type RecurringSpec struct {
 
 	MaxFires int // per-task total cap; 0 = deployment default
 
+	// Surface — where the fire REPORTS: "" (nobody chose; see
+	// scheduleSurfaceDefault) | "session" | "cortex" | "background". Stored on the
+	// payload and resolved at fire time against SessionID, which stays the home
+	// thread either way so a move back always works.
+	Surface string
+
 	// Carry-over identity, set ONLY by an edit-in-place (handleConsoleRecurringUpdate)
 	// so a retime / directive edit preserves the task's history instead of resetting
 	// it. Fresh schedules (the recurring tool, console create) leave these zero/empty:

@@ -1016,6 +1016,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		WindowFromMin:   spec.WindowFromMin,
 		WindowToMin:     spec.WindowToMin,
 		MaxFires:        spec.MaxFires,
+		Surface:         strings.TrimSpace(spec.Surface),
 		// Preserve fire count + creation time on edit-in-place; fresh schedules
 		// pass zero/empty and start clean.
 		FireCount: spec.FireCount,

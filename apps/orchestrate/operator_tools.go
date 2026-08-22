@@ -1004,6 +1004,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					Mission: mission, Created: time.Now(),
 					ReportAgentID:   controllerAgentID,
 					ReportSessionID: controllerSession,
+					// Same default as a recurring task: a controller with a cortex
+					// reads its scheduled runs there, not interleaved into whichever
+					// conversation set the schedule up. The report session stays the
+					// home, so the console's Move-to → Session brings it back.
+					Surface: scheduleSurfaceDefault("", hasCortexThread(owner, controllerAgentID)),
 				}
 				switch {
 				case cron != "":

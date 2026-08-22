@@ -99,6 +99,64 @@ func surfaceOptions(agentHasCortex bool) []struct {
 	return out
 }
 
+// scheduleSurfaceDefault picks where a schedule REPORTS when nobody chose. An
+// agent with a cortex has a standing thread built for exactly this — background
+// work the user reads when they choose to, instead of fires interleaved into
+// whatever conversation happened to author them — so a cortex agent defaults to
+// "cortex" and everything else keeps the creating session. Applied on create AND
+// on edit, which is why an explicit choice must be STORED rather than left empty:
+// normalizeSurface keeps "session" as "session" so a deliberate move back is not
+// re-defaulted to cortex by the next timing edit.
+func scheduleSurfaceDefault(chosen string, hasCortex bool) string {
+	if c := strings.TrimSpace(chosen); c != "" {
+		return c
+	}
+	if hasCortex {
+		return "cortex"
+	}
+	return ""
+}
+
+// surfaceDestLabel names a stored Surface mode in a sentence, for the confirmation
+// the tool hands back and the model repeats to the user. Where a schedule reports
+// is the one thing they need told, and "" (defaulted to the session) reads the
+// same as an explicit "session".
+func surfaceDestLabel(surface string) string {
+	switch strings.TrimSpace(surface) {
+	case "cortex":
+		return "this agent's Cortex mind thread"
+	case "background":
+		return "no thread (background — the run happens, nothing is posted)"
+	default:
+		return "this session"
+	}
+}
+
+// surfaceSuffix is the one-clause tail a console row adds so WHERE a schedule
+// reports is visible without opening it — the destination is now defaulted per
+// agent, so a row that says only its cadence hides the difference. Empty for the
+// session, which is what the row's own context already implies.
+func surfaceSuffix(surface string) string {
+	switch strings.TrimSpace(surface) {
+	case "cortex":
+		return " · reports to cortex"
+	case "background":
+		return " · background (no agent visibility)"
+	}
+	return ""
+}
+
+// hasCortexThread reports whether this user's agent maintains a cortex thread.
+// Tolerant by design: an unknown agent is simply "no cortex", so a caller
+// defaulting a surface degrades to the session rather than erroring.
+func hasCortexThread(user, agentID string) bool {
+	if strings.TrimSpace(agentID) == "" {
+		return false
+	}
+	a, ok := loadAgent(agentUserDB(RootDB, user), agentID)
+	return ok && a.Cortex
+}
+
 // defaultConsoleAgent is the channel agent the console endpoints — and the
 // event-monitor wake fallback — default to when no agent is specified. Chat is
 // the primary channel agent now (the Operator folded into it), so legacy
@@ -356,7 +414,7 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		id := url.QueryEscape(sa.Name)
 		rows = append(rows, map[string]any{
 			"name":           sa.Name,
-			"detail":         what + " · " + StandingScheduleLabel(sa),
+			"detail":         what + " · " + StandingScheduleLabel(sa) + surfaceSuffix(sa.Surface),
 			"paused":         sa.Paused,
 			"pause_url":      "api/console/agents/pause?id=" + id,
 			"resume_url":     "api/console/agents/resume?id=" + id,
@@ -379,7 +437,7 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		}
 		rows = append(rows, map[string]any{
 			"name":           label,
-			"detail":         recurringDetail(rt.Payload),
+			"detail":         recurringDetail(rt.Payload) + surfaceSuffix(rt.Payload.Surface),
 			"paused":         false,
 			"delete_url":     "api/console/recurring/delete?id=" + url.QueryEscape(rt.TaskID),
 			"id":             rt.TaskID,
@@ -428,7 +486,7 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		}
 		row := consoleRecurringRow{
 			Name:    label,
-			Cadence: recurringDetail(rt.Payload),
+			Cadence: recurringDetail(rt.Payload) + surfaceSuffix(rt.Payload.Surface),
 			Fires:   fires,
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
@@ -620,12 +678,19 @@ func (T *OrchestrateApp) handleConsoleSurfaceOptions(w http.ResponseWriter, r *h
 	writeJSON(w, surfaceOptions(hasCortex))
 }
 
-// normalizeSurface maps a picker value to a stored Surface mode. "session" is
-// the default and stores as "" so the home session is used untouched.
+// normalizeSurface maps a picker value to a stored Surface mode. "session"
+// stores as "session" — NOT as "" — even though resolveSurface treats the two
+// identically at fire time: empty means "nobody chose", which is what
+// scheduleSurfaceDefault fills in with the cortex on a cortex agent. Storing the
+// word is what makes a deliberate move back to the session survive the next
+// edit. An empty picker value is still accepted (a client sending nothing means
+// the default) and stays empty.
 func normalizeSurface(val string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(val)) {
-	case "session", "":
+	case "":
 		return "", true
+	case "session":
+		return "session", true
 	case "cortex":
 		return "cortex", true
 	case "background":
@@ -979,11 +1044,16 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		name = strings.TrimSpace(*body.Name)
 	}
 	spec := RecurringSpec{
-		SessionID:       found.SessionID,
-		AgentID:         found.AgentID,
-		Username:        found.Username,
-		Prompt:          prompt,
-		Name:            name,
+		SessionID: found.SessionID,
+		AgentID:   found.AgentID,
+		Username:  found.Username,
+		Prompt:    prompt,
+		Name:      name,
+		// An edit re-schedules the task, so the destination has to travel with
+		// it or a retime would silently send the reports somewhere else. A
+		// surface the user actually chose is preserved verbatim; an unchosen one
+		// takes the agent's default (its cortex, when it has one).
+		Surface:         scheduleSurfaceDefault(found.Surface, hasCortexThread(user, found.AgentID)),
 		FireCount:       found.FireCount, // preserve run history across an edit (don't reset the budget)
 		CreatedAt:       found.CreatedAt, // keep the original creation time, not "now"
 		Pattern:         strings.ToLower(strings.TrimSpace(body.Pattern)),
@@ -1060,6 +1130,11 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		ActiveFrom      string `json:"active_from"`
 		ActiveTo        string `json:"active_to"`
 		MaxFires        int    `json:"max_fires"`
+		// Where its fires report — "" (let the agent decide), "session",
+		// "cortex", or "background". The modal doesn't offer it today; the
+		// field is here so a client that wants to choose can, and so the
+		// default below is the only thing an omission relies on.
+		Surface string `json:"surface"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
@@ -1082,8 +1157,17 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 	if sessionID == "" {
 		sessionID = cortexSessionID(agentID) // no open thread → attach to the agent's home thread
 	}
+	surface, valid := normalizeSurface(body.Surface)
+	if !valid {
+		http.Error(w, "surface must be cortex, session, or background", http.StatusBadRequest)
+		return
+	}
+	// Unchosen → the agent's default: its cortex when it has one. The home
+	// session stays the open thread either way, so Move-to → Session returns it.
+	surface = scheduleSurfaceDefault(surface, hasCortexThread(user, agentID))
 	spec := RecurringSpec{
 		SessionID:       sessionID,
+		Surface:         surface,
 		AgentID:         agentID,
 		Username:        user,
 		Prompt:          strings.TrimSpace(body.Prompt),
@@ -1267,12 +1351,16 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		http.Error(w, "set a cron schedule or an interval (minutes)", http.StatusBadRequest)
 		return
 	}
-	prevCron, prevInterval := sa.Cron, sa.IntervalSeconds
+	prevCron, prevInterval, prevSurface := sa.Cron, sa.IntervalSeconds, sa.Surface
 	if cron != "" {
 		sa.Cron, sa.IntervalSeconds = cron, 0
 	} else {
 		sa.Cron, sa.IntervalSeconds = "", secs
 	}
+	// A destination nobody chose takes the agent's default on edit, same as on
+	// create: a cortex controller reads its scheduled runs in its cortex. An
+	// explicit choice (stored, including "session") is left alone.
+	sa.Surface = scheduleSurfaceDefault(sa.Surface, hasCortexThread(user, sa.ReportAgentID))
 	var err error
 	if sa.Paused {
 		SaveStandingAgent(RootDB, sa)
@@ -1281,7 +1369,7 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 	}
 	if err != nil {
 		// Restore so a rejected edit doesn't strand the agent.
-		sa.Cron, sa.IntervalSeconds = prevCron, prevInterval
+		sa.Cron, sa.IntervalSeconds, sa.Surface = prevCron, prevInterval, prevSurface
 		if sa.Paused {
 			SaveStandingAgent(RootDB, sa)
 		} else {
@@ -1897,12 +1985,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			}
 			// Show where the monitor surfaces (Surface) so the user sees + can change
 			// it via the Move-to action (its card/badge/wake all follow).
-			switch strings.TrimSpace(m.Surface) {
-			case "background":
-				detail += " · background (no agent visibility)"
-			case "cortex":
-				detail += " · reports to cortex"
-			}
+			detail += surfaceSuffix(m.Surface)
 		}
 		last := ""
 		if !m.LastFired.IsZero() {
