@@ -94,7 +94,22 @@ func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef
 		Log("[orchestrate.machines] run %q: tool catalog partly unresolved for user=%q: %v", def.Name, user, err)
 	}
 	cache := NewRunToolCache()
-	base := T.PhaseWorker(WrapToolsWithRunCache(cache, catalog))
+	cur := &MachineCursor{}
+	// The full host, not the bare worker: a step that delegates, runs a
+	// pipeline, or runs a child machine does that here exactly as it does in a
+	// conversation. Status is left unset because this surface draws a block per
+	// step already; a sub-run's progress rides Activity into the same status
+	// line the framework's own breadcrumbs use.
+	base := T.unattendedHost(unattendedRun{
+		User:   user,
+		ID:     "machine-run:" + def.ID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		Tools:  WrapToolsWithRunCache(cache, catalog),
+		Cursor: cur,
+		Note:   func(kind, detail string) { sink(PipelineEvent{Kind: "status", Text: detail}) },
+		Activity: func(source, text string) {
+			sink(PipelineEvent{Kind: "status", Text: source + ": " + text})
+		},
+	}).phaseRunner()
 
 	var seq int
 	runner := func(ctx context.Context, ph MachinePhase, prompt string) (string, error) {
@@ -116,7 +131,6 @@ func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef
 		return out, nil
 	}
 
-	cur := &MachineCursor{}
 	final, out, err := T.RunUnattended(ctx, def, cur, MachineTurn{
 		Input: input,
 		User:  user,

@@ -121,12 +121,13 @@ func TestAHalfBuiltMachineRefusesBeforeItSpendsAnything(t *testing.T) {
 	}
 }
 
-// A step that hands off to an agent, a pipeline or a child machine only runs in
-// a conversation. A dispatched run would run it as an ordinary prompt and hand
-// back an answer that looks right and did none of the arranged work — so it is
-// refused, and the refusal NAMES the steps, because that is where the reader
-// has to go.
-func TestAMachineThatDelegatesCannotBeDispatched(t *testing.T) {
+// A step that hands off to an agent, a pipeline or a child machine used to be
+// refused here: the seam that honours those steps lived on the turn, so a
+// dispatched run would have put such a step through the bare worker and handed
+// back an answer that looked right and did none of the arranged work. The seam
+// is the run's own now (machineHost), so the refusal is gone — and this test is
+// what stops it coming back as a copy-paste.
+func TestAMachineThatDelegatesCanBeDispatched(t *testing.T) {
 	turn := newMachineDispatchTurn(t, dispatchAll, nil, func(udb Database) {
 		SaveMachineDef(udb, MachineDef{
 			Name: "Hands Off", Owner: "u", Unattended: true,
@@ -136,25 +137,8 @@ func TestAMachineThatDelegatesCannotBeDispatched(t *testing.T) {
 			},
 		})
 	})
-	_, _, err := turn.machineDispatchGate(map[string]any{"machine": "Hands Off", "message": "go"})
-	if err == nil {
-		t.Fatal("a machine with a delegating step must not be dispatched")
-	}
-	if !strings.Contains(err.Error(), `"ask"`) {
-		t.Errorf("refusal should name the step; got: %v", err)
-	}
-	for _, field := range []string{"Pipeline", "Machine"} {
-		ph := MachinePhase{Name: "ask", Prompt: "x"}
-		switch field {
-		case "Pipeline":
-			ph.Pipeline = "Nightly"
-		case "Machine":
-			ph.Machine = "Child"
-		}
-		def := MachineDef{Name: "X", Phases: []MachinePhase{{Name: "gather", Prompt: "c"}, ph}}
-		if got := machineStepsNeedingAConversation(def); len(got) != 1 {
-			t.Errorf("a %s step should be named as needing a conversation; got %v", field, got)
-		}
+	if _, _, err := turn.machineDispatchGate(map[string]any{"machine": "Hands Off", "message": "go"}); err != nil {
+		t.Fatalf("a machine whose step delegates must be dispatchable: %v", err)
 	}
 }
 

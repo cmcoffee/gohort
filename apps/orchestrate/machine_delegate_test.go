@@ -71,7 +71,7 @@ func TestMissingDelegateFallsBackAndSaysSo(t *testing.T) {
 		ranInline = true
 		return "inline answer", nil
 	}
-	out, err := turn.runDelegatedPhase(nil, MachinePhase{Name: "work"}, "Nobody", "do it", base)
+	out, err := turn.machineHost().runDelegatedPhase(nil, MachinePhase{Name: "work"}, "Nobody", "do it", base)
 	if err != nil {
 		t.Fatalf("a missing delegate must not fail the turn: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestSelfDelegationRunsInline(t *testing.T) {
 		ranInline = true
 		return "inline", nil
 	}
-	if _, err := turn.runDelegatedPhase(nil, MachinePhase{Name: "work"}, "Host", "do it", base); err != nil {
+	if _, err := turn.machineHost().runDelegatedPhase(nil, MachinePhase{Name: "work"}, "Host", "do it", base); err != nil {
 		t.Fatal(err)
 	}
 	if !ranInline {

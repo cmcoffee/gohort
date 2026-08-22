@@ -243,7 +243,7 @@ func TestAToolStepCallsTheToolAndHandsOnItsResult(t *testing.T) {
 	turn := &chatTurn{app: &OrchestrateApp{}, ctx: context.Background(), user: user, udb: udb, agent: ag}
 
 	ph, _ := def.Phase("grab")
-	out, err := turn.runToolPhase(context.Background(), ph, "pf_echo", "what the last step said")
+	out, err := turn.machineHost().runToolPhase(context.Background(), ph, "pf_echo", "what the last step said")
 	if err != nil {
 		t.Fatalf("tool step: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestAToolStepSaysWhenTheAgentLacksTheTool(t *testing.T) {
 		agent: ag, session: sess}
 
 	ph := MachinePhase{Name: "grab", Tool: "nothing_provides_this"}
-	if _, err := turn.runToolPhase(context.Background(), ph, "nothing_provides_this", ""); err == nil {
+	if _, err := turn.machineHost().runToolPhase(context.Background(), ph, "nothing_provides_this", ""); err == nil {
 		t.Fatal("calling a tool the agent lacks should fail the step")
 	}
 	var diags []SessionDiag

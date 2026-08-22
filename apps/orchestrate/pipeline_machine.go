@@ -51,16 +51,27 @@ func (T *OrchestrateApp) pipelineMachineRunner(owner string) PipelineMachineRunn
 		}
 		catalog = WrapToolsWithRunCache(NewRunToolCache(), catalog)
 		cur := &MachineCursor{}
+		// A stage has no turn to hang a diagnostic on, so the child's
+		// breadcrumbs go to the log rather than being dropped: they are how
+		// somebody works out why a run stopped where it did.
+		note := func(kind, detail string) {
+			Log("[orchestrate.pipelines] machine %q: %s: %s", def.Name, kind, detail)
+		}
+		// The full host, so a step of this machine that delegates or runs its
+		// own pipeline does that here too. The depth already on the context is
+		// what stops the nesting going round forever.
+		runner := T.unattendedHost(unattendedRun{
+			User:   owner,
+			ID:     "machine-stage:" + def.ID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36),
+			Tools:  catalog,
+			Cursor: cur,
+			Note:   note,
+		}).phaseRunner()
 		final, out, err := T.RunUnattended(WithMachineDepth(ctx, MachineDepth(ctx)+1), def, cur, MachineTurn{
 			Input: input,
 			User:  owner,
 			Now:   time.Now().In(UserLocation(owner)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
-		}, T.PhaseWorker(catalog), func(kind, detail string) {
-			// A stage has no turn to hang a diagnostic on, so the child's
-			// breadcrumbs go to the log rather than being dropped: they are
-			// how somebody works out why a run stopped where it did.
-			Log("[orchestrate.pipelines] machine %q: %s: %s", def.Name, kind, detail)
-		})
+		}, runner, note)
 		if err != nil {
 			return "", nil, err
 		}

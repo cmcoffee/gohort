@@ -756,9 +756,11 @@ thing whose value is that it is not a decoder. So it reports, and the phase's ow
 report into the declared fields through the same path a non-delegating phase uses, told to take the
 findings as given rather than re-do the work. A phase declaring nothing costs one call.
 
-**One continuing thread per (conversation, phase)**, keyed `machine:<session>:<phase>`. Continuing,
-so a re-entered phase builds on what the delegate already established here; per-conversation, so two
-investigations never share a delegate's context.
+**One continuing thread per (run, phase)**, keyed `machine:<thread>:<phase>` where the thread is the
+conversation's session id, or the run's own id when there is no conversation. Continuing, so a
+re-entered phase builds on what the delegate already established here; scoped to the run, so two
+investigations never share a delegate's context — and a schedule's fires do not either, which is why
+a turn-free run mints a fresh id per FIRE rather than reusing the machine's.
 
 **Transient phases only.** A resident phase is where the conversation lives, and delegating it would
 mean the person is talking to something they did not open. `Problems()` reports it.
@@ -771,6 +773,29 @@ same, since that is a second turn of the same agent with all of the cost and non
 
 **A delegate that errors fails the phase.** It does not fall back: answering the question with the
 wrong thing wearing the right name is the one outcome worse than an error.
+
+## The two hosts (v0.6.334)
+
+Which of the five things runs a step — inline worker, one tool, a delegate, a pipeline, a child
+machine — is decided by `machineHost` (`apps/orchestrate/machine_host.go`). A host holds only what
+those runners reach for: a catalog, an approval gate, somewhere to narrate, somewhere to leave
+breadcrumbs, the blackboard. Two are built:
+
+- **Conversational** (`chatTurn.machineHost`) — everything comes from the turn: the live catalog, the
+  turn's approval card, the activity surface, the session a delegate's thread hangs off.
+- **Unattended** (`OrchestrateApp.unattendedHost`) — built by the run: the owner's or requester's
+  pool, no approval gate (nobody to ask; `PhaseWorkerConfirm` reads a nil gate the same way), no
+  prior-work ledger (that feeds the end-of-turn judge, which is a property of a reply to a person),
+  and narration only where a surface asked for it.
+
+Before this, that dispatch lived on the turn, so **only a conversation honoured it**. The schedule,
+the machine page's Run button and a pipeline's `kind: machine` stage ran every step through the bare
+inline worker: a step arranged to delegate ran as an ordinary prompt and produced an answer that read
+right and had done none of the work its author arranged. Dispatch was the one door that noticed, and
+refused such machines by name. All four doors now build a host, and that refusal is gone.
+
+The dry run ("Try it") deliberately keeps the bare worker with no catalog: a rehearsal that dispatched
+to real agents and ran real pipelines would not be a rehearsal, and the panel says so in its reply.
 
 ## Tools in a step
 

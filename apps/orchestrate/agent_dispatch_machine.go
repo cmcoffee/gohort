@@ -259,22 +259,15 @@ func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string,
 		return MachineDef{}, "", fmt.Errorf("machine %q will not run yet — %s (%d outstanding). Its page lists them; do not retry until they are fixed",
 			def.Name, probs[0], len(probs))
 	}
-	// Steps that hand off to something else only run inside a CONVERSATION
-	// today. The delegate / pipeline / child-machine seam lives on chatTurn's
-	// PhaseRunner (machine_delegate.go); a turn-free host runs steps through
-	// AppCore.PhaseWorker, which knows nothing about those fields and would run
-	// such a step as an ordinary prompt — the machine would produce an answer
-	// that looks right and did none of the work its author arranged.
+	// Steps that hand off to something else USED to be refused here: the
+	// delegate / pipeline / child-machine seam lived on chatTurn, so a turn-free
+	// run put such a step through the bare worker and got an answer that looked
+	// right and had done none of the arranged work. Refusing beat degrading.
 	//
-	// So it is refused rather than degraded. A wrong answer with the right
-	// shape is the single worst thing a dispatched procedure can return, and
-	// the caller has no way to tell. (The schedule and the page's Run button
-	// take the degraded path today; this is the new door, and it is not going
-	// to add a third place that quietly does the wrong thing.)
-	if steps := machineStepsNeedingAConversation(def); len(steps) > 0 {
-		return MachineDef{}, "", fmt.Errorf("machine %q cannot be dispatched — its step(s) %s hand off to another agent, pipeline or machine, and that only happens in a conversation. Attach it to an agent and talk to it instead, or ask the user for a version whose steps do their own work",
-			def.Name, strings.Join(steps, ", "))
-	}
+	// That seam is now machineHost (machine_host.go), which a run builds for
+	// itself, so all three doors honour those steps and there is nothing left to
+	// refuse. The cycle guard below is what keeps a delegating step from
+	// dispatching back into its own machine.
 	// Transitive authority, the same fence the other two targets carry:
 	// everything above judges the IMMEDIATE caller, which makes an allowlist a
 	// one-hop gate. Authority must never GROW along a chain.
@@ -292,20 +285,6 @@ func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string,
 		}
 	}
 	return def, msg, nil
-}
-
-// machineStepsNeedingAConversation names the steps a turn-free run cannot
-// honour: the ones that delegate to an agent, run a pipeline, or run a child
-// machine. Named rather than counted, because the answer to this refusal is to
-// go and look at those steps.
-func machineStepsNeedingAConversation(def MachineDef) []string {
-	var out []string
-	for _, p := range def.Phases {
-		if strings.TrimSpace(p.Agent) != "" || strings.TrimSpace(p.Pipeline) != "" || strings.TrimSpace(p.Machine) != "" {
-			out = append(out, strconv.Quote(p.Name))
-		}
-	}
-	return out
 }
 
 // agentsRunMachineAction dispatches to a saved machine and returns the result
@@ -423,9 +402,20 @@ func (t *chatTurn) runDispatchedMachine(ctx context.Context, def MachineDef, msg
 		Log("[orchestrate.machines] dispatch of %q: tool catalog partly unresolved for %q: %v", def.Name, t.user, err)
 	}
 	cache := NewRunToolCache()
-	runner := t.app.PhaseWorker(WrapToolsWithRunCache(cache, catalog))
-
 	cur := &MachineCursor{}
+	// The full host, so a dispatched machine's delegating / pipeline / child
+	// steps do their arranged work instead of running as an ordinary prompt.
+	// It carries the REQUESTER's identity, matching the pool above: the recipe
+	// travels, the authority does not.
+	runner := t.app.unattendedHost(unattendedRun{
+		User:   t.user,
+		Agent:  t.agent,
+		ID:     "dispatch:" + def.ID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		Tools:  WrapToolsWithRunCache(cache, catalog),
+		Cursor: cur,
+		Note:   note,
+	}).phaseRunner()
+
 	final, out, rerr := t.app.RunUnattended(ctx, def, cur, MachineTurn{
 		Input: msg,
 		User:  t.user,

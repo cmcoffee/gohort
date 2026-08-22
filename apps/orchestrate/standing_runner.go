@@ -345,12 +345,27 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 
 	cur := &MachineCursor{}
 	var notes []string
+	note := func(kind, detail string) { notes = append(notes, kind+": "+detail) }
+	// The full host: a scheduled machine whose steps delegate, run a pipeline,
+	// or run a child machine now does that at 3am the same way it does in a
+	// conversation. It used to run those steps as an ordinary prompt and report
+	// an answer that had done none of the arranged work.
+	//
+	// The run id is per FIRE, not per schedule: a delegate's thread hangs off it,
+	// and one that persisted across fires would carry January's findings into
+	// February's run.
+	runner := app.unattendedHost(unattendedRun{
+		User:   sa.Owner,
+		ID:     "standing:" + sa.Name + ":" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		Tools:  catalog,
+		Cursor: cur,
+		Note:   note,
+	}).phaseRunner()
 	final, out, err := app.RunUnattended(ctx, def, cur, MachineTurn{
 		Input: input,
 		User:  sa.Owner,
 		Now:   time.Now().In(UserLocation(sa.Owner)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
-	}, app.PhaseWorker(catalog),
-		func(kind, detail string) { notes = append(notes, kind+": "+detail) })
+	}, runner, note)
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
 		// The partial result rides along: a run that stopped at step nine
