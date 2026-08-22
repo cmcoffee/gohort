@@ -554,18 +554,19 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:    gDecline,
-		SendGuardKey:      sendGuardKey,
-		SystemPrompt:      sysPrompt,
-		Tools:             tools,
-		MaxRounds:         softCap,
-		StampLocation:     UserLocation(p.Username), // stamp the turn in the owning user's zone
-		ThinkBudget:       agent.ThinkBudget,
-		Confirm:           gate.confirm,
-		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
-		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
+		PreEmptedReply:      gDecline,
+		SendGuardKey:        sendGuardKey,
+		SystemPrompt:        sysPrompt,
+		Tools:               tools,
+		MaxRounds:           softCap,
+		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
+		ThinkBudget:         agent.ThinkBudget,
+		Confirm:             gate.confirm,
+		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
 		OnStep: func(s StepInfo) {
 			if s.Round > lastRound {
 				lastRound = s.Round

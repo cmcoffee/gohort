@@ -1091,7 +1091,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// parent's own tool calls — the second knowledge_search row
 	// the user reported was the sub-agent's, but they had no way
 	// to tell because both rows looked identical.
-	t.wrapToolsForActivity(subSess, tools, "↳ ["+target.Name+"] ")
+	//
+	// The TARGET is passed as the receiver: these results land in the
+	// sub-agent's context, so the sub-agent's own scan scope governs whether
+	// they are scanned. Reading it off the caller instead would leave an agent
+	// whose owner turned scanning on unscanned whenever it is dispatched.
+	t.wrapToolsForActivity(subSess, tools, target, "↳ ["+target.Name+"] ")
 
 	subFacts := ListMemoryFacts(t.udb, factsNamespace(target.ID))
 	sysPrompt := prependAgentContext(
@@ -1180,17 +1185,18 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:    gDecline,
-		SystemPrompt:      sysPrompt,
-		Tools:             tools,
-		MaxRounds:         resolveMaxWorkerRounds(target),
-		ThinkBudget:       target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Confirm:           func(name, args string) bool { return true },
-		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
-		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
-		OnStep:            stepNotice,
+		PreEmptedReply:      gDecline,
+		SystemPrompt:        sysPrompt,
+		Tools:               tools,
+		MaxRounds:           resolveMaxWorkerRounds(target),
+		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Confirm:             func(name, args string) bool { return true },
+		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
+		OnStep:              stepNotice,
 		// Custom-tool resolution, same as the channel/dispatch + web paths:
 		// lazyToolFallback resolves a direct call to a has-args custom tool;
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.

@@ -43,6 +43,12 @@ type GuardrailBlock struct {
 	Channel string    `json:"channel,omitempty"` // the surface it arrived on, when known
 	Sender  string    `json:"sender,omitempty"`  // the contact's self-reported name — untrusted, shown as-is
 	Session string    `json:"session,omitempty"` // the thread, so the full ⚠ trail can be found
+
+	// Tool names the tool whose RESULT was flagged, for entries filed by the
+	// injection scanner (Hook == GuardHookToolResult). Empty for rule blocks,
+	// which are about something the agent was going to do rather than
+	// something a tool brought back.
+	Tool string `json:"tool,omitempty"`
 }
 
 // recordGuardrailBlock files a block for later review. Called on every block,

@@ -85,15 +85,16 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 	resp, _, err2 := t.app.RunAgentLoop(ctx, stageMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:    gDecline,
-		SystemPrompt:      sysPrompt,
-		Tools:             tools,
-		MaxRounds:         maxRounds,
-		Confirm:           func(name, args string) bool { return true },
-		GuardrailCheck:    t.guardrailEnforcer().Check,
-		GuardrailHalted:   t.guardrailEnforcer().Halted,
-		GuardrailReject:   t.guardrailEnforcer().Reject,
-		GuardrailDeclines: t.agent.GuardrailDeclines,
+		PreEmptedReply:      gDecline,
+		SystemPrompt:        sysPrompt,
+		Tools:               tools,
+		MaxRounds:           maxRounds,
+		Confirm:             func(name, args string) bool { return true },
+		GuardrailCheck:      t.guardrailEnforcer().Check,
+		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     t.guardrailEnforcer().Halted,
+		GuardrailReject:     t.guardrailEnforcer().Reject,
+		GuardrailDeclines:   t.agent.GuardrailDeclines,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(f),

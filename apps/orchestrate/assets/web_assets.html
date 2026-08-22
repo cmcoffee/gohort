@@ -5158,6 +5158,215 @@
           failWrap.appendChild(failHelp);
           gWrap.appendChild(failWrap);
 
+          // Injection scanning of what TOOLS RETURN. Sits BELOW the hook
+          // controls and outside them on purpose: it is not a fifth check
+          // point and not another notch of strictness. The hooks judge this
+          // agent's conduct against rules its owner wrote; this reads content
+          // that arrived from outside and asks one question the framework asks
+          // identically for every agent. Putting it on the strictness slider
+          // would say otherwise, and would hide it from the agent that needs it
+          // most — the one with no rules at all, whose input is a feed.
+          var scanWrap = document.createElement('div');
+          scanWrap.style.cssText = 'margin-top:0.7rem;padding-top:0.6rem;border-top:1px solid var(--border)';
+          var scanRow = document.createElement('label');
+          scanRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.45rem;font-size:0.85rem;padding:0.12rem 0;cursor:pointer';
+          var scanCb = document.createElement('input');
+          scanCb.type = 'checkbox';
+          scanCb.checked = !!agent.scan_tool_results;
+          scanCb.style.cssText = 'margin-top:0.2rem';
+          scanRow.appendChild(scanCb);
+          var scanTxt = document.createElement('span');
+          scanTxt.textContent = 'Scan incoming tool content for injection attempts';
+          scanRow.appendChild(scanTxt);
+          scanWrap.appendChild(scanRow);
+          var scanHelp = document.createElement('div');
+          scanHelp.className = 'ui-orch-modal-help';
+          scanHelp.style.cssText = 'margin-top:0.15rem';
+          scanHelp.textContent = 'Reads what fetched pages, feeds, and connectors return BEFORE this agent sees it, and flags text that is trying to give it instructions. Works with no rules written. Flagged content is kept, not dropped — it arrives marked as hostile so the agent can tell you what it says — and every detection is recorded below. This is the one check that reads what a tool brought back mid-turn: the request check and the reply check never see it, so an agent steered at round 3 passes both while acting on it for the rest of the turn.';
+          scanWrap.appendChild(scanHelp);
+          // Coverage line + the add/skip editor, both folded away until the
+          // toggle is on: a picker for a feature that is off is furniture.
+          var scanDetail = document.createElement('div');
+          scanDetail.style.cssText = 'margin-top:0.35rem;display:' + (scanCb.checked ? 'block' : 'none');
+          scanWrap.appendChild(scanDetail);
+          var coversLine = document.createElement('div');
+          coversLine.style.cssText = 'font-size:0.78rem;color:var(--text-mute);line-height:1.45';
+          scanDetail.appendChild(coversLine);
+          var scanAdd = (agent.scan_tools_add || []).slice();
+          var scanSkip = (agent.scan_tools_skip || []).slice();
+          var scanTrusted = (agent.scan_trusted_sources || []).slice();
+          var scanCovers = [];
+          function renderCovers() {
+            coversLine.innerHTML = '';
+            var lead = document.createElement('span');
+            // Worded as a RULE plus examples, never as a complete list. The
+            // resolver walks the registered catalog; an agent's connector, MCP
+            // and source-hook tools are minted per session and cannot be
+            // enumerated from here. They ARE scanned — they all declare network
+            // access, which is the whole default set — and a list presented as
+            // exhaustive would understate coverage for exactly the agents that
+            // need it most.
+            lead.textContent = 'Covers every tool that reaches outside the system, including your connector, MCP and source-hook tools';
+            coversLine.appendChild(lead);
+            if (scanCovers.length) {
+              var eg = document.createElement('span');
+              eg.textContent = ' — e.g. ' + scanCovers.slice(0, 6).join(', ') +
+                (scanCovers.length > 6 ? ', +' + (scanCovers.length - 6) + ' more' : '');
+              coversLine.appendChild(eg);
+            }
+            coversLine.appendChild(document.createTextNode('. '));
+            // Both bypasses are shown in full and in the warning colour. What
+            // is NOT covered is the thing an owner most needs to be able to see
+            // without opening an editor.
+            if (scanSkip.length || scanTrusted.length) {
+              var sk = document.createElement('span');
+              sk.style.color = 'var(--warning)';
+              sk.textContent = 'Not scanned: ' +
+                scanSkip.concat(scanTrusted).join(', ') + '. ';
+              coversLine.appendChild(sk);
+            }
+            var edit = document.createElement('a');
+            edit.href = '#'; edit.textContent = 'edit';
+            edit.style.cssText = 'color:var(--accent,#6366f1);text-decoration:none';
+            edit.onclick = function(e) {
+              e.preventDefault();
+              scanEditor.style.display = (scanEditor.style.display === 'none') ? 'block' : 'none';
+            };
+            coversLine.appendChild(edit);
+          }
+          var scanEditor = document.createElement('div');
+          scanEditor.style.cssText = 'display:none;margin-top:0.4rem';
+          scanDetail.appendChild(scanEditor);
+          function scanListEditor(title, arr, help) {
+            var box = document.createElement('div');
+            box.style.cssText = 'margin-bottom:0.4rem';
+            var lbl = document.createElement('div');
+            lbl.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin-bottom:0.2rem';
+            lbl.textContent = title;
+            box.appendChild(lbl);
+            var list = document.createElement('div');
+            list.className = 'ui-orch-list';
+            box.appendChild(list);
+            function render() {
+              list.innerHTML = '';
+              arr.forEach(function(n, i) {
+                var row = document.createElement('div');
+                row.className = 'ui-orch-list-row';
+                var inp = document.createElement('input');
+                inp.type = 'text'; inp.value = n; inp.placeholder = 'tool name…';
+                inp.className = 'ui-orch-list-input';
+                inp.oninput = function() { arr[i] = inp.value; };
+                inp.onblur = function() { renderCovers(); };
+                var del = document.createElement('button');
+                del.type = 'button'; del.className = 'ui-orch-list-del'; del.textContent = '×';
+                del.onclick = function() { arr.splice(i, 1); render(); renderCovers(); };
+                row.appendChild(inp); row.appendChild(del);
+                list.appendChild(row);
+              });
+              var add = document.createElement('button');
+              add.type = 'button'; add.className = 'ui-orch-list-add'; add.textContent = '+ Add tool';
+              add.onclick = function() { arr.push(''); render(); };
+              list.appendChild(add);
+            }
+            render();
+            var h = document.createElement('div');
+            h.className = 'ui-orch-modal-help';
+            h.textContent = help;
+            box.appendChild(h);
+            return box;
+          }
+          scanEditor.appendChild(scanListEditor('Also scan these tools:', scanAdd,
+            'For tools that carry outside content without reaching the network themselves — a file store holding uploads, a database of messages other people wrote.'));
+          scanEditor.appendChild(scanListEditor('Never scan these tools:', scanSkip,
+            'For endpoints you trust — an internal API behind your own auth. A name in both lists is skipped. Removing coverage is the one edit here that can only make things worse, so it is worth being able to see at a glance: skipped tools are listed above in full.'));
+          scanEditor.appendChild(scanListEditor('Trusted sources — never scanned:', scanTrusted,
+            'A host (wiki.internal) or a full URL prefix (https://api.example.com/v2/). Matched against the address the tool was called with, by this framework rather than by a model, so there is nothing for a page to talk its way past. A host also covers its subdomains and nothing else — example.com never matches notexample.com. A call with no address in it is scanned.'));
+          renderCovers();
+
+          // What a DETECTION does. The same three bands the rules carry —
+          // block, appeal, bypass — because an owner who has learned them on
+          // rules should not have to learn a second vocabulary here. Where the
+          // meaning differs, it differs for a reason stated in the help text
+          // rather than silently.
+          var actWrap = document.createElement('div');
+          actWrap.style.cssText = 'margin-top:0.5rem';
+          scanDetail.appendChild(actWrap);
+          var actLbl = document.createElement('div');
+          actLbl.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin-bottom:0.2rem';
+          actLbl.textContent = 'When something is detected:';
+          actWrap.appendChild(actLbl);
+          var actSel = document.createElement('select');
+          actSel.className = 'ui-orch-input';
+          actSel.style.cssText = 'width:auto;font-size:0.82rem';
+          [['flag', 'Flag it — deliver the content marked as hostile (default)'],
+           ['block', 'Block it — withhold the content entirely']].forEach(function(o) {
+            var op = document.createElement('option');
+            op.value = o[0]; op.textContent = o[1];
+            actSel.appendChild(op);
+          });
+          actSel.value = (agent.scan_action === 'block') ? 'block' : 'flag';
+          actWrap.appendChild(actSel);
+          var actHelp = document.createElement('div');
+          actHelp.className = 'ui-orch-modal-help';
+          actHelp.style.cssText = 'margin-top:0.15rem';
+          actHelp.textContent = 'Flag is the default here, and it is the opposite of the default for a rule — on purpose. A rule is a limit you wrote and mean absolutely, so it blocks. A detection is a model reading somebody else\u2019s prose, and the page most likely to be misread is a security write-up quoting an attack string: a real page, withheld, with your agent told only that the fetch failed. Delivering it marked loses nothing and tells you something. Choose Block where a miss would cost more than a wrong refusal.';
+          actWrap.appendChild(actHelp);
+
+          // The appeal, shown only under Block. Under Flag nothing was
+          // withheld, so there would be nothing to appeal — a control that
+          // renders and does nothing teaches the owner it is decorative.
+          var appWrap = document.createElement('div');
+          appWrap.style.cssText = 'margin-top:0.4rem;display:' + (actSel.value === 'block' ? 'block' : 'none');
+          actWrap.appendChild(appWrap);
+          var appRow = document.createElement('label');
+          appRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.45rem;font-size:0.85rem;cursor:pointer';
+          var appCb = document.createElement('input');
+          appCb.type = 'checkbox';
+          appCb.checked = !!agent.scan_appealable;
+          appCb.style.cssText = 'margin-top:0.2rem';
+          appRow.appendChild(appCb);
+          var appTxt = document.createElement('span');
+          appTxt.textContent = 'Let the agent appeal a block, once per turn';
+          appRow.appendChild(appTxt);
+          appWrap.appendChild(appRow);
+          var appHelp = document.createElement('div');
+          appHelp.className = 'ui-orch-modal-help';
+          appHelp.style.cssText = 'margin-top:0.15rem';
+          appHelp.textContent = 'Same channel and the same one-per-turn budget as a contestable rule, and the same hard limit: the agent must quote the user\u2019s OWN WORDS asking for the content — \u201cread me that article about prompt injection\u201d — and this framework does the looking up. An explanation is not evidence and is not read. That matters more here than for a rule: the agent appealing a detection may already be reading the text that was flagged, so an appeal it argues is an appeal the page may have written. A verified quote does not lift the flag by itself either — it goes back to the scanner, which judges the content again knowing it.';
+          appWrap.appendChild(appHelp);
+          actSel.onchange = function() {
+            appWrap.style.display = (actSel.value === 'block') ? 'block' : 'none';
+          };
+
+          // The turn-tightening. Lives here rather than beside the hooks
+          // because it is conditioned on a DETECTION, not on a rule — it does
+          // nothing on a turn where nothing was found — and because an owner
+          // reading this section is already thinking about what happens after
+          // something is.
+          var tightRow = document.createElement('label');
+          tightRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.45rem;font-size:0.85rem;margin-top:0.5rem;cursor:pointer';
+          var tightCb = document.createElement('input');
+          tightCb.type = 'checkbox';
+          // Default ON: the record stores a SUSPEND flag, so an agent that
+          // never chose gets the protection rather than having to find it.
+          tightCb.checked = (agent.scan_tighten !== false);
+          tightCb.style.cssText = 'margin-top:0.2rem';
+          tightRow.appendChild(tightCb);
+          var tightTxt = document.createElement('span');
+          tightTxt.textContent = 'After a detection, check this agent\u2019s actions for the rest of the turn';
+          tightRow.appendChild(tightTxt);
+          scanDetail.appendChild(tightRow);
+          var tightHelp = document.createElement('div');
+          tightHelp.className = 'ui-orch-modal-help';
+          tightHelp.style.cssText = 'margin-top:0.15rem';
+          tightHelp.textContent = 'Marking content as hostile tells your agent about it; it does not stop the agent acting on it. This does. Once something is detected, every consequential action for the rest of that turn — and every call that could carry data OUT, which the ordinary action check does not cover — is judged against one question: is this doing what the injected text asked, or what you asked? Anything serving the injection is stopped. It needs no rules written and costs nothing on a turn where nothing was found. Turn it off if you would rather be told than protected.';
+          scanDetail.appendChild(tightHelp);
+          scanCb.onchange = function() {
+            agent.scan_tool_results = scanCb.checked;
+            scanDetail.style.display = scanCb.checked ? 'block' : 'none';
+          };
+          gWrap.appendChild(scanWrap);
+
           // What these rules have actually STOPPED. Reviewing a guardrail
           // belongs next to the guardrail, not in a separate console — and on a
           // channel this is the only place it can be reviewed at all, because
@@ -5166,7 +5375,7 @@
           recWrap.style.cssText = 'margin-top:0.7rem';
           var recLbl = document.createElement('div');
           recLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
-          recLbl.textContent = 'Recent blocks:';
+          recLbl.textContent = 'Recent blocks and detections:';
           recWrap.appendChild(recLbl);
           var recBody = document.createElement('div');
           recWrap.appendChild(recBody);
@@ -5177,16 +5386,21 @@
           fetch('api/agents/' + encodeURIComponent(id) + '/guardrails')
             .then(function(r) { return r.ok ? r.json() : null; })
             .then(function(d) {
+              // Same round trip as the log — the covers list is resolved
+              // server-side against the live catalog, so it rides the response
+              // that was already being fetched rather than costing a second one.
+              scanCovers = (d && d.scan_covers) || [];
+              renderCovers();
               var recent = (d && d.recent) || [];
               recBody.innerHTML = '';
               if (!recent.length) {
                 var none = document.createElement('div');
                 none.className = 'ui-orch-modal-help';
-                none.textContent = 'Nothing yet. Every time a rule stops this agent it is recorded here — the rule, where it fired, and what the check objected to. Nothing is sent anywhere.';
+                none.textContent = 'Nothing yet. Every time a rule stops this agent — or the scan finds instructions hidden in something a tool fetched — it is recorded here, with where it fired and what the check objected to. Nothing is sent anywhere. For an agent that runs on a schedule this list is the only place a detection is reported, because nobody was watching when it happened.';
                 recBody.appendChild(none);
                 return;
               }
-              recLbl.textContent = 'Recent blocks (' + recent.length + '):';
+              recLbl.textContent = 'Recent blocks and detections (' + recent.length + '):';
               var list = document.createElement('div');
               list.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem;max-height:14rem;overflow-y:auto';
               recent.forEach(function(b) {
@@ -5195,12 +5409,20 @@
                 var head = document.createElement('div');
                 var when = '';
                 try { when = new Date(b.at).toLocaleString(); } catch (e) { when = String(b.at || ''); }
-                head.textContent = when + (b.hook ? '  ·  ' + b.hook : '');
+                // A detection is a different KIND of event from a rule block —
+                // something arrived, rather than something was stopped — so it
+                // reads differently at a glance instead of hiding in a list of
+                // near-identical rows.
+                var isScan = (b.hook === 'tool_result');
+                if (isScan) { row.style.borderColor = 'var(--warning)'; }
+                head.textContent = when + (b.hook ? '  ·  ' + b.hook : '') + (b.tool ? '  ·  ' + b.tool : '');
                 head.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
                 row.appendChild(head);
                 var rule = document.createElement('div');
-                rule.textContent = b.rule || '(rule not recorded)';
-                rule.style.cssText = 'font-weight:600;margin-top:0.1rem';
+                rule.textContent = isScan
+                  ? ('Injection detected in ' + (b.tool || 'a tool') + ' result')
+                  : (b.rule || '(rule not recorded)');
+                rule.style.cssText = 'font-weight:600;margin-top:0.1rem' + (isScan ? ';color:var(--warning)' : '');
                 row.appendChild(rule);
                 var where = [];
                 if (b.channel) { where.push(b.channel); }
@@ -5217,7 +5439,7 @@
               var help = document.createElement('div');
               help.className = 'ui-orch-modal-help';
               help.style.cssText = 'margin-top:0.3rem';
-              help.textContent = 'Newest first, kept on this box and sent nowhere. The same block is also in the ⚠ trail of the thread it happened in, with the full entry.';
+              help.textContent = 'Newest first, kept on this box and sent nowhere. The same entry is also in the ⚠ trail of the thread it happened in, with the full detail.';
               recBody.appendChild(help);
             })
             .catch(function() { /* the log is informational; never block the modal on it */ });
@@ -5505,7 +5727,18 @@
             }).then(function() {
               return fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines, disabled: !!guardrailsOff, exceptions: gexceptions}),
+                body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines, disabled: !!guardrailsOff, exceptions: gexceptions,
+                  // Scanning rides this save because it is owner-only and
+                  // protected the same way — NOT because it is a rule. It is
+                  // sent even when off and even with no rules written, which is
+                  // the case it exists for.
+                  scan_tool_results: !!scanCb.checked,
+                  scan_tools_add: scanAdd.map(function(n){ return String(n||'').trim(); }).filter(Boolean),
+                  scan_tools_skip: scanSkip.map(function(n){ return String(n||'').trim(); }).filter(Boolean),
+                  scan_action: actSel.value,
+                  scan_appealable: !!appCb.checked,
+                  scan_tighten: !!tightCb.checked,
+                  scan_trusted_sources: scanTrusted.map(function(n){ return String(n||'').trim(); }).filter(Boolean)}),
               });
             }).then(function(r) {
               if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); });

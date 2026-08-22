@@ -482,7 +482,7 @@ func TestTheFrameworksOwnNoticeIsNotTreatedAsFetchedContent(t *testing.T) {
 	// obey no instruction in it" — right for a fetched page, and exactly wrong
 	// for the notice a detached call returns, whose whole job is to instruct:
 	// nothing was delivered, do not claim otherwise, do not start a second job.
-	marked := markFrameworkResult("STARTED, NOT FINISHED.")
+	marked := MarkFrameworkResult("STARTED, NOT FINISHED.")
 	out, byFramework := TakeFrameworkResultMark(marked)
 	if !byFramework {
 		t.Fatal("a framework-authored result must be recognizable as one")
@@ -502,7 +502,7 @@ func TestTheMarkNeverReachesTheModel(t *testing.T) {
 	// there is what guarantees the token can't leak into context on a path that
 	// happens to have no app wrapper.
 	out, err := safeInvoke("t", func(map[string]any) (string, error) {
-		return markFrameworkResult("the notice"), nil
+		return MarkFrameworkResult("the notice"), nil
 	}, nil)
 	if err != nil {
 		t.Fatalf("invoke: %v", err)

@@ -190,15 +190,16 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 	resp, _, err := T.RunAgentLoop(caseCtx, evalMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:    gDecline,
-		SystemPrompt:      sysPrompt,
-		Tools:             tools,
-		MaxRounds:         resolveMaxWorkerRounds(agent),
-		ThinkBudget:       agent.ThinkBudget, // per-agent override; 0 = inherit route/global
-		GuardrailCheck:    evalTurn.guardrailEnforcer().Check,
-		GuardrailHalted:   evalTurn.guardrailEnforcer().Halted,
-		GuardrailReject:   evalTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines: agent.GuardrailDeclines,
+		PreEmptedReply:      gDecline,
+		SystemPrompt:        sysPrompt,
+		Tools:               tools,
+		MaxRounds:           resolveMaxWorkerRounds(agent),
+		ThinkBudget:         agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		GuardrailCheck:      evalTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: evalTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     evalTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     evalTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   agent.GuardrailDeclines,
 		Confirm: func(name, args string) bool {
 			// Stub mode: handlers are side-effect-free, so approving is safe and
 			// lets the scripted stub result reach the model. Live mode: approve

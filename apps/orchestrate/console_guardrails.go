@@ -112,9 +112,15 @@ func guardrailRowTitle(rule string) string {
 // The contact's name is SELF-REPORTED (they choose it) and is shown as what it
 // is rather than as an identification.
 func guardrailRowWhere(b GuardrailBlock) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if h := strings.TrimSpace(b.Hook); h != "" {
 		parts = append(parts, h)
+	}
+	// The tool comes right after the hook, because on a tool_result row it is
+	// the thing being identified: "which feed carried it" is the first question
+	// a detection raises and the one that decides what to do about it.
+	if tl := strings.TrimSpace(b.Tool); tl != "" {
+		parts = append(parts, tl)
 	}
 	if c := strings.TrimSpace(b.Channel); c != "" {
 		parts = append(parts, c)

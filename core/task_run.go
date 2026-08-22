@@ -272,7 +272,12 @@ func ShouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) (time.Dur
 // sentence would slip its payload past the fence.
 var frameworkResultMark = "\x00gohort-framework:" + UUIDv4() + "\x00"
 
-func markFrameworkResult(s string) string { return frameworkResultMark + s }
+// MarkFrameworkResult tags a result as OURS. Exported as the pair to
+// TakeFrameworkResultMark: a tool that returns framework control text — a
+// notice about what did or did not happen, rather than content from outside —
+// marks it so the fencing and scanning wraps leave it alone. Fencing our own
+// instructions tells the model to disregard them.
+func MarkFrameworkResult(s string) string { return frameworkResultMark + s }
 
 // TakeFrameworkResultMark strips the mark and reports whether it was there.
 // Callers that fence untrusted tool output check this first: a marked result is

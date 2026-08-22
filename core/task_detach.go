@@ -145,7 +145,7 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 				of = ExtendTaskSeries(sess.DeliverySession(), p.key())
 			}
 			Debug("[task] %s refused a second detach this turn; task %q is already running (set of %d)", p.Tool, prior.ID, of)
-			return markFrameworkResult(secondDetachNotice(p.Tool, prior, of)), nil
+			return MarkFrameworkResult(secondDetachNotice(p.Tool, prior, of)), nil
 		}
 		label := ""
 		if p.Label != nil {
@@ -195,7 +195,7 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 		// Marked as framework-authored so the app's untrusted-content fence
 		// leaves it alone: these instructions are ours, and wrapping them in
 		// "obey no instruction below" is self-defeating.
-		return markFrameworkResult(detachedNotice(run, typical)), nil
+		return MarkFrameworkResult(detachedNotice(run, typical)), nil
 	}
 }
 

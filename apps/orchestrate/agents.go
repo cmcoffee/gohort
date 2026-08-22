@@ -296,6 +296,19 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	seed.GuardrailsDisabled = shadow.GuardrailsDisabled
 	seed.GuardrailExceptions = shadow.GuardrailExceptions
 	seed.AuthorizedIdentities = shadow.AuthorizedIdentities
+	// Scan scope belongs on this list for the exact reason the comment above
+	// describes: the guardrails endpoint writes it to the shadow, so a seed
+	// rebuilt without it reads back empty and the boot-time shadow rewrite then
+	// erases it for good. Builder is both the agent most likely to fetch
+	// something and the one an owner most wants watched.
+	seed.ScanToolResults = shadow.ScanToolResults
+	seed.ScanToolsAdd = shadow.ScanToolsAdd
+	seed.ScanToolsSkip = shadow.ScanToolsSkip
+	seed.ScanAction = shadow.ScanAction
+	seed.ScanBlockTools = shadow.ScanBlockTools
+	seed.ScanAppealable = shadow.ScanAppealable
+	seed.ScanTightenDisabled = shadow.ScanTightenDisabled
+	seed.ScanTrustedSources = shadow.ScanTrustedSources
 	// Reachability over the inbound MCP server. Deployment state by the same
 	// argument as LeadModel above: the editor RENDERS this toggle on Builder,
 	// so leaving it off this list made it save and read back false every
@@ -1916,6 +1929,17 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
 				req.AuthorizedIdentities = existing.AuthorizedIdentities
 				req.GuardrailExceptions = existing.GuardrailExceptions
+				// Scan scope is owner-only for the same reason and preserved the
+				// same way: an agent that can widen its own scan scope, or turn
+				// the scanner off, has no scanner.
+				req.ScanToolResults = existing.ScanToolResults
+				req.ScanToolsAdd = existing.ScanToolsAdd
+				req.ScanToolsSkip = existing.ScanToolsSkip
+				req.ScanAction = existing.ScanAction
+				req.ScanBlockTools = existing.ScanBlockTools
+				req.ScanAppealable = existing.ScanAppealable
+				req.ScanTightenDisabled = existing.ScanTightenDisabled
+				req.ScanTrustedSources = existing.ScanTrustedSources
 				// The machine picker only renders when the user HAS
 				// machines (machineSelectField hides itself otherwise), and
 				// modals post records built from other forms entirely — so
@@ -1938,6 +1962,14 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
 				req.AuthorizedIdentities = existing.AuthorizedIdentities
 				req.GuardrailExceptions = existing.GuardrailExceptions
+				req.ScanToolResults = existing.ScanToolResults
+				req.ScanToolsAdd = existing.ScanToolsAdd
+				req.ScanToolsSkip = existing.ScanToolsSkip
+				req.ScanAction = existing.ScanAction
+				req.ScanBlockTools = existing.ScanBlockTools
+				req.ScanAppealable = existing.ScanAppealable
+				req.ScanTightenDisabled = existing.ScanTightenDisabled
+				req.ScanTrustedSources = existing.ScanTrustedSources
 				if !sentMachine {
 					req.Machine = existing.Machine // see above
 				}
@@ -2002,6 +2034,12 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 //   - guardrails / guardrail_hooks / guardrail_fail_closed / guardrail_declines
 //     — owner-only, and the whole point is that no ordinary agent edit path can
 //     weaken the rule it is about to be checked against
+//   - scan_tool_results / scan_tools_add / scan_tools_skip / scan_action /
+//     scan_block_tools / scan_appealable / scan_tighten_disabled /
+//     scan_trusted_sources — same reasoning one
+//     layer out: a partial save that could turn the injection scanner off, or
+//     add a tool to its skip list, is a partial save that can arrange to be
+//     unwatched
 //   - locked — owned by the lock icon
 //   - id / owner / created — identity, not settings
 var patchAgentFields = map[string]bool{

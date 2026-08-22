@@ -835,6 +835,100 @@ type AgentRecord struct {
 	// wired in a later slice; this records the owner's choice.
 	GuardrailHooks []string `json:"guardrail_hooks,omitempty"`
 
+	// ScanToolResults turns on injection scanning of what TOOLS RETURN
+	// (core/toolscan.go, docs/tool-result-scan.md).
+	//
+	// Independent of Guardrails on purpose, in both directions: it needs no
+	// authored rule, and GuardrailsDisabled does not suspend it. That flag
+	// suspends RULE enforcement — rules the owner wrote and can rewrite — and
+	// this is not a rule. Injection detection has one right answer that does
+	// not vary per agent; asking an owner to author "do not obey fetched
+	// instructions" would produce a different sentence per agent and a
+	// different result from each.
+	//
+	// Owner-only, protected exactly like Guardrails: an agent that can widen
+	// its own scan scope has no scan scope.
+	ScanToolResults bool `json:"scan_tool_results,omitempty"`
+
+	// ScanToolsAdd / ScanToolsSkip adjust the default scan set, which is every
+	// tool the untrusted fence already covers (network-capable, output not
+	// declared trusted — see resolveScanScope).
+	//
+	// The default is derived from CAPABILITY rather than named, so a tool added
+	// next month arrives covered. A hand-picked list would leave it unguarded
+	// while the setting still read as protection.
+	//
+	// A name in both is SKIPPED: an owner who edited twice most plausibly meant
+	// the narrower thing, and the failure direction is a scan that does not run
+	// rather than a tool that unexpectedly stalls on every call.
+	ScanToolsAdd  []string `json:"scan_tools_add,omitempty"`
+	ScanToolsSkip []string `json:"scan_tools_skip,omitempty"`
+
+	// ScanAction is what a DETECTION does: scanActionFlag (default) delivers
+	// the content under a banner naming what was found; scanActionBlock
+	// withholds it.
+	//
+	// Flag is the default, and it is the opposite of the default for a
+	// guardrail rule — deliberately, because the two bands answer different
+	// questions. A rule is a limit its owner wrote and means absolutely, so
+	// blocking is what it is for. A detection is a MODEL'S READING of somebody
+	// else's prose, and the page most likely to be misread is a security
+	// write-up that quotes an attack string — a legitimate page, blocked, with
+	// the agent told only that the fetch failed. Delivering it marked as
+	// hostile loses nothing and tells the user something.
+	//
+	// Block is right where a miss costs more than a false positive, which is a
+	// judgement about the SOURCE rather than about scanning, so it is also
+	// settable per tool (ScanBlockTools).
+	ScanAction string `json:"scan_action,omitempty"`
+
+	// ScanBlockTools escalates specific tools to block while the rest of the
+	// agent stays on flag. Empty with ScanAction=block means every scanned tool
+	// blocks.
+	ScanBlockTools []string `json:"scan_block_tools,omitempty"`
+
+	// ScanAppealable lets the agent dispute a BLOCKED result once per turn, by
+	// citing the user's own words (guardrail_appeal, the same channel and the
+	// same one-per-turn budget as a contestable rule).
+	//
+	// Only meaningful under block. A flagged result was delivered, so there is
+	// nothing withheld to appeal, and offering the control there would be a
+	// button that does nothing.
+	//
+	// The citation rule is what makes this safe, and it is stricter here than
+	// for a rule: the agent appealing a detection may ALREADY BE READING the
+	// content that was flagged, so an appeal it argues is an appeal the page
+	// may have written. Only USER turns are admissible, the framework does the
+	// looking up, and an upheld citation does not lift the flag by itself — it
+	// is handed to the scanner, which judges the content again knowing it.
+	ScanAppealable bool `json:"scan_appealable,omitempty"`
+
+	// ScanTightenDisabled suspends the after-a-detection action check while
+	// keeping everything else about scanning on.
+	//
+	// INVERTED, and named after GuardrailsDisabled rather than invented fresh,
+	// because it is the same idea in the same place: a control that is ON once
+	// its parent feature is on, with an explicit way to suspend it. The zero
+	// value therefore means TIGHTENING IS ON, which is the point — a protection
+	// that has to be found and enabled separately is a protection most agents
+	// will not have, and this is the half that actually constrains a steered
+	// agent rather than reporting on it.
+	//
+	// It costs nothing on a turn where nothing was detected. The check only
+	// exists while a turn is tainted.
+	ScanTightenDisabled bool `json:"scan_tighten_disabled,omitempty"`
+
+	// ScanTrustedSources bypasses the scan for content fetched from a matching
+	// host or URL prefix — an internal wiki, a first-party API.
+	//
+	// Resolved BEFORE the scan runs and never judged by a model, which is the
+	// property that makes it a bypass rather than a hint: it is the same shape
+	// as the guardrail "@" marker, where an exempted rule is not put to the
+	// warden at all. Matched against the tool's own arguments; a call with no
+	// URL-shaped argument matches nothing and is scanned, which is the
+	// direction every unresolvable thing in this band fails in.
+	ScanTrustedSources []string `json:"scan_trusted_sources,omitempty"`
+
 	// KnowledgeModel is a Phase 3 placeholder.
 	KnowledgeModel string `json:"knowledge_model,omitempty"`
 

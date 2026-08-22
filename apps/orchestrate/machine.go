@@ -223,7 +223,7 @@ func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
 		pool = append(pool, t.buildAttachedPipelineToolDefs()...)
 		// Prefixed so the activity pane reads as what it is: work done
 		// inside a step, before the turn's own answer began.
-		t.machineTools = t.wrapToolsForActivity(sess, pool, "↳ [step] ")
+		t.machineTools = t.wrapToolsForActivity(sess, pool, t.agent, "↳ [step] ")
 		t.noteStepToolCalls(t.machineTools)
 		// Kept because the approval hook reads it: which credential a
 		// call rides on is session state, so the gate has to be built

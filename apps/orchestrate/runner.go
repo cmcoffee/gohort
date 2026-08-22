@@ -387,6 +387,32 @@ type chatTurn struct {
 	// guardrails caches this turn's enforcement set (see guardrailEnforcer).
 	guardrails *guardrailEnforcement
 
+	// scanner is this turn's tool-result injection scanner and scannerInit
+	// records that we tried to build it (nil is a real answer — no LLM wired —
+	// and must not be retried on every tool call). Its own mutex: toolMu is
+	// held across parts of the tool-call path this runs inside of. See
+	// chatTurn.toolScanner in toolscan.go.
+	scanMu      sync.Mutex
+	scanner     ToolScanner
+	scannerInit bool
+
+	// scanTaint is what THIS turn has been told to do by content it read —
+	// one entry per detection, holding the flagged span.
+	//
+	// Its presence is what makes the turn tainted: while it is non-empty, the
+	// pre_action gate widens and every consequential call is judged against
+	// what the injection asked for. Guarded by scanMu, because a detection can
+	// land from a parallel tool call while another is being judged.
+	scanTaint  []string
+	taintJudge TaintedActionJudge
+	taintInit  bool
+	// outboundTools names the wrapped tools that can carry data OUT. Read by
+	// the widened pre_action gate on a tainted turn; see guardrailActionGate.
+	outboundTools map[string]bool
+	// taintBlocks counts actions stopped by that check, so the diagnostic can
+	// say whether the tightening did anything.
+	taintBlocks int
+
 	// machine is the phase this turn is running under, if the agent has a
 	// machine (machine.go). Lives on the turn because change_phase can
 	// move it MID-turn, and the end-of-turn handoff has to close over
@@ -2300,7 +2326,7 @@ func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (A
 	// the next round's dynamicNewTempTools rebuilds it the same way.
 	for _, td := range temptool.BuildAgentToolDefs(sess) {
 		if td.Tool.Name == name {
-			wrapped := t.wrapToolsForActivity(sess, []AgentToolDef{td})
+			wrapped := t.wrapToolsForActivity(sess, []AgentToolDef{td}, t.agent)
 			if len(wrapped) > 0 {
 				return wrapped[0], true
 			}
@@ -2346,7 +2372,7 @@ func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
 func (t *chatTurn) dynamicTempTools(sess *ToolSession) func() []AgentToolDef {
 	return func() []AgentToolDef {
 		defs := temptool.BuildAgentToolDefs(sess)
-		t.wrapToolsForActivity(sess, defs)
+		t.wrapToolsForActivity(sess, defs, t.agent)
 		return defs
 	}
 }
@@ -3208,7 +3234,15 @@ func toolCarriesNetworkCap(t Tool) bool {
 // question, long enough that an ordinary tool call never emits one.
 const toolHeartbeat = 15 * time.Second
 
-func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef, labelPrefix ...string) []AgentToolDef {
+// receiver is the agent whose CONTEXT these results land in, which is not
+// always the turn's own agent: a dispatched sub-agent's tools are wrapped here
+// by the caller's turn, and it is the sub-agent that reads what they return and
+// can be steered by it. Fencing does not care (it is derived from the tool's
+// capabilities and is the same for everyone); the injection scan does, because
+// the scan scope is a per-agent setting and reading it off the wrong record
+// would mean an agent whose owner turned scanning ON goes unscanned whenever
+// something else dispatches it.
+func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef, receiver AgentRecord, labelPrefix ...string) []AgentToolDef {
 	prefix := ""
 	if len(labelPrefix) > 0 {
 		prefix = labelPrefix[0]
@@ -3232,15 +3266,20 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		// fencing it tells the model to disregard the very instructions
 		// ("nothing has been delivered", "do not call this again") that keep it
 		// from claiming a finished render or starting a second one.
-		fenceThisTool := toolCarriesNetworkCap(tools[i].Tool) && !tools[i].Tool.TrustedOutput
+		//
+		// The injection SCAN rides the same wrap and defaults to the same set —
+		// see toolResultPolicyFor. Resolved once here rather than per call, so a
+		// turn with scanning off pays two bools and nothing else.
+		policy := toolResultPolicyFor(receiver, tools[i].Tool)
+		if policy.fence {
+			// Network-capable and not framework-authored: the same predicate
+			// that decides fencing decides what can carry data out.
+			t.noteOutboundTool(name)
+		}
 		inner := orig
 		orig = func(args map[string]any) (string, error) {
 			out, err := inner(args)
-			out, byFramework := TakeFrameworkResultMark(out)
-			if fenceThisTool && !byFramework && err == nil && strings.TrimSpace(out) != "" {
-				out = untrustedContentFence + out
-			}
-			return out, err
+			return t.applyToolResultPolicy(name, policy, args, out, err)
 		}
 		tools[i].Handler = func(args map[string]any) (string, error) {
 			// Activity-pane cmd / inline tool_call go in parallel so
@@ -6109,7 +6148,7 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 			Log("[orchestrate.scope] agent=%s credential-denied, dropped %d tool(s): %v", t.agent.ID, len(dropped), dropped)
 		}
 	}
-	t.wrapToolsForActivity(sess, allCustomTools)
+	t.wrapToolsForActivity(sess, allCustomTools, t.agent)
 	t.staticTempToolNames = map[string]bool{}
 	t.lazyCustomToolNames = map[string]bool{}
 	t.loadedCustomTools = map[string]bool{}
@@ -6701,7 +6740,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// without trimming.
 	workerTools, workerNames = filterToolAuthoringWithoutFocus(workerTools, workerNames, t.session)
 	t.gateAgentCRUDTools(workerTools)
-	t.wrapToolsForActivity(sess, workerTools)
+	t.wrapToolsForActivity(sess, workerTools, t.agent)
 
 	// Wrap control tools too so they emit cmd rows in the activity
 	// pane (transparency: user sees "plan_set was called" / "ask_user
@@ -6715,7 +6754,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// the same text — producing a double reply. Workers never had it
 	// (runWorkerStep builds its own catalog), so this is lead-path only.
 	controlTools := []AgentToolDef{planTool, askTool, formTool}
-	t.wrapToolsForActivity(nil, controlTools)
+	t.wrapToolsForActivity(nil, controlTools, t.agent)
 	// Three orthogonal layers; each gates its own tool group:
 	//
 	//   - Knowledge (uploaded files, read-only): knowledge_search —
@@ -6899,7 +6938,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// backward-compat with any future agent that explicitly opts in
 	// via AllowedTools, but the closure-bound default registration is
 	// removed.
-	t.wrapToolsForActivity(sess, knowTools)
+	t.wrapToolsForActivity(sess, knowTools, t.agent)
 	// Persistent temp tools also flow into the static set so the
 	// rewriter can collapse them when they're members of an admin-
 	// curated group. Otherwise vapi-style user-defined tools sit at
@@ -6938,7 +6977,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// so direct (not lazy load_tool). Wrap for activity so a pipeline run
 	// shows its tool_call / result in the convo + activity pane.
 	if attachedPipes := t.buildAttachedPipelineToolDefs(); len(attachedPipes) > 0 {
-		t.wrapToolsForActivity(sess, attachedPipes)
+		t.wrapToolsForActivity(sess, attachedPipes, t.agent)
 		allTools = append(allTools, attachedPipes...)
 		t.noteAttachedTools(attachedPipes)
 		Log("[orchestrate.tools] surfaced %d attached pipeline tool(s) for agent=%s", len(attachedPipes), t.agent.ID)
@@ -6946,7 +6985,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// Attached reference sources (servitor systems, workspaces, connected doc
 	// spaces). Same treatment as pipelines: curated, few, surfaced directly.
 	if attachedSrc := t.buildAttachedSourceToolDefs(sess); len(attachedSrc) > 0 {
-		t.wrapToolsForActivity(sess, attachedSrc)
+		t.wrapToolsForActivity(sess, attachedSrc, t.agent)
 		allTools = append(allTools, attachedSrc...)
 		t.noteAttachedTools(attachedSrc)
 		Log("[orchestrate.tools] surfaced %d attached source tool(s) for agent=%s", len(attachedSrc), t.agent.ID)
@@ -7679,11 +7718,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// credential flagged "Require confirm" park on an in-chat
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
-		Confirm:           t.confirmFuncFor(sess),
-		GuardrailCheck:    t.guardrailEnforcer().Check,
-		GuardrailHalted:   t.guardrailEnforcer().Halted,
-		GuardrailReject:   t.guardrailEnforcer().Reject,
-		GuardrailDeclines: t.agent.GuardrailDeclines,
+		Confirm:             t.confirmFuncFor(sess),
+		GuardrailCheck:      t.guardrailEnforcer().Check,
+		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     t.guardrailEnforcer().Halted,
+		GuardrailReject:     t.guardrailEnforcer().Reject,
+		GuardrailDeclines:   t.agent.GuardrailDeclines,
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
 		// fires and the turn pauses for the user's actual answer.
@@ -8205,7 +8245,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	if len(workerLabel) > 32 {
 		workerLabel = workerLabel[:32] + "…"
 	}
-	t.wrapToolsForActivity(sess, tools, "↳ [worker: "+workerLabel+"] ")
+	t.wrapToolsForActivity(sess, tools, t.agent, "↳ [worker: "+workerLabel+"] ")
 
 	// Collapse admin-curated tool groups. Workers may have a totally
 	// different tool surface than the orchestrator (each step
@@ -8330,11 +8370,12 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// orchestrator loop: flagged-credential calls park on the
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
-		Confirm:           t.confirmFuncFor(sess),
-		GuardrailCheck:    t.guardrailEnforcer().Check,
-		GuardrailHalted:   t.guardrailEnforcer().Halted,
-		GuardrailReject:   t.guardrailEnforcer().Reject,
-		GuardrailDeclines: t.agent.GuardrailDeclines,
+		Confirm:             t.confirmFuncFor(sess),
+		GuardrailCheck:      t.guardrailEnforcer().Check,
+		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     t.guardrailEnforcer().Halted,
+		GuardrailReject:     t.guardrailEnforcer().Reject,
+		GuardrailDeclines:   t.agent.GuardrailDeclines,
 		// A step must be able to END ITSELF. Without these, respond_directly
 		// inside a worker step is an ordinary tool call: it returns, the round
 		// completes, and the loop takes another turn — observed as a step that

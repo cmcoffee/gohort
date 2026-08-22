@@ -450,6 +450,20 @@ const (
 	GuardHookPreAction = "pre_action" // before a consequential tool call
 	GuardHookPreOutput = "pre_output" // before the final reply is returned
 	GuardHookPeriodic  = "periodic"   // sampling narration mid-turn
+
+	// GuardHookToolResult labels the injection scan of what a TOOL RETURNED
+	// (core/toolscan.go). It is NOT one of the warden's hook points and is
+	// deliberately absent from the app's validGuardHooks set: the warden judges
+	// a candidate against rules the owner authored, and this judges content
+	// against a question the framework asks the same way for every agent.
+	//
+	// The constant exists so the audit log, the breadcrumb trail, and the
+	// console name the interception point in the same vocabulary as the other
+	// four. It is where the other four cannot reach: pre_input reads the
+	// request and pre_output reads the reply, so an agent doing agentic work
+	// that is steered by a tool result at round 3 passes both while acting on
+	// it for rounds 4 through 10.
+	GuardHookToolResult = "tool_result"
 )
 
 // The periodic guardrail check used to sample every 4th round with fresh
@@ -932,6 +946,27 @@ type AgentLoopConfig struct {
 	// hook at the right moments and honors the verdict. nil ⇒ no guardrails
 	// (zero overhead). Optional.
 	GuardrailCheck func(hookPoint, candidate string) GuardrailDecision
+
+	// GuardrailActionGate, when set, WIDENS which tool calls reach the
+	// pre_action check. nil keeps the default: the NeedsConfirm set, and only
+	// that.
+	//
+	// NeedsConfirm is the right default and the wrong ceiling. It names the
+	// calls a person would want to approve — sends, posts, deletes, spends —
+	// which is what an owner's rule is usually about. It does not name the
+	// calls that carry data OUT without looking consequential: a plain fetch of
+	// https://elsewhere.example/?q=<the system prompt> is an exfiltration with
+	// the shape of a read.
+	//
+	// That gap costs nothing while nothing has gone wrong, which is why the
+	// default stays where it is — judging every network read on every turn is a
+	// model call per read. It matters on a turn where something HAS gone wrong,
+	// and the app is the only party that knows. So the app supplies a predicate
+	// and may widen the gate for exactly those turns.
+	//
+	// Widening changes WHICH calls are judged, never HOW: the verdict, the
+	// block, the message, and the escalation counter are unchanged.
+	GuardrailActionGate func(toolName string) bool
 
 	// GuardrailHalted, when set, is consulted immediately after any blocked
 	// check. true means the app has decided this turn must END — not be
@@ -3758,7 +3793,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// violation blocks the call and hands back the app's trusted
 			// message (never fenced). guardBlockedThisRound feeds the wedge
 			// machinery so repeated blocks settle the turn.
-			if cfg.GuardrailCheck != nil && needsConfirm[tc.Name] {
+			judgeThisCall := needsConfirm[tc.Name]
+			if !judgeThisCall && cfg.GuardrailActionGate != nil {
+				judgeThisCall = cfg.GuardrailActionGate(tc.Name)
+			}
+			if cfg.GuardrailCheck != nil && judgeThisCall {
 				// Decision.Correctable is deliberately ignored here: a blocked call
 				// still leaves the agent a compliant way to finish the task, so
 				// this stays block-and-continue no matter which rule fired.

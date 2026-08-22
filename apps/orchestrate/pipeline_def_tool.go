@@ -587,7 +587,7 @@ func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, 
 	sess := t.newToolSession()
 	defer t.captureActiveWorkspace(sess)
 	inheritedTools, _, _ := t.resolveWorkerTools(sess, false)
-	wrappedTools := t.wrapToolsForActivity(sess, inheritedTools, "↳ ["+def.Name+"] ")
+	wrappedTools := t.wrapToolsForActivity(sess, inheritedTools, t.agent, "↳ ["+def.Name+"] ")
 	out, err := t.app.RunPipelineDefSyncWithTools(ctx, def, input, dispatch, status, wrappedTools)
 	if err != nil {
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)

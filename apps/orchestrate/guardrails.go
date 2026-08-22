@@ -970,6 +970,10 @@ type guardrailEnforcement struct {
 	Check  func(hookPoint, candidate string) GuardrailDecision
 	Halted func() bool
 	Reject func(reason, request string) string
+	// ActionGate widens WHICH calls reach Check at pre_action, and only while
+	// this turn is tainted. It travels with the rest because it is meaningless
+	// without them: a gate with no check behind it judges nothing.
+	ActionGate func(toolName string) bool
 }
 
 // guardrailEnforcer returns the enforcement set for this turn. Inert (zero
@@ -1004,8 +1008,9 @@ func (t *chatTurn) guardrailEnforcerCtx(ctx context.Context) guardrailEnforcemen
 		return guardrailEnforcement{} // inert — core takes its no-guardrails path
 	}
 	return guardrailEnforcement{
-		Check:  check,
-		Halted: func() bool { return t.guardrailBlocks >= guardBlockEscalateAt },
+		Check:      check,
+		ActionGate: t.guardrailActionGate(),
+		Halted:     func() bool { return t.guardrailBlocks >= guardBlockEscalateAt },
 		// Bound to the same context as the check, for the same reason: the
 		// rejection writer is itself a model call, and one made on a dead
 		// context falls through to the canned decline every time.
@@ -1018,8 +1023,20 @@ func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) Guardr
 }
 
 func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, candidate string) GuardrailDecision {
-	if resolveGuardrailHooks(t.agent) == nil {
-		return nil // no rules / no hooks → inert
+	rulesActive := resolveGuardrailHooks(t.agent) != nil
+	// Two checks share this one hook, because the loop has one interception
+	// point and they fire at the same moment. They are NOT the same check:
+	//
+	//   rules  — does this action break something the owner wrote (the warden)
+	//   taint  — is this action serving text that just tried to steer the agent
+	//
+	// The second needs no authored rule, which is exactly why it cannot be
+	// folded into the first: the agent most exposed to a feed is usually the
+	// one with no rules at all, and for that agent resolveGuardrailHooks
+	// returns nil and the hook used to be inert.
+	tightens := scanTightens(t.agent)
+	if !rulesActive && !tightens {
+		return nil // no rules, no scanning → inert, and core pays nothing
 	}
 	// Resolved once per turn, not per check: the requester cannot change
 	// mid-turn, and the checks fire on every governed tool call.
@@ -1028,7 +1045,18 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 	// early returns below read as a decision rather than a bare pair.
 	pass := GuardrailDecision{}
 	return func(hookPoint, candidate string) GuardrailDecision {
-		if !guardrailHookActive(t.agent, hookPoint) {
+		// The tainted-action check runs FIRST and independently of the hook
+		// selection. An owner who turned pre_action off chose not to have their
+		// RULES judged there; they did not choose to let a steered agent act
+		// unchecked, because at the time they chose it there was nothing to
+		// steer it. It also runs for an agent with no rules at all.
+		if tightens && hookPoint == guardHookPreAction && t.turnTainted() {
+			if dec := t.checkTaintedAction(ctx, candidate); dec.Blocked {
+				t.guardrailBlocks++ // shares the turn's escalation counter
+				return dec
+			}
+		}
+		if !rulesActive || !guardrailHookActive(t.agent, hookPoint) {
 			return pass
 		}
 		verdicts, err := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who)
@@ -1627,6 +1655,27 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			"recent":      listGuardrailBlocks(udb, agent.ID, 25),
 			"authorized":  agent.AuthorizedIdentities,
 			"exceptions":  agent.GuardrailExceptions,
+			// Scan scope rides this endpoint because it is owner-only and
+			// protected the same way — NOT because it is a rule. It is not one:
+			// it needs no authored guardrail and "disabled" above does not
+			// suspend it. See docs/tool-result-scan.md.
+			"scan_tool_results": agent.ScanToolResults,
+			"scan_tools_add":    agent.ScanToolsAdd,
+			"scan_tools_skip":   agent.ScanToolsSkip,
+			// Resolved live against the registered catalog, never stored: a
+			// list of covered tools written down at save time is wrong the day
+			// somebody adds a tool. Necessarily partial — see
+			// scanCoveredToolNames — which is why the modal words it as
+			// "including" rather than as the whole set.
+			"scan_covers":      scanCoveredToolNames(agent),
+			"scan_action":      scanActionOf(agent),
+			"scan_block_tools": agent.ScanBlockTools,
+			"scan_appealable":  agent.ScanAppealable,
+			// Sent as the POSITIVE, because that is what the control reads as.
+			// The record stores the suspend flag (see ScanTightenDisabled) so
+			// the zero value means on; the wire says what the box shows.
+			"scan_tighten":         !agent.ScanTightenDisabled,
+			"scan_trusted_sources": agent.ScanTrustedSources,
 		})
 	case http.MethodPost:
 		var body struct {
@@ -1645,6 +1694,18 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			Authorized    *[]string             `json:"authorized"`
 			AuthorizedOff *[]string             `json:"authorized_off"`
 			Exceptions    *[]GuardrailException `json:"exceptions"`
+			// Same pointer rule, and the same reason — a client that predates
+			// these fields must not clear them. The pointer is WIRE-ONLY: the
+			// stored field is a plain bool, so this never meets the gob encoder
+			// that drops a *bool false.
+			Scan        *bool     `json:"scan_tool_results"`
+			ScanAdd     *[]string `json:"scan_tools_add"`
+			ScanSkip    *[]string `json:"scan_tools_skip"`
+			ScanAction  *string   `json:"scan_action"`
+			ScanBlock   *[]string `json:"scan_block_tools"`
+			ScanAppeal  *bool     `json:"scan_appealable"`
+			ScanTighten *bool     `json:"scan_tighten"`
+			ScanTrusted *[]string `json:"scan_trusted_sources"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -1673,6 +1734,38 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		if body.Exceptions != nil {
 			agent.GuardrailExceptions = sanitizeGuardrailExceptions(*body.Exceptions)
 		}
+		if body.Scan != nil {
+			agent.ScanToolResults = *body.Scan
+		}
+		if body.ScanAdd != nil {
+			agent.ScanToolsAdd = sanitizeToolNameList(*body.ScanAdd)
+		}
+		if body.ScanSkip != nil {
+			agent.ScanToolsSkip = sanitizeToolNameList(*body.ScanSkip)
+		}
+		if body.ScanAction != nil {
+			// Normalized on the way IN, so an unrecognized value is rejected at
+			// the boundary rather than reinterpreted on every read. The reader
+			// still defaults defensively — a record written before this field
+			// existed has to mean something — but a client cannot store a value
+			// the reader has to guess about.
+			agent.ScanAction = normalizeScanAction(*body.ScanAction)
+		}
+		if body.ScanBlock != nil {
+			agent.ScanBlockTools = sanitizeToolNameList(*body.ScanBlock)
+		}
+		if body.ScanAppeal != nil {
+			agent.ScanAppealable = *body.ScanAppeal
+		}
+		if body.ScanTighten != nil {
+			// Inverted on the way in: the wire carries the box, the record
+			// carries the suspension, so an agent stored before this field
+			// existed reads as tightening ON.
+			agent.ScanTightenDisabled = !*body.ScanTighten
+		}
+		if body.ScanTrusted != nil {
+			agent.ScanTrustedSources = sanitizeScanSources(*body.ScanTrusted)
+		}
 		if _, err := saveAgent(udb, agent); err != nil {
 			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1686,9 +1779,11 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		// (an exception with no condition, a roster entry that could never
 		// match) is otherwise invisible to everyone: the owner sees a clean
 		// save and the thing they typed simply is not there afterwards.
-		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v, authorized=%d/%d kept, exceptions=%d/%d kept)",
+		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v, authorized=%d/%d kept, exceptions=%d/%d kept, tool_scan=%v +%d/-%d, action=%s, appealable=%v, tighten=%v, trusted=%d)",
 			agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed, agent.GuardrailsDisabled,
-			len(agent.AuthorizedIdentities), lenOrNil(body.Authorized), len(agent.GuardrailExceptions), lenOrNil(body.Exceptions))
+			len(agent.AuthorizedIdentities), lenOrNil(body.Authorized), len(agent.GuardrailExceptions), lenOrNil(body.Exceptions),
+			agent.ScanToolResults, len(agent.ScanToolsAdd), len(agent.ScanToolsSkip),
+			scanActionOf(agent), agent.ScanAppealable, scanTightens(agent), len(agent.ScanTrustedSources))
 		// Answer with what was actually STORED, not just "no content". The
 		// caller can then render the truth instead of its own optimistic copy —
 		// which is the difference between an entry the server declined to keep
@@ -1818,41 +1913,12 @@ func sortedHookList(active map[string]bool) []string {
 
 // extractJSONObject returns the first balanced {...} run in s, or "" when
 // there is none. Lets the parser survive a model that prefixes/suffixes prose.
-func extractJSONObject(s string) string {
-	start := strings.IndexByte(s, '{')
-	if start < 0 {
-		return ""
-	}
-	depth := 0
-	inStr := false
-	esc := false
-	for i := start; i < len(s); i++ {
-		c := s[i]
-		if inStr {
-			switch {
-			case esc:
-				esc = false
-			case c == '\\':
-				esc = true
-			case c == '"':
-				inStr = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return s[start : i+1]
-			}
-		}
-	}
-	return ""
-}
+//
+// The walk itself lives in textutil now — the tool-result scanner needed the
+// same thing, and a second brace-depth parser is a second set of edge cases to
+// get wrong. Kept as a package-local name because every call site in this file
+// reads better without the package qualifier.
+func extractJSONObject(s string) string { return textutil.FirstJSONObject(s) }
 
 // guardrailNoVerdictMessage is handed back when a fail-closed agent's warden
 // could not reach a verdict. It deliberately does NOT say which rule or that

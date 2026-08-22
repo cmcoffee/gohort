@@ -712,16 +712,17 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		//
 		// No LiveClaimSpeaker: this path has no third party writing to it, so
 		// there is no live claim and nothing to be cautious about.
-		TurnGroundingJudge: T.turnGroundingJudge(ctx),
-		UncheckedClaims:    UncheckedFactNotes(subFacts),
-		DeliveredCount:     func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
-		Backgrounded:       func() bool { return subSess.Detach.Any() },
-		BackgroundEstimate: func() string { return subSess.Detach.EstimateText() },
-		Confirm:            confirm,
-		GuardrailCheck:     subTurn.guardrailEnforcer().Check,
-		GuardrailHalted:    subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:    subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:  subTurn.agent.GuardrailDeclines,
+		TurnGroundingJudge:  T.turnGroundingJudge(ctx),
+		UncheckedClaims:     UncheckedFactNotes(subFacts),
+		DeliveredCount:      func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
+		Backgrounded:        func() bool { return subSess.Detach.Any() },
+		BackgroundEstimate:  func() string { return subSess.Detach.EstimateText() },
+		Confirm:             confirm,
+		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
@@ -1533,16 +1534,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		think = *run.Think
 	}
 	loopCfg := AgentLoopConfig{
-		SendGuardKey:      sendGuardKey,
-		SystemPrompt:      sysPrompt,
-		Tools:             tools,
-		MaxRounds:         resolveMaxWorkerRounds(target),
-		ThinkBudget:       target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Confirm:           func(name, args string) bool { return true },
-		GuardrailCheck:    subTurn.guardrailEnforcer().Check,
-		GuardrailHalted:   subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:   subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines: subTurn.agent.GuardrailDeclines,
+		SendGuardKey:        sendGuardKey,
+		SystemPrompt:        sysPrompt,
+		Tools:               tools,
+		MaxRounds:           resolveMaxWorkerRounds(target),
+		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Confirm:             func(name, args string) bool { return true },
+		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
