@@ -778,6 +778,27 @@ func LoadGhostConfig() GhostConfig {
 	return GhostConfig{}
 }
 
+// SaveGhostConfigFunc is set by the application to persist CMS settings to
+// exactly where LoadGhostConfigFunc reads them.
+//
+// It exists because there was no writer seam and an app therefore had nowhere
+// correct to save to: an app's T.DB is its own bucket, while setup and the
+// publisher both use the root store, so a UI that wrote the obvious way wrote
+// somewhere nothing reads. A loader without a matching saver is an invitation
+// to guess, and the guess is wrong.
+var SaveGhostConfigFunc func(GhostConfig)
+
+// SaveGhostConfig stores the CMS configuration where LoadGhostConfig will find
+// it. Reports false when the application wired no store, so a caller can say so
+// rather than reporting a save that went nowhere.
+func SaveGhostConfig(cfg GhostConfig) bool {
+	if SaveGhostConfigFunc == nil {
+		return false
+	}
+	SaveGhostConfigFunc(cfg)
+	return true
+}
+
 // RouteStage represents a lead-LLM call site that can be optionally
 // downgraded to the worker LLM via the routing menu. Apps self-register
 // their stages via RegisterRouteStage in init().

@@ -417,12 +417,20 @@ func main() {
 		// Wire persistent queue.
 		SetQueueDB(func() Database { return global.db })
 
-		// Wire CMS config loader (setup saves to global.db, not per-agent bucket).
+		// Wire CMS config loader AND saver. Both on global.db, not a per-agent
+		// bucket — setup writes here and the publisher reads here, so anything
+		// that saves anywhere else is invisible to both.
 		LoadGhostConfigFunc = func() GhostConfig {
 			var cfg GhostConfig
 			global.db.Get("ghost_config", "url", &cfg.URL)
 			global.db.Get("ghost_config", "api_key", &cfg.APIKey)
 			return cfg
+		}
+		SaveGhostConfigFunc = func(cfg GhostConfig) {
+			global.db.Set("ghost_config", "url", cfg.URL)
+			if cfg.APIKey != "" {
+				global.db.CryptSet("ghost_config", "api_key", cfg.APIKey)
+			}
 		}
 
 		// Wire admin IP allowlist. Sourced from gohort.ini with a
