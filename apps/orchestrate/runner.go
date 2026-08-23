@@ -76,7 +76,7 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
 func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
-	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts, agentOperatingNotes(runtimeDB, target))
+	sysPrompt := prependAgentContext(gatedPersonaFor(target, target.OrchestratorPrompt), target, subFacts, agentOperatingNotes(runtimeDB, target))
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
 	if target.Cortex && sessID != cortexSessionID(target.ID) {
@@ -4269,7 +4269,17 @@ func (t *chatTurn) facts() []MemoryFact {
 // (agent's allowlist) so framework-provided things like plan_set
 // and store_fact stay visible regardless of what the admin trimmed.
 func (t *chatTurn) gatedPersona(prompt string) string {
-	if len(t.agent.AllowedTools) == 0 {
+	return gatedPersonaFor(t.agent, prompt)
+}
+
+// gatedPersonaFor is gatedPersona without a turn, so the dispatch prompt
+// builder can gate a target it was handed as a record. The dispatch path used
+// to skip gating entirely — it passed OrchestratorPrompt raw — which meant an
+// agent reached over a channel carried persona sections for tools it does not
+// have, and shipped the raw `@requires-tools` marker comments to the model
+// besides.
+func gatedPersonaFor(agent AgentRecord, prompt string) string {
+	if len(agent.AllowedTools) == 0 {
 		return StripPromptSectionsForTools(prompt, nil)
 	}
 	gate := append([]string{
@@ -4280,7 +4290,7 @@ func (t *chatTurn) gatedPersona(prompt string) string {
 		"knowledge_search", "fetch_knowledge_doc",
 		"memory",
 		"store_fact", "forget_fact", "list_facts",
-	}, t.agent.AllowedTools...)
+	}, agent.AllowedTools...)
 	return StripPromptSectionsForTools(prompt, gate)
 }
 

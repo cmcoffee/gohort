@@ -1029,6 +1029,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// after, originAuthority returns the inherited value, so the authority
 		// bounding the chain is always the one at its root and can only narrow.
 		dispatchOrigin: t.originAuthority(),
+		// The FLEET view travels with the dispatch. On a phantom (or any
+		// foreign-user) run the runtime identity is a synthetic per-chat user
+		// whose store holds no agent records, so a sub-turn that inherited only
+		// udb/user would look for peers in an empty DB. Left unset, the
+		// Available-agents block this sub-turn now renders would come back
+		// empty on exactly the runs where the fleet matters most — and its own
+		// agents(run) would refuse every target as "not found".
+		ownerUser: t.ownerUser,
+		ownerDB:   t.ownerDB,
 	}
 	// Shared sub-agent dispatch catalog — framework conversational tools
 	// (knowledge, find_tools, send_status, stay_silent, load_tool, skills, the
@@ -1091,12 +1100,19 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// whose owner turned scanning on unscanned whenever it is dispatched.
 	t.wrapToolsForActivity(subSess, tools, target, "↳ ["+target.Name+"] ")
 
+	// Same prompt the channel/dispatch path builds, from the same two helpers:
+	// dispatchContextBlocks for the Available-agents / skills / topics blocks,
+	// dispatchSystemPrompt for everything around them (agent context, the
+	// custom-tool index, a cortex agent's feed, the per-agent capability
+	// blocks). This path used to hand-roll prependAgentContext + the custom
+	// tool index and stop there, so a target reached in-session ran on a
+	// materially thinner prompt than the same target reached over a channel.
+	//
+	// It also gated the persona against the CALLER's AllowedTools rather than
+	// the target's, which is the wrong agent's tool list to be stripping a
+	// target's persona sections against; gatedPersonaFor reads the target.
 	subFacts := ListMemoryFacts(t.udb, factsNamespace(target.ID))
-	sysPrompt := prependAgentContext(
-		t.gatedPersona(target.OrchestratorPrompt),
-		target, subFacts, agentOperatingNotes(t.udb, target),
-	)
-	sysPrompt += customToolPrompt // "Your custom tools (load before use)" section
+	sysPrompt := dispatchSystemPrompt(target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
 
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
 	// SAME parent session re-threads the prior exchange, so the parent can

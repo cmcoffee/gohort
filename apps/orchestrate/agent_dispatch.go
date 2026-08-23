@@ -460,29 +460,44 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 	var extra []AgentToolDef
 	extra, customToolPrompt = subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
 	extraTools = append(extraTools, extra...)
-	// Sub-agents also skip the Available agents block — no point
-	// telling a leaf about fleet peers it can't dispatch to. Saves
-	// tokens AND removes the "DELEGATE FIRST" nudge that would
-	// otherwise contradict the missing tool.
-	if target.OwnedBy == "" {
-		availableBlock = subTurn.renderAvailableAgentsBlock()
-	}
-	// "Available skills" block — same parity issue as agents. The
-	// dispatch path adds activate_skill to the tool catalog when the
-	// agent has skills enabled, but without this block the LLM has
-	// no idea which skills it can invoke. That bit a phantom-
-	// dispatched agent whose network capability came via a Skill's
-	// AllowedTools: the LLM "knew" it had activate_skill but couldn't
-	// see fetch_url was reachable through it, so it hallucinated
-	// that the network was unavailable. Always emit alongside
-	// activate_skill so the tool and its catalog stay in sync.
-	availableBlock += subTurn.renderAvailableSkillsBlock()
-	// "Known topics" block — surfaces the (user, agent) topic
-	// accumulator so memory_save / memory_search reuse existing
-	// snake_case slugs instead of minting near-duplicates. Cheap to
-	// add; matches what the direct path does.
-	availableBlock += subTurn.renderKnownTopicsBlock()
+	availableBlock = subTurn.dispatchContextBlocks()
 	return extraTools, availableBlock, customToolPrompt, subTurn
+}
+
+// dispatchContextBlocks renders the prompt blocks a dispatched agent needs to
+// behave the way it does on its own chat surface. THE single place they are
+// assembled, so a block added for one dispatch surface reaches the other —
+// dispatchExtraTools is that place for the tool catalog and dispatchSystemPrompt
+// for the prompt around them; this is the missing third.
+//
+// It was missing, and the two dispatch paths had drifted apart because of it:
+// RunAgentSync built these three inline while the in-session agents(action=
+// "run") path built none of them. Same target reached two ways got two
+// different prompts — one handed the fleet catalog, the other left to discover
+// peers by calling agents(action="list"), which a model almost never does
+// speculatively.
+func (t *chatTurn) dispatchContextBlocks() string {
+	// Sub-agents skip the Available agents block — no point telling a leaf
+	// about fleet peers it can't dispatch to. Saves tokens AND removes the
+	// "DELEGATE FIRST" nudge that would otherwise contradict the missing tool.
+	var block string
+	if t.agent.OwnedBy == "" {
+		block = t.renderAvailableAgentsBlock()
+	}
+	// "Available skills" — same parity issue as agents. The dispatch path adds
+	// activate_skill to the tool catalog when the agent has skills enabled, but
+	// without this block the LLM has no idea which skills it can invoke. That
+	// bit a phantom-dispatched agent whose network capability came via a Skill's
+	// AllowedTools: the LLM "knew" it had activate_skill but couldn't see
+	// fetch_url was reachable through it, so it hallucinated that the network
+	// was unavailable. Always emit alongside activate_skill so the tool and its
+	// catalog stay in sync.
+	block += t.renderAvailableSkillsBlock()
+	// "Known topics" — surfaces the (user, agent) topic accumulator so
+	// memory_save / memory_search reuse existing snake_case slugs instead of
+	// minting near-duplicates. Cheap to add; matches what the direct path does.
+	block += t.renderKnownTopicsBlock()
+	return block
 }
 
 // via, when supplied, is the live dispatch chain — the agent that dispatched
