@@ -7656,7 +7656,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.
 		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
-		UncheckedClaims:    UncheckedFactNotes(t.facts()),
+		//
+		// The SAME slice the prompt was built from, not a second read of the
+		// store. An incognito turn blanks facts before rendering the memory
+		// block (above), and re-reading here scoped the judge to every marked
+		// note in the store while the prompt contained none — so the judge ran
+		// on a turn it is documented never to run on, and could convict the
+		// reply for failing to attribute a note the model was never shown. One
+		// slice, rendered and judged, makes the scope true by construction
+		// rather than by two reads agreeing.
+		UncheckedClaims:    UncheckedFactNotes(facts),
 		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:       func() bool { return sess.Detach.Any() },
 		BackgroundEstimate: func() string { return sess.Detach.EstimateText() },
