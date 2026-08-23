@@ -18,10 +18,11 @@
 Most local agent frameworks give you one clever assistant: it lives on your machine, holds your keys, wires into your messaging apps, and does the work itself. Gohort is a tier up. It's the place you **build, run, and govern many agents** — authored from chat, extended in code, and kept honest by a runtime that makes even small local models behave. Local-first by default, multi-user by design, secret-safe by construction.
 
 ```bash
-go build -o gohort . && ./gohort --setup && ./gohort serve :8080
+make build && ./build/gohort --setup && ./build/gohort serve :8080
 ```
 
-That's the whole install. One static binary, no runtime, no dependency tree.
+That's the whole install. One static binary, no runtime, no dependency tree —
+or skip the toolchain entirely and [download one](#download-a-release).
 
 ## Three ways to think about it
 
@@ -43,7 +44,7 @@ That's the loop: **describe it, approve it, it runs.**
 
 ## What makes it different
 
-- **One binary. No Python, no venv, no dependency tree.** `go build` produces a single static executable — the web dashboard, the agent runtime, the database layer, and every built-in app are compiled in. Deploying is copying one file; upgrading is replacing it. There's no runtime to install on the host, no lockfile to resolve, and no drift between your machine and the box. For self-hosters, this is the difference between a five-second deploy and an afternoon.
+- **One binary. No Python, no venv, no dependency tree.** `make build` produces a single static executable (cgo off, so it carries no libc floor onto the machines it lands on) — the web dashboard, the agent runtime, the database layer, and every built-in app are compiled in. Deploying is copying one file; upgrading is replacing it. There's no runtime to install on the host, no lockfile to resolve, and no drift between your machine and the box. For self-hosters, this is the difference between a five-second deploy and an afternoon.
 
 - **Build it in the browser, not just for it.** The chat *is* the authoring surface. Tell the Builder agent "make me an agent for X" or "set up a workflow that does Y" and it assembles the right thing from primitives — a new agent, an attached pipeline, a skill, a runtime-defined tool. No code, no visual flow editor, no separate IDE. Persistence of anything consequential goes through an admin approval queue.
 
@@ -63,25 +64,50 @@ That's the loop: **describe it, approve it, it runs.**
 
 ## Quick start
 
-**Requires:** Go 1.25+. A local GPU (Ollama / llama.cpp) is optional — point the worker tier at a hosted provider instead if you'd rather.
+A local GPU (Ollama / llama.cpp) is optional — point the worker tier at a hosted provider instead if you'd rather.
+
+### Download a release
+
+Binaries for linux, macOS and Windows (amd64 and arm64 where the platform has both) are on the [releases page](https://github.com/cmcoffee/gohort/releases), each archive carrying the binary, `LICENSE`, `NOTICE` and the third-party notices for that build. No toolchain, no runtime, nothing to install beside it.
 
 ```bash
-# Build — one static binary, no runtime to install
-go build -o gohort .
+# Verify what you downloaded — SHA256SUMS sits beside the archives
+sha256sum --ignore-missing -c SHA256SUMS     # macOS: shasum -a 256 -c SHA256SUMS
+
+tar xzf gohort_<version>_linux_amd64.tar.gz
+cd gohort_<version>_linux_amd64
+
+./gohort --setup                     # TLS, listen addr, admin account, a minimal LLM provider
+./gohort serve 127.0.0.1:8080        # the web dashboard
+```
+
+On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.apple.quarantine gohort` before the first run.
+
+### Build from source
+
+**Requires:** Go 1.25+.
+
+```bash
+# Build — one static binary, plus the notices it has to travel with
+make build
 
 # First-boot setup (TLS, listen addr, admin account, a minimal LLM provider)
-./gohort --setup
+./build/gohort --setup
 
 # Run the web dashboard (the primary surface)
-./gohort serve :8080
-./gohort serve :8443 --tls       # with a self-signed cert
+./build/gohort serve :8080
+./build/gohort serve :8443 --tls     # with a self-signed cert
 
-# Or drive an app from the CLI
-./gohort                         # interactive chat with tool access
-./gohort techwriter --serve :8080
+# Or talk to it from the terminal
+./build/gohort chat                  # interactive chat with tool access; bare `./build/gohort` does the same
+./build/gohort --version
 ```
 
 Then sign in and visit **/admin** — nearly all operator config (LLM routing, embeddings, STT, image gen, web search, SMTP, cost rates, tunables) lives there, each with an inline **Test connectivity** button.
+
+**Do `--setup` first, and on loopback.** An instance with no users configured has nobody to authenticate, so the dashboard's front door is open and `/admin/` leads to the wizard that mints the first admin. That is how the first account gets created and it is fine on `127.0.0.1` (the setup default is `127.0.0.1:8181`); it is not fine on a public interface. Create the admin account, then widen the bind address.
+
+**Optional host tools.** The binary needs nothing else to run, but a few features shell out to programs it expects on `PATH`: `ffmpeg`/`ffprobe` (audio and video), `pdftotext` and `pandoc` (document extraction), `yt-dlp` (video downloads), `git` (repository appliances), `python3` (sandboxed scripts), and `bwrap` (the shell sandbox, Linux). Each is optional and only the feature that uses it degrades when it is missing; **Admin → System Dependencies** shows what is present, what version, and what it enables.
 
 ## Extend it — a whole app in ~20 lines
 
@@ -153,9 +179,13 @@ On deck:
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-`make release` builds the binary with `GOWORK=off` and writes
-`THIRD_PARTY_NOTICES` beside it, generated from the modules actually linked —
-that file, `LICENSE` and `NOTICE` are what a distributed binary has to carry.
+`make release` builds an export of `HEAD` for every supported platform with
+`GOWORK=off`, and packages each binary with `LICENSE`, `NOTICE` and a
+`THIRD_PARTY_NOTICES` generated for *that* platform from the modules actually
+linked into it. Those three files are what a distributed binary has to carry.
+A module that ships no license text of its own has its terms vendored under
+[`licenses/`](licenses/), together with where they were obtained, and the
+generated notices say so rather than passing them off as the module's own.
 
 Versions before v0.6.314 were released under the MIT License and stay available
 under those terms; the change applies from that version onward. Apache 2.0 was

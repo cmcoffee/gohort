@@ -15,6 +15,13 @@
 // stops the build with its name. The failure mode this exists to prevent is a
 // notices file that looks complete and quietly is not, and a missing license is
 // exactly the case where a human has to go and look.
+//
+// The one escape hatch is the licenses/ directory: some modules genuinely ship
+// no license file, having stated their terms only in a README or added the file
+// after the tagged version we build against. Their text is vendored there, with
+// the URL it was taken from, and the notices say for each one that it came from
+// us rather than from the module. That is a disclosure, not a workaround — the
+// alternative is a human deciding once and the build forgetting.
 package main
 
 import (
@@ -56,6 +63,7 @@ type pkg struct {
 func main() {
 	out := flag.String("out", "THIRD_PARTY_NOTICES", "file to write")
 	target := flag.String("pkg", ".", "package whose linked dependencies to list")
+	vendored := flag.String("licenses", "licenses", "directory of license texts vendored for modules that ship none")
 	flag.Parse()
 
 	// The module being BUILT is the only one to skip. Not "any main module":
@@ -80,18 +88,22 @@ func main() {
 	b.WriteString(header)
 	var missing []string
 	for _, m := range mods {
-		texts := licenseTexts(m.Dir)
+		texts, note := licenseTexts(m.Dir), ""
+		if len(texts) == 0 {
+			dir := filepath.Join(*vendored, filepath.FromSlash(m.Path))
+			texts, note = licenseTexts(dir), vendorNote(dir)
+		}
 		if len(texts) == 0 {
 			missing = append(missing, m.Path+" ("+m.Dir+")")
 			continue
 		}
-		b.WriteString(entry(m, texts))
+		b.WriteString(entry(m, texts, note))
 	}
 	// Reported together and last: fixing them one build at a time, each after a
 	// full compile, is how a five-minute job becomes an afternoon.
 	if len(missing) > 0 {
-		fail("no license file found for %d module(s) — find their terms and add the filename to licenseNames, or vendor the license beside them:\n  %s",
-			len(missing), strings.Join(missing, "\n  "))
+		fail("no license file found for %d module(s) — add the filename to licenseNames if the module keeps its terms somewhere unusual, or vendor the text under %s/<module path>/ with a SOURCE file saying where it came from:\n  %s",
+			len(missing), *vendored, strings.Join(missing, "\n  "))
 	}
 	if err := os.WriteFile(*out, []byte(b.String()), 0o644); err != nil {
 		fail("writing %s: %v", *out, err)
@@ -169,10 +181,25 @@ func licenseTexts(dir string) map[string]string {
 	return out
 }
 
+// vendorNote reads the SOURCE file beside a vendored license text: where that
+// text was obtained. Absent is allowed and the entry still says the text was
+// supplied by us — the disclosure matters more than the citation.
+func vendorNote(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "SOURCE"))
+	if err != nil {
+		return "(no SOURCE recorded)"
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // entry renders one module: what it is, which version of it, and its terms in
 // full. The full text, not a name and a link — a link is not a license, and
 // somebody reading this offline is exactly who the file is for.
-func entry(m mod, texts map[string]string) string {
+//
+// note is non-empty when the text did not come from the module itself, and is
+// printed above the terms so the reader is never left believing they are
+// reading something the module shipped.
+func entry(m mod, texts map[string]string, note string) string {
 	var b strings.Builder
 	b.WriteString("\n" + strings.Repeat("=", 74) + "\n")
 	b.WriteString(m.Path)
@@ -187,6 +214,10 @@ func entry(m mod, texts map[string]string) string {
 		b.WriteString(" (LOCAL WORKING COPY — not a released version; built from " + m.Dir + ")")
 	}
 	b.WriteString("\n" + strings.Repeat("=", 74) + "\n\n")
+	if note != "" {
+		b.WriteString("This module ships no license file. The terms below were supplied by the\n")
+		b.WriteString("gohort project from: " + note + "\n\n")
+	}
 	names := make([]string, 0, len(texts))
 	for n := range texts {
 		names = append(names, n)
@@ -223,4 +254,7 @@ tooling dependencies.
 
 Third-party code that lives IN the gohort source tree, rather than being fetched
 as a module, is listed in NOTICE instead.
+
+Where a module ships no license file of its own, its terms are supplied by the
+gohort project and the entry says so, along with where the text was obtained.
 `
