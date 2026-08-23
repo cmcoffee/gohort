@@ -12,11 +12,11 @@
 // completion, and returns the final text. The calling agent sees
 // the result as a normal tool output and continues its own turn.
 //
-// Recursion guard: dispatchDepth on chatTurn is capped by
-// maxDispatchDepth so A→B→A or transitively-cyclic chains can't
-// run away. Distinct from pipelineDepth (pipeline-mode temp tools)
-// — the two surfaces share a sub-loop runner but track their own
-// counters because their failure modes differ.
+// Recursion guard: chatTurn.dispatchHops is capped by maxDispatchDepth
+// so A→B→A or transitively-cyclic chains can't run away. Distinct from
+// pipelineDepth (pipeline-mode temp tools) — the two surfaces share a
+// sub-loop runner but track their own counters because their failure
+// modes differ.
 
 package orchestrate
 
@@ -35,6 +35,27 @@ import (
 // realistic mesh patterns (router → specialist → helper) without
 // letting a misconfigured fleet thrash.
 const maxDispatchDepth = 3
+
+// dispatchHops is how far down a dispatch chain this turn already sits: 0 for
+// a turn a human (or a schedule, or a monitor wake) started, 1 for the agent
+// it dispatched to, and so on. Compared against maxDispatchDepth by all three
+// run targets.
+//
+// Read off dispatchChain rather than a counter of its own. A counter measured
+// the wrong thing twice over. It lived on chatTurn and was never copied into
+// the sub-turn, so it RESET at every hop — the cap it was checked against was
+// unreachable, and the comments on dispatchChain below already say so. And
+// because it incremented for the duration of a call rather than for the depth
+// of a chain, N sibling dispatches in flight at once read as recursion depth
+// N: with the batch fanned out, call N+1 would fail "depth limit exceeded" at
+// a true depth of 1. dispatchChain has neither problem — it is built once per
+// sub-turn, carried unchanged, and never mutated by a call in flight.
+func (t *chatTurn) dispatchHops() int {
+	if t == nil {
+		return 0
+	}
+	return len(t.dispatchChain)
+}
 
 // maxSameTargetDispatch caps how many times ONE user turn may dispatch the
 // IDENTICAL call — same target agent AND same message — before it's treated as
@@ -58,6 +79,26 @@ const maxTotalTargetDispatch = 12
 // bites. The identical-call loop cap above still applies unchanged.
 const maxBuilderTargetDispatch = 40
 
+// dispatchCap is the turn-level entry to dispatchCapDecision: it holds
+// dispatchMu across the whole decision and mints the map on first use, so the
+// three run targets share one counter set safely.
+//
+// The lock is not optional. Every branch of the decision is a
+// read-modify-write on a plain map, and with sibling dispatches fanned out
+// across a batch the increments race: concurrent writes to the map itself, and
+// a cap check where N callers can all read the same pre-increment value and
+// sail past the ceiling together. Taken here rather than inside
+// dispatchCapDecision so the counter map stays a plain argument and the
+// decision stays testable without a turn.
+func (t *chatTurn) dispatchCap(capKey, targetName, msg string) string {
+	t.dispatchMu.Lock()
+	defer t.dispatchMu.Unlock()
+	if t.agentDispatchCounts == nil {
+		t.agentDispatchCounts = map[string]int{}
+	}
+	return dispatchCapDecision(t.agentDispatchCounts, capKey, targetName, msg, isBuilderAgent(t.agent.ID))
+}
+
 // dispatchCapDecision applies the two per-turn dispatch caps against the
 // running per-turn counts and returns a non-empty block message when one is
 // hit (empty string = allowed). It mutates counts (incrementing the loop and
@@ -69,6 +110,10 @@ const maxBuilderTargetDispatch = 40
 //   - THRASH: the TOTAL dispatches to one target past the ceiling
 //     (maxBuilderTargetDispatch when the dispatcher is Builder, else
 //     maxTotalTargetDispatch), regardless of message.
+//
+// Callers on a turn go through chatTurn.dispatchCap, which holds the lock the
+// mutation needs.
+
 func dispatchCapDecision(counts map[string]int, targetID, targetName, msg string, isBuilder bool) string {
 	loopKey := "call\x00" + targetID + "\x00" + msg
 	counts[loopKey]++

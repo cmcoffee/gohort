@@ -208,21 +208,17 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			// return content that actually came from outside; they self-fence.
 			TrustedOutput: true,
 		},
-		// Batched agents() calls are a SEQUENCE, not a fan-out. The loop runs
-		// parallel batch calls in goroutines, but every run/run_tool mutates
-		// unsynchronized per-turn dispatch state: dispatchDepth (a plain int —
-		// N sibling calls in flight read as recursion depth N, so call N+1
-		// fails "depth limit exceeded" at true depth 1; observed as
-		// intermittent depth errors inside one Comedian batch) and
-		// agentDispatchCounts (a plain map — concurrent writes race, and the
-		// cap check is a read-modify-write, so a 20-call batch could all read
-		// a stale count and sail past the per-turn ceiling before any
-		// increment landed). Serial-fire is the loop's seam for exactly this:
-		// calls still all run, in submission order, each observing the
-		// prior's bookkeeping — so the cap now cuts a runaway batch off AT
-		// the ceiling instead of after it.
-		SerialFirePerBatch: true,
-		Handler:            handler,
+		// Batched agents() calls are a SEQUENCE by default, and a bounded
+		// fan-out across distinct targets when an operator turns one on. The
+		// two hazards that made this a flat sequence are gone: depth is read
+		// off dispatchChain rather than a counter that N calls in flight
+		// inflated (see dispatchHops), and the per-turn cap now takes
+		// dispatchMu across its read-modify-write (see dispatchCap), so it
+		// still cuts a runaway batch off AT the ceiling. What remains is the
+		// shared sub-session id two dispatches to ONE target hold, which no
+		// lock fixes — so the lane key is the target. See dispatch_fanout.go.
+		BatchLane: t.agentsBatchLane,
+		Handler:   handler,
 	}
 }
 
@@ -715,7 +711,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 // per-turn dispatch COUNTERS are therefore not here: they mutate, and they
 // belong to the inline path that can be looped.
 func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, error) {
-	if t.dispatchDepth >= maxDispatchDepth {
+	if t.dispatchHops() >= maxDispatchDepth {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
 	}
 	key := strings.TrimSpace(stringArg(args, "agent"))
@@ -911,11 +907,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		return "", err
 	}
 	// Per-turn dispatch caps — the hard stop for a chat agent that re-fires
-	// agents(run, X) round after round in ONE turn. dispatchDepth (recursion)
-	// and dispatchChain (cycles) both miss it: depth resets as each sub-run
-	// returns and there's no cycle. A prompt "don't dispatch again" is a soft
-	// guard the worker ignores; this is code-enforced. Counts only dispatches
-	// that pass the gates above (a refused one shouldn't burn the budget).
+	// agents(run, X) round after round in ONE turn. dispatchChain misses it
+	// entirely: the chain neither deepens nor cycles when one agent fires the
+	// same dispatch at the same level all turn. A prompt "don't dispatch
+	// again" is a soft guard the worker ignores; this is code-enforced.
+	// Counts only dispatches that pass the gates above (a refused one
+	// shouldn't burn the budget).
 	//
 	// Two distinct pathologies, two counters:
 	//   (1) LOOP — the SAME call (target + message) fired over and over with
@@ -927,10 +924,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	//       to one target in a turn. Ceiling is generous, and higher still when
 	//       the dispatcher is the Builder, whose job is to sweep an agent's
 	//       whole toolset.
-	if t.agentDispatchCounts == nil {
-		t.agentDispatchCounts = map[string]int{}
-	}
-	if block := dispatchCapDecision(t.agentDispatchCounts, target.ID, target.Name, msg, isBuilderAgent(t.agent.ID)); block != "" {
+	if block := t.dispatchCap(target.ID, target.Name, msg); block != "" {
 		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → %s — blocking further dispatch", t.agent.ID, target.ID)
 		// Returned as an ERROR, never as a normal result. A normal result rides
 		// through fenceAgentsOutput, which wraps it in the untrusted-content
@@ -941,8 +935,6 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// loop's failure-streak machinery, so repeated cap hits settle the turn.
 		return "", errors.New(block)
 	}
-	t.dispatchDepth++
-	defer func() { t.dispatchDepth-- }()
 
 	parentSessID := ""
 	if t.session != nil {
@@ -1209,7 +1201,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		},
 	})
 	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s msg_chars=%d err=%v",
-		t.dispatchDepth, t.agent.ID, target.ID, len(msg), runErr)
+		t.dispatchHops(), t.agent.ID, target.ID, len(msg), runErr)
 	if runErr != nil {
 		return "", runErr
 	}

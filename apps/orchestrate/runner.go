@@ -586,19 +586,16 @@ type chatTurn struct {
 	// pipeline tool calling another doesn't tear through the budget.
 	pipelineDepth int
 
-	// dispatchDepth tracks recursion into dispatch_to_agent. Distinct
-	// from pipelineDepth because they're separate failure modes —
-	// pipelines compose tools, dispatch fans out to named specialists.
-	// Both are capped to prevent runaway recursive chains.
-	dispatchDepth int
-
 	// dispatchChain carries the IDs of agents already invoked higher
 	// up in this dispatch chain. agentsRunAction refuses to dispatch
-	// to an agent already in the chain — catches cycles like A→B→A
-	// that depth alone misses (depth resets to 0 on each sub-turn,
-	// so A→B→A→B→… would have looked depth-fine for a long time
-	// before the cap tripped). Includes the current turn's agent ID
-	// when propagated to a sub-turn.
+	// to an agent already in the chain — catches cycles like A→B→A.
+	// Includes the current turn's agent ID when propagated to a
+	// sub-turn.
+	//
+	// Its LENGTH is also how deep the chain runs (chatTurn.dispatchHops),
+	// which is what all three run targets check against maxDispatchDepth.
+	// A separate depth counter used to live here and measured neither
+	// thing correctly; see dispatchHops for what it got wrong.
 	dispatchChain []string
 
 	// dispatchOrigin carries the dispatch authority of the agent that
@@ -620,14 +617,20 @@ type chatTurn struct {
 	// SAME target within one user turn (keyed by target agent ID). Distinct from
 	// dispatchCounts above (that one keys on (name,args) and only caps cacheable
 	// READ tools — agent dispatch is state-mutating, so it's exempt there). It's
-	// also distinct from dispatchDepth (a recursion guard that decrements as each
-	// sub-run returns, so it never sees a chat agent re-firing agents(run, X)
-	// round after round at the same level) and dispatchChain (cycles only). This
-	// accumulates across the whole turn and is the hard stop for the "answers and
-	// runs the app over and over" loop — which the signature-based agent_loop
-	// guard also misses because each sub-run returns different text. NOT
-	// propagated to sub-turns; resets per user message.
+	// also distinct from dispatchChain, which measures how DEEP the chain runs
+	// and catches cycles, and so never sees a chat agent re-firing agents(run,
+	// X) round after round at the same level. This accumulates across the whole
+	// turn and is the hard stop for the "answers and runs the app over and
+	// over" loop — which the signature-based agent_loop guard also misses
+	// because each sub-run returns different text. NOT propagated to
+	// sub-turns; resets per user message.
+	//
+	// Guarded by dispatchMu, NOT toolMu: the cap is a read-modify-write, the
+	// three run targets all reach it, and sibling dispatches can be in flight
+	// at once. toolMu is held across parts of the tool-call path a dispatch
+	// runs inside of, so taking it here would be re-entrant.
 	agentDispatchCounts map[string]int
+	dispatchMu          sync.Mutex
 
 	// ownerDB / ownerUser are the FLEET view — set on phantom-
 	// dispatched (and other foreign-user) runs where the runtime

@@ -421,6 +421,25 @@ type AgentToolDef struct {
 	// authoring tools where [delete X, create Y] is a legit two-step edit
 	// (tool_def). Takes precedence over SingleFirePerBatch if both are set.
 	SerialFirePerBatch bool
+
+	// BatchLane generalizes SerialFirePerBatch from one sequence to N. Calls
+	// this round whose lane keys MATCH run sequentially in submission order;
+	// calls in different lanes run in parallel with each other and with the
+	// rest of the batch. Returning a constant is exactly SerialFirePerBatch;
+	// returning "" puts the call in the shared serial lane alongside the
+	// plain serial-fire tools.
+	//
+	// The point is a tool whose batched calls are only conditionally a
+	// sequence: safe to fan out across distinct subjects, unsafe against the
+	// same one (two dispatches to one sub-agent share a session id, so they
+	// would race on its record and tear down each other's temp tools). The
+	// tool knows which subject a call names; the loop cannot. Called once per
+	// call during the serial partition pass, before anything executes, so it
+	// may read stores — keep it cheap and side-effect free.
+	//
+	// Set INSTEAD of SerialFirePerBatch / SingleFirePerBatch, not alongside:
+	// a lane function supersedes both.
+	BatchLane func(args map[string]any) string
 }
 
 // ConfirmFunc is called to ask the user whether a tool call should proceed.
@@ -1758,6 +1777,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	writeTools := make(map[string]bool)
 	singleFireTools := make(map[string]bool)
 	serialFireTools := make(map[string]bool)
+	batchLaneFns := make(map[string]func(map[string]any) string)
 	rebuildToolMaps := func(active []AgentToolDef) {
 		toolDefs = toolDefs[:0]
 		for k := range handlers {
@@ -1771,6 +1791,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		}
 		for k := range serialFireTools {
 			delete(serialFireTools, k)
+		}
+		for k := range batchLaneFns {
+			delete(batchLaneFns, k)
 		}
 		for _, td := range active {
 			// Name collision. Two defs can reach here under one name without any
@@ -1805,8 +1828,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 			// Serial-fire takes precedence: a serial tool must NOT be added to
 			// the single-fire set, or the enforcement pass would drop its
-			// excess calls before the executor gets to run them in order.
-			if td.SerialFirePerBatch {
+			// excess calls before the executor gets to run them in order. A
+			// lane function supersedes both for the same reason — its calls
+			// all run, and the lanes decide which of them run together.
+			if td.BatchLane != nil {
+				batchLaneFns[td.Tool.Name] = td.BatchLane
+			} else if td.SerialFirePerBatch {
 				serialFireTools[td.Tool.Name] = true
 			} else if td.SingleFirePerBatch {
 				singleFireTools[td.Tool.Name] = true
@@ -4064,32 +4091,54 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
 				}
 			}
-			// Partition: serial-fire tool calls run SEQUENTIALLY in submission
-			// order, so a stateful authoring batch like tool_def[delete X,
-			// create Y] applies in the order the LLM intended and can't race on
-			// the same record. Everything else still runs in parallel. work is
-			// already in submission order, so one ordered goroutine over the
-			// serial slice preserves it while the parallel calls fan out.
-			var serial []toolWork
+			// Partition into LANES. Calls sharing a lane run SEQUENTIALLY in
+			// submission order, so a stateful authoring batch like
+			// tool_def[delete X, create Y] applies in the order the LLM
+			// intended and can't race on the same record. Everything else
+			// still runs in parallel. work is already in submission order, so
+			// one ordered goroutine per lane preserves it while the unlaned
+			// calls fan out.
+			//
+			// Plain serial-fire tools all share the one unnamed lane, which is
+			// what they did when that lane was the only one: two serial tools
+			// in a batch stay ordered against each other, not just against
+			// themselves. A BatchLane function opts a tool into finer
+			// partitioning — same guarantee within a lane, concurrency across
+			// lanes — and its keys are namespaced by tool name so two tools'
+			// lane functions cannot collide on a shared string.
+			lanes := map[string][]toolWork{}
+			var laneOrder []string
 			for _, w := range work {
-				if serialFireTools[w.tc.Name] {
-					serial = append(serial, w)
+				lane, laned := "", false
+				if fn := batchLaneFns[w.tc.Name]; fn != nil {
+					laned = true
+					if key := fn(w.tc.Args); key != "" {
+						lane = w.tc.Name + "\x00" + key
+					}
+				} else if serialFireTools[w.tc.Name] {
+					laned = true
+				}
+				if !laned {
+					wg.Add(1)
+					go func(w toolWork) {
+						defer wg.Done()
+						invokeStore(w)
+					}(w)
 					continue
 				}
-				wg.Add(1)
-				go func(w toolWork) {
-					defer wg.Done()
-					invokeStore(w)
-				}(w)
+				if _, seen := lanes[lane]; !seen {
+					laneOrder = append(laneOrder, lane)
+				}
+				lanes[lane] = append(lanes[lane], w)
 			}
-			if len(serial) > 0 {
+			for _, key := range laneOrder {
 				wg.Add(1)
 				go func(items []toolWork) {
 					defer wg.Done()
 					for _, w := range items {
 						invokeStore(w)
 					}
-				}(serial)
+				}(lanes[key])
 			}
 			wg.Wait()
 			toolErrors += int(atomic.LoadInt32(&errCount))

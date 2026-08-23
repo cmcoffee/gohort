@@ -239,7 +239,7 @@ func (t *chatTurn) dispatchableMachine(ref string) (MachineDef, error) {
 // none of the rest — a refusal has to reach the model while it still has a
 // round to fix it in.
 func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string, error) {
-	if t.dispatchDepth >= maxDispatchDepth {
+	if t.dispatchHops() >= maxDispatchDepth {
 		return MachineDef{}, "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
 	}
 	msg := strings.TrimSpace(stringArg(args, "message"))
@@ -294,10 +294,7 @@ func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if t.agentDispatchCounts == nil {
-		t.agentDispatchCounts = map[string]int{}
-	}
-	if block := dispatchCapDecision(t.agentDispatchCounts, dispatchMachineCapKey(def.ID), def.Name, msg, isBuilderAgent(t.agent.ID)); block != "" {
+	if block := t.dispatchCap(dispatchMachineCapKey(def.ID), def.Name, msg); block != "" {
 		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → machine %s — blocking further dispatch", t.agent.ID, def.ID)
 		// An ERROR, never a normal result: a normal result rides through
 		// fenceAgentsOutput, and a framework STOP verdict delivered inside a
@@ -310,8 +307,6 @@ func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
 	if err := t.guardMachineInput(t.ctx, def, msg); err != nil {
 		return "", err
 	}
-	t.dispatchDepth++
-	defer func() { t.dispatchDepth-- }()
 
 	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
 		Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100)).

@@ -62,19 +62,26 @@ func TestPermissionBlockRefusesAgentsRun(t *testing.T) {
 	}
 }
 
-// TestAgentsToolIsSerialFirePerBatch pins the batching mode of the agents
-// tool. The loop executes batched tool calls in parallel goroutines, but
-// agentsRunAction mutates unsynchronized per-turn state: dispatchDepth (plain
-// int — concurrent siblings read as recursion, giving spurious "depth limit
-// exceeded" at true depth 1) and agentDispatchCounts (plain map — racy
-// read-modify-write lets a large batch pass the per-turn cap before any
-// increment lands). Serial-fire keeps every dispatch's bookkeeping visible to
-// the next call in the batch.
-func TestAgentsToolIsSerialFirePerBatch(t *testing.T) {
-	turn, _ := newRunGateTurn(t, dispatchAll)
+// TestAgentsToolBatchesThroughALane pins the batching mode of the agents tool.
+// The loop executes batched tool calls in parallel goroutines; the agents tool
+// opts into a lane so calls it must not overlap stay a sequence, and at the
+// shipped default that lane is the shared serial one — a batch of dispatches
+// behaves exactly as it did before fan-out existed. See dispatch_fanout.go for
+// what raising the knob changes and what it can never change (two dispatches
+// to ONE target share a sub-session id and always serialize).
+func TestAgentsToolBatchesThroughALane(t *testing.T) {
+	turn, target := newRunGateTurn(t, dispatchAll)
 	for _, allowRun := range []bool{true, false} {
-		if td := turn.agentsGroupedToolDef(allowRun); !td.SerialFirePerBatch {
-			t.Fatalf("agents tool (allowRun=%v) must be SerialFirePerBatch — parallel batch calls race on dispatchDepth and agentDispatchCounts", allowRun)
+		td := turn.agentsGroupedToolDef(allowRun)
+		if td.BatchLane == nil {
+			t.Fatalf("agents tool (allowRun=%v) must declare a BatchLane; without one its calls fan out unpartitioned", allowRun)
+		}
+		if td.SingleFirePerBatch {
+			t.Fatalf("agents tool (allowRun=%v) must not be single-fire — batched calls all run, the lane decides which run together", allowRun)
+		}
+		lane := td.BatchLane(map[string]any{"action": "run", "agent": target.Name, "message": "hi"})
+		if lane != "" {
+			t.Fatalf("agents tool (allowRun=%v) must default to the shared serial lane; got %q", allowRun, lane)
 		}
 	}
 }

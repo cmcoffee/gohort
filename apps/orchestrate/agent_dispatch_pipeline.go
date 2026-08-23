@@ -290,7 +290,7 @@ func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 // round to fix it in. Detached, "that pipeline is not attached to you" arrives
 // as a wake with no turn left to correct it, and the agent invents a reason.
 func (t *chatTurn) pipelineDispatchGate(args map[string]any) (PipelineDef, string, error) {
-	if t.dispatchDepth >= maxDispatchDepth {
+	if t.dispatchHops() >= maxDispatchDepth {
 		return PipelineDef{}, "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
 	}
 	msg := strings.TrimSpace(stringArg(args, "message"))
@@ -352,10 +352,7 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	if t.agentDispatchCounts == nil {
-		t.agentDispatchCounts = map[string]int{}
-	}
-	if block := dispatchCapDecision(t.agentDispatchCounts, dispatchPipelineCapKey(def.ID), def.Name, msg, isBuilderAgent(t.agent.ID)); block != "" {
+	if block := t.dispatchCap(dispatchPipelineCapKey(def.ID), def.Name, msg); block != "" {
 		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → pipeline %s — blocking further dispatch", t.agent.ID, def.ID)
 		// An ERROR, never a normal result: a normal result rides through
 		// fenceAgentsOutput, and a framework STOP verdict delivered inside a
@@ -368,8 +365,6 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 	if err := t.guardPipelineInput(t.ctx, def, msg); err != nil {
 		return "", err
 	}
-	t.dispatchDepth++
-	defer func() { t.dispatchDepth-- }()
 
 	// Live activity, same as the agent path and the schedule path: without it
 	// a multi-minute run is invisible until it finishes.
