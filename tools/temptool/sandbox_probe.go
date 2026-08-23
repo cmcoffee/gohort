@@ -92,7 +92,19 @@ func (t *SandboxProbeTool) RunWithSession(args map[string]any, sess *ToolSession
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := "command -v " + name + " 2>/dev/null || true"
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShellPipe(ctx, cmd, "")
+	// A probe that could not RUN has learned nothing about the binary. Reading
+	// its empty output as "not available" is the worst possible answer: it is
+	// confident, specific, and wrong, and it sends the model off redesigning a
+	// tool around a missing dependency that is not missing. Since confinement
+	// became mandatory this is a reachable state on any host with no backend,
+	// where every probe would otherwise report every binary absent.
+	if res.Err != nil {
+		return fmt.Sprintf("The probe for %q could not run, so nothing is known about whether it exists: %v "+
+			"This is a fault in the execution path, not an answer about the binary — do not redesign the tool around it.",
+			name, res.Err), nil
+	}
 	output := strings.TrimSpace(res.Output)
 	if output == "" {
 		return fmt.Sprintf("%q is NOT available in the sandbox. Pivot your design — either use a different binary or switch the tool's mode (api / pipeline / different shell tool).", name), nil

@@ -45,7 +45,7 @@ var scriptTypeRE = regexp.MustCompile(`(?i)\btype\s*=\s*["']?([^"'\s>]+)`)
 // returns one line per block that fails to parse. An empty result means either
 // "everything parses" or "no verdict was reachable" — checked reports which,
 // so a caller never presents an unchecked save as a verified one.
-func htmlScriptSyntaxProblems(html string) (problems []string, checked bool) {
+func htmlScriptSyntaxProblems(ctx context.Context, html string) (problems []string, checked bool) {
 	blocks := scriptBlockRE.FindAllStringSubmatch(html, -1)
 	if len(blocks) == 0 {
 		return nil, false
@@ -81,7 +81,7 @@ func htmlScriptSyntaxProblems(html string) (problems []string, checked bool) {
 			}
 		}
 		index++
-		problem, ok := jsSyntaxProblem(dir, index, body)
+		problem, ok := jsSyntaxProblem(ctx, dir, index, body)
 		if !ok {
 			// No verdict on this block — and therefore none for the section.
 			// Better to say nothing than to half-check.
@@ -96,12 +96,16 @@ func htmlScriptSyntaxProblems(html string) (problems []string, checked bool) {
 
 // jsSyntaxProblem runs one script body through node --check inside the sandbox.
 // Returns the problem (empty when it parses) and whether a verdict was reached.
-func jsSyntaxProblem(dir string, index int, body string) (string, bool) {
+func jsSyntaxProblem(ctx context.Context, dir string, index int, body string) (string, bool) {
 	path := filepath.Join(dir, fmt.Sprintf("block%d.js", index))
 	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
 		return "", false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Derived from the caller's context, not Background, so the admin stamp it
+	// carries survives down to the sandbox. Without it an admin authoring an
+	// app on a host that cannot confine gets "no verdict" from the very check
+	// meant to catch their typo.
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	// Direct exec first. `node --check` READS and PARSES the file and never
 	// executes it, so there is nothing for a sandbox to contain — unlike the

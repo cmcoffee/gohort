@@ -2235,6 +2235,47 @@ func (s *ToolSession) ContextWithNetworkConnector(ctx context.Context) context.C
 	return WithNetworkConnector(ctx, s.Network)
 }
 
+// ContextWithSandboxCaller stamps the run with whether the human behind it is
+// an admin, which is what the "admin only" unsandboxed-bypass keys on.
+//
+// Applied here rather than resolved inside the sandbox because by the time a
+// command reaches exec there is no request, no cookie and no session left to
+// resolve it FROM — only a context and a string of shell. Anything that does
+// not pass through a ToolSession (a schedule, a channel wake, a monitor
+// evaluator, an export generator) never gets stamped and is therefore not an
+// admin, which is the correct answer for all four: nobody is at the keyboard.
+//
+// Note this asks about the OWNER of the session, not about what the model
+// wants. An LLM cannot stamp itself admin; it can only run inside a session
+// that already belongs to one.
+func (s *ToolSession) ContextWithSandboxCaller(ctx context.Context) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return ContextWithSandboxUser(ctx, s.Username)
+}
+
+// ContextWithSandboxUser is ContextWithSandboxCaller for a caller that knows
+// WHO it is acting for but has no ToolSession to say it through — the app
+// authoring path, where a chat turn runs node --check over a section the user
+// is editing. Same rule: only the named user's own admin flag counts, an
+// unknown or non-admin name stamps nothing, and nothing stamped means not an
+// admin.
+func ContextWithSandboxUser(ctx context.Context, username string) context.Context {
+	if strings.TrimSpace(username) == "" || AuthDB == nil {
+		return ctx
+	}
+	db := AuthDB()
+	if db == nil {
+		return ctx
+	}
+	user, ok := AuthGetUser(db, username)
+	if !ok || !user.Admin {
+		return ctx
+	}
+	return WithAdminCaller(ctx, true)
+}
+
 // flushed marker. Call once per tool-call dispatch (typically
 // from the app's flushNewAttachments hook). Returns an empty
 // slice when there's nothing new.

@@ -1951,7 +1951,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 
 		// C. response_pipe compiles (catches a broken jq/awk filter).
 		if ep.ResponsePipe != "" {
-			if serr := pipeCompileError(ep.ResponsePipe); serr != "" {
+			if serr := pipeCompileError(ep.ResponsePipe, sess); serr != "" {
 				fail("response_pipe has a syntax/compile error: %s", serr)
 			} else {
 				pass("response_pipe compiles")
@@ -1974,7 +1974,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 				default:
 					pass("live %s returned %q", method, status)
 					if ep.ResponsePipe != "" {
-						if perr := runPipeAgainst(ep.ResponsePipe, body); perr != "" {
+						if perr := runPipeAgainst(ep.ResponsePipe, body, sess); perr != "" {
 							fail("response_pipe failed on the REAL response body (shape mismatch — e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
 						} else {
 							pass("response_pipe runs clean on the real response")
@@ -2089,7 +2089,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	//    catch for the class where a tool was authored with a broken
 	//    f-string / quote and every single call returns a SyntaxError.
 	if strings.TrimSpace(tt.ScriptBody) != "" {
-		lang, problem, checked := scriptSyntaxCheck(tt)
+		lang, problem, checked := scriptSyntaxCheck(tt, sess)
 		switch {
 		case !checked:
 			note("script_body not syntax-checked (no checker available for this language) — the live run is the only proof")
@@ -2205,7 +2205,7 @@ func shellRunFailed(out string) bool {
 // description (empty when it parses), and whether a verdict could be reached
 // at all — an unknown extension or a missing interpreter yields checked=false
 // rather than a false accusation of a syntax error.
-func scriptSyntaxCheck(tt TempTool) (lang, problem string, checked bool) {
+func scriptSyntaxCheck(tt TempTool, sess *ToolSession) (lang, problem string, checked bool) {
 	name := tt.CanonicalScriptName
 	if name == "" {
 		name = tt.ScriptName
@@ -2249,6 +2249,11 @@ func scriptSyntaxCheck(tt TempTool) (lang, problem string, checked bool) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
+	// Authoring-time checks are still sandboxed runs, so they carry the same
+	// caller stamp as a dispatch — otherwise an admin on a host that cannot
+	// confine gets their tool refused by the checker that was supposed to
+	// help them write it, with "sandbox refused" as the only verdict.
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShell(ctx, fmt.Sprintf(checker, shellQuote(path)), dir)
 	if res.Err == nil && !res.TimedOut {
 		return lang, "", true
@@ -2440,9 +2445,14 @@ func emptyResultBody(body string, ep TempToolAction) bool {
 // fire regardless of input shape and are true authoring bugs. A runtime
 // error against the dummy input (null iteration, missing field) is not a
 // compile bug and yields "" (the real shape is checked live for reads).
-func pipeCompileError(pipe string) string {
+func pipeCompileError(pipe string, sess *ToolSession) string {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
+	// Authoring-time checks are still sandboxed runs, so they carry the same
+	// caller stamp as a dispatch — otherwise an admin on a host that cannot
+	// confine gets their tool refused by the checker that was supposed to
+	// help them write it, with "sandbox refused" as the only verdict.
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShellPipe(ctx, pipe, "{}")
 	if res.Err == nil {
 		return ""
@@ -2456,9 +2466,14 @@ func pipeCompileError(pipe string) string {
 
 // runPipeAgainst runs a response_pipe against a real response body and
 // returns a non-empty message if it failed (bad filter, shape mismatch).
-func runPipeAgainst(pipe, body string) string {
+func runPipeAgainst(pipe, body string, sess *ToolSession) string {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
+	// Authoring-time checks are still sandboxed runs, so they carry the same
+	// caller stamp as a dispatch — otherwise an admin on a host that cannot
+	// confine gets their tool refused by the checker that was supposed to
+	// help them write it, with "sandbox refused" as the only verdict.
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShellPipe(ctx, pipe, body)
 	if res.TimedOut {
 		return "timed out"

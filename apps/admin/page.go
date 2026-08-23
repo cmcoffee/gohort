@@ -545,6 +545,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Label: "Shell sandbox", Field: "sandbox_backend", StatusField: "sandbox_status"},
 						{Label: "Shell tools confined", Field: "sandbox_confined", StatusField: "sandbox_status"},
 						{Label: "Sandbox required (fail closed)", Field: "sandbox_required"},
+						// The row an operator on an unconfined host actually
+						// needs: not "are we confined" (no) but "is anything
+						// running" (also no). Reading only the row above, the
+						// natural conclusion is the dangerous one.
+						{Label: "Shell tools refused (no sandbox)", Field: "sandbox_refusing", StatusField: "sandbox_status"},
+						{Label: "Unsandboxed bypass (off / admin / on)", Field: "sandbox_bypass"},
 						{Label: "Sandbox note", Field: "sandbox_advice"},
 					},
 				},

@@ -91,6 +91,9 @@ func transcodeVideoAction(args map[string]any, sess *ToolSession) (string, error
 
 	ctx, cancel := context.WithTimeout(context.Background(), transcodeTimeout)
 	defer cancel()
+	// Both ffprobe and ffmpeg below run sandboxed; stamp the caller once here
+	// so the "admin only" bypass can tell them apart on an unconfinable host.
+	ctx = sess.ContextWithSandboxCaller(ctx)
 
 	durSec, err := probeDuration(ctx, sess.WorkspaceDir, inputAbs)
 	if err != nil {

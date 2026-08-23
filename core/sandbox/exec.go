@@ -43,20 +43,6 @@ const sandboxWaitDelay = 5 * time.Second
 
 // detectBwrap finds the bwrap binary on PATH once and caches the result.
 // Empty path means no sandbox — caller falls back to plain sh -c.
-// sandboxRequired reports whether the operator has demanded fail-closed
-// sandboxing via the GOHORT_SANDBOX_REQUIRED env var. When set and bubblewrap
-// is unavailable, shell/script execution is refused rather than silently
-// dropping to an unsandboxed subshell running at the service account's full
-// privilege. Default (unset) preserves the historical fail-open behavior so
-// hosts without bubblewrap keep working; a hardened deployment sets it.
-func sandboxRequired() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_REQUIRED"))) {
-	case "1", "true", "yes", "on":
-		return true
-	}
-	return false
-}
-
 // sandboxPythonPath builds the PYTHONPATH for a run, given the bwrap binary
 // that will (or will not) carry it.
 //
@@ -261,7 +247,8 @@ func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir strin
 	extraEnv["PYTHONPATH"] = sandboxPythonPath(sb.remapsPaths(), extraEnv["PYTHONPATH"])
 
 	if !sb.confines() {
-		if sandboxRequired() {
+		if sandboxRequired(ctx) {
+			warnRefusing("shell tools")
 			return SandboxedShellResult{Err: sandboxUnavailableErr()}
 		}
 		warnUnsandboxed("shell tools")
@@ -501,7 +488,8 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) SandboxedShellResult {
 	sb := activeSandbox()
 	if !sb.confines() {
-		if sandboxRequired() {
+		if sandboxRequired(ctx) {
+			warnRefusing("response pipes")
 			return SandboxedShellResult{Err: sandboxUnavailableErr()}
 		}
 		warnUnsandboxed("response pipes")
@@ -605,7 +593,8 @@ type SandboxedScriptResult struct {
 func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData string) SandboxedScriptResult {
 	sb := activeSandbox()
 	if !sb.confines() {
-		if sandboxRequired() {
+		if sandboxRequired(ctx) {
+			warnRefusing("evaluator scripts")
 			return SandboxedScriptResult{Err: sandboxUnavailableErr()}
 		}
 		warnUnsandboxed("evaluator scripts")

@@ -241,16 +241,36 @@ func detectSandboxFor(goos string, look func(string) (string, error), probe func
 // past days ago, on a platform where the advice it gave was impossible to
 // follow.
 type SandboxStatus struct {
-	Backend  string `json:"backend"`  // "bubblewrap" | "none"
-	Confined bool   `json:"confined"` // false means shell tools run at the daemon's privilege
-	Required bool   `json:"required"` // GOHORT_SANDBOX_REQUIRED is set
-	Advice   string `json:"advice"`   // what to do about it, or "" when confined
+	Backend  string `json:"backend"`  // "bubblewrap" | "seatbelt" | "none"
+	Confined bool   `json:"confined"` // false means this host has no OS confinement
+	Required bool   `json:"required"` // confinement is mandatory for an unprivileged caller
+	// Bypass is the deployment's tri-state: "off" (default, nothing runs
+	// unconfined), "admin" (an admin's own runs may), "on" (anything may).
+	Bypass string `json:"bypass"`
+	// Refusing reports the state an operator most needs named: this host
+	// cannot confine AND will not run shell tools unconfined, so every shell
+	// tool on it is currently refused. Distinct from !Confined, which since
+	// the default flipped no longer tells you whether anything still runs.
+	Refusing bool   `json:"refusing"`
+	Advice   string `json:"advice"` // what to do about it, or "" when confined
 }
 
 // GetSandboxStatus reports what is confining shell execution on this host.
+//
+// Reported for a caller with no admin stamp — the strictest reading, and the
+// one that describes what an AGENT faces. An admin panel that answered for the
+// admin reading it would say "tools run fine" about the exact configuration in
+// which every agent on the box is being refused.
 func GetSandboxStatus() SandboxStatus {
 	sb := activeSandbox()
-	st := SandboxStatus{Backend: sb.name(), Confined: sb.confines(), Required: sandboxRequired()}
+	policy := bypassPolicy()
+	st := SandboxStatus{
+		Backend:  sb.name(),
+		Confined: sb.confines(),
+		Bypass:   policy.String(),
+		Required: sandboxRequired(context.Background()),
+	}
+	st.Refusing = !st.Confined && st.Required
 	if !st.Confined {
 		st.Advice = unsandboxedAdvice()
 	}
@@ -270,15 +290,16 @@ func unsandboxedAdvice() string { return unsandboxedAdviceFor(runtime.GOOS) }
 // alone would leave the one message that matters most verified by nothing but a
 // cross-compile — which proves it parses, not that it says anything useful.
 func unsandboxedAdviceFor(goos string) string {
+	const optOut = " Or set GOHORT_ALLOW_UNSANDBOXED=1 to accept that shell tools run at this account's full privilege."
 	switch goos {
 	case "linux":
-		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)."
+		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)." + optOut
 	case "darwin":
 		return "macOS confinement uses sandbox-exec (Seatbelt), and this host either lacks it or it refused the probe profile — " +
 			"check the log for the refusal. Nothing can be installed to fix that; sandbox-exec ships with macOS or not at all. " +
-			"Either accept that shell tools run at this account's privilege, run them on a Linux peer, or set GOHORT_SANDBOX_REQUIRED=1 to refuse them."
+			"Either run shell tools on a Linux peer, or accept them unconfined." + optOut
 	default:
-		return "gohort has no sandbox backend for " + goos + "."
+		return "gohort has no sandbox backend for " + goos + "." + optOut
 	}
 }
 
@@ -288,17 +309,38 @@ func unsandboxedAdviceFor(goos string) string {
 // operator to install bubblewrap, which on macOS is an instruction to do
 // something impossible in order to fix something that was never going to work.
 func sandboxUnavailableErr() error {
-	return Error("sandbox required (GOHORT_SANDBOX_REQUIRED) but this host has none — refusing to run the tool unsandboxed. " +
-		unsandboxedAdvice() + " Or clear GOHORT_SANDBOX_REQUIRED to run unconfined.")
+	return Error("this host has no OS sandbox, and gohort refuses to run shell tools unconfined by default — the tool did not run. " +
+		unsandboxedAdvice())
 }
 
 var sandboxWarnOnce sync.Once
+var sandboxRefuseOnce sync.Once
+
+// warnRefusing logs the fail-closed refusal once per process.
+//
+// The refusal already reaches the LLM as a tool error, which is exactly the
+// wrong and only audience: the model paraphrases it into the conversation and
+// the operator — the one person who can fix it — never sees the sentence that
+// names the cause. An upgraded host with no bwrap goes from "everything works"
+// to "every shell tool fails" on one restart, and this is the log line that
+// explains why.
+func warnRefusing(what string) {
+	sandboxRefuseOnce.Do(func() {
+		nfo.Log("[sandbox] REFUSING: no OS sandbox on this host (%s) — %s are refused rather than run unconfined. %s",
+			runtime.GOOS, what, unsandboxedAdvice())
+	})
+}
 
 // warnUnsandboxed logs the degraded state once per process, naming what is
 // running unconfined.
+//
+// Reaching this now means somebody ASKED for it — confinement is required by
+// default, so the only way here is an explicit opt-out. The line says so,
+// because "no sandbox on this host" reads as an accident and this one isn't.
 func warnUnsandboxed(what string) {
 	sandboxWarnOnce.Do(func() {
-		nfo.Log("[sandbox] WARNING: no OS sandbox on this host (%s) — %s run with gohort user permissions. %s Set GOHORT_SANDBOX_REQUIRED=1 to refuse unsandboxed execution instead.",
+		nfo.Log("[sandbox] WARNING: no OS sandbox on this host (%s) and unsandboxed execution was explicitly permitted "+
+			"(GOHORT_ALLOW_UNSANDBOXED) — %s run with this account's full permissions. %s",
 			runtime.GOOS, what, unsandboxedAdvice())
 	})
 }

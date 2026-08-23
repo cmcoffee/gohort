@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ function draw() {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			probs, checked := htmlScriptSyntaxProblems(tc.html)
+			probs, checked := htmlScriptSyntaxProblems(context.Background(), tc.html)
 			if !checked {
 				t.Skip("sandbox could not reach node; no verdict")
 			}
@@ -82,7 +83,7 @@ function loop() {
 document.addEventListener('keydown', function(e) { if (e.code === 'Space') bird.y -= 40; });
 loop();
 </script></body></html>`
-	probs, checked := htmlScriptSyntaxProblems(html)
+	probs, checked := htmlScriptSyntaxProblems(context.Background(), html)
 	if !checked {
 		t.Skip("sandbox could not reach node; no verdict")
 	}
@@ -100,7 +101,7 @@ func TestHTMLScriptSyntaxSkipsNonJS(t *testing.T) {
 <script src="/some/where.js"></script>
 <script>var ok = 1;</script>
 </body></html>`
-	probs, checked := htmlScriptSyntaxProblems(html)
+	probs, checked := htmlScriptSyntaxProblems(context.Background(), html)
 	if !checked {
 		t.Skip("sandbox could not reach node; no verdict")
 	}
@@ -112,7 +113,7 @@ func TestHTMLScriptSyntaxSkipsNonJS(t *testing.T) {
 // TestHTMLScriptSyntaxNoScripts — a markup-only section has nothing to parse,
 // which is "no verdict", not "passed".
 func TestHTMLScriptSyntaxNoScripts(t *testing.T) {
-	if _, checked := htmlScriptSyntaxProblems("<div>just markup</div>"); checked {
+	if _, checked := htmlScriptSyntaxProblems(context.Background(), "<div>just markup</div>"); checked {
 		t.Error("a section with no inline script yields no verdict")
 	}
 }

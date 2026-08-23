@@ -56,16 +56,40 @@ Shell and script tools run under one of three backends, and the third one is not
   privilege.**
 
 Unconfined is a real, reachable state, not a theoretical one. Check which you are in at
-**Admin → System Status**, or call `GetSandboxStatus()`. To refuse rather than degrade, set:
+**Admin → System Status**, or call `GetSandboxStatus()`.
+
+**Confinement is required by default.** On a host with no working backend, shell and script
+tools are refused rather than run at the daemon's privilege — `run_local`, temp tools,
+persistent shells, response pipes, and event-monitor evaluator scripts all fail closed with
+an error naming the cause. To permit unconfined execution, say so explicitly:
 
 ```
-GOHORT_SANDBOX_REQUIRED=1
+GOHORT_ALLOW_UNSANDBOXED=off      # default — nothing runs unconfined, ever
+GOHORT_ALLOW_UNSANDBOXED=admin    # an admin's own runs may; everything else refused
+GOHORT_ALLOW_UNSANDBOXED=on       # anything may
 ```
 
-With that set, a tool that cannot be confined does not run. Without it, the deployment logs
-the degradation once and keeps working, because the alternative on a host with no sandbox is
-that no tool works at all. Which of those you want is a deployment decision, so it is yours
-to make rather than ours to assume.
+`admin` is the setting that makes an unconfinable host livable. It splits the two decisions
+that "allow unsandboxed" otherwise collapses — whether the deployment tolerates unconfined
+execution at all, and whether the caller is trusted to have it. An admin at the keyboard keeps
+their shell tools; agents, schedules, channel wakes, monitor evaluators, export generators and
+non-admin users stay fail-closed. That split is the point: the untrusted party is the model,
+not the operator.
+
+A run is "an admin's" only if it reaches exec through a session owned by an admin user. Nothing
+the model says can stamp it — anything with no known human behind it is not an admin. An
+unrecognized value is read as `off`, so a typo in this switch refuses rather than opens.
+
+This used to be the other way round: unconfined was the default and `GOHORT_SANDBOX_REQUIRED=1`
+was the opt-in to safety. The argument for that default was that a host with no backend would
+otherwise have no working shell tools at all, with nothing installable to fix it on macOS —
+which is true, and is not a reason to default open. The remedy was never "install something",
+it is "say you accept the risk", and that is one flag either way. Dangerous by default and
+safe on request is the wrong way round.
+
+`GOHORT_SANDBOX_REQUIRED` is still honored in both directions (`=0` is equivalent to the opt-out
+above), so a deployment carrying it keeps the behavior it asked for. If both are set
+contradictorily, confinement wins.
 
 ## Credentials
 
@@ -115,7 +139,8 @@ anything wider than localhost:
   crosses a capability boundary **is** in scope, and the distinction is the whole point.
 - An admin authoring a tool that does something dangerous on their own deployment.
 - Running unconfined on a host with no sandbox backend, when that state is reported
-  correctly and `GOHORT_SANDBOX_REQUIRED` is unset. A sandbox that silently reports
-  `Confined: true` while not confining is in scope.
+  correctly and the operator opted in with `GOHORT_ALLOW_UNSANDBOXED`. A sandbox that
+  silently reports `Confined: true` while not confining is in scope, and so is an
+  unconfined run on a host that opted into nothing.
 - Resource exhaustion from a schedule or agent the operator configured themselves.
 - Findings from a scanner with no working exploit against a supported configuration.

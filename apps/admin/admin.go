@@ -4971,13 +4971,24 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// reader most needs to notice looking exactly like one they do not.
 		"sandbox_status":   map[bool]string{true: "ok", false: "bad"}[sandbox.Confined],
 		"sandbox_required": sandbox.Required,
-		"sandbox_advice":   sandbox.Advice,
-		"tls_enabled":      TLSEnabled(),
-		"tls_self_signed":  TLSSelfSignedEnabled(),
-		"auth_enabled":     AuthHasUsers(a.db),
-		"user_count":       len(AuthListUsers(a.db)),
-		"active_sessions":  len(AllLiveSessions()),
-		"allow_signup":     allow_signup,
+		// Refusing is the state that changed meaning when confinement became
+		// the default: an unconfined host no longer runs shell tools anyway,
+		// it refuses them. Without this the panel says "confined: false" and
+		// an operator reasonably concludes their tools are running wide open,
+		// when in fact they are not running at all — opposite diagnoses, and
+		// opposite fixes.
+		"sandbox_refusing": sandbox.Refusing,
+		// Which of the three bypass settings is live. "required: false" alone
+		// cannot distinguish "everyone may run unconfined" from "admins may",
+		// and those are very different deployments.
+		"sandbox_bypass":  sandbox.Bypass,
+		"sandbox_advice":  sandbox.Advice,
+		"tls_enabled":     TLSEnabled(),
+		"tls_self_signed": TLSSelfSignedEnabled(),
+		"auth_enabled":    AuthHasUsers(a.db),
+		"user_count":      len(AuthListUsers(a.db)),
+		"active_sessions": len(AllLiveSessions()),
+		"allow_signup":    allow_signup,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)

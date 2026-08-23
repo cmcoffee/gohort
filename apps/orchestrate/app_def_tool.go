@@ -412,7 +412,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if raw, ok := args["sections"]; ok && raw != nil {
 		var scriptProblems []string
 		for i, html := range appHTMLSectionScripts(raw) {
-			probs, checked := htmlScriptSyntaxProblems(html)
+			probs, checked := htmlScriptSyntaxProblems(t.sandboxCallerCtx(), html)
 			if !checked {
 				continue // no verdict reachable — say nothing rather than accuse
 			}

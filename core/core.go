@@ -232,6 +232,8 @@ var (
 	RunSandboxedShellWithHookEnv = sandbox.RunSandboxedShellWithHookEnv
 	RunSandboxedScript           = sandbox.RunSandboxedScript
 	GetSandboxStatus             = sandbox.GetSandboxStatus
+	WithAdminCaller              = sandbox.WithAdminCaller
+	CallerIsAdmin                = sandbox.CallerIsAdmin
 )
 
 // hookServer adapts the broker to the two things the mechanics need of it. The

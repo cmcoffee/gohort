@@ -35,6 +35,13 @@ func injectShellTool(t *testing.T, sess *ToolSession, name, body string) *TempTo
 // `unsupported protocol scheme ""` on a script that had nothing to do with
 // HTTP. The author then edited command_template repeatedly trying to make
 // a python3 invocation parse as a URL.
+// scriptSyntaxCheckForTest exercises the checker with no session, which is
+// also the real shape of an unattended caller: no human behind it, so no admin
+// stamp. The checker's verdict must not depend on who asked.
+func scriptSyntaxCheckForTest(tt TempTool) (string, string, bool) {
+	return scriptSyntaxCheck(tt, nil)
+}
+
 func TestShellToolIsNotProbedAsHTTP(t *testing.T) {
 	sess := newTestSession()
 	injectShellTool(t, sess, "cal_create", "print('ok')\n")
@@ -137,7 +144,7 @@ func TestShellRunFailed(t *testing.T) {
 // TestScriptSyntaxCheckUnknownLanguage confirms an unrecognized script type
 // yields no verdict rather than a false syntax-error accusation.
 func TestScriptSyntaxCheckUnknownLanguage(t *testing.T) {
-	_, problem, checked := scriptSyntaxCheck(TempTool{
+	_, problem, checked := scriptSyntaxCheckForTest(TempTool{
 		ScriptName: "thing.zig", ScriptBody: "not a language we check",
 	})
 	if checked || problem != "" {
@@ -151,7 +158,7 @@ func TestScriptSyntaxCheckUnknownLanguage(t *testing.T) {
 // and nothing in the tool ever ran. Skips where the sandbox can't reach a
 // python3 to ask (the checker reports no verdict rather than guessing).
 func TestScriptSyntaxCheckCatchesUnterminatedString(t *testing.T) {
-	lang, problem, checked := scriptSyntaxCheck(TempTool{
+	lang, problem, checked := scriptSyntaxCheckForTest(TempTool{
 		ScriptName: "cal.py",
 		ScriptBody: "ical = ''\nical += f\"DESCRIPTION:{description}\nprint(ical)\n",
 	})
@@ -166,7 +173,7 @@ func TestScriptSyntaxCheckCatchesUnterminatedString(t *testing.T) {
 // TestScriptSyntaxCheckPassesValidScript confirms a clean script is not
 // accused of a syntax error.
 func TestScriptSyntaxCheckPassesValidScript(t *testing.T) {
-	lang, problem, checked := scriptSyntaxCheck(TempTool{
+	lang, problem, checked := scriptSyntaxCheckForTest(TempTool{
 		ScriptName: "ok.py",
 		ScriptBody: "import os\nprint(os.environ.get('summary', ''))\n",
 	})

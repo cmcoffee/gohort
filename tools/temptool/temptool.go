@@ -1759,6 +1759,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// applies --unshare-net when the calling turn is in private
 	// mode. No-op when sess has no connector.
 	ctx = sess.ContextWithNetworkConnector(ctx)
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	// Tool-level network policy: shell-mode tools default to
 	// --unshare-net regardless of session policy. Raw network is
 	// granted only when the tool record explicitly opts in with

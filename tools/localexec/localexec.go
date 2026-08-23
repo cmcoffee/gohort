@@ -87,6 +87,9 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// Wrap with the session's network connector first so Private
 	// mode (allowed=false) is still honored if it's already on.
 	ctx = sess.ContextWithNetworkConnector(ctx)
+	// Who is behind this run, for the "admin only" unsandboxed bypass. No-op
+	// unless the host cannot confine AND the deployment chose that setting.
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	// Strict-net policy for localexec: iterate-and-test scripts get
 	// --unshare-net the same way persisted shell-mode tools do. The
 	// LLM uses local(run) to test logic; "test" should match what

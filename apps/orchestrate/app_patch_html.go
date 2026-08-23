@@ -86,7 +86,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, idx int, prior, next, summary, verb, reason string) (string, error) {
 	sections[idx]["html"] = next
 
-	if problems, checked := htmlScriptSyntaxProblems(next); checked && len(problems) > 0 {
+	if problems, checked := htmlScriptSyntaxProblems(t.sandboxCallerCtx(), next); checked && len(problems) > 0 {
 		return "", fmt.Errorf("that %s would break the page's JavaScript, so it was NOT applied — the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, strings.Join(problems, "\n- "))
 	}
 	if broke := jsNewDanglingCalls(prior, next); len(broke) > 0 {

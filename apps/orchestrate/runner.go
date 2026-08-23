@@ -1906,6 +1906,22 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	}
 }
 
+// sandboxCallerCtx is this turn's context for a sandboxed run started OUTSIDE
+// a tool session — the app-authoring syntax checks, which run node over the
+// user's own draft rather than anything the model asked to execute.
+//
+// It exists because those checks previously built their context from
+// Background and so arrived at the sandbox anonymous. On a host that cannot
+// confine, with the bypass set to admin-only, that made the checker refuse for
+// the one person entitled to run it, and report "no verdict" — the checker
+// meant to catch a typo silently declining to look.
+func (t *chatTurn) sandboxCallerCtx() context.Context {
+	if t == nil {
+		return context.Background()
+	}
+	return ContextWithSandboxUser(context.Background(), t.user)
+}
+
 // detachLedger is the turn's one background-job ledger. See chatTurn.detach.
 func (t *chatTurn) detachLedger() *DetachLedger {
 	t.detachOnce.Do(func() { t.detach = NewDetachLedger() })
