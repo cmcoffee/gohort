@@ -890,17 +890,6 @@ func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
 	return SkillTriggerHintBlock(names)
 }
 
-// renderAvailableSkillsBlock produces the "Available skills" section —
-// every skill the agent can reach (via AllowedSkills), which the LLM
-// draws on via read_skill / skill_knowledge_search / skill_knowledge_fetch_doc.
-// Empty when DisableSkills, no allowlist, or no allowed skill.
-func (t *chatTurn) renderAvailableSkillsBlock() string {
-	if t == nil {
-		return ""
-	}
-	return availableSkillsBlock(t.agent, t.udb, t.user)
-}
-
 // availableSkillsBlock is the chatTurn-free form so the shared capability
 // assembler (used by BOTH the web and channel/dispatch paths) can render it
 // without a chatTurn. See appendAgentCapabilityBlocks.

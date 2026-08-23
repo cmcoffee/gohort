@@ -163,3 +163,48 @@ func TestDispatchContextBlocksSkipFleetForOwnedSubAgent(t *testing.T) {
 		t.Error("an owned sub-agent must not get the fleet block")
 	}
 }
+
+// Comparing the two dispatch paths' heading SETS cannot catch a block that both
+// paths emit twice — the sets still match. This counts instead.
+//
+// The skills catalog was appended in two places: dispatchContextBlocks, and
+// appendAgentCapabilityBlocks (which dispatchSystemPrompt calls after splicing
+// the first one in). Same pure function, same arguments, so every dispatch,
+// channel and scheduled prompt for a skills-enabled agent carried the whole
+// catalog twice. The web turn had already been changed to rely on the assembler
+// owning it — "do NOT re-append here or it doubles" — and the dispatch side
+// re-appended anyway.
+func TestDispatchPromptEmitsEachBlockOnce(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	if _, err := SaveSkill(udb, "u", SkillRecord{ID: "sk1", Name: "Deep Research", Description: "how to research"}); err != nil {
+		t.Fatalf("save skill: %v", err)
+	}
+	peer, err := saveAgent(udb, AgentRecord{Name: "Peer", Owner: "u", Description: "a peer", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save peer: %v", err)
+	}
+	_ = peer
+	target, err := saveAgent(udb, AgentRecord{
+		Name: "Specialist", Owner: "u", Description: "knows things",
+		OrchestratorPrompt: "persona", AllowedSkills: []string{"sk1"},
+	})
+	if err != nil {
+		t.Fatalf("save target: %v", err)
+	}
+
+	turn := &chatTurn{user: "u", udb: udb, agent: target}
+	prompt := dispatchSystemPrompt(target, nil, turn.dispatchContextBlocks(), "", "chan:1", udb, "u")
+
+	for _, heading := range []string{"## Available skills", "## Available agents"} {
+		if n := strings.Count(prompt, heading); n > 1 {
+			t.Errorf("%q appears %d times in one dispatch prompt; every block must be emitted once", heading, n)
+		}
+	}
+	// The skills block must still be PRESENT — the fix removes a duplicate, not
+	// the capability. A dispatched agent that cannot see its skills hallucinates
+	// that the tools behind them are unavailable.
+	if !strings.Contains(prompt, "## Available skills") {
+		t.Error("the dispatch prompt lost the skills block entirely")
+	}
+}

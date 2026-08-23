@@ -484,15 +484,15 @@ func (t *chatTurn) dispatchContextBlocks() string {
 	if t.agent.OwnedBy == "" {
 		block = t.renderAvailableAgentsBlock()
 	}
-	// "Available skills" — same parity issue as agents. The dispatch path adds
-	// activate_skill to the tool catalog when the agent has skills enabled, but
-	// without this block the LLM has no idea which skills it can invoke. That
-	// bit a phantom-dispatched agent whose network capability came via a Skill's
-	// AllowedTools: the LLM "knew" it had activate_skill but couldn't see
-	// fetch_url was reachable through it, so it hallucinated that the network
-	// was unavailable. Always emit alongside activate_skill so the tool and its
-	// catalog stay in sync.
-	block += t.renderAvailableSkillsBlock()
+	// NO "Available skills" here. It reaches a dispatched agent through
+	// appendAgentCapabilityBlocks, which dispatchSystemPrompt calls after
+	// splicing in this block — the shared capability assembler owns it for every
+	// surface, which is exactly what the web turn's runPlan was changed to rely
+	// on ("do NOT re-append here or it doubles", runner.go). Appending it here
+	// too shipped the whole skills catalog TWICE in every dispatch, channel and
+	// scheduled prompt. The chatTurn wrapper that made that easy is gone; the
+	// only renderer left is availableSkillsBlock, and only the assembler calls it.
+	//
 	// "Known topics" — surfaces the (user, agent) topic accumulator so
 	// memory_save / memory_search reuse existing snake_case slugs instead of
 	// minting near-duplicates. Cheap to add; matches what the direct path does.
