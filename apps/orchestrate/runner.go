@@ -931,7 +931,17 @@ func IsFrameworkToolDef(td AgentToolDef) bool {
 // though session/memory/facts stay scoped to the runtime user. On
 // interactive owner-runs where the fields are unset, falls back to
 // udb / user — same behavior as before this split.
-func (t *chatTurn) fleetView() (Database, string) {
+func (t *chatTurn) fleetView() (Database, string) { return t.ownerView() }
+
+// ownerView is the store that owns the AGENT — its record, its fleet peers, and
+// the custom-tool pool its AllowedTools names. Falls back to the runtime
+// identity, which is the same thing on an ordinary owner-driven turn.
+//
+// The distinction only bites when the two differ: a phantom/channel run under a
+// synthetic per-chat user, or a PUBLISHED agent being chatted by someone who is
+// not its author. In both cases sessions, memory and knowledge belong to the
+// runtime user and everything describing the agent belongs to the owner.
+func (t *chatTurn) ownerView() (Database, string) {
 	if t == nil {
 		return nil, ""
 	}
@@ -2066,7 +2076,16 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// Custom (temp) tools — persistent pool (this user) + the agent-scoped kit.
 	// Shared with the channel/dispatch path via loadAgentTempTools so both
 	// surfaces hydrate identically.
-	t.loadAgentTempTools(sess, sess.Username, sess.DB)
+	// The OWNER's pool, not the runtime user's. loadAgentTempTools says so in
+	// its own contract — "drawn from poolUser/poolDB — the AGENT OWNER, so a
+	// channel/dispatch run under a synthetic runtime user still gets the owner's
+	// tools" — and the dispatch path honours it. This one passed the session's
+	// identity flat, so a PUBLISHED agent chatted by anyone but its author
+	// resolved its AllowedTools against a store holding none of them: the tools
+	// silently vanished while the prompt still claimed the capabilities. On an
+	// owner-driven turn ownerView returns the same pair this used to pass.
+	poolDB, poolUser := t.ownerView()
+	t.loadAgentTempTools(sess, poolUser, poolDB)
 	// Session-scoped tool drafts — the LLM authored these in THIS
 	// conversation (e.g. for_agent-attached pipeline + bundled inline
 	// tools from create_agent). Load them so the LLM can dispatch by
@@ -5100,6 +5119,17 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// calls — see core/prompt_prefix_watch.go.
 	ctx = WithPromptTurn(ctx, "agent="+agent.ID+" session="+sess.ID)
 
+	// A PUBLISHED agent can be chatted by someone who is not its author. The
+	// record, and the custom-tool pool its AllowedTools names, live in the
+	// AUTHOR's store; sessions, memory and knowledge stay with whoever is
+	// typing. Without this the agent ran against the visitor's store, found none
+	// of its own tools, and said nothing about it. Unset on an ordinary turn,
+	// where the two identities are the same and ownerView falls back.
+	var ownerUDB Database
+	ownerUser := ""
+	if agent.Owner != "" && agent.Owner != user {
+		ownerUser, ownerUDB = agent.Owner, UserDB(T.DB, agent.Owner)
+	}
 	turn := &chatTurn{
 		app:         T,
 		ctx:         ctx,
@@ -5107,6 +5137,8 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		udb:         udb,
 		user:        user,
 		agent:       agent,
+		ownerUser:   ownerUser,
+		ownerDB:     ownerUDB,
 		queue:       queue,
 		session:     &sess,
 		privateMode: privateMode,
