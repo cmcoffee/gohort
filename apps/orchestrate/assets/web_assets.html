@@ -1103,6 +1103,19 @@
       editor.addEventListener('click', function() {
         window.location.href = 'agent/' + encodeURIComponent(agentID);
       });
+      // A card the owner already settled comes back as a RECORD of what was
+      // decided, not a live form. Without this the same card replayed with its
+      // controls armed on every session load — the grant reading as though it
+      // were still an open question days after it was answered.
+      if (d.resolved) {
+        sub.textContent = String(d.resolved);
+        wrap.classList.add('resolved');
+        rows.querySelectorAll('select').forEach(function(el2) { el2.disabled = true; });
+        wrap.querySelectorAll('input[type=checkbox]').forEach(function(el2) { el2.disabled = true; });
+        apply.remove();
+        return {wrap: wrap, body: null};
+      }
+
       apply.addEventListener('click', function() {
         var hasTools = Object.keys(toolEdits).length, hasFlags = Object.keys(flagEdits).length;
         if (!hasTools && !hasFlags) { note.textContent = 'Nothing changed.'; return; }
@@ -1117,6 +1130,9 @@
           note.textContent = 'Saved.';
           toolEdits = {}; flagEdits = {};
           apply.disabled = false;
+          // Settle it on the stored block too, so reopening this session
+          // shows what was granted rather than re-asking for it.
+          window.uiResolveBlock(d.id, 'Applied — permissions saved for "' + name + '".');
         }).catch(function(err) {
           apply.disabled = false;
           note.textContent = '';

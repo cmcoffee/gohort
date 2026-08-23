@@ -426,6 +426,9 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// being served — the stored record is left alone so a re-drafted
 		// credential gets a live card again.
 		s.UIBlocks = settleResolvedBlocks(s.UIBlocks, user)
+		// A card that VIEWS live permissions must not replay an authoring-time
+		// snapshot of them (see refreshPrivilegeBlocks).
+		s.UIBlocks = refreshPrivilegeBlocks(udb, s.UIBlocks)
 		s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
 		// Only the tail is rendered. Blocks and plans are session-level and
 		// ride along whole — they are not indexed by message, so trimming

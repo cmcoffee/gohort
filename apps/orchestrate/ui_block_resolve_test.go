@@ -143,3 +143,78 @@ func TestSettleResolvedBlocksKeepsStoredAnswer(t *testing.T) {
 		t.Fatalf("stored answer overwritten: %q", blocks[0].Resolved)
 	}
 }
+
+// The privilege card's own bug: its rows are serialized into Data when an
+// authoring tool saves the agent, and nothing ever refreshed them. Permissions
+// kept changing (the card's Apply, the Permissions pane, the agent editor) and
+// the replayed card kept showing the authoring-time answer, with an Apply
+// button that would write it all back.
+
+func privBlock(agentID, toolsJSON string) UIBlock {
+	return UIBlock{Type: "privilege_grant", ID: "privileges-" + agentID, Title: "A",
+		Data: map[string]string{"agent_id": agentID, "tools": toolsJSON, "flags": "[]"}}
+}
+
+func TestRefreshPrivilegeBlocksTracksLivePolicy(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if _, err := saveAgent(db, AgentRecord{ID: "a1", Owner: "u", Name: "A",
+		OrchestratorPrompt: "p", AutoApproveTools: []string{"send_message"}}); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	// Snapshot says both still need asking; the record says send_message was
+	// since allowed and call_x was since revoked.
+	blocks := refreshPrivilegeBlocks(db, []UIBlock{privBlock("a1",
+		`[{"name":"send_message","detail":"d","policy":"ask"},`+
+			`{"name":"call_x","detail":"d","policy":"allow"},`+
+			`{"name":"read_file","detail":"d","policy":"auto"}]`)})
+	got := blocks[0].Data["tools"]
+	for _, want := range []string{`"name":"send_message","detail":"d","policy":"allow"`,
+		`"name":"call_x","detail":"d","policy":"ask"`,
+		`"name":"read_file","detail":"d","policy":"auto"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("refreshed rows missing %q in %s", want, got)
+		}
+	}
+}
+
+// A capability toggle drawn from the snapshot is the same lie in checkbox form.
+func TestRefreshPrivilegeBlocksTracksLiveFlags(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if _, err := saveAgent(db, AgentRecord{ID: "a1", Owner: "u", Name: "A",
+		OrchestratorPrompt: "p", Fleet: true}); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	b := privBlock("a1", "[]")
+	b.Data["flags"] = `[{"field":"fleet","label":"Conductor tools","on":false}]`
+	blocks := refreshPrivilegeBlocks(db, []UIBlock{b})
+	if !strings.Contains(blocks[0].Data["flags"], `"field":"fleet","label":"Conductor tools (schedule, monitors, delegate)","on":true`) {
+		t.Fatalf("flags not refreshed from the record: %s", blocks[0].Data["flags"])
+	}
+}
+
+// A card whose agent is gone must not offer controls that 404 on click.
+func TestRefreshPrivilegeBlocksSettlesDeletedAgent(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	blocks := refreshPrivilegeBlocks(db, []UIBlock{privBlock("gone", "[]")})
+	if blocks[0].Resolved == "" {
+		t.Fatal("a card for a deleted agent should settle, not stay actionable")
+	}
+}
+
+// An answered card is the user's decision; refreshing must not re-arm it.
+func TestRefreshPrivilegeBlocksLeavesAnsweredCards(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if _, err := saveAgent(db, AgentRecord{ID: "a1", Owner: "u", Name: "A",
+		OrchestratorPrompt: "p", AutoApproveTools: []string{"send_message"}}); err != nil {
+		t.Fatalf("save agent: %v", err)
+	}
+	b := privBlock("a1", `[{"name":"send_message","detail":"d","policy":"ask"}]`)
+	b.Resolved = "Applied — permissions saved."
+	blocks := refreshPrivilegeBlocks(db, []UIBlock{b})
+	if blocks[0].Resolved != "Applied — permissions saved." {
+		t.Fatalf("stamp lost: %q", blocks[0].Resolved)
+	}
+	if !strings.Contains(blocks[0].Data["tools"], `"policy":"ask"`) {
+		t.Fatalf("a settled card should be left alone: %s", blocks[0].Data["tools"])
+	}
+}

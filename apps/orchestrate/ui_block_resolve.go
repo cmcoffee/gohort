@@ -134,3 +134,69 @@ func settleResolvedBlocks(blocks []UIBlock, owner string) []UIBlock {
 	}
 	return blocks
 }
+
+// Refreshing a card that VIEWS live state, instead of replaying a snapshot.
+//
+// A privilege_grant block is persisted with its rows serialized into Data at
+// the moment an authoring tool saved the agent. Everything else about that
+// agent's permissions kept moving — the card's own Apply, the Permissions pane,
+// the agent editor — and the block never did. So opening the session a day
+// later replayed the authoring-time answer as though it were the current one:
+// tools shown as "ask" that had since been allowed, capability toggles drawn
+// unchecked that were on, and an Apply button that would write all of it back.
+//
+// The card is a VIEW (see privilege_card.go), so the fix is to make the served
+// copy tell the truth rather than to stop serving it. Policy is re-derived from
+// the live AutoApproveTools and the flags are recomputed from the live record —
+// both from the record in hand, with no registry lookups, so a session load
+// pays nothing for it. The stored block is left alone.
+//
+// Consequential-ness is NOT re-derived: whether a tool would stop and ask is
+// the authoring-time classification (it needs a ToolSession this path does not
+// have), so a row that ran freely then still reads "runs freely" now. The
+// EDITABLE half — which is the half that goes stale and the half Apply writes —
+// is exactly what gets refreshed.
+func refreshPrivilegeBlocks(udb Database, blocks []UIBlock) []UIBlock {
+	for i := range blocks {
+		b := &blocks[i]
+		if b.Resolved != "" || b.Type != "privilege_grant" {
+			continue
+		}
+		agentID := strings.TrimSpace(b.Data["agent_id"])
+		if agentID == "" {
+			continue
+		}
+		rec, ok := loadAgent(udb, agentID)
+		if !ok {
+			// Nothing left to grant. Settling rather than hiding keeps the
+			// record of what was once decided here, without controls that
+			// would 404 on click.
+			b.Resolved = "This agent no longer exists — nothing to grant."
+			continue
+		}
+		approved := map[string]bool{}
+		for _, t := range rec.AutoApproveTools {
+			approved[strings.TrimSpace(t)] = true
+		}
+		var tools []privilegeGrant
+		if json.Unmarshal([]byte(b.Data["tools"]), &tools) == nil {
+			for j := range tools {
+				if tools[j].Policy == "auto" {
+					continue // not editable; nothing to re-derive
+				}
+				if approved[strings.TrimSpace(tools[j].Name)] {
+					tools[j].Policy = "allow"
+				} else {
+					tools[j].Policy = "ask"
+				}
+			}
+			if enc, err := json.Marshal(tools); err == nil {
+				b.Data["tools"] = string(enc)
+			}
+		}
+		if enc, err := json.Marshal(privilegeFlagRows(rec)); err == nil {
+			b.Data["flags"] = string(enc)
+		}
+	}
+	return blocks
+}
