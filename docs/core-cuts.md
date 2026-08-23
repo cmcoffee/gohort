@@ -4,8 +4,11 @@ Status: measured 2026-08-22 against v0.6.337. Re-run it with
 `go run ./scripts/cutmap core <prefix>` rather than trusting these numbers after
 the package has moved on.
 
-Package `core` is 169 source files, 86,163 lines and 3,613 exported symbols, dot-imported
-by 548 files. It was 111 files / 60,540 lines on 2026-08-06, so it has taken on 58 files
+Package `core` is 166 source files, 84,657 lines and 2,109 exported top-level symbols,
+dot-imported by 548 files. (An earlier draft of this page said 3,613, from a grep that
+counted methods. Methods hang off a type and are not what collides; the number that matters
+for a dot-import is funcs, types, vars and consts, and `TestCoreStaysUnderItsCeiling` counts
+it by parsing rather than grepping for exactly this reason.) It was 111 files / 60,540 lines on 2026-08-06, so it has taken on 58 files
 and 25,600 lines in sixteen days with nothing removed. The earlier extraction project
 (`project_core_modularization`) cut 144 → 111 over weeks; that was undone in about a week.
 
@@ -62,13 +65,26 @@ The internal structure rules out a smaller bite: the wire (`peer_key`, `peer_tok
 symbols from the wire, and the wire calls back into `peer_remote`, `peer_models` and
 `peer_investigate`. It is one package or none.
 
+## The ceiling test
+
+`core/ceiling_test.go` (v0.6.341) fails the build when package `core` passes its file or
+exported-symbol count, and — the half that keeps it honest — when it drops meaningfully
+below and the number was not lowered. The failure names the three answers in order: put it
+in a subpackage, unexport what nobody outside needs, or raise the number in the same commit
+and say why. All three are legitimate; none of them is silent.
+
+The file count is a hard ratchet, because one new file in the hub is exactly the decision
+this exists to catch. The export count carries a small band, because a file here
+legitimately grows a helper or two during ordinary work and a test that fails on that gets
+raised reflexively until it means nothing.
+
 ## The rate, not the size
 
-Any single extraction buys back about a week at the current rate. Nothing today makes adding
-a fourteenth `peer_` file to core a decision rather than the default — the hub is where
-`AppCore` and the shared vocabulary live, so that is where everything lands. A ceiling test
-(fail the build when package `core` passes N files or M exported symbols) turns the drift
-into a prompt at the moment someone is choosing, which is the only point where it is cheap.
+Any single extraction buys back about a week at the current rate. Nothing MADE adding a
+fourteenth `peer_` file to core a decision rather than the default — the hub is where
+`AppCore` and the shared vocabulary live, so that is where everything lands. That is what
+the ceiling test above is for: it does not judge whether a file belongs here, it makes
+putting one here something a person has to type a number for.
 
 ## What the sandbox cut actually looked like (v0.6.339)
 
