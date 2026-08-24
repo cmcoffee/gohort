@@ -829,14 +829,22 @@ func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 		for _, grp := range ReferenceGroups(user) {
 			for _, it := range grp.Items {
 				items = append(items, map[string]string{
-					"id": grp.Kind + "::" + it.ID, "name": it.Name, "desc": it.Desc, "group": grp.Label,
+					// ReferenceSelection.Ref(), NOT a hand-rolled join. This built
+					// "kind::item" while core emits "kind:item", so the two
+					// pickers put different strings on the wire for the same
+					// source. Harmless only because ParseReferenceRef tolerates
+					// both spellings — which is exactly what kept it invisible,
+					// and what would have let any future change to Ref()
+					// (escaping, a third component) reach one picker and not
+					// the other.
+					"id": ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(), "name": it.Name, "desc": it.Desc, "group": grp.Label,
 				})
 			}
 		}
 		attached := []string{}
 		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok {
 			for _, s := range g.References {
-				attached = append(attached, s.Kind+"::"+s.ItemID)
+				attached = append(attached, s.Ref())
 			}
 		}
 		writeJSON(w, map[string]any{"items": items, "attached": attached})

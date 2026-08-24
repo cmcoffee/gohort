@@ -68,11 +68,25 @@ func (a *AdminApp) handleToolGroupSuggest(w http.ResponseWriter, r *http.Request
 
 	// Side-fill mode: when the user clicks ✨ on description and the
 	// name is still empty, ask the LLM for BOTH in one structured
-	// call. The framework's runFieldSuggest applies the primary
-	// `value` to the field that was clicked and any `extra.name`
-	// through the same setter, so a single click lands a complete
-	// record. Naming the group is partly the LLM's call anyway —
-	// it'll be the one referencing the group by name later.
+	// call. Naming the group is partly the LLM's call anyway — it'll be the one
+	// referencing the group by name later.
+	//
+	// UNREACHABLE TODAY, and left in deliberately rather than deleted or wired,
+	// because making it work is a feature decision and not a bug fix. Two
+	// separate reasons it cannot fire:
+	//
+	//  1. Nothing calls this endpoint. The Categories editor's `name` and
+	//     `description` fields carry no SuggestURL (apps/admin/page.go), so the
+	//     ✨ control this branch describes is not on the form. handleToolGroup-
+	//     AutoCreate has no caller anywhere in Go, JS or HTML either.
+	//  2. Even wired, the side-fill would be discarded. `description` is a
+	//     textarea, and runFieldSuggest routes textareas to the ASSIST branch,
+	//     which returns {reply, value} and drops `extra` — the `extra` handling
+	//     lives only in the other branch.
+	//
+	// So `out["extra"]` below has no consumer on any reachable path. The comment
+	// this replaces asserted the opposite, in the present tense, which is how a
+	// reader came to believe the one-click-complete-record behaviour existed.
 	wantsBoth := req.Field == "description" && emptyRecordField(req.Record, "name")
 
 	ctx, cancel := context.WithTimeout(r.Context(), toolGroupSuggestTimeout())

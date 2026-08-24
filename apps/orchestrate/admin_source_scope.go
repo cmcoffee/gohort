@@ -122,7 +122,11 @@ func sourceScopeState(db Database, owner, name string) (ToolScopeState, bool) {
 		// the pill surfaces unless they already hold an explicit grant.
 		// Both rules copied from the pipeline plane so the three planes
 		// offer the same set of targets.
-		if isAppAgent(a.ID) {
+		// isCloneOnlySeed too, matching the tool plane. seed-kb is a live seed
+		// record that listAgents returns, so without this it was offered as a
+		// scope target on two planes of three — a grant made, or kept visible,
+		// on a template that is never runnable.
+		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
 			continue
 		}
 		if (isSeedID(a.ID) || a.Owner == seedOwner) && !holds {
