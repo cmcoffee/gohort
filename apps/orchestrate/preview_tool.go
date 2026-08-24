@@ -49,9 +49,15 @@ func (s *ChatSession) upsert_ui_block(blk UIBlock, same_surface func(*UIBlock) b
 }
 
 // showHTMLToolDef builds the per-turn show_html tool. Framework display
-// tool — always in the catalog (like compact_context): it has no side
-// effects beyond the user's own screen and session record, so it isn't
-// gated on AllowedTools, capabilities, or private mode.
+// tool: it has no side effects beyond the user's own screen and session
+// record, so it isn't gated on AllowedTools, capabilities, or private mode.
+//
+// "Always in the catalog" is what this used to claim, and it is not true — it
+// is mounted by the WEB turn only. That is deliberate rather than an oversight:
+// the handler renders through t.sse, and a dispatched or channel sub-turn has
+// no live pane to render into. sseWriter.Send is nil-safe, so mounting it there
+// would hand the model a tool that silently succeeds and shows nobody
+// anything. A display tool needs a display.
 func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
@@ -194,7 +200,9 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 // "go to /custom/myapp/" leaves the user copy-pasting a path; this drops
 // a card with a real Open button instead. Same framework-display-tool
 // posture as show_html: no side effects beyond the user's screen and
-// session record, so it's always in the catalog, ungated. Emits a
+// session record, so it's ungated — and, like show_html, mounted on the WEB
+// turn only, because it renders through t.sse and a sub-turn has no pane to
+// render into. Emits a
 // generic {kind:"block", type:"link_hint"} SSE event (renderer in
 // core/ui's prelude) and persists as a UIBlock so it replays on reload.
 func (t *chatTurn) showLinkToolDef() AgentToolDef {

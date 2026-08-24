@@ -6137,6 +6137,17 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	if t.hasMachineExit() {
 		out = append(out, t.changePhaseToolDef()) // way out of a resident phase (machine.go)
 	}
+	// The appeal channel belongs here, not in the web caller. Guardrails are
+	// enforced on the dispatch path too (subTurn.guardrailEnforcer), and a
+	// contestable block there appends "you may say so ONCE by calling
+	// guardrail_appeal" — so a dispatched agent was invited to call a tool its
+	// catalog did not contain, which is an invitation to improvise instead of
+	// report. Same gate the web turn used, so no agent gains a schema it could
+	// never use; the def also self-gates at call time, refusing unless a block
+	// is actually pending.
+	if agentHasContestableRule(t.agent) {
+		out = append(out, t.guardrailAppealToolDef())
+	}
 	out = append(out, t.loadToolToolDef(sess)) // gateway for the agent's lazy custom tools
 	out = append(out, t.skillToolDefs()...)    // read_skill / skill_knowledge_*; nil when skills off
 	if unifiedMemoryEnabled() {
@@ -6939,9 +6950,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// The appeal channel, only for agents that actually have a rule worth
 	// appealing. Mounting it everywhere would put a tool about guardrails in
 	// front of agents that have none, which is both noise and a hint.
-	if agentHasContestableRule(t.agent) {
-		knowTools = append(knowTools, t.guardrailAppealToolDef())
-	}
 	if agentCanAuthor(t.agent) {
 		knowTools = append(knowTools,
 			t.presentBuildPlanToolDef(),

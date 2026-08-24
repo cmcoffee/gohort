@@ -19,19 +19,47 @@ package orchestrate
 
 import . "github.com/cmcoffee/gohort/core"
 
-// phantomInheritableToolDefs returns the OWNER-SAFE phantom tools an inheriting
-// sub-agent / dispatched Builder may use: the read-only ones (list_phantom_chats,
-// read_phantom_chat) PLUS notify_me, which only ever texts the OWNER (no
-// approval, no third party) — so a scheduled summarizer can deliver its result
-// to the user's phone. The genuinely consequential phantom tools that reach
-// OTHER people (message_contact, converse_with_contact) are NOT inheritable.
-// Reuses operatorManagementTools as the canonical source (same pattern the
-// watch-tool invoker uses in operator_wake.go) so the closures can't drift.
-func phantomInheritableToolDefs(sess *ToolSession, agentID string) []AgentToolDef {
+// phantomInheritableToolDefs returns the OWNER-SAFE tools an inheriting
+// sub-agent / dispatched Builder may use: the read-only chat pair (list_chats,
+// read_chat) PLUS notify_me, which only ever texts the OWNER (no approval, no
+// third party) — so a scheduled summarizer can deliver its result to the user's
+// phone. The genuinely consequential tools that reach OTHER people
+// (send_message, message_contact, converse_with_contact) are NOT inheritable.
+//
+// TWO sources, which is the bug this carried for a long time. notify_me comes
+// from operatorManagementTools; the chat readers come from channelChatTools.
+// The old filter matched all three names against operatorManagementTools alone,
+// which builds 18 tools and neither reader is among them — so it returned
+// notify_me by itself and "a Builder-authored summarizer can read the chat it
+// summarizes", the stated purpose of this file, never once worked through
+// inheritance. operator_wake.go, cited here as "the same pattern", does the
+// second lookup this was missing and says why: without it the watch fails
+// "read_chat is not registered".
+//
+// It also named the readers list_phantom_chats / read_phantom_chat, which are
+// not tool names anywhere in the tree — only in comments like this one. They
+// are list_chats and read_chat.
+func phantomInheritableToolDefs(sess *ToolSession, owner, agentID string) []AgentToolDef {
 	var out []AgentToolDef
 	for _, td := range operatorManagementTools(sess, agentID) {
+		if td.Tool.Name == "notify_me" {
+			out = append(out, td)
+		}
+	}
+	// The chat readers come from channelChatTools, NOT from
+	// operatorManagementTools — which builds 18 tools and neither of these is
+	// among them. The old filter matched all three names against that one set,
+	// so it returned notify_me alone and the read-the-chat half of this
+	// function's whole purpose never fired. operator_wake.go, cited above as
+	// "the same pattern", does the second lookup this was missing.
+	//
+	// Scoped to the agent's own channels, and read-only by construction:
+	// channelChatTools returns list_chats / read_chat / send_message, and the
+	// sender is dropped here. An inheriting sub-agent may READ the chat it was
+	// built to summarize; reaching other people stays with the parent.
+	for _, td := range channelChatTools(sess, owner, agentID) {
 		switch td.Tool.Name {
-		case "list_chats", "read_chat", "notify_me":
+		case "list_chats", "read_chat":
 			out = append(out, td)
 		}
 	}
@@ -59,7 +87,11 @@ func (t *chatTurn) inheritableParentTools(parent AgentRecord, sess *ToolSession)
 	if err != nil {
 		tools = nil
 	}
-	tools = append(tools, phantomInheritableToolDefs(sess, parent.ID)...)
+	// The OWNER's identity, not the runtime one: a phantom/channel run has a
+	// synthetic per-chat user whose store holds neither the parent's channels
+	// nor its tools, and the parent's chat is the thing being inherited.
+	_, ownerUser := t.ownerView()
+	tools = append(tools, phantomInheritableToolDefs(sess, ownerUser, parent.ID)...)
 	return tools
 }
 

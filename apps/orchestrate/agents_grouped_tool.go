@@ -1046,10 +1046,17 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// is the SAME assembly the channel/dispatch path uses, so an inline
 	// agents(run) sub-agent sees the identical surface (this is the path that
 	// previously had neither the full framework set nor any custom tools) and the
-	// two sub-agent surfaces can't drift. Parent + sub-agent share the user/db, so
-	// the custom-tool pool owner is the caller's user.
+	// two sub-agent surfaces can't drift.
+	//
+	// The pool is the OWNER's, via ownerView. This used to pass t.user/t.udb
+	// flat under a comment asserting "parent + sub-agent share the user/db" —
+	// false on exactly the runs the pool parameter exists for. On a phantom or
+	// channel run the runtime identity is a synthetic per-chat user whose store
+	// holds no custom tools, so the sub-agent got an empty pool while the same
+	// target reached by external dispatch got the real one.
 	subTurn.intentText = msg // Tier-1 tool elevation matches against the dispatch brief
-	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, t.user, t.udb)
+	poolDB, poolUser := subTurn.ownerView()
+	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
 	tools = append(tools, dispatchExtra...)
 	// Parent-tool inheritance on the DISPATCH path (this resolves tools directly,
 	// not via resolveWorkerTools, so the runtime block there wouldn't fire here).
