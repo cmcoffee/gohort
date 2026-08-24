@@ -762,14 +762,41 @@ func isResolvableToolName(db Database, owner, name string) bool {
 // records. Owner must be set by the caller. Seed-IDs are written
 // under the same ID as user-owned shadow records (no forking) — this
 // is what makes "Edit a seed, then Revert" work.
-// NOTE for a new caller: saveAgent writes the record it is handed, Locked
-// included. The "Locked is owned by the lock icon" rule is enforced by the
-// three HTTP save paths, which read the stored value back before calling here —
-// not by this function. A path that builds a record and calls saveAgent
-// directly will clear a lock an admin set, silently.
+// saveAgent writes an agent record, PRESERVING the stored Locked flag.
+//
+// Locked is the human's lock icon and belongs to handleAgentLock alone. That
+// rule used to be enforced by each HTTP save path reading the stored value back
+// before calling here — three places, correct in all three, and structurally
+// unable to cover a fourth. A path that built a record and called saveAgent
+// directly cleared an admin's lock with no error and no log, which is the worst
+// shape a permission bug takes.
+//
+// Enforced here now, so the rule holds for every caller that exists and every
+// caller that does not yet. setAgentLocked is the one door through it.
 func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
+	return writeAgent(db, a, false)
+}
+
+// setAgentLocked is the ONLY way to change an agent's lock. Separate function
+// rather than a flag on saveAgent, so the exception is something a caller has
+// to reach for by name — grep for it and the answer is the lock handler.
+func setAgentLocked(db Database, a AgentRecord, locked bool) (AgentRecord, error) {
+	a.Locked = locked
+	return writeAgent(db, a, true)
+}
+
+// writeAgent is the single store write. maySetLocked is false for everything
+// except setAgentLocked.
+func writeAgent(db Database, a AgentRecord, maySetLocked bool) (AgentRecord, error) {
 	if db == nil {
 		return a, fmt.Errorf("db not initialized")
+	}
+	if !maySetLocked && a.ID != "" {
+		// A record with no stored counterpart is a creation; there is no lock
+		// to preserve and the caller's value (normally false) stands.
+		if existing, ok := loadAgent(db, a.ID); ok {
+			a.Locked = existing.Locked
+		}
 	}
 	if strings.TrimSpace(a.Name) == "" {
 		return a, fmt.Errorf("name is required")
@@ -1962,10 +1989,8 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				http.Error(w, "not your agent", http.StatusForbidden)
 				return
 			} else {
-				// Locked is owned by the lock icon (handleAgentLock), not the
-				// edit form — preserve the stored value so a normal save can't
-				// silently unlock the agent.
-				req.Locked = existing.Locked
+				// (Locked needs no restore here: saveAgent preserves the
+				// stored flag for every caller. See setAgentLocked.)
 				// Guardrails are owned by the dedicated guardrails endpoint
 				// (handleAgentGuardrails), never the whole-record form — a
 				// wholesale-replace save must NOT be able to weaken or clear
@@ -2003,7 +2028,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			// field (the icon owns it), so preserve the stored lock from the
 			// existing shadow or it would clear on every save.
 			if existing, ok := loadAgent(udb, req.ID); ok {
-				req.Locked = existing.Locked
+				// (Locked: preserved by saveAgent itself now.)
 				req.Guardrails = existing.Guardrails
 				req.GuardrailHooks = existing.GuardrailHooks
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
@@ -2611,14 +2636,12 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			http.NotFound(w, r)
 			return
 		}
-		locked := existing.Locked // owned by the lock icon, not the form/picker
 		if err := json.NewDecoder(r.Body).Decode(&existing); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		existing.ID = id
 		existing.Owner = user
-		existing.Locked = locked
 		// Flattened namespace: tools live in the unified store, and the GET
 		// view synthesizes them onto the record — never write that view back.
 		existing.Tools = nil
@@ -2678,13 +2701,15 @@ func (T *OrchestrateApp) handleAgentLock(w http.ResponseWriter, r *http.Request,
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	a.Owner = user
-	a.Locked = req.Locked
-	if _, err := saveAgent(udb, a); err != nil {
+	// The RETURNED record, not the local one: setAgentLocked takes a by value,
+	// so the caller's copy still carries the old flag and would report it.
+	saved, err := setAgentLocked(udb, a, req.Locked)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"locked": a.Locked})
+	_ = json.NewEncoder(w).Encode(map[string]any{"locked": saved.Locked})
 }
 
 // newlyHidden reports whether this save is the one turning Hidden ON — a new

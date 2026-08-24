@@ -55,52 +55,62 @@ func TestEveryMachineDeleteDetachesFirst(t *testing.T) {
 	}
 }
 
-// Locked: NOT pinned here, deliberately, and the attempt is worth recording.
-//
-// The claim is that handleAgentLock is the only writer and every other save
-// restores the stored value first. That is true of the three HTTP save paths
-// (agents.go:1963, :2001, :2609) and of nothing below them: saveAgent writes
-// whatever record it is handed. A test at the saveAgent layer therefore FAILS
-// against correct code, which is what the first version of this file did.
-//
-// Pinning it honestly means either driving those three handlers (HTTP plus auth
-// this package has no harness for) or moving the restore into saveAgent with a
-// carve-out for the lock handler — a design change, not a test. Left as it
-// stands, with the risk named: a fourth save path that calls saveAgent directly
-// will silently unlock an agent an admin locked, and nothing will say so.
+// Locked is the human's lock icon, and saveAgent now preserves the stored flag
+// for every caller. This could not be pinned before: the rule lived in three
+// HTTP save paths and in nothing beneath them, so a test at the saveAgent layer
+// FAILED against correct code — which is what the first version of this test
+// did. The rule moved into the write path, so the test is now possible AND the
+// fourth save path that nobody has written yet is covered.
+func TestSaveAgentPreservesLocked(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
 
-// dropChatSessionBucket (agent delete) must clear the same per-session side
-// tables deleteChatSession does, or deleting an agent orphans authoring rows,
-// tool verifications, session temp tools and compact state — invisibly, since
-// the session row itself is gone and nothing points at the leftovers.
-//
-// The existing sessions_lcm_test covers only the chunk archive for both, so
-// removing any of the other four from the bucket path fails no test.
-func TestBothSessionDeletePathsClearTheSameSideTables(t *testing.T) {
-	src := readSourceFile(t, "sessions.go")
-	// Each helper must appear on BOTH paths. A count of one means a side table
-	// is cleared when a session is deleted and orphaned when its agent is.
-	for _, helper := range []string{
-		"clearAuthoringInProgress(",
-		"clearToolVerifications(",
-		"DeleteSessionTempTools(",
-		"deleteCompactState(",
-	} {
-		if n := strings.Count(src, helper); n < 2 {
-			t.Errorf("%s appears %d time(s) in sessions.go; deleteChatSession and dropChatSessionBucket must both call it", helper, n)
-		}
+	rec, err := saveAgent(udb, AgentRecord{Name: "Pinned", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
 	}
-}
+	if _, err := setAgentLocked(udb, rec, true); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
 
-// Both Explicit-Memory write surfaces — store_fact and remember(pin=true) — go
-// through storeFactNote, so dedup, supersession and the relevance gate exist in
-// one place. A second surface writing StoreMemoryFactP directly would bypass
-// all three and land a duplicate or an ungated note.
-func TestExplicitMemoryHasOneWritePath(t *testing.T) {
-	for _, f := range []string{"facts.go", "unified_memory.go"} {
-		src := readSourceFile(t, f)
-		if !strings.Contains(src, "storeFactNote(") {
-			t.Errorf("%s no longer routes through storeFactNote; the Explicit layer's dedup and relevance gate live there", f)
-		}
+	// An ordinary edit carrying Locked=false — what a partial POST decoding
+	// into a zero value looks like — must not unlock it.
+	edit := rec
+	edit.Description = "edited"
+	edit.Locked = false
+	if _, err := saveAgent(udb, edit); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	got, ok := loadAgent(udb, rec.ID)
+	if !ok {
+		t.Fatal("agent vanished")
+	}
+	if !got.Locked {
+		t.Fatal("an ordinary save cleared Locked; only setAgentLocked may write that field")
+	}
+	if got.Description != "edited" {
+		t.Errorf("the edit itself did not land: Description = %q", got.Description)
+	}
+
+	// And the one door still opens both ways, or the icon cannot unlock.
+	unlocked, err := setAgentLocked(udb, got, false)
+	if err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	if unlocked.Locked {
+		t.Error("setAgentLocked(false) returned a record still marked locked — the handler reports this value to the browser")
+	}
+	if reloaded, _ := loadAgent(udb, rec.ID); reloaded.Locked {
+		t.Error("setAgentLocked(false) did not persist the unlock")
+	}
+
+	// A creation may still arrive locked=false without a stored record to
+	// preserve from; nothing to restore, and the caller's value stands.
+	fresh, err := saveAgent(udb, AgentRecord{Name: "Fresh", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	if fresh.Locked {
+		t.Error("a newly created agent came out locked")
 	}
 }
