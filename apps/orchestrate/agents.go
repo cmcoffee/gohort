@@ -604,6 +604,37 @@ func effectiveDispatchMode(a AgentRecord) string {
 	}
 }
 
+// dispatchModeAfterSelfHeal is effectiveDispatchMode with the deleted-target
+// rescue applied: an "only" list whose every named agent has since been deleted,
+// and which names no runnable pipeline or machine either, is read as "all"
+// rather than as "nothing is reachable".
+//
+// It exists because that rescue lived in the fleet-catalog renderer alone, and
+// the dispatch gate resolved the mode raw. So the rescued agent was shown the
+// whole fleet under "**If a question lands in one of these agents' domains,
+// DELEGATE FIRST**" and then had every dispatch it made refused with "not on
+// this agent's dispatch allow list". The advertisement healed and the door did
+// not, which is a worse state than either alone: the model is steered into a
+// call and punished for making it, round after round.
+//
+// Both surfaces call this now. A catalog that offers what the gate refuses is
+// the drift worth preventing, not the mode calculation itself.
+func (t *chatTurn) dispatchModeAfterSelfHeal(fleetDB Database, fleetUser string) string {
+	mode := effectiveDispatchMode(t.agent)
+	if mode != dispatchOnly {
+		return mode
+	}
+	for _, a := range listAgents(fleetDB, fleetUser) {
+		if dispatchListContains(t.agent, a.ID) {
+			return mode // at least one named target still exists
+		}
+	}
+	if t.dispatchListNamesARunnable() {
+		return mode // names a pipeline or machine instead of an agent
+	}
+	return dispatchAll
+}
+
 // dispatchListNames reports whether a dispatch target list names a target by
 // any of the identities that target answers to.
 //

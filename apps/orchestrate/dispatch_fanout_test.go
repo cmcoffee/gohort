@@ -143,3 +143,48 @@ func withFanoutLanes(t *testing.T, turn *chatTurn, n int) {
 		InvalidateTunables()
 	})
 }
+
+// The fleet catalog and the dispatch gate must agree about a stale allowlist.
+// The catalog rescued an "only" list whose every target had been deleted —
+// reading it as "all" rather than "nothing reachable" — and the gate resolved
+// the mode raw. So the rescued agent was shown the whole fleet under
+// "**DELEGATE FIRST**" and had every dispatch it then made refused with "not on
+// this agent's dispatch allow list": steered into a call and punished for it,
+// round after round.
+//
+// Dispatched at a TOP-LEVEL peer deliberately. The gate clears an agent's own
+// sub-agents before it ever consults the mode, so a test aimed at an owned
+// target passes whatever the mode says and proves nothing.
+func TestStaleAllowlistHealsForCatalogAndGateAlike(t *testing.T) {
+	turn, _ := newRunGateTurn(t, dispatchAll)
+	fleetDB, fleetUser := turn.fleetView()
+	peer, err := saveAgent(turn.udb, AgentRecord{Name: "Peer", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save peer: %v", err)
+	}
+
+	// An allowlist naming only agents that no longer exist.
+	turn.agent.DispatchMode = dispatchOnly
+	turn.agent.AllowedDispatchTargets = []string{"deleted-agent-1", "deleted-agent-2"}
+
+	if got := turn.dispatchModeAfterSelfHeal(fleetDB, fleetUser); got != dispatchAll {
+		t.Fatalf("a wholly-deleted allowlist resolved to %q, want the %q rescue", got, dispatchAll)
+	}
+	if _, _, err := turn.agentsRunGate(map[string]any{"agent": peer.Name, "message": "hi"}); err != nil {
+		t.Fatalf("gate refused a peer the catalog would advertise: %v", err)
+	}
+
+	// A list naming a target that DOES exist is not stale and must not heal —
+	// otherwise the rescue would quietly widen every allowlist to "all".
+	turn.agent.AllowedDispatchTargets = []string{"deleted-agent-1", peer.ID}
+	if got := turn.dispatchModeAfterSelfHeal(fleetDB, fleetUser); got != dispatchOnly {
+		t.Fatalf("a partly-live allowlist resolved to %q; the rescue must fire only when nothing survives", got)
+	}
+	stranger, err := saveAgent(turn.udb, AgentRecord{Name: "Stranger", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatalf("save stranger: %v", err)
+	}
+	if _, _, err := turn.agentsRunGate(map[string]any{"agent": stranger.Name, "message": "hi"}); err == nil {
+		t.Fatal("a live allowlist must still refuse a target it does not name")
+	}
+}

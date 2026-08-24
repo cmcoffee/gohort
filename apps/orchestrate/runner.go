@@ -1033,9 +1033,10 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 			listed[id] = true
 		}
 	}
-	if mode == dispatchOnly && len(listed) == 0 && !t.dispatchListNamesARunnable() {
-		mode = dispatchAll // self-heal: every allowlisted target was deleted
-	}
+	// Self-heal (every allowlisted target deleted) now lives in
+	// dispatchModeAfterSelfHeal, shared with the dispatch gate — see there for
+	// what went wrong while only this surface applied it.
+	mode = t.dispatchModeAfterSelfHeal(fleetDB, fleetUser)
 	var available []AgentRecord
 	for _, a := range all {
 		if a.ID == t.agent.ID || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {

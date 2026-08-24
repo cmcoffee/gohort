@@ -860,7 +860,11 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 		// should be a top-level agent, not a sub-agent.)
 		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is a sub-agent owned by another agent and is private to its owner — you can't dispatch to it. If you need this capability, ask its owning agent, or have the user make it a top-level agent.", target.Name)
 	} else {
-		switch effectiveDispatchMode(t.agent) {
+		// The HEALED mode, matching the fleet catalog. An allowlist whose every
+		// target was deleted reads as "all" on both surfaces or on neither;
+		// resolving it raw here is what let the catalog advertise a fleet this
+		// gate then refused, one dispatch at a time.
+		switch t.dispatchModeAfterSelfHeal(fleetDB, fleetUser) {
 		case dispatchNone:
 			return AgentRecord{}, "", fmt.Errorf("agents(run): this agent is set to dispatch to NO other agents (Security & Access → Allow none); ask the user to change its dispatch policy before it can reach %q", target.Name)
 		case dispatchOnly:
