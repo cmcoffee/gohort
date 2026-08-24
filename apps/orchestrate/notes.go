@@ -31,7 +31,8 @@ func agentOperatingNotes(db Database, agent AgentRecord) OperatingNotes {
 
 // operatingNotes is the chatTurn variant: same as agentOperatingNotes but also
 // suppresses notes in an incognito session (no stored state surfaced), matching
-// how facts() is nil'd for incognito turns.
+// how facts() nils for incognito turns — a claim this comment carried for a
+// while before facts() actually did it, which is how the gap went unnoticed.
 func (t *chatTurn) operatingNotes() OperatingNotes {
 	if !t.agent.EnableNotes {
 		return OperatingNotes{}

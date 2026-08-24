@@ -4266,6 +4266,22 @@ func (t *chatTurn) facts() []MemoryFact {
 	if t.agent.DisableExplicit {
 		return nil
 	}
+	// Incognito is a clean room, and the promise on it is the user's own: they
+	// opened the session from "+ New ▾" specifically to get "no baggage in,
+	// nothing out" (see ChatSession.Incognito). Nothing sets that flag
+	// programmatically — one assignment in the tree, straight from the request —
+	// so honouring it here is carrying out an explicit instruction, not
+	// overriding a default.
+	//
+	// The rule lives in this function because runPlan used to blank a local copy
+	// instead, and a turn builds more than one prompt: the worker step and the
+	// synthesis step each called facts() again and got everything back. The
+	// clean room held for the orchestrator's prompt and for nothing downstream
+	// of it. operatingNotes has always guarded here rather than at its callers;
+	// its comment even claimed this function did the same.
+	if t.session != nil && t.session.Incognito {
+		return nil
+	}
 	return ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
 }
 
@@ -6373,15 +6389,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// Incognito (clean-room) session: inherit NOTHING — no memory facts and no
 	// cortex standing context. A one-off with no baggage. Connected sessions
 	// (the default) get both.
+	// facts() and operatingNotes() each enforce incognito themselves, so this
+	// turn gets the clean room without a second copy of the rule here — and so
+	// do the worker and synthesis prompts, which this function cannot reach.
+	// The flag is still read below, where the cortex standing context is a
+	// separate inheritance this session also severs.
 	incognito := t.session != nil && t.session.Incognito
 	facts := t.facts()
-	if incognito {
-		facts = nil
-	}
 	notes := t.operatingNotes()
-	if incognito {
-		notes = OperatingNotes{}
-	}
 	sys := prependAgentContext(persona, t.agent, facts, notes)
 	// Cortex awareness injection — recent STANDING context (received channel
 	// messages, monitor fires) as read-only background so the agent greets you
@@ -7690,13 +7705,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
 		//
 		// The SAME slice the prompt was built from, not a second read of the
-		// store. An incognito turn blanks facts before rendering the memory
-		// block (above), and re-reading here scoped the judge to every marked
-		// note in the store while the prompt contained none — so the judge ran
+		// store. Re-reading here once scoped the judge to every marked note the
+		// agent had while an incognito prompt contained none — so the judge ran
 		// on a turn it is documented never to run on, and could convict the
 		// reply for failing to attribute a note the model was never shown. One
 		// slice, rendered and judged, makes the scope true by construction
-		// rather than by two reads agreeing.
+		// rather than by two reads agreeing about a condition either could
+		// forget. (facts() now enforces incognito itself, so a second read would
+		// agree today — the point stands for whatever the next condition is.)
 		UncheckedClaims:    UncheckedFactNotes(facts),
 		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:       func() bool { return sess.Detach.Any() },
