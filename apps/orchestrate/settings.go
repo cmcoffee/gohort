@@ -61,7 +61,7 @@ func (T *OrchestrateApp) handlePrivateModeGet(w http.ResponseWriter, r *http.Req
 	// no button at all.
 	locked := false
 	if agentID != "" {
-		if a, ok := loadAgent(udb, agentID); ok && a.ForcePrivate {
+		if a, ok := loadAgent(udb, agentID); ok && agentForcesPrivate(a) {
 			mode = true
 			locked = true
 		}

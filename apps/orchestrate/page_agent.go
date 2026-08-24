@@ -148,7 +148,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
 			agentLocked = rec.Locked
-			leadModelLocked = rec.ForcePrivate && !AllLLMsPrivate()
+			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			dispatchModeFirst = effectiveDispatchMode(rec)
 			if rec.OwnedBy != "" {
 				subAgent = true

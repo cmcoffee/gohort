@@ -55,6 +55,24 @@ func appAgentForcesPrivate(id string) bool {
 	return ok && s.ForcePrivate
 }
 
+// agentForcesPrivate is THE question "must this agent stay private" — the
+// record's own flag OR the spec's, for every caller that enforces it.
+//
+// The comment above explains why the spec has to be consulted; what it did not
+// do was reach the places that enforce. Only the model-routing gate ORed the
+// two. The two paths that actually strip network access — the dispatch
+// tool-filter and the web turn's connector — read the record alone, so a stale
+// shadow was correctly denied a remote lead model while keeping fetch_url,
+// web_search and browse_page in its catalog and an open connector behind them.
+// For servitor's investigator, which holds SSH credentials and log contents,
+// that is the wrong half to enforce.
+//
+// One function so the answer cannot differ by call site, which is how it came
+// to differ in the first place.
+func agentForcesPrivate(a AgentRecord) bool {
+	return a.ForcePrivate || appAgentForcesPrivate(a.ID)
+}
+
 // appAgentVisibilityWarnOnce fires the visible-app-agent lint a single time,
 // the first time app agents are folded into resolution (startup / first agent
 // list). Guarded so the per-request registeredAppAgents() call doesn't spam.

@@ -5133,7 +5133,7 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// regardless of what the user toggled. Composes with the
 	// per-turn user toggle via OR — either source can force the
 	// network connector to refuse.
-	privateMode := req.PrivateMode || agent.ForcePrivate
+	privateMode := req.PrivateMode || agentForcesPrivate(agent)
 	// Build ONE connector per turn and share it across ctx,
 	// sess.Network, and the inflight registry. Sharing one
 	// instance is what makes the mid-turn cutoff work: when the
@@ -5145,7 +5145,7 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	defer inflightConnectors.Delete(sess.ID)
 	// Also lock ForcePrivate agents so the privacy endpoint can't
 	// flip them OFF — the agent-level lock is the source of truth.
-	if agent.ForcePrivate {
+	if agentForcesPrivate(agent) {
 		// no-op marker; SetAllowed(true) from the endpoint will be
 		// reverted by the next Allowed() check if we add an
 		// auto-revert guard. Simpler for now: trust the endpoint
@@ -6033,7 +6033,7 @@ func (t *chatTurn) leadPermitted() bool {
 	// older than the flag — the same drift that let a stale shadow carry
 	// Hidden=false — and here the consequence is an investigator holding SSH
 	// credentials talking to a hosted model.
-	if t.agent.ForcePrivate || appAgentForcesPrivate(t.agent.ID) {
+	if agentForcesPrivate(t.agent) {
 		return false
 	}
 	return !t.privateMode
@@ -6202,7 +6202,7 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 	// Custom (temp) tools — hydrate the session from the owner's pool + the
 	// agent-scoped kit, then split direct/lazy. Without the hydrate the session
 	// is empty (the ts3_client_status-over-a-channel bug).
-	t.privateMode = t.agent.ForcePrivate
+	t.privateMode = agentForcesPrivate(t.agent)
 	t.loadAgentTempTools(sess, poolUser, poolDB)
 	direct, ctp := t.setupCustomTools(sess)
 	extraTools = append(extraTools, direct...)

@@ -357,7 +357,7 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 	// the PARENT turn is already running private — the parent's connector rides
 	// on ctx, so a blocked incoming ctx means a Private parent delegated /
 	// dispatched here and the privacy must NOT be lost in the sub-run.
-	if !target.ForcePrivate && NetworkAllowedFromContext(ctx) {
+	if !agentForcesPrivate(target) && NetworkAllowedFromContext(ctx) {
 		return ctx, tools
 	}
 	connector := NewNetworkConnector(true)

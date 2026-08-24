@@ -105,6 +105,19 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// agent's Hide toggle, and that's legitimate deployment state.
 			if _, isApp := appagents.AppAgentByID(id); isApp {
 				shadow.Hidden = seed.Hidden
+				// ForcePrivate refreshes too, and this is the root of the
+				// staleness the enforcement helper defends against: a minimal
+				// shadow minted by a tool-approval (the bundle path's saveAgent,
+				// same origin as the Hidden case above) carries
+				// ForcePrivate=false, and every field around it rebased while
+				// this one never did. So an app agent whose spec declares itself
+				// private stayed non-private in that user's store forever.
+				//
+				// OR, not assignment. Privacy ratchets UP only: a spec that says
+				// false must never clear a flag the user turned on for their own
+				// copy. Every other field here is framework-owned and overwrites;
+				// this one is framework-owned in one direction.
+				shadow.ForcePrivate = shadow.ForcePrivate || seed.ForcePrivate
 			}
 			shadow = selfHealAllowedTools(db, shadow)
 			return enforceSubAgentPosture(applyLegacyMode(shadow)), true
