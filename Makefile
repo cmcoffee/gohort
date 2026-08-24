@@ -31,20 +31,43 @@ export CGO_ENABLED := 0
 # that half-works.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: all build clean linux notices release
+.PHONY: all build check clean linux notices release vet
 
 # Default: build for the current platform
 all: build
 
-build: notices
+# go vet before every build, because the two worst bugs this tree has shipped
+# were both things vet already knew about and nobody was listening: prompt
+# templates whose literal "%" characters fmt parsed as verbs (a numeric-accuracy
+# rule delivered with its own examples corrupted), and an app copying its own
+# mutex on every call. Both sat for months in packages whose vet output was
+# never read.
+#
+# ~5 seconds. SKIP_VET=1 for a tight edit loop, the same escape hatch shape as
+# ALLOW_DIRTY on release.
+build: vet notices
 	@mkdir -p $(OUTDIR)
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUTDIR)/$(APPNAME) .
 	@echo "Built $(OUTDIR)/$(APPNAME) ($(VERSION))"
 
-linux: notices
+linux: vet notices
 	@mkdir -p $(OUTDIR)
 	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUTDIR)/$(APPNAME)_linux_amd64 .
 	@echo "Built $(OUTDIR)/$(APPNAME)_linux_amd64"
+
+# Vets the WORKING TREE, private half included. That inclusion is the point:
+# `release` vets the export instead, and the export has no private/ in it by
+# design — so release-time vetting alone would never look at the private apps,
+# which is exactly where two of the four findings that prompted this lived.
+vet:
+ifndef SKIP_VET
+	@go vet ./... || { echo "vet failed — fix it, or SKIP_VET=1 to build anyway"; exit 1; }
+endif
+
+# vet + the full test suite. What to run before pushing; `build` gates on vet
+# alone so the inner loop stays quick.
+check: vet
+	go test ./...
 
 # What a downloaded binary has to carry. A compiled gohort contains the object
 # code of ~40 modules, each asking for its notice to travel with it, and the
@@ -94,6 +117,11 @@ release:
 	  echo "release: the private tree is present in the export — refusing to ship it."; \
 	  exit 1; \
 	fi
+	@echo "  vetting the export"
+	@(cd $(SRCDIR) && GOWORK=off go vet ./...) || { \
+	  echo "release: go vet failed on the exported source — refusing to ship it."; \
+	  exit 1; \
+	}
 	@(cd $(SRCDIR) && GOWORK=off go build -o $(CURDIR)/$(DISTDIR)/.licensenotice ./scripts/licensenotice)
 	@for p in $(PLATFORMS); do \
 	  os=$${p%%/*}; arch=$${p##*/}; \
