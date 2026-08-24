@@ -229,6 +229,10 @@ const (
 // PanelMaxVoices and PanelMaxRounds are the caps as an editor states them, so
 // a form's own limits and the validator's cannot drift.
 const (
+	// Wired into the voices field's help text. It was exported for that and then
+	// left unreferenced for a while, with the form stating "Two to eight" in
+	// prose — the exact drift the export exists to prevent, sitting inside the
+	// mechanism meant to prevent it.
 	PanelMaxVoices = panelMaxVoices
 	PanelMaxRounds = panelMaxRounds
 )

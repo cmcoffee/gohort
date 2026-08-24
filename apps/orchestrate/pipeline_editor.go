@@ -152,7 +152,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 		ui.FormField{Field: "panel", Type: "tags", Label: "The voices",
 			ShowWhen:    keepWhileList(s.Panel, "kind:panel"),
 			Placeholder: "Optimist, Skeptic, Cost",
-			Help: "Two to eight. A name that matches one of your agents IS that agent — its persona, its memory, its tools. " +
+			Help: "Two to " + strconv.Itoa(PanelMaxVoices) + ". A name that matches one of your agents IS that agent — its persona, its memory, its tools. " +
 				"One that does not is a role the worker answers as, which is how a panel of perspectives runs without authoring three agents first. " +
 				"Write the prompt to whoever is answering and place {voice}; {panel} is everything said so far, and goes at the end on its own if you leave it out."},
 		ui.FormField{Field: "count", Type: "number", Label: "Rounds", Min: 1, Max: PanelMaxRounds,

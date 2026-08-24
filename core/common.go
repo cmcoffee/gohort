@@ -438,7 +438,15 @@ func (s *Session) ChatStream(ctx context.Context, messages []Message, handler St
 	// never appears in the [llm] debug log). LeadChat has its
 	// own fellBackToWorker flag for the non-streaming case; this
 	// is the streaming equivalent.
-	servedByLead := s.Tier == LEAD && !s.agent.LeadDenied() && s.agent.LeadLLM != nil
+	// HasDistinctLead, the same test LeadChat uses — NOT a bare nil check on the
+	// handle. ReloadableLeadLLM() returns a non-nil handle even when no lead is
+	// configured, so `s.agent.LeadLLM != nil` was true on every deployment and
+	// any LEAD-tier session stream billed itself to LEAD while the process
+	// tracker (which records inside the handle) billed the same tokens to
+	// WORKER. Two tiers, one call, two prices. Latent today because every
+	// in-tree Session.ChatStream caller is worker-tier; the fix is cheaper than
+	// the day one is not.
+	servedByLead := s.Tier == LEAD && s.agent.HasDistinctLead()
 	var llm LLM
 	if servedByLead {
 		llm = s.agent.LeadLLM
@@ -577,10 +585,17 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 				}
 				Debug("[llm] %s routed to worker LLM (thinking=%v, routing config)", probe.RouteKey, *think)
 			} else {
-				// RouteThink returns nil only when LookupRouteFunc is nil; guard
-				// against that edge by defaulting thinking off on any worker route.
-				opts = append(opts, WithThink(false))
-				Debug("[llm] %s routed to worker LLM (routing config)", probe.RouteKey)
+				// The WORKER default, which is ON — the same fallback WorkerChat
+				// applies for the same key ("worker tier: thinking on by default;
+				// callers that don't need thinking pass WithThink(false)").
+				// This used to default OFF, so one route key produced opposite
+				// thinking depending on which entry point the call arrived
+				// through. Its justification was wrong too: RouteThink returns
+				// nil for the values "lead" and "" as well as for a nil lookup,
+				// and a private stage holding a stale "lead" reaches exactly
+				// here.
+				opts = append(opts, WithThink(true))
+				Debug("[llm] %s routed to worker LLM (routing config, worker default thinking)", probe.RouteKey)
 			}
 		} else {
 			Debug("[llm] %s routed to worker LLM (thinking=%v, call-site override)", probe.RouteKey, *probe.Think)
