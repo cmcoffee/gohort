@@ -46,19 +46,48 @@ func TestPlanDriverHonorsClosedTurn(t *testing.T) {
 // TestWorkerStepCanEndItself — without RoundAbortTools, respond_directly inside
 // a step is an ordinary tool call: it returns, the round completes, and the
 // loop takes another turn.
+//
+// This used to grep the source: `strings.Count(src, "RoundAbortTools:") >= 2`
+// plus the worker's literal. Both parts passed while the invariant they
+// described could be broken — adding a fifth abort tool to the orchestrator
+// left the worker set stale, the count still 2, the literal still present, the
+// test still green. It now reads the values, and the worker set is derived from
+// the orchestrator's rather than retyped, so the relationship is the compiler's
+// to keep.
 func TestWorkerStepCanEndItself(t *testing.T) {
-	src, err := readRunnerSource()
-	if err != nil {
-		t.Skip("runner source unavailable")
+	if len(workerAbortTools) == 0 {
+		t.Fatal("the worker-step loop needs its own RoundAbortTools")
 	}
-	if strings.Count(src, "RoundAbortTools:") < 2 {
-		t.Fatal("the worker-step loop needs its own RoundAbortTools — only the orchestrator declared them")
+	orch := map[string]bool{}
+	for _, n := range orchestratorAbortTools {
+		orch[n] = true
 	}
-	// The worker's set, exactly: endable by the tools that finish or pause a
-	// turn, but NOT by plan_set — a step does not get to re-plan the turn it
-	// belongs to.
-	const workerSet = `RoundAbortTools: []string{"ask_user", "ask_user_form", "respond_directly"}`
-	if !strings.Contains(src, workerSet) {
-		t.Errorf("worker step should declare exactly %s", workerSet)
+	if !orch["plan_set"] {
+		t.Fatal("the orchestrator must be able to end a round by planning")
+	}
+	for _, n := range workerAbortTools {
+		if n == "plan_set" {
+			t.Error("a worker step must NOT end its round with plan_set — it is already inside a plan")
+		}
+		if !orch[n] {
+			t.Errorf("worker abort tool %q is not one of the orchestrator's; the sets have diverged", n)
+		}
+	}
+	// Everything the orchestrator aborts on except plan_set must reach the
+	// worker, or a step loses a way to pause for the user.
+	if len(workerAbortTools) != len(orchestratorAbortTools)-1 {
+		t.Errorf("worker has %d abort tools, orchestrator %d; expected exactly one fewer (plan_set)",
+			len(workerAbortTools), len(orchestratorAbortTools))
+	}
+	for _, want := range []string{"ask_user", "ask_user_form", "respond_directly"} {
+		found := false
+		for _, n := range workerAbortTools {
+			if n == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("a worker step can no longer end itself with %s", want)
+		}
 	}
 }

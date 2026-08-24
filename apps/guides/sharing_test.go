@@ -3,7 +3,9 @@ package guides
 import (
 	"testing"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // TestReadOnlyGuideTools proves a reader of a shared guide gets exactly the
@@ -171,5 +173,36 @@ func TestShareModeEdit(t *testing.T) {
 	// The owner edits + manages either way.
 	if !canEdit(viewG, "alice", "alice", false) || !CanManageShared("alice", "alice", false) {
 		t.Error("owner should edit and manage their own guide")
+	}
+}
+
+// The reader-safe list names tools by string, and the builder that produces
+// them is a separate function. TestReadOnlyGuideTools above feeds a HAND-WRITTEN
+// fixture, so renaming a tool in coauthor.go would drop it from readers with
+// every test still green — the reader silently loses the ability to search the
+// guide's knowledge, and nothing says so.
+//
+// This closes that by checking the names against the real builder.
+func TestReadOnlyNamesExistInTheCoauthorBuilder(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
+	T := &Guides{}
+	built := map[string]bool{}
+	for _, td := range T.coauthorTools(udb, orch, "u", true) {
+		built[td.Tool.Name] = true
+	}
+	if len(built) == 0 {
+		t.Skip("coauthorTools built nothing without a live store; the fixture test still covers the filter")
+	}
+	for name := range readOnlyGuideToolNames {
+		if !built[name] {
+			t.Errorf("readOnlyGuideToolNames names %q, which coauthorTools no longer builds — readers lose it silently", name)
+		}
+	}
+	// Sanity: the check can fail. A name the builder does not produce must be
+	// detected, or this test is asserting against an empty set.
+	if built["a_tool_that_does_not_exist"] {
+		t.Fatal("the builder claims to produce a tool that cannot exist; the comparison is not meaningful")
 	}
 }

@@ -68,6 +68,30 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 	return a.MaxWorkerRounds
 }
 
+// orchestratorAbortTools names the tools that close an orchestrator round the
+// moment they succeed: the turn is now waiting on the user, on a direct reply,
+// or on a plan.
+var orchestratorAbortTools = []string{"ask_user", "ask_user_form", "respond_directly", "plan_set"}
+
+// workerAbortTools is the orchestrator's set MINUS plan_set — a worker step is
+// already inside a plan and has none to set.
+//
+// Derived rather than retyped. These were two literals hundreds of lines apart,
+// with the relationship stated only in a comment; the test guarding it grepped
+// the source for `strings.Count(src, "RoundAbortTools:") >= 2` and for the
+// worker literal, so adding a fifth abort tool to the orchestrator left the
+// worker set stale and the test green. Subtracting from the real list makes the
+// relationship the compiler's problem.
+var workerAbortTools = func() []string {
+	out := make([]string, 0, len(orchestratorAbortTools))
+	for _, n := range orchestratorAbortTools {
+		if n != "plan_set" {
+			out = append(out, n)
+		}
+	}
+	return out
+}()
+
 // dispatchSystemPrompt assembles the system prompt for an external/channel
 // dispatch (RunAgentSync / RunAgentSyncContinuingRich): the agent's context
 // (rules + facts) over its OrchestratorPrompt, then the Available-agents/skills
@@ -7851,7 +7875,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
 		// fires and the turn pauses for the user's actual answer.
-		RoundAbortTools: []string{"ask_user", "ask_user_form", "respond_directly", "plan_set"},
+		RoundAbortTools: orchestratorAbortTools,
 		// (No SingleFireGroups for image/video producers anymore.
 		// Under the old auto-attach architecture, multiple find_image
 		// calls in one batch produced multiple unintended attachments
@@ -8506,7 +8530,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// decided it was finished and then ran to nine rounds and six tool
 		// errors anyway. Same set the orchestrator round declares, minus
 		// plan_set: a step does not get to re-plan the turn it belongs to.
-		RoundAbortTools: []string{"ask_user", "ask_user_form", "respond_directly"},
+		RoundAbortTools: workerAbortTools,
 		// (No SingleFireGroups for image/video producers — same
 		// rationale as the orchestrator round above. Multi-fire is
 		// intentional under the write-to-workspace + workspace(attach)

@@ -420,10 +420,18 @@ func displayFromSnake(name string) string {
 // named "input" or "iteration" must not be able to redefine the template
 // language out from under a pipeline that was authored against it — the form is
 // the app author's, the vocabulary is the framework's.
-var reservedTemplateVars = map[string]bool{
-	"input": true, "prev": true, "item": true,
-	"iteration": true, "iterations": true, "stage": true,
-}
+// DERIVED from builtinTemplateTokens rather than retyped beside it. The two
+// were separate literals in separate files, described as "the same set plus
+// stage" — a relationship a reader could verify and a compiler could not, and
+// the kind that survives exactly until someone adds a sixth builtin to one of
+// them.
+var reservedTemplateVars = func() map[string]bool {
+	out := map[string]bool{"stage": true} // the extra seam: a stage reference, not a value
+	for k := range builtinTemplateTokens {
+		out[k] = true
+	}
+	return out
+}()
 
 // applyRunVars substitutes the run's form values. Applied LAST, so a built-in
 // resolves first and a collision can only ever fail to substitute, never

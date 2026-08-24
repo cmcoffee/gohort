@@ -762,6 +762,11 @@ func isResolvableToolName(db Database, owner, name string) bool {
 // records. Owner must be set by the caller. Seed-IDs are written
 // under the same ID as user-owned shadow records (no forking) — this
 // is what makes "Edit a seed, then Revert" work.
+// NOTE for a new caller: saveAgent writes the record it is handed, Locked
+// included. The "Locked is owned by the lock icon" rule is enforced by the
+// three HTTP save paths, which read the stored value back before calling here —
+// not by this function. A path that builds a record and calls saveAgent
+// directly will clear a lock an admin set, silently.
 func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	if db == nil {
 		return a, fmt.Errorf("db not initialized")
