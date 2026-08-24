@@ -68,3 +68,39 @@ func TestEveryMachineDeleteDetachesFirst(t *testing.T) {
 // carve-out for the lock handler — a design change, not a test. Left as it
 // stands, with the risk named: a fourth save path that calls saveAgent directly
 // will silently unlock an agent an admin locked, and nothing will say so.
+
+// dropChatSessionBucket (agent delete) must clear the same per-session side
+// tables deleteChatSession does, or deleting an agent orphans authoring rows,
+// tool verifications, session temp tools and compact state — invisibly, since
+// the session row itself is gone and nothing points at the leftovers.
+//
+// The existing sessions_lcm_test covers only the chunk archive for both, so
+// removing any of the other four from the bucket path fails no test.
+func TestBothSessionDeletePathsClearTheSameSideTables(t *testing.T) {
+	src := readSourceFile(t, "sessions.go")
+	// Each helper must appear on BOTH paths. A count of one means a side table
+	// is cleared when a session is deleted and orphaned when its agent is.
+	for _, helper := range []string{
+		"clearAuthoringInProgress(",
+		"clearToolVerifications(",
+		"DeleteSessionTempTools(",
+		"deleteCompactState(",
+	} {
+		if n := strings.Count(src, helper); n < 2 {
+			t.Errorf("%s appears %d time(s) in sessions.go; deleteChatSession and dropChatSessionBucket must both call it", helper, n)
+		}
+	}
+}
+
+// Both Explicit-Memory write surfaces — store_fact and remember(pin=true) — go
+// through storeFactNote, so dedup, supersession and the relevance gate exist in
+// one place. A second surface writing StoreMemoryFactP directly would bypass
+// all three and land a duplicate or an ungated note.
+func TestExplicitMemoryHasOneWritePath(t *testing.T) {
+	for _, f := range []string{"facts.go", "unified_memory.go"} {
+		src := readSourceFile(t, f)
+		if !strings.Contains(src, "storeFactNote(") {
+			t.Errorf("%s no longer routes through storeFactNote; the Explicit layer's dedup and relevance gate live there", f)
+		}
+	}
+}
