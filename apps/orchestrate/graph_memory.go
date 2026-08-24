@@ -154,6 +154,13 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
+			// The graph is durable state like the facts block, and
+			// UpsertGraphEntity / LinkGraphEdge below write straight into the
+			// user's own namespace — so a clean room refuses it for the same
+			// reason it refuses store_fact.
+			if t.incognitoSession() {
+				return "", t.refuseDurableMemoryInCleanRoom("not recorded", "a relationship written into the graph would outlive the conversation that made it")
+			}
 			subject := strings.TrimSpace(stringArg(args, "subject"))
 			relation := strings.TrimSpace(stringArg(args, "relation"))
 			object := strings.TrimSpace(stringArg(args, "object"))

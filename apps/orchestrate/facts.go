@@ -91,6 +91,12 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error
 	if note == "" {
 		return "", errors.New("note is required")
 	}
+	// The write half of the clean room. Checked before anything else so a
+	// refused session never runs the dedup, relevance and supersession machinery
+	// on a note that cannot be stored anyway.
+	if t.incognitoSession() {
+		return "", t.refuseDurableMemoryInCleanRoom("not saved", "a pinned note would outlive the conversation that made it")
+	}
 	// A pinned note naming a handle that does not survive is wrong from the
 	// moment it is written, and goes on being read as authoritative.
 	//
@@ -173,6 +179,15 @@ func (t *chatTurn) forgetFactToolDef() AgentToolDef {
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
+			// Refused in a clean room, and this one is not symmetry for its own
+			// sake. The index is documented as "matching the number prefix in
+			// your facts block" — and an incognito prompt has no facts block,
+			// so the number would be aimed at a list this turn was never shown.
+			// A blind index into somebody's durable memory, on the destructive
+			// tool, is the worst of the three to leave open.
+			if t.incognitoSession() {
+				return "", t.refuseDurableMemoryInCleanRoom("not deleted", "your prompt carries no facts block, so an index here points into a list this session cannot see")
+			}
 			idx := intFromArgs(args, "index")
 			if idx < 1 {
 				return "", errors.New("index is required and must be >= 1")

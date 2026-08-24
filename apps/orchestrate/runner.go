@@ -4279,10 +4279,35 @@ func (t *chatTurn) facts() []MemoryFact {
 	// clean room held for the orchestrator's prompt and for nothing downstream
 	// of it. operatingNotes has always guarded here rather than at its callers;
 	// its comment even claimed this function did the same.
-	if t.session != nil && t.session.Incognito {
+	if t.incognitoSession() {
 		return nil
 	}
 	return ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+}
+
+// incognitoSession reports whether this turn runs in a clean room — the session
+// a user opens from "+ New ▾" to get "no baggage in, nothing out" (see
+// ChatSession.Incognito).
+//
+// ONE predicate, because the rule now governs both directions across five
+// surfaces: the facts a prompt inherits, the operating notes beside them, and
+// the three tools that would otherwise write or delete durable memory from
+// inside the room. Written out five times it would be wrong in one of them
+// within a release; that is the entire lesson of the audit this came out of.
+func (t *chatTurn) incognitoSession() bool {
+	return t.session != nil && t.session.Incognito
+}
+
+// refuseDurableMemoryInCleanRoom is the single refusal for a durable-memory
+// write or delete attempted in an incognito session.
+//
+// A refusal the model can READ, not a silent no-op. A tool that quietly does
+// nothing and reports success is how an agent comes to tell someone it saved
+// something it did not. Withholding the tool instead is no better: the prompt
+// still describes the capability, and an absent tool gets improvised around
+// rather than reported. So the tool stays mounted and explains itself.
+func (t *chatTurn) refuseDurableMemoryInCleanRoom(verb, because string) error {
+	return fmt.Errorf("%s: this is an incognito (clean-room) session, where %s. Durable memory is neither read into this conversation nor written out of it — that is what the user asked for when they opened it, not a fault to route around. Say so plainly instead of retrying; if it should persist, they can tell you again in an ordinary session.", verb, because)
 }
 
 // gatedPersona returns the agent's persona prompt with any

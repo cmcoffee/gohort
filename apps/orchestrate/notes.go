@@ -37,7 +37,7 @@ func (t *chatTurn) operatingNotes() OperatingNotes {
 	if !t.agent.EnableNotes {
 		return OperatingNotes{}
 	}
-	if t.session != nil && t.session.Incognito {
+	if t.incognitoSession() {
 		return OperatingNotes{}
 	}
 	return ResolveOperatingNotes(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes)
