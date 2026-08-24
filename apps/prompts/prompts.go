@@ -46,9 +46,18 @@ type PromptsApp struct {
 
 // --- core.Agent interface ----------------------------------------------------
 
-func (T PromptsApp) Name() string         { return "prompts" }
-func (T PromptsApp) SystemPrompt() string { return "" }
-func (T PromptsApp) Desc() string {
+// Pointer receivers, like every other app that holds non-copyable state
+// (OrchestrateApp, FileStoreApp). PromptsApp gained optimizeMu when the
+// Optimize-all background run landed, and these three kept the value receivers
+// they were written with — so each call copied the struct, mutex included.
+// go vet's copylocks flags it: copying a sync.Mutex yields a second lock that
+// guards nothing, and a copy made while the original is held starts out locked.
+// Harmless in these three (they read a constant and drop the copy) but the
+// pattern is one edit away from being load-bearing, and RegisterApp already
+// passes a pointer, so nothing outside had to change.
+func (T *PromptsApp) Name() string         { return "prompts" }
+func (T *PromptsApp) SystemPrompt() string { return "" }
+func (T *PromptsApp) Desc() string {
 	return "Apps: Edit the framework prompt blocks that shape agent behavior."
 }
 func (T *PromptsApp) Init() error { return T.Flags.Parse() }
