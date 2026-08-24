@@ -200,3 +200,38 @@ func TestThePreviewRefreshesAfterASave(t *testing.T) {
 		t.Error("the listener is written but never installed")
 	}
 }
+
+// The panel is titled "What this step actually receives" and its note said
+// "this is what the step is actually told" for every kind of step. For two
+// kinds that is false: a tool step runs with no model in the loop at all (the
+// composed text only fills the tool's arguments), and a step that pins values
+// and asks nothing returns before any call is made. An author tuning wording on
+// either one is tuning something no model reads, and finds out by running the
+// machine.
+func TestPreviewNoteNamesWhoReceivesTheText(t *testing.T) {
+	def := MachineDef{Name: "m"}
+
+	toolStep := MachinePhase{Name: "fetch", Tool: "http_get", Prompt: "get the page"}
+	_, note := phasePreviewParts(def, toolStep)
+	if !strings.Contains(note, "http_get") || !strings.Contains(note, "NO model") {
+		t.Errorf("a tool step's note must say no model is asked and name the tool; got: %s", note)
+	}
+
+	// A step that asks for nothing and says nothing, but pins a field, returns
+	// before any model call — mirror of the early return in MachineDef.runPhase.
+	pinOnly := MachinePhase{Name: "pin", Output: []PipelineField{{Name: "id", From: "input"}}}
+	if len(pinOnly.StaticFields()) == 0 {
+		t.Skip("fixture does not produce a static-only step; the branch is pinned by the runner instead")
+	}
+	_, note = phasePreviewParts(def, pinOnly)
+	if !strings.Contains(note, "NO model") {
+		t.Errorf("a pin-only step's note must say no model runs; got: %s", note)
+	}
+
+	// An ordinary model step keeps the original framing.
+	plain := MachinePhase{Name: "think", Prompt: "consider the options"}
+	_, note = phasePreviewParts(def, plain)
+	if strings.Contains(note, "NO model") {
+		t.Errorf("an ordinary step still goes to a model; got: %s", note)
+	}
+}

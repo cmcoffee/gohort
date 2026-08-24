@@ -81,6 +81,28 @@ func samplePhaseVars() PhaseVars {
 func phasePreviewParts(def MachineDef, p MachinePhase) (block, note string) {
 	block = strings.TrimSpace(def.PhaseInstructions(p, sampleStateFor(def, p), samplePhaseVars()))
 	note = "This is what the step is actually told, composed by the framework — your instructions, plus everything the definition already knows. You do not need to repeat any of it."
+	// Who RECEIVES this text depends on what the step runs, and for two kinds of
+	// step the answer is "no model at all". Saying "this is what the step is
+	// actually told" over a tool step's composed prompt is the exact failure
+	// this panel exists to prevent, one level up: an author tunes wording that
+	// changes nothing, and finds out only by running the machine.
+	//
+	// Branches on the same fields the runner branches on (machineHost.runPhase
+	// for the delegating kinds, MachineDef.runPhase for the pin-only early
+	// return), so the panel and the runner cannot disagree about which case
+	// this is.
+	switch {
+	case strings.TrimSpace(p.Tool) != "":
+		note = "This step calls the tool " + strings.TrimSpace(p.Tool) + ". NO model is asked anything — the text below is composed only to fill that tool's arguments, so wording here changes what the tool receives, not how anything is reasoned about."
+	case len(p.ModelOutput()) == 0 && strings.TrimSpace(p.Prompt) == "" && len(p.StaticFields()) > 0:
+		note = "This step pins values and asks nothing. NO model runs — the fields below are filled from what the framework already holds, so the composed text is shown for reference only."
+	case strings.TrimSpace(p.Pipeline) != "":
+		note = "This text is handed to the pipeline " + strings.TrimSpace(p.Pipeline) + " as its input. What the pipeline's own stages then tell a model is defined in the pipeline, not here."
+	case strings.TrimSpace(p.Machine) != "":
+		note = "This text is handed to the machine " + strings.TrimSpace(p.Machine) + " as its input. What that machine's steps tell a model is defined there, not here."
+	case strings.TrimSpace(p.Agent) != "":
+		note = "This text is the brief handed to the agent " + strings.TrimSpace(p.Agent) + ". When the step declares fields, what it reports back is then shaped by a second call that quotes this brief alongside the reply — so the model sees more than what is shown here."
+	}
 	// A filled field is deliberately absent below, and absent without a
 	// word reads as a bug rather than as the saving it is.
 	if static := p.StaticFields(); len(static) > 0 {
