@@ -607,16 +607,53 @@ func TestThePipelineMapIsRedrawnWhenAStageChangesTheShape(t *testing.T) {
 		t.Error("a branch with a destination should draw its jump")
 	}
 
-	// And the page listens for the save that does it, from either a
-	// top-level stage or a step inside a body — both post to the same
-	// route.
+	// The page DECLARES the refresh rather than scripting it: every
+	// derived block is a card with a source, watching the route a stage
+	// save posts to. The hand-rolled fetch-and-swap this replaced was
+	// the second copy of the same twenty lines in this package.
 	r = httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
 	w = httptest.NewRecorder()
 	app.handlePipelinePage(w, asUser(r, user))
 	body := w.Body.String()
-	for _, want := range []string{"ui-data-changed", "/stages?name=", "/graph?links=1"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the page should redraw the map on a stage save, missing %q", want)
+	stages := `api/pipelines/` + def.ID + `/stages`
+	for _, name := range []string{"map", "plan", "cost", "checklist"} {
+		src := `"source":"api/pipelines/` + def.ID + `/block?name=` + name + `"`
+		if !strings.Contains(body, src) {
+			t.Errorf("the %s block should refetch itself; no source for it:\n%s", name, body)
 		}
+	}
+	if n := strings.Count(body, `"refresh_on":["`+stages+`"]`); n != 4 {
+		t.Errorf("want all four derived blocks watching the stage route, found %d", n)
+	}
+	// The mark is the page's own business, and a redraw is new elements.
+	if !strings.Contains(body, "ui-card-refreshed") {
+		t.Error("the you-are-here mark has to go back on after a redraw")
+	}
+	// Each block is served by the endpoint the card names.
+	for _, tc := range []struct{ name, want string }{
+		{"map", "machine-map-cap"},
+		{"plan", "plan"},
+		{"cost", "model call"},
+		{"checklist", "read as instructions"},
+	} {
+		r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/block?name="+tc.name, nil)
+		w = httptest.NewRecorder()
+		app.handlePipelineOne(w, asUser(r, user))
+		if w.Code != 200 {
+			t.Errorf("block %q does not render: %d", tc.name, w.Code)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(w.Body.String()), strings.ToLower(tc.want)) {
+			t.Errorf("block %q looks wrong:\n%s", tc.name, w.Body.String())
+		}
+	}
+	// An unknown block is a 404, not an empty card: a card told to
+	// refresh from a route that answers 200 with nothing would blank
+	// itself on the first save.
+	r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/block?name=nonsense", nil)
+	w = httptest.NewRecorder()
+	app.handlePipelineOne(w, asUser(r, user))
+	if w.Code != 404 {
+		t.Errorf("an unknown block should 404, got %d", w.Code)
 	}
 }

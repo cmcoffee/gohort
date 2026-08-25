@@ -299,7 +299,12 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			// stage list into twelve calls.
 			Title:    "What a run costs",
 			Wide:     true,
-			Subtitle: pipelineCostText(def),
+			Subtitle: "Before you pay for one — worked out from the definition, not from a run.",
+			Body: ui.Card{
+				HTML:      costCardHTML(def),
+				Source:    pipelineBlockURL(def.ID, "cost"),
+				RefreshOn: []string{pipelineStagesBase(def.ID)},
+			},
 		},
 		// Assign to agents. The list has said "callable by" since it
 		// existed and nothing could change it — a pipeline attached to
@@ -324,13 +329,21 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Title:    "What it will do",
 			Wide:     true,
 			Subtitle: "Worked out from the definition, without running anything — the order, what each stage is handed, and what a run costs before you pay for one.",
-			Body:     ui.Card{HTML: planHTML(def)},
+			Body: ui.Card{
+				HTML:      planHTML(def),
+				Source:    pipelineBlockURL(def.ID, "plan"),
+				RefreshOn: []string{pipelineStagesBase(def.ID)},
+			},
 		},
 		ui.Section{
 			Title:    "Worth a look",
 			Wide:     true,
 			Subtitle: "Nothing here refuses a save. It is what the pipeline looks like it might not have meant.",
-			Body:     ui.Card{HTML: findingsHTMLPlain(pipelineChecklist(udb, user, def), "Nothing — the stages read as instructions rather than specifications.")},
+			Body: ui.Card{
+				HTML:      findingsHTMLPlain(pipelineChecklist(udb, user, def), pipelineChecklistEmpty),
+				Source:    pipelineBlockURL(def.ID, "checklist"),
+				RefreshOn: []string{pipelineStagesBase(def.ID)},
+			},
 		},
 	)
 	// Share with users — the owner's decision, so the section exists only for
@@ -442,15 +455,79 @@ func undoPipelineRevisionToolbar(def PipelineDef) ui.Component {
 
 // pipelineMapCard is the picture: the whole pipeline, every box a door
 // into that stage's section.
+//
+// Sourced, because the shape is not only in the stage LIST: pointing a
+// branch somewhere else adds an arrow and giving a loop a body puts
+// boxes inside it, and neither of those reloads the page. RefreshOn is
+// the stage route rather than the card's own source — what changed is a
+// stage, and the picture is what it changed.
 func pipelineMapCard(def PipelineDef) ui.Component {
 	if len(def.Stages) == 0 {
 		return ui.Stack{}
 	}
-	return ui.Card{HTML: `<div class="machine-map">` +
+	return ui.Card{
+		HTML:      pipelineMapHTML(def),
+		Source:    pipelineBlockURL(def.ID, "map"),
+		RefreshOn: []string{pipelineStagesBase(def.ID)},
+	}
+}
+
+// pipelineMapHTML is the map block itself — caption and picture — in
+// ONE place, so what the page renders and what a refresh fetches cannot
+// drift into two different blocks.
+func pipelineMapHTML(def PipelineDef) string {
+	return `<div class="machine-map">` +
 		`<div class="machine-map-cap">Map — click a stage to open it. A fanout is one box and many calls; a loop's body is drawn inside it.</div>` +
 		`<div class="machine-map-body">` + pipelineGraphSVG(def) + `</div>` +
-		`</div>`}
+		`</div>`
 }
+
+// pipelineStagesBase is the route every stage save posts to, top-level
+// or inside a body. A card naming it as RefreshOn is saying "redraw me
+// when a stage changes", which is the only thing these blocks are
+// derived from.
+func pipelineStagesBase(id string) string {
+	return "api/pipelines/" + url_(id) + "/stages"
+}
+
+// pipelineBlockURL addresses one derived block for refetching.
+func pipelineBlockURL(id, name string) string {
+	return "api/pipelines/" + url_(id) + "/block?name=" + name
+}
+
+// pipelinePageBlock renders one derived block by name — the ONE place
+// each is built, called both when the page is first served and when a
+// stage save asks for it again.
+//
+// Everything here is worked out from the definition: change a stage
+// from a worker to a loop and the plan, the price and the findings all
+// say something different. Rendered once and left alone, they describe
+// the pipeline as it was before the edit that was made while looking at
+// them, which is worse than showing nothing — it is wrong and it looks
+// fine.
+func pipelinePageBlock(udb Database, user string, def PipelineDef, name string) (string, bool) {
+	switch name {
+	case "map":
+		return pipelineMapHTML(def), true
+	case "plan":
+		return planHTML(def), true
+	case "cost":
+		return costCardHTML(def), true
+	case "checklist":
+		return findingsHTMLPlain(pipelineChecklist(udb, user, def), pipelineChecklistEmpty), true
+	}
+	return "", false
+}
+
+// costCardHTML is the price of a run as a block, so it can be refetched.
+func costCardHTML(def PipelineDef) string {
+	return `<p style="margin:0">` + HTMLEscape(pipelineCostText(def)) + `</p>`
+}
+
+// pipelineChecklistEmpty is written once: the page and the refresh must
+// say the same thing about an empty list, or a save that fixed the last
+// finding would look like the panel changing its mind.
+const pipelineChecklistEmpty = "Nothing — the stages read as instructions rather than specifications."
 
 // pipelineGraphSVG draws the pipeline with each stage linking to its own
 // section.
@@ -754,40 +831,11 @@ const pipelineMapHereJS = `(function() {
     }
   }
   window.addEventListener('hashchange', mark);
+  // The map redraws itself when a stage is saved (ui.Card + RefreshOn),
+  // and a redraw is new elements — the mark went with the old ones. All
+  // this page adds is putting it back.
+  window.addEventListener('ui-card-refreshed', mark);
   mark();
-
-  // Redraw the map when a stage is saved. The shape is not only in the
-  // stage LIST: pointing a branch somewhere else adds an arrow, giving
-  // a loop a body puts boxes inside it, and changing a kind changes
-  // what the box is. The picture is rendered server-side, so without
-  // this it kept describing the pipeline as it was before the edit that
-  // was made while looking at it. Structural edits that reload the page
-  // (add, remove) do not need it; the ones that quietly change routing
-  // do.
-  var pending = null;
-  window.addEventListener('ui-data-changed', function(ev) {
-    var sources = (ev.detail && ev.detail.sources) || [];
-    // A stage save, top-level or inside a body — both post to the same
-    // route, addressed by name.
-    var touched = sources.some(function(s) { return String(s).indexOf('/stages?name=') >= 0; });
-    if (!touched) return;
-    var body = document.querySelector('.machine-map-body');
-    var id = new URLSearchParams(window.location.search).get('id');
-    if (!body || !id) return;
-    // One redraw per burst: a panel fires a save per field group, and
-    // three of those should not be three fetches of the same picture.
-    clearTimeout(pending);
-    pending = setTimeout(function() {
-      fetch('/orchestrate/api/pipelines/' + encodeURIComponent(id) + '/graph?links=1')
-        .then(function(r) { return r.ok ? r.text() : null; })
-        .then(function(svg) {
-          if (!svg) return;
-          body.innerHTML = svg;
-          mark();   // the redrawn boxes are new elements, so the mark goes on again
-        })
-        .catch(function() {});
-    }, 250);
-  });
 })();`
 
 // pipelineBodySections renders the stages inside one body-bearing stage,

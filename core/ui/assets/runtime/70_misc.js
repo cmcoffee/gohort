@@ -680,19 +680,69 @@
 
   components.card = function(cfg) {
     var wrap = el('div', {class: 'ui-card'});
-    wrap.innerHTML = cfg.html || '';
     // Re-execute any inline <script> tags. innerHTML doesn't run them
     // (per HTML5), so we manually clone each script into a fresh
     // element the browser will execute. Keep this for the escape-hatch
     // case where the Card's body needs to fetch + render data.
-    wrap.querySelectorAll('script').forEach(function(old) {
-      var s = document.createElement('script');
-      for (var i = 0; i < old.attributes.length; i++) {
-        s.setAttribute(old.attributes[i].name, old.attributes[i].value);
-      }
-      s.text = old.textContent;
-      old.parentNode.replaceChild(s, old);
+    function paint(html) {
+      wrap.innerHTML = html || '';
+      wrap.querySelectorAll('script').forEach(function(old) {
+        var s = document.createElement('script');
+        for (var i = 0; i < old.attributes.length; i++) {
+          s.setAttribute(old.attributes[i].name, old.attributes[i].value);
+        }
+        s.text = old.textContent;
+        old.parentNode.replaceChild(s, old);
+      });
+    }
+    paint(cfg.html);
+
+    if (!cfg.source) return wrap;
+
+    // A sourced card is server-rendered content that goes stale. The
+    // fetch takes the fragment as TEXT: an endpoint that already serves
+    // a picture (an SVG, a rendered list) can be pointed at directly,
+    // and {"html": "..."} is accepted for the ones that answer in JSON.
+    function reload() {
+      return fetch(cfg.source, {credentials: 'same-origin', cache: 'no-store'})
+        .then(function(r) { return r.ok ? r.text() : null; })
+        .then(function(body) {
+          if (body === null) return;   // a failed refresh keeps the last good paint
+          var html = body;
+          if (body.charAt(0) === '{') {
+            try { var d = JSON.parse(body); if (d && typeof d.html === 'string') html = d.html; }
+            catch (_) {}
+          }
+          paint(html);
+          // The card's content is new ELEMENTS, so anything a page hung
+          // on the old ones — a "you are here" mark, a measured height —
+          // has to go on again. Bubbles, so one listener on the page can
+          // serve every card in it.
+          wrap.dispatchEvent(new CustomEvent('ui-card-refreshed',
+            {bubbles: true, detail: {source: cfg.source}}));
+        })
+        .catch(function() {});
+    }
+    if (!cfg.html) reload();
+
+    // What changed is rarely the card's own source: a diagram of the
+    // stages is redrawn when a STAGE is saved. Prefix match, because the
+    // write a form broadcasts carries the record it wrote in its query.
+    var watch = (cfg.refresh_on || []).concat([cfg.source]);
+    var pending = null;
+    window.addEventListener('ui-data-changed', function(ev) {
+      var sources = (ev.detail && ev.detail.sources) || [];
+      var hit = sources.some(function(src) {
+        src = String(src);
+        return watch.some(function(w) { return w && src.indexOf(w) === 0; });
+      });
+      if (!hit) return;
+      // One redraw per burst: a panel fires a save per field group, and
+      // three of those should not be three fetches of the same block.
+      clearTimeout(pending);
+      pending = setTimeout(reload, 250);
     });
+    uiAutoRefresh(cfg.auto_refresh_ms, reload);
     return wrap;
   };
 

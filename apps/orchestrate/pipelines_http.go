@@ -12,6 +12,7 @@
 //	PUT    /api/pipelines/{id}         → replace the def's fields/stages
 //	DELETE /api/pipelines/{id}         → delete
 //	GET    /api/pipelines/{id}/graph   → SVG of the stages and their arrows; ?links=1 anchors each box
+//	GET    /api/pipelines/{id}/block?name=map|plan|cost|checklist → one derived block of the editor page, as HTML
 //	GET    /api/pipelines/{id}/export  → portable recipe (id/owner/timestamps stripped)
 //	POST   /api/pipelines/{id}/run     → run on body {input}; returns {output} (sync)
 //	POST   /api/pipelines/{id}/stream          → run, streaming the transcript (SSE)
@@ -353,6 +354,24 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		breakSchedulesForLostRecipients(saved, before)
 		Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
 		writeJSON(w, saved)
+	case "block":
+		// One derived block of the editor page, by name, as the HTML the
+		// page itself renders (pipeline_page.go). A ui.Card with a Source
+		// fetches this when a stage is saved, which is what keeps the
+		// plan, the price and the findings describing the pipeline as it
+		// is rather than as it was when the page was opened.
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		html, ok := pipelinePageBlock(udb, user, def, strings.TrimSpace(r.URL.Query().Get("name")))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(html))
 	case "graph":
 		// The picture (docs/workflow-graph.md), so the editor can redraw
 		// it after an edit that changed the SHAPE — ticking a branch's

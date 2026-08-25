@@ -444,7 +444,14 @@ const shareModalScript = `<script>
     fetch(url, {method:'POST'}).then(function(r){
       if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
       return r.json();
-    }).then(function(d){ if (onOk) onOk(d || {}); }).catch(function(e){
+    }).then(function(d){
+      if (onOk) onOk(d || {});
+      // Refresh the row as each toggle lands, not only on Done: the
+      // Status column IS what these toggles write (private / shared to
+      // users / public link), and a modal dismissed with Escape or the
+      // X left it describing the sharing the app had on the way in.
+      if (ctx.reload) ctx.reload();
+    }).catch(function(e){
       if (cb) cb.checked = !cb.checked;
       (window.uiAlert || window.alert)('Sharing failed: ' + e.message);
     });

@@ -148,6 +148,27 @@ A `ui.Section` has a Title, Subtitle, and a Body (one Component). Common compone
 
 `Card` splices raw HTML into the page; `Frame` gives a COMPLETE HTML document (a game, a canvas animation, an embedded mini-app) its own iframe so its CSS reset and `body` rules style only itself and its `100vh` measures its own box. Reach for `Frame` whenever the markup starts with a doctype or carries its own `<body>` — same origin either way, so relative fetches and storage keep working.
 
+A `Card` whose content is DERIVED — a diagram, a plan, a list of findings your
+handler worked out — should carry a `Source` and a `RefreshOn`, or it will go
+on describing the record as it was before the edit that was made while looking
+at it:
+
+```go
+ui.Card{
+    HTML:      thingMapHTML(def),                       // the first paint, server-rendered
+    Source:    "api/things/" + id + "/block?name=map",  // where to fetch it again
+    RefreshOn: []string{"api/things/" + id + "/parts"}, // what changing means "redraw me"
+}
+```
+
+`RefreshOn` entries match an invalidated source by PREFIX, so one entry covers
+the per-record writes (`…/parts?name=x`) a form broadcasts when it saves. The
+card coalesces a burst of saves into one fetch, keeps the last good content if
+the fetch fails, and dispatches `ui-card-refreshed` on itself afterwards —
+listen for that if your page decorates the card's elements. Serve the block
+from the SAME function the page renders it with, so the refresh cannot drift
+from the first paint.
+
 ### SSE for streaming, REST for the rest
 Static data → JSON over plain HTTP. Live pipelines → SSE (`/api/send`, framework runtime handles the protocol). The `PipelinePanel` primitive does this for you — you write a *bridge* function that translates your app's events into framework SSE events.
 

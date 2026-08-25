@@ -75,6 +75,11 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						PostURL:     "/filestore/api/actions?slug={slug}",
 						SubmitLabel: "Add action",
 						Fields:      actionFormFields(),
+						// The save broadcasts its own PostURL, and the slug in
+						// the query means that is never the actions table's
+						// source. Without this the action was added and the
+						// table below went on listing what was there before.
+						Invalidate: []string{"/filestore/api/actions"},
 					}),
 					ui.Expand("Assigned to", ui.ACLPicker(ui.ACLPickerConfig{
 						OptionsSource: "/admin/api/user-candidates",
@@ -87,6 +92,10 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
 							"Applies to admins too: admin manages the list, membership decides reach.",
 						EmptyText: "No approved users to assign yet.",
+						// The row this picker opened from renders the list it
+						// writes, in "Assigned to". A picker broadcasts nothing
+						// on its own, so the column kept the old answer.
+						Invalidate: []string{"/filestore/api/stores"},
 					})),
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/filestore/api/stores?slug={slug}",

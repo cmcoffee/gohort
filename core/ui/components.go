@@ -2997,8 +2997,39 @@ func (c CodeWriterPanel) MarshalJSON() ([]byte, error) {
 
 // Card is a free-form container that just renders raw HTML. Use
 // sparingly — escape hatch for things the framework doesn't model yet.
+//
+// Give it a Source and it stays CURRENT. A card is where a page puts
+// what it worked out on the server — a diagram, a plan, a list of
+// findings — and that is exactly the content a save on the same page
+// invalidates. Without a source the block is computed once and then
+// quietly describes the record as it was before the edit that was made
+// while looking at it, which is a worse failure than showing nothing:
+// it is wrong and it looks fine. Table, DisplayPanel and ChartPanel
+// have refetched on invalidation for a while; a card is the same
+// problem for content the server renders as HTML.
 type Card struct {
 	HTML string `json:"html"`
+	// Source serves this card's HTML. Answer with the fragment itself
+	// (HTML or SVG) or with {"html": "..."} — either is accepted, so an
+	// endpoint that already serves a picture can be pointed at directly
+	// rather than wrapped.
+	//
+	// HTML stays the FIRST paint: the server renders the block into the
+	// page as before and the source is what keeps it up to date, so a
+	// card never flashes "Loading…" on arrival. A card with only a
+	// Source fetches on mount.
+	Source string `json:"source,omitempty"`
+	// RefreshOn names the data whose change should redraw this card,
+	// which is rarely the card's own Source: a diagram of the stages is
+	// refetched when a STAGE is saved. Entries match an invalidated
+	// source by PREFIX, so "api/things/7/parts" covers the per-record
+	// writes to "api/things/7/parts?name=x" that a form broadcasts.
+	// Source itself always refreshes the card, listed here or not.
+	RefreshOn []string `json:"refresh_on,omitempty"`
+	// AutoRefreshMS re-fetches Source on an interval, for a block that
+	// changes on its own rather than when the reader does something.
+	// Paused while the tab is hidden (see uiAutoRefresh).
+	AutoRefreshMS int `json:"auto_refresh_ms,omitempty"`
 }
 
 func (Card) componentType() string { return "card" }

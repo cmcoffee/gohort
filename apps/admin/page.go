@@ -715,6 +715,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Noun:          "user",
 							Intro:         "Which users may use this feature. Empty = every user. Each granted user then decides which of THEIR keys use it and what each key may reach.",
 							EmptyText:     "No users to grant yet.",
+							// "Allowed" on the row is this list, summarised. A
+							// picker broadcasts nothing on its own, so setting
+							// users left the column saying what it said before.
+							Invalidate: []string{"api/feature-access"},
 						})),
 					},
 					EmptyText: "No shareable features are registered.",

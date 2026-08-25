@@ -10,6 +10,7 @@
 //	PUT    /api/machines/{id}         → replace the def's fields/phases
 //	DELETE /api/machines/{id}         → delete
 //	GET    /api/machines/{id}/export  → portable recipe (id/owner/timestamps stripped)
+//	GET    /api/machines/{id}/block?name=map|advice|checklist → one derived block of the editor page, as HTML
 //	GET    /api/machines/{id}/graph   → SVG of the phases and transitions;
 //	                                    ?agent=&session= overlays a live conversation
 //
@@ -501,6 +502,24 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			return
 		}
 		T.handleMachineSuggest(w, r, udb, user, def)
+	case "block":
+		// One derived block of the editor page, by name, as the HTML the
+		// page itself renders (machine_page.go). A ui.Card with a Source
+		// fetches this when a step is saved, which is what keeps the map
+		// and the two findings lists describing the machine as it is
+		// rather than as it was when the page was opened.
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		html, ok := machinePageBlock(udb, user, def, strings.TrimSpace(r.URL.Query().Get("name")))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(html))
 	case "graph":
 		// The picture (docs/workflow-graph.md). With ?session=<id> it
 		// carries the overlay: where that conversation is sitting and

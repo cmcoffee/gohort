@@ -456,8 +456,11 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			// send somebody rewriting something that works.
 			Subtitle: "Nothing here refuses a save. It is what the machine looks like it might not have meant.",
 			Wide:     true,
-			Body: withRepairButton(def, RepairAdvice,
-				ui.Card{HTML: `<div data-machine-advice>` + adviceHTML(udb, user, def) + `</div>`}),
+			Body: withRepairButton(def, RepairAdvice, ui.Card{
+				HTML:      `<div data-machine-advice>` + adviceHTML(udb, user, def) + `</div>`,
+				Source:    machineBlockURL(def.ID, "advice"),
+				RefreshOn: machineDerivedFrom(def),
+			}),
 		},
 		{
 			Title: "What is still missing",
@@ -472,8 +475,11 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			// costs something.
 			Subtitle: "The same findings a save is checked against, as work remaining.",
 			Wide:     true,
-			Body: withRepairButton(def, RepairProblems,
-				ui.Card{HTML: `<div data-machine-checklist>` + checklistHTML(def, checklist) + `</div>`}),
+			Body: withRepairButton(def, RepairProblems, ui.Card{
+				HTML:      `<div data-machine-checklist>` + checklistHTML(def, checklist) + `</div>`,
+				Source:    machineBlockURL(def.ID, "checklist"),
+				RefreshOn: machineDerivedFrom(def),
+			}),
 		},
 	}...)
 	// Share with users — the owner's decision, so the section exists only on
@@ -983,10 +989,55 @@ func checklistHTML(def MachineDef, probs []string) string {
 // offers to turn the page back into the thing the map was built to
 // replace, and the height it would reclaim is capped already.
 func machineMapCard(def MachineDef) ui.Component {
-	return ui.Card{HTML: `<div class="machine-map">` +
+	return ui.Card{
+		HTML:      machineMapHTML(def),
+		Source:    machineBlockURL(def.ID, "map"),
+		RefreshOn: machineDerivedFrom(def),
+	}
+}
+
+// machineMapHTML is the map block — caption and picture — in ONE place,
+// so what the page renders and what a refresh fetches cannot drift.
+func machineMapHTML(def MachineDef) string {
+	return `<div class="machine-map">` +
 		`<div class="machine-map-cap">Map — click a step to open it. Its shape follows the arrows, not the step order.</div>` +
 		`<div class="machine-map-body">` + machineGraphSVG(def) + `</div>` +
-		`</div>`}
+		`</div>`
+}
+
+// machineDerivedFrom is what these blocks are worked out from: a step,
+// and the machine's own meta. Ticking a choice on a step ADDS AN ARROW,
+// and "Starts at" is the entry the whole layout is ranked from, so
+// either can rearrange every box on the map. Structural edits that
+// reload the page do not need it; the ones that quietly change routing
+// do.
+func machineDerivedFrom(def MachineDef) []string {
+	return []string{machineAPIBase(def) + "/phases", machineAPIBase(def) + "/meta"}
+}
+
+// machineBlockURL addresses one derived block for refetching.
+func machineBlockURL(id, name string) string {
+	return "api/machines/" + url_(id) + "/block?name=" + name
+}
+
+// machinePageBlock renders one derived block by name — the ONE place
+// each is built, called both when the page is first served and when a
+// step save asks for it again.
+//
+// This list is what the editor WORKED OUT: the shape, and the two
+// findings lists somebody works down one item at a time. The list that
+// still says "3 to fix" after the third fix is the one place staleness
+// actually costs something.
+func machinePageBlock(udb Database, user string, def MachineDef, name string) (string, bool) {
+	switch name {
+	case "map":
+		return machineMapHTML(def), true
+	case "advice":
+		return `<div data-machine-advice>` + adviceHTML(udb, user, def) + `</div>`, true
+	case "checklist":
+		return `<div data-machine-checklist>` + checklistHTML(def, machineChecklist(udb, user, def)) + `</div>`, true
+	}
+	return "", false
 }
 
 // machineMapCSS keeps the map from eating the page, and lights the step
@@ -1047,90 +1098,14 @@ const machineMapCSS = `
 // the map's boxes already link to those anchors, so "which step am I
 // on" is a question the URL answers — on arrival, on every click, and
 // on the back button.
+//
+// The redraw that used to live here is gone: the map and the two
+// findings lists are cards with a source (machineDerivedFrom), so the
+// framework refetches them when a step is saved. What was left behind
+// was a second implementation of findingsHTML in JavaScript, kept in
+// step with the Go one by hand and by a test — for content the server
+// was already able to render.
 const machineMapHereJS = `(function() {
-  // The two derived lists, worded HERE as well as on the server —
-  // deliberately, and pinned by a test, because a refresh that phrased
-  // them differently would read as the page changing its mind rather
-  // than as the same list one item shorter.
-  // Rebuilt as a LIST, matching what the page rendered — the server
-  // draws <ul><li>, so replacing it with one joined line would make the
-  // panel change shape the first time anything was saved.
-  function paintFindings(box, items, empty, count, rewrites) {
-    if (!box) return;
-    var rewritable = {};
-    (rewrites || []).forEach(function(rw) { if (rw && rw.why) rewritable[rw.why] = rw.step; });
-    box.textContent = '';
-    if (!items.length) {
-      var none = document.createElement('div');
-      none.className = 'machine-findings-none';
-      none.textContent = empty;
-      box.appendChild(none);
-      return;
-    }
-    if (count) {
-      var head = document.createElement('div');
-      head.className = 'machine-findings-count';
-      head.textContent = items.length + ' to fix';
-      box.appendChild(head);
-    }
-    var names = stepNames();
-    var ul = document.createElement('ul');
-    ul.className = 'machine-findings';
-    items.forEach(function(it) {
-      var li = document.createElement('li');
-      var step = findingStep(names, it);
-      if (step) {
-        var a = document.createElement('a');
-        a.className = 'machine-finding-step';
-        a.href = '#' + slugOf(step);
-        a.textContent = 'step ' + step;
-        li.appendChild(a);
-        li.appendChild(document.createTextNode(it.slice(('step ' + step).length)));
-      } else {
-        li.textContent = it;   // textContent, so a finding quoting a step name is text
-      }
-      if (rewritable[it]) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'machine-finding-rewrite';
-        btn.setAttribute('data-rewrite-step', rewritable[it]);
-        btn.textContent = 'Rewrite the instructions…';
-        li.appendChild(document.createTextNode(' '));
-        li.appendChild(btn);
-      }
-      ul.appendChild(li);
-    });
-    box.appendChild(ul);
-  }
-
-  // The step names come from the map this refresh just redrew, so there
-  // is one list of steps on the page rather than a second copy shipped
-  // alongside the findings.
-  function stepNames() {
-    var out = [];
-    var nodes = document.querySelectorAll('.machine-map [data-node]');
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i].getAttribute('data-node');
-      if (n) out.push(n);
-    }
-    return out;
-  }
-  function slugOf(name) {
-    return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  }
-  // Longest match wins, same as the server: one step may be named with
-  // another's name as its prefix.
-  function findingStep(names, line) {
-    var best = '';
-    names.forEach(function(n) {
-      var lead = 'step ' + n;
-      if (n.length <= best.length || line.indexOf(lead) !== 0) return;
-      var next = line.charAt(lead.length);
-      if (next === '' || next === ':' || next === ' ') best = n;
-    });
-    return best;
-  }
-
   function mark() {
     var want = (window.location.hash || '').replace(/^#/, '');
     var nodes = document.querySelectorAll('.machine-map [data-node]');
@@ -1141,56 +1116,9 @@ const machineMapHereJS = `(function() {
     }
   }
   window.addEventListener('hashchange', mark);
+  // A redraw is new elements, so the mark went with the old ones.
+  window.addEventListener('ui-card-refreshed', mark);
   mark();
-
-  // Redraw the map when a step is saved. Ticking a choice ADDS AN ARROW
-  // — the shape changed — and the map is rendered server-side, so
-  // without this the picture kept describing the machine as it was
-  // before the edit that was made while looking at it. Structural edits
-  // that reload the page (add, remove, rename, reorder, kind) do not
-  // need it; the ones that quietly change routing do.
-  var pending = null;
-  window.addEventListener('ui-data-changed', function(ev) {
-    var sources = (ev.detail && ev.detail.sources) || [];
-    // A step save, or the machine's own — "Starts at" is the entry the
-    // whole layout is ranked FROM, so changing it can rearrange every
-    // box on the map.
-    var touched = sources.some(function(s) {
-      s = String(s);
-      return s.indexOf('/phases?name=') >= 0 || s.lastIndexOf('/meta') === s.length - 5;
-    });
-    if (!touched) return;
-    var body = document.querySelector('.machine-map-body');
-    var id = new URLSearchParams(window.location.search).get('id');
-    if (!body || !id) return;
-    // One redraw per burst: a checklist fires a save per box, and three
-    // ticks should not be three fetches of the same picture.
-    clearTimeout(pending);
-    pending = setTimeout(function() {
-      fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/graph?links=1')
-        .then(function(r) { return r.ok ? r.text() : null; })
-        .then(function(svg) {
-          if (!svg) return;
-          body.innerHTML = svg;
-          mark();
-        })
-        .catch(function() {});
-      // The two derived lists, from the endpoint that already computes
-      // both. This is the one place staleness costs something: it is
-      // the list you work against, fixing one thing at a time, and it
-      // said "3 to fix" until a reload however many you had fixed.
-      fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/editor')
-        .then(function(r) { return r.ok ? r.json() : null; })
-        .then(function(spec) {
-          if (!spec) return;
-          var c = document.querySelector('[data-machine-checklist]');
-          var a = document.querySelector('[data-machine-advice]');
-          paintFindings(c, spec.checklist || [], '\u2713 Nothing outstanding — this machine will run as written.', true, spec.rewrites);
-          paintFindings(a, spec.advice || [], 'Nothing — the steps read as instructions rather than specifications.', false, spec.rewrites);
-        })
-        .catch(function() {});
-    }, 250);
-  });
 })();`
 
 // machineRewriteJS is the one finding whose fix is prose.

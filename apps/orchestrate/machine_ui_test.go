@@ -644,6 +644,16 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 		t.Error("anchors only mean something inside the page that has those sections")
 	}
 
+	// The block endpoint serves what the page rendered — one renderer,
+	// so the refresh cannot drift from the first paint. Checked before
+	// the local copy below is mutated.
+	r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/block?name=map", nil)
+	w = httptest.NewRecorder()
+	app.handleMachineOne(w, asUser(r, user))
+	if w.Body.String() != machineMapHTML(def) {
+		t.Error("the refreshed map is not the map the page drew")
+	}
+
 	// Adding a choice adds an arrow: what the redraw exists to show.
 	before := strings.Count(machineGraphSVG(def), "stroke-dasharray")
 	def.Phases[0].Choices = []string{"dig", "answer"}
@@ -651,20 +661,23 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 		t.Errorf("ticking a choice should change the picture: %d then %d", before, after)
 	}
 
-	// The listener keys off the same broadcast the preview uses, and
-	// coalesces: a checklist fires one save per box.
-	page, err := os.ReadFile("machine_page.go")
-	if err != nil {
-		t.Fatal(err)
+	// The redraw is DECLARED, not scripted: the map is a card with a
+	// source, watching the routes a step save and a meta save post to.
+	// The coalescing, the swap and the fetch all live in the framework
+	// now (ui.Card), so this page carries none of them.
+	card, _ := json.Marshal(machineMapCard(def))
+	for _, want := range []string{
+		`"source":"api/machines/` + def.ID + `/block?name=map"`,
+		`"api/machines/` + def.ID + `/phases"`,
+		`"api/machines/` + def.ID + `/meta"`,
+	} {
+		if !strings.Contains(string(card), want) {
+			t.Errorf("the map card should carry %s:\n%s", want, card)
+		}
 	}
-	src := string(page)
-	if !strings.Contains(src, "graph?links=1") {
-		t.Error("the map never refetches itself")
-	}
-	if !strings.Contains(src, "clearTimeout(pending)") {
-		t.Error("three ticks should not be three fetches of the same picture")
-	}
-	if !strings.Contains(src, "body.innerHTML = svg;\n          mark();") {
+	// And the mark goes back on after a redraw, because the redraw is
+	// new elements.
+	if !strings.Contains(machineMapHereJS, "ui-card-refreshed") {
 		t.Error("a redrawn map should light the step you are on again")
 	}
 }
@@ -686,12 +699,9 @@ func TestTheMachinesOwnFieldsKeepThePageTrue(t *testing.T) {
 		t.Errorf("only the name needs a rebuild: %s", meta)
 	}
 
-	page, err := os.ReadFile("machine_page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(page), "'/meta'") {
-		t.Error("a meta save should redraw the map — the start is what the layout ranks from")
+	derived := machineDerivedFrom(def)
+	if len(derived) != 2 || !strings.HasSuffix(derived[1], "/meta") {
+		t.Errorf("a meta save should redraw the map — the start is what the layout ranks from: %v", derived)
 	}
 
 	// And that claim is true of the graph, not just of the comment: the
@@ -733,48 +743,39 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 		t.Error("the page should show the outstanding work it found")
 	}
 
-	// The refresh reads the endpoint that already computes both lists.
-	page, err := os.ReadFile("machine_page.go")
-	if err != nil {
-		t.Fatal(err)
+	// Both lists are cards with a source, so a save refetches them from
+	// the ONE place they are rendered. They used to be rebuilt in
+	// JavaScript — a second implementation of findingsHTML, kept in step
+	// with the Go one by hand and by this test, which is why the wording
+	// and the shape both had to be pinned twice.
+	for _, name := range []string{"checklist", "advice"} {
+		r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/block?name="+name, nil)
+		w = httptest.NewRecorder()
+		app.handleMachineOne(w, asUser(r, user))
+		if w.Code != 200 {
+			t.Fatalf("the %s block does not render: %d", name, w.Code)
+		}
+		want, _ := machinePageBlock(udb, user, def, name)
+		if w.Body.String() != want {
+			t.Errorf("the refreshed %s is not the list the page drew", name)
+		}
 	}
-	src := string(page)
-	if !strings.Contains(src, "/editor'") {
+	if !strings.Contains(body, `"source":"api/machines/`+def.ID+`/block?name=checklist"`) {
 		t.Error("nothing refetches the lists")
 	}
 
-	// Both wordings exist twice — Go and JS — so they are pinned
-	// together: a refresh phrased differently reads as the page changing
-	// its mind rather than as the same list one item shorter.
-	clean := MachineDef{Name: "ok", Start: "s", Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}}
-	goneClean := checklistHTML(clean, clean.Problems())
-	if !strings.Contains(src, "Nothing outstanding — this machine will run as written.") ||
-		!strings.Contains(goneClean, "Nothing outstanding — this machine will run as written.") {
-		t.Error("the empty-checklist sentence should be the same on both sides")
-	}
-	if !strings.Contains(src, "' to fix'") || !strings.Contains(checklistHTML(def, def.Problems()), " to fix") {
-		t.Error("the counted form should be the same on both sides")
-	}
-	if !strings.Contains(src, "the steps read as instructions rather than specifications.") ||
-		!strings.Contains(adviceHTML(nil, "u", clean), "the steps read as instructions rather than specifications.") {
-		t.Error("the empty-advice sentence should be the same on both sides")
-	}
-
-	// And the SHAPE is pinned with the wording. Each finding runs to
-	// several lines of prose, so joining them into one paragraph with
-	// inline bullets made three findings read as one wall — the page
-	// draws <li> per finding, and so must the refresh.
+	// The SHAPE, once: each finding runs to several lines of prose, so
+	// joining them into one paragraph with inline bullets made three
+	// findings read as one wall.
 	if html := checklistHTML(def, def.Problems()); !strings.Contains(html, "<li>") || strings.Contains(html, " • ") {
 		t.Error("the page should draw one finding per line")
 	}
-	if !strings.Contains(src, "ul.className = 'machine-findings'") ||
-		!strings.Contains(src, "createElement('li')") {
-		t.Error("the refresh should rebuild the same list, not a joined line")
-	}
-	// Built with textContent: a finding quotes step names, and a step
-	// named by somebody else is not markup.
-	if !strings.Contains(src, "li.textContent = it") {
-		t.Error("findings are text, not HTML")
+	// A finding quotes step names, and a step named by somebody else is
+	// not markup.
+	hostile := MachineDef{Name: "M", Start: "s", Phases: []MachinePhase{
+		{Name: "<img src=x onerror=alert(1)>", Prompt: "p"}}}
+	if h := checklistHTML(hostile, hostile.Problems()); strings.Contains(h, "<img") {
+		t.Errorf("findings are text, not HTML:\n%s", h)
 	}
 }
 
@@ -907,17 +908,12 @@ func TestAFindingLinksToTheStepItIsAbout(t *testing.T) {
 	if strings.Contains(whole, "<a") && !strings.Contains(whole, "step s") {
 		t.Errorf("a machine-level finding has no step to open:\n%s", whole)
 	}
-	// The refresh applies the same rule, from the step names in the map
-	// it just redrew — one list of steps on the page, not two.
-	src, err := os.ReadFile("machine_page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"function stepNames()", "data-node", "function findingStep(names, line)",
-		"machine-finding-step"} {
-		if !strings.Contains(string(src), want) {
-			t.Errorf("the live refresh is missing %q", want)
-		}
+	// One implementation: the refresh refetches this same rendering
+	// rather than reapplying the rule in JavaScript against the step
+	// names it scraped off the map.
+	block, ok := machinePageBlock(nil, "u", def, "checklist")
+	if !ok || !strings.Contains(block, "machine-finding-step") {
+		t.Errorf("a refreshed finding should still open its step:\n%s", block)
 	}
 }
 
@@ -971,9 +967,15 @@ func TestTheProseFindingOffersARewrite(t *testing.T) {
 	if !strings.Contains(js, "closest('[data-rewrite-step]')") {
 		t.Error("the handler should be delegated, or it dies with the first redraw")
 	}
-	// And the live refresh redraws the button.
-	if !strings.Contains(js, "btn.setAttribute('data-rewrite-step'") {
-		t.Error("a save would drop the button until the next reload")
+	// And a refresh redraws the button, because the refresh is the same
+	// server rendering that drew it the first time.
+	both := ""
+	for _, name := range []string{"checklist", "advice"} {
+		b, _ := machinePageBlock(udb, user, def, name)
+		both += b
+	}
+	if !strings.Contains(both, "data-rewrite-step") {
+		t.Errorf("a save would drop the button until the next reload:\n%s", both)
 	}
 
 	// A machine with no prose finding offers no rewrite.
