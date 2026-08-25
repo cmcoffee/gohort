@@ -78,3 +78,38 @@ func TestASourcedCardKeepsItsServerRenderedFirstPaint(t *testing.T) {
 		t.Error("a plain card must not fetch, listen or poll")
 	}
 }
+
+// A row action reloads its own table and rebroadcasts its source, which
+// covers "this row changed". What it could not say is "and that changed
+// something in another section" — so an admin approving a promotion, or
+// installing from the catalog, was looking at four other sections still
+// showing the answer from before the click.
+func TestARowActionCanRefreshWhatItChangedElsewhere(t *testing.T) {
+	b, err := json.Marshal(RowAction{Type: "button", Label: "Install",
+		PostTo: "api/catalog?action=install&id={id}", Method: "POST",
+		Invalidate: []string{"api/connectors", "api/persistent-tools"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"invalidate":["api/connectors","api/persistent-tools"]`) {
+		t.Errorf("the action should carry what else it changed:\n%s", b)
+	}
+	// And an action that changes only its own rows ships nothing extra.
+	plain, _ := json.Marshal(RowAction{Type: "button", Label: "Delete", PostTo: "api/things/{id}", Method: "DELETE"})
+	if strings.Contains(string(plain), "invalidate") {
+		t.Errorf("an ordinary row action should not ship the field:\n%s", plain)
+	}
+
+	basics := mustRuntimePart(t, "10_basics.js")
+	if !strings.Contains(basics, "act.invalidate && act.invalidate.length") {
+		t.Error("the runtime ignores the field, so declaring it does nothing")
+	}
+	// After the row's own reload and its source rebroadcast, not instead
+	// of them: the row still changed, and sibling tables on the same
+	// source still need to hear about it.
+	own := strings.Index(basics, "window.uiInvalidate(cfg.source);")
+	other := strings.Index(basics, "window.uiInvalidate(act.invalidate);")
+	if own < 0 || other < 0 || other < own {
+		t.Error("an action's own table and its siblings must still refresh first")
+	}
+}

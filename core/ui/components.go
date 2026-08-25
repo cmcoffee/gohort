@@ -351,6 +351,14 @@ type RowAction struct {
 	// "thing is gone" feedback is the whole point — the round-trip
 	// shouldn't gate the visual.
 	Optimistic bool `json:"optimistic,omitempty"`
+	// Invalidate — sources to refetch after the action succeeds, for
+	// what it changed ELSEWHERE. A row action already reloads its own
+	// table and rebroadcasts its source, which covers the common case;
+	// this is for the action whose real effect lands somewhere else on
+	// the page. Installing from a catalog writes connectors, tools,
+	// credentials and skills — every one of them a section of its own,
+	// and the point of the install is that you then go and review them.
+	Invalidate []string `json:"invalidate,omitempty"`
 }
 
 // Expand is a helper to wrap a nested Component for expand-type RowActions.

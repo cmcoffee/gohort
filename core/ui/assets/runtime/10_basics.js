@@ -494,6 +494,14 @@
               if (window.uiInvalidate && cfg.source) {
                 window.uiInvalidate(cfg.source);
               }
+              // And what this action changed ELSEWHERE. A row button
+              // could only ever refresh its own table, so an action
+              // whose effect lands in another section — a catalog
+              // install writing connectors, tools and credentials —
+              // left every one of those sections stale.
+              if (window.uiInvalidate && act.invalidate && act.invalidate.length) {
+                window.uiInvalidate(act.invalidate);
+              }
               // Surface a server-provided outcome message. A non-empty
               // `warnings` array escalates to a modal alert so an unmet
               // reference (e.g. a catalog install that leaves a tool

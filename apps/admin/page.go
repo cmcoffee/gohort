@@ -1419,7 +1419,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo:  "api/secure-api?name={name}",
 									Method:  "DELETE",
 									Confirm: "Delete this credential? The encrypted secret goes with it.",
-									Variant: "danger"},
+									Variant: "danger",
+									// Every tool that names this credential is
+									// broken the moment it goes: the "⚠ missing"
+									// badge in Persistent Tools is computed from
+									// whether the credential still exists.
+									Invalidate: []string{"api/persistent-tools"}},
 							},
 							EmptyText: "No credentials registered. Add one with the button below.",
 						},
@@ -1438,6 +1443,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								TestLabel:   "Test token (oauth2)",
 								SubmitLabel: "Create credential",
 								Fields:      credentialFormFields(),
+								// Supplying a credential a tool was waiting on
+								// clears that tool's "⚠ missing" badge — the
+								// usual reason to add one is the tool that has
+								// been sitting there broken.
+								Invalidate: []string{"api/secure-api", "api/persistent-tools"},
 							},
 						},
 						// Export all credentials' CONFIG as one bundle. Secrets never
@@ -1618,7 +1628,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					RowActions: []ui.RowAction{
 						{Type: "button", Label: "Approve",
 							PostTo: "api/promotions?action=approve&id={id}",
-							Method: "POST"},
+							Method: "POST",
+							// Approving a tool promotion shares it deployment-wide
+							// — which is a badge on that tool's row two sections
+							// down, in the table this queue exists to feed.
+							Invalidate: []string{"api/persistent-tools"}},
 						{Type: "button", Label: "Deny",
 							PostTo:  "api/promotions?action=deny&id={id}",
 							Method:  "POST",
@@ -1908,7 +1922,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					},
 					RowActions: []ui.RowAction{
 						{Type: "button", Label: "Install", Method: "POST", Variant: "primary",
-							PostTo:  "api/catalog?action=install&id={id}",
+							PostTo: "api/catalog?action=install&id={id}",
+							// An install runs the same importer a file import
+							// does, and lands the same drafts: connectors
+							// unapproved, tools pending, credentials inert. Each
+							// is a section of its own, and reviewing them is the
+							// next thing you do — the file-import path has said
+							// so since it existed, and this one did not.
+							Invalidate: []string{"api/connectors", "api/persistent-tools", "api/secure-api", "api/skills"},
 							Confirm: "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above — nothing goes live until you approve it."},
 					},
 					EmptyText: "The catalog is empty.",
