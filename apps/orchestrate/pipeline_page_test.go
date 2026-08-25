@@ -522,3 +522,101 @@ func TestRunPanelNamesItsDeepLinkParam(t *testing.T) {
 		t.Error("the run panel must name its deep-link param, or the page's own ?id= reads as a session id")
 	}
 }
+
+// Clicking a box opened the right section and then said nothing about
+// which one — the map stayed a flat picture with no "you are here",
+// which the machine editor's map has had all along. The rail highlights
+// its own row; the diagram above it did not.
+func TestThePipelineMapSaysWhichStageYouAreOn(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Research",
+		Stages: []PipelineStage{
+			{Name: "plan", Kind: StageWorker, Prompt: "p"},
+			{Name: "refine", Kind: StageLoop, Count: 2, Body: []PipelineStage{
+				{Name: "critique", Kind: StageWorker, Prompt: "c"},
+			}},
+		}})
+
+	r := httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
+	w := httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	body := w.Body.String()
+
+	// The mark itself, and something to see when it lands.
+	if !strings.Contains(body, "[data-node].here rect") {
+		t.Error("nothing styles the stage you are on")
+	}
+	// Matched on the box's own link, not on a slug recomputed from its
+	// name: the sections are numbered ("1. plan"), so the bare name in
+	// data-node is not the anchor.
+	if !strings.Contains(body, "getAttribute('href')") || !strings.Contains(body, "classList.toggle('here'") {
+		t.Error("the map should mark the box whose link is the open section")
+	}
+	// A click in the map and a click in the rail both set the hash, and
+	// the back button walks it.
+	if !strings.Contains(body, "addEventListener('hashchange'") {
+		t.Error("the mark should follow the hash, not just the first paint")
+	}
+	// A loop's body steps get sections of their own, so their boxes are
+	// doors too — and a door is what can be marked.
+	if !strings.Contains(body, `href=\"#refine-critique\"`) {
+		t.Errorf("a body step's box should open its own section:\n%s", body)
+	}
+}
+
+// The map is drawn server-side, so an edit that changed the SHAPE —
+// pointing a branch somewhere else, giving a loop a body — left the
+// picture describing the pipeline as it was before the edit that was
+// made while looking at it. The machine editor redraws; this one did
+// not, because there was no endpoint to redraw FROM.
+func TestThePipelineMapIsRedrawnWhenAStageChangesTheShape(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "Research",
+		Stages: []PipelineStage{
+			{Name: "plan", Kind: StageWorker, Prompt: "p"},
+			{Name: "gate", Kind: StageBranch, When: "ok"},
+			{Name: "dig", Kind: StageWorker, Prompt: "d"},
+			{Name: "answer", Kind: StageWorker, Prompt: "a"},
+		}})
+
+	// The endpoint the refresh calls draws the MAP — anchors and all —
+	// or a redraw would quietly cost every box its link.
+	r := httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/graph?links=1", nil)
+	w := httptest.NewRecorder()
+	app.handlePipelineOne(w, asUser(r, user))
+	if w.Code != 200 {
+		t.Fatalf("graph fetch failed: %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `href="#3-dig"`) {
+		t.Errorf("the refreshed map should keep its links:\n%s", w.Body.String())
+	}
+	// And the plain endpoint stays plain — it is what a standalone image
+	// or a saved copy gets.
+	r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/graph", nil)
+	w = httptest.NewRecorder()
+	app.handlePipelineOne(w, asUser(r, user))
+	if strings.Contains(w.Body.String(), `href="#3-dig"`) {
+		t.Error("anchors only mean something inside the page that has those sections")
+	}
+
+	// Sending a branch somewhere else adds an arrow: what the redraw
+	// exists to show.
+	before := strings.Count(pipelineGraphSVG(def), "stroke-dasharray")
+	def.Stages[1].SkipTo = "answer"
+	if after := strings.Count(pipelineGraphSVG(def), "stroke-dasharray"); after <= before {
+		t.Error("a branch with a destination should draw its jump")
+	}
+
+	// And the page listens for the save that does it, from either a
+	// top-level stage or a step inside a body — both post to the same
+	// route.
+	r = httptest.NewRequest("GET", "/orchestrate/pipeline?id="+def.ID, nil)
+	w = httptest.NewRecorder()
+	app.handlePipelinePage(w, asUser(r, user))
+	body := w.Body.String()
+	for _, want := range []string{"ui-data-changed", "/stages?name=", "/graph?links=1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page should redraw the map on a stage save, missing %q", want)
+		}
+	}
+}

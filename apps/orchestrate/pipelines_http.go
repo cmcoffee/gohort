@@ -11,6 +11,7 @@
 //	GET    /api/pipelines/{id}         → full def
 //	PUT    /api/pipelines/{id}         → replace the def's fields/stages
 //	DELETE /api/pipelines/{id}         → delete
+//	GET    /api/pipelines/{id}/graph   → SVG of the stages and their arrows; ?links=1 anchors each box
 //	GET    /api/pipelines/{id}/export  → portable recipe (id/owner/timestamps stripped)
 //	POST   /api/pipelines/{id}/run     → run on body {input}; returns {output} (sync)
 //	POST   /api/pipelines/{id}/stream          → run, streaming the transcript (SSE)
@@ -352,6 +353,30 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		breakSchedulesForLostRecipients(saved, before)
 		Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
 		writeJSON(w, saved)
+	case "graph":
+		// The picture (docs/workflow-graph.md), so the editor can redraw
+		// it after an edit that changed the SHAPE — ticking a branch's
+		// destination adds an arrow, and the map is rendered server-side.
+		//
+		// Served as SVG so it can be linked or saved on its own; the page
+		// fetches the text and injects it inline, which is what lets the
+		// page's CSS variables theme it. Every dynamic string in the
+		// document is escaped at the renderer (see xmlEscape).
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		// ?links=1 draws it as the editor's MAP: every box a door into
+		// that stage's section. Same picture either way — the difference
+		// is anchors, which only mean something inside the page that has
+		// those sections. Mirrors the machines route.
+		if r.URL.Query().Get("links") == "1" {
+			_, _ = w.Write([]byte(pipelineGraphSVG(def)))
+			return
+		}
+		_, _ = w.Write([]byte(def.Graph().SVG(nil)))
 	case "export":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

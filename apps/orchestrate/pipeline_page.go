@@ -177,6 +177,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		// exactly what a stage's own section cannot show.
 		Sticky: pipelineMapCard(def),
 		Head: ui.NewHead().CSS(pipelineStageCSS).
+			JS(pipelineMapHereJS).
 			ClientAction("pipeline_duplicate", pipelineDuplicateJS),
 		Sections: []ui.Section{{
 			Title:    "The pipeline",
@@ -462,7 +463,15 @@ func pipelineGraphSVG(def PipelineDef) string {
 	g := def.Graph()
 	titles := map[string]string{}
 	for i, s := range def.Stages {
-		titles[strings.TrimSpace(s.Name)] = stageSectionTitle(i, s.Name)
+		name := strings.TrimSpace(s.Name)
+		titles[name] = stageSectionTitle(i, s.Name)
+		// A body step is drawn as its own box and gets its own section,
+		// so it is a door for the same reason its parent is. The graph
+		// scopes its id to the loop it lives in, exactly as the section
+		// title does.
+		for _, b := range s.Body {
+			titles[name+" \u203a "+strings.TrimSpace(b.Name)] = bodyStageSectionTitle(s.Name, b.Name)
+		}
 	}
 	for i := range g.Nodes {
 		if title, ok := titles[g.Nodes[i].ID]; ok {
@@ -709,11 +718,77 @@ const pipelineStageCSS = `
 }
 .machine-map-body > svg { flex: 0 0 auto; margin: 0 auto; }
 .machine-map svg a { text-decoration: none; }
+/* You are here. The fill is what carries it — a border alone is lost
+   among the boxes already drawn heavier for being the entry or the
+   result. */
+.machine-map [data-node].here rect {
+  fill: var(--accent-soft, rgba(99,102,241,0.16));
+  stroke: var(--accent, #6366f1);
+  stroke-width: 2.5;
+}
 .machine-findings { margin: 0; padding-left: 1.1rem; }
 .machine-findings > li { margin: 0 0 0.5rem 0; line-height: 1.5; }
 .machine-findings > li:last-child { margin-bottom: 0; }
 .machine-findings-none { color: var(--text-mute); }
 `
+
+// pipelineMapHereJS lights the box whose section is open.
+//
+// The rail and the map address the same stage by the same hash — the
+// rail sets it on a click, the boxes link to it — so "which stage am I
+// on" is a question the URL already answers: on arrival, on a click in
+// either place, and on the back button.
+//
+// Matched on the box's own LINK rather than on a slug recomputed from
+// its name, which is where the machine editor's version cannot be
+// reused: a stage's section is titled "3. draft", so the bare name in
+// data-node is not its anchor. The href is.
+const pipelineMapHereJS = `(function() {
+  function mark() {
+    var want = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+    var links = document.querySelectorAll('.machine-map svg a[href]');
+    for (var i = 0; i < links.length; i++) {
+      var href = String(links[i].getAttribute('href') || '').replace(/^#/, '').toLowerCase();
+      var box = links[i].querySelector('[data-node]');
+      if (box) box.classList.toggle('here', !!want && href === want);
+    }
+  }
+  window.addEventListener('hashchange', mark);
+  mark();
+
+  // Redraw the map when a stage is saved. The shape is not only in the
+  // stage LIST: pointing a branch somewhere else adds an arrow, giving
+  // a loop a body puts boxes inside it, and changing a kind changes
+  // what the box is. The picture is rendered server-side, so without
+  // this it kept describing the pipeline as it was before the edit that
+  // was made while looking at it. Structural edits that reload the page
+  // (add, remove) do not need it; the ones that quietly change routing
+  // do.
+  var pending = null;
+  window.addEventListener('ui-data-changed', function(ev) {
+    var sources = (ev.detail && ev.detail.sources) || [];
+    // A stage save, top-level or inside a body — both post to the same
+    // route, addressed by name.
+    var touched = sources.some(function(s) { return String(s).indexOf('/stages?name=') >= 0; });
+    if (!touched) return;
+    var body = document.querySelector('.machine-map-body');
+    var id = new URLSearchParams(window.location.search).get('id');
+    if (!body || !id) return;
+    // One redraw per burst: a panel fires a save per field group, and
+    // three of those should not be three fetches of the same picture.
+    clearTimeout(pending);
+    pending = setTimeout(function() {
+      fetch('/orchestrate/api/pipelines/' + encodeURIComponent(id) + '/graph?links=1')
+        .then(function(r) { return r.ok ? r.text() : null; })
+        .then(function(svg) {
+          if (!svg) return;
+          body.innerHTML = svg;
+          mark();   // the redrawn boxes are new elements, so the mark goes on again
+        })
+        .catch(function() {});
+    }, 250);
+  });
+})();`
 
 // pipelineBodySections renders the stages inside one body-bearing stage,
 // plus the form that adds another.
