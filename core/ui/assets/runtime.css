@@ -3651,6 +3651,17 @@ select:-webkit-autofill {
   .ui-agent-actions { padding: 0.4rem 0.5rem; gap: 0.3rem; }
   .ui-agent-actions .ui-row-btn { font-size: 0.78rem; padding: 0.3rem 0.55rem; }
 }
+/* Manage ▾ dropdown, mobile. The panel runtime anchors this menu inline with
+ * right: 0 against its button. On desktop the button is the last thing in a
+ * right-aligned action row, so flush-right reads correctly. On mobile the
+ * bundle stacks and .ui-agent-actions switches to justify-content: flex-start
+ * with wrapping, so the button sits mid-row and a flush-right menu hangs to
+ * its left, tucked under the buttons before it. Nudge the panel right by a
+ * button's worth of inset so it clears that shoulder. !important because the
+ * anchor is an inline style (same trick .ui-agent-top-bundle uses for height). */
+@media (max-width: 900px) {
+  .ui-channel-menu { right: -0.5rem !important; }
+}
 .ui-agent-split {
   display: flex; flex: 1 1 auto; min-height: 0;
 }
