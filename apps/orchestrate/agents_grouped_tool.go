@@ -528,7 +528,16 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 		a, ok = findAgentByNameOrID(fleetDB, fleetUser, key)
 	}
 	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
-		return "", fmt.Errorf("agent %q not found", key)
+		// Name the near misses. Against a fleet of dozens, a bare "not found"
+		// leaves a caller unable to tell a missing agent from a misspelt one,
+		// and its next move is to guess again or to stop and ask the user
+		// about an agent that is sitting in the list it just read.
+		//
+		// Only HERE. The other not-found returns above are deliberate
+		// concealment — a Builder the caller may not dispatch, a retired seed
+		// — and they must keep answering identically to a genuinely absent
+		// name, or the error becomes an oracle for what exists but is hidden.
+		return "", fmt.Errorf("agent %q not found.%s", key, suggestAgents(listAgents(fleetDB, fleetUser), key))
 	}
 	if isBuilderAgent(a.ID) && !t.canDispatchBuilder() {
 		return "", fmt.Errorf("agent %q not found", key)

@@ -87,6 +87,26 @@ const workPlanGenericSetDescription = "Commit to a multi-step plan, and track it
 const workPlanGenericWorkHint = "Do the work for that step now."
 
 // WorkPlanTools mounts the group for one plan.
+// stepIDArg reads a step id, accepting the names a model actually writes.
+//
+// The parameter is step_id, and models routinely send "step" or "id" — the
+// schema says one thing and the obvious shorthand says another. Reported live:
+// an agent called mark_step_in_progress({"step": 1}) four rounds running,
+// getting the same result each time and never adapting, because a missing
+// integer reads as 0 and "step 0 not found in plan" does not tell anyone which
+// WORD to change. Accepting the synonyms costs nothing; the schema still
+// advertises step_id, so nothing is encouraged to drift.
+func stepIDArg(args map[string]any) (int, bool) {
+	for _, k := range []string{"step_id", "step", "id", "stepId", "stepID"} {
+		if v, ok := args[k]; ok && v != nil {
+			if n := IntArg(map[string]any{"n": v}, "n"); n != 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
 func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 	plan := spec.Plan
 	if plan == nil {
@@ -153,7 +173,18 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
-			stepID := IntArg(args, "step_id")
+			stepID, ok := stepIDArg(args)
+			if !ok {
+				return "", fmt.Errorf("which step? pass step_id, e.g. mark_step_in_progress(step_id=1). Steps are numbered from set_plan")
+			}
+			// Already the step in progress: say so plainly rather than
+			// reporting a change that did not happen. A cheerful success here
+			// reads as progress, and an agent that has just been told it
+			// progressed will happily say so again — four identical rounds of
+			// "starting step 1" with no work between them.
+			if plan.StatusOf(stepID) == WorkStepInProgress {
+				return fmt.Sprintf("Step %d is ALREADY the step in progress — this call changed nothing. Stop marking it and do the step's work now, then call record_step_findings.", stepID), nil
+			}
 			if err := plan.SetStatus(stepID, WorkStepInProgress); err != nil {
 				return "", err
 			}
@@ -176,7 +207,10 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
-			stepID := IntArg(args, "step_id")
+			stepID, ok := stepIDArg(args)
+			if !ok {
+				return "", fmt.Errorf("which step? pass step_id, e.g. record_step_findings(step_id=1, findings=\"...\")")
+			}
 			findings, _ := args["findings"].(string)
 			if strings.TrimSpace(findings) == "" {
 				return "", fmt.Errorf("findings is required")
@@ -205,7 +239,10 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
-			stepID := IntArg(args, "step_id")
+			stepID, ok := stepIDArg(args)
+			if !ok {
+				return "", fmt.Errorf("which step? pass step_id, e.g. mark_step_blocked(step_id=1, reason=\"...\")")
+			}
 			reason, _ := args["reason"].(string)
 			if strings.TrimSpace(reason) == "" {
 				return "", fmt.Errorf("reason is required")

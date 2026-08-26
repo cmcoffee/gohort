@@ -299,3 +299,19 @@ func (p *WorkPlan) Pending() int {
 	}
 	return n
 }
+
+// StatusOf reports one step's status, or an empty status when the id is not in
+// the plan. Read-only, so a caller can tell whether a change would be a no-op
+// before making it — the difference between "marked in progress" and "was
+// already in progress", which is the difference between reporting progress and
+// reporting nothing.
+func (p *WorkPlan) StatusOf(id int) WorkStepStatus {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.Steps {
+		if p.Steps[i].ID == id {
+			return p.Steps[i].Status
+		}
+	}
+	return ""
+}

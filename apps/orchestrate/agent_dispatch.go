@@ -2068,7 +2068,130 @@ func findAgentByNameOrID(udb Database, owner, key string) (AgentRecord, bool) {
 			return a, true
 		}
 	}
+	// Tag-tolerant fallback, matched last. Agent names carry display tags in
+	// brackets — "Kwik [Cortex]", "Market Research [Fleet]" — which is this
+	// framework's OWN convention, printed in every listing an agent reads. So
+	// a caller naturally writes the name without the tag, and exact matching
+	// then fails on an agent that plainly exists: reported live as Builder
+	// looking up "Moltbook Conversational Agent", being told it was not found,
+	// and having to stop and ask which agent was meant while the agent sat in
+	// the list it had just read.
+	//
+	// Ambiguity is NOT resolved by guessing. If two agents share a base name
+	// and differ only by tag, the bare name means neither, and the caller gets
+	// the not-found path — where the suggestion list names both and the choice
+	// stays theirs.
+	if base := stripAgentTag(keyNorm); base != keyNorm {
+		if a, ok := uniqueAgentByBaseName(agents, base); ok {
+			return a, true
+		}
+	}
+	var matches []AgentRecord
+	for _, a := range agents {
+		if stripAgentTag(normalizeAgentKey(a.Name)) == keyNorm {
+			matches = append(matches, a)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	// Last resort: a UNIQUE partial name. "moltbook" identifies "Moltbook
+	// Conversational Agent [Cortex]" as surely as the whole string does, and
+	// callers shorten names — a model reading a fleet listing writes the
+	// distinctive word, not the four-word title with its tag. Reported live:
+	// Builder looked up "moltbook", was told no such agent existed, and
+	// repeated that to the user as fact about an agent it had just seen listed.
+	//
+	// Same rule as everywhere above: unique or nothing. A prefix matching two
+	// agents means neither, because resolving it would edit whichever happened
+	// to sort first — and an authoring tool silently rewriting the wrong agent
+	// is the one outcome worse than a failed lookup.
+	if a, ok := uniqueAgentByPartialName(agents, keyNorm); ok {
+		return a, true
+	}
 	return AgentRecord{}, false
+}
+
+// uniqueAgentByPartialName resolves a name fragment when exactly one agent
+// contains it. Prefix matches are preferred over interior ones: "research"
+// should mean "Research Agent" rather than "Deep Dive Research", and only
+// falls through to interior matching when no name begins with the fragment.
+func uniqueAgentByPartialName(agents []AgentRecord, frag string) (AgentRecord, bool) {
+	if len(frag) < 3 {
+		// Too short to identify anything. A two-letter fragment matching one
+		// agent today matches three after the next one is added, so the
+		// resolution would be correct only until the fleet grew.
+		return AgentRecord{}, false
+	}
+	var prefix, interior []AgentRecord
+	for _, a := range agents {
+		name := stripAgentTag(normalizeAgentKey(a.Name))
+		switch {
+		case strings.HasPrefix(name, frag):
+			prefix = append(prefix, a)
+		case strings.Contains(name, frag):
+			interior = append(interior, a)
+		}
+	}
+	if len(prefix) == 1 {
+		return prefix[0], true
+	}
+	if len(prefix) == 0 && len(interior) == 1 {
+		return interior[0], true
+	}
+	return AgentRecord{}, false
+}
+
+// stripAgentTag removes a trailing bracketed display tag from an already-
+// normalized name: "kwik [cortex]" becomes "kwik".
+func stripAgentTag(norm string) string {
+	i := strings.LastIndexByte(norm, '[')
+	if i <= 0 || !strings.HasSuffix(strings.TrimSpace(norm), "]") {
+		return norm
+	}
+	return strings.TrimSpace(norm[:i])
+}
+
+// uniqueAgentByBaseName returns the single agent whose tag-stripped name
+// matches, or reports false when none or several do.
+func uniqueAgentByBaseName(agents []AgentRecord, base string) (AgentRecord, bool) {
+	var found AgentRecord
+	n := 0
+	for _, a := range agents {
+		if stripAgentTag(normalizeAgentKey(a.Name)) == base {
+			found, n = a, n+1
+		}
+	}
+	return found, n == 1
+}
+
+// suggestAgents lists the agents closest to a name that did not resolve.
+//
+// "agent %q not found" against a fleet of thirty-eight is a dead end: the
+// caller cannot tell whether the agent is missing, renamed, or spelled
+// differently, and an LLM's next move is to guess again or to stop and ask.
+// Naming the near misses turns that into a correction. Mirrors the "did you
+// mean" the tool loop already offers for tool names.
+func suggestAgents(agents []AgentRecord, key string) string {
+	want := stripAgentTag(normalizeAgentKey(key))
+	if want == "" {
+		return ""
+	}
+	var near []string
+	for _, a := range agents {
+		got := stripAgentTag(normalizeAgentKey(a.Name))
+		if strings.Contains(got, want) || strings.Contains(want, got) {
+			near = append(near, a.Name)
+		}
+	}
+	if len(near) == 0 {
+		return ""
+	}
+	sort.Strings(near)
+	if len(near) > 5 {
+		near = near[:5]
+	}
+	return " Did you mean: " + strings.Join(near, ", ") + "?"
 }
 
 // normalizeAgentKey lowercases and collapses separator runs (- _ and

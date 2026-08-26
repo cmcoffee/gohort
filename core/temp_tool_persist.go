@@ -800,6 +800,24 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		next.Tool.Disabled = approved[i].Tool.Disabled
 		next.Tool.BuilderOnly = approved[i].Tool.BuilderOnly
 		next.Tool.BoundOnly = approved[i].Tool.BoundOnly
+		// CONFIRMATION is one of these flags and was missing from the list.
+		//
+		// Trial says nobody has vouched for the tool yet, and clearing it is a
+		// user action taken in Extensions › Tools — never something tool_def
+		// carries. So a Builder edit reconstructing the record silently
+		// UN-CONFIRMED a tool the user had confirmed, and the consequence was
+		// invisible: a trial tool is kept out of the inline catalog and
+		// reachable only via load_tool, so the agent stopped seeing it and
+		// reached for whatever it could see instead.
+		//
+		// Reported live as "the moltbook agent keeps using fetch_url over the
+		// moltbook tools" — a tool that had been confirmed, was edited, and
+		// quietly left the catalog. Nothing failed; it simply was not offered.
+		//
+		// Carried in BOTH directions: a tool that was Trial before an edit
+		// stays Trial, because an edit is not a vouching either.
+		next.Tool.Trial = approved[i].Tool.Trial
+		next.Tool.TrialSince = approved[i].Tool.TrialSince
 		// Wrapper-level state survives a re-persist too. ScopeAgents is the
 		// flattened namespace's scope — dropping it would silently promote an
 		// agent-scoped tool to shared on every Builder edit. Shared /
