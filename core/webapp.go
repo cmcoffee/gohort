@@ -196,6 +196,15 @@ func HubNav(activePath string) []ui.NavLink {
 	// explicit WebApps PLUS registered Apps/Agents that implement WebApp (most
 	// apps, incl. Agency/Bridges/Knowledge, register via RegisterApp, not
 	// RegisterWebApp) — deduped by path. Collect the ones opting into the hub.
+	// Timed per SOURCE. Everything in this function reads as free — three slice
+	// walks, a map check, a constant-returning interface method — and it was
+	// measured at 1.97 SECONDS on a live page. Something behind one of these
+	// interface calls is not what it appears to be, and the only honest way to
+	// find out which is to time them separately rather than reason about the
+	// bodies again.
+	navStart := time.Now()
+	var webAppsAt, appsAt, agentsAt time.Duration
+
 	seen := make(map[string]bool)
 	consider := func(wa WebApp) {
 		if seen[wa.WebPath()] {
@@ -210,15 +219,24 @@ func HubNav(activePath string) []ui.NavLink {
 	for _, wa := range RegisteredWebApps() {
 		consider(wa)
 	}
+	webAppsAt = time.Since(navStart)
 	for _, a := range RegisteredApps() {
 		if wa, ok := a.(WebApp); ok {
 			consider(wa)
 		}
 	}
+	appsAt = time.Since(navStart)
 	for _, a := range RegisteredAgents() {
 		if wa, ok := a.(WebApp); ok {
 			consider(wa)
 		}
+	}
+	agentsAt = time.Since(navStart)
+	if agentsAt > 250*time.Millisecond {
+		Log("[hubnav] slow: %s total — webapps %s, apps %s, agents %s (counts %d/%d/%d)",
+			agentsAt.Round(time.Millisecond), webAppsAt.Round(time.Millisecond),
+			(appsAt - webAppsAt).Round(time.Millisecond), (agentsAt - appsAt).Round(time.Millisecond),
+			len(RegisteredWebApps()), len(RegisteredApps()), len(RegisteredAgents()))
 	}
 	sort.SliceStable(tabs, func(i, j int) bool { return tabs[i].order < tabs[j].order })
 	out := make([]ui.NavLink, 0, len(tabs))

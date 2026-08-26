@@ -2,8 +2,10 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -17,10 +19,21 @@ import (
 // new) is exposed via toolbar actions that pivot off whatever the
 // dropdown currently has selected.
 func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) {
+	// Where a slow render actually goes.
+	//
+	// Reported at 2.3 SECONDS for a plain GET of this page, with no way to
+	// tell which part of it — and reading the handler for a likely suspect is
+	// how the last few investigations went wrong. Phases are timed and, when
+	// the whole render is slow enough to notice, reported. Silent below the
+	// threshold, so an ordinary load costs two clock reads and no log line.
+	phases := newPhaseTimer()
+	defer phases.report("chat page")
+
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
+	phases.mark("auth")
 	// Load the user's visible agents into the picker. listAgents
 	// already merges in-code seeds with any per-user shadows, so each
 	// agent appears exactly once whether or not the user has tweaked
@@ -32,6 +45,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		{Value: "", Label: "— select agent —"},
 	}
 	agents := listAgents(udb, user)
+	phases.mark(fmt.Sprintf("list %d agents", len(agents)))
 	// First-run setup: a user who owns no agents of their own is walked
 	// into creating a personal assistant (agent/wizard first-run mode)
 	// instead of landing on a picker of framework seeds, which are on
@@ -71,7 +85,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// to Built-in/Custom after a Builder action. See agent_options.go.
 	// pickerAgents drops the retired framework seeds (Builder stays) —
 	// the same filter every picker surface applies.
+	phases.mark("first-run checks")
 	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(pickerAgents(agents))
+	phases.mark("picker options")
 	agentOpts = append(agentOpts, grouped...)
 
 	// Default the dropdown to the requested agent if the URL carries
@@ -96,6 +112,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	defaultAgent := resolveDefaultAgent(r, user, fallbackAgent, agentOpts)
+	phases.mark("resolve default agent")
 	if a := r.URL.Query().Get("agent"); a != "" {
 		for _, opt := range agentOpts {
 			if opt.Value == a {
@@ -110,6 +127,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// the editor uses (availableWorkerToolOptions) — sorted by group
 	// + name. Inline JSON is fine; the list is short (<50 entries).
 	catalogJSON, _ := json.Marshal(availableWorkerToolOptions(user))
+	phases.mark("worker tool catalog")
 	// Parallel list of tool names that contact the network. The Tools
 	// button label uses this to subtract network-capability tools from
 	// the count when Private mode is enabled (which hides them at
@@ -122,6 +140,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// when the selected parent has no children.
 	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
 	cortexAgentsJSON, _ := json.Marshal(cortexAgents)
+	phases.mark("marshal head json")
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
@@ -133,6 +152,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// Read + consume it server-side and hand it to the chat panel as AutoSend,
 	// so Builder receives it on mount through its own send path — no fragile
 	// client-side fetch + DOM injection.
+	phases.mark("head html concat")
 	builderBrief := ""
 	if bid := strings.TrimSpace(r.URL.Query().Get("builder_brief")); bid != "" {
 		if udb := UserDB(T.DB, user); udb != nil {
@@ -151,11 +171,27 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// always has tools, memory, rules — so it is the only one that
 	// hides. Computed once here; the picker itself still says what to
 	// do when a source disappears while the modal is open.
+	phases.mark("builder brief")
 	hiddenActions := map[string]bool{}
-	if len(ReferenceGroups(user)) == 0 {
+	// AnyReferenceSource, not len(ReferenceGroups(...)): the question is
+	// whether there is anything to show, and building the whole catalog to
+	// answer it made every source enumerate everything it owns on every page
+	// render. Measured as the largest single cost in this handler.
+	if !AnyReferenceSource(user) {
 		hiddenActions["orchestrate_sources_modal"] = true
 	}
 
+	// The three CALLS inside the page literal, hoisted so each is timed on its
+	// own. A 340-line composite literal reads as data, and two of these reach
+	// registries that walk every app and every machine — which is invisible at
+	// the call site and was where thirteen seconds went.
+	phases.mark("reference check")
+	nav := HubNav("/orchestrate")
+	phases.mark("hub nav")
+	schedCreator := machineScheduleCreator()
+	phases.mark("machine schedule creator")
+
+	phases.mark("pre-literal")
 	page := ui.Page{
 		Title:         "Agents",
 		ShowTitle:     true,
@@ -165,7 +201,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		// Top nav — the shared hub tabs, single-sourced from the WebApp registry
 		// (each member app's HubTab()); Agents is marked active here. Adding a
 		// member is one HubTab() method on that app, no change to this list.
-		Nav: HubNav("/orchestrate"),
+		Nav: nav,
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
@@ -195,7 +231,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// action registered in web_assets.html.
 					ScheduleCreators: []ui.ScheduleCreator{
 						{Label: "New recurring task", Action: "orchestrate_new_recurring"},
-						machineScheduleCreator(),
+						schedCreator,
 					},
 					// Canonical default wake rule, so the channel editor can offer
 					// "Reset to default" on the gatekeeper rules (source of truth is Go).
@@ -466,7 +502,36 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 			},
 		},
 	}
-	page.ServeHTTP(w, r)
+	phases.mark("assemble page")
+	// Counted, because "render" includes writing the body to the client and
+	// those are different problems with different fixes. A slow ASSEMBLE is
+	// server work to optimize; a slow SERVE of a large body is a page that is
+	// too big, and no amount of tuning the handler touches it.
+	counted := &countingWriter{ResponseWriter: w}
+	page.ServeHTTP(counted, r)
+	phases.mark(fmt.Sprintf("serve %s", HumanSize(counted.n)))
+}
+
+// countingWriter records how many bytes a handler wrote, so a slow response
+// can be attributed to its size rather than guessed at.
+type countingWriter struct {
+	http.ResponseWriter
+	n int64
+}
+
+func (c *countingWriter) Write(b []byte) (int, error) {
+	n, err := c.ResponseWriter.Write(b)
+	c.n += int64(n)
+	return n, err
+}
+
+// Flush forwards to the underlying writer when it supports it — a page render
+// does not stream, but wrapping a ResponseWriter that silently loses Flush is
+// the kind of thing that breaks something else later.
+func (c *countingWriter) Flush() {
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // pruneToolbar drops the toolbar entries whose client action is in hide.
@@ -486,4 +551,67 @@ func pruneToolbar(hide map[string]bool, in []ui.ToolbarAction) []ui.ToolbarActio
 		out = append(out, a)
 	}
 	return out
+}
+
+// phaseTimer records how long the named parts of a request took, and says so
+// only when the whole thing was slow enough to be worth a line.
+//
+// Cheap by construction: a slice append and a clock read per phase, and no
+// output at all on a normal request. The alternative — reading a long handler
+// and picking a likely suspect — is what turned a 2.3-second page load into
+// several rounds of confident wrong answers elsewhere in this codebase.
+type phaseTimer struct {
+	start  time.Time
+	last   time.Time
+	phases []string
+}
+
+// slowPageThreshold is when a render becomes worth reporting. Well above a
+// healthy load and well below anything a person would call slow, so the log
+// stays empty until something is actually wrong.
+const slowPageThreshold = 750 * time.Millisecond
+
+// The goroutine dump that used to live here is gone. It answered its one
+// question — every phase in this handler is map and slice work that cannot
+// take seconds, so was the goroutine BLOCKED? — and the answer was no: on
+// every slow render it was the only one running while the rest of the process
+// sat in IO wait. That redirected the search from locks to actual work.
+//
+// Removed rather than kept, because runtime.Stack(_, true) writes every
+// goroutine in the process: close to a megabyte per slow load on a server with
+// live terminals and SSE streams open. A diagnostic that costs a megabyte to
+// answer a question already answered is noise, and it lands in the log the
+// operator has to read.
+
+func newPhaseTimer() *phaseTimer {
+	now := time.Now()
+	return &phaseTimer{start: now, last: now}
+}
+
+// mark closes the phase that just ran.
+func (p *phaseTimer) mark(name string) {
+	if p == nil {
+		return
+	}
+	now := time.Now()
+	p.phases = append(p.phases, fmt.Sprintf("%s %s", name, now.Sub(p.last).Round(time.Millisecond)))
+	p.last = now
+}
+
+// report logs the breakdown if the total crossed the threshold.
+func (p *phaseTimer) report(what string) {
+	if p == nil {
+		return
+	}
+	total := time.Since(p.start)
+	if total < slowPageThreshold {
+		return
+	}
+	// Only add a trailing bucket when the caller did not close the last phase
+	// itself. A handler that marks its own final step would otherwise show a
+	// spurious near-zero "render" after it.
+	if time.Since(p.last) > time.Millisecond {
+		p.mark("remainder")
+	}
+	Log("[orchestrate.page] %s took %s — %s", what, total.Round(time.Millisecond), strings.Join(p.phases, ", "))
 }

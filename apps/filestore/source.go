@@ -37,6 +37,20 @@ type storeSource struct{ app *FileStoreApp }
 func (s storeSource) Kind() string  { return "files" }
 func (s storeSource) Label() string { return "File stores" }
 
+// HasItems answers the cheap question cheaply: whether this user can reach any
+// store at all, without describing them.
+//
+// List builds each item's description by walking the store's tree for a file
+// count, which is right for a picker somebody opened and absurd as the answer
+// to "is there anything here" — it was costing seconds on every render of a
+// page that showed none of it. See core.ReferenceSourceCounter.
+func (s storeSource) HasItems(user string) bool {
+	if s.app == nil || s.app.DB == nil {
+		return false
+	}
+	return len(StoresForUser(s.app.DB, user)) > 0
+}
+
 func (s storeSource) List(user string) []ReferenceItem {
 	if s.app == nil || s.app.DB == nil {
 		return nil

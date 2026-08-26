@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Reference sources — a generic, extensible registry that lets one app's
@@ -156,15 +157,101 @@ func ReferenceGroups(user string) []ReferenceGroup {
 	refSourcesMu.RUnlock()
 
 	var groups []ReferenceGroup
+	start := time.Now()
+	var slow []string
 	for _, s := range srcs {
+		at := time.Now()
 		items := s.List(user)
+		// Per-source, because "listing references is slow" is not actionable
+		// and "the servitor source took 1.9s" is. Every source here enumerates
+		// something it owns — appliances, agents, stores, a remote MCP server —
+		// and any one of them can be the whole cost while the others are free.
+		if d := time.Since(at); d > 100*time.Millisecond {
+			slow = append(slow, fmt.Sprintf("%s %s", s.Kind(), d.Round(time.Millisecond)))
+		}
 		if len(items) == 0 {
 			continue
 		}
 		groups = append(groups, ReferenceGroup{Kind: s.Kind(), Label: s.Label(), Items: items})
 	}
+	if len(slow) > 0 {
+		Log("[reference] listing sources took %s — slow: %s", time.Since(start).Round(time.Millisecond), strings.Join(slow, ", "))
+	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Label < groups[j].Label })
 	return groups
+}
+
+// ReferenceSourceCounter is the cheap half of a reference source: whether it
+// has anything, without building what it has.
+//
+// It exists because the two questions have wildly different costs and the
+// interface only offered the expensive one. The filestore source builds each
+// item's description by WALKING THE FILESYSTEM — stat every file under every
+// folder of every store, to render "· 12 folders" in a picker. Asking it
+// merely whether it has any stores therefore cost a full tree walk, measured
+// live at 2.3 and then 5.1 seconds on a page render that displayed none of it.
+//
+// Optional: a source that does not implement this is asked the long way, which
+// is correct for the ones whose List is already cheap.
+type ReferenceSourceCounter interface {
+	// HasItems reports whether this source has anything for user, and must be
+	// substantially cheaper than List — no I/O beyond what naming the items
+	// requires.
+	HasItems(user string) bool
+}
+
+// AnyReferenceSource reports whether user has ANY reference source with
+// anything in it, stopping at the first one that does.
+//
+// It exists because asking that question through ReferenceGroups is
+// enormously more expensive than the question deserves: that call makes every
+// registered source enumerate everything it owns — appliances, all the user's
+// agents, file stores, a remote MCP server over the network — assembles the
+// full catalog, sorts it, and hands it back so the caller can compare its
+// length to zero. The orchestrate page did exactly that on every render, to
+// decide whether to hide one toolbar button, and it was the single largest
+// cost in the page.
+//
+// Short-circuiting is a real fix rather than a micro-optimization: with any
+// source populated, the work drops from "every source" to "one". It does not
+// help when the FIRST source consulted is the slow one, which is why the
+// timing above stays — the two together turn an unexplained page stall into a
+// named source with a bounded cost.
+func AnyReferenceSource(user string) bool {
+	refSourcesMu.RLock()
+	srcs := make([]ReferenceSource, 0, len(refSources))
+	for _, s := range refSources {
+		srcs = append(srcs, s)
+	}
+	refSourcesMu.RUnlock()
+
+	// Timed per source here TOO. The page moved to this function precisely
+	// because it is the cheap form of the question, and shipping the cheap
+	// form without the measurement meant the next slow render had nothing to
+	// say — which is exactly what happened on the first one.
+	start := time.Now()
+	for _, s := range srcs {
+		at := time.Now()
+		var found bool
+		if c, ok := s.(ReferenceSourceCounter); ok {
+			found = c.HasItems(user)
+		} else {
+			found = len(s.List(user)) > 0
+		}
+		if d := time.Since(at); d > 100*time.Millisecond {
+			Log("[reference] %s.List took %s (checking whether ANY source has items)", s.Kind(), d.Round(time.Millisecond))
+		}
+		if found {
+			if total := time.Since(start); total > 250*time.Millisecond {
+				Log("[reference] any-source check took %s, satisfied by %s", total.Round(time.Millisecond), s.Kind())
+			}
+			return true
+		}
+	}
+	if total := time.Since(start); total > 250*time.Millisecond {
+		Log("[reference] any-source check took %s and found nothing", total.Round(time.Millisecond))
+	}
+	return false
 }
 
 // ReferenceSourceKnown reports whether kind names a registered reference
