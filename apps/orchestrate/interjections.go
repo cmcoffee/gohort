@@ -159,3 +159,21 @@ func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+// PublicHandleInject is the landing an app routes its AgentLoopPanel's
+// InjectURL to, so a message typed while a turn is running joins that turn
+// instead of replacing it.
+//
+// Without an InjectURL the panel has nowhere to put a mid-flight message, so
+// it falls through to its ordinary send path — which tears down the running
+// stream and starts again. That reads as the app cancelling your work because
+// you had a second thought, and it throws away everything the turn had done.
+//
+// Safe to expose without a check of its own: the queue is looked up by session
+// id and the owner is compared against the caller, so a note can only ever
+// join a run the caller started. A session that is not currently running has
+// no queue and answers 404, which is the correct answer to "add this to the
+// turn in progress" when there is no turn in progress.
+func (T *OrchestrateApp) PublicHandleInject(w http.ResponseWriter, r *http.Request) {
+	T.handleInject(w, r)
+}

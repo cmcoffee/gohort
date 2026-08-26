@@ -705,6 +705,26 @@ type ChatConfig struct {
 	// It cannot escalate past the privacy pin: every reader still requires
 	// HasDistinctLead(), which folds in LeadDenied().
 	TierOverride LLMTier
+	// OnStreamRestart, when set, declares that this stream's partial output
+	// can be thrown away — and IS the thing that throws it away.
+	//
+	// Streaming retries stop dead the moment one chunk has been delivered,
+	// because for user-visible prose a retry would duplicate or contradict
+	// half a paragraph somebody has already read. That is right for a chat
+	// reply and wrong for a phase nobody is reading: a planner that streams
+	// into a buffer and times out mid-generation loses the whole turn, with
+	// max_retries set to whatever you like.
+	//
+	// The obvious spelling of the opt-in is a bool, and it is a trap. A caller
+	// accumulating chunks would keep the partial from the failed attempt and
+	// append the full text of the retry to it, producing output that is
+	// corrupt rather than merely late — and nothing would say so. So the
+	// permission and the cleanup are ONE thing: you cannot declare a stream
+	// retryable without handing over the function that resets it. Called
+	// immediately before each re-attempt, on the goroutine that owns the
+	// stream.
+	OnStreamRestart func()
+
 	// NoTierFallback refuses the quiet degrade to the worker when a lead call
 	// fails.
 	//
@@ -834,6 +854,17 @@ func WithJSONMode() ChatOption {
 // WithMaxRetries overrides the default retry count for this call. 0 disables retries.
 func WithMaxRetries(n int) ChatOption {
 	return func(c *ChatConfig) { c.MaxRetries = &n }
+}
+
+// WithStreamRestart makes a streaming call retryable after partial output by
+// supplying the reset that makes it safe. See ChatConfig.OnStreamRestart.
+//
+// Use it for a stream whose chunks are NOT shown to a person as they arrive —
+// a plan phase, a judge, anything accumulating into a buffer the caller owns.
+// Do not use it for a chat reply being rendered live: the reset cannot unsee
+// what somebody already read.
+func WithStreamRestart(reset func()) ChatOption {
+	return func(c *ChatConfig) { c.OnStreamRestart = reset }
 }
 
 // WithThink enables or disables thinking mode for thinking models (qwen3, etc.).
@@ -1222,19 +1253,46 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 
 func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	var handlerCalled bool
+	var chunks int
 	wrappedHandler := func(chunk string) {
 		handlerCalled = true
+		chunks++
 		handler(chunk)
+	}
+	// Resolved once: whether this caller has told us its partial output can be
+	// discarded, and given us the means to discard it.
+	streamCfg := ChatConfig{}
+	for _, opt := range opts {
+		opt(&streamCfg)
+	}
+	// restart discards whatever the failed attempt delivered and reports
+	// whether a re-attempt is safe. Without an OnStreamRestart the answer is
+	// always no, which keeps every existing caller exactly as it was.
+	restart := func() bool {
+		if streamCfg.OnStreamRestart == nil {
+			return false
+		}
+		streamCfg.OnStreamRestart()
+		return true
 	}
 	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// Stream-aware empty retry: only safe to retry if the handler
 		// hasn't already received chunks (otherwise the user has seen
-		// partial output and a retry would duplicate or contradict it).
+		// partial output and a retry would duplicate or contradict it) —
+		// unless the caller supplied the reset that makes it safe.
 		handlerCalled = false
+		chunks = 0
 		resp, err := r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
 		if err != nil && handlerCalled {
-			// Chunks were already delivered to the caller; do not retry.
-			return resp, &nonRetryableError{err}
+			if !restart() {
+				// Chunks were already delivered to the caller; do not retry.
+				return resp, &nonRetryableError{err}
+			}
+			// The caller has thrown its partial away. Hand the error back
+			// unwrapped so the normal transience rules decide — a stream that
+			// died on a deadline retries, one that died on a 400 still does not.
+			Debug("[retry] stream failed after %d partial chunk(s); caller discarded them — retrying: %v", chunks, err)
+			return resp, err
 		}
 		if handlerCalled || !shouldRetryEmpty(resp, err) {
 			return resp, err
@@ -1251,7 +1309,7 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		if err2 == nil && responseIsUseable(resp2) {
 			return resp2, nil
 		}
-		if handlerCalled {
+		if handlerCalled && !restart() {
 			// Second attempt produced visible chunks; can't safely retry again.
 			return resp2, err2
 		}

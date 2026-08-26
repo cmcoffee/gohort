@@ -180,6 +180,11 @@ func operatorFoldBusy(agentID, sessID string) bool {
 // maybeFoldOperatorHistory launches the background fold for one thread,
 // single-flight. Mirrors maybeSweepFacts / maybeExtractGraph: best-effort,
 // never blocks the caller, panics contained.
+// operatorFoldSlot admits one background fold at a time, deployment-wide.
+// Buffered-1 rather than a mutex so the wait is visible as what it is: a
+// queue for a shared resource, not a critical section.
+var operatorFoldSlot = make(chan struct{}, 1)
+
 func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, agent AgentRecord, sessID string, cfg CompactionConfig) {
 	key := operatorFoldKey(agent.ID, sessID)
 	operatorFoldMu.Lock()
@@ -198,6 +203,25 @@ func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, agent AgentRecor
 				Log("[operator.compact] background fold panic for %s: %v", key, r)
 			}
 		}()
+		// ONE fold at a time across the deployment.
+		//
+		// The in-flight guard above is keyed per (agent, session), which was
+		// sufficient while only persistent channel threads folded — there are
+		// few of them and they rarely cross the trigger together. Widening the
+		// trigger to any overgrown session made a stampede possible: several
+		// threads crossing at once, each running a series of LLM calls AND
+		// ingesting its folded span into the vector store.
+		//
+		// The store is bolt, so writes are serialized deployment-wide and a
+		// bulk ingest is a long one. Concurrent folds therefore do not just
+		// compete with each other; they queue every OTHER write behind them,
+		// which is felt as a page that is usually quick and occasionally takes
+		// seconds. A fold is background maintenance with no deadline, so
+		// waiting its turn costs nothing anyone can perceive, while running
+		// several at once costs everyone.
+		operatorFoldSlot <- struct{}{}
+		defer func() { <-operatorFoldSlot }()
+
 		T.foldOperatorHistory(udb, agent, sessID, cfg)
 	}()
 }
@@ -378,7 +402,89 @@ func collapseMonitorWakes(msgs []ChatMessage, keepRecent int) []ChatMessage {
 
 // operatorFold is the worker-LLM summarizer: extend the running summary with
 // the aging span and surface a few durable facts.
+// operatorFold extends a thread's running summary with its aging exchanges.
+//
+// CHUNKED, and that is the whole point of this function's shape. It used to
+// build one prompt holding the entire aging span and make a single call — fine
+// while a thread was folded regularly, and fatal once one had not been: a
+// backlog larger than the window failed the call, CompactConversation returned
+// unchanged, the cursor never advanced, and the fold failed identically on
+// every subsequent turn. The thread then paid the agent loop's emergency
+// recovery FOREVER, because the cleanup that would have ended it was itself
+// too big to run. Observed as a cortex thread where saying "hello" cost a full
+// recovery cycle every time.
+//
+// Folding incrementally also produces a better summary than a map-reduce
+// would: each chunk extends the accumulated summary rather than being
+// summarized in isolation, so the result is one narrative instead of a
+// stitched pile of partial ones.
 func (T *OrchestrateApp) operatorFold(ctx context.Context, aging []Message, prior string) (string, []string, error) {
+	summary := prior
+	var facts []string
+	chunks := chunkMessages(aging, operatorFoldChunkTokens)
+	if len(chunks) > 1 {
+		Log("[operator.compact] folding a backlog of %d message(s) in %d pass(es)", len(aging), len(chunks))
+	}
+	for _, chunk := range chunks {
+		s, f, err := T.operatorFoldOnce(ctx, chunk, summary)
+		if err != nil {
+			// Keep what has been folded so far rather than losing the whole
+			// pass: a partial extension is real progress, and the caller's
+			// cursor only advances when a summary comes back.
+			if strings.TrimSpace(summary) != strings.TrimSpace(prior) {
+				Log("[operator.compact] fold stopped early (%v) — keeping the %d chunk(s) already folded", err, len(facts))
+				return summary, facts, nil
+			}
+			return "", nil, err
+		}
+		if strings.TrimSpace(s) != "" {
+			summary = s
+		}
+		facts = append(facts, f...)
+	}
+	return summary, facts, nil
+}
+
+// chunkMessages splits a span into groups no larger than budget tokens each.
+// A message larger than the budget forms its own chunk — the agent loop's own
+// cap has already cut anything genuinely impossible.
+//
+// UNCAPPED in count, deliberately. Stopping early would be safe only if the
+// caller advanced its cursor by exactly what was folded, and it does not:
+// CompactConversation advances SummarizedThrough to the end of the whole span
+// on any success. A capped fold would therefore mark content summarized that
+// was never read — the span stays recoverable through the archive, but the
+// summary silently omits it, which is worse than the slow pass this avoids.
+//
+// The cost lands in the right place: this runs in a background goroutine,
+// once, and leaves the thread bounded afterwards. A long first pass that ends
+// the problem beats a short one that returns every turn.
+func chunkMessages(msgs []Message, budgetTokens int) [][]Message {
+	var out [][]Message
+	var cur []Message
+	curTokens := 0
+	for i := range msgs {
+		n := EstimateTokens(msgs[i].Content)
+		if curTokens+n > budgetTokens && len(cur) > 0 {
+			out = append(out, cur)
+			cur, curTokens = nil, 0
+		}
+		cur = append(cur, msgs[i])
+		curTokens += n
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// operatorFoldChunkTokens is the input budget for one fold request. Small
+// requests place themselves on a busy inference server where large ones wait
+// or evict.
+const operatorFoldChunkTokens = 12000
+
+// operatorFoldOnce extends the summary with ONE span.
+func (T *OrchestrateApp) operatorFoldOnce(ctx context.Context, aging []Message, prior string) (string, []string, error) {
 	var sb strings.Builder
 	if p := strings.TrimSpace(prior); p != "" {
 		sb.WriteString("EXISTING SUMMARY:\n")
@@ -486,4 +592,40 @@ func splitSummaryAndFacts(out string) (string, []string) {
 		}
 	}
 	return summary, facts
+}
+
+// historyOutgrewItsSession reports whether an ordinary session has grown past
+// the point where treating it as disposable is still honest.
+//
+// The bounded view is gated to persistent threads because an ad-hoc session is
+// meant to be short: it gets a fresh id per conversation and is thrown away.
+// That is a description of how they are USUALLY used, and nothing enforces it.
+// One long-running thread is enough to blow the window permanently, and the
+// failure is at the far end — a provider refusal in the middle of a turn,
+// where the cheapest correct action (bounding the thread) is no longer
+// available.
+//
+// The threshold is half the window, which is where compaction's own steady-
+// state budget sits, so a session crossing it is one the framework would
+// already be trimming had it been a channel thread.
+//
+// contextSize is routinely ZERO — it comes from an optional interface a
+// provider may not implement. A fixed fallback rather than "unknown means fine"
+// for the reason that cost three rounds of a live investigation: a check that
+// disables itself when it cannot measure disables itself exactly where the
+// measurement was going to matter.
+func historyOutgrewItsSession(msgs []ChatMessage, contextSize int) bool {
+	const fallbackThresholdTokens = 100000
+	threshold := fallbackThresholdTokens
+	if contextSize > 0 {
+		threshold = contextSize / 2
+	}
+	total := 0
+	for i := range msgs {
+		total += EstimateTokens(msgs[i].Content)
+		if total > threshold {
+			return true
+		}
+	}
+	return false
 }

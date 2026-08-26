@@ -1675,6 +1675,13 @@
         input = el('input', {type: 'text', class: 'ui-form-input', value: f.default || ''});
       }
       extraInputs[f.name] = input;
+      // The field's NAME is its DOM id, which ChatField documents and apps
+      // rely on: a client action (a toolbar button, a block renderer) has to
+      // be able to read the value the next message will carry, and the
+      // extraInputs map above is closure-local. Without the id those actions
+      // silently read nothing — which does not look like a bug at the point
+      // it happens, it looks like an empty parameter arriving at a handler.
+      if (f.name) input.id = f.name;
       // On change, refresh the list rail. The list URL gets the new
       // extra value substituted into its {field_name} placeholder,
       // so changing the appliance picker reloads the workspace list

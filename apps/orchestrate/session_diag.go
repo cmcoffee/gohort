@@ -10,6 +10,7 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -150,4 +151,60 @@ func (T *OrchestrateApp) handleSessionDiag(w http.ResponseWriter, r *http.Reques
 		out = append(out, list[i])
 	}
 	writeJSON(w, out)
+}
+
+// PublicHandleSessionDiag is the landing an app routes its AgentLoopPanel's
+// DiagnosticsURL to. The agent id is the caller's, so an app cannot read
+// another agent's trail by asking for it in the query string — which the
+// admin-mounted variant can, because there the caller IS the operator.
+//
+// This is the answer to "why did that stop". The entries are the framework's
+// decisions taken on the user's behalf inside one conversation — a denied
+// tool, an approval that timed out, a guardrail that dropped a call — and
+// without a surface they exist only in the server log, which is not where the
+// person who asked the question is looking.
+func (T *OrchestrateApp) PublicHandleSessionDiag(w http.ResponseWriter, r *http.Request, agentID, sessionID string) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if agentID == "" || sessionID == "" {
+		http.Error(w, "agent and session required", http.StatusBadRequest)
+		return
+	}
+	var list []SessionDiag
+	udb.Get(sessionDiagTable, agentID+":"+sessionID, &list)
+	out := make([]SessionDiag, 0, len(list))
+	for i := len(list) - 1; i >= 0; i-- {
+		out = append(out, list[i])
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// PublicHandleSessionRename renames one of the caller's sessions. Body is
+// {id, name}, which is the shape core/ui's rename affordance POSTs — the id
+// travels in the body rather than the path, so the URL needs no template.
+//
+// A coding thread's auto-title comes from its first message, which is
+// routinely the least descriptive thing about it ("have a look at this").
+func (T *OrchestrateApp) PublicHandleSessionRename(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	var body struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.ID) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	renameChatSession(udb, agentID, body.ID, body.Name)
+	w.WriteHeader(http.StatusNoContent)
 }

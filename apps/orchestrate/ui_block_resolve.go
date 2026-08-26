@@ -200,3 +200,23 @@ func refreshPrivilegeBlocks(udb Database, blocks []UIBlock) []UIBlock {
 	}
 	return blocks
 }
+
+// PublicHandleBlockResolve is the landing an app routes its AgentLoopPanel's
+// BlockResolveURL to, so a card the user has ANSWERED stays answered.
+//
+// A `kind:"block"` card has two lifetimes and only one of them ends at the
+// click. The DOM one does; the stored one does not — so without this, an
+// actionable card replays on every session load with its controls live again,
+// over a decision that was already made and applied. Anvil's edit cards carry
+// a Revert button, which is exactly that shape: revert once, reload, and the
+// same card offers to revert an edit that is already back.
+//
+// The agent id is the caller's, so a card can only be settled inside a
+// conversation the caller owns.
+func (T *OrchestrateApp) PublicHandleBlockResolve(w http.ResponseWriter, r *http.Request, agentID, sid, blockID string) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleSessionBlockResolve(w, r, udb, user, agentID, sid, blockID)
+}

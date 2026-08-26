@@ -401,10 +401,16 @@ type AgentToolDef struct {
 	// pre-action guardrail check (GuardHookPreAction). That is a real
 	// function, so the flag is not decoration — but do not read it as
 	// "the user will be asked" on the web path, because today they won't.
-	// Wiring a per-call web confirm needs per-ACTION granularity on
-	// grouped tools (GroupedTool.NeedsConfirm ORs its actions together,
-	// so honoring it as-is would prompt on reads too).
+	// Wiring THIS flag to a web prompt is what ConfirmPrompt below is for;
+	// it cannot be done by honoring NeedsConfirm itself, because grouped
+	// tools OR the flag across their actions (GroupedTool.NeedsConfirm),
+	// so a group with one dangerous action would prompt on its reads too.
 	NeedsConfirm bool
+
+	// Confirmation, when non-nil, turns a call into a question the user
+	// actually answers. Setting it implies NeedsConfirm, so a tool needs
+	// only this field. See ToolConfirmation.
+	Confirmation *ToolConfirmation
 
 	// SingleFirePerBatch indicates that only ONE call to this tool may run
 	// per batch. When the LLM emits multiple parallel calls in one
@@ -1817,7 +1823,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 			toolDefs = append(toolDefs, td.Tool)
 			handlers[td.Tool.Name] = td.Handler
-			if td.NeedsConfirm {
+			// A declared ConfirmPrompt implies NeedsConfirm. Without this the
+			// two flags are a trap: a tool author writes the sentence the user
+			// is meant to read, forgets the boolean, and the loop never calls
+			// Confirm at all — so the tool runs unasked and the only evidence
+			// is a prompt string nothing ever renders.
+			if td.NeedsConfirm || td.Confirmation.asks() {
 				needsConfirm[td.Tool.Name] = true
 			}
 			for _, c := range td.Tool.Caps {
@@ -2701,8 +2712,44 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// exceeded, surface a clean caller-friendly error instead of
 		// the raw provider message.
 		if err != nil && IsContextExceededError(err) {
-			Debug("[agent_loop] round %d: context exceeded — force-compacting history and retrying once", round)
-			compactHistory(history, systemPrompt, cfg.ContextSize, true)
+			// The window to recover INTO. cfg.ContextSize is the configured
+			// answer and is routinely zero — it comes from an optional
+			// ContextSizer the provider may not implement, and every
+			// size-dependent path is documented as disabling itself when it
+			// is. That default is defensible for a routine budget check and
+			// indefensible here: we are in this branch because the provider
+			// has JUST said the prompt is too large, so "we do not know the
+			// window" must not mean "do nothing". The provider's own refusal
+			// usually names the number; failing that, assume a small window
+			// and recover harder than strictly needed.
+			window := cfg.ContextSize
+			if window <= 0 {
+				window = contextWindowFromError(err)
+			}
+			if window <= 0 {
+				window = fallbackRecoveryWindow
+			}
+			Debug("[agent_loop] round %d: context exceeded — recovering into a %d-token window", round, window)
+
+			compactHistory(history, systemPrompt, window, true)
+			// Compaction only cuts bodies. If the bulk is ordinary
+			// conversation it is still there, so SUMMARIZE the older span
+			// before considering throwing any of it away — the recovery
+			// ladder is cheap-and-lossless, then costly-and-faithful, then
+			// cheap-and-lossy, in that order.
+			if stillTooBig(history, systemPrompt, window) {
+				if folded, ok := T.summarizeOldHistory(ctx, history, window, contextRecoveryKeepWhole); ok {
+					history = folded
+				}
+			}
+			// Last resort. A summarizer that is unavailable or failing must
+			// not leave the turn dead when dropping old text would let it run.
+			if stillTooBig(history, systemPrompt, window) {
+				budget := window - EstimateTokens(systemPrompt) - 34000
+				if n := elideOldMessageText(history, budget, contextRecoveryKeepWhole); n > 0 {
+					Log("[agent_loop] context recovery: summarization unavailable — elided ~%d tokens of older message text", n)
+				}
+			}
 			if streamHandler != nil {
 				resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, callOpts...)
 			} else {
@@ -2721,8 +2768,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				resp, err = callFn(ctx, history, callOpts...)
 			}
 			if err != nil && IsContextExceededError(err) {
-				Debug("[agent_loop] round %d: context exceeded after force-compact — giving up", round)
-				return resp, history, fmt.Errorf("context exhausted: even after aggressive history compaction, the round prompt remains too large for the model's context window — start a new session or split this turn into smaller steps (%w)", err)
+				// Log, not Debug. This is the moment somebody needs the
+				// breakdown, and requiring --debug to learn where two million
+				// tokens went means the answer is missing exactly when it is
+				// being asked for.
+				Log("[agent_loop] round %d: context exceeded after force-compact — %s", round, promptSizeReport(cfg, systemPrompt, history))
+				return resp, history, fmt.Errorf("context exhausted: %s. Compaction only trims conversation history, so if the bulk is elsewhere a new session will not help (%w)",
+					promptSizeHeadline(cfg, systemPrompt, history), err)
 			}
 			if err == nil {
 				Debug("[agent_loop] round %d: context-exceeded recovered after force-compact", round)
@@ -5590,6 +5642,30 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 		return
 	}
 	origTotal := total
+
+	// FIRST, before anything else: cut down any SINGLE result too large to
+	// coexist with a round at all.
+	//
+	// The newest tool-result message is otherwise spared unconditionally,
+	// which is right when it is a normal size and catastrophic when it is not.
+	// One tool returning eight megabytes bricks the conversation outright:
+	// every following turn assembles a prompt that cannot fit, the recovery
+	// path declines to touch the one thing making it too big, and no message
+	// the user types can ever get through again. A recovery path that refuses
+	// to touch the cause is not a recovery path.
+	//
+	// The cap is deliberately generous — a large file read or a wide search
+	// must keep working — so this only fires on a result that could not have
+	// been used in a round anyway.
+	total -= capOversizedResults(msgs, contextSize)
+	if total <= budget {
+		// Cutting the outlier was enough; leave the rest of history intact.
+		if total < origTotal {
+			Log("[agent_loop] compaction: truncated an oversized tool result, est %d→%d tokens (window=%d)", origTotal, total, contextSize)
+		}
+		return
+	}
+
 	var trIdx []int
 	for i := range msgs {
 		if len(msgs[i].ToolResults) > 0 {
@@ -5597,6 +5673,9 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 		}
 	}
 	if len(trIdx) <= keepRecentToolMsgs {
+		if total < origTotal {
+			Log("[agent_loop] compaction: truncated an oversized tool result, est %d→%d tokens (window=%d)", origTotal, total, contextSize)
+		}
 		return // nothing old enough to safely elide
 	}
 	elided := 0
@@ -6302,11 +6381,41 @@ func providerRefused(resp *Response) bool {
 // layer, and ~4 bytes/token is close enough to tell a 20k problem from a 2k
 // one.
 func logPromptFloor(cfg AgentLoopConfig, systemPrompt string, history []Message) {
-	sysBytes := len(systemPrompt)
-	histBytes := 0
-	for _, m := range history {
-		histBytes += len(m.Content)
+	if r := promptSizeReport(cfg, systemPrompt, history); r != "" {
+		Debug("[agent_loop] prompt floor: %s", r)
 	}
+}
+
+// promptSizeReport says where a round's bytes actually are.
+//
+// It exists because "the prompt is too large" is not a diagnosis. A session
+// that failed at two million tokens against a 262k window was investigated
+// twice from the code — once wrongly blaming history compaction, once wrongly
+// blaming a single oversized tool result — because nothing in the failure said
+// which part was big. A number per component turns the next occurrence into a
+// reading rather than a guess.
+//
+// The counts include TOOL RESULTS, which the original floor log omitted: it
+// summed only Message.Content, so a history dominated by tool output reported
+// as small. That omission is exactly the shape of thing that hides for a long
+// time — the number was there, it was just quietly wrong.
+func promptSizeReport(cfg AgentLoopConfig, systemPrompt string, history []Message) string {
+	sysBytes := len(systemPrompt)
+
+	histBytes, resultBytes := 0, 0
+	biggestMsg, biggestMsgAt, biggestMsgRole := 0, -1, ""
+	for i, m := range history {
+		n := len(m.Content) + len(m.Reasoning)
+		for _, tr := range m.ToolResults {
+			n += len(tr.Content)
+			resultBytes += len(tr.Content)
+		}
+		histBytes += n
+		if n > biggestMsg {
+			biggestMsg, biggestMsgAt, biggestMsgRole = n, i, m.Role
+		}
+	}
+
 	toolBytes, biggest, biggestName := 0, 0, ""
 	for _, t := range cfg.Tools {
 		n := len(t.Tool.Name) + len(t.Tool.Description)
@@ -6318,15 +6427,594 @@ func logPromptFloor(cfg AgentLoopConfig, systemPrompt string, history []Message)
 			biggest, biggestName = n, t.Tool.Name
 		}
 	}
+
 	total := sysBytes + histBytes + toolBytes
 	if total == 0 {
-		return
+		return ""
 	}
 	pct := func(n int) int { return n * 100 / total }
-	Debug("[agent_loop] prompt floor: %d bytes total (~%dk tokens) = system %d (%d%%) + %d tool schemas %d (%d%%) + history %d (%d%%); largest tool %q at %d bytes",
+	return fmt.Sprintf("%d bytes total (~%dk tokens) = system %d (%d%%) + %d tool schemas %d (%d%%) + history %d (%d%%, of which %d is tool results); "+
+		"largest single message #%d (%s) at %d bytes; largest tool schema %q at %d bytes",
 		total, total/4000,
 		sysBytes, pct(sysBytes),
 		len(cfg.Tools), toolBytes, pct(toolBytes),
-		histBytes, pct(histBytes),
+		histBytes, pct(histBytes), resultBytes,
+		biggestMsgAt, biggestMsgRole, biggestMsg,
 		biggestName, biggest)
+}
+
+// promptSizeHeadline is the one-clause version for a user-facing error: which
+// component holds the bulk, so the message names a place to look instead of
+// only reporting that there is a problem.
+func promptSizeHeadline(cfg AgentLoopConfig, systemPrompt string, history []Message) string {
+	sysBytes := len(systemPrompt)
+	histBytes := 0
+	for _, m := range history {
+		histBytes += len(m.Content) + len(m.Reasoning)
+		for _, tr := range m.ToolResults {
+			histBytes += len(tr.Content)
+		}
+	}
+	toolBytes := 0
+	for _, t := range cfg.Tools {
+		toolBytes += len(t.Tool.Name) + len(t.Tool.Description)
+		for pn, p := range t.Tool.Parameters {
+			toolBytes += len(pn) + len(p.Description) + len(p.Type)
+		}
+	}
+	switch {
+	case sysBytes >= histBytes && sysBytes >= toolBytes:
+		return fmt.Sprintf("most of it is the system prompt (~%dk tokens), which compaction cannot shrink — the agent's own instructions, memory or attached sources are the place to look", sysBytes/4000)
+	case toolBytes >= histBytes:
+		return fmt.Sprintf("most of it is tool definitions (~%dk tokens across %d tools), which compaction cannot shrink — narrow the agent's tool list", toolBytes/4000, len(cfg.Tools))
+	default:
+		return fmt.Sprintf("most of it is conversation history (~%dk tokens)", histBytes/4000)
+	}
+}
+
+// --- confirmation ------------------------------------------------------------
+//
+// What it means for a tool to ask before it acts, and what "don't ask me
+// again" is allowed to mean afterwards.
+//
+// A prompt on every call is a prompt nobody reads. The loop that makes an
+// agentic coding session worth having is edit → build → read the error → fix
+// → build, and if each build stops for approval then the safe configuration
+// is the one that is too tedious to use — which is how gates get switched off
+// wholesale. So the answer to a confirmation has three shapes, not two: no,
+// yes this once, and yes to this KIND of call from now on.
+//
+// The third one is where the care goes. A grant is a standing decision made
+// in one click during a task, so it has to be narrow enough that the user can
+// predict what they just allowed:
+//
+//   - It is namespaced by Scope, an opaque key the app supplies. Allowing a
+//     build in a throwaway checkout must not allow one in the source tree the
+//     server is running from, and only the app knows those are different.
+//   - It covers a tool outright ONLY when the tool has no meaningful argument
+//     to vary — an operator-defined "run the tests" command is one fixed
+//     string, so "always" is exactly as broad as it sounds.
+//   - Where there IS a varying argument (a shell command), the grant is a
+//     PREFIX of it, and prefix matching refuses anything a shell would treat
+//     as more than one command. See CommandIsGrantable for why that guard is
+//     load-bearing rather than defensive.
+//   - A tool can refuse to offer one at all (NeverRemember), for actions
+//     where a standing yes is not a thing a person should be able to hand out
+//     mid-flow.
+
+// ToolConfirmation describes a tool's confirmation behavior.
+type ToolConfirmation struct {
+	// Prompt is the question the user reads. It is prose, and it is the
+	// tool author's job because only they can write one worth interrupting
+	// for: "Allow run?" is a reflex click, "Run a command in gohort?" over
+	// the command itself is a decision.
+	//
+	// FAILS CLOSED. A run with no interactive viewer (a schedule, a
+	// dispatch, a channel wake) has nobody to ask, so the call is denied
+	// rather than allowed. A tool that must work unattended must not set a
+	// confirmation at all.
+	Prompt string
+
+	// Scope namespaces any grant the user hands out from this call's card.
+	// Opaque to the framework — an app passes whatever "the same situation"
+	// means to it (a project id, a workspace, a connection). Empty puts
+	// grants in a namespace shared by everything else that left it empty,
+	// which is rarely what an app wants and never what a dangerous tool
+	// wants.
+	Scope string
+
+	// GrantArg names the argument a remembered grant is matched on. When
+	// set, a grant records a PREFIX of that argument's value and applies
+	// only to later calls whose value starts with it. When empty, a grant
+	// covers the tool outright — correct only when the tool has no varying
+	// argument that changes what it does.
+	GrantArg string
+
+	// NeverRemember withholds the "always allow" option, leaving only
+	// once-or-deny. For calls where a standing yes should not be obtainable
+	// by clicking a third button in the middle of something else.
+	NeverRemember bool
+}
+
+// asks reports whether this confirmation actually gates anything. A nil
+// confirmation, or one with no question in it, does not.
+func (c *ToolConfirmation) asks() bool {
+	return c != nil && strings.TrimSpace(c.Prompt) != ""
+}
+
+// Asks is the exported form, for the layers outside core that decide whether
+// to escalate.
+func (c *ToolConfirmation) Asks() bool { return c.asks() }
+
+// CanRemember reports whether this call may offer a standing grant.
+func (c *ToolConfirmation) CanRemember() bool {
+	return c.asks() && !c.NeverRemember
+}
+
+// shellMetaChars are the characters that let one command line become more
+// than one command, or become a command whose text is computed at run time.
+const shellMetaChars = ";&|`$><\n\r()"
+
+// CommandIsGrantable reports whether a command line may take part in prefix
+// matching at all.
+//
+// This is the guard that decides whether the whole grant mechanism is a
+// convenience or a hole. Without it, granting the prefix "go build" would
+// also allow:
+//
+//	go build ./... ; rm -rf /
+//
+// which starts with the granted prefix, was never shown to the user, and
+// would run without a prompt. So a command containing anything a shell reads
+// as chaining, substitution, or redirection is never matched against a grant
+// and never offered as one — it goes to the user every time, which is the
+// correct answer for a line that does more than one thing.
+//
+// Deliberately a blunt character test rather than a parser. A parser that is
+// subtly wrong here fails open, and the cost of the blunt version is only
+// that a legitimate piped command keeps asking.
+func CommandIsGrantable(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+	return !strings.ContainsAny(cmd, shellMetaChars)
+}
+
+// GrantPrefixFor derives the prefix a card offers for a command: its leading
+// words, up to the first one that looks like an argument rather than part of
+// the verb.
+//
+// "go build ./..."        → "go build"
+// "npm run test -- -w"    → "npm run"
+// "make"                  → "make"
+// "./scripts/ci.sh --fast"→ "./scripts/ci.sh"
+//
+// Two words at most, because the useful unit is the verb ("go test") and
+// anything past it is the part that legitimately varies between iterations —
+// which is the whole reason a prefix beats an exact match here. Returns ""
+// when the command may not be granted at all.
+func GrantPrefixFor(cmd string) string {
+	if !CommandIsGrantable(cmd) {
+		return ""
+	}
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	prefix := fields[0]
+	// A second word joins the verb only when it is a bare subcommand — not a
+	// flag, not a path, not a value. "go build" is a verb; "make -j8" is a
+	// verb plus a setting, and granting "make -j8" would be narrower than the
+	// user expects rather than broader.
+	if len(fields) > 1 && isBareWord(fields[1]) {
+		prefix += " " + fields[1]
+	}
+	return prefix
+}
+
+// isBareWord reports whether s is a plain subcommand token.
+func isBareWord(s string) bool {
+	if s == "" || strings.HasPrefix(s, "-") || strings.ContainsAny(s, "/\\=.") {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') &&
+			!(r >= '0' && r <= '9') && r != '_' && r != ':' {
+			return false
+		}
+	}
+	return true
+}
+
+// CommandMatchesPrefix reports whether cmd is covered by a granted prefix.
+//
+// The match is at a WORD boundary, so a grant of "go build" does not cover
+// "go buildsomethingelse". Both sides must be grantable, which is what stops
+// a chained command from riding in on a grant made for its first clause.
+func CommandMatchesPrefix(cmd, prefix string) bool {
+	cmd = strings.TrimSpace(cmd)
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || !CommandIsGrantable(cmd) {
+		return false
+	}
+	if cmd == prefix {
+		return true
+	}
+	return strings.HasPrefix(cmd, prefix+" ")
+}
+
+// capOversizedResults truncates any single tool result that could not fit in a
+// round even on its own, and returns the estimated tokens reclaimed.
+//
+// Position-blind on purpose. Every other rule here spares the newest results
+// because the model needs them to act; this one applies to all of them,
+// because a body this size is not something the model can act on — it is a
+// body that stops the round existing. Truncating it to something readable is
+// strictly better than a turn that cannot run.
+//
+// The tail is kept rather than the head: a command's error is at the end of
+// its output, and that is overwhelmingly what an oversized result is.
+func capOversizedResults(msgs []Message, contextSize int) (reclaimed int) {
+	limit := oversizedResultBytes(contextSize)
+	for i := range msgs {
+		// Message CONTENT as well as tool results. A single message can be
+		// just as impossible as a single result — a pasted document, a reply
+		// that quoted its whole input — and capping only results left the
+		// other half of history untouchable, which is what a live failure at
+		// 1.4M tokens of conversation text turned out to be.
+		if len(msgs[i].Content) > limit {
+			was := len(msgs[i].Content)
+			msgs[i].Content = truncateTail(msgs[i].Content, limit,
+				"[message truncated: it was %d bytes, larger than a whole round can hold, so only the last %d are kept]")
+			reclaimed += (was - len(msgs[i].Content)) / 4
+		}
+		for j := range msgs[i].ToolResults {
+			body := msgs[i].ToolResults[j].Content
+			if len(body) <= limit {
+				continue
+			}
+			replaced := truncateTail(body, limit,
+				"[tool result truncated: it was %d bytes, larger than a whole round can hold, so only the last %d are kept. "+
+					"Re-run the tool with a narrower query if you need the rest.]")
+			reclaimed += (len(body) - len(replaced)) / 4
+			msgs[i].ToolResults[j].Content = replaced
+		}
+	}
+	return reclaimed
+}
+
+// oversizedResultBytes is the largest single tool result worth keeping whole,
+// in bytes, derived from the window so a big-context model is not held to a
+// small model's limit.
+//
+// A quarter of the window: a result larger than that leaves too little room
+// for the system prompt, the tools and the reply for the round to be useful,
+// whatever else is trimmed. The floor matters more than the fraction — when
+// the window is unknown (contextSize 0, which is what a provider that never
+// reported one gives us) an unbounded result would otherwise sail through the
+// one check that could have caught it.
+func oversizedResultBytes(contextSize int) int {
+	const floor = 256 << 10 // 256 KiB ≈ 64k tokens
+	if contextSize <= 0 {
+		return floor
+	}
+	// contextSize is tokens; ~4 bytes each.
+	quarter := contextSize / 4 * 4
+	if quarter < floor {
+		return floor
+	}
+	return quarter
+}
+
+// truncateTail keeps the END of an oversized body, prefixed with a note in the
+// caller's words saying what was dropped.
+//
+// The tail rather than the head, everywhere: a command's error is at the end
+// of its output, the conclusion is at the end of a reply, and the useful part
+// of a long paste is rarely its opening. Trimming forward to the next newline
+// avoids starting mid-line, which reads as corruption rather than as a cut.
+func truncateTail(body string, limit int, noteFormat string) string {
+	if len(body) <= limit {
+		return body
+	}
+	kept := body[len(body)-limit:]
+	if k := strings.IndexByte(kept, '\n'); k >= 0 && k < 200 {
+		kept = kept[k+1:]
+	}
+	return fmt.Sprintf(noteFormat, len(body), len(kept)) + "\n" + kept
+}
+
+// elideOldMessageText drops the TEXT of older messages, newest-first-preserved,
+// until history fits. Returns the estimated tokens reclaimed.
+//
+// This is the floor under everything else, and it exists because the loop had
+// no way to trim conversation at all: compaction elided tool-result bodies and
+// nothing else, so a long-lived thread whose bulk was ordinary message text
+// could grow until every turn failed, permanently, with the recovery path
+// reporting success at doing nothing. The upstream session layer bounds a
+// thread too — but a last line of defence that cannot act on the commonest
+// shape of history is not one.
+//
+// Structure is preserved: only Content is replaced, so tool calls and their
+// results stay paired and the transcript's shape is intact. The newest
+// keepWhole messages are never touched, because those are the ones the round
+// is actually about.
+func elideOldMessageText(msgs []Message, budgetTokens, keepWhole int) (reclaimed int) {
+	if len(msgs) <= keepWhole {
+		return 0
+	}
+	total := 0
+	for i := range msgs {
+		total += len(msgs[i].Content) / 4
+		for _, tr := range msgs[i].ToolResults {
+			total += len(tr.Content) / 4
+		}
+	}
+	for i := 0; i < len(msgs)-keepWhole && total > budgetTokens; i++ {
+		body := msgs[i].Content
+		if len(body) <= 400 {
+			continue
+		}
+		marker := fmt.Sprintf("[earlier message elided to fit context — was %d bytes]", len(body))
+		total -= (len(body) - len(marker)) / 4
+		reclaimed += (len(body) - len(marker)) / 4
+		msgs[i].Content = marker
+	}
+	return reclaimed
+}
+
+// summarizeOldHistory folds the oldest part of a conversation into a summary,
+// in chunks small enough that each fold call itself fits.
+//
+// This is the smart half of context recovery, and it is what should be tried
+// before anything is thrown away. Eliding text is cheap and lossy: a thread
+// that has been running for weeks loses what was decided in it, and the model
+// carries on without knowing what it forgot. Summarizing costs LLM calls and
+// keeps the substance, which is the trade worth making at the point where the
+// alternative is a conversation that can no longer take a message at all.
+//
+// CHUNKED, because the thing that does not fit cannot be handed to a
+// summarizer in one piece either — 1.4M tokens of history is not summarizable
+// by a model with a 262k window. Each chunk is folded on its own and the folds
+// are then folded together, so the work scales with the history rather than
+// with the window.
+//
+// Returns the rewritten history and whether anything changed. Failure is not
+// an error: a summarizer that is unavailable or refuses leaves history
+// untouched and the caller falls through to elision, which still beats a turn
+// that cannot run.
+func (T *AppCore) summarizeOldHistory(ctx context.Context, msgs []Message, contextSize, keepWhole int) ([]Message, bool) {
+	if T == nil || T.LLM == nil || len(msgs) <= keepWhole {
+		return msgs, false
+	}
+	foldEnd := safeCutPoint(msgs, len(msgs)-keepWhole)
+	if foldEnd <= 0 {
+		return msgs, false
+	}
+	// How much of the window one fold call may spend on input.
+	//
+	// Deliberately SMALL, and much smaller than the window allows. A fold is
+	// remedial work on a server that is by definition under pressure — the
+	// turn got here because something did not fit — and a large request is
+	// exactly what such a server cannot place. Observed on llama.cpp as
+	// "failed to find a memory slot for batch of size 2048" and slots being
+	// purged mid-flight: asking for quarter-window folds meant the recovery
+	// competed for KV cache with the very conversation it was rescuing.
+	//
+	// Summarizing does not need a big bite. Notes from twelve thousand tokens
+	// are as good as notes from sixty-five, and the smaller request places
+	// itself in a crowded cache where the larger one waits or evicts.
+	chunkTokens := foldChunkTokens
+	if q := contextSize / 4; q > 0 && q < chunkTokens {
+		chunkTokens = q
+	}
+
+	var chunkSummaries []string
+	var cur []Message
+	curTokens := 0
+	// Bounded. An unbounded fold count turns one failed turn into an
+	// arbitrarily long sequence of LLM calls, which is a poor trade against
+	// simply dropping old text — and on a loaded server it is a queue of
+	// requests nobody asked for. Past the cap the caller falls through to
+	// elision, which is lossy but immediate.
+	budgetExhausted := false
+	flush := func() {
+		if len(cur) == 0 || budgetExhausted {
+			cur, curTokens = nil, 0
+			return
+		}
+		if len(chunkSummaries) >= maxFoldCalls {
+			budgetExhausted = true
+			cur, curTokens = nil, 0
+			return
+		}
+		if s := T.foldChunk(ctx, cur); s != "" {
+			chunkSummaries = append(chunkSummaries, s)
+		}
+		cur, curTokens = nil, 0
+	}
+	for i := 0; i < foldEnd; i++ {
+		n := EstimateTokens(msgs[i].Content)
+		for _, tr := range msgs[i].ToolResults {
+			n += EstimateTokens(tr.Content)
+		}
+		// A single message larger than a chunk is folded alone; capOversized
+		// has already cut anything genuinely impossible, so this is a large
+		// message rather than an absurd one.
+		if curTokens+n > chunkTokens && len(cur) > 0 {
+			flush()
+		}
+		cur = append(cur, msgs[i])
+		curTokens += n
+	}
+	flush()
+
+	if len(chunkSummaries) == 0 {
+		return msgs, false
+	}
+	summary := strings.Join(chunkSummaries, "\n\n")
+	// Fold the folds when there were several, so the result is one account of
+	// the conversation rather than a pile of partial ones.
+	if len(chunkSummaries) > 1 {
+		if s := T.foldChunk(ctx, []Message{{Role: "user", Content: summary}}); s != "" {
+			summary = s
+		}
+	}
+
+	if budgetExhausted {
+		Log("[agent_loop] context recovery: stopped after %d fold calls — the remainder falls to elision", maxFoldCalls)
+	}
+	out := make([]Message, 0, keepWhole+1)
+	out = append(out, Message{
+		Role: "user",
+		Content: "[Earlier conversation, summarized to fit the context window. " +
+			"This replaces the messages themselves; treat it as an account of what was said and decided, not as something the user just wrote.]\n\n" + summary,
+	})
+	out = append(out, msgs[foldEnd:]...)
+	Log("[agent_loop] context recovery: folded %d earlier message(s) into a %d-byte summary across %d chunk(s)",
+		foldEnd, len(summary), len(chunkSummaries))
+	return out, true
+}
+
+// foldChunk summarizes one span. Returns "" on any failure, because every
+// caller has a worse-but-working fallback and none of them should abort a
+// turn because a salvage step did not work.
+func (T *AppCore) foldChunk(ctx context.Context, span []Message) string {
+	var b strings.Builder
+	for _, m := range span {
+		role := m.Role
+		if role == "" {
+			role = "message"
+		}
+		if c := strings.TrimSpace(m.Content); c != "" {
+			fmt.Fprintf(&b, "%s: %s\n", role, c)
+		}
+		for _, tr := range m.ToolResults {
+			if c := strings.TrimSpace(tr.Content); c != "" {
+				fmt.Fprintf(&b, "tool result: %s\n", c)
+			}
+		}
+	}
+	if strings.TrimSpace(b.String()) == "" {
+		return ""
+	}
+	// Bounded so a salvage attempt cannot itself hang a turn that is already
+	// in trouble.
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	resp, err := T.WorkerChat(ctx, []Message{{
+		Role: "user",
+		Content: "Summarize this part of a conversation so it can replace the messages themselves.\n\n" +
+			"Keep: what was asked, what was decided, what was done, any values, names, paths or numbers that later turns would need, and anything still outstanding. " +
+			"Drop: pleasantries, restatements, and the exact wording. Write it as compact notes, not prose. No preamble.\n\n" +
+			"---\n" + b.String(),
+	}}, WithMaxRetries(1))
+	if err != nil || resp == nil {
+		Debug("[agent_loop] context recovery: a fold call failed (%v) — falling back to elision for this span", err)
+		return ""
+	}
+	return strings.TrimSpace(resp.Content)
+}
+
+// foldChunkTokens is the input budget for one summarization call, and
+// maxFoldCalls bounds how many of them a single recovery may make. Both exist
+// to keep a salvage attempt small on a server that is already struggling —
+// see summarizeOldHistory.
+const (
+	foldChunkTokens = 12000
+	maxFoldCalls    = 12
+)
+
+// contextRecoveryKeepWhole is how many of the newest messages stay verbatim
+// through any recovery. The round is about those; folding them would salvage
+// the turn by destroying the thing it was asked to do.
+const contextRecoveryKeepWhole = 6
+
+// stillTooBig estimates whether a round would still overflow. Deliberately an
+// estimate: the exact figure belongs to the provider's tokenizer, and the only
+// decision resting on this is whether to try one more salvage step.
+func stillTooBig(msgs []Message, systemPrompt string, contextSize int) bool {
+	if contextSize <= 0 {
+		return false
+	}
+	total := EstimateTokens(systemPrompt)
+	for i := range msgs {
+		total += EstimateTokens(msgs[i].Content)
+		for _, tr := range msgs[i].ToolResults {
+			total += EstimateTokens(tr.Content)
+		}
+	}
+	return total > contextSize-34000
+}
+
+// fallbackRecoveryWindow is what recovery assumes when nothing reports a
+// window: neither the configuration nor the provider's refusal. Deliberately
+// small. Recovering into a window smaller than the real one costs some history
+// that need not have been folded; recovering into one larger than the real one
+// achieves nothing and the turn stays dead.
+const fallbackRecoveryWindow = 32000
+
+// contextWindowFromError reads the window out of a provider's own refusal.
+//
+// The number is almost always right there in the message — llama.cpp says
+// "exceeds the available context size (262144 tokens)", and the others phrase
+// it differently around the same two figures. Reading it is what lets recovery
+// work on a deployment where the optional ContextSizer is not implemented,
+// which is the common case rather than an exotic one.
+//
+// Returns 0 when nothing recognizable is present; the caller then falls back.
+func contextWindowFromError(err error) int {
+	if err == nil {
+		return 0
+	}
+	msg := err.Error()
+	// The window is the SMALLER of the two numbers a refusal names: the other
+	// is the prompt that did not fit. Collect every plausible token count and
+	// take the smallest above a floor, which avoids depending on any one
+	// provider's wording.
+	var best int
+	for _, m := range contextNumberPattern.FindAllStringSubmatch(msg, -1) {
+		n, convErr := strconv.Atoi(m[1])
+		if convErr != nil || n < 1000 {
+			continue
+		}
+		if best == 0 || n < best {
+			best = n
+		}
+	}
+	return best
+}
+
+// contextNumberPattern finds token counts in a provider's error text.
+var contextNumberPattern = regexp.MustCompile(`(\d{4,})\s*tokens?`)
+
+// safeCutPoint moves a proposed history cut forward until it does not orphan a
+// tool message from the assistant that called it.
+//
+// A message carrying ToolResults is rendered by every provider as one or more
+// role:"tool" messages, and a tool message is only valid immediately after the
+// assistant message holding the matching tool_calls. Cut between them and the
+// model's own chat template rejects the request outright — llama.cpp answers
+// "A tool message must follow an assistant or tool message", a 500 rather than
+// a graceful degrade, which turns a context-recovery attempt into a harder
+// failure than the one it was recovering from.
+//
+// Moving FORWARD rather than back: the pair is folded together, so the summary
+// covers the call and its result as one event. Moving back would keep an
+// assistant message whose results were summarized away, leaving the model
+// looking at a call with no answer.
+func safeCutPoint(msgs []Message, idx int) int {
+	if idx <= 0 {
+		return 0
+	}
+	if idx > len(msgs) {
+		idx = len(msgs)
+	}
+	// Advance past any run of tool-result messages, and past the assistant
+	// that owns them if the cut landed between the two.
+	for idx < len(msgs) && len(msgs[idx].ToolResults) > 0 {
+		idx++
+	}
+	return idx
 }

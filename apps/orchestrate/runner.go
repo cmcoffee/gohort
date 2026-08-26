@@ -4745,7 +4745,17 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 // handleSendWithAppTools is handleSend plus extra host-app tools injected into
 // the agent's catalog for this run (see chatTurn.appTools). The plain handleSend
 // passes nil.
+// handleSendWithAppTools is the publisher-free spelling, for the apps whose
+// tools only return text.
 func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.Request, udb Database, user string, agent AgentRecord, appTools []AgentToolDef) {
+	T.handleSendWithAppToolsPublishing(w, r, udb, user, agent, appTools, nil)
+}
+
+// handleSendWithAppToolsPublishing additionally binds a host app's block
+// publisher to this turn, so an app tool can put a card in the conversation.
+// See app_block_publisher.go for why the binding happens here rather than at
+// tool-build time.
+func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter, r *http.Request, udb Database, user string, agent AgentRecord, appTools []AgentToolDef, appBlockPub *AppBlockPublisher) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -5097,7 +5107,17 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// "default (12)" while never taking effect, because the code that applies
 	// that default is exactly what the gate skipped. A normal chat session is
 	// safe unbounded: it gets a fresh id per conversation and is short-lived.
-	if strings.HasPrefix(sess.ID, "channel:") {
+	//
+	// ALSO bound an ordinary session that has outgrown the assumption above.
+	// "A normal chat session is short-lived" is a habit, not an invariant:
+	// nothing makes anyone start a new one, and a dashboard thread somebody
+	// keeps using for weeks grows without limit while this gate excludes it
+	// from the only thing that would stop it. Observed live at ~1.4M tokens of
+	// conversation against a 262k window, failing every turn and unrecoverable
+	// downstream — the loop's own salvage can fold history, but a thread that
+	// arrives that large has already cost the turn. Small sessions still skip
+	// this entirely and stay verbatim, which is what the gate was protecting.
+	if strings.HasPrefix(sess.ID, "channel:") || historyOutgrewItsSession(sess.Messages, T.LeadContextSize()) {
 		planMsgs = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
 		// Bound STORAGE too (not just the run-view): drop leading messages already
 		// folded into the summary AND archived to the recall index, keeping the
@@ -5191,9 +5211,19 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	// typing. Without this the agent ran against the visitor's store, found none
 	// of its own tools, and said nothing about it. Unset on an ordinary turn,
 	// where the two identities are the same and ownerView falls back.
+	//
+	// NOT for a SEED agent. A seed's Owner is the framework marker "system",
+	// which is not an author and has no store of its own: redirecting to it
+	// pointed every seed agent at an empty fleet. Builder is the agent that
+	// suffers most and the one that can least afford it — it is the only agent
+	// with authoring access, its entire job is reading and changing the user's
+	// agents, and it was being handed a store containing none of them.
+	// Observed as agents(action="list") returning [] in the same turn that
+	// survey listed thirty-eight, every lookup failing, and Builder telling
+	// the user their agent must have been deleted.
 	var ownerUDB Database
 	ownerUser := ""
-	if agent.Owner != "" && agent.Owner != user {
+	if agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner {
 		ownerUser, ownerUDB = agent.Owner, UserDB(T.DB, agent.Owner)
 	}
 	turn := &chatTurn{
@@ -5225,6 +5255,9 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		deliveredSkills:  map[string]bool{},
 		appTools:         appTools,
 	}
+	// Bound before anything can run, so a card emitted by the very first
+	// tool call still has somewhere to go.
+	appBlockPub.bind(turn)
 	for _, d := range req.Documents {
 		if n := strings.TrimSpace(d.Name); n != "" {
 			turn.docNames = append(turn.docNames, n)
@@ -6326,20 +6359,43 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 		// how the LLM must reach it (load_tool first), so leave a trail.
 		Log("[orchestrate.tools] agent=%s: %d unconfirmed (trial) tool(s) kept out of the inline catalog — reachable via load_tool; Confirm them in Extensions › Tools to pin their schemas", t.agent.ID, trialDemoted)
 	}
-	if len(lazyCustomTools) > 0 {
-		var b strings.Builder
-		b.WriteString("\n\n## Your custom tools (load before use)\n")
-		b.WriteString("These tools exist but their full definitions aren't loaded. To use them, call `load_tool(names=[\"<name>\", ...])` first — pass ALL the ones you'll need in that one call; it returns their parameters and makes them callable. Then call them normally.\n\n")
-		for _, td := range lazyCustomTools {
-			desc := strings.TrimSpace(td.Tool.Description)
-			if len(desc) > 200 {
-				desc = desc[:200] + "…"
-			}
-			b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
-		}
-		lazyPromptSection = b.String()
-	}
+	lazyPromptSection = lazyToolSectionFor(lazyCustomTools)
+
 	return direct, lazyPromptSection
+}
+
+// lazyToolSectionFor renders the held-back-tools section of the prompt.
+// Extracted so its wording can be asserted on: the difference between an agent
+// using its own tools and reaching for fetch_url instead lives in this text,
+// and nothing else would catch it changing.
+func lazyToolSectionFor(lazyCustomTools []AgentToolDef) string {
+	if len(lazyCustomTools) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Your custom tools (load before use)\n")
+	// These lose an unfair fight without this paragraph. A tool listed here
+	// is a BULLET; a generic tool like fetch_url or web_search is a real
+	// entry in the tool-calling API with a full schema, one call away. A
+	// model comparing "purpose-built, but load it first" against "generic,
+	// callable right now" takes the generic one nearly every time — and
+	// nothing in the old wording said the first was preferable, only that
+	// it was possible.
+	//
+	// Reported live: an agent built to talk to a social network reached for
+	// fetch_url on every turn while its own posting tools sat in this list.
+	// It was not ignoring instructions; it was never told these were the
+	// right tools, only that they existed.
+	b.WriteString("These are tools built for THIS agent's job. Their full definitions aren't loaded yet, so call `load_tool(names=[\"<name>\", ...])` first — pass ALL the ones you'll need in that one call; it returns their parameters and makes them callable. Then call them normally.\n\n")
+	b.WriteString("**Prefer these over a generic tool.** If one of them covers what the user asked for, load it and use it — do NOT reach for `fetch_url`, `browse_page`, `web_search` or your own knowledge to do the same job by hand. A purpose-built tool here knows the service's endpoints, auth and shapes; doing it generically re-derives all of that and usually gets it wrong. The extra `load_tool` call is cheap and expected.\n\n")
+	for _, td := range lazyCustomTools {
+		desc := strings.TrimSpace(td.Tool.Description)
+		if len(desc) > 200 {
+			desc = desc[:200] + "…"
+		}
+		b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
+	}
+	return b.String()
 }
 
 // isTrialTool reports whether the session's live record for name is an
