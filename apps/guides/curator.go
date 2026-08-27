@@ -572,7 +572,7 @@ func (T *Guides) runSupersede(ctx context.Context, udb Database, orch *orchestra
 		"3. Preserve anything in the old section that the finding does NOT contradict; you are replacing a claim, not deleting a section.\n\n" +
 		UntrustedData("replacing finding", content) + "\n\n" +
 		"When done, reply with one line naming what changed."
-	tools := T.coauthorTools(udb, orch, user, true)
+	tools := T.coauthorTools(ctx, udb, orch, user, true)
 	if private {
 		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 		tools = withoutTools(tools, "research")

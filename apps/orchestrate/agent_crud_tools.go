@@ -160,7 +160,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		}
 		installedDrafts++
 	}
-	b, _ := json.Marshal(saved)
+	b := agentEchoJSON(saved)
 	toolWarn := unresolvedToolsWarning(sess, &saved)
 	if dispatchedBuild {
 		// Held-for-approval path: the sub-agent is saved but not live, so there
@@ -168,7 +168,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		// the parent owner approves. Report and end the turn.
 		return fmt.Sprintf(
 			"AGENT_DRAFTED ok. id=%s name=%q — saved but HELD FOR APPROVAL. It will not run until the owner approves it in the Authorizations pane; on approval it goes live as a sub-agent of %s and inherits that parent's read-only tools.%s DONE — reply with a one-line summary of what you drafted and END THE TURN. Do NOT call ask_user or create_agent again.\n\nSaved record: %s",
-			saved.ID, saved.Name, sess.DispatchParentAgentID, toolWarn, string(b),
+			saved.ID, saved.Name, sess.DispatchParentAgentID, toolWarn, b,
 		), nil
 	}
 	// Lead with a directive line so the LLM doesn't keep iterating
@@ -201,7 +201,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	unresolved := unresolvedToolNote(sess.DB, saved)
 	return fmt.Sprintf(
 		"AGENT_CREATED ok. id=%s name=%q.%s%s%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, focusNote, unresolved, string(b),
+		saved.ID, saved.Name, verifyHint, focusNote, unresolved, b,
 	), nil
 }
 
@@ -505,13 +505,13 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// An update can widen what an agent may do as easily as a create can —
 	// same card, same reason.
 	emitPrivilegeCard(sess, saved, append(append([]TempTool{}, inlineTools...), copiedTools...))
-	b, _ := json.Marshal(saved)
+	b := agentEchoJSON(saved)
 	// Same check as create: an update is where a tool name goes stale,
 	// because the allowlist is rewritten while the tools it references
 	// were authored somewhere else.
 	return fmt.Sprintf(
 		"AGENT_UPDATED ok. id=%s name=%q.%s%s DONE — reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved), string(b),
+		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved), b,
 	), nil
 }
 
@@ -552,10 +552,10 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	// A clone copies the source's grants verbatim, which is exactly the case
 	// where they go unexamined — show them.
 	emitPrivilegeCard(sess, saved, nil)
-	b, _ := json.Marshal(saved)
+	b := agentEchoJSON(saved)
 	return fmt.Sprintf(
 		"AGENT_CLONED ok. id=%s name=%q. DONE — reply with a short summary of what was cloned and END THE TURN. Do NOT call ask_user, clone_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, string(b),
+		saved.ID, saved.Name, b,
 	), nil
 }
 
@@ -701,6 +701,40 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		params["id"] = ToolParam{Type: "string", Description: "Agent id (from agents(action=\"list\"))."}
 	}
 	return params
+}
+
+// agentEchoJSON renders the "Saved record:" blob that create/update/clone hand
+// back to the authoring LLM, trimmed to the fields those tools can actually
+// WRITE (agentMutationParams) plus the id.
+//
+// The full record also carries owner-only deployment state — disabled_credentials,
+// disabled_pipelines, disabled_persistent_tools, guardrail_*, exposure, machine.
+// The model can neither set those nor tell current from stale, and echoing them
+// invites a confident misreading: a per-agent credential opt-out left over from
+// before that credential was secured read back as a live misconfiguration, and
+// got reported to the user as a bug in the agent the model had just edited.
+// Show back only what the call could have changed.
+func agentEchoJSON(rec AgentRecord) string {
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return "{}"
+	}
+	var all map[string]any
+	if err := json.Unmarshal(b, &all); err != nil {
+		return string(b)
+	}
+	writable := agentMutationParams(true)
+	out := make(map[string]any, len(writable))
+	for k := range writable {
+		if v, ok := all[k]; ok {
+			out[k] = v
+		}
+	}
+	trimmed, err := json.Marshal(out)
+	if err != nil {
+		return string(b)
+	}
+	return string(trimmed)
 }
 
 // agentRecordFromArgs builds an AgentRecord from tool args. Used by

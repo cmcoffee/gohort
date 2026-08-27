@@ -2049,8 +2049,59 @@ func findAgentByNameOrID(udb Database, owner, key string) (AgentRecord, bool) {
 	if a, ok := loadAgent(udb, key); ok {
 		return a, true
 	}
+	// A name the user gave their OWN agent beats a framework seed or app agent
+	// carrying the same one, at EVERY tier below.
+	//
+	// The registry of app agents is process-global and its entries are hidden,
+	// so a user naming an agent "Investigator" has no way to know one already
+	// answers to that. Before this, whichever record listAgents happened to
+	// emit first won, which meant the answer depended on registration order —
+	// on which apps are compiled in. A caller asking for the agent they built
+	// and named would be handed a hidden framework agent instead, and nothing
+	// would say so.
+	//
+	// Precedence, not a tighter match: the tiers keep their own semantics
+	// (exact beats normalized beats tag-stripped beats unique-partial, and each
+	// fuzzy tier still refuses on a genuine ambiguity). They just run over the
+	// user's own agents first and over the framework's only if that finds
+	// nothing.
+	own, framework := splitOwnAndFrameworkAgents(listAgents(udb, owner))
+	for _, group := range [][]AgentRecord{own, framework} {
+		if a, ok := matchAgentByName(group, key); ok {
+			return a, true
+		}
+	}
+	return AgentRecord{}, false
+}
+
+// splitOwnAndFrameworkAgents divides a listing into the agents the user made
+// and the ones the framework supplied (orchestrate's own seeds plus every
+// registered app agent — isSeedID walks both).
+//
+// Keyed on the ID via the registry rather than on Owner, for the reason
+// appAgentForcesPrivate spells out: a customized seed carries a per-user shadow
+// whose Owner IS the user, so Owner would call it theirs and hand a shadowed
+// framework agent the same precedence as one they built and named.
+func splitOwnAndFrameworkAgents(agents []AgentRecord) (own, framework []AgentRecord) {
+	for _, a := range agents {
+		if isSeedID(a.ID) {
+			framework = append(framework, a)
+			continue
+		}
+		own = append(own, a)
+	}
+	return own, framework
+}
+
+// matchAgentByName runs the name-resolution tiers over one group of agents,
+// strongest first. Split out of findAgentByNameOrID so the same cascade can be
+// applied to the user's own agents and then, only if it comes up empty, to the
+// framework's.
+func matchAgentByName(agents []AgentRecord, key string) (AgentRecord, bool) {
+	if len(agents) == 0 {
+		return AgentRecord{}, false
+	}
 	low := strings.ToLower(key)
-	agents := listAgents(udb, owner)
 	for _, a := range agents {
 		if strings.ToLower(a.Name) == low {
 			return a, true

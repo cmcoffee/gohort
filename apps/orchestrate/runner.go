@@ -8025,6 +8025,24 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// the shownText substring match dropped a 338-char reply because it was
 	// a substring of a larger earlier block. Exact-match-last-bubble is the
 	// narrowest dedup that still catches the true duplicate case.
+	// emitBubble is the raw send, with NO dedup. Split out because an ASK must
+	// never be suppressed: see the ask_user path below.
+	emitBubble := func(text string) {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return
+		}
+		id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
+		t.sse.Send(map[string]any{
+			"kind": "message",
+			"role": "assistant",
+			"id":   id,
+			"text": text,
+		})
+		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+		t.emitStats(id, resp, orchStart)
+	}
+
 	emitCapturedAsBubble := func(text string) {
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {
@@ -8042,15 +8060,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return
 		}
 		Debug("[orchestrate.orch] emitting captured reply as bubble (%d ch, last bubble %d ch)", len(trimmed), len(strings.TrimSpace(lastFinalizedText)))
-		id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
-		t.sse.Send(map[string]any{
-			"kind": "message",
-			"role": "assistant",
-			"id":   id,
-			"text": text,
-		})
-		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-		t.emitStats(id, resp, orchStart)
+		emitBubble(text)
 	}
 
 	// Loop end conditions:
@@ -8092,7 +8102,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// set: it is still an ask, and the next turn's gated tools (agent CRUD
 		// after a Builder confirmation) depend on the flag, not the rendering.
 		if len(capturedOptions) == 0 {
-			emitCapturedAsBubble(capturedQuest)
+			// emitBubble, NOT emitCapturedAsBubble. The near-duplicate guard is
+			// right for a REPLY (a repeat is noise) and catastrophic for an ASK:
+			// the model routinely streams a lead-in ("Several things are
+			// ambiguous:") and then captures a question that BEGINS with those
+			// same words, which scores as a duplicate on longest-common-prefix
+			// and drops the entire ask. AwaitingUserConfirm is still set below,
+			// so the turn ended parked on a question the user was never shown —
+			// a lead-in, a colon, and nothing. Live, in Guides. A repeated
+			// sentence is a cosmetic cost; a swallowed question is a dead turn.
+			emitBubble(capturedQuest)
 			if t.session != nil {
 				t.session.AwaitingUserConfirm = true
 			}

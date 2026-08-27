@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
 // activeTable holds the per-user "which guide is open" marker, so the co-author
@@ -927,9 +929,16 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	//     — but it can't change someone else's document.
 	// Both cases share one tool builder (the closures resolve the open guide to
 	// its owner's store); we just hand the reader a filtered slice.
+
+	// Dispatch follows the guide's Sources, and nothing else. No open guide, no
+	// dispatch — see guideDispatchPolicy. Set before the tool build so it holds
+	// on every path below, reader and editor alike.
+	agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(Guide{})
+
 	var tools []AgentToolDef
 	if g, _, _, canEdit, found := T.resolve(r, udb, user, activeGuideID(udb)); found {
-		all := T.coauthorTools(udb, orch, user, canEdit)
+		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
+		all := T.coauthorTools(r.Context(), udb, orch, user, canEdit)
 		if canEdit {
 			tools = all
 		} else {
@@ -952,6 +961,41 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 		}
 	}
 	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
+}
+
+// guideDispatchPolicy returns the dispatch mode + target list a turn on this
+// guide runs under: the agents attached to it as Sources, and nobody else.
+//
+// This has to be set explicitly because BOTH defaults point the other way. The
+// `agents` grouped tool is a FRAMEWORK tool, appended to every turn regardless
+// of AllowedTools, so leaving it off the Guide Author's allowlist withholds
+// nothing. And an app-agent spec that names no DispatchMode resolves through
+// effectiveDispatchMode to "all" — every non-hidden agent in the user's fleet.
+// So the Guide Author was dispatching to agents the guide had never attached,
+// and so could a READER of a view-only shared guide, whose four-name tool
+// whitelist does not reach the framework set either.
+//
+// Sources are where the owner says what backs this guide. An agent attached
+// there is reachable; one that is not, is not. A guide with no agent Sources
+// gets "none" rather than an empty allowlist, because an empty
+// AllowedDispatchTargets is read as the DEFAULT (all), not as nothing.
+//
+// Note this bounds pipelines and machines by the same list, which is how
+// dispatch policy works everywhere: a target not named is not reachable. The
+// Guide Author attaches no pipelines, so today that costs it nothing.
+func guideDispatchPolicy(g Guide) (mode string, targets []string) {
+	for _, ref := range g.References {
+		if ref.Kind != orchestrate.AgentReferenceKind {
+			continue
+		}
+		if id := strings.TrimSpace(ref.ItemID); id != "" {
+			targets = append(targets, id)
+		}
+	}
+	if len(targets) == 0 {
+		return orchestrate.DispatchNone, nil
+	}
+	return orchestrate.DispatchOnly, targets
 }
 
 // readOnlyGuideToolNames are the co-author tools safe to hand a READER of a

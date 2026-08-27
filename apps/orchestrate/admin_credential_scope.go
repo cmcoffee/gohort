@@ -12,6 +12,8 @@
 package orchestrate
 
 import (
+	"strings"
+
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -45,9 +47,30 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 			}
 		}
 	}
-	// Tier 2: this agent's per-agent opt-outs.
+	// Tier 2: this agent's per-agent opt-outs — minus SECURED credentials. The
+	// editor's picker (userScopableCredentials) filters secured creds out and says
+	// so on the page: their access follows their TOOL BINDINGS, not per-agent
+	// scope. An opt-out recorded before a credential was secured therefore
+	// survives on the record — invisible in the picker, unclearable from the UI —
+	// while this set went on enforcing it, silently dropping every tool bound to
+	// that cred from the kit and blocking its fetch_url auto-route. Honor the
+	// contract the UI states rather than a leftover the owner can no longer see.
 	for _, c := range a.DisabledCredentials {
+		if credentialSecured(c, user) {
+			continue
+		}
 		add(c)
 	}
 	return deny
+}
+
+// credentialSecured reports whether `name` resolves to a SECURED credential for
+// session user `user` — the same user-shadows-global lookup dispatch itself uses,
+// so a user-owned secured cred shadowing a global open one reads as secured here
+// too. A name that resolves to nothing is not secured, which keeps a stale
+// opt-out for a deleted credential denying (it costs nothing and stays
+// conservative).
+func credentialSecured(name, user string) bool {
+	c, ok := Secure().Resolve(strings.TrimSpace(name), user)
+	return ok && c.Secured
 }

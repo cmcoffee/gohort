@@ -55,6 +55,26 @@ func appAgentForcesPrivate(id string) bool {
 	return ok && s.ForcePrivate
 }
 
+// appAgentDispatchMode returns the SPEC-declared dispatch policy for an app
+// agent, and whether id is one at all.
+//
+// Consulted for the same reason appAgentForcesPrivate is: a per-user shadow
+// saved before the spec declared anything carries a blank DispatchMode forever,
+// and blank on a RECORD is read as "all". Without this the fix would hold only
+// for app agents nobody had ever opened in the editor.
+//
+// It is a FALLBACK, never an override — see effectiveDispatchMode. A record
+// carrying an explicit mode is a decision, whether the owner made it in the
+// editor or the hosting app made it on its per-turn copy, and a spec default
+// must not overrule either.
+func appAgentDispatchMode(id string) (string, bool) {
+	s, ok := appagents.AppAgentByID(id)
+	if !ok {
+		return "", false
+	}
+	return s.EffectiveDispatchMode(), true
+}
+
 // agentForcesPrivate is THE question "must this agent stay private" — the
 // record's own flag OR the spec's, for every caller that enforces it.
 //
@@ -108,6 +128,10 @@ func appAgentSpecToRecord(s appagents.AppAgentSpec) AgentRecord {
 		MemoryMode:         s.MemoryMode,
 		DisableExplicit:    s.DisableExplicit,
 		ForcePrivate:       s.ForcePrivate,
+		// Carried onto the record so the agent editor SHOWS the policy rather
+		// than an empty select that reads as "all". effectiveDispatchMode still
+		// falls back to the spec, for the shadow that predates this field.
+		DispatchMode: s.EffectiveDispatchMode(),
 	}
 }
 

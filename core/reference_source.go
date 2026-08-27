@@ -296,6 +296,25 @@ func ReferenceItemTools(user, kind, itemID string) []AgentToolDef {
 	return ReferenceItemToolsWithSession(nil, user, kind, itemID)
 }
 
+// ReferenceItemToolsWithContext is for the callers in between: an app that
+// mints its tools OUTSIDE a turn (the app-tools contract is a plain
+// []AgentToolDef, built before the run exists) but does hold the request or run
+// context the work should die with.
+//
+// Without it those callers reach for ReferenceItemTools, and a tool that
+// dispatches its own sub-run roots that run on context.Background(). Stopping
+// the turn then stops the turn and nothing else: servitor's investigate_<system>
+// keeps a lead investigator and an SSH worker running against a live machine
+// with nobody left to report to. Wrapping the context in a minimal session is
+// the whole fix, and it lives here rather than in each app so the shape of that
+// stand-in session is decided once.
+func ReferenceItemToolsWithContext(ctx context.Context, user, kind, itemID string) []AgentToolDef {
+	if ctx == nil {
+		return ReferenceItemToolsWithSession(nil, user, kind, itemID)
+	}
+	return ReferenceItemToolsWithSession(&ToolSession{Ctx: ctx, Username: user}, user, kind, itemID)
+}
+
 // ReferenceItemToolsWithSession is ReferenceItemTools with the calling
 // turn's session, so a source whose tools spawn their own work can root it
 // on a context that a Stop actually reaches. See

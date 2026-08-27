@@ -21,11 +21,17 @@ import (
 func TestForcePrivateEnforcesFromTheSpecNotJustTheRecord(t *testing.T) {
 	const id = "test-forceprivate-appagent"
 	appagents.RegisterAppAgent(appagents.AppAgentSpec{
-		ID: id, Name: "Investigator", Hidden: true, ForcePrivate: true,
+		// Named distinctively on purpose. The registry is process-global and
+		// append-only, so a fixture registered under a plausible name ("Investigator")
+		// shadows any agent another test saves under the same one — and which of
+		// the two wins depends on registration order, i.e. on which test files
+		// exist. Adding an unrelated test file broke TestSessionStart... exactly
+		// that way.
+		ID: id, Name: "ForcePrivate Fixture", Hidden: true, ForcePrivate: true,
 	})
 
 	// The stale shadow: the spec says private, this user's record does not.
-	stale := AgentRecord{ID: id, Name: "Investigator", ForcePrivate: false}
+	stale := AgentRecord{ID: id, Name: "ForcePrivate Fixture", ForcePrivate: false}
 	if !agentForcesPrivate(stale) {
 		t.Fatal("a shadow whose spec declares ForcePrivate must be treated as private")
 	}

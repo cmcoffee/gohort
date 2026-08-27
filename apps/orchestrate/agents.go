@@ -581,12 +581,31 @@ func isNoToolsSentinel(allowed []string) bool {
 // Dispatch policy modes — how an agent's AllowedDispatchTargets list is read.
 // See AgentRecord.DispatchMode. Resolve with effectiveDispatchMode, never the
 // raw field, so back-compat inference + the deleted-target self-heal apply.
+// Aliased to appagents' spellings rather than restated, so a spec and a record
+// cannot come to disagree about what "none" is spelled like.
 const (
-	dispatchAll    = "all"    // any non-hidden agent (default)
-	dispatchOnly   = "only"   // allowlist: only the listed agents
-	dispatchExcept = "except" // denylist: any non-hidden agent EXCEPT the listed
-	dispatchNone   = "none"   // no dispatch at all
+	dispatchAll    = appagents.DispatchAll    // any non-hidden agent (default)
+	dispatchOnly   = appagents.DispatchOnly   // allowlist: only the listed agents
+	dispatchExcept = appagents.DispatchExcept // denylist: any non-hidden agent EXCEPT the listed
+	dispatchNone   = appagents.DispatchNone   // no dispatch at all
 )
+
+// Exported spellings of the modes above, for an APP that hosts an agent turn
+// and needs to set the policy on its per-turn record copy. The `agents` grouped
+// tool is a framework tool: it rides every turn regardless of AllowedTools, so
+// an app whose agent should not reach the user's whole fleet has to say so here
+// rather than by leaving it off an allowlist.
+const (
+	DispatchAll    = dispatchAll
+	DispatchOnly   = dispatchOnly
+	DispatchExcept = dispatchExcept
+	DispatchNone   = dispatchNone
+)
+
+// AgentReferenceKind is the ReferenceSource kind an AGENT is attached under, so
+// a consumer can tell an attached agent apart from an attached system or file
+// store without hardcoding the string.
+const AgentReferenceKind = "agent"
 
 // effectiveDispatchMode resolves an agent's dispatch policy, applying back-
 // compat: a blank DispatchMode with a non-empty AllowedDispatchTargets is the
@@ -599,6 +618,15 @@ func effectiveDispatchMode(a AgentRecord) string {
 	default:
 		if len(a.AllowedDispatchTargets) > 0 {
 			return dispatchOnly
+		}
+		// An APP agent's blank means none, not all. It is hidden, bound to its
+		// app's surface, and the `agents` tool rides its turns regardless of
+		// AllowedTools — so the ordinary fail-open default handed every app
+		// agent the user's whole fleet without its author choosing that. Read
+		// from the spec, because a per-user shadow saved before the spec grew
+		// the field carries a blank one forever. See appAgentDispatchMode.
+		if mode, ok := appAgentDispatchMode(a.ID); ok {
+			return mode
 		}
 		return dispatchAll
 	}

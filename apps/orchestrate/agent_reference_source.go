@@ -34,7 +34,7 @@ import (
 // agentReferenceSource exposes the caller's own agents as reference items.
 type agentReferenceSource struct{ app *OrchestrateApp }
 
-func (s agentReferenceSource) Kind() string  { return "agent" }
+func (s agentReferenceSource) Kind() string  { return AgentReferenceKind }
 func (s agentReferenceSource) Label() string { return "Agents" }
 
 // List offers the user's agents. Hidden agents are dropped — one kept out of

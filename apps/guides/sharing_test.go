@@ -1,6 +1,7 @@
 package guides
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -189,7 +190,7 @@ func TestReadOnlyNamesExistInTheCoauthorBuilder(t *testing.T) {
 	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
 	T := &Guides{}
 	built := map[string]bool{}
-	for _, td := range T.coauthorTools(udb, orch, "u", true) {
+	for _, td := range T.coauthorTools(context.Background(), udb, orch, "u", true) {
 		built[td.Tool.Name] = true
 	}
 	if len(built) == 0 {

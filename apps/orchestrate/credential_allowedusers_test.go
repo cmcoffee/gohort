@@ -56,3 +56,54 @@ func TestCredentialAllowedUsers(t *testing.T) {
 		t.Fatal("alice is granted team; tier-2 didn't opt it out")
 	}
 }
+
+// TestSecuredCredentialIgnoresPerAgentOptOut pins the contract the agent
+// editor states out loud: "Secured credentials aren't listed: their access
+// follows their tool bindings, not per-agent scope."
+//
+// The picker (userScopableCredentials) drops secured creds, so an opt-out
+// recorded BEFORE a credential was secured becomes invisible and unclearable
+// from the UI. While credentialDenySet still honored it, that leftover kept
+// dropping every tool bound to the cred out of the agent's kit and blocking its
+// fetch_url auto-route, with nowhere for the owner to look.
+func TestSecuredCredentialIgnoresPerAgentOptOut(t *testing.T) {
+	secStore := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return secStore }
+	defer func() { AuthDB = prev }()
+
+	for _, n := range []string{"locked", "open"} {
+		if err := Secure().Save(SecureCredential{Name: n, Type: SecureCredBearer, BaseURL: "https://" + n + ".test"}, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Secure().SetSecured("locked", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale opt-out names BOTH; only the open one may still be denied.
+	agent := AgentRecord{Name: "A", Owner: "alice", DisabledCredentials: []string{"locked", "open"}}
+	deny := credentialDenySet(agent, "alice")
+	if deny["locked"] {
+		t.Error("a SECURED credential must not be denied by a per-agent opt-out the picker hides — its access follows tool bindings")
+	}
+	if !deny["open"] {
+		t.Error("an OPEN credential's opt-out must still deny")
+	}
+
+	// A user-owned secured cred shadowing an open global reads as secured too —
+	// Resolve is the same user-shadows-global lookup dispatch uses.
+	if err := Secure().Save(SecureCredential{Name: "open", Type: SecureCredBearer, BaseURL: "https://mine.test", Owner: "alice"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().SetSecuredOwned("alice", "open", true); err != nil {
+		t.Fatal(err)
+	}
+	if credentialDenySet(agent, "alice")["open"] {
+		t.Error("alice's own SECURED credential shadows the open global; the opt-out must not deny it")
+	}
+	// bob resolves the same name to the OPEN global, so his deny is unchanged.
+	if !credentialDenySet(agent, "bob")["open"] {
+		t.Error("another user still resolves the open global; the opt-out must deny there")
+	}
+}
