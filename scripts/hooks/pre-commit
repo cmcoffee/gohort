@@ -19,12 +19,29 @@ cd "$repo_root"
 # Files staged in this commit that live under core/ui/. Anything else
 # is allowed to mention apps by name (apps/* obviously can, and
 # top-level config like agents.go has to).
-# Only check files that are *modifications* of already-tracked files
-# (diff-filter=M). First-commit additions of an untracked file (A)
-# would otherwise trip on every pre-existing leak in the file
-# wholesale; those need a manual review pass, not a hook block. Once
-# a file is tracked, the hook protects every subsequent change to it.
-staged=$(git diff --cached --name-only --diff-filter=M | grep -E '^core/ui/.*\.(go|js)$' || true)
+# Three ways content enters core/ui, and all three are checked:
+#
+#   M — an edit to a tracked file. Only the ADDED lines are scanned; the
+#       rest of the file is somebody's earlier review and re-litigating it
+#       on every unrelated edit would make the hook something to bypass.
+#   A — a new file. Scanned in FULL, because every line of it is new work.
+#       This used to be skipped, on the theory that first-commit additions
+#       would trip on pre-existing leaks wholesale. That was true during the
+#       initial import and stopped being true once core/ui was tracked — and
+#       the gap it left ran the wrong way, since a brand-new file is exactly
+#       where a fresh leak lands. Caught by a new runtime fragment that
+#       carried an app's name past the hook untouched.
+#   R — a file MOVED into core/ui. Also scanned in full: a pure rename
+#       produces no "+" lines at all, so diffing one waves the whole file
+#       through no matter what is in it.
+#
+# The status letter rides along with the path so the scan below knows which
+# of the two treatments a file gets. Renames print old and new paths; the
+# LAST field is the one that landed in core/ui.
+staged=$(
+  git diff --cached --name-status --diff-filter=AMR \
+    | awk -F'\t' '{ p = $NF; if (p ~ /^core\/ui\/.*\.(go|js)$/) print substr($1, 1, 1) "\t" p }'
+)
 
 if [ -z "$staged" ]; then
   exit 0
@@ -103,13 +120,22 @@ if [ -z "$pattern" ]; then
   exit 0
 fi
 
+# scan_file emits the lines of $file that this commit is answerable for.
+# An edit (M) is answerable for its additions: diff output lines starting
+# with "+", minus the "+++" header. A new or moved-in file (A/R) is
+# answerable for all of it.
+scan_file() {
+  if [ "$1" = "M" ]; then
+    git diff --cached --unified=0 -- "$2" | grep -E '^\+[^+]' || true
+  else
+    git show ":$2" || true
+  fi
+}
+
 violations=$(
-  for file in $staged; do
-    # Only flag added/modified lines, not full-file content. Diff
-    # output lines starting with "+" are additions; skip the "+++"
-    # file header.
-    git diff --cached --unified=0 -- "$file" \
-      | grep -E '^\+[^+]' \
+  printf '%s\n' "$staged" | while IFS="$(printf '\t')" read -r status file; do
+    [ -n "$file" ] || continue
+    scan_file "$status" "$file" \
       | grep -E -i "${pattern}" \
       | sed "s|^|${file}: |" || true
   done
@@ -117,8 +143,8 @@ violations=$(
 
 if [ -n "$violations" ]; then
   echo
-  echo "ERROR: core/ui/ must stay domain-agnostic. The following added/modified lines"
-  echo "mention an app by name:"
+  echo "ERROR: core/ui/ must stay domain-agnostic. The following lines this commit"
+  echo "is answerable for mention an app by name:"
   echo
   echo "$violations" | head -40
   echo
