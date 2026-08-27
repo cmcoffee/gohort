@@ -8083,7 +8083,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// session-persistence logic has something to record.
 		t.sse.Send(map[string]any{
 			"kind":  "block",
-			"type":  "orchestrate_ask_form",
+			"type":  "ui_ask_form",
 			"id":    fmt.Sprintf("askform-%d", time.Now().UnixNano()),
 			"steps": capturedFormSteps,
 		})
@@ -8120,7 +8120,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// With options, the card is the whole point: click-to-choose.
 		t.sse.Send(map[string]any{
 			"kind":     "block",
-			"type":     "orchestrate_ask",
+			"type":     "ui_ask",
 			"id":       fmt.Sprintf("ask-%d", time.Now().UnixNano()),
 			"question": capturedQuest,
 			"options":  capturedOptions,

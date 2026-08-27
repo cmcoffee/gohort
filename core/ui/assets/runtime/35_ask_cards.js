@@ -1,8 +1,8 @@
   // Ask cards — the framework's clarifying-question control-tool blocks.
   //
-  // `orchestrate_ask` ({question, options, multi}) and `orchestrate_ask_form`
-  // ({steps}) are the wire contract the agent runner emits when an agent calls
-  // ask_user / ask_user_form. Both shapes are generic and know no app.
+  // `ui_ask` ({question, options, multi}) and `ui_ask_form` ({steps}) are the
+  // wire contract the agent runner emits when an agent calls ask_user /
+  // ask_user_form. Both shapes are generic and know no app.
   //
   // REGISTERED GLOBALLY, and that is the whole point of this file. These used to
   // be defined into pipeline_panel's LOCAL renderer map, which meant they
@@ -10,8 +10,8 @@
   // reads window.UIBlockRenderers and found nothing, so on every agent-loop
   // surface an ask arrived, matched no renderer, and fell through to a status
   // row rendering `d.text || d.title` — neither of which these blocks carry. The
-  // user saw an empty "[orchestrate_ask]" line and the turn sat waiting on a
-  // question nobody could answer. Reported from Guides twice.
+  // user saw an empty bracketed type name and the turn sat parked on a question
+  // nobody could answer. Reported twice from a writer app before it was found.
   //
   // Registered at IIFE time, guarded so a renderer already present wins. Apps
   // register their own richer variants from deferred / DOMContentLoaded
@@ -55,8 +55,8 @@
     if (window.uiMdToHTML) { elm.innerHTML = window.uiMdToHTML(text); } else { elm.textContent = text; }
   }
 
-  if (!window.UIBlockRenderers.orchestrate_ask) {
-    window.uiRegisterBlockRenderer('orchestrate_ask', function(d) {
+  if (!window.UIBlockRenderers.ui_ask) {
+    window.uiRegisterBlockRenderer('ui_ask', function(d) {
       var wrap = el('div', {class: 'ui-ask-card'});
       var q = el('div', {class: 'ui-ask-q'});
       uiAskQuestionHTML(q, d.question);
@@ -104,8 +104,8 @@
     });
   }
 
-  if (!window.UIBlockRenderers.orchestrate_ask_form) {
-    window.uiRegisterBlockRenderer('orchestrate_ask_form', function(d) {
+  if (!window.UIBlockRenderers.ui_ask_form) {
+    window.uiRegisterBlockRenderer('ui_ask_form', function(d) {
       var wrap = el('div', {class: 'ui-ask-card'});
       var steps = (d.steps || []).filter(function(s){ return s && s.question; });
       if (!steps.length) {

@@ -11,13 +11,13 @@ import (
 // renderer map, so they existed only on a page that mounted a PipelinePanel.
 // AgentLoopPanel reads window.UIBlockRenderers, found nothing, and fell through
 // to a status row rendering `d.text || d.title` — neither of which these blocks
-// carry. Guides showed an empty "[orchestrate_ask]" line while the turn sat
-// waiting on a question nobody could answer. Twice.
+// carry. A writer app showed an empty bracketed type name while the turn sat
+// parked on a question nobody could answer. Reported twice.
 func TestAskCardRenderersAreRegisteredGlobally(t *testing.T) {
 	js := string(runtimeJS)
 	for _, want := range []string{
-		`window.uiRegisterBlockRenderer('orchestrate_ask',`,
-		`window.uiRegisterBlockRenderer('orchestrate_ask_form',`,
+		`window.uiRegisterBlockRenderer('ui_ask',`,
+		`window.uiRegisterBlockRenderer('ui_ask_form',`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("the runtime never registers %s globally; every AgentLoopPanel surface renders the ask as an empty status row", want)
@@ -29,7 +29,7 @@ func TestAskCardRenderersAreRegisteredGlobally(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, banned := range []string{"blockRenderers.orchestrate_ask =", "blockRenderers.orchestrate_ask_form ="} {
+	for _, banned := range []string{"blockRenderers.ui_ask =", "blockRenderers.ui_ask_form ="} {
 		if strings.Contains(string(raw), banned) {
 			t.Errorf("%q is back in pipeline_panel's local map — it would render only where a PipelinePanel is mounted", banned)
 		}
