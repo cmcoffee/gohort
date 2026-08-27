@@ -43,6 +43,16 @@ func (t *chatTurn) operatingNotes() OperatingNotes {
 	return ResolveOperatingNotes(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes)
 }
 
+// AgentStateNamespace is the store namespace an agent's per-agent state lives
+// under — its Explicit Memory facts and its Working-notes block.
+//
+// Exported for a HOSTING APP that owns an agent's identity per turn. Anvil
+// rewrites agent.ID to scope memory per project, so its own review surface has
+// to address the same namespace the runtime wrote to. Deriving it a second time
+// in the app is how the two come to disagree about where a note lives, and the
+// symptom of that is a panel that shows nothing while the model reads something.
+func AgentStateNamespace(agentID string) string { return factsNamespace(agentID) }
+
 // --- HTTP handler ---------------------------------------------------------
 
 // handleAgentNotes serves the Working notes block to the Memory modal.
