@@ -32,8 +32,16 @@ const (
 	// when a caller's ceiling would not leave room to answer.
 	anthThinkAnswerHeadroom = 4096
 
-	anthDefaultMaxTokens       = 8192
-	anthDefaultStreamMaxTokens = 16384
+	anthDefaultMaxTokens = 8192
+	// The STREAMING default is where a turn actually lives, and 16384 was the
+	// documented ceiling for the NON-streaming path — applied here it left a
+	// model with adaptive thinking (which shares this one allowance) able to
+	// spend the entire budget reasoning and be cut off before it emitted the
+	// tool call it had just announced. Anthropic's guidance is ~16k
+	// non-streaming, ~64k streaming, precisely because streaming removes the
+	// HTTP-timeout concern this constant's own comment cites; the models this
+	// client serves accept up to 128k.
+	anthDefaultStreamMaxTokens = 64000
 )
 
 // anthropicClient implements the LLM interface for the Anthropic Messages API.

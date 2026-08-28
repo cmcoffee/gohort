@@ -3252,6 +3252,37 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// corrective user message and re-loop instead of returning,
 		// up to maxCorrectionsPerKind times per turn.
 		if len(resp.ToolCalls) == 0 {
+			// Cut off, not finished. The provider says so outright, and until
+			// this the loop read "no tool calls + some content" as a completed
+			// turn and exited respond_directly with rounds to spare.
+			//
+			// What that looked like: a lead spent its whole output allowance
+			// thinking, emitted 133 characters and no tool call, and the turn
+			// ended on "Doing it now." Twice in a row, three minutes and a
+			// couple of dollars each, with 29 of 30 rounds unused. stop_reason
+			// said max_tokens both times and nothing was listening — the only
+			// consumers were providerRefused (safety reasons only) and a Warn.
+			//
+			// Checked BEFORE the behavioural corrections below because this is
+			// a mechanical fact rather than an inference about intent: the
+			// reply ISN'T an unkept promise or an announced call, it is an
+			// unfinished one, and the corrections that pattern-match prose
+			// would either miss it or scold the model for being interrupted.
+			if responseWasTruncated(resp) {
+				if corrections.available(correctionTruncated) && round < maxRounds {
+					Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars) — continuing (correction %d/%d)",
+						round, resp.StopReason, len(resp.Content), corrections.spend(correctionTruncated), maxCorrectionsPerKind)
+					emitDiag("output-truncated", "The model's reply hit the output limit before it finished; it was asked to continue.")
+					settleRound() // finalize the partial so the continuation doesn't concatenate into it
+					history = append(history, Message{
+						Role:    "user",
+						Content: frameworkNoticeTag + "Your previous reply was CUT OFF at the output limit before you finished it — you did not choose to stop. Continue from where you left off. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
+					})
+					continue
+				}
+				noteUncorrected(correctionTruncated, "The reply was cut off at the output limit again and no further continuation was left to spend, so the partial answer was delivered as written.")
+			}
+
 			// Action-promise correction DISABLED for now — it false-positived
 			// on ordinary conversational replies ("I'll try to nail the house
 			// next time."), burning rounds re-prompting for an action the model
@@ -4837,6 +4868,7 @@ const (
 	correctionUnkeptClaim     = "unkept-claim"
 	correctionUngrounded      = "ungrounded-claim"
 	correctionMachinery       = "machinery-leak"
+	correctionTruncated       = "output-truncated"
 )
 
 const (
@@ -6391,6 +6423,29 @@ func parseFunctionTagToolCall(body string) (string, map[string]any) {
 		rest = rest[closeIdx+len(pClose):]
 	}
 	return name, args
+}
+
+// responseWasTruncated reports whether the provider cut the response off at the
+// output ceiling rather than the model finishing.
+//
+// Both spellings: Anthropic says "max_tokens", the OpenAI-compatible clients
+// (and Gemini, through geminiStopReason) say "length". Every client populates
+// StopReason now, so this is a fact rather than a guess.
+//
+// Deliberately does NOT require empty content. A truncated turn usually HAS
+// content — a preamble the model wrote before it ran out — and the guard that
+// only fires on emptiness (llm_openai.go's finish_reason==length check) misses
+// exactly the case that matters: 133 characters of "Doing it now" with the
+// tool call it was about to make lost past the ceiling.
+func responseWasTruncated(resp *Response) bool {
+	if resp == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(resp.StopReason)) {
+	case "max_tokens", "length":
+		return true
+	}
+	return false
 }
 
 // providerRefused reports whether a response is the provider declining on its
