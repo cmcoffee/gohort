@@ -122,6 +122,12 @@
         fw.appendChild(lbl);
         var opts = (step.options || []).map(function(s){ return String(s || '').trim(); }).filter(function(s){ return s.length > 0; });
         var t = step.type || (opts.length ? 'choice' : 'text');
+        // A chooser with nothing to choose renders a control the user cannot
+        // answer through — an empty dropdown showing only its placeholder, or a
+        // radio group with no rows. The server drops the type when it authors a
+        // step that way, but blocks persisted before that fix still replay from
+        // stored sessions, so degrade here too rather than render a dead field.
+        if (!opts.length && (t === 'select' || t === 'choice')) t = 'text';
         var input, getVal;
         if (t === 'textarea') {
           input = document.createElement('textarea'); input.className = 'ui-ask-extra'; input.rows = 3;

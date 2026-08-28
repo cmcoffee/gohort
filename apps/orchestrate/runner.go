@@ -6783,7 +6783,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			if capturedQuest == "" {
 				capturedQuest = strings.TrimSpace(stringArg(args, "questions"))
 			}
-			capturedOptions = stringSliceFromArgs(args, "options")
+			// Same alias tolerance as a form step's choices: options under a
+			// near-miss key are not "no options", and reading only the
+			// documented one turns a multiple-choice question into a bare
+			// prose one with the choices silently gone.
+			capturedOptions = formStepOptions(args)
 			if v, ok := args["multi"].(bool); ok {
 				capturedMulti = v
 			}
@@ -6870,7 +6874,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			case []any:
 				for _, x := range v {
 					if m, ok := x.(map[string]any); ok {
-						steps = append(steps, normalizeFormStep(m))
+						step, warn := normalizeFormStep(m)
+						if warn != "" {
+							t.turnDiag("form-step-degraded", warn)
+						}
+						steps = append(steps, step)
 					} else {
 						// Diagnostic breadcrumb — a discarded step used to
 						// vanish without trace, making "the form is missing a
@@ -6881,7 +6889,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				}
 			case []map[string]any:
 				for _, m := range v {
-					steps = append(steps, normalizeFormStep(m))
+					step, warn := normalizeFormStep(m)
+					if warn != "" {
+						t.turnDiag("form-step-degraded", warn)
+					}
+					steps = append(steps, step)
 				}
 			default:
 				Debug("[orchestrate.ask_form] steps arg in unusable shape %T: %.300v", raw, raw)
@@ -8852,11 +8864,16 @@ func toLLMMessages(msgs []ChatMessage) []Message {
 // A non-empty `type` marks the step as a typed entry FIELD (text / number /
 // textarea / select / password); the renderer switches to an all-at-once
 // form when any step carries one.
-func normalizeFormStep(m map[string]any) map[string]any {
+// normalizeFormStep renders one authored step into the wire shape the ask-card
+// renderer reads. The second return is a warning for the turn diagnostics when
+// something about the step had to be overridden — a step that quietly changes
+// shape is the kind of thing nobody can attribute afterward.
+func normalizeFormStep(m map[string]any) (map[string]any, string) {
 	out := map[string]any{
 		"question": strings.TrimSpace(stringArg(m, "question")),
 	}
-	if opts := stringSliceFromArgs(m, "options"); len(opts) > 0 {
+	opts := formStepOptions(m)
+	if len(opts) > 0 {
 		out["options"] = opts
 	}
 	if v, ok := m["multi"].(bool); ok && v {
@@ -8864,14 +8881,49 @@ func normalizeFormStep(m map[string]any) map[string]any {
 	}
 	// Entry-field metadata. Only accept known types so a stray value can't
 	// produce a broken input; anything else falls back to a choice/open step.
-	switch strings.ToLower(strings.TrimSpace(stringArg(m, "type"))) {
-	case "text", "number", "textarea", "select", "password":
-		out["type"] = strings.ToLower(strings.TrimSpace(stringArg(m, "type")))
+	warn := ""
+	switch t := strings.ToLower(strings.TrimSpace(stringArg(m, "type"))); t {
+	case "select":
+		// A dropdown with nothing in it is worse than no dropdown: the control
+		// renders, shows its "— choose —" placeholder, and there is nothing to
+		// pick, so the question cannot be answered at all. Reported as "it just
+		// says choose answer with nothing to select".
+		//
+		// A text field is the safe degradation — the user can still reply — so
+		// the type is dropped rather than the step. The single-question path
+		// already reasons this way ("the card earns its place exactly when it
+		// has choices to click"); this is the same rule for form steps.
+		if len(opts) == 0 {
+			warn = fmt.Sprintf("A form step asked for a dropdown but listed no options, so it rendered as a text field: %q", out["question"])
+			break
+		}
+		out["type"] = t
+	case "text", "number", "textarea", "password":
+		out["type"] = t
 	}
 	if ph := strings.TrimSpace(stringArg(m, "placeholder")); ph != "" {
 		out["placeholder"] = ph
 	}
-	return out
+	return out, warn
+}
+
+// formStepOptionKeys are the names a model writes the choices under. "options"
+// is the schema's; the rest are what it reaches for when it is pattern-matching
+// against some other form shape it has seen.
+//
+// Reading the aliases rather than only the documented key is the same
+// concession stringSliceFromArgs already makes for the option VALUES, and for
+// the same reason: a set of choices that arrives under a near-miss key is not a
+// question with no answers, and rendering it as one strands the turn.
+var formStepOptionKeys = []string{"options", "choices", "opts", "values", "answers"}
+
+func formStepOptions(m map[string]any) []string {
+	for _, k := range formStepOptionKeys {
+		if opts := stringSliceFromArgs(m, k); len(opts) > 0 {
+			return opts
+		}
+	}
+	return nil
 }
 
 // looksLikeVacuousPlan returns a non-empty reason string when the plan
