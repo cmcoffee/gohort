@@ -1435,6 +1435,32 @@ func defaultConfirm(toolName string, argsSummary string) bool {
 	return result
 }
 
+// toolCallLabel names a call the way a log reader needs to see it: the tool,
+// plus the ACTION when the tool is a grouped one.
+//
+// A grouped tool is one name over many operations — the moltbook tool both
+// lists your messages and publishes a post — so logging the bare name makes
+// those identical on the page. "tool call: moltbook (args=46 bytes)" cannot
+// answer the only question worth asking of a scheduled fire's log: did it
+// actually post, or did it just read? The action is the answer and it was
+// being dropped.
+//
+// Only `action` is lifted, and only when it is a plain scalar. Everything else
+// stays in the Trace line: the point is to make the log scannable, not to leak
+// argument content into DEBUG, which MaskDebugOutput exists to prevent.
+func toolCallLabel(tc ToolCall) string {
+	if tc.Args == nil {
+		return tc.Name
+	}
+	switch v := tc.Args["action"].(type) {
+	case string:
+		if a := strings.TrimSpace(v); a != "" {
+			return tc.Name + "/" + a
+		}
+	}
+	return tc.Name
+}
+
 // formatArgs formats tool call arguments as a human-readable summary.
 func formatArgs(args map[string]any) string {
 	if len(args) == 0 {
@@ -2904,9 +2930,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			}
 
 			if cfg.MaskDebugOutput {
-				Debug("[agent_loop] prompt-tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
+				Debug("[agent_loop] prompt-tool call: %s([masked: %d bytes])", toolCallLabel(*tc), len(formatArgs(tc.Args)))
 			} else {
-				Debug("[agent_loop] prompt-tool call: %s (args=%d bytes)", tc.Name, len(formatArgs(tc.Args)))
+				Debug("[agent_loop] prompt-tool call: %s (args=%d bytes)", toolCallLabel(*tc), len(formatArgs(tc.Args)))
 				Trace("[agent_loop] prompt-tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
 			}
 
@@ -3842,9 +3868,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				}
 			}
 			if cfg.MaskDebugOutput {
-				Debug("[agent_loop] tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
+				Debug("[agent_loop] tool call: %s([masked: %d bytes])", toolCallLabel(tc), len(formatArgs(tc.Args)))
 			} else {
-				Debug("[agent_loop] tool call: %s (args=%d bytes)", tc.Name, len(formatArgs(tc.Args)))
+				Debug("[agent_loop] tool call: %s (args=%d bytes)", toolCallLabel(tc), len(formatArgs(tc.Args)))
 				Trace("[agent_loop] tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
 			}
 
@@ -4122,11 +4148,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			w := work[0]
 			output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
 			if err != nil {
-				debugToolErr(w.tc.Name, err)
+				debugToolErr(toolCallLabel(w.tc), err)
 				results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
 				toolErrors++
 			} else {
-				debugResult(w.tc.Name, output)
+				debugResult(toolCallLabel(w.tc), output)
 				results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
 			}
 		} else if len(work) > 1 {
@@ -4135,11 +4161,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			invokeStore := func(w toolWork) {
 				output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
 				if err != nil {
-					debugToolErr(w.tc.Name, err)
+					debugToolErr(toolCallLabel(w.tc), err)
 					results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
 					atomic.AddInt32(&errCount, 1)
 				} else {
-					debugResult(w.tc.Name, output)
+					debugResult(toolCallLabel(w.tc), output)
 					results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
 				}
 			}
