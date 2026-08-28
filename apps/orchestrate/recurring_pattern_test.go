@@ -42,19 +42,69 @@ func TestParseHHMM(t *testing.T) {
 
 func TestNextWindowOpen(t *testing.T) {
 	from, to := 540, 1020 // 09:00–17:00
+	// Same-day cases: now and the candidate share a day, which is every
+	// sub-daily cadence. Behaviour here is unchanged.
 	// before window → today's start
-	if got := nextWindowOpen(refDay(7, 0), from, to); !got.Equal(refDay(9, 0)) {
+	if got := nextWindowOpen(refDay(6, 0), refDay(7, 0), from, to); !got.Equal(refDay(9, 0)) {
 		t.Errorf("before-window: got %v, want 09:00", got)
 	}
 	// inside window → unchanged
-	if got := nextWindowOpen(refDay(12, 30), from, to); !got.Equal(refDay(12, 30)) {
+	if got := nextWindowOpen(refDay(12, 0), refDay(12, 30), from, to); !got.Equal(refDay(12, 30)) {
 		t.Errorf("in-window: got %v, want 12:30", got)
 	}
 	// past window → tomorrow's start
-	got := nextWindowOpen(refDay(18, 0), from, to)
+	got := nextWindowOpen(refDay(17, 30), refDay(18, 0), from, to)
 	want := refDay(9, 0).AddDate(0, 0, 1)
 	if !got.Equal(want) {
 		t.Errorf("past-window: got %v, want %v", got, want)
+	}
+}
+
+// TestALateDailyFireDoesNotSkipADay — the bug that made a daily task run every
+// other day and, once restarts joined in, five times in a month.
+//
+// A fire scheduled for 09:00 runs whenever the scheduler reaches it. Anything
+// that delays it past the window's close puts now+24h past the FOLLOWING day's
+// window as well, and rolling from that lands on the day after — skipping a
+// window that was still hours in the future when the sum was computed.
+func TestALateDailyFireDoesNotSkipADay(t *testing.T) {
+	from, to := 540, 570 // 09:00–09:30, the reported shape
+
+	// The fire was due at 09:00 and the scheduler got to it at 11:00.
+	now := refDay(11, 0)
+	next := now.AddDate(0, 0, 1) // now + 1440m, what computeNextFire forms
+
+	got := nextWindowOpen(now, next, from, to)
+	want := refDay(9, 0).AddDate(0, 0, 1) // TOMORROW, not the day after
+	if !got.Equal(want) {
+		t.Errorf("a fire two hours late scheduled its next run for %v, want %v — one late fire must not cost a whole day", got, want)
+	}
+
+	// And it self-corrects: from that on-time fire the next is the following
+	// morning, so lateness stops compounding instead of accumulating.
+	onTime := want
+	if got := nextWindowOpen(onTime, onTime.AddDate(0, 0, 1), from, to); !got.Equal(want.AddDate(0, 0, 1)) {
+		t.Errorf("an on-time fire scheduled %v, want %v", got, want.AddDate(0, 0, 1))
+	}
+}
+
+// TestComputeNextFireKeepsADailyWindowDaily — the same property through the
+// function the scheduler actually calls.
+func TestComputeNextFireKeepsADailyWindowDaily(t *testing.T) {
+	p := &orchUpdatePayload{
+		IntervalSeconds: 86400,
+		HasWindow:       true,
+		WindowFromMin:   540,
+		WindowToMin:     570,
+	}
+	late := refDay(11, 0)
+	next, err := computeNextFire(p, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := refDay(9, 0).AddDate(0, 0, 1)
+	if !next.Equal(want) {
+		t.Errorf("next fire after a late run = %v, want %v (a day was being skipped each time)", next, want)
 	}
 }
 

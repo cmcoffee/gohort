@@ -153,7 +153,7 @@ func startOfLocalDay(t time.Time) time.Time {
 // window [fromMin, toMin]. If t is already inside, t is returned unchanged; if
 // before today's window, today's start; if past it, tomorrow's start. Windows
 // are same-day (fromMin < toMin), validated at schedule time.
-func nextWindowOpen(t time.Time, fromMin, toMin int) time.Time {
+func nextWindowOpen(now, t time.Time, fromMin, toMin int) time.Time {
 	day := startOfLocalDay(t)
 	start := day.Add(time.Duration(fromMin) * time.Minute)
 	end := day.Add(time.Duration(toMin) * time.Minute)
@@ -162,6 +162,28 @@ func nextWindowOpen(t time.Time, fromMin, toMin int) time.Time {
 	}
 	if t.Before(end) {
 		return t
+	}
+	// t overshot its day's window, so roll — but roll from NOW, not from t.
+	//
+	// This is what made a daily task run every other day, and sometimes less.
+	// A fire scheduled for 09:00 runs whenever the scheduler reaches it, and
+	// anything that delays it past 09:30 — a restart, a busy box, an overdue
+	// task caught by the reconciler hours later — puts now+24h past the
+	// following day's window too. Rolling from THAT lands on the day after,
+	// skipping a window that was still hours in the future when the sum was
+	// computed. Every late fire cost a day, and a box that restarts often loses
+	// most of them: observed as a daily task with five fires in a month, its
+	// next run a clean 09:00 exactly two days after the last one.
+	//
+	// The first opening after now is the answer that self-corrects instead. A
+	// fire that ran late still runs the next morning, and lateness stops
+	// compounding. Sub-daily cadences are untouched: when now and t share a day
+	// this returns the same instant the old arithmetic did.
+	for i := 0; i < 3; i++ {
+		open := startOfLocalDay(now).AddDate(0, 0, i).Add(time.Duration(fromMin) * time.Minute)
+		if open.After(now) && !open.Before(start) {
+			return open
+		}
 	}
 	return start.AddDate(0, 0, 1)
 }
@@ -232,7 +254,7 @@ func computeNextFire(p *orchUpdatePayload, now time.Time) (time.Time, error) {
 	}
 	next := now.Add(time.Duration(p.IntervalSeconds) * time.Second)
 	if p.HasWindow {
-		next = nextWindowOpen(next, p.WindowFromMin, p.WindowToMin)
+		next = nextWindowOpen(now, next, p.WindowFromMin, p.WindowToMin)
 	}
 	return next, nil
 }
@@ -250,7 +272,7 @@ func nextSpacedRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() 
 	gap := minGap + time.Duration(randFloat()*float64(maxGap-minGap))
 	next := now.Add(gap)
 	if p.HasWindow {
-		next = nextWindowOpen(next, p.WindowFromMin, p.WindowToMin)
+		next = nextWindowOpen(now, next, p.WindowFromMin, p.WindowToMin)
 	}
 	return next
 }
@@ -290,7 +312,7 @@ func nextRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() float6
 			end := day.Add(time.Duration(p.WindowToMin) * time.Minute)
 			return planRandomFireTimes(start, end, p.TimesPerDay, time.Duration(p.MinGapSeconds)*time.Second, randFloat)
 		}
-		day := startOfLocalDay(nextWindowOpen(now, p.WindowFromMin, p.WindowToMin))
+		day := startOfLocalDay(nextWindowOpen(now, now, p.WindowFromMin, p.WindowToMin))
 		times, err := planDay(day)
 		if err != nil {
 			return time.Time{}, err
