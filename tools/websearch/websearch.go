@@ -395,8 +395,12 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		return "", fmt.Errorf("fetch failed: %w", err)
 	}
 	text = strings.TrimSpace(text)
+	// The tool-claim note rides on every outcome below, including the empty
+	// one: "no readable text" is exactly the moment the reader most needs to
+	// know something else already serves this host.
+	claim := ToolClaimNote(sess, target)
 	if text == "" {
-		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty).", nil
+		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty)." + claim, nil
 	}
 	// If the article was likely truncated (close to or at the limit),
 	// auto-cache the full text so the LLM can read the rest if needed.
@@ -412,8 +416,15 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 			}
 		}
 	}
+	// A page that answered with its consent wall reads, mechanically, exactly
+	// like a page that answered with its content. Name the difference.
+	lead := ""
+	if note := LowYieldNote(text); note != "" {
+		lead = "[Heads up: " + note + ".]\n\n"
+		Debug("[fetch_url] low-yield result for %s: %s", target, note)
+	}
 	Debug("[fetch_url] %s → %d chars", target, len(text))
-	return fmt.Sprintf("Fetched %s (%d chars):\n\n%s%s", target, len(text), text, suffix), nil
+	return fmt.Sprintf("%sFetched %s (%d chars):\n\n%s%s%s", lead, target, len(text), text, suffix, claim), nil
 }
 
 // fetchAndCache downloads target into the workspace's .fetch_cache dir

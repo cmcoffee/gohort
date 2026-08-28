@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const (
@@ -1374,4 +1376,55 @@ func SharedToolOwners(db Database) map[string]string {
 		}
 	}
 	return out
+}
+
+// ToolClaimNote is the advisory to append when a generic fetch (fetch_url,
+// browse_page) targets a host one of the caller's OWN tools already serves.
+// Returns "" when nothing claims it, which is the overwhelmingly common case.
+//
+// This is the tool-level counterpart of SecureAPI.AutoRouteCredential, and it
+// exists for the same observed reason: the always-available generic tool wins
+// the model's attention over the purpose-built one, and the generic call then
+// fails in a way that doesn't look like failure — a 401 there, a consent
+// banner here. A credential declares its host with BaseURL; a tool declares
+// its hosts in the URL templates it already stores, so the claim is DERIVED
+// and no host is ever named in framework code.
+//
+// The claim is read from the tools resolved for THIS turn rather than reloaded
+// from the store: that set is already scoped to the caller and to what this
+// agent may call, so the note can never point at a tool the reader cannot
+// reach, and the lookup costs no DB read on a path that runs on every fetch.
+//
+// Shell-mode tools claim nothing. Their CommandTemplate is a command line, and
+// reading a host out of it would claim on the strength of a URL that merely
+// appears in an argument.
+func ToolClaimNote(sess *ToolSession, rawURL string) string {
+	host := textutil.HostKey(rawURL)
+	if host == "" || sess == nil {
+		return ""
+	}
+	var claims []textutil.ToolClaim
+	for _, tt := range sess.CopyTempTools() {
+		if tt == nil || tt.Disabled {
+			continue
+		}
+		claim := textutil.ToolClaim{Tool: tt.Name}
+		matched := strings.EqualFold(strings.TrimSpace(tt.Mode), "api") &&
+			textutil.HostKey(tt.CommandTemplate) == host
+		for _, a := range tt.Actions {
+			if a.Disabled || textutil.HostKey(a.URLTemplate) != host {
+				continue
+			}
+			matched = true
+			if n := strings.TrimSpace(a.Name); n != "" {
+				claim.Actions = append(claim.Actions, n)
+			}
+		}
+		if !matched {
+			continue
+		}
+		sort.Strings(claim.Actions)
+		claims = append(claims, claim)
+	}
+	return textutil.ClaimNote(host, claims)
 }

@@ -369,6 +369,19 @@ func (t *BrowsePageTool) fetchImage(pageURL string) ([]byte, error) {
 func (t *BrowsePageTool) IsInternetTool() bool { return true }
 
 func (t *BrowsePageTool) Run(args map[string]any) (string, error) {
+	return t.runImpl(args, nil)
+}
+
+// RunWithSession is the session-aware entry point. The session is what makes
+// the tool-claim note possible: it carries the set of tools resolved for THIS
+// caller this turn, which is the only honest source for "something here
+// already serves that host" — a claim built from anywhere else could name a
+// tool this agent may not call.
+func (t *BrowsePageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return t.runImpl(args, sess)
+}
+
+func (t *BrowsePageTool) runImpl(args map[string]any, sess *ToolSession) (string, error) {
 	target := StringArg(args, "url")
 	if target == "" {
 		return "", fmt.Errorf("url is required")
@@ -391,11 +404,20 @@ func (t *BrowsePageTool) Run(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	claim := ToolClaimNote(sess, target)
 	if text == "" {
-		return "Page loaded but no readable text could be extracted.", nil
+		return "Page loaded but no readable text could be extracted." + claim, nil
+	}
+	// A rendered page that came back as a consent banner is a failed read that
+	// looks like a successful one. Say so in the result, where the model reads
+	// it, rather than leaving it to infer a shortfall from a character count.
+	lead := ""
+	if note := LowYieldNote(text); note != "" {
+		lead = "[Heads up: " + note + ".]\n\n"
+		Debug("[browse_page] low-yield result for %s: %s", target, note)
 	}
 	Debug("[browse_page] %s → %d chars", target, len(text))
-	return fmt.Sprintf("Fetched %s via browser (%d chars):\n\n%s", target, len(text), text), nil
+	return fmt.Sprintf("%sFetched %s via browser (%d chars):\n\n%s%s", lead, target, len(text), text, claim), nil
 }
 
 // stripTags removes all HTML tags and collapses whitespace — minimal fallback

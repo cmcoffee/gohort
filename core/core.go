@@ -173,6 +173,10 @@ var (
 
 	// Same-origin path handed to a network tool → the hint that names it.
 	SameOriginURLHint = textutil.SameOriginURLHint
+
+	// A fetch that succeeded and returned nothing worth having → the note
+	// that says so, since "0 errors" otherwise reads as "I read the page".
+	LowYieldNote = textutil.LowYieldNote
 )
 
 // --- factcheck ---------------------------------------------------------------
