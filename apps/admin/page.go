@@ -513,6 +513,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("tool_promote_global", toolPromoteGlobalAction).
 			ClientAction("pipeline_scope_manage", pipelineScopeManageAction).
+			ClientAction("category_scope_manage", categoryScopeManageAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
 			ClientAction("skills_export", skillsExportAction).
@@ -2348,6 +2349,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Intro:         "Your custom tools claiming this category. Add a tool to stamp its Category with this name; remove to clear the claim.",
 									EmptyText:     "No custom tools yet — author one via Builder or Gateways first.",
 								}),
+								// Access for the whole category at once. Same pill
+								// control every other scoped thing uses, over the
+								// union of the tools claiming this category — so
+								// granting a category to an agent grants each of its
+								// tools, and a category whose tools disagree says
+								// Custom rather than picking one and calling it the
+								// group's answer.
+								{Type: "button", Label: "Access", Method: "client",
+									PostTo: "category_scope_manage"},
 								// Admin-curated categories: Delete drops the row.
 								{Type: "button", Label: "Delete",
 									PostTo:  "api/tool-groups?id={id}",
@@ -3263,7 +3273,12 @@ func scopeManageActionJS(kind, idExpr, labelExpr, decorate string) string {
 }
 
 // mapAgentsPillsJS is the shared items mapper: st.agents → per-agent pills.
-const mapAgentsPillsJS = `(st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on }; })`
+//
+// partial carries the third pill state through. Only a GROUPED kind (a
+// category, whose scope is the union of its members') ever sets it; for a
+// single tool, pipeline or credential it is always absent and the pill renders
+// on/off exactly as before.
+const mapAgentsPillsJS = `(st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on, under: a.parent_id, partial: !!a.partial }; })`
 
 // toolPromoteGlobalAction moves an agent-scoped tool into its owner's user-wide
 // pool — the on-ramp to the tier-1 user ACL, which is the only access control
@@ -3305,6 +3320,37 @@ var pipelineScopeManageAction = scopeManageActionJS("pipeline",
       ? 'Global: every agent can run this pipeline. Turn an agent off to deny it there; turn Global off to scope it down to the agents left on.'
       : 'Agent-scoped: runnable only on the agents shown. Turn Global on to give it to all your agents.';
     return { primary: { label: 'Global (all agents)', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
+  }`)
+
+// categoryScopeManageAction — set access for EVERY tool claiming a category at
+// once, and say so plainly when they don't agree.
+//
+// The pills mean the same thing they do for one tool; what differs is that a
+// category's answer is the union of its members'. A target every member holds
+// reads on, one no member holds reads off, and anything in between is the third
+// state — which is what "Custom" names. Clicking a Custom pill settles it by
+// turning every member on.
+var categoryScopeManageAction = scopeManageActionJS("category",
+	`r.name || r.id`, `r.name || r.id`,
+	`function(st){
+    var note;
+    if (!(st.agents || []).length) {
+      // An empty category: say that, rather than showing a pill grid implying
+      // there is something here to grant.
+      return { items: [], note: 'No tools claim this category yet. Use Members to add some, then set the category\u2019s access here and every tool in it moves together.' };
+    }
+    if (st.custom) {
+      note = 'Custom: the tools in this category do not all have the same access, so there is no single answer for the category. A dashed pill is one they disagree on — click it to turn every tool in the category on there.';
+    } else if (st.global) {
+      note = 'Global: every tool in this category is in the user-wide pool, so all agents can use them. Turn an agent off to deny the whole category there.';
+    } else {
+      note = 'Agent-scoped: every tool in this category is available only on the agents shown. Turn Global on to move the whole category into the user-wide pool.';
+    }
+    return {
+      primary: { label: 'Global (all agents)', on: !!st.global, partial: !!st.global_partial },
+      items: `+mapAgentsPillsJS+`,
+      note: note
+    };
   }`)
 
 // (credentialScopeManageAction removed — the per-agent credential scope pill is

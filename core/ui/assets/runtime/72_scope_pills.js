@@ -16,21 +16,32 @@
 // a parent on says nothing about its children. Items whose `under` names no
 // known key fall back to the top row rather than disappearing.
 (function () {
-  function makePill(label, on, primary, onToggle) {
+  // A pill has three states, not two. `partial` is the third: some of what this
+  // pill covers is on and some is not — a group whose members disagree. It
+  // cannot render as either on or off without misreporting the other half, so
+  // it gets its own look (dashed outline, accent text, a dash instead of a
+  // tick) and clicking it commits everything to ON, the way an indeterminate
+  // checkbox resolves.
+  function makePill(label, on, primary, onToggle, partial) {
     var b = document.createElement('button');
     b.type = 'button';
+    var border = on ? 'var(--accent,#6366f1)' : (partial ? 'var(--accent,#6366f1)' : 'var(--border,#3a3a4a)');
+    var color = on ? '#fff' : (partial ? 'var(--accent,#6366f1)' : 'var(--text,#cfd0d8)');
     b.style.cssText =
       'border-radius:999px;padding:0.28rem 0.75rem;margin:0.18rem;font-size:0.8rem;' +
-      'cursor:pointer;transition:background 0.12s,border-color 0.12s;border:1px solid ' +
-      (on ? 'var(--accent,#6366f1)' : 'var(--border,#3a3a4a)') + ';background:' +
-      (on ? 'var(--accent,#6366f1)' : 'transparent') + ';color:' +
-      (on ? '#fff' : 'var(--text,#cfd0d8)') + (primary ? ';font-weight:600' : '');
-    b.textContent = (on ? '✓ ' : '') + label;
+      'cursor:pointer;transition:background 0.12s,border-color 0.12s;border:1px ' +
+      (partial && !on ? 'dashed ' : 'solid ') + border + ';background:' +
+      (on ? 'var(--accent,#6366f1)' : 'transparent') + ';color:' + color +
+      (primary ? ';font-weight:600' : '');
+    b.textContent = (on ? '✓ ' : (partial ? '– ' : '')) + label;
+    if (partial && !on) b.title = 'Some are on and some are not — click to turn all on';
     b.addEventListener('click', function () {
       if (b.disabled) return;
       b.disabled = true;
       b.style.opacity = '0.6';
-      Promise.resolve(onToggle(!on)).catch(function (err) {
+      // From partial, the useful move is "make them all match" rather than a
+      // toggle of a state that was never uniform.
+      Promise.resolve(onToggle(partial && !on ? true : !on)).catch(function (err) {
         b.disabled = false;
         b.style.opacity = '';
         if (window.uiAlert) window.uiAlert('Failed: ' + (err && err.message || err));
@@ -68,7 +79,7 @@
         if (state.primary) {
           var p = makePill(state.primary.label, state.primary.on, true, function (newOn) {
             return Promise.resolve(opts.toggle('__primary__', newOn)).then(render);
-          });
+          }, state.primary.partial);
           if (state.primary.disabled) { p.disabled = true; p.style.opacity = '0.5'; p.style.cursor = 'not-allowed'; }
           top.appendChild(p);
           // A thin divider between the primary pill and the per-item pills.
@@ -97,7 +108,7 @@
         function pillFor(it) {
           return makePill(it.label, it.on, false, function (newOn) {
             return Promise.resolve(opts.toggle(it.key, newOn)).then(render);
-          });
+          }, it.partial);
         }
         items.forEach(function (it) {
           if (it.under && known[it.under]) return;   // rendered under its parent

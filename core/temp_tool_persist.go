@@ -63,6 +63,12 @@ type ToolScopeAgent struct {
 	// sub-agent's tools unreachable from any UI — the only way to give one a
 	// tool was to have the assistant author it there.
 	ParentID string `json:"parent_id,omitempty"`
+	// Partial marks a target that only SOME members of a group hold. It is set
+	// only by a grouped provider (a category, whose state is the union of the
+	// tools claiming it); a single tool is either on a target or it is not.
+	// The pill renders as an indeterminate third state rather than lying in
+	// either direction, and clicking it sets every member the same way.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // ToolScopeState is the full scope picture for one tool, driving the pill
@@ -75,6 +81,19 @@ type ToolScopeState struct {
 	Global  bool             `json:"global"`
 	Missing []string         `json:"missing,omitempty"`
 	Agents  []ToolScopeAgent `json:"agents"`
+	// GlobalPartial is the Global pill's version of ToolScopeAgent.Partial:
+	// some members of a group are user-wide and others are agent-scoped.
+	GlobalPartial bool `json:"global_partial,omitempty"`
+	// Custom reports that the members of a group do not all share one scope,
+	// so there is no single answer to "what access does this group have". Set
+	// only by a grouped provider; a caller renders it as the group's access
+	// rather than picking one member's answer and presenting it as the whole.
+	//
+	// Derived on every read rather than stored. A stored flag would be one more
+	// thing to keep true — every path that changes ONE tool's scope would have
+	// to remember to mark its category custom, and the first one that forgot
+	// would leave the group claiming an access it no longer has.
+	Custom bool `json:"custom,omitempty"`
 }
 
 // AdminToolScopeState, when set, returns the current scope picture for a
