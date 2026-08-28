@@ -92,7 +92,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Phantom used to register this; when it retired, the ONLY surviving
 	// API-key validator was the core desktop key — so the gohort-desktop
 	// daemon authenticating its WS bridge (/api/desktop/ws) with a bridges-
-	// minted X-API-Key got 401'd and never connected, and from_client.*
+	// minted X-API-Key got 401'd and never connected, and from_client_*
 	// (filesystem, screenshot, …) calls failed with "desktop isn't connected"
 	// even though the iMessage hook (which uses validateBridgeKey) worked.
 	// Registered here, at route time, because T.DB must be live (not init()).

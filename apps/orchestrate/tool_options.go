@@ -156,7 +156,7 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 				},
 			})
 		}
-		// Client-bridge tools (from_client.*) are NOT surfaced here.
+		// Client-bridge tools (from_client_*) are NOT surfaced here.
 		// The runtime always includes them in the catalog whenever
 		// the user has registered a desktop (see LocalToolsForUser
 		// + resolveWorkerTools) and the desktop's per-call approval

@@ -1,5 +1,5 @@
 // Shared read-allowlist for filesystem tools. Centralizes the list of
-// root directories that any filesystem.* tool may resolve paths
+// root directories that any filesystem_* tool may resolve paths
 // against. read_local_file and list_directory both check here, so a
 // folder added once becomes visible to every read-side tool at the
 // same time.

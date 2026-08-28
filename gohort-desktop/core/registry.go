@@ -35,6 +35,11 @@ var (
 // package's init(). Refuses duplicates by name (panics — a duplicate name in
 // init order is a programming error, surface it immediately rather than letting
 // the second registration silently shadow the first).
+//
+// Panics on a name outside ValidToolName's class for the same reason: a native
+// name is a compile-time constant we author, and an unusable one means the tool
+// is dropped from the model's catalog with no error anywhere. Better to fail on
+// the first run in dev than to ship a capability that is never offered.
 func RegisterTool(t Tool) {
 	if t == nil {
 		return
@@ -42,6 +47,9 @@ func RegisterTool(t Tool) {
 	registry_mu.Lock()
 	defer registry_mu.Unlock()
 	name := t.Name()
+	if !ValidToolName(name) {
+		panic(fmt.Sprintf("gohort-desktop: tool name %q is not usable by the model APIs (must match ^[a-zA-Z0-9_-]{1,128}$)", name))
+	}
 	for _, existing := range registry {
 		if existing.Name() == name {
 			panic(fmt.Sprintf("gohort-desktop: duplicate tool name %q registered", name))
@@ -119,9 +127,19 @@ func RegisteredTools() []Tool {
 	registry_mu.RUnlock()
 	out := make([]Tool, 0, len(all))
 	for _, t := range all {
-		if t.Enabled() {
-			out = append(out, t)
+		if !t.Enabled() {
+			continue
 		}
+		// Backstop for DYNAMIC tools, whose names come from outside (an MCP
+		// server, a declared command) and are sanitized at mint — native ones
+		// already panicked in RegisterTool. Announcing a name the model APIs
+		// reject doesn't cost one tool: the server drops it, and older servers
+		// had the whole request rejected, taking every other tool down with it.
+		if !ValidToolName(t.Name()) {
+			warn_unusable_tool_name(t.Name())
+			continue
+		}
+		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
@@ -168,4 +186,16 @@ func registered_names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// warn_unusable_tool_name logs a dropped name once per name, so a broken
+// dynamic source doesn't spam the log on every catalog read (RegisteredTools
+// runs on every announce and every invoke).
+var unusable_names_logged sync.Map
+
+func warn_unusable_tool_name(name string) {
+	if _, seen := unusable_names_logged.LoadOrStore(name, true); seen {
+		return
+	}
+	Warn("[registry] tool %q has a name the model APIs reject (must match ^[a-zA-Z0-9_-]{1,128}$); not announcing it", name)
 }

@@ -744,7 +744,7 @@ func selfHealAllowedTools(db Database, a AgentRecord) AgentRecord {
 // orphan entries left in AllowedTools after a tool gets unregistered
 // or a temp tool gets deleted.
 //
-// Client-bridge tools (name prefix "from_client.") are treated as
+// Client-bridge tools (ClientToolPrefix) are treated as
 // ALWAYS resolvable: they're framework-runtime tools injected
 // per-turn from the desktop bridge regardless of whether the
 // agent's AllowedTools lists them, and the desktop may be
@@ -757,7 +757,7 @@ func isResolvableToolName(db Database, owner, name string) bool {
 	if name == "" {
 		return false
 	}
-	if strings.HasPrefix(name, "from_client.") {
+	if IsClientToolName(name) {
 		return true
 	}
 	// Legacy call_<credential> aliases resolve to fetch_url_<credential>.

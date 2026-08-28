@@ -4,7 +4,7 @@
 //
 // The motivating use case: an admin runs gohort serve remotely (e.g.
 // on a home server) and gohort-desktop on their Mac. The desktop
-// registers local tools (filesystem.read_local_file, eventually
+// registers local tools (filesystem_read_local_file, eventually
 // notify / screenshot / shell). Without this bridge those tools are
 // only reachable from the in-window JS bridge — agents running on
 // the remote server can't call them. The bridge fills that gap:
@@ -303,7 +303,7 @@ func userFromAPIKey(r *http.Request) string {
 // DesktopClientUser resolves the X-Gohort-Desktop-Client-Key header to a
 // username, proving the request came from the gohort-desktop VIEWER on the
 // same machine as the user's bridge (the viewer's reverse proxy stamps its
-// API key into this header). It gates the from_client.* tool surface so the
+// API key into this header). It gates the from_client_* tool surface so the
 // local machine's capabilities (filesystem, screenshot, contacts) are
 // reachable ONLY from the desktop app — never from a remote browser or phone
 // logged into the same account, even with auto-approve on. Returns "" when
@@ -644,6 +644,51 @@ func loadDesktopKnownTools(user string) []DesktopToolDescriptor {
 	return out
 }
 
+// ClientToolPrefix marks a tool in the LLM-visible catalog as one that runs on
+// the user's gohort-desktop rather than on the server.
+//
+// An UNDERSCORE, not the dot this used to be. Every provider validates tool
+// names against ^[a-zA-Z0-9_-]{1,128}$ (see validLLMToolName), and a dot is
+// outside that class — so every single desktop tool failed the check and the
+// name guard in llm.go dropped the whole surface from the catalog on every
+// call. The bridge silently had no tools; nothing errored, the model just
+// never saw them. Same trap the remote-MCP names hit (mcpExposedName), one
+// seam later.
+const ClientToolPrefix = "from_client_"
+
+// clientToolPrefixLegacy is the dotted spelling this surface used before.
+// Kept for RECOGNITION only — never for minting. Agent allow-lists persisted
+// under the old names are still on disk, and IsClientToolName has to keep
+// matching them or a saved allow-list entry would stop resolving to a tool.
+const clientToolPrefixLegacy = "from_client."
+
+// IsClientToolName reports whether name addresses the desktop-bridge surface,
+// in either the current or the legacy spelling. Use this rather than a bare
+// HasPrefix: the call sites are authorization and resolution gates, and a gate
+// that recognizes only one of the two spellings mis-classifies stored names.
+func IsClientToolName(name string) bool {
+	return strings.HasPrefix(name, ClientToolPrefix) || strings.HasPrefix(name, clientToolPrefixLegacy)
+}
+
+// ClientToolName is the LLM-facing name for one desktop tool: the prefix plus
+// the announced name, sanitized into the provider-accepted character class and
+// capped to length. Returns "" when nothing usable survives, which the caller
+// treats as "don't offer this tool" — a nameless tool can't be called anyway.
+//
+// The desktop names its own tools, so this has to sanitize rather than trust:
+// it's the same reason mcpExposedName exists for remote MCP servers.
+func ClientToolName(raw string) string {
+	s := sanitizeToolName(raw)
+	if s == "" {
+		return ""
+	}
+	full := ClientToolPrefix + s
+	if len(full) > maxLLMToolNameBytes {
+		full = strings.Trim(full[:maxLLMToolNameBytes], "_")
+	}
+	return full
+}
+
 // LocalToolsForUser returns ChatTool wrappers for the user's desktop
 // tool surface. Always returns the same surface whether the desktop
 // is currently connected or not — agents see a stable catalog instead
@@ -655,38 +700,49 @@ func loadDesktopKnownTools(user string) []DesktopToolDescriptor {
 // Returns nil only when the user has NEVER registered a desktop
 // (no live clients AND nothing persisted).
 //
-// Tool names are prefixed with "from_client." so they're easy to
+// Tool names are prefixed with ClientToolPrefix so they're easy to
 // distinguish in the LLM-visible catalog and don't collide with
 // server-side tools.
+//
+// The map is keyed by the EXPOSED (sanitized) name, not the raw one the
+// desktop announced. Two raw names can sanitize to the same string — most
+// concretely a desktop that upgraded from the dotted naming, whose old
+// "contacts.lookup" sits in the persisted set while the live connection
+// announces "contacts_lookup". Keying on raw would emit both, and the LLM
+// would see one name twice.
 func LocalToolsForUser(user string) []ChatTool {
 	clients := desktopReg.clientsFor(user)
 	// Walk live tools newest-client-first so the latest connection's
 	// schema wins for any name collision.
 	seen := map[string]DesktopToolDescriptor{}
+	keep := func(t DesktopToolDescriptor) {
+		exposed := ClientToolName(t.Name)
+		if exposed == "" {
+			return // nothing survived sanitizing; unaddressable, so don't offer it
+		}
+		if _, dup := seen[exposed]; dup {
+			return
+		}
+		seen[exposed] = t
+	}
 	for i := len(clients) - 1; i >= 0; i-- {
 		c := clients[i]
 		c.mu.Lock()
 		for _, t := range c.tools {
-			if _, dup := seen[t.Name]; dup {
-				continue
-			}
-			seen[t.Name] = t
+			keep(t)
 		}
 		c.mu.Unlock()
 	}
 	// Layer persisted tools on top — covers the "desktop was here,
 	// now offline" case so the agent still sees the catalog.
 	for _, t := range loadDesktopKnownTools(user) {
-		if _, dup := seen[t.Name]; dup {
-			continue
-		}
-		seen[t.Name] = t
+		keep(t)
 	}
 	if len(seen) == 0 {
 		return nil
 	}
 	// Emit in NAME-SORTED order. `seen` is a map, so a raw range would
-	// order the from_client.* tools randomly every call — and tool ORDER
+	// order the from_client_* tools randomly every call — and tool ORDER
 	// (not just per-tool schema) is part of the prompt the worker caches,
 	// so a shuffling catalog breaks the prompt-cache prefix and forces a
 	// full re-prefill every turn (the Chat-only cache thrash: only the
@@ -699,27 +755,34 @@ func LocalToolsForUser(user string) []ChatTool {
 	sort.Strings(names)
 	out := make([]ChatTool, 0, len(seen))
 	for _, name := range names {
-		out = append(out, &desktopChatTool{user: user, desc: seen[name]})
+		out = append(out, &desktopChatTool{user: user, desc: seen[name], exposed: name})
 	}
 	return out
 }
 
 // desktopChatTool implements core.ChatTool by proxying Run() over
 // whichever live WS connection the user has at call time. Name is
-// rewritten with the "from_client." prefix so the LLM sees a
+// rewritten with the ClientToolPrefix so the LLM sees a
 // clearly-distinct surface.
+//
+// exposed is the LLM-facing name, computed once by LocalToolsForUser.
+// desc.Name stays the RAW name the desktop announced, and Run sends
+// that one over the wire — so sanitizing the exposed name can never
+// break dispatch, and an older desktop that still names its tools with
+// dots keeps working against a new server.
 //
 // Resolves the client at CALL time (not registration time) so the
 // catalog stays stable even as the desktop disconnects/reconnects.
 // An offline tool call returns a clean error the LLM can relay; the
 // catalog doesn't churn.
 type desktopChatTool struct {
-	user string
-	desc DesktopToolDescriptor
+	user    string
+	exposed string
+	desc    DesktopToolDescriptor
 }
 
 func (t *desktopChatTool) Name() string {
-	return "from_client." + t.desc.Name
+	return t.exposed
 }
 
 func (t *desktopChatTool) Desc() string {

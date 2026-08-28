@@ -395,7 +395,7 @@ func unresolvedAllowedTools(sess *ToolSession, rec *AgentRecord) []string {
 		switch {
 		case name == "" || name == "*":
 			continue
-		case strings.HasPrefix(name, "from_client."): // per-user desktop tools, resolved at run time
+		case IsClientToolName(name): // per-user desktop tools, resolved at run time
 			continue
 		case known[name]:
 			continue

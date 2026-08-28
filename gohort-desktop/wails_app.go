@@ -418,7 +418,7 @@ func (a *App) SetAutoApprove(on bool) save_result {
 
 // --- filesystem read-allowlist surface ---
 //
-// Lets the operator manage which folders the desktop's filesystem.*
+// Lets the operator manage which folders the desktop's filesystem_*
 // tools may resolve paths under. The menu (Account → Add / Show
 // Allowed Folders) and the in-page modal both call these methods.
 

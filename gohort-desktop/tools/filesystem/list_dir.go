@@ -1,4 +1,4 @@
-// filesystem.list_directory — list entries in a directory on the host
+// filesystem_list_directory — list entries in a directory on the host
 // filesystem of the connected gohort-desktop. Shares the read-allowlist
 // with read_local_file (core.PathAllowed) so adding a folder once
 // exposes it to both tools.
@@ -43,7 +43,7 @@ func init() {
 type list_dir_tool struct{}
 
 func (t *list_dir_tool) Name() string {
-	return "filesystem.list_directory"
+	return "filesystem_list_directory"
 }
 
 func (t *list_dir_tool) Desc() string {
@@ -56,7 +56,7 @@ func (t *list_dir_tool) Desc() string {
 		"themselves; that's the safe starting point when you don't know " +
 		"what's exposed. Capped at 500 entries with a [TRUNCATED — N more] " +
 		"marker if the directory is larger. Use to discover what files " +
-		"exist before calling filesystem.read_local_file."
+		"exist before calling filesystem_read_local_file."
 }
 
 func (t *list_dir_tool) Params() map[string]core.ToolParam {
@@ -86,24 +86,24 @@ func (t *list_dir_tool) Handler() core.ToolHandler {
 
 		abs, err := filepath.Abs(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.list_directory: resolve path: %w", err)
+			return "", fmt.Errorf("filesystem_list_directory: resolve path: %w", err)
 		}
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
 			abs = real
 		}
 		if !core.PathAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem.list_directory refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
+			return "", fmt.Errorf("filesystem_list_directory refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		info, err := os.Stat(abs)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.list_directory: stat: %w", err)
+			return "", fmt.Errorf("filesystem_list_directory: stat: %w", err)
 		}
 		if !info.IsDir() {
-			return "", fmt.Errorf("filesystem.list_directory: %s is a file, not a directory — use filesystem.read_local_file for files", abs)
+			return "", fmt.Errorf("filesystem_list_directory: %s is a file, not a directory — use filesystem_read_local_file for files", abs)
 		}
 		entries, err := os.ReadDir(abs)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.list_directory: read: %w", err)
+			return "", fmt.Errorf("filesystem_list_directory: read: %w", err)
 		}
 		// Sort: dirs first, then files; alphabetical within each
 		// group. Matches typical ls --group-directories-first behavior
@@ -115,7 +115,7 @@ func (t *list_dir_tool) Handler() core.ToolHandler {
 			}
 			return entries[i].Name() < entries[j].Name()
 		})
-		core.Debug("[filesystem.list_directory] %s → %d entries", abs, len(entries))
+		core.Debug("[filesystem_list_directory] %s → %d entries", abs, len(entries))
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "Listing of %s (%d %s):\n", abs, len(entries), plural(len(entries), "entry", "entries"))

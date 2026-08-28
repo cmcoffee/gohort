@@ -4,7 +4,7 @@
 // "read this 200 MiB log" is NOT to send 200 MiB; it's to run the
 // query where the file lives and return the matches.
 //
-// All five share the same read-allowlist as filesystem.read_local_file
+// All five share the same read-allowlist as filesystem_read_local_file
 // (core.PathAllowed). Adding a folder via "Add Allowed Folder…" once
 // makes it queryable by every tool here.
 
@@ -66,16 +66,16 @@ func resolve_query_path(path string) (string, error) {
 		return "", fmt.Errorf("stat: %w", err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("%s is a directory — use filesystem.list_directory", abs)
+		return "", fmt.Errorf("%s is a directory — use filesystem_list_directory", abs)
 	}
 	return abs, nil
 }
 
-// --- filesystem.stat_file ---
+// --- filesystem_stat_file ---
 
 type stat_file_tool struct{}
 
-func (t *stat_file_tool) Name() string { return "filesystem.stat_file" }
+func (t *stat_file_tool) Name() string { return "filesystem_stat_file" }
 
 func (t *stat_file_tool) Desc() string {
 	return "Inspect a file on the host filesystem of the connected gohort-desktop: " +
@@ -100,17 +100,17 @@ func (t *stat_file_tool) Handler() core.ToolHandler {
 		path, _ := args["path"].(string)
 		abs, err := resolve_query_path(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.stat_file: %w", err)
+			return "", fmt.Errorf("filesystem_stat_file: %w", err)
 		}
 		return format_stat(abs)
 	}
 }
 
-// --- filesystem.head_file ---
+// --- filesystem_head_file ---
 
 type head_file_tool struct{}
 
-func (t *head_file_tool) Name() string { return "filesystem.head_file" }
+func (t *head_file_tool) Name() string { return "filesystem_head_file" }
 
 func (t *head_file_tool) Desc() string {
 	return "Return the first N lines of a file on the gohort-desktop host " +
@@ -136,17 +136,17 @@ func (t *head_file_tool) Handler() core.ToolHandler {
 		n := int_arg_or(args, "lines", 50)
 		abs, err := resolve_query_path(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.head_file: %w", err)
+			return "", fmt.Errorf("filesystem_head_file: %w", err)
 		}
 		return run_head(abs, n)
 	}
 }
 
-// --- filesystem.tail_file ---
+// --- filesystem_tail_file ---
 
 type tail_file_tool struct{}
 
-func (t *tail_file_tool) Name() string { return "filesystem.tail_file" }
+func (t *tail_file_tool) Name() string { return "filesystem_tail_file" }
 
 func (t *tail_file_tool) Desc() string {
 	return "Return the last N lines of a file on the gohort-desktop host " +
@@ -170,17 +170,17 @@ func (t *tail_file_tool) Handler() core.ToolHandler {
 		n := int_arg_or(args, "lines", 50)
 		abs, err := resolve_query_path(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.tail_file: %w", err)
+			return "", fmt.Errorf("filesystem_tail_file: %w", err)
 		}
 		return run_tail(abs, n)
 	}
 }
 
-// --- filesystem.read_file_range ---
+// --- filesystem_read_file_range ---
 
 type read_lines_tool struct{}
 
-func (t *read_lines_tool) Name() string { return "filesystem.read_file_range" }
+func (t *read_lines_tool) Name() string { return "filesystem_read_file_range" }
 
 func (t *read_lines_tool) Desc() string {
 	return "Return a specific line range from a file on the gohort-desktop " +
@@ -207,17 +207,17 @@ func (t *read_lines_tool) Handler() core.ToolHandler {
 		end := int_arg_or(args, "end", 0)
 		abs, err := resolve_query_path(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.read_file_range: %w", err)
+			return "", fmt.Errorf("filesystem_read_file_range: %w", err)
 		}
 		return run_read_lines(abs, start, end)
 	}
 }
 
-// --- filesystem.grep_file ---
+// --- filesystem_grep_file ---
 
 type grep_file_tool struct{}
 
-func (t *grep_file_tool) Name() string { return "filesystem.grep_file" }
+func (t *grep_file_tool) Name() string { return "filesystem_grep_file" }
 
 func (t *grep_file_tool) Desc() string {
 	return "Search a file on the gohort-desktop host for a regex pattern " +
@@ -248,7 +248,7 @@ func (t *grep_file_tool) Handler() core.ToolHandler {
 		max_matches := int_arg_or(args, "max_matches", 0)
 		abs, err := resolve_query_path(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.grep_file: %w", err)
+			return "", fmt.Errorf("filesystem_grep_file: %w", err)
 		}
 		return run_grep(abs, pattern, context, max_matches)
 	}

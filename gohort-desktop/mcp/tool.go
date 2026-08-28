@@ -13,7 +13,7 @@ import (
 type mcpTool struct {
 	srv      *server
 	rawName  string // MCP tool name, used in tools/call
-	name     string // namespaced "<server>.<tool>" for the registry + approval UI
+	name     string // namespaced "<server>_<tool>" for the registry + approval UI
 	desc     string
 	params   map[string]core.ToolParam
 	required []string
@@ -32,7 +32,13 @@ func (t *mcpTool) Handler() core.ToolHandler {
 
 // newTool wraps a tools/list entry. The name is namespaced by server so
 // servers can't collide and the approval dialog reads clearly
-// ("Allow tool: github.create_issue?").
+// ("Allow tool: github_create_issue?").
+//
+// Joined and sanitized with core.ToolName rather than concatenated raw: a
+// remote MCP server names its own tools, and the server side publishes ours
+// to the model APIs, which accept only ^[a-zA-Z0-9_-]{1,128}$. rawName keeps
+// the on-the-wire name for tools/call, so sanitizing here can't break
+// dispatch.
 func newTool(srv *server, def toolDef) *mcpTool {
 	params, required := mapSchema(def.InputSchema)
 	desc := def.Description
@@ -42,7 +48,7 @@ func newTool(srv *server, def toolDef) *mcpTool {
 	return &mcpTool{
 		srv:      srv,
 		rawName:  def.Name,
-		name:     srv.name + "." + def.Name,
+		name:     core.ToolName(srv.name + "_" + def.Name),
 		desc:     desc,
 		params:   params,
 		required: required,

@@ -1,4 +1,4 @@
-// filesystem.write_file — create/overwrite/append a text file on the
+// filesystem_write_file — create/overwrite/append a text file on the
 // host, gated by the SEPARATE write-allowlist (core.PathWriteAllowedOrConsent).
 // Read access never implies write access; the first write to a new
 // folder asks the user for permission on its own track. Symlink-safe:
@@ -21,7 +21,7 @@ func init() { core.RegisterTool(&write_file_tool{}) }
 
 type write_file_tool struct{}
 
-func (t *write_file_tool) Name() string { return "filesystem.write_file" }
+func (t *write_file_tool) Name() string { return "filesystem_write_file" }
 
 func (t *write_file_tool) Desc() string {
 	return "Create, overwrite, or append to a text file on the host filesystem of the connected gohort-desktop client. Gated by a SEPARATE write-allowlist from reads — the first write to a new folder prompts the user to approve write access there. Use to save output, edit a config file, or create a file the user asked for. Set append=true to add to the end of an existing file instead of replacing it. Returns a confirmation with the byte count."
@@ -43,14 +43,14 @@ func (t *write_file_tool) Handler() core.ToolHandler {
 		path, _ := args["path"].(string)
 		path = strings.TrimSpace(path)
 		if path == "" {
-			return "", errors.New("filesystem.write_file: path is required")
+			return "", errors.New("filesystem_write_file: path is required")
 		}
 		content, _ := args["content"].(string)
 		appendMode, _ := args["append"].(bool)
 
 		abs, err := filepath.Abs(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.write_file: resolve path: %w", err)
+			return "", fmt.Errorf("filesystem_write_file: resolve path: %w", err)
 		}
 		// Resolve the PARENT (the file itself may not exist yet) so a
 		// symlinked directory can't redirect the write past the allowlist.
@@ -59,7 +59,7 @@ func (t *write_file_tool) Handler() core.ToolHandler {
 			abs = filepath.Join(real, filepath.Base(abs))
 		}
 		if !core.PathWriteAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem.write_file refused: %s is not under an approved write folder (approved: %v)", abs, core.AllowedWriteRoots())
+			return "", fmt.Errorf("filesystem_write_file refused: %s is not under an approved write folder (approved: %v)", abs, core.AllowedWriteRoots())
 		}
 
 		flag := os.O_CREATE | os.O_WRONLY
@@ -70,12 +70,12 @@ func (t *write_file_tool) Handler() core.ToolHandler {
 		}
 		f, err := os.OpenFile(abs, flag, 0o644)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.write_file: open: %w", err)
+			return "", fmt.Errorf("filesystem_write_file: open: %w", err)
 		}
 		defer f.Close()
 		n, err := f.WriteString(content)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.write_file: write: %w", err)
+			return "", fmt.Errorf("filesystem_write_file: write: %w", err)
 		}
 		verb := "Wrote"
 		if appendMode {

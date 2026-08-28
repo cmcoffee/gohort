@@ -23,7 +23,7 @@ needs). Two bundles with distinct bundle IDs also dodge the single-instance
 launchd / Run-key ── Gohort-Bridge.app (cmd/gohort-bridge; always on)
                        ├─ menu-bar icon (fyne.io/systray)
                        ├─ WS tool bridge → gohort  /api/desktop/ws   (X-API-Key)
-                       ├─ local tools: filesystem.* , contacts.lookup / contacts.search
+                       ├─ local tools: filesystem_* , contacts_lookup / contacts_search
                        ├─ MCP host (configured stdio MCP servers → tools)
                        ├─ declared-command host (fixed commands → tools)
                        ├─ server-push install: server sends a capability (a
@@ -57,10 +57,10 @@ user / tray opens ──── Gohort.app (Wails viewer; quittable, no perms)
 ```
 gohort-desktop/
 ├── core/                 # config, settings, sidecar, fs read/write allowlists, log aliases
-├── tools/filesystem/     # filesystem.* tools (read_file, list_dir, query suite, write_file)
+├── tools/filesystem/     # filesystem_* tools (read_file, list_dir, query suite, write_file)
 ├── macos/                # darwin-only capabilities (//go:build darwin)
 │   ├── imsg/             # iMessage relay: chat.db watch + AppleScript send
-│   └── contacts/         # AddressBook lookup → contacts.lookup core.Tool
+│   └── contacts/         # AddressBook lookup → contacts_lookup core.Tool
 ├── mcp/                  # MCP host: stdio JSON-RPC client, adapts MCP tools → core.Tool; runtime Install/Remove + mcp.json persistence
 ├── command/              # declared-command host: fixed command → core.Tool (no shell); Install/Remove + commands.json persistence
 ├── wsbridge/             # WebSocket client to gohort (X-API-Key, Approver + Installer ifaces); announce, invoke, install frames
@@ -108,7 +108,7 @@ through per-folder consent (read and write are separate, stronger grants);
 a tool that returns a `data:image/...;base64,...` URI (e.g. MCP image
 tools) is delivered to the LLM as a vision attachment automatically.
 
-The registry has two tiers. **Native** tools (`filesystem.*`, `contacts.*`)
+The registry has two tiers. **Native** tools (`filesystem_*`, `contacts_*`)
 register at `init()` and are permanent. **Dynamic** tools register at runtime
 via `core.ReplaceDynamicTools(source, tools)`, keyed by source (an MCP server,
 a declared command), and can be swapped or dropped wholesale. A native tool

@@ -20,6 +20,8 @@
 
 package core
 
+import "strings"
+
 // ToolParam describes one parameter on a Tool. Matches gohort's own
 // ToolParam shape so catalogs interop without translation.
 type ToolParam struct {
@@ -35,9 +37,10 @@ type ToolHandler func(args map[string]any) (string, error)
 // Tool is the contract every local capability implements.
 //
 // Name is the LLM-facing identifier; should be snake_case and
-// prefixed with the category (e.g. "filesystem.read_local_file",
-// "apps.open", "contacts.lookup") so the registry stays scannable
-// as the catalog grows.
+// prefixed with the category (e.g. "filesystem_read_local_file",
+// "apps_open", "contacts_lookup") so the registry stays scannable
+// as the catalog grows. It MUST satisfy ValidToolName — see the note
+// there for why a separator other than "_" silently breaks the tool.
 //
 // Desc is what the LLM reads when deciding whether to call this
 // tool — be descriptive about WHEN to use it, not just what it does.
@@ -49,7 +52,7 @@ type ToolHandler func(args map[string]any) (string, error)
 // map; returns result-or-error.
 //
 // Enabled lets a tool opt out of registration at runtime (e.g. an
-// apps.open tool that's disabled on systems where the open command
+// apps_open tool that's disabled on systems where the open command
 // isn't available). The registry skips disabled tools entirely —
 // they don't appear in the catalog, can't be called.
 type Tool interface {
@@ -59,4 +62,66 @@ type Tool interface {
 	Required() []string
 	Handler() ToolHandler
 	Enabled() bool
+}
+
+// maxToolNameBytes is the longest tool name the model APIs accept.
+const maxToolNameBytes = 128
+
+// ValidToolName reports whether name is in the character class every model
+// API accepts: ^[a-zA-Z0-9_-]{1,128}$.
+//
+// This matters here, two hops from any model, because the server publishes
+// this catalog straight into the LLM tool list. The names were once written
+// "filesystem.read_local_file", and a DOT is outside that class — so the
+// server's name guard dropped the entire desktop surface from every catalog
+// it built. Nothing errored on either side; the tools were simply never
+// offered. Hence the check at the point names are minted rather than a
+// convention nobody can enforce.
+func ValidToolName(name string) bool {
+	if len(name) == 0 || len(name) > maxToolNameBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ToolName normalizes an externally-supplied name (an MCP server's own tool
+// names, a declared command) into that class: everything outside it collapses
+// to a single underscore, and the result is capped to length. Returns "" when
+// nothing usable survives.
+//
+// Only for names we did NOT author. A native tool's name is a compile-time
+// constant and should be written correctly, not laundered — RegisterTool
+// panics rather than sanitizing.
+func ToolName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	prev_underscore := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-':
+			b.WriteRune(r)
+			prev_underscore = false
+		default:
+			if !prev_underscore && b.Len() > 0 {
+				b.WriteByte('_')
+				prev_underscore = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if len(out) > maxToolNameBytes {
+		out = strings.Trim(out[:maxToolNameBytes], "_")
+	}
+	return out
 }

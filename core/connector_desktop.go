@@ -1,7 +1,7 @@
 // The desktop_mcp connector kind: materializes a LOCAL MCP server on the
 // connector owner's own machine (a stdio subprocess hosted by their
 // gohort-desktop bridge), so its tools become callable by agents as
-// <name>.<tool> via the from_client.* surface. This is the desktop-side analog
+// <name>.<tool> via the from_client_* surface. This is the desktop-side analog
 // of remote_mcp — the same "declare a bridge type, no code change" idea, but
 // the capability runs on the user's laptop instead of a remote HTTP endpoint.
 //

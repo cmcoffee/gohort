@@ -1,4 +1,4 @@
-// filesystem.read_local_file — read a text file from the host
+// filesystem_read_local_file — read a text file from the host
 // filesystem, gated by the shared read-allowlist in core. Symlink-safe
 // (resolves the real path before allowlist check). Caps at
 // MAX_READ_BYTES with a TRUNCATED marker for partial reads.
@@ -44,7 +44,7 @@ func init() {
 type read_file_tool struct{}
 
 func (t *read_file_tool) Name() string {
-	return "filesystem.read_local_file"
+	return "filesystem_read_local_file"
 }
 
 func (t *read_file_tool) Desc() string {
@@ -64,7 +64,7 @@ func (t *read_file_tool) Params() map[string]core.ToolParam {
 	return map[string]core.ToolParam{
 		"path": {
 			Type:        "string",
-			Description: "Absolute path to the file. Must resolve under one of the allowlisted roots. If unsure what's allowed, call filesystem.list_directory first to see the available roots.",
+			Description: "Absolute path to the file. Must resolve under one of the allowlisted roots. If unsure what's allowed, call filesystem_list_directory first to see the available roots.",
 		},
 	}
 }
@@ -78,11 +78,11 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 		path, _ := args["path"].(string)
 		path = strings.TrimSpace(path)
 		if path == "" {
-			return "", errors.New("filesystem.read_local_file: path is required")
+			return "", errors.New("filesystem_read_local_file: path is required")
 		}
 		abs, err := filepath.Abs(path)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.read_local_file: resolve path: %w", err)
+			return "", fmt.Errorf("filesystem_read_local_file: resolve path: %w", err)
 		}
 		// Symlink-safe: resolve the real path so an attacker can't
 		// smuggle /tmp/sneaky → /etc/shadow past the allowlist.
@@ -90,19 +90,19 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 			abs = real
 		}
 		if !core.PathAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem.read_local_file refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
+			return "", fmt.Errorf("filesystem_read_local_file refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		f, err := os.Open(abs)
 		if err != nil {
-			return "", fmt.Errorf("filesystem.read_local_file: open: %w", err)
+			return "", fmt.Errorf("filesystem_read_local_file: open: %w", err)
 		}
 		defer f.Close()
 		info, err := f.Stat()
 		if err != nil {
-			return "", fmt.Errorf("filesystem.read_local_file: stat: %w", err)
+			return "", fmt.Errorf("filesystem_read_local_file: stat: %w", err)
 		}
 		if info.IsDir() {
-			return "", fmt.Errorf("filesystem.read_local_file: %s is a directory, not a file — use filesystem.list_directory for directories", abs)
+			return "", fmt.Errorf("filesystem_read_local_file: %s is a directory, not a file — use filesystem_list_directory for directories", abs)
 		}
 		// Hard-stop for files larger than the inline cap. Truncating
 		// silently and returning a partial body is the worst of both
@@ -111,20 +111,20 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 		// tools instead — they ship only the slice the LLM actually
 		// needs and run on the host so the bridge stays cheap.
 		if info.Size() > MAX_READ_BYTES {
-			return "", fmt.Errorf("filesystem.read_local_file: %s is %d bytes (cap %d); too large to inline. Use a targeted query instead:\n"+
-				"  filesystem.stat_file(path=%q)                       → size, line count, kind hint\n"+
-				"  filesystem.head_file(path=%q, lines=N)               → first N lines\n"+
-				"  filesystem.tail_file(path=%q, lines=N)               → last N lines\n"+
-				"  filesystem.read_file_range(path=%q, start=A, end=B)  → lines A–B\n"+
-				"  filesystem.grep_file(path=%q, pattern=\"…\")           → matching lines\n"+
+			return "", fmt.Errorf("filesystem_read_local_file: %s is %d bytes (cap %d); too large to inline. Use a targeted query instead:\n"+
+				"  filesystem_stat_file(path=%q)                       → size, line count, kind hint\n"+
+				"  filesystem_head_file(path=%q, lines=N)               → first N lines\n"+
+				"  filesystem_tail_file(path=%q, lines=N)               → last N lines\n"+
+				"  filesystem_read_file_range(path=%q, start=A, end=B)  → lines A–B\n"+
+				"  filesystem_grep_file(path=%q, pattern=\"…\")           → matching lines\n"+
 				"Pick the one matching what you need — the whole file never has to cross the WS bridge.",
 				abs, info.Size(), MAX_READ_BYTES, abs, abs, abs, abs, abs)
 		}
 		buf, err := io.ReadAll(io.LimitReader(f, MAX_READ_BYTES))
 		if err != nil {
-			return "", fmt.Errorf("filesystem.read_local_file: read: %w", err)
+			return "", fmt.Errorf("filesystem_read_local_file: read: %w", err)
 		}
-		core.Debug("[filesystem.read_local_file] %s → %d bytes", abs, len(buf))
+		core.Debug("[filesystem_read_local_file] %s → %d bytes", abs, len(buf))
 		return string(buf), nil
 	}
 }

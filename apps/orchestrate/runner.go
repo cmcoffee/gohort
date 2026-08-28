@@ -482,7 +482,7 @@ type chatTurn struct {
 	isNewSession     bool     // first turn for this session; gates background title generation
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 	// fromDesktopClient is true when THIS request came from the gohort-desktop
-	// viewer (its proxy stamped the bridge key). Gates the from_client.* tool
+	// viewer (its proxy stamped the bridge key). Gates the from_client_* tool
 	// surface so local-machine capabilities are reachable only from the
 	// desktop app, never a remote browser/phone on the same account.
 	fromDesktopClient bool
@@ -2735,7 +2735,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		}
 		toolNames = filtered
 	}
-	// Strip client-bridge tool names (from_client.*) before the
+	// Strip client-bridge tool names (from_client_*) before the
 	// global-registry lookup. They're never in the registered
 	// ChatTools pool (they're per-user, injected at runtime by the
 	// bridge), so GetAgentToolsWithSession would 404 on every one
@@ -2745,7 +2745,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	if len(toolNames) > 0 {
 		filtered := toolNames[:0]
 		for _, n := range toolNames {
-			if strings.HasPrefix(n, "from_client.") {
+			if IsClientToolName(n) {
 				continue
 			}
 			filtered = append(filtered, n)
@@ -2962,7 +2962,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// at turn start. A skill's tools are surfaced by the per-round
 	// DynamicTools feed (dynamicNewTempTools → AppendSkillGrantedTools) the
 	// round AFTER activate_skill fires, so they appear this same turn.)
-	// Local tools from the user's gohort-desktop surface (from_client.*).
+	// Local tools from the user's gohort-desktop surface (from_client_*).
 	// Exposed ONLY when this request came from the gohort-desktop viewer
 	// itself (its proxy stamps the bridge key — see t.fromDesktopClient). A
 	// remote browser / phone logged into the same account never sees them, so
@@ -2999,7 +2999,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// part of the returned slice, which both callers wrap as a whole
 	// (resolveWorkerTools' result → wrapToolsForActivity at the orchestrator
 	// and worker call sites). Wrapping here too double-wrapped ONLY the
-	// from_client.* tools, so each fired two tool_call/tool_result SSE events
+	// from_client_* tools, so each fired two tool_call/tool_result SSE events
 	// and two recordToolCall entries — the catalog showed (and the tool log
 	// recorded) every desktop call twice. The single call-site wrap gives
 	// them the same inline chips + cache as every other tool, once.
@@ -5244,7 +5244,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		inferredDisabled: req.InferredDisabled || sess.Incognito,
 		isNewSession:     isNewSession,
 		userImages:       decodeUserImages(req.Images),
-		// from_client.* tools are exposed only when the request came from the
+		// from_client_* tools are exposed only when the request came from the
 		// gohort-desktop viewer (its proxy stamps the bridge key) — never a
 		// remote browser/phone on the same account.
 		fromDesktopClient: user != "" && DesktopClientUser(r) == user,

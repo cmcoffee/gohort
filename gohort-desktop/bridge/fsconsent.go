@@ -5,7 +5,7 @@ import (
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
 
-	// Register the cross-platform filesystem.* tools so the agent serves
+	// Register the cross-platform filesystem_* tools so the agent serves
 	// them over the WS bridge. ONLY the agent has any file-read
 	// capability — the viewer registers no filesystem tools.
 	_ "github.com/cmcoffee/gohort/gohort-desktop/tools/filesystem"

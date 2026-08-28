@@ -2,7 +2,7 @@
 
 // Package contacts resolves macOS Address Book handles (phone/email)
 // to display names, and exposes that lookup as a gohort-desktop tool
-// (contacts.lookup) so server-side agents can call it over the WS
+// (contacts_lookup) so server-side agents can call it over the WS
 // tool bridge. Migrated from apps/phantom/_bridge/main.go.
 package contacts
 
@@ -23,8 +23,8 @@ import (
 )
 
 // init registers the contacts tools so the daemon announces them over
-// the WS tool bridge: contacts.lookup (handle -> name) and its reverse,
-// contacts.search (name -> handles). The message service shares the same
+// the WS tool bridge: contacts_lookup (handle -> name) and its reverse,
+// contacts_search (name -> handles). The message service shares the same
 // underlying lookup impl.
 func init() {
 	core.RegisterTool(new(lookupTool))
@@ -36,10 +36,10 @@ func init() {
 // the message service (macos/imsg) and the LLM tool share one path.
 func Lookup(handle string) string { return lookupContact(handle) }
 
-// lookupTool exposes Lookup as a core.Tool (contacts.lookup).
+// lookupTool exposes Lookup as a core.Tool (contacts_lookup).
 type lookupTool struct{}
 
-func (lookupTool) Name() string { return "contacts.lookup" }
+func (lookupTool) Name() string { return "contacts_lookup" }
 func (lookupTool) Desc() string {
 	return "Resolve a phone number or email address to the contact's display name from the local macOS Address Book. Use when you have a handle (phone/email) and need the person's name. Returns an empty result if the handle isn't in Contacts."
 }
@@ -122,12 +122,12 @@ func Search(query string, limit int) []ContactRecord {
 	return out
 }
 
-// searchTool exposes Search as a core.Tool (contacts.search).
+// searchTool exposes Search as a core.Tool (contacts_search).
 type searchTool struct{}
 
-func (searchTool) Name() string { return "contacts.search" }
+func (searchTool) Name() string { return "contacts_search" }
 func (searchTool) Desc() string {
-	return "Search the local macOS Address Book by contact name (full or partial) and return matching people with their phone numbers and email addresses. Use when you have a name (e.g. \"mom\", \"John Smith\") and need a handle to text or email them. This is the reverse of contacts.lookup. Returns an empty result if no name matches."
+	return "Search the local macOS Address Book by contact name (full or partial) and return matching people with their phone numbers and email addresses. Use when you have a name (e.g. \"mom\", \"John Smith\") and need a handle to text or email them. This is the reverse of contacts_lookup. Returns an empty result if no name matches."
 }
 func (searchTool) Params() map[string]core.ToolParam {
 	return map[string]core.ToolParam{

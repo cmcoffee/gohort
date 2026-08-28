@@ -97,12 +97,20 @@ func (s *approvalStore) AllowedTools() []string {
 }
 
 // IsToolAllowed reports whether name is on the per-tool allow-list.
+//
+// Compared through core.ToolName rather than by equality so an entry saved
+// under the old dotted spelling ("filesystem.read_local_file") still matches
+// the tool it was granted for, now named with underscores. Without that, the
+// rename would silently revoke every "Always allow" the user had already
+// given — fail-closed, so nothing unsafe, but they'd have to re-approve a
+// list they never chose to clear.
 func (s *approvalStore) IsToolAllowed(name string) bool {
 	if name == "" {
 		return false
 	}
+	want := core.ToolName(name)
 	for _, t := range s.AllowedTools() {
-		if t == name {
+		if t == name || (want != "" && core.ToolName(t) == want) {
 			return true
 		}
 	}
@@ -130,11 +138,16 @@ func (s *approvalStore) AllowTool(name string) error {
 // behind the Preferences manager. No-op if not present.
 func (s *approvalStore) RemoveAllowedTool(name string) error {
 	bc := core.ReadBridgeConfig()
+	// Drops the legacy dotted spelling of the same tool too — otherwise a
+	// revoke would appear to work while IsToolAllowed kept matching the old
+	// entry.
+	want := core.ToolName(name)
 	next := make([]string, 0, len(bc.AllowedTools))
 	for _, t := range bc.AllowedTools {
-		if t != name {
-			next = append(next, t)
+		if t == name || (want != "" && core.ToolName(t) == want) {
+			continue
 		}
+		next = append(next, t)
 	}
 	bc.AllowedTools = next
 	return core.WriteBridgeConfig(bc)
