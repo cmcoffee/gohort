@@ -2564,7 +2564,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// this and later rounds stay under the window. Runs after
 		// round-start injections so it sees the full assembled history.
 		forceCompact := cfg.RoundCompactNow != nil && cfg.RoundCompactNow()
-		compactHistory(history, systemPrompt, cfg.ContextSize, forceCompact)
+		// effectiveContextSize, not cfg.ContextSize: if this window has recently
+		// refused a prompt, the next one has to be built against what the
+		// worker actually granted. Otherwise every turn rebuilds to the claim
+		// and rediscovers the wall a round later.
+		compactHistory(history, systemPrompt, effectiveContextSize(cfg.ContextSize), forceCompact)
 		// Route think is the default; ChatOptions override it. Build route
 		// defaults first so per-call WithThink(true/false) takes precedence.
 		var opts []ChatOption
@@ -2771,14 +2775,10 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// window" must not mean "do nothing". The provider's own refusal
 			// usually names the number; failing that, assume a small window
 			// and recover harder than strictly needed.
-			window := cfg.ContextSize
-			if window <= 0 {
-				window = contextWindowFromError(err)
-			}
-			if window <= 0 {
-				window = fallbackRecoveryWindow
-			}
-			Debug("[agent_loop] round %d: context exceeded — recovering into a %d-token window", round, window)
+			refused := estimatePromptTokens(history, systemPrompt)
+			noteContextRefusal(cfg.ContextSize, refused)
+			window := recoveryWindow(cfg.ContextSize, err, refused)
+			Debug("[agent_loop] round %d: context exceeded — recovering into a %d-token window (refused prompt ~%d tokens)", round, window, refused)
 
 			compactHistory(history, systemPrompt, window, true)
 			// Compaction only cuts bodies. If the bulk is ordinary
@@ -6987,6 +6987,19 @@ func stillTooBig(msgs []Message, systemPrompt string, contextSize int) bool {
 	if contextSize <= 0 {
 		return false
 	}
+	return estimatePromptTokens(msgs, systemPrompt) > contextSize-34000
+}
+
+// estimatePromptTokens is what the next call will cost: the system prompt plus
+// every message body and tool result. Shared with the refusal bookkeeping below
+// so "how big was the prompt we sent" and "is the prompt still too big" can
+// never answer with different arithmetic.
+//
+// Tool SCHEMAS are not counted, so this reads low by however many the catalog
+// carries (~7.5k tokens on the turn that prompted this work). That is the safe
+// direction for both callers: an under-count makes stillTooBig keep cutting and
+// makes a recorded ceiling stricter.
+func estimatePromptTokens(msgs []Message, systemPrompt string) int {
 	total := EstimateTokens(systemPrompt)
 	for i := range msgs {
 		total += EstimateTokens(msgs[i].Content)
@@ -6994,7 +7007,141 @@ func stillTooBig(msgs []Message, systemPrompt string, contextSize int) bool {
 			total += EstimateTokens(tr.Content)
 		}
 	}
-	return total > contextSize-34000
+	return total
+}
+
+// recoveryWindow is the window to recover INTO after a provider has refused a
+// prompt as too large: the smallest credible number available, because this is
+// the one place where guessing high is useless and guessing low merely costs
+// some history.
+//
+// refused is the estimated size of the prompt that was just rejected, and it is
+// the only hard evidence in this branch — whatever the real ceiling is, it is
+// below that. Recovering into anything larger is what let the whole ladder
+// no-op: stillTooBig would report that the history already fits, so nothing
+// after the first rung ever ran and the retry re-sent what had just been
+// refused.
+//
+// Floored, so a refusal that has nothing to do with size can't drive recovery
+// into a window too small to hold a turn at all.
+func recoveryWindow(configured int, refusal error, refused int) int {
+	window := configured
+	if window <= 0 {
+		window = contextWindowFromError(refusal)
+	}
+	if window <= 0 {
+		window = fallbackRecoveryWindow
+	}
+	if refused > 0 {
+		if capped := refused * 3 / 4; capped < window {
+			window = capped
+		}
+	}
+	if window < observedCeilingFloor {
+		window = observedCeilingFloor
+	}
+	return window
+}
+
+// --- observed context ceilings ---------------------------------------------
+//
+// The configured window is a CLAIM. A refusal is a MEASUREMENT. Until these,
+// the claim won every time, including in the branch that exists BECAUSE the
+// claim was just proved wrong.
+//
+// What that looked like: a worker advertising a 262144-token window refused a
+// prompt estimated at ~130k. Recovery read cfg.ContextSize, announced it was
+// "recovering into a 262144-token window", and asked stillTooBig whether ~117k
+// still didn't fit. It fit fine. So the ladder's summarize and elide rungs
+// never ran, the retry sent an all-but-identical prompt, the same refusal came
+// back, and the turn died — holding a window half of which it was never going
+// to get. Every following turn then rebuilt a prompt against the same 262144
+// and walked into the same wall.
+//
+// Note the shape of the evidence: on that deployment a 149,267-token prompt was
+// ACCEPTED and a ~130k one refused later the same day, and refusals also hit
+// ~5k-token summarizer sub-calls that could not have exhausted anything by
+// themselves. So the real ceiling is not a property of our prompt at all — it
+// moves with what else the worker is serving. That is what makes measuring it
+// the right approach and a static number the wrong one, whatever the underlying
+// cause turns out to be.
+
+// observedCeilingTTL is how long a refusal is believed. Long enough to carry a
+// conversation through the condition that caused it; short enough that a busy
+// minute doesn't surrender half the window for the rest of the day.
+const observedCeilingTTL = 30 * time.Minute
+
+// observedCeilingFloor stops the feedback loop from collapsing the window to
+// nothing if refusals arrive for some reason that has nothing to do with size.
+// Below this an agent cannot carry a system prompt and a round of tool results,
+// so clamping further would trade a failing turn for a useless one.
+const observedCeilingFloor = 24000
+
+// observedCeilings maps a configured window to the ceiling actually observed
+// under it. Keyed by the configured number rather than by model because that is
+// the figure loopContextSize already collapses both tiers into — the
+// observation attaches to the same number the budget is derived from.
+var observedCeilings sync.Map // int (configured) → observedCeiling
+
+type observedCeiling struct {
+	tokens int       // largest prompt we are now willing to build
+	at     time.Time // when the refusal was seen; the entry expires from here
+}
+
+// noteContextRefusal records that a prompt of refusedTokens was rejected as too
+// large under the given configured window.
+//
+// Keeps three quarters of the refused size. The refusal proves the ceiling is
+// BELOW that number but says nothing about how far below, and the margin also
+// has to cover what estimatePromptTokens does not count (tool schemas) — so the
+// recorded figure is deliberately stricter than the evidence strictly requires.
+//
+// The smallest refusal within the TTL wins: two refusals mean the ceiling is
+// under both.
+func noteContextRefusal(configured, refusedTokens int) {
+	if configured <= 0 || refusedTokens <= 0 {
+		return
+	}
+	ceiling := refusedTokens * 3 / 4
+	if ceiling < observedCeilingFloor {
+		ceiling = observedCeilingFloor
+	}
+	if ceiling >= configured {
+		return // nothing learned: the refusal was already at or above the claim
+	}
+	if prev, ok := observedCeilings.Load(configured); ok {
+		if p := prev.(observedCeiling); time.Since(p.at) < observedCeilingTTL && p.tokens <= ceiling {
+			observedCeilings.Store(configured, observedCeiling{tokens: p.tokens, at: time.Now()})
+			return
+		}
+	}
+	Log("[agent_loop] context ceiling: a %d-token prompt was refused under a configured %d-token window — building to %d for the next %s",
+		refusedTokens, configured, ceiling, observedCeilingTTL)
+	observedCeilings.Store(configured, observedCeiling{tokens: ceiling, at: time.Now()})
+}
+
+// effectiveContextSize is the window to actually build against: the configured
+// one, or the smaller ceiling a recent refusal measured.
+//
+// Expired observations are dropped rather than merely ignored, so a worker that
+// stops refusing gets its full window back on its own — no restart, no setting.
+func effectiveContextSize(configured int) int {
+	if configured <= 0 {
+		return configured
+	}
+	v, ok := observedCeilings.Load(configured)
+	if !ok {
+		return configured
+	}
+	obs := v.(observedCeiling)
+	if time.Since(obs.at) >= observedCeilingTTL {
+		observedCeilings.Delete(configured)
+		return configured
+	}
+	if obs.tokens < configured {
+		return obs.tokens
+	}
+	return configured
 }
 
 // fallbackRecoveryWindow is what recovery assumes when nothing reports a
