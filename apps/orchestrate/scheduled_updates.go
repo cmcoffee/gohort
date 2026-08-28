@@ -574,6 +574,26 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			liveCalls = append(liveCalls, s.ToolCalls...)
 			liveRun.SetProgress(s.Round, s.ToolCalls)
 		},
+		// Is the reply true about what this fire actually did?
+		//
+		// A scheduled fire is the turn that needs this MOST and was the one
+		// without it. Nobody is reading along: a fire that writes out three
+		// finished posts, marks them done and calls no posting tool produces a
+		// transcript nothing disputes, and the run ledger records a success.
+		// The interactive paths had the judge because a person was there to
+		// notice anyway. See turn_judge.go.
+		//
+		// No PriorWork: a fire has no machine steps running ahead of its loop,
+		// so the tools the loop ran are the whole of what happened.
+		TurnClaimJudge: app.turnClaimJudge(ctx),
+		// And whether it KNOWS what it asserts. The two travel together
+		// everywhere else and a test enforces it, which is the right rule: a
+		// fire stating an unchecked fact as certain is exactly as unwatched as
+		// one claiming work it did not do. UncheckedClaims is the scope that
+		// makes it fire at all — the agent's own remembered facts, the same
+		// ones the dispatch path hands it.
+		TurnGroundingJudge: app.turnGroundingJudge(ctx),
+		UncheckedClaims:    UncheckedFactNotes(facts),
 		// Custom-tool resolution, same as the dispatch path: resolve a direct
 		// call to a has-args custom tool and surface tools loaded via load_tool.
 		ToolFallbackResolver: subTurn.lazyToolFallback,
