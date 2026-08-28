@@ -472,6 +472,38 @@ type Folder struct {
 // which is what lets an agent be attached once and still reach whatever
 // lands tomorrow. Attaching per subfolder would mean editing the agent
 // every time somebody dropped one in.
+// CountFolders answers how many subfolders a store has, and nothing else.
+//
+// Its own function because the answer costs one directory read, while
+// ListFolders below costs a recursive walk of every subfolder — it stats each
+// file for size, count and newest mtime so a folder MENU can be ordered and
+// labelled. Three callers wanted the number alone and paid the walk for it,
+// including two that render on the agent editor. Measured at 273ms of a 296ms
+// source listing on one deployment, all of it spent computing sizes that were
+// then discarded.
+//
+// Same rule as ListFolders on what counts: a DirEntry's IsDir, so the two can
+// never disagree about the number, and a symlink to a directory is not one in
+// either. IsDir here reads the type the directory read already returned, so
+// there is no stat per entry.
+func CountFolders(root string) (int, error) {
+	rootAbs, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return 0, fmt.Errorf("that folder is unreadable: %w", err)
+	}
+	entries, err := os.ReadDir(rootAbs)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func ListFolders(root string) ([]Folder, error) {
 	rootAbs, err := filepath.EvalSymlinks(root)
 	if err != nil {

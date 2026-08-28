@@ -292,8 +292,8 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 		// store reading "unreadable" here is a typo caught before an agent
 		// is attached to it.
 		folders := "unreadable"
-		if list, err := ListFolders(st.Path); err == nil {
-			folders = strconv.Itoa(len(list))
+		if n, err := CountFolders(st.Path); err == nil {
+			folders = strconv.Itoa(n)
 		}
 		assigned := "everyone"
 		if len(st.AllowedUsers) > 0 {

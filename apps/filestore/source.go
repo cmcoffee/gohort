@@ -64,8 +64,13 @@ func (s storeSource) List(user string) []ReferenceItem {
 		// Say what is actually in there. A store reading "0 folders" or
 		// "unreadable" in the picker is a misconfigured path caught
 		// before an agent is attached to it rather than after.
-		if folders, err := ListFolders(st.Path); err == nil {
-			desc += " · " + strconv.Itoa(len(folders)) + " folder" + plural(len(folders))
+		// CountFolders, not ListFolders: this line needs the NUMBER, and
+		// ListFolders buys it with a recursive walk of every subfolder whose
+		// sizes and mtimes are then thrown away. The picker renders on the
+		// agent editor, so that walk was in front of somebody every time they
+		// opened one.
+		if n, err := CountFolders(st.Path); err == nil {
+			desc += " · " + strconv.Itoa(n) + " folder" + plural(n)
 		} else {
 			desc += " · unreadable"
 		}

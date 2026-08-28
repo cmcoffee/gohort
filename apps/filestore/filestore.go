@@ -177,8 +177,8 @@ func (T *FileStoreApp) grantsFor(user, agentID string) []AgentGrant {
 		// posture of a store, and the row is read by someone deciding
 		// whether an attachment is safe to leave in place.
 		detail := "read-only"
-		if folders, err := ListFolders(st.Path); err == nil {
-			detail = strconv.Itoa(len(folders)) + " folders, read-only"
+		if n, err := CountFolders(st.Path); err == nil {
+			detail = strconv.Itoa(n) + " folders, read-only"
 		}
 		out = append(out, AgentGrant{Label: st.Name, Detail: detail})
 	}
