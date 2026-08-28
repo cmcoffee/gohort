@@ -14,6 +14,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 
@@ -49,6 +50,32 @@ const (
 	ENV_WINDOW_WIDTH  = "GOHORT_DESKTOP_WIDTH"
 	ENV_WINDOW_HEIGHT = "GOHORT_DESKTOP_HEIGHT"
 )
+
+// FirstPaintHead is the <head> fragment every page the DESKTOP itself serves
+// must carry: the bounce documents, the API-key editor, the not-reachable
+// card. Emit it immediately after <meta charset>, before any other style.
+//
+// WINDOW_BG_* paints the window BEHIND the webview, which covers the gaps
+// where no document is on screen. It does not cover the other half: the first
+// frame of a document that has been handed to the webview but whose own
+// background hasn't painted yet. There the browser uses its default canvas,
+// and the default is WHITE — so a one-line redirect body with no styling is a
+// full white frame, on every bounce, which is exactly where a person is
+// navigating and looking.
+//
+// color-scheme is the half that reaches furthest: the browser applies it while
+// parsing, before any CSS at all, and it decides the canvas, the scrollbars,
+// and how form controls render. The inline background pins the exact colour
+// rather than the browser's idea of dark. Same two lines, and the same
+// reasoning, as ui.ThemeFirstPaintHead on the server side — the desktop can't
+// call that one (it can't reach the theme registry, and these pages render
+// before there is any server to ask), so it states the two properties itself.
+func FirstPaintHead() string {
+	return fmt.Sprintf(
+		`<meta name="color-scheme" content="dark">`+
+			`<style>html,body{background:#%02x%02x%02x;margin:0}</style>`,
+		WINDOW_BG_R, WINDOW_BG_G, WINDOW_BG_B)
+}
 
 // Config bundles the desktop's runtime knobs + the persistent settings
 // handle. One instance per process, constructed at startup by

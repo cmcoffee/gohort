@@ -126,7 +126,8 @@ const GET_SETTINGS_PATH = "/__desktop/getsettings"
 // apikey_page_html is the standalone bridge-API-key editor. Kept inline
 // (not a proxied gohort page, not the configure form) so updating the
 // key is fully decoupled from the server-connection flow.
-const apikey_page_html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+var apikey_page_html = `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+	core.FirstPaintHead() + `
 <title>Gohort-Bridge API Key</title><style>
 html,body{height:100%;margin:0}body{background:#0d1117;color:#c9d1d9;
 font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,sans-serif;
@@ -266,6 +267,7 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">`+
+			core.FirstPaintHead()+
 			`<meta http-equiv="refresh" content="0;url=%s">`+
 			`<title>Loading…</title></head>`+
 			`<body><script>location.replace(%q);</script></body></html>`,
@@ -331,7 +333,7 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		}
 		// Tag the request as coming from the desktop client itself, with the
 		// bridge API key. The server (core.DesktopClientUser) validates it to
-		// expose from_client.* tools ONLY to this desktop app — a remote
+		// expose from_client_* tools ONLY to this desktop app — a remote
 		// browser/phone on the same account never carries it. Strip any value
 		// the webview might have set first, then write our authentic key
 		// (mirrors the Cookie handling above; the static X-Forwarded-For-
@@ -340,7 +342,7 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		// Use the shared resolver (sidecar-first) — the SAME key the daemon
 		// authenticates with, so the server's DesktopClientUser validates it.
 		// Reading ReadBridgeConfig().APIKey directly here was the bug that
-		// withheld from_client.* tools: the viewer stamped the stale manual
+		// withheld from_client_* tools: the viewer stamped the stale manual
 		// key while the auto-provisioned sidecar key was the live one.
 		if k := core.BridgeAPIKey(); k != "" {
 			req.Header.Set("X-Gohort-Desktop-Client-Key", k)
@@ -647,8 +649,15 @@ func rewrite_redirect_as_js(resp *http.Response) error {
 // (not href =) so the bounce page doesn't enter the back/forward
 // history; the <noscript> path covers the (vanishingly unlikely)
 // case of JS being disabled.
-const redirect_bounce_html = `<!DOCTYPE html><html><head>` +
-	`<meta charset="utf-8"><title>Redirecting…</title>` +
+//
+// Carries the first-paint head because this is the document a person sees
+// most often without ever meaning to: every upstream 3xx becomes one of
+// these, so it lands between a click and the page it leads to. Undressed it
+// painted a full white frame there — the flash that survived theming the
+// window itself, since the window's colour is behind the webview and this
+// gap is inside it.
+var redirect_bounce_html = `<!DOCTYPE html><html><head>` +
+	`<meta charset="utf-8">` + core.FirstPaintHead() + `<title>Redirecting…</title>` +
 	`<meta http-equiv="refresh" content="0;url=%s">` +
 	`</head><body><script>location.replace(%q);</script></body></html>`
 
@@ -686,6 +695,26 @@ func (gp *gohort_proxy) clear_and_configure(w http.ResponseWriter) {
 // Only injects into 200 text/html responses that look like full
 // pages (contain "<head>"). AJAX fragments returned as text/html
 // without a <head> are left alone.
+//
+// Injected at the END of the head, never the start. It used to go in
+// immediately after "<head>", which put 35 KB of inline script AHEAD of the
+// page's own <meta charset> and its first-paint theme block. Two things go
+// wrong there, both invisible on a fast desktop-less browser and both very
+// visible in the webview:
+//
+//   - The parser has to compile and run every byte of the shim before it
+//     reaches the <meta name="color-scheme"> and inline background the server
+//     puts in the head for exactly this reason. Until it gets there the
+//     document is on screen with the browser's default canvas, which is white.
+//     That is a white flash on EVERY page navigation — and it is why theming
+//     the window and the page head did not, on their own, stop the flashing.
+//
+//   - <meta charset> has to land in the first 1024 bytes or the browser stops
+//     looking and falls back to a default encoding.
+//
+// At the end of the head the shim still runs before the body parses and long
+// before any user interaction, which is all it needs: it overrides window.open
+// and intercepts clicks.
 func inject_popup_shim(resp *http.Response) error {
 	if resp.StatusCode != http.StatusOK {
 		return nil
@@ -698,16 +727,24 @@ func inject_popup_shim(resp *http.Response) error {
 	if err != nil {
 		return err
 	}
-	idx := bytes.Index(body, []byte("<head>"))
-	if idx < 0 {
+	// A full page is one with a <head>; fragments are left alone. The shim
+	// goes in just before </head> — see the note above for why the top of the
+	// head is the wrong end.
+	if bytes.Index(body, []byte("<head>")) < 0 {
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return nil
 	}
-	insertion := []byte("<head>" + popup_shim_script)
+	idx := bytes.Index(body, []byte("</head>"))
+	if idx < 0 {
+		// A head that never closes: nothing to insert before, and guessing
+		// would risk landing inside a tag. Serve it untouched.
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return nil
+	}
 	new_body := make([]byte, 0, len(body)+len(popup_shim_script))
 	new_body = append(new_body, body[:idx]...)
-	new_body = append(new_body, insertion...)
-	new_body = append(new_body, body[idx+len("<head>"):]...)
+	new_body = append(new_body, popup_shim_script...)
+	new_body = append(new_body, body[idx:]...)
 	resp.Body = io.NopCloser(bytes.NewReader(new_body))
 	resp.ContentLength = int64(len(new_body))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(new_body)))
@@ -749,10 +786,10 @@ var popup_shim_script = "<script>" + popup_shim_js + "</script>"
 // is unreachable. Includes a "Change server" button that calls
 // ResetSettings via the Wails bridge and reloads — the most likely
 // fix from this state is correcting the URL.
-const GOHORT_NOT_RUNNING_HTML = `<!DOCTYPE html>
+var GOHORT_NOT_RUNNING_HTML = `<!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
+<meta charset="utf-8">` + core.FirstPaintHead() + `
 <title>gohort not reachable</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%%; }

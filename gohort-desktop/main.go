@@ -146,11 +146,11 @@ func runViewer() {
 				// Themed, for the same reason the window is. This page exists
 				// for one frame before the redirect, and undressed it is a
 				// white one — the first thing anybody sees at launch.
+				// core.FirstPaintHead is the same fragment every other
+				// desktop-served page carries; see the note there.
 				fmt.Fprintf(w,
 					`<!DOCTYPE html><html><head><meta charset="utf-8">`+
-						`<meta name="color-scheme" content="dark">`+
-						fmt.Sprintf(`<style>html,body{background:#%02x%02x%02x;margin:0}</style>`,
-							core.WINDOW_BG_R, core.WINDOW_BG_G, core.WINDOW_BG_B)+
+						core.FirstPaintHead()+
 						`<meta http-equiv="refresh" content="0;url=%s">`+
 						`<title>Loading…</title></head>`+
 						`<body><script>location.replace(%q);</script></body></html>`,
