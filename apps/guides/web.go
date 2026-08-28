@@ -63,6 +63,14 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleCollections(w, r, udb, user)
 	case path == "references":
 		T.handleReferences(w, r, udb, user)
+	// Publishing OUT: the modal's state, its Publisher chat, and the
+	// no-conversation update of an already-published copy.
+	case path == "publish/state":
+		T.handlePublishState(w, r, udb, user)
+	case path == "publish/chat/send":
+		T.handlePublishChat(w, r, udb, user)
+	case path == "publish/again":
+		T.handleRepublish(w, r, udb, user)
 	// Curator: the digest (what it did), the queue (what it has not done yet),
 	// an undo per decision, and a manual drain.
 	case path == "curator/runs":

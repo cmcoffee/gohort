@@ -50,6 +50,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 				{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
 			}},
+			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
 			{Label: "Curator", Kind: "client", URL: "guides_curator"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
@@ -91,12 +92,14 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			CSS(guideKnowledgeCSS).
 			CSS(guideSettingsCSS).
 			CSS(guideCuratorCSS).
+			CSS(guidePublishCSS).
 			JS(guideModalElJS).
 			JS(guideSectionCode).
 			ClientAction("guides_knowledge", guideKnowledgeAction).
 			ClientAction("guides_sources", guideSourcesAction).
 			ClientAction("guides_settings", guideSettingsAction).
-			ClientAction("guides_curator", guideCuratorAction),
+			ClientAction("guides_curator", guideCuratorAction).
+			ClientAction("guides_publish", guidePublishAction),
 	}
 	page.ServeHTTP(w, r)
 }
@@ -394,3 +397,81 @@ const guideSettingsCSS = `.guide-share-row { display: flex; align-items: center;
 .guide-share-modes { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.2rem 0 0.3rem 1.6rem; }
 .guide-share-mode { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: var(--text); }
 .guide-set-head { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); font-weight: 700; margin: 0.9rem 0 0.2rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }`
+
+// guidePublishAction is the 'guides_publish' client action behind the Publish
+// toolbar button. It opens the Publisher agent in a modal rather than a form:
+// which space a page belongs in, and whether this is the page published last
+// time, are questions worth asking rather than guessing.
+//
+// The panel is a plain core/ui agent_loop_panel pointed at this app's publish
+// chat endpoint — ask_user cards render in it for free — so nothing about
+// publishing leaks into core/ui. Where the guide has already been published,
+// each destination gets a Republish link that updates that exact page with no
+// conversation at all.
+const guidePublishAction = `function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'id=' + encodeURIComponent(gid);
+      fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+        window.uiOpenSimpleModal({title:'Publish guide', width:'760px', mount: function(body){
+          if (!d || !d.configured){
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'No publish destinations are configured on this deployment yet. An admin sets them up in Admin > Publishing — a Confluence site, or any endpoint that accepts a posted document.'}));
+            return;
+          }
+          if (!d.can_publish){
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'You need edit access to this guide to publish it.'}));
+            return;
+          }
+          // Where it already lives, with a one-click update of that same page.
+          (d.published || []).forEach(function(p){
+            var row = el('div', {class:'guide-pub-row'});
+            var where = p.target_title || p.kind;
+            var label = el('div', {class:'guide-pub-where'}, [el('strong', {text: p.title || 'Published'}),
+              el('span', {class:'guide-pub-mute', text: ' in ' + where + (p.version ? ' (v' + p.version + ')' : '')})]);
+            row.appendChild(label);
+            if (p.url){
+              var a = el('a', {class:'guide-pub-link', href: p.url, target:'_blank', rel:'noopener', text:'Open'});
+              row.appendChild(a);
+            }
+            var again = el('button', {class:'ui-row-btn', text:'Update'});
+            again.addEventListener('click', function(){
+              again.disabled = true; again.textContent = 'Updating…';
+              fetch('publish/again?' + qp + '&kind=' + encodeURIComponent(p.kind), {method:'POST', credentials:'same-origin'})
+                .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
+                .then(function(){ again.textContent = 'Updated'; if (window.uiInvalidate) window.uiInvalidate('guides'); })
+                .catch(function(err){ again.disabled = false; again.textContent = 'Update';
+                  window.uiAlert('Could not update it: ' + (err && err.message || err)); });
+            });
+            row.appendChild(again);
+            body.appendChild(row);
+          });
+          // The conversation. It opens itself: the agent's first move is to
+          // look at what is configured and ask where this should go.
+          var host = el('div', {class:'guide-pub-chat'});
+          body.appendChild(host);
+          window.uiMountComponent({
+            type: 'agent_loop_panel',
+            send_url: 'publish/chat/send',
+            cancel_url: 'chat/cancel',
+            markdown: true,
+            lock_activity: true,
+            auto_send: 'Publish this guide.',
+            empty_text: 'Working out where this can go…',
+            placeholder: 'Answer the Publisher…',
+            submit_label: 'Send'
+          }, host);
+        }});
+      });
+}`
+
+// guidePublishCSS styles the "already published here" rows and gives the
+// Publisher chat a fixed height inside the modal, so the modal doesn't grow as
+// the conversation does.
+const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.7rem; margin-bottom: 0.5rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
+.guide-pub-where { flex: 1; font-size: 0.9rem; color: var(--text-hi); }
+.guide-pub-mute { color: var(--text-mute); font-weight: 400; }
+.guide-pub-link { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
+.guide-pub-link:hover { text-decoration: underline; }
+.guide-pub-chat { height: 52vh; min-height: 20rem; display: flex; flex-direction: column; margin-top: 0.4rem; }
+.guide-pub-chat > * { flex: 1; min-height: 0; }
+@media (max-width: 700px) { .guide-pub-chat { height: 60vh; } }`

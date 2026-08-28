@@ -15,6 +15,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/docs"
 )
 
 const guidesTable = "guides"
@@ -58,9 +59,15 @@ type Guide struct {
 	// turns run ForcePrivate (network tools stripped, worker-tier routing) and the
 	// web-research tool is withheld, so answers/edits are grounded only in the
 	// guide's own attached knowledge — nothing reaches the open web.
-	Private bool   `json:"private,omitempty"`
-	Created string `json:"created"`
-	Updated string `json:"updated"`
+	Private bool `json:"private,omitempty"`
+	// Published records where this guide has been published OUT to an external
+	// system (a Confluence page, a webhook), one entry per destination. It is
+	// what makes the second publish an UPDATE of the same page rather than a
+	// duplicate, and what the Publish dialog reads to offer that. Written by the
+	// publisher tools; see apps/publish.
+	Published []docs.PublishRecord `json:"published,omitempty"`
+	Created   string               `json:"created"`
+	Updated   string               `json:"updated"`
 }
 
 // ShareModeEdit is the ShareMode value that lets any authenticated user edit a

@@ -283,6 +283,11 @@ type (
 	DocFinding       = docs.Finding
 	DocFindingOrigin = docs.Origin
 	DocFindingTarget = docs.FindingTarget
+	// NOTE: the publish-destination subsystem (core/docs/publish.go) is
+	// deliberately NOT aliased here. Its consumers — the writer app publishing
+	// and the package implementing a destination — import core/docs directly,
+	// so a whole outbound subsystem's API costs the hub namespace nothing. See
+	// the ceiling test's order of preference.
 )
 
 var (
