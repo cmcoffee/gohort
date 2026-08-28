@@ -324,6 +324,32 @@ func (T *AppCore) LeadContextSize() int {
 	return T.WorkerContextSize()
 }
 
+// loopContextSize is the window an agent loop has to stay inside: the SMALLER
+// of the tiers the turn might run on.
+//
+// A loop is not pinned to one tier — it starts on the route's model and can
+// escalate mid-turn — so a single budget has to be safe for whichever it lands
+// on, and the smaller window is the only one that is. The cost of being wrong
+// in this direction is that a large-window turn sheds some old tool BODIES
+// slightly early, and the model can re-run any tool whose body went; the cost
+// of being wrong in the other direction is the server quietly dropping the
+// system prompt mid-turn.
+//
+// Zero when no tier reports a window (a model that isn't a ContextSizer), which
+// leaves compaction off exactly as before — no invented number.
+func (T *AppCore) loopContextSize() int {
+	worker, lead := T.WorkerContextSize(), T.LeadContextSize()
+	switch {
+	case worker <= 0:
+		return lead
+	case lead <= 0:
+		return worker
+	case lead < worker:
+		return lead
+	}
+	return worker
+}
+
 // LLMTier selects which LLM tier a Session routes to. Worker is the
 // primary/local tier; Lead is the precision/judge tier (which may
 // fall back to Worker if not configured separately).

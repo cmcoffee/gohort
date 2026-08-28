@@ -1361,13 +1361,22 @@ type AgentLoopConfig struct {
 	// into the same dead end. Nil = no per-round override.
 	RoundChatOptions func() []ChatOption
 
-	// ContextSize is the model's context window (tokens). When > 0, the
-	// loop compacts history before each round once it crosses ~70% of the
-	// window — eliding the bodies of OLD tool results (keeping recent ones
-	// + all conversational text) so a long multi-round session can't grow
-	// past the window and trigger server-side context-shift (which drops
-	// the system prompt and degrades the model). 0 = no compaction. Set it
-	// from the caller's WorkerContextSize()/LeadContextSize().
+	// ContextSize is the model's context window (tokens). The loop compacts
+	// history before each round once it crosses ~70% of the window — eliding
+	// the bodies of OLD tool results (keeping recent ones + all conversational
+	// text) so a long multi-round session can't grow past the window and
+	// trigger server-side context-shift, which drops the system prompt and
+	// degrades the model.
+	//
+	// LEAVE IT ZERO. RunAgentLoop fills it from the running tiers, and that is
+	// the right answer for every caller in the tree. It used to read "0 = no
+	// compaction, set it from the caller's WorkerContextSize()/LeadContextSize()"
+	// — an instruction one of twenty loop configs followed, so nineteen kinds of
+	// turn had no compaction at all and grew until the server silently dropped
+	// their system prompt. See RunAgentLoop.
+	//
+	// Negative disables compaction outright, for a caller that genuinely wants
+	// an unbounded history and has a reason.
 	ContextSize int
 
 	// RoundCompactNow, when set, is checked at the top of each round; a
@@ -1681,6 +1690,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	if reply := strings.TrimSpace(cfg.PreEmptedReply); reply != "" {
 		resp, history := T.deliverPreEmptedReply(messages, reply, cfg)
 		return resp, history, nil
+	}
+	// Compaction is ON unless a caller has explicitly said otherwise.
+	//
+	// The window is not the caller's business — it belongs to whichever model
+	// tier the turn ends up on, which the loop knows and the caller often does
+	// not. Asking every construction site to remember produced exactly what
+	// asking always produces: one site remembered. The nineteen that did not
+	// included every scheduled fire, and a scheduled agent carrying its prior
+	// conversation is the turn most likely to grow past the window — observed
+	// at a 600KB request whose reply then wrote out three posts in prose and
+	// called no tool at all, because the system prompt telling it to had been
+	// dropped server-side.
+	if cfg.ContextSize == 0 {
+		cfg.ContextSize = T.loopContextSize()
 	}
 	resp, history, err := T.runAgentLoopInner(ctx, messages, cfg)
 	// Think-tag leak backstop at THE loop boundary, so every surface (web

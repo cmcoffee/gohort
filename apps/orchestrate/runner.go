@@ -7878,13 +7878,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			}
 			return nil
 		},
-		// Context window for history compaction — long multi-round
-		// sessions (Builder's edit→re-fetch loop especially) were growing
-		// past the window and triggering server-side context-shift. With
-		// this set, the loop elides old tool-result bodies once history
-		// nears the budget. LeadContextSize falls back to the worker
-		// window; 0 (unconfigured) disables compaction.
-		ContextSize: t.app.LeadContextSize(),
+		// ContextSize is deliberately UNSET: RunAgentLoop now fills it from
+		// the running tiers for every loop in the tree, and its answer is
+		// better than the one that was here. This asked for the LEAD window,
+		// which a turn running on the worker tier can exceed — the loop can
+		// escalate mid-turn, so the budget has to be safe for whichever tier
+		// it lands on, and only the smaller window is.
 		// LLM-driven compaction: when the model calls compact_context (it
 		// just consumed a long output it's done with), force an aggressive
 		// shed on the next round.
