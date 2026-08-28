@@ -2198,12 +2198,23 @@
           onclick: function(){ retryAssistantMessage(bubble); },
         }, ['Retry']));
       }
+      // Two copies, because they are wanted for different things. Copy is the
+      // one you reach for constantly — take this answer somewhere else — and it
+      // takes the text and nothing else. Copy turn is the one you reach for when
+      // something went wrong and you need to SHOW what happened: the question,
+      // every round of the reply, and each tool with its args and result.
       var copyBtn = el('button', {
         class: 'ui-agent-msg-act',
-        title: 'Copy this exchange — the request, this reply, and its tool calls',
-        onclick: function(){ copySubSession(bubble, copyBtn); },
+        title: 'Copy this reply\u2019s text',
+        onclick: function(){ copyAssistantMessage(bubble, copyBtn); },
       }, ['Copy']);
       bar.appendChild(copyBtn);
+      var copyTurnBtn = el('button', {
+        class: 'ui-agent-msg-act',
+        title: 'Copy the whole exchange \u2014 the request, every reply, and the tool calls with their args and results',
+        onclick: function(){ copySubSession(bubble, copyTurnBtn); },
+      }, ['Copy turn']);
+      bar.appendChild(copyTurnBtn);
       maybeAppendScrub(bar, bubble);
       appendBubbleActions(bar, 'assistant', bubble);
       bubble.appendChild(bar);
@@ -2249,27 +2260,18 @@
       retryUserMessage(prev);
     }
 
-    // copyAssistantMessage writes the bubble's rendered text content
-    // to the clipboard. Falls back to a textarea+execCommand path
-    // for browsers without Clipboard API permission. Brief "Copied"
-    // flash on the button so the user sees the action took.
-    function copyAssistantMessage(bubble, btn) {
-      var body = bubble.querySelector(':scope > .ui-agent-msg-body');
-      if (!body) return;
-      var text = body.innerText || body.textContent || '';
+    // writeClipboard is the one clipboard path both copy buttons use: the
+    // Clipboard API where it is permitted, a hidden textarea + execCommand
+    // where it is not (a non-secure origin, a browser that withholds the
+    // permission), and a brief "Copied" flash on the button either way so the
+    // action is visibly acknowledged.
+    function writeClipboard(text, btn) {
       var flash = function() {
         if (!btn) return;
         var prior = btn.textContent;
         btn.textContent = 'Copied';
         setTimeout(function(){ btn.textContent = prior; }, 900);
       };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(flash).catch(function() {
-          fallback();
-        });
-        return;
-      }
-      fallback();
       function fallback() {
         var ta = document.createElement('textarea');
         ta.value = text;
@@ -2279,13 +2281,31 @@
         try { document.execCommand('copy'); flash(); } catch (_) {}
         document.body.removeChild(ta);
       }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(flash).catch(fallback);
+        return;
+      }
+      fallback();
+    }
+
+    // copyAssistantMessage copies the bubble's TEXT and nothing else — what
+    // the Copy button on a reply does. Deliberately not the transcript: the
+    // common reason to copy an answer is to paste the answer, and a paste that
+    // arrives wrapped in headings and tool dumps has to be edited back down by
+    // hand. The transcript is Copy turn, one button over.
+    function copyAssistantMessage(bubble, btn) {
+      var body = bubble.querySelector(':scope > .ui-agent-msg-body');
+      if (!body) return;
+      writeClipboard(body.innerText || body.textContent || '', btn);
     }
 
     // copySubSession copies ONE exchange as a short, self-contained transcript —
     // the request, the reply(-ies), and their tool calls with args + results.
     // It's "Copy session" scoped to a single turn: the sub-session you paste to
     // show what happened in one fire or one answer without dumping the whole
-    // thread. Wired to the per-message Copy button.
+    // thread. Wired to the per-message "Copy turn" button — plain Copy takes
+    // the reply's text alone, which is what that button used to do and what it
+    // does again.
     //
     // Starts by walking back to the user bubble that opened the turn. A REPORT
     // CARD (a scheduled fire) has no preceding user bubble — the request is the
@@ -2376,29 +2396,7 @@
         }
         next = next.nextElementSibling;
       }
-      var blob = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
-      var flash = function() {
-        if (!btn) return;
-        var prior = btn.textContent;
-        btn.textContent = 'Copied';
-        setTimeout(function(){ btn.textContent = prior; }, 1100);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(blob).then(flash).catch(function() {
-          fallback();
-        });
-        return;
-      }
-      fallback();
-      function fallback() {
-        var ta = document.createElement('textarea');
-        ta.value = blob;
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); flash(); } catch (_) {}
-        document.body.removeChild(ta);
-      }
+      writeClipboard(lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n', btn);
     }
 
     // userBubbleIndex returns the index of this bubble's CORRESPONDING
