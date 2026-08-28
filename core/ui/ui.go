@@ -56,7 +56,25 @@ type Page struct {
 	// BackURL renders a "← Back" link at the top-left of the page.
 	// Empty omits the back link. Set to "/" to return to the gohort
 	// app menu, or to any path the operator wants.
+	//
+	// It is the page's SEMANTIC parent, and a FALLBACK rather than the whole
+	// answer. When the page was reached by following a link from elsewhere in
+	// this deployment, the back link walks history instead, because history
+	// knows something the declared parent cannot: where the reader actually
+	// was. That matters most for a hub of peer apps, where the declared parent
+	// is the dashboard for every one of them — Back from one hub page used to
+	// skip the hub page you came from and drop you at the top.
+	//
+	// BackURL still does the work when there is no trail: a bookmark, a fresh
+	// tab, a pasted link. It is also the href, so opening the parent in a new
+	// tab and no-JS both behave.
 	BackURL string
+	// HomeURL is where the « arrow goes — the dashboard, in one press, from
+	// anywhere. It sits beside the ← arrow (the page you came from) so the two
+	// jobs a single back link used to guess between are each a control the
+	// reader can aim. Defaults to "/"; set it only for a deployment whose hub
+	// is somewhere else. The arrow is omitted on the home page itself.
+	HomeURL string
 	// ShowTitle renders the Title visibly at the top of the page (in
 	// addition to the document <title>). Pairs with BackURL — the
 	// header bar shows back-arrow + title + optional badge area.
@@ -166,11 +184,15 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 		Footer:     p.Footer,
 		FooterURL:  p.FooterURL,
 		BackURL:    p.BackURL,
+		HomeURL:    p.HomeURL,
 		LiveURL:    p.LiveURL,
 		ShowTitle:  p.ShowTitle,
 	}
 	if cfg.MaxWidth == "" {
 		cfg.MaxWidth = "600px"
+	}
+	if cfg.HomeURL == "" {
+		cfg.HomeURL = "/"
 	}
 	// The live pill's link target: page override, else the framework default
 	// that the live-view app registers (keeps the app's route out of core/ui).
@@ -223,10 +245,10 @@ func RenderPageJSON(w io.Writer, pageJSON []byte, theme, extraHead, title string
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%s">
+%s<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%s">
 <title>%s</title>
 <link rel="stylesheet" href="/_ui/ui.css">
-%s</head>`, theme, webui.FaviconSVG, htmlEscape(title), extraHead)
+%s</head>`, theme, ThemeFirstPaintHead(theme), webui.FaviconSVG, htmlEscape(title), extraHead)
 	fmt.Fprintf(w, `
 <body>
 <div id="ui-root"></div>
@@ -332,6 +354,7 @@ type Section struct {
 type pageConfig struct {
 	Title     string          `json:"title"`
 	BackURL   string          `json:"back_url,omitempty"`
+	HomeURL   string          `json:"home_url,omitempty"`
 	ShowTitle bool            `json:"show_title,omitempty"`
 	Nav       []navLinkConfig `json:"nav,omitempty"`
 	Sticky    json.RawMessage `json:"sticky,omitempty"`

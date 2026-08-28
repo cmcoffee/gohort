@@ -103,6 +103,93 @@
   })();
 
   // --- Page mount ------------------------------------------------------
+  // --- in-page history depth ------------------------------------------------
+  //
+  // A page's own sub-navigation lives in the history stack too. The section
+  // rail addresses each section with a hash so a link can carry someone
+  // straight to one, and every such move is an entry. That is right for the
+  // BROWSER's back button, which means "undo my last step" and should walk
+  // those sections.
+  //
+  // It is wrong for the header arrow, which means "leave this page". Retracing
+  // blindly made the arrow step through the sub-menu the reader had just been
+  // using, several presses before it did the one thing it is labelled for.
+  //
+  // So each in-page entry carries a COUNT of how many of them are behind it,
+  // stored in the history entry itself rather than in a variable. State travels
+  // with the entry, so the number stays correct after the reader has used the
+  // browser's own back and forward buttons — which a counter kept on the side
+  // cannot, because nothing tells it which direction they went.
+  var uiLastPageDepth = 0;
+
+  function uiPageDepth() {
+    if (!window.history) return 0;
+    var st = history.state;
+    if (st && typeof st.ui_page_depth === 'number') {
+      uiLastPageDepth = st.ui_page_depth;
+      return st.ui_page_depth;
+    }
+    // Unlabelled, so answer zero — but do NOT forget what we last knew. An
+    // entry somebody else pushed is about to be stamped relative to that
+    // number, and reading it first must not be what destroys it.
+    return 0;
+  }
+
+  // uiPushPageStep records one in-page move. Falls back to a plain hash set
+  // where pushState is unavailable or refused: the section still opens and the
+  // URL still addresses it, and the header arrow degrades to walking the trail
+  // rather than to doing nothing.
+  function uiPushPageStep(hash) {
+    if (window.history && history.pushState) {
+      try {
+        history.pushState({ui_page_depth: uiPageDepth() + 1}, '', '#' + hash);
+        uiLastPageDepth++;
+        return;
+      } catch (_) {}
+    }
+    window.location.hash = hash;
+  }
+
+  // uiStampPageStep labels an entry somebody ELSE pushed — a hash link inside
+  // the content rather than a rail click. Unlabelled it reads as depth 0, and
+  // the header arrow would land on the previous SECTION believing it was the
+  // previous page.
+  function uiStampPageStep() {
+    if (!window.history || !history.replaceState) return;
+    var st = history.state;
+    if (st && typeof st.ui_page_depth === 'number') {
+      uiLastPageDepth = st.ui_page_depth;
+      return;
+    }
+    uiLastPageDepth++;
+    try {
+      history.replaceState({ui_page_depth: uiLastPageDepth}, '');
+    } catch (_) {}
+  }
+
+  // uiArrivedFromInsideTheApp reports whether this page was reached by following
+  // a link from another page of this same deployment — the condition under which
+  // walking history backwards lands somewhere the user recognises.
+  //
+  // Two signals, and both are needed. history.length alone counts entries this
+  // tab has accumulated for ANY site, so a tab that visited three other sites
+  // before landing here by bookmark would claim a trail that leads out of the
+  // app. document.referrer alone is empty on a reload of a page that WAS reached
+  // by a link in some browsers, and is stripped entirely under a strict referrer
+  // policy — so on its own it would quietly disable the whole behaviour rather
+  // than fail loudly. Requiring both keeps the fallback honest: when we cannot
+  // tell, the declared parent wins, which is exactly the old behaviour.
+  function uiArrivedFromInsideTheApp() {
+    if (!window.history || history.length <= 1) return false;
+    var ref = document.referrer || '';
+    if (!ref) return false;
+    try {
+      return new URL(ref, location.href).origin === location.origin;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function mount() {
     var configEl = document.getElementById('ui-config');
     if (!configEl) return;
@@ -126,7 +213,55 @@
       // tabs stay centered in column 2 — the two can never overlap.
       var headerLeft = el('div', {class: 'ui-page-header-left'});
       if (cfg.back_url) {
-        headerLeft.appendChild(el('a', {class: 'ui-back-link', href: cfg.back_url, title: 'Back'}, ['← Back']));
+        // Two arrows, two jobs. This used to be a single link that tried to be
+        // both the previous page and the way out, and it could only ever guess
+        // which one was meant — so it guessed, from history, and the guess is
+        // what the long comment below is about. Now the reader says which:
+        //   ‹  the page you came from
+        //   «  the dashboard, always, one press
+        var navGroup = el('div', {class: 'ui-back-group'});
+        var homeURL = cfg.home_url || '/';
+        // On the dashboard itself the dashboard arrow is a link to here.
+        var homeLink = location.pathname === homeURL ? null : el('a', {
+          class: 'ui-back-link ui-home-link', href: homeURL,
+          title: 'Dashboard', 'aria-label': 'Dashboard'
+        }, ['«']);
+        var backLink = el('a', {class: 'ui-back-link', href: cfg.back_url, title: 'Back', 'aria-label': 'Back'}, ['‹']);
+        // Retrace, when there is a trail to retrace.
+        //
+        // back_url is the page's SEMANTIC parent, which for a hub of peer apps
+        // is the dashboard for all of them — so following it blindly skipped
+        // the hub page you came from and dropped you at the top. That is what
+        // the « arrow is for now, and this one no longer has to serve both.
+        //
+        // History knows the answer the declared parent cannot: it is where you
+        // actually were. Walk it when this page was reached from inside the
+        // deployment, and fall back to back_url when it was not — a bookmark, a
+        // fresh tab, a pasted link, where going "back" would leave the app
+        // entirely or do nothing at all.
+        //
+        // The href stays, and modified clicks are left alone: a back link is
+        // still a LINK, and cmd/ctrl/shift/middle-clicking it to open the
+        // parent in a new tab is a real affordance that preventDefault would
+        // silently eat. It is also what runs with no JS.
+        backLink.addEventListener('click', function(ev) {
+          if (ev.defaultPrevented || ev.button !== 0) return;
+          if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+          if (!uiArrivedFromInsideTheApp()) return;
+          // Past this page's own sub-navigation in one press, not through it.
+          // Clamped because history.go past the start of the stack is a no-op
+          // in most browsers, and an arrow that does nothing is worse than one
+          // that goes somewhere merely unideal — if the count is ever wrong,
+          // this still moves.
+          var steps = uiPageDepth() + 1;
+          if (steps > history.length - 1) steps = history.length - 1;
+          if (steps < 1) return;
+          ev.preventDefault();
+          history.go(-steps);
+        });
+        navGroup.appendChild(backLink);
+        if (homeLink) navGroup.appendChild(homeLink);
+        headerLeft.appendChild(navGroup);
       }
       if (cfg.show_title && cfg.title) {
         // title attr = full name, so a name truncated by the ellipsis in a
@@ -376,11 +511,11 @@
         }
         ib.addEventListener('click', function() {
           activate(si);
-          // The hash is the address of the open section, so a link can
-          // carry someone to it and Back walks the trail. replaceState
-          // when clearing to the first section would be nicer still, but
-          // a plain hash set keeps the behaviour observable.
-          if (slugs[si]) window.location.hash = slugs[si];
+          // The hash is the address of the open section, so a link can carry
+          // someone to it and the browser's Back walks the trail. Pushed with
+          // a depth on it so the header arrow can step over the whole trail at
+          // once — see uiPushPageStep.
+          if (slugs[si]) uiPushPageStep(slugs[si]);
         });
         items.push(ib);
         rail.appendChild(ib);
@@ -394,8 +529,15 @@
         var si = slugs.indexOf(secnavSlug(want));
         if (si >= 0) activate(si);
       }
-      window.addEventListener('hashchange', activateHash);
+      window.addEventListener('hashchange', function() {
+        activateHash();
+        uiStampPageStep();
+      });
       activateHash();
+      // Landing on #<slug> directly is depth zero: it is where this reader
+      // started, so the header arrow leaves the page rather than clearing the
+      // hash first.
+      uiPageDepth();
     }
     if (tabbed) {
       var order = [], seenG = {}, secByGroup = {};

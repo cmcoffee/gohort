@@ -116,6 +116,14 @@ func runViewer() {
 		MinWidth:  core.MIN_WINDOW_WIDTH,
 		MinHeight: core.MIN_WINDOW_HEIGHT,
 
+		// The window's own colour, behind the webview. Wails defaults it to
+		// white, which shows through in every gap where the webview has not
+		// painted — between one page and the next above all, which is where a
+		// person moves most. See core.WINDOW_BG_*.
+		BackgroundColour: &options.RGBA{
+			R: core.WINDOW_BG_R, G: core.WINDOW_BG_G, B: core.WINDOW_BG_B, A: 255,
+		},
+
 		// Wails disables the webview's right-click menu in production
 		// builds by default. Turning it back on restores browser-style
 		// context actions — Copy on a text selection above all — which
@@ -135,8 +143,14 @@ func runViewer() {
 				target := localBase + r.URL.RequestURI()
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Header().Set("Cache-Control", "no-store")
+				// Themed, for the same reason the window is. This page exists
+				// for one frame before the redirect, and undressed it is a
+				// white one — the first thing anybody sees at launch.
 				fmt.Fprintf(w,
 					`<!DOCTYPE html><html><head><meta charset="utf-8">`+
+						`<meta name="color-scheme" content="dark">`+
+						fmt.Sprintf(`<style>html,body{background:#%02x%02x%02x;margin:0}</style>`,
+							core.WINDOW_BG_R, core.WINDOW_BG_G, core.WINDOW_BG_B)+
 						`<meta http-equiv="refresh" content="0;url=%s">`+
 						`<title>Loading…</title></head>`+
 						`<body><script>location.replace(%q);</script></body></html>`,

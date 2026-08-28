@@ -27,6 +27,23 @@ const (
 	MIN_WINDOW_WIDTH      = 720
 	MIN_WINDOW_HEIGHT     = 480
 
+	// WINDOW_BG_* is the colour the window itself is painted, behind the
+	// webview. Wails defaults it to WHITE, and that white is visible in every
+	// gap where the webview has nothing on screen: the moment between one page
+	// and the next, a resize, the first frame at launch. Against a dark web UI
+	// that reads as a flash, and no amount of CSS inside the page can reach it
+	// — it is not the document's background, it is the window's.
+	//
+	// The value is the framework's default theme background (--bg-0 of
+	// "indigo", core/ui/themes.go). It cannot be read from the server: the
+	// window exists before there is a connection to ask. A deployment on a
+	// light theme gets a dark frame for a few milliseconds instead of a light
+	// one, which is the same trade every native app makes and far better than
+	// white for everyone.
+	WINDOW_BG_R = 0x0f
+	WINDOW_BG_G = 0x11
+	WINDOW_BG_B = 0x17
+
 	ENV_GOHORT_ADDR   = "GOHORT_DESKTOP_ADDR"
 	ENV_LANDING_PATH  = "GOHORT_DESKTOP_PATH"
 	ENV_WINDOW_WIDTH  = "GOHORT_DESKTOP_WIDTH"

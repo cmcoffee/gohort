@@ -97,10 +97,19 @@ select:-webkit-autofill {
   display: flex; align-items: center; gap: 0.6rem;
   min-width: 0;
 }
+/* The two header chevrons: ‹ to the page you came from, « to the dashboard.
+ * Grouped tight so they read as one control with two aims rather than as two
+ * unrelated links. */
+.ui-back-group { display: inline-flex; align-items: center; gap: 0.25rem; }
 .ui-back-link {
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.9rem;
   padding: 0.2rem 0.5rem;
-  font-size: 0.8rem; color: var(--text-mute); text-decoration: none;
+  /* The chevrons carry the whole meaning now that the word "Back" is gone, and
+   * a chevron draws lighter than an arrow did — so they get a size and a weight
+   * that survive being one small glyph. */
+  font-size: 1.1rem; font-weight: 600; line-height: 1;
+  color: var(--text-mute); text-decoration: none;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg-1);
   -webkit-tap-highlight-color: transparent;
@@ -108,7 +117,7 @@ select:-webkit-autofill {
 }
 /* Mobile: keep a touch-friendly tap target. */
 @media (max-width: 700px) {
-  .ui-back-link { min-height: var(--tap); padding: 0.45rem 0.7rem; font-size: 0.9rem; }
+  .ui-back-link { min-height: var(--tap); min-width: var(--tap); padding: 0.45rem 0.7rem; font-size: 1.2rem; }
 }
 .ui-back-link:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-back-link:active { transform: scale(0.97); }
@@ -3113,7 +3122,7 @@ select:-webkit-autofill {
    * is pure navigation chrome that just adds height above the fold
    * when you scroll up. Browser back still works. Scoped via :has()
    * so non-chat pages keep their back button. */
-  #ui-root:has(.ui-agent) .ui-back-link { display: none; }
+  #ui-root:has(.ui-agent) .ui-back-group { display: none; }
 }
 .ui-agent-topbar {
   display: flex; flex-direction: column;

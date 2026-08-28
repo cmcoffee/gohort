@@ -56,3 +56,47 @@ func TestAskCardSubmitsToItsOwnPanel(t *testing.T) {
 		t.Errorf("uiAskSubmitAnswer(wrap, …) called %d time(s), want 2 (the options card and the multi-step form)", n)
 	}
 }
+
+// TestBackLinkRetracesButKeepsItsHref — the back link is the page's SEMANTIC
+// parent, and for a hub of peer apps that parent is the dashboard for all of
+// them. Arriving at one hub page from another and pressing Back skipped the
+// page you came from and dropped you at the top, so getting back to where you
+// were meant pressing Forward.
+//
+// The behavioral half is driven under node by testdata/back_link_test.js. This
+// pins the two properties that test cannot see, because they are about the
+// element rather than the predicate.
+func TestBackLinkRetracesButKeepsItsHref(t *testing.T) {
+	raw, err := os.ReadFile("assets/runtime/99_epilogue.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+
+	// The href stays. It is what runs with no JS, and it is what a
+	// cmd/ctrl/middle-click opens in a new tab.
+	if !strings.Contains(src, "href: cfg.back_url") {
+		t.Error("the back link lost its href; with no JS, and on a new-tab click, it now goes nowhere")
+	}
+	if !strings.Contains(src, "history.go(-steps)") {
+		t.Error("the back link no longer retraces; every hub page sends the reader to the dashboard again")
+	}
+	// Past the page's own sub-navigation, not through it. history.back() alone
+	// stepped the reader back through the section rail they had just been
+	// using, several presses before the arrow did what it is labelled for.
+	if !strings.Contains(src, "uiPageDepth() + 1") {
+		t.Error("the back link steps one entry at a time again; it will walk this page's own section rail before leaving")
+	}
+	// The rail's entries have to carry their depth, or there is nothing to skip
+	// by. A plain location.hash set pushes an entry with no state on it.
+	if strings.Contains(src, "if (slugs[si]) window.location.hash = slugs[si];") {
+		t.Error("the section rail pushes unlabelled history entries again; the back link cannot tell them from a page")
+	}
+	// Modified clicks belong to the browser. preventDefault on all of them
+	// silently eats opening the parent in a new tab, and nothing reports it.
+	for _, key := range []string{"ev.metaKey", "ev.ctrlKey", "ev.shiftKey", "ev.altKey", "ev.button"} {
+		if !strings.Contains(src, key) {
+			t.Errorf("the back-link handler does not check %s; a modified click would be swallowed instead of opening a new tab", key)
+		}
+	}
+}
