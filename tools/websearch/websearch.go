@@ -197,7 +197,9 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 		provider = "duckduckgo"
 	}
 
-	result, err := SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+	result, err := SearchWithProvider(SearchRequest{
+		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,
+	})
 	// The operator's own searches are priced too. Recording only a peer's would
 	// make a shared key look like the peer was spending all of it.
 	recordSearchCost(cfg, provider)
@@ -825,7 +827,8 @@ func isBinaryMime(mime string) bool {
 
 // SearchWithProvider runs a search query using a specific provider.
 // This is exported so callers can run cross-provider searches.
-func SearchWithProvider(query string, provider string, apiKey string, endpoint string) (string, error) {
+func SearchWithProvider(req SearchRequest) (string, error) {
+	query, provider, apiKey := req.Query, req.Provider, req.APIKey
 	Debug("[web_search] provider=%s query=%q", provider, query)
 	var result string
 	var err error
@@ -837,7 +840,10 @@ func SearchWithProvider(query string, provider string, apiKey string, endpoint s
 	case "google":
 		result, err = searchGoogle(query, apiKey)
 	case "searxng":
-		result, err = searchSearXNG(query, endpoint, apiKey)
+		// The one provider a PEER can be behind, so the only one that takes the
+		// whole request: it needs Source to know whether to authenticate
+		// through the peer transport.
+		result, err = searchSearXNG(req)
 	case "serper":
 		result, err = searchSerper(query, apiKey)
 	default:
@@ -866,7 +872,9 @@ func CrossProviderSearch(query string) (string, error) {
 		provider = "duckduckgo"
 	}
 
-	out, err := SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+	out, err := SearchWithProvider(SearchRequest{
+		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,
+	})
 	recordSearchCost(cfg, provider)
 	return out, err
 }
@@ -1178,42 +1186,49 @@ type searxngResponse struct {
 	} `json:"results"`
 }
 
+// query returns the search text. A one-line helper so the URL build above
+// reads as a URL rather than as field access.
+func query(sr SearchRequest) string { return sr.Query }
+
 // searchSearXNG uses a SearXNG instance's JSON API.
 //
 // apiKey is optional and sent as a bearer. A public SearXNG needs none, but an
 // instance behind an authenticating proxy does — and so does a gohort PEER,
 // which serves this exact shape at /api/peer/v1/search precisely so that
 // borrowing another instance's search needs no client of its own.
-func searchSearXNG(query, endpoint, apiKey string) (string, error) {
+func searchSearXNG(sr SearchRequest) (string, error) {
+	endpoint := strings.TrimSuffix(strings.TrimSpace(sr.Endpoint), "/")
 	if endpoint == "" {
 		return "", fmt.Errorf("searxng requires an endpoint URL (configure with --setup)")
 	}
-
-	endpoint = strings.TrimSuffix(endpoint, "/")
 
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("invalid searxng endpoint: %w", err)
 	}
 
-	client := &apiclient.APIClient{
-		Server:         parsed.Host,
-		URLScheme:      parsed.Scheme,
-		ConnectTimeout: 5 * time.Second,
-		RequestTimeout: 15 * time.Second,
-	}
+	target := fmt.Sprintf("%s://%s%s/search?q=%s&format=json&categories=general",
+		parsed.Scheme, parsed.Host, parsed.Path, url.QueryEscape(query(sr)))
 
-	path := fmt.Sprintf("%s/search?q=%s&format=json&categories=general", parsed.Path, url.QueryEscape(query))
-
-	req, err := client.NewRequest("GET", path)
+	req, err := http.NewRequest("GET", target, nil)
 	if err != nil {
 		return "", fmt.Errorf("searxng request failed: %w", err)
 	}
-	if key := strings.TrimSpace(apiKey); key != "" {
+	if key := strings.TrimSpace(sr.APIKey); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 
-	resp, err := client.SendRawRequest("", req)
+	// PeerClientForProvider, on net/http rather than snugforge's APIClient,
+	// which has no transport hook to plug this into.
+	//
+	// When Source names a peer this is the peer transport: the Authorization
+	// set just above is replaced with a credential resolved NOW, and a refused
+	// one is re-exchanged and the request replayed. A peer's search key rotates
+	// like every other peer credential, and a stale one here fails as an EMPTY
+	// RESULT SET rather than an error — every search quietly returns nothing
+	// and the agent above reports it found no sources. When Source is local or
+	// empty this is an ordinary client and nothing about the request changes.
+	resp, err := PeerClientForProvider(sr.Source, 15*time.Second).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("searxng request failed: %w", err)
 	}

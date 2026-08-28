@@ -148,12 +148,12 @@ func PeerInvestigate(ctx context.Context, p RemotePeer, applianceID, question st
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, PeerCredential(p))
+	// The credential is the transport's business — see peer_client.go.
 
 	// Timeout matches the server-side cap: a client that gives up sooner than
 	// the far side finishes turns a slow answer into a failure with no way to
 	// retrieve the work that was already done.
-	resp, err := (&http.Client{Timeout: peerInvestigateTimeout}).Do(req)
+	resp, err := PeerClientFor(p, peerInvestigateTimeout).Do(req)
 	if err != nil {
 		// A timeout here is not a broken link — it is an investigation still
 		// running on the far side with nobody left to receive it. Said plainly,
@@ -326,9 +326,7 @@ func PeerFetchKnowledge(ctx context.Context, p RemotePeer, applianceID string) (
 		return out, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, PeerCredential(p))
-
-	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	resp, err := PeerClientFor(p, 60*time.Second).Do(req)
 	if err != nil {
 		return out, fmt.Errorf("reaching peer %q: %w", p.Name, err)
 	}
@@ -489,9 +487,7 @@ func PeerExec(ctx context.Context, p RemotePeer, applianceID, command string) (s
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(peerKeyHeader, PeerCredential(p))
-
-	resp, err := (&http.Client{Timeout: peerExecTimeout}).Do(req)
+	resp, err := PeerClientFor(p, peerExecTimeout).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("reaching peer %q: %w", p.Name, err)
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -642,4 +643,143 @@ func TestARekeyIsNotRacedByTheRenewalItProvokes(t *testing.T) {
 	} else if _, live := peerKeyFromAccessToken(cred); !live {
 		t.Error("the credential after a contested re-key is not live")
 	}
+}
+
+// The startup burst: "unrecognized or disabled peer key", once per tool, from
+// tool indexing.
+//
+// These go through Embed, NOT EmbedWith with a config resolved up front, and
+// that is the whole point. Embed reads the config on every call, and the read
+// path (resolveEmbeddingPeer, under GetEmbeddingConfig) is hot enough that it
+// answers without blocking — so with no live access token it hands back the
+// static key. The key stopped authenticating anything when exchange became
+// mandatory: it is a pairing code, and the far side must refuse it. A test
+// holding a config snapshotted while the token was alive proves nothing,
+// because it never asks the question.
+//
+// An expired access token with the refresh token intact is the state a process
+// comes back in after being down longer than a token's life.
+func TestEmbedResolvesACredentialAtSendTimeNotReadTime(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	cfg, err := ResolveEmbeddingProvider(EmbeddingConfig{
+		Enabled: true, Provider: PeerProviderValue("gpu-box"),
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// resolveEmbeddingPeer + EmbedWith is exactly what Embed does — Embed is
+	// EmbedWith(GetEmbeddingConfig()), and GetEmbeddingConfig is the stored
+	// config put through resolveEmbeddingPeer. Composed by hand here because
+	// both sides of this test are ONE process: installing a peer-backed config
+	// globally would make the SERVING half believe it borrows its embeddings
+	// and refuse to relay them, which is a different guard entirely.
+
+	// Age the access token out, keeping the refresh token — coming back from
+	// downtime, not losing the pairing.
+	aged := loadPeerTokens("gpu-box")
+	if aged.Refresh == "" {
+		t.Fatal("precondition: pairing should have produced a refresh token")
+	}
+	aged.Expires = time.Now().Add(-time.Hour)
+	storePeerTokens("gpu-box", aged)
+
+	// What a config READ yields in this state is the pairing code — the
+	// credential that used to reach the wire.
+	if stale := resolveEmbeddingPeer(cfg); stale.APIKey != strings.TrimSpace(key) {
+		t.Logf("note: the non-blocking read returned %q, not the static key", stale.APIKey)
+	}
+
+	// Several in a row, because the symptom was a BURST: the first exchanges,
+	// the rest ride what it landed.
+	for i := 0; i < 3; i++ {
+		vec, err := EmbedWith(t.Context(), resolveEmbeddingPeer(cfg), "tool description to index")
+		if err != nil {
+			t.Fatalf("embed %d failed against a peer that was reachable throughout: %v", i+1, err)
+		}
+		if len(vec) != 4 {
+			t.Fatalf("embed %d returned %d dimensions, want 4", i+1, len(vec))
+		}
+	}
+
+	if cred := PeerCredential(mustPeer(t, "gpu-box")); cred == strings.TrimSpace(key) {
+		t.Error("the peer is still presenting its pairing code as a credential")
+	} else if _, live := peerKeyFromAccessToken(cred); !live {
+		t.Errorf("expected a live access token after embedding, got %q", cred)
+	}
+}
+
+// The state nothing could recover from: a token this side believes in and the
+// far side has dropped.
+//
+// EnsurePeerToken returns early while the local clock says the access token is
+// inside its life, which is right for expiry and wrong for every other way a
+// token dies — the peer restarting and losing its table, reuse detection
+// deleting the family, a revoked grant. In all of those this side keeps
+// presenting a credential it believes in, the peer answers "unrecognized or
+// disabled peer key" to every call, and nothing reconciles it: the renewal that
+// would fix it is never attempted. Before rotation there was no such state.
+//
+// A 401 is the only evidence available, so it has to be the trigger.
+func TestARefusedTokenIsRenewedAndTheEmbedRetried(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	cfg, err := ResolveEmbeddingProvider(EmbeddingConfig{
+		Enabled: true, Provider: PeerProviderValue("gpu-box"),
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// See the note in the test above: the read path is composed by hand
+	// because this process is also the peer.
+
+	// The far side forgets this access token while our clock still trusts it: a
+	// long life on a credential that is already dead over there.
+	live := loadPeerTokens("gpu-box")
+	if live.Access == "" || live.Refresh == "" {
+		t.Fatal("precondition: pairing should have produced both tokens")
+	}
+	dead := live
+	dead.Access = "dead-" + live.Access
+	dead.Expires = time.Now().Add(time.Hour)
+	storePeerTokens("gpu-box", dead)
+
+	// Nothing else would fix this: from here the credential looks healthy, so
+	// no renewal is due and none will be attempted.
+	if got := PeerCredential(mustPeer(t, "gpu-box")); got != dead.Access {
+		t.Fatalf("precondition: expected the dead token to be presented, got %q", got)
+	}
+
+	vec, err := EmbedWith(t.Context(), resolveEmbeddingPeer(cfg), "an embed that meets a refused token")
+	if err != nil {
+		t.Fatalf("a refused token was not recovered from: %v", err)
+	}
+	if len(vec) != 4 {
+		t.Errorf("vector length = %d, want 4", len(vec))
+	}
+	if got := PeerCredential(mustPeer(t, "gpu-box")); got == dead.Access {
+		t.Error("the refused token is still installed — the next embed fails the same way")
+	} else if _, ok := peerKeyFromAccessToken(got); !ok {
+		t.Errorf("expected a live access token after recovery, got %q", got)
+	}
+
+	// The refresh token has to SURVIVE the recovery. Clearing both would put
+	// the peer back on a pairing code that has already been spent, which means
+	// re-pairing by hand — the exact outage this is meant to prevent.
+	if loadPeerTokens("gpu-box").Refresh == "" {
+		t.Error("recovery discarded the refresh token, leaving nothing to renew with")
+	}
+}
+
+func mustPeer(t *testing.T, name string) RemotePeer {
+	t.Helper()
+	p, ok := GetRemotePeer(name)
+	if !ok {
+		t.Fatalf("peer %q vanished", name)
+	}
+	return p
 }

@@ -27,40 +27,112 @@ import (
 const mediaUploadCredential = "media_local"
 
 func init() {
-	media.GovernedUploadFunc = func(ctx context.Context, url, field, filename string, body []byte, fields map[string]string, bearer string) (string, error) {
-		scoped := SecureCredential{
-			Name:              mediaUploadCredential,
-			Type:              SecureCredNone,
-			AllowedURLPattern: imageHostPattern(url),
-			Description:       "Unauthenticated media upload, scoped to the configured endpoint's host.",
-		}
-		// An authenticated endpoint — real OpenAI, or a peer instance — gets
-		// its key. Carried on the synthesized credential rather than as a
-		// request header, because dispatch strips caller-supplied Authorization
-		// on purpose; and inline rather than stored, because a key the operator
-		// typed into the STT form has no business appearing in the shared
-		// credential store under a name they never chose.
-		if bearer = strings.TrimSpace(bearer); bearer != "" {
-			scoped.Type = SecureCredBearer
-			scoped.inlineSecret = bearer
-			scoped.Description = "Authenticated media upload, scoped to the configured endpoint's host."
-		}
-		args := map[string]any{
-			"url":    url,
-			"method": "POST",
-			secureUploadArg: &FileUpload{
-				Reader:    bytes.NewReader(body),
-				FieldName: field,
-				FileName:  filename,
-				Fields:    fields,
-			},
-		}
-		out, err := Secure().dispatch(scoped, args, sessionForMediaUpload(ctx))
+	media.GovernedUploadFunc = func(ctx context.Context, up media.UploadRequest) (string, error) {
+		out, err := mediaUpload(ctx, up, mediaUploadBearer(ctx, up))
 		if err != nil {
 			return "", err
 		}
+		// A peer that refused the credential is the one failure worth a second
+		// attempt: this side cannot otherwise learn that a token it believes in
+		// has died over there. Same recovery the peer transport performs for
+		// every other capability — it cannot be reused literally here because a
+		// governed upload goes out through SecureAPI dispatch rather than an
+		// http.Client, so the refusal arrives as text rather than a status.
+		if mediaUploadRefused(out) {
+			if cred, ok := renewRefusedPeerUpload(ctx, up); ok {
+				out, err = mediaUpload(ctx, up, cred)
+				if err != nil {
+					return "", err
+				}
+			}
+		}
 		return mediaUploadBody(out)
 	}
+}
+
+// mediaUpload performs one governed upload with the given bearer.
+func mediaUpload(ctx context.Context, up media.UploadRequest, bearer string) (string, error) {
+	scoped := SecureCredential{
+		Name:              mediaUploadCredential,
+		Type:              SecureCredNone,
+		AllowedURLPattern: imageHostPattern(up.URL),
+		Description:       "Unauthenticated media upload, scoped to the configured endpoint's host.",
+	}
+	// An authenticated endpoint — real OpenAI, or a peer instance — gets its
+	// key. Carried on the synthesized credential rather than as a request
+	// header, because dispatch strips caller-supplied Authorization on purpose;
+	// and inline rather than stored, because a key the operator typed into the
+	// STT form has no business appearing in the shared credential store under a
+	// name they never chose.
+	if bearer = strings.TrimSpace(bearer); bearer != "" {
+		scoped.Type = SecureCredBearer
+		scoped.inlineSecret = bearer
+		scoped.Description = "Authenticated media upload, scoped to the configured endpoint's host."
+	}
+	args := map[string]any{
+		"url":    up.URL,
+		"method": "POST",
+		secureUploadArg: &FileUpload{
+			Reader:    bytes.NewReader(up.Body),
+			FieldName: up.FieldName,
+			FileName:  up.FileName,
+			Fields:    up.Fields,
+		},
+	}
+	return Secure().dispatch(scoped, args, sessionForMediaUpload(ctx))
+}
+
+// mediaUploadBearer picks the credential this upload presents.
+//
+// For a PEER it is resolved now, from the peer's name, blocking for a token
+// exchange if there is no live one — the same rule the peer transport follows,
+// and for the same reason: up.Bearer is whatever was live when the transcription
+// config was READ, and reads happen far from sends. For anything else it is the
+// configured key, unchanged.
+func mediaUploadBearer(ctx context.Context, up media.UploadRequest) string {
+	if p, ok := peerForProvider(up.Provider); ok {
+		if cred := strings.TrimSpace(PeerCredentialNow(ctx, p)); cred != "" {
+			return cred
+		}
+	}
+	return up.Bearer
+}
+
+// mediaUploadRefused reports whether a dispatch result is a 401. dispatch
+// writes for a model — it reports a failed status in a leading "HTTP 401 ..."
+// line rather than as an error — so the refusal has to be read out of the text.
+func mediaUploadRefused(out string) bool {
+	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	return strings.HasPrefix(line, "HTTP 401")
+}
+
+// renewRefusedPeerUpload drops the access token a peer refused and exchanges a
+// new one, reporting whether the retry is worth making.
+func renewRefusedPeerUpload(ctx context.Context, up media.UploadRequest) (string, bool) {
+	p, ok := peerForProvider(up.Provider)
+	if !ok || !p.UseTokens {
+		return "", false
+	}
+	InvalidatePeerAccessToken(p.Name)
+	InvalidatePeerResolution()
+	if fresh, ok := GetRemotePeer(p.Name); ok {
+		p = fresh
+	}
+	cred := strings.TrimSpace(PeerCredentialNow(ctx, p))
+	if cred == "" || cred == strings.TrimSpace(p.Key) {
+		return "", false
+	}
+	Log("[peer] %q refused our credential on a media upload — exchanged a new one and retrying", p.Name)
+	return cred, true
+}
+
+// peerForProvider resolves a "peer:<name>" provider string to its record.
+func peerForProvider(provider string) (RemotePeer, bool) {
+	name := peerNameFromProvider(provider)
+	if name == "" {
+		return RemotePeer{}, false
+	}
+	return lookupPeerCached(name)
 }
 
 // mediaUploadBody turns a governed dispatch's LLM-facing result into the plain

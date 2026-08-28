@@ -678,6 +678,13 @@ func InvalidatePeerResolution() {
 
 // warnPeerResolveOnce logs a resolution problem the first time it is seen, and
 // again only if the problem CHANGES.
+//
+// An EMPTY msg is the all-clear: callers pass it after a success so the next
+// occurrence of the same problem is reported again rather than deduped against
+// a fault that has since been fixed. It records that and says nothing — it used
+// to log it, which put a bare "[peer]" line with no message after it in the log
+// every time a peer recovered. Reading one of those next to a real failure, the
+// obvious conclusion is that something went wrong and could not say what.
 func warnPeerResolveOnce(name, msg string) {
 	peerResolveMu.Lock()
 	last, seen := peerResolveWarned[name]
@@ -687,6 +694,9 @@ func warnPeerResolveOnce(name, msg string) {
 	}
 	peerResolveWarned[name] = msg
 	peerResolveMu.Unlock()
+	if strings.TrimSpace(msg) == "" {
+		return
+	}
 	Log("[peer] %s", msg)
 }
 

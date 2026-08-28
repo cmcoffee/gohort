@@ -531,7 +531,12 @@ func peerModelAuth(name string) func(*http.Request) {
 			// Sending nothing earns a clean 401 rather than a stale secret.
 			return
 		}
-		if cred := strings.TrimSpace(PeerCredential(p)); cred != "" {
+		// PeerCredentialNow, not PeerCredential: this is the moment of sending,
+		// and the non-blocking form answers with the static key when there is
+		// no token yet — a request the far side refuses by design. The first
+		// message after a peer has been idle past its token's life was losing
+		// the whole turn to that.
+		if cred := strings.TrimSpace(PeerCredentialNow(req.Context(), p)); cred != "" {
 			req.Header.Set("Authorization", "Bearer "+cred)
 		}
 	}

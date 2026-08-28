@@ -9,6 +9,7 @@ package core
 // reads as a theft, and a fallback that quietly stops falling back.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -324,5 +325,67 @@ func TestPeerCredentialNeverBlocks(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("PeerCredential blocked on the network")
+	}
+}
+
+// TestPeerCredentialNowWaitsForTheExchange — the bug this exists for.
+//
+// PeerCredential must not block, so with no usable token it schedules the
+// exchange and hands back the static key. That fallback was written when a key
+// was ALSO a credential; the serving side now accepts access tokens only, so
+// the key is a request that cannot succeed. The cost is a whole turn: the first
+// message after a peer has been idle past its token's life goes out on the key,
+// earns a 401, and the renewal it kicked off lands milliseconds later. Seen
+// live as a 401 and a successful renewal in the same second.
+func TestPeerCredentialNowWaitsForTheExchange(t *testing.T) {
+	defer scratchPeerStore(t)()
+	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
+	k := grantFor(t)
+	p := consumingPeer(t, "den", peerTokenServer(t), k.Key, true)
+
+	// Nothing cached: exactly the state a first request after a restart is in.
+	got := PeerCredentialNow(context.Background(), p)
+	if got == k.Key {
+		t.Fatal("PeerCredentialNow handed back the pairing code; the far side refuses it by design and the turn is lost")
+	}
+	if got == "" {
+		t.Fatal("PeerCredentialNow returned nothing")
+	}
+	// And it is the token the exchange actually stored, not something invented.
+	if stored := loadPeerTokens(p.Name); stored.Access != got {
+		t.Errorf("returned %q but the store holds %q", got, stored.Access)
+	}
+
+	// A second call is free: the token is cached, so no exchange happens and no
+	// refresh token is spent.
+	if again := PeerCredentialNow(context.Background(), p); again != got {
+		t.Errorf("a second call exchanged again: %q then %q", got, again)
+	}
+}
+
+// TestPeerCredentialNowStillFallsBackWhenExchangeIsImpossible — blocking must
+// not turn a peer whose serving side never enabled rotation, or one that is
+// simply down, into a hard failure. The caller has a request in hand and
+// nothing better to do with it than send and find out.
+func TestPeerCredentialNowStillFallsBackWhenExchangeIsImpossible(t *testing.T) {
+	defer scratchPeerStore(t)()
+	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
+	p := consumingPeer(t, "den", "http://127.0.0.1:1", "static-key", true)
+
+	done := make(chan string, 1)
+	go func() { done <- PeerCredentialNow(context.Background(), p) }()
+	select {
+	case got := <-done:
+		if got != "static-key" {
+			t.Errorf("PeerCredentialNow = %q, want the static key when exchange is impossible", got)
+		}
+	case <-time.After(peerTokenExchangeTimeout + 5*time.Second):
+		t.Fatal("PeerCredentialNow never gave up on an unreachable peer")
+	}
+
+	// A peer that was never opted in does not even try.
+	off := consumingPeer(t, "off", "http://127.0.0.1:1", "static-key", false)
+	if got := PeerCredentialNow(context.Background(), off); got != "static-key" {
+		t.Errorf("a peer not on the token flow = %q, want its static key", got)
 	}
 }

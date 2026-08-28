@@ -217,7 +217,13 @@ func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32
 	// 60s is the CEILING for a caller that sets no deadline (bulk ingestion).
 	// Latency-sensitive callers pass a ctx with their own budget — the request
 	// is context-aware, so the shorter of the two wins.
-	client := &http.Client{Timeout: 60 * time.Second}
+	//
+	// Through PeerClientForProvider, so a peer-backed embedder authenticates
+	// itself: the Authorization set above carries whatever key was live when
+	// this config was READ, and reads happen far from sends. When the provider
+	// names a peer the transport replaces it with a credential resolved now and
+	// re-exchanges if the peer refuses it; otherwise this is a plain client.
+	client := PeerClientForProvider(cfg.Provider, 60*time.Second)
 	started := time.Now()
 	resp, err := client.Do(req)
 	elapsed := time.Since(started)

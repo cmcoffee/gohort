@@ -237,6 +237,34 @@ func clearPeerTokens(name string) {
 	storePeerTokens(name, peerTokens{})
 }
 
+// InvalidatePeerAccessToken drops the access token a peer has REFUSED, keeping
+// the refresh token so the next exchange can recover without re-pairing.
+//
+// This is the state nothing else could reach. EnsurePeerToken returns early
+// while the local clock says the access token is still inside its life, which
+// is right for expiry and wrong for every other way a token dies: the far side
+// restarting and losing its table, reuse detection deleting the family, an
+// operator revoking the grant. In all of those this side goes on presenting a
+// credential it believes in, the peer answers "unrecognized or disabled peer
+// key" to every call, and nothing reconciles the disagreement — the renewal
+// that would fix it is never attempted, because by our clock there is nothing
+// to renew. Before rotation there was no such state: a static key either worked
+// or it did not.
+//
+// So a refusal is the signal to stop believing the clock. Only the ACCESS half
+// is dropped: clearPeerTokens would take the refresh token with it, and that is
+// the one thing that can re-establish the link without an operator pasting a
+// new pairing code.
+func InvalidatePeerAccessToken(name string) {
+	key := strings.ToLower(strings.TrimSpace(name))
+	t := loadPeerTokens(key)
+	if t.Access == "" {
+		return
+	}
+	t.Access, t.Expires = "", time.Time{}
+	storePeerTokens(key, t)
+}
+
 // --- credential resolution ---------------------------------------------------
 
 // PeerCredential returns the bearer to present to this peer right now.
@@ -263,6 +291,63 @@ func PeerCredential(p RemotePeer) string {
 	// that case the 401 it earns is the honest report that this peer needs
 	// re-pairing, rather than a hang while we try to fix it inline.
 	schedulePeerRenewal(p.Name)
+	return strings.TrimSpace(p.Key)
+}
+
+// PeerCredentialNow is PeerCredential for a caller that is ABOUT TO SEND — it
+// waits for the exchange instead of answering with something the far side will
+// refuse.
+//
+// PeerCredential above must never block: it sits under GetTranscribeConfig and
+// LoadWebSearchConfig, which are called to answer questions as small as "is
+// transcription enabled", and a page render cannot wait on another machine. So
+// with no usable token it schedules the work and hands back the static key.
+//
+// That fallback used to be right, and stopped being. It was written when a key
+// was ALSO a credential, so the fallback usually worked; the serving side now
+// advertises exchange as required and accepts access tokens only, so presenting
+// the key is a request that cannot succeed. What that costs is a whole turn:
+// the first message after a peer has been idle past its token's life goes out
+// on the key, earns a 401, and the background renewal it kicked off finishes
+// milliseconds later — the peer was fine, it needed three hundred milliseconds
+// and was never asked for them. Observed exactly that way, a 401 and a
+// successful renewal in the same second.
+//
+// So: block here, where a round trip is already happening and the wait is
+// invisible against it. Still no error return — a caller with a request in hand
+// has nothing better to do with one than send and find out, and the static key
+// remains the last resort for a peer whose serving side never turned rotation
+// on.
+func PeerCredentialNow(ctx context.Context, p RemotePeer) string {
+	if !p.UseTokens {
+		return strings.TrimSpace(p.Key)
+	}
+	t := loadPeerTokens(p.Name)
+	if t.Access != "" && time.Now().Before(t.Expires) {
+		// Inside the renewal lead the CURRENT token is still good, so hand it
+		// over and let the background pass replace it — exactly as
+		// PeerCredential does. Waiting here would add a round trip to a request
+		// that already has a working credential.
+		if time.Until(t.Expires) < peerRenewLead {
+			schedulePeerRenewal(p.Name)
+		}
+		return t.Access
+	}
+	release := lockPeerCredential(p.Name)
+	defer release()
+	// Re-read under the lock: a renewal that was already in flight when we
+	// arrived has landed by now, and exchanging again would spend a refresh
+	// token for nothing.
+	if t := loadPeerTokens(p.Name); t.Access != "" && time.Now().Before(t.Expires) {
+		return t.Access
+	}
+	if err := EnsurePeerToken(ctx, p); err != nil {
+		Debug("[peer] %q could not be given a credential before this request: %v", p.Name, err)
+		return strings.TrimSpace(p.Key)
+	}
+	if t := loadPeerTokens(p.Name); t.Access != "" {
+		return t.Access
+	}
 	return strings.TrimSpace(p.Key)
 }
 
@@ -453,4 +538,205 @@ func republishPeerImageCredential(p RemotePeer) {
 	}, PeerCredential(p)); err != nil {
 		Log("[peer] could not republish the image credential for %q: %v", p.Name, err)
 	}
+}
+
+// --- the transport ------------------------------------------------------------
+//
+// Everything above holds a credential. This spends it, and it is the ONLY place
+// that does.
+//
+// Before this, every capability that borrowed something from a peer carried its
+// own copy of the same three steps: resolve a credential, set a header, send.
+// Eight call sites — embeddings, transcription, web search, browse, three in
+// investigate, the manifest probe — each with its own http.Client and its own
+// idea of which credential to present. That duplication is not a tidiness
+// complaint. It meant a fix to how a peer is authenticated had to be made eight
+// times to be true, and the credential-refused recovery below had in fact been
+// made in ONE of them, so the rest went on failing in a way that looked like the
+// peer being broken.
+//
+// A peer relationship is established ONCE, at pairing. After that, sending
+// something to a peer should be sending something to a peer — the credential is
+// the transport's business, not the caller's. So callers build ordinary
+// requests, and this owns:
+//
+//   - Resolving the credential at SEND time, blocking for an exchange if there
+//     is no live token. Resolved from the peer NAME on every request, never
+//     snapshotted, so a config saved months ago cannot carry a stale secret.
+//   - Repairing a refused one. A 401 is the only evidence available that a token
+//     this side believes in has died on the far side; the transport drops it,
+//     exchanges a new one, and replays the request once.
+//
+// The first was missing from most callers. The second was missing from all.
+
+// peerTransport authenticates and repairs every request to one peer.
+//
+// It holds the peer's NAME, never its credential. That is the point: a stored
+// credential is what goes stale, and a name is what stays true.
+//
+// held is the record a caller already had in hand. Most callers reach a peer
+// BECAUSE they were given one — investigate and browse are handed a RemotePeer
+// — and requiring the store to agree would break them the moment a caller works
+// with a peer that is not (or not yet) written down. The store still wins when
+// it has the peer, since a record read now is fresher than one passed in a
+// while ago; held is what makes a caller-supplied peer work at all.
+type peerTransport struct {
+	name string
+	held RemotePeer
+	base http.RoundTripper
+}
+
+// peer returns the record to authenticate against: the stored one when there is
+// one, else whatever the caller was already holding.
+func (t *peerTransport) peer() (RemotePeer, bool) {
+	if p, ok := lookupPeerCached(t.name); ok {
+		return p, true
+	}
+	if strings.TrimSpace(t.held.BaseURL) != "" || strings.TrimSpace(t.held.Key) != "" {
+		return t.held, true
+	}
+	return RemotePeer{}, false
+}
+
+func (t *peerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	p, ok := t.peer()
+	if !ok {
+		// The peer was forgotten out from under a live config. Send it as
+		// written rather than inventing a credential — the caller's own error
+		// will name the endpoint, which is the useful thing to see.
+		return base.RoundTrip(req)
+	}
+
+	first := req.Clone(req.Context())
+	setPeerAuth(first, PeerCredentialNow(req.Context(), p))
+	resp, err := base.RoundTrip(first)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+
+	// Refused. Everything below is the recovery that used to not exist.
+	cred, renewed := renewRefusedPeerCredential(req, p)
+	if !renewed {
+		return resp, nil
+	}
+	retry, rerr := replayPeerRequest(req)
+	if rerr != nil {
+		return resp, nil
+	}
+	// The first response is being abandoned, so its body has to be released or
+	// the connection is never reused.
+	drainAndClose(resp)
+	setPeerAuth(retry, cred)
+	return base.RoundTrip(retry)
+}
+
+// setPeerAuth attaches a peer credential, overwriting whatever the caller put
+// there. Callers that build an OpenAI-shaped request set their own
+// Authorization from a config field, and that field is exactly the stale copy
+// this transport exists to stop trusting.
+func setPeerAuth(req *http.Request, cred string) {
+	cred = strings.TrimSpace(cred)
+	if cred == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+cred)
+	req.Header.Set(peerKeyHeader, cred)
+}
+
+// renewRefusedPeerCredential reacts to a 401 by dropping the access token the
+// peer refused and exchanging a new one. It reports false unless it came back
+// with something genuinely different that is not the static key: retrying with
+// the same credential wastes a round trip, and retrying with the pairing code
+// earns a second, differently-worded 401 that would replace an accurate error
+// with a confusing one.
+func renewRefusedPeerCredential(req *http.Request, p RemotePeer) (string, bool) {
+	if !p.UseTokens {
+		return "", false
+	}
+	InvalidatePeerAccessToken(p.Name)
+	InvalidatePeerResolution()
+	if fresh, ok := GetRemotePeer(p.Name); ok {
+		p = fresh
+	}
+	cred := PeerCredentialNow(req.Context(), p)
+	if cred == "" || cred == strings.TrimSpace(p.Key) {
+		return "", false
+	}
+	Log("[peer] %q refused our credential — exchanged a new one and retrying", p.Name)
+	return cred, true
+}
+
+// replayPeerRequest rebuilds a request for the retry.
+//
+// A body is a stream and the first attempt consumed it, so a request without
+// GetBody cannot be replayed. http.NewRequest sets GetBody for every in-memory
+// body (bytes.Reader, bytes.Buffer, strings.Reader), which is every peer
+// request we make; anything else keeps the original 401 rather than silently
+// sending an empty body.
+func replayPeerRequest(req *http.Request) (*http.Request, error) {
+	retry := req.Clone(req.Context())
+	if req.Body == nil || req.Body == http.NoBody {
+		return retry, nil
+	}
+	if req.GetBody == nil {
+		return nil, errPeerBodyNotReplayable
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	retry.Body = body
+	return retry, nil
+}
+
+// errPeerBodyNotReplayable marks a request whose body cannot be sent twice.
+const errPeerBodyNotReplayable = Error("this request's body cannot be replayed")
+
+// drainAndClose releases an abandoned response so its connection is reused.
+func drainAndClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+// PeerHTTPClient returns a client whose requests to the named peer authenticate
+// themselves and recover from a refused credential. Callers build ordinary
+// requests and never touch a key.
+func PeerHTTPClient(peerName string, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &peerTransport{name: strings.ToLower(strings.TrimSpace(peerName))},
+	}
+}
+
+// PeerClientFor is PeerHTTPClient for a caller that already holds the peer
+// record — investigate, browse, anything handed a RemotePeer. The record is
+// used when the store has nothing to say, so a peer that is not written down
+// still authenticates instead of silently going out bare.
+func PeerClientFor(p RemotePeer, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &peerTransport{name: strings.ToLower(strings.TrimSpace(p.Name)), held: p},
+	}
+}
+
+// PeerClientForProvider is PeerHTTPClient for the capabilities configured by a
+// PROVIDER string rather than by a peer — embeddings, transcription, web search.
+// Those point at a peer sometimes and at a local or third-party endpoint the
+// rest of the time, and a plain client is the right answer for the latter.
+//
+// This is what lets those callers stop branching on "is this a peer": they ask
+// for a client and send. When the provider names a peer they get credential
+// resolution and 401 recovery; when it does not they get net/http.
+func PeerClientForProvider(provider string, timeout time.Duration) *http.Client {
+	provider = strings.TrimSpace(provider)
+	if !strings.HasPrefix(provider, peerProviderPrefix) {
+		return &http.Client{Timeout: timeout}
+	}
+	return PeerHTTPClient(strings.TrimPrefix(provider, peerProviderPrefix), timeout)
 }

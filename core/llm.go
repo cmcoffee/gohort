@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -1082,6 +1083,41 @@ func newLLMAPIClient(cfg LLMProviderConfig) *apiclient.APIClient {
 type retryLLM struct {
 	inner      LLM
 	maxRetries int
+	// peer names the peer a peer-backed tier borrows this model from, so a
+	// credential that peer REFUSES can be dropped and re-exchanged. Empty for
+	// every other provider. See peerRefused.
+	peer string
+}
+
+// peerRefused reports a peer answering 401 to a model call, and drops the
+// access token it refused on the way through.
+//
+// The far side is the only thing that knows a token has died — reuse detection
+// deleting the family, the peer restarting, a revoked grant — and this side's
+// clock says the token is fine, so nothing else will ever renew it. Left alone,
+// one refusal means every model call to that peer fails until an operator
+// re-pairs by hand.
+//
+// Dropping it is what makes recovery automatic: the client's AuthFunc resolves
+// a credential per request (see peerModelAuth), so the very next attempt
+// exchanges a fresh one. The immediate retry below turns "one dead turn" into
+// no dead turn; the drop alone would already have fixed the turn after.
+//
+// The LLM tiers cannot use the peer transport that every other capability
+// authenticates through — they go out on snugforge's APIClient, which has an
+// AuthFunc hook but no transport hook to install a RoundTripper into — so the
+// same recovery is expressed here instead.
+func (r *retryLLM) peerRefused(err error) bool {
+	if r.peer == "" || err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
+		return false
+	}
+	InvalidatePeerAccessToken(r.peer)
+	Log("[peer] %q refused our credential on a model call — dropped it so the next request re-exchanges", r.peer)
+	return true
 }
 
 // ErrContextExceeded is the sentinel returned (via fmt.Errorf "%w") when
@@ -1217,6 +1253,10 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// First attempt: original opts, original messages.
 		resp, err := r.inner.Chat(ctx, messages, opts...)
+		if r.peerRefused(err) {
+			// The credential is gone; this attempt resolves a new one.
+			resp, err = r.inner.Chat(ctx, messages, opts...)
+		}
 		if !shouldRetryEmpty(resp, err) {
 			return resp, err
 		}
@@ -1283,6 +1323,17 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		handlerCalled = false
 		chunks = 0
 		resp, err := r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
+		// A peer refusing the credential is caught before the transience rules
+		// see it, because a 401 is not transient and would otherwise end the
+		// turn. Re-attempted ONLY when nothing has reached the caller yet: a
+		// refused request produces no output, so that is the normal case, and
+		// the alternative — replaying a stream a reader has already seen — is
+		// worse than the failure. The token is dropped either way, so a turn
+		// that cannot be retried here still leaves the peer healthy for the
+		// next one.
+		if r.peerRefused(err) && !handlerCalled {
+			resp, err = r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
+		}
 		if err != nil && handlerCalled {
 			if !restart() {
 				// Chunks were already delivered to the caller; do not retry.
@@ -1631,5 +1682,5 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		return nil, Error("no LLM provider is configured — set one in the web UI under Admin → LLMs → Worker LLM")
 	}
 
-	return &retryLLM{inner: inner, maxRetries: 5}, nil
+	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName}, nil
 }

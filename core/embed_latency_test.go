@@ -16,7 +16,15 @@ import (
 // work out what could even live in that window.
 func TestEmbedIsTimedAndWarnsWhenSlow(t *testing.T) {
 	src := mustCoreFile(t, "embeddings.go")
-	call := src[strings.Index(src, "client := &http.Client{Timeout:"):]
+	// Anchored on the client construction, whatever builds it. It is
+	// PeerClientForProvider now — a peer-backed embedder authenticates through
+	// the peer transport rather than the config's snapshotted key — and the
+	// timing this guards has to survive that kind of change.
+	at := strings.Index(src, "client := PeerClientForProvider(")
+	if at < 0 {
+		t.Fatal("the embed call no longer builds a client where this guard can find it; re-anchor it rather than deleting it")
+	}
+	call := src[at:]
 	if !strings.Contains(call[:900], "time.Since(started)") {
 		t.Fatal("the embed call is untimed again; a blocking call on the critical path must report its duration")
 	}

@@ -48,7 +48,26 @@ const peerBrowseMaxChars = 2 << 20
 
 // SearchWithProviderFunc is set by the websearch package so core can run a
 // search without importing it. Same seam as BrowserFetchFunc and CrossSearchFunc.
-var SearchWithProviderFunc func(query, provider, apiKey, endpoint string) (string, error)
+var SearchWithProviderFunc func(SearchRequest) (string, error)
+
+// SearchRequest is one provider search.
+//
+// A struct rather than four positional strings, and Source is why it became
+// one: a search pointed at a PEER is stored as an ordinary searxng config, so
+// by the time the request is built nothing in it says "peer" except this field.
+// Without it the search client cannot know to authenticate through the peer
+// transport, and goes out carrying whatever key the config was holding when it
+// was read — which for a peer is a credential that has probably rotated.
+type SearchRequest struct {
+	Query    string
+	Provider string
+	Endpoint string
+	// APIKey is the configured bearer. For a peer it is a FALLBACK: the search
+	// client resolves a current credential from Source instead.
+	APIKey string
+	// Source records where the config came from — "local", or "peer:<name>".
+	Source string
+}
 
 // --- per-capability rate limiting -------------------------------------------
 
@@ -158,7 +177,12 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := SearchWithProviderFunc(query, cfg.Provider, cfg.APIKey, cfg.Endpoint)
+	// No Source: an instance that borrows its own search from a peer refuses to
+	// relay it (the guard above), so what reaches here is always a config this
+	// instance owns.
+	out, err := SearchWithProviderFunc(SearchRequest{
+		Query: query, Provider: cfg.Provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint,
+	})
 	// Priced whether or not it answered usefully: the provider bills for the
 	// call, not for the quality of the result, and recording only successes
 	// would under-report exactly the runs that went wrong.

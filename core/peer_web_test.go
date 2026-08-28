@@ -22,7 +22,11 @@ func withSearchProvider(t *testing.T, provider string, fn func(query, prov, key,
 	LoadWebSearchConfigFunc = func() WebSearchConfig {
 		return WebSearchConfig{Provider: provider, APIKey: "sk-upstream"}
 	}
-	SearchWithProviderFunc = fn
+	// Adapted rather than restated at each call site: these tests care about
+	// the four values, not about the struct that now carries them.
+	SearchWithProviderFunc = func(r SearchRequest) (string, error) {
+		return fn(r.Query, r.Provider, r.APIKey, r.Endpoint)
+	}
 }
 
 func searchRequest(t *testing.T, key, q string) *http.Request {

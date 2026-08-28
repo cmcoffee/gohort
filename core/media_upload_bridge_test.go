@@ -76,8 +76,10 @@ func TestAnAuthenticatedMediaUploadCarriesItsKey(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	out, err := media.GovernedUploadFunc(t.Context(), srv.URL+"/audio/transcriptions",
-		"file", "a.mp3", []byte("audio"), map[string]string{"response_format": "text"}, "sk-secret")
+	out, err := media.GovernedUploadFunc(t.Context(), media.UploadRequest{
+		URL: srv.URL + "/audio/transcriptions", FieldName: "file", FileName: "a.mp3",
+		Body: []byte("audio"), Fields: map[string]string{"response_format": "text"}, Bearer: "sk-secret",
+	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -91,8 +93,10 @@ func TestAnAuthenticatedMediaUploadCarriesItsKey(t *testing.T) {
 	// And with no key the call stays unauthenticated, which is what a local
 	// whisper.cpp expects.
 	gotAuth = ""
-	if _, err := media.GovernedUploadFunc(t.Context(), srv.URL+"/audio/transcriptions",
-		"file", "a.mp3", []byte("audio"), nil, ""); err != nil {
+	if _, err := media.GovernedUploadFunc(t.Context(), media.UploadRequest{
+		URL: srv.URL + "/audio/transcriptions", FieldName: "file", FileName: "a.mp3",
+		Body: []byte("audio"),
+	}); err != nil {
 		t.Fatalf("unauthenticated upload: %v", err)
 	}
 	if gotAuth != "" {

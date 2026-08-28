@@ -208,7 +208,14 @@ func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (Transcrib
 	return cfg, nil
 }
 
-func init() { media.TranscribeResolver = resolveTranscribePeer }
+func init() {
+	media.TranscribeResolver = resolveTranscribePeer
+	// And the transport the request rides out on. The resolver above keeps the
+	// endpoint current; this is what keeps the CREDENTIAL current, which the
+	// resolver cannot do — it runs under GetTranscribeConfig, on the per-upload
+	// enabled-check path, where blocking for a token exchange is not allowed.
+	media.HTTPClientForProvider = PeerClientForProvider
+}
 
 // resolveTranscribePeer overlays the CURRENT peer record onto a stored
 // transcription config whose Provider names a peer.

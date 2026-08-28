@@ -86,6 +86,31 @@ func SetTranscribeConfig(cfg TranscribeConfig) {
 // a second, which is what makes that true.
 var TranscribeResolver func(TranscribeConfig) TranscribeConfig
 
+// HTTPClientForProvider, when set, supplies the client a transcription request
+// goes out on. core installs it so a config whose Provider names a PEER gets
+// the peer transport: a credential resolved at send time rather than the copy
+// this config is carrying, and a re-exchange when the peer refuses it.
+//
+// A function variable for the same reason as the two seams around it — this
+// package cannot import core and knows nothing about peers. Nil, or a Provider
+// that names no peer, means an ordinary client with the given timeout, which is
+// exactly the old behavior.
+//
+// The alternative was for this file to keep sending cfg.APIKey, which is the
+// credential that was live when the config was READ. Reads happen far from
+// sends, and a peer credential rotates between them.
+var HTTPClientForProvider func(provider string, timeout time.Duration) *http.Client
+
+// transcribeClient returns what this request should be sent on.
+func transcribeClient(cfg TranscribeConfig, timeout time.Duration) *http.Client {
+	if HTTPClientForProvider != nil {
+		if c := HTTPClientForProvider(cfg.Provider, timeout); c != nil {
+			return c
+		}
+	}
+	return &http.Client{Timeout: timeout}
+}
+
 // GetTranscribeConfig returns the current STT config, with any registered
 // resolver applied.
 func GetTranscribeConfig() TranscribeConfig {
@@ -161,7 +186,30 @@ func TranscribeRuntimeFlagScript() string {
 // unauthenticated credential, so a local whisper.cpp kept working while every
 // AUTHENTICATED endpoint (real OpenAI, a peer instance) lost its key on the way
 // out and answered 401 to a configuration that looked correct.
-var GovernedUploadFunc func(ctx context.Context, url, field, filename string, body []byte, fields map[string]string, bearer string) (string, error)
+var GovernedUploadFunc func(ctx context.Context, up UploadRequest) (string, error)
+
+// UploadRequest is one governed upload. A struct rather than eight positional
+// arguments, and Provider is why it became one: the core side cannot resolve a
+// PEER's credential for itself without knowing that the URL came from a peer
+// config, and Bearer alone cannot tell it — a bearer is just a string, and the
+// one in a stored config is the credential that was live when the config was
+// READ.
+type UploadRequest struct {
+	URL       string
+	FieldName string
+	FileName  string
+	Body      []byte
+	Fields    map[string]string
+	// Bearer is the endpoint's key as the config holds it. For a peer it is a
+	// FALLBACK: the core side resolves a current credential from Provider and
+	// uses this only when there is no peer to resolve against.
+	Bearer string
+	// Provider records where the config came from — "local", or "peer:<name>".
+	// The core side reads it to decide whether this upload rides the peer
+	// transport (credential resolved at send time, re-exchanged if refused) or
+	// goes out as written.
+	Provider string
+}
 
 // Transcribe sends audio bytes to the configured STT endpoint and
 // returns the recognized text. Filename hints the server about the
@@ -207,7 +255,10 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 		if cfg.Model != "" {
 			fields["model"] = cfg.Model
 		}
-		out, err := GovernedUploadFunc(ctx, url, "file", filepath.Base(filename), audio, fields, cfg.APIKey)
+		out, err := GovernedUploadFunc(ctx, UploadRequest{
+			URL: url, FieldName: "file", FileName: filepath.Base(filename),
+			Body: audio, Fields: fields, Bearer: cfg.APIKey, Provider: cfg.Provider,
+		})
 		if err != nil {
 			nfo.Debug("[transcribe] governed upload failed: %v", err)
 			return "", err
@@ -245,8 +296,9 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Do(req)
+	// 5 minutes: transcription of a long recording is slow, and a deadline
+	// shorter than the work turns a working answer into a failure.
+	resp, err := transcribeClient(cfg, 5*time.Minute).Do(req)
 	if err != nil {
 		nfo.Debug("[transcribe] transport error: %v", err)
 		return "", err
