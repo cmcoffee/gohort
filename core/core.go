@@ -337,14 +337,15 @@ var (
 // --- messaging (seams the transport registers so apps needn't import it) -----
 
 type (
-	MessagingChatSummary = messaging.MessagingChatSummary
-	MessagingChatMessage = messaging.MessagingChatMessage
-	MessagingLink        = messaging.MessagingLink
-	ChannelThreadInfo    = messaging.ChannelThreadInfo
-	ChannelLine          = messaging.ChannelLine
-	ChannelMember        = messaging.ChannelMember
-	ChannelThreads       = messaging.ChannelThreads
-	ChannelSearcher      = messaging.ChannelSearcher
+	MessagingChatSummary  = messaging.MessagingChatSummary
+	MessagingChatMessage  = messaging.MessagingChatMessage
+	MessagingLink         = messaging.MessagingLink
+	ChannelThreadInfo     = messaging.ChannelThreadInfo
+	ChannelLine           = messaging.ChannelLine
+	ChannelMember         = messaging.ChannelMember
+	ChannelThreads        = messaging.ChannelThreads
+	ChannelSearcher       = messaging.ChannelSearcher
+	ChannelMediaDeliverer = messaging.ChannelMediaDeliverer
 )
 
 var (

@@ -699,6 +699,38 @@ func operatorDeliverMessage(owner, agentID, chatID, handle, text string, images 
 	return text, nil
 }
 
+// operatorDeliverMedia is operatorDeliverMessage with videos.
+//
+// A separate entry point because only one caller has them: a background job
+// that finished a video download. The other nine send text or images, and
+// widening the shared signature would make every one of them name a parameter
+// it has no use for.
+//
+// Falls back to the images-only Deliver when the transport does not implement
+// the optional capability, so a transport that cannot carry video still gets
+// the text rather than nothing. The dropped-video line stays in that case,
+// because a silent drop is what made this take a person noticing the file was
+// missing to find.
+func operatorDeliverMedia(owner, agentID, chatID, handle, text string, images, videos []string) (string, error) {
+	if len(videos) == 0 {
+		return operatorDeliverMessage(owner, agentID, chatID, handle, text, images)
+	}
+	ct, ok := ActiveChannelThreads()
+	if !ok {
+		return "", fmt.Errorf("no messaging transport is available")
+	}
+	md, ok := ct.(ChannelMediaDeliverer)
+	if !ok {
+		Log("[operator] transport cannot carry video; delivering %d image(s) and the text only", len(images))
+		return operatorDeliverMessage(owner, agentID, chatID, handle, text, images)
+	}
+	service := exactChannelService(owner, chatID, handle)
+	if err := md.DeliverMedia(owner, service, chatID, handle, text, agentNameTag(owner, agentID), images, videos); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
 // exactChannelService returns the service of a channel EXACTLY bound to this
 // chat_id/handle, or "" when only a whole-service ("global view") channel — or
 // nothing — covers it. Unlike channelForChat, it never falls back to a

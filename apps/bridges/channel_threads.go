@@ -96,6 +96,12 @@ func (c channelThreadsImpl) SearchMessages(owner, chatID, query string, limit in
 }
 
 func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text, agentName string, images []string) error {
+	return c.DeliverMedia(owner, service, chatID, handle, text, agentName, images, nil)
+}
+
+// DeliverMedia is the real body: the outbox has always carried videos, so this
+// only had to be reachable. See core/messaging.ChannelMediaDeliverer.
+func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, agentName string, images, videos []string) error {
 	svc := strings.TrimSpace(service)
 	if svc == "" {
 		// Caller didn't specify a transport (proactive send) — resolve it from
@@ -120,7 +126,7 @@ func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text, agentN
 			}
 		}
 	}
-	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Agent: agentName, Owner: owner, Type: "reply"})
+	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Videos: videos, Agent: agentName, Owner: owner, Type: "reply"})
 	// Mirror the outbound into the thread store so the dashboard + read_chat see it.
 	c.T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})
 	return nil

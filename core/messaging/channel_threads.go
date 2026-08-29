@@ -61,6 +61,24 @@ type ChannelThreads interface {
 	Deliver(owner, service, chatID, handle, text, agentName string, images []string) error
 }
 
+// ChannelMediaDeliverer is the OPTIONAL video capability a transport may add
+// beside ChannelThreads, checked by type assertion so implementing the base
+// seam stays sufficient.
+//
+// Deliver carries images and nothing else, which was invisible until a
+// background job finished a video download: the reply went out, the file did
+// not, and the only trace was one log line saying this path delivers text and
+// images only. The outbound record has carried a Videos field the whole time;
+// the seam in front of it did not, so nothing could reach it from here.
+//
+// Separate from Deliver rather than a wider signature, because nine callers
+// send text or images and none of them should have to name a video to keep
+// compiling.
+type ChannelMediaDeliverer interface {
+	// DeliverMedia is Deliver with videos alongside images. Both are base64.
+	DeliverMedia(owner, service, chatID, handle, text, agentName string, images, videos []string) error
+}
+
 // ChannelSearcher is the OPTIONAL search capability a transport may add beside
 // ChannelThreads (checked by type assertion, so implementing the base seam
 // stays sufficient). It answers "what was said about X in this conversation"

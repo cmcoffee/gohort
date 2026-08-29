@@ -556,12 +556,10 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 	if text == "" && len(imgs) == 0 {
 		return
 	}
-	if len(vids) > 0 {
-		Log("[task] wake for session %s carried %d video(s); this path delivers text and images only", p.SessionID, len(vids))
-	}
-	if _, err := operatorDeliverMessage(p.Username, p.AgentID, chatID, handle, text, imgs); err != nil {
+	if _, err := operatorDeliverMedia(p.Username, p.AgentID, chatID, handle, text, imgs, vids); err != nil {
 		Warn("[task] could not deliver the finished result to the conversation (%s): %v", chFirst(chatID, handle), err)
 		return
 	}
-	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s))", chFirst(chatID, handle), len(text), len(imgs))
+	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s), %d video(s))",
+		chFirst(chatID, handle), len(text), len(imgs), len(vids))
 }
