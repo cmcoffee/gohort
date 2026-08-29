@@ -87,3 +87,41 @@ func TestAnAnswerIsNotAStall(t *testing.T) {
 		t.Error("a long answer is an answer, not a lead-in")
 	}
 }
+
+// A promise about future CONDUCT is not work left undone.
+//
+// Observed 2026-08-29 in a casual conversation: the user asked why the agent
+// used em-dashes, it answered "I'll keep it straight going forward", and the
+// give-up guard re-prompted it to "do it NOW with a real tool call". There is
+// no tool for not using a punctuation mark. It fired three times in one chat,
+// concatenated its retries into a single bubble, and ended with the agent
+// inventing work nobody had asked for so that it would have a tool call to
+// make. These are the exact replies from that session.
+func TestABehavioralPromiseIsNotStalledWork(t *testing.T) {
+	for _, conduct := range []string{
+		"You're right, I missed that one. The rule is clear and I bent it without thinking. I'll keep it straight going forward.",
+		"You caught me, the same thing happened right there too. It's a pattern, not a one-off slip. I'll watch for it this time.",
+		"I'll be more careful with that from now on.",
+		"My mistake. Next time I'll get it right.",
+		"Noted, I won't do that again.",
+	} {
+		if replyStalledOnAPromise(conduct) {
+			t.Errorf("re-prompted a promise no tool can keep:\n  %s", conduct)
+		}
+	}
+}
+
+// The tightening must not blunt the guard on real work. A promise to ACT still
+// has to be caught, including when the same reply apologises first, which is
+// the shape that makes the two easy to conflate.
+func TestAPromiseToActIsStillCaughtAfterTheTightening(t *testing.T) {
+	for _, stall := range []string{
+		"Sorry about that. Let me look up the current price.",
+		"You're right, I should have checked. I'll search for it now.",
+		"I'm going to fetch that page and pull the number out.",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("stopped catching a real stall:\n  %s", stall)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -495,4 +496,59 @@ func TestExistingAgentsKeepTheirFailPolicy(t *testing.T) {
 	if open.GuardrailFailClosed {
 		t.Error("an existing record must not gain fail-closed implicitly")
 	}
+}
+
+// A deployment's global rules are the floor: they reach the warden through the
+// same funnel an agent's own rules use, so an agent that authored none still
+// gets judged once an operator writes one.
+func TestGlobalRulesReachTheWarden(t *testing.T) {
+	restore := withGlobalRules(t, "Do not perform any action that may potentially be deemed illegal.")
+	defer restore()
+
+	bare := AgentRecord{} // no rules of its own
+	rules := guardrailRules(bare)
+	if len(rules) != 1 || !strings.Contains(rules[0].Text, "deemed illegal") {
+		t.Fatalf("global rule did not reach an agent with none of its own: %+v", rules)
+	}
+	// And the hooks must actually turn on, or the rule is decorative.
+	if resolveGuardrailHooks(bare) == nil {
+		t.Error("an agent with only global rules is still inert; the floor does nothing")
+	}
+}
+
+// Suspension is the OWNER setting their own rules aside. It is not authority
+// over the deployment's, or "global" would mean "until someone objects".
+func TestSuspensionDoesNotReachGlobalRules(t *testing.T) {
+	restore := withGlobalRules(t, "Do not perform any action that may potentially be deemed illegal.")
+	defer restore()
+
+	agent := AgentRecord{Guardrails: "never mention salary", GuardrailsDisabled: true}
+
+	// Both rules still EXIST — that is what Off keeps.
+	if got := len(guardrailRules(agent)); got != 2 {
+		t.Fatalf("suspension must keep the rules listed; got %d", got)
+	}
+	// Only the global one is enforced.
+	enforced := enforcedGuardrailRules(agent)
+	if len(enforced) != 1 || !strings.Contains(enforced[0].Text, "deemed illegal") {
+		t.Fatalf("suspension should leave the global rule standing and drop the agent's own; got %+v", enforced)
+	}
+	if resolveGuardrailHooks(agent) == nil {
+		t.Error("a suspended agent still owes the deployment's rules")
+	}
+}
+
+// withGlobalRules points the prompt store at an in-memory one and sets the
+// deployment's rules for the duration of a test. Restores whatever was there,
+// so a test never leaks a rule into the ones after it.
+func withGlobalRules(t *testing.T, lines ...string) func() {
+	t.Helper()
+	db := &DBase{Store: kvlite.MemStore()}
+	prompts.SetPromptOverrideDB(db)
+	var rules []prompts.StyleRule
+	for _, l := range lines {
+		rules = append(rules, prompts.StyleRule{Text: l})
+	}
+	prompts.SetGlobalRules(rules)
+	return func() { prompts.SetPromptOverrideDB(nil) }
 }

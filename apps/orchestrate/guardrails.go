@@ -26,6 +26,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -424,16 +425,47 @@ type guardrailLink struct {
 	Off  bool
 }
 
-// guardrailRules splits an agent's Guardrails field into individual rules (one
-// per non-blank line), stripping and recording the severity marker.
+// guardrailRules is every rule in force for an agent: the deployment's global
+// rules first, then the agent's own, one per non-blank line, with the severity
+// markers stripped and recorded.
+//
+// Globals ride in HERE rather than at the warden call because this is the
+// funnel: hook activation, the judge's rule list, appeals and the diagnostics
+// all read it, so one prepend covers them and there is no second path to keep
+// in step. It also means an agent that authored no rules of its own still gets
+// judged once a deployment has written one, which is the point of a floor.
+//
+// It answers "what rules EXIST", not "what is enforced": suspension keeps an
+// agent's rules and switches enforcement off, which is what makes Off different
+// from delete. enforcedGuardrailRules below is the other question.
 func guardrailRules(agent AgentRecord) []guardrailRule {
 	var out []guardrailRule
+	for _, g := range prompts.EnabledGlobalRules() {
+		out = append(out, parseGuardrailRule(strings.TrimSpace(g.Text)))
+	}
 	for _, ln := range strings.Split(agent.Guardrails, "\n") {
 		s := strings.TrimSpace(ln)
 		if s == "" {
 			continue
 		}
 		out = append(out, parseGuardrailRule(s))
+	}
+	return out
+}
+
+// enforcedGuardrailRules is the subset actually judged this turn.
+//
+// SUSPENSION STOPS AT THE OWN RULES. GuardrailsDisabled is an agent owner
+// setting THEIR rules aside; the deployment's globals are not theirs to
+// suspend, or "global" would mean "until someone objects". So a suspended agent
+// keeps the floor and loses only what it wrote itself.
+func enforcedGuardrailRules(agent AgentRecord) []guardrailRule {
+	if !agent.GuardrailsDisabled {
+		return guardrailRules(agent)
+	}
+	var out []guardrailRule
+	for _, g := range prompts.EnabledGlobalRules() {
+		out = append(out, parseGuardrailRule(strings.TrimSpace(g.Text)))
 	}
 	return out
 }
@@ -669,11 +701,11 @@ const defaultNewAgentFailClosed = true
 // valid values, or the pre_action default when rules exist but no hook was
 // picked.
 func resolveGuardrailHooks(agent AgentRecord) map[string]bool {
-	if agent.GuardrailsDisabled {
-		return nil // suspended by the owner; rules kept, enforcement off
-	}
-	if len(guardrailRules(agent)) == 0 {
-		return nil // inert — no rule authored
+	// Not a GuardrailsDisabled bail: suspension is the owner setting THEIR OWN
+	// rules aside, and guardrailRules already drops those while keeping the
+	// deployment's. Returning nil here would have suspended the globals too.
+	if len(enforcedGuardrailRules(agent)) == 0 {
+		return nil // inert — nothing authored here or globally, or all suspended
 	}
 	active := map[string]bool{}
 	for _, h := range agent.GuardrailHooks {
@@ -830,7 +862,7 @@ const (
 //
 // Empty finding = ordinary check, byte-identical to what runWarden always sent.
 func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, finding string, opts ...ChatOption) ([]guardrailVerdict, error) {
-	rules := rulesInPlayFor(guardrailRules(agent), req)
+	rules := rulesInPlayFor(enforcedGuardrailRules(agent), req)
 	if len(rules) == 0 {
 		// Either nothing was authored, or every authored rule is exempt for this
 		// person. Both mean there is nothing to judge — and skipping the call
@@ -1772,8 +1804,20 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		}
 		// Stated at Log level, not Debug: an agent carrying rules that are not being
 		// enforced is the kind of state an owner forgets they left behind.
-		if agent.GuardrailsDisabled && len(guardrailRules(agent)) > 0 {
-			Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner — %d rule(s) kept but NOT enforced", agentID, len(guardrailRules(agent)))
+		if agent.GuardrailsDisabled {
+			// Count the agent's OWN lines, not guardrailRules: that now returns the
+			// deployment's globals for a suspended agent, and those ARE enforced.
+			// Reporting the combined figure as "not enforced" would say the exact
+			// opposite of what is true about half of it.
+			own := 0
+			for _, ln := range strings.Split(agent.Guardrails, "\n") {
+				if strings.TrimSpace(ln) != "" {
+					own++
+				}
+			}
+			if globals := len(prompts.EnabledGlobalRules()); own > 0 || globals > 0 {
+				Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner — %d own rule(s) kept but NOT enforced; %d global rule(s) still apply", agentID, own, globals)
+			}
 		}
 		// Counts BOTH sides of each list — submitted and kept. A silent drop
 		// (an exception with no condition, a roster entry that could never

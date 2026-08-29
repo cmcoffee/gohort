@@ -5533,6 +5533,11 @@ func replyStalledOnAPromise(content string) bool {
 	if userDirectiveRe.MatchString(lower) {
 		return false
 	}
+	// A promise about future CONDUCT is not work left undone, and there is no
+	// tool that performs it.
+	if behavioralCommitmentRe.MatchString(lower) {
+		return false
+	}
 	return futureCommitmentRe.MatchString(lower)
 }
 
@@ -5556,6 +5561,24 @@ func ReplyPromisesWork(reply string) bool { return replyStalledOnAPromise(reply)
 // errors. Standing alone it decides whether an ordinary reply gets re-prompted,
 // and "Here's the answer: 42." is an answer.
 var futureCommitmentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to|going to|now i|next i|on it)\b`)
+
+// behavioralCommitmentRe matches the agent promising to BEHAVE differently
+// rather than to do something.
+//
+// futureCommitmentRe matches "i'll", which is the right hook for "I'll look
+// that up" and the wrong one for "I'll keep it straight going forward". Both
+// are promises; only the first has work behind it. Told apart by what follows,
+// because nothing in the sentence's grammar distinguishes them.
+//
+// Observed 2026-08-29: a user asked why the agent used em-dashes, it answered
+// "I'll keep it straight going forward", and the guard re-prompted it to "do it
+// NOW with a real tool call". There is no tool for not using a punctuation
+// mark. It fired three times in one casual conversation, concatenated its
+// retries into one bubble, and ended with the agent inventing work nobody
+// asked for so it would have a tool call to make. A guard that demands an
+// action for a promise no action can keep does not correct the turn, it
+// derails it.
+var behavioralCommitmentRe = regexp.MustCompile(`\b(?:going forward|from now on|next time|in future|in the future|this time|won't happen again|will not happen again|keep (?:that|this|it) in mind|keep (?:that|this|it) straight|watch (?:out )?for (?:that|this|it)|be (?:more )?careful|my (?:mistake|bad)|noted)\b`)
 
 // callWordRe word-bounds the announcement keywords so "basically:" /
 // "technically:" (which CONTAIN "call") can't false-fire the guard.
