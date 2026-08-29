@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/gohort/core/prompts"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -475,5 +475,5 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 // that disagrees with the conversation it transcribes is worse than no
 // transcript, because it gets read as evidence.
 func exportText(s string) string {
-	return textutil.StripFillerClassic(StripEmDashes(StripMetaTags(s)))
+	return prompts.ApplyRuleEnforcers(StripMetaTags(s))
 }

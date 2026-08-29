@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // channelSurfaceContext renders a one-line provenance note for a channel
@@ -480,7 +481,11 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// ([ATTACH: …]) or a <gohort-meta> note rides out verbatim in the text.
 		// Attachments for channels travel via res.Images (workspace attach), so
 		// stripping the textual marker here doesn't drop a real attachment.
-		replyText := StripMetaTags(res.Text)
+		// A channel reply leaves the web UI entirely, so the browser-side strip
+		// never sees it: whatever goes out here is exactly what the recipient
+		// reads. This is the boundary that most needs the enforcers, and it was
+		// the one without them.
+		replyText := prompts.ApplyRuleEnforcers(StripMetaTags(res.Text))
 		// Never deliver silence: if the run produced no text AND no attachment
 		// (the model ended a turn with empty content, or its whole output was a
 		// stripped marker), send a graceful fallback so the contact gets SOMETHING

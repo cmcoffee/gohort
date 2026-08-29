@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 func (T *OrchestrateApp) installTaskRunner() {
@@ -547,7 +548,10 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 		}
 		return
 	}
-	text := strings.TrimSpace(StripMetaTags(reply))
+	// House style holds here too. It used to run only on the interactive chat
+	// path, so a scheduled report was the one reply nobody had read yet and the
+	// one nothing corrected.
+	text := strings.TrimSpace(prompts.ApplyRuleEnforcers(StripMetaTags(reply)))
 	imgs, vids := collectMessageMedia(subSess, reply)
 	if text == "" && len(imgs) == 0 {
 		return
