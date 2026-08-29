@@ -143,6 +143,21 @@ func buildTunableSections() []ui.Section {
 // by the "Add source" modal (empty create form) and the per-row "Edit"
 // expand (pre-filled from api/source-hooks?name={name}). Field names match
 // the SourceHook json tags so the GET-one response pre-fills directly.
+// The cost surfaces, named once because two things have to agree about them: a
+// chart's Source and the Invalidate list of every form that changes what the
+// chart counts. Invalidation matches on the EXACT source string, so a days=30
+// written in one place and days=60 in the other fails silently, leaving a stale
+// graph and nothing to notice it by. Sharing the constant makes the coupling a
+// compile error instead of a bug report.
+const (
+	costHistorySource  = "api/cost-history?days=30"
+	costBySourceSource = "api/cost-by-source?days=30"
+)
+
+// costSources is what a form that edits a per-call cost must refresh: editing
+// one changes both the chart total and the per-source breakdown.
+var costSources = []string{costHistorySource, costBySourceSource}
+
 func sourceHookFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "ident", Type: "header", Label: "Identity"},
@@ -958,7 +973,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				Title:    "Cost History (Last 30 Days)",
 				Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown of runs, tokens, searches, and images. The \"in\" figures are the whole prompt; the cached / written rows beneath each are the share of it billed at the cache weights rather than the full input rate.",
 				Body: ui.BarChart{
-					Source:    "api/cost-history?days=30",
+					Source:    costHistorySource,
 					XField:    "date",
 					YField:    "cost",
 					XFormat:   "date",
@@ -993,7 +1008,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				Title:    "Cost by source",
 				Subtitle: "Metered source-hook + credential spend over the last 30 days (a \"cost hook\" per source). Set a per-call cost on a source hook or API credential to track it here; it also folds into the chart total above.",
 				Body: ui.Table{
-					Source:    "api/cost-by-source?days=30",
+					Source:    costBySourceSource,
 					RowKey:    "source_id",
 					EmptyText: "No metered external calls recorded yet. Set a \"Cost per call\" on a source hook or API credential to track its spend here.",
 					Columns: []ui.Col{
@@ -1315,6 +1330,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								ui.Expand("Edit", ui.FormPanel{
 									Source:      "api/secure-api?name={name}",
 									PostURL:     "api/secure-api",
+									Invalidate:  costSources,
 									TestURL:     "api/secure-api/test",
 									TestLabel:   "Test token (oauth2)",
 									SubmitLabel: "Save changes",
@@ -1445,10 +1461,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								SubmitLabel: "Create credential",
 								Fields:      credentialFormFields(),
 								// Supplying a credential a tool was waiting on
-								// clears that tool's "⚠ missing" badge — the
+								// clears that tool's "⚠ missing" badge: the
 								// usual reason to add one is the tool that has
-								// been sitting there broken.
-								Invalidate: []string{"api/secure-api", "api/persistent-tools"},
+								// been sitting there broken. The cost surfaces
+								// go too, since a credential can arrive with a
+								// per-call cost already set.
+								Invalidate: append([]string{"api/secure-api", "api/persistent-tools"}, costSources...),
 							},
 						},
 						// Export all credentials' CONFIG as one bundle. Secrets never
@@ -1931,7 +1949,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							// next thing you do — the file-import path has said
 							// so since it existed, and this one did not.
 							Invalidate: []string{"api/connectors", "api/persistent-tools", "api/secure-api", "api/skills"},
-							Confirm: "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above — nothing goes live until you approve it."},
+							Confirm:    "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above — nothing goes live until you approve it."},
 					},
 					EmptyText: "The catalog is empty.",
 				},
@@ -1974,6 +1992,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								ui.Expand("Edit", ui.FormPanel{
 									Source:      "api/source-hooks?name={name}",
 									PostURL:     "api/source-hooks",
+									Invalidate:  costSources,
 									SubmitLabel: "Save changes",
 									Templates:   sourceHookFormTemplates(),
 									Fields:      sourceHookFormFields(),
@@ -2012,6 +2031,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Width:    "640px",
 							Body: ui.FormPanel{
 								PostURL:     "api/source-hooks",
+								Invalidate:  costSources,
 								SubmitLabel: "Create source hook",
 								Templates:   sourceHookFormTemplates(),
 								Fields:      sourceHookFormFields(),
