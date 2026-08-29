@@ -30,6 +30,8 @@ github.com/cmcoffee/snugforge v0.1.0 h1:BR47l1e0+He84u33GcVvxIBrwClP8CTvm4d5e+Vb
 github.com/cmcoffee/snugforge v0.1.0/go.mod h1:v3grJcl96XAeHU8OGgrMYn7hxuaz1KdtjKk33usdLCw=
 github.com/cmcoffee/snugforge v0.2.0 h1:r7VRZVzKqDhIE+k+9x/kQZcW4YOj8HI02L/YbXfcKjk=
 github.com/cmcoffee/snugforge v0.2.0/go.mod h1:v3grJcl96XAeHU8OGgrMYn7hxuaz1KdtjKk33usdLCw=
+github.com/cmcoffee/snugforge v0.3.0 h1:NFirAyYXxyEW0X9K/LR1HEiygXrERYq28pjEpXfHKPA=
+github.com/cmcoffee/snugforge v0.3.0/go.mod h1:v3grJcl96XAeHU8OGgrMYn7hxuaz1KdtjKk33usdLCw=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
