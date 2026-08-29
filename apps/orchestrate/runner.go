@@ -18,6 +18,8 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/tools/temptool"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // inflightCancels keys per-session cancel funcs so /api/cancel can
@@ -8783,10 +8785,15 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	}
 	t.sse.Send(map[string]any{"kind": "message_done", "id": msgID})
 	t.emitStats(msgID, resp, synthStart)
-	// Scrub framework-internal markers AND enforce the no-em-dash house style on
-	// the saved/exported copy (the client also strips both on render — see
-	// uiRenderMarkdown). Cheap no-op when neither is present.
-	return strings.TrimSpace(StripEmDashes(StripMetaTags(reply))), nil
+	// Scrub framework-internal markers AND enforce the house style on the
+	// saved/exported copy (the client also strips em-dashes on render — see
+	// uiRenderMarkdown). Cheap no-op when none is present.
+	//
+	// The "classic" rule is enforced HERE and not in the prompt because the
+	// prompt already asks and is already ignored: a worker-tier reply broke
+	// both this rule and the em-dash one in a single conversation. A tic that
+	// is a pure function of the text belongs at the output boundary.
+	return strings.TrimSpace(textutil.StripFillerClassic(StripEmDashes(StripMetaTags(reply)))), nil
 }
 
 // --- helpers ---------------------------------------------------------------

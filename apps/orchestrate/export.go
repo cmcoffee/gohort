@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/textutil"
+
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -261,8 +263,8 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 		}
 		header := strings.ToUpper(m.Role[:1]) + m.Role[1:]
 		fmt.Fprintf(&b, "## %s%s\n\n", header, ts)
-		if strings.TrimSpace(m.Content) != "" {
-			b.WriteString(strings.TrimSpace(m.Content))
+		if body := strings.TrimSpace(exportText(m.Content)); body != "" {
+			b.WriteString(body)
 			b.WriteString("\n\n")
 		}
 		if m.Role == "assistant" {
@@ -462,4 +464,16 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 		}
 	}
 	return out
+}
+
+// exportText applies the same delivery-boundary scrub the chat path and the
+// browser renderer apply, so an export reads as what the user was shown.
+//
+// It was writing stored content verbatim, which is how an em-dash reached a
+// pasted transcript: the model emits them, the save path and uiStripEmDashes
+// both remove them, and this was the one surface that did neither. A transcript
+// that disagrees with the conversation it transcribes is worse than no
+// transcript, because it gets read as evidence.
+func exportText(s string) string {
+	return textutil.StripFillerClassic(StripEmDashes(StripMetaTags(s)))
 }
