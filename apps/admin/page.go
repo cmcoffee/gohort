@@ -3289,7 +3289,7 @@ const mapAgentsPillsJS = `(st.agents || []).map(function(a){ return { key: a.id,
 // agents — the wrong level: admin governs which USERS may reach a tool, and
 // which of their own agents load it is the user's call in their agent editor.
 // Promote reaches the user-ACL model; it doesn't reimplement a second one.
-const toolPromoteGlobalAction = `function(ctx){
+const toolPromoteGlobalAction = `async function(ctx){
   var r = ctx && ctx.record; if(!r) return;
   var name = (r.tool && r.tool.name) || r.name;
   var owner = r.owner || '';
@@ -3298,7 +3298,10 @@ const toolPromoteGlobalAction = `function(ctx){
   var msg = 'Move "' + name + '" into ' + who + ' user-wide pool? Every one of their '
           + 'agents can then use it, and you can Share it and set which users may '
           + 'adopt it from Global Tools.';
-  if(!window.confirm(msg)) return;
+  // uiConfirm, not confirm: the desktop shim cannot answer a synchronous browser
+  // dialog, so a bare confirm() there does not ask. It used to approve without
+  // asking, which on a promote-to-global is exactly the wrong default.
+  if(!(await (window.uiConfirm ? window.uiConfirm(msg) : Promise.resolve(window.confirm(msg))))) return;
   fetch('api/tool-scope?name=' + encodeURIComponent(name) + '&owner=' + encodeURIComponent(owner), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
