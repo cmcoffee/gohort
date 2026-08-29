@@ -54,3 +54,41 @@ func TestPopupShimSyntax(t *testing.T) {
 		t.Fatalf("assets/popup_shim.js failed `node --check`: %v\n%s", err, out)
 	}
 }
+
+// TestContextMenuIsNotImageOnly guards the fix for a right click that ate the
+// selection instead of offering to copy it.
+//
+// The menu used to bail unless the target was an <img>, leaving text clicks to
+// the webview's native menu. When that menu does not appear — which is the
+// platform's business, not ours — the click has already collapsed the
+// selection, so the text is gone before a Copy item can be looked for. Taking
+// the event unconditionally, and calling preventDefault, is the whole fix; an
+// early return on a non-image would silently restore the bug.
+func TestContextMenuIsNotImageOnly(t *testing.T) {
+	if strings.Contains(popup_shim_js, "if(!img)return;") {
+		t.Error("the context menu bails on non-image targets again; text right-clicks will lose the selection")
+	}
+	for _, want := range []string{
+		"function context_at(",       // selection captured AT right-click time
+		"window.__desktop_copy_text", // menu Copy rides the one Go-side copy path
+	} {
+		if !strings.Contains(popup_shim_js, want) {
+			t.Errorf("shim is missing %q", want)
+		}
+	}
+}
+
+// TestContextMenuCapturesBeforeItDraws guards the ordering the fix depends on:
+// the selection is read, then the default is prevented, and only then is a
+// menu built. Reading the selection after preventDefault would still work, but
+// building the menu before either is what lets a click land and collapse it.
+func TestContextMenuCapturesBeforeItDraws(t *testing.T) {
+	capture := strings.Index(popup_shim_js, "var ctx=context_at(e);")
+	prevent := strings.Index(popup_shim_js, "e.preventDefault();e.stopPropagation();\n  open_menu(")
+	if capture < 0 || prevent < 0 {
+		t.Fatalf("contextmenu handler shape changed (capture=%d prevent=%d)", capture, prevent)
+	}
+	if capture > prevent {
+		t.Error("the selection must be captured before the menu is opened")
+	}
+}

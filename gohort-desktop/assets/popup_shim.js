@@ -37,6 +37,10 @@ function push_copy(text,quiet){
 // Explicit copy (menu: Copy Selection / ⌘⇧C). Posts even when the
 // selection is empty so the Go side can fall back to the tmux buffer.
 window.__desktop_copy_selection=function(){push_copy(selection_text(),false);};
+// Copy an explicit string — the context menu captures its text at
+// right-click time and hands it over, because by the time an item is
+// clicked the live selection may be gone.
+window.__desktop_copy_text=function(text){push_copy(String(text||''),false);};
 // Quiet mirrors: whenever the page performs a copy (context menu,
 // Edit▸Copy reaching the webview, a copy button using execCommand),
 // or Cmd/Ctrl+C lands as a keydown, push the selection Go-side too.
@@ -124,13 +128,24 @@ document.addEventListener('keydown',function(e){
 })();
 
 (function(){
-// --- image context menu: Copy Image / Save Image As… ---
-// WKWebView's default menu can't reliably copy a data:-URI image (the
-// form every chat image takes), and dragging an image out to Finder
-// needs a native NSFilePromiseProvider that Wails doesn't expose. So
-// right-click on any <img> gets a desktop menu instead: Copy Image
-// writes real PNG bytes to the pasteboard via Go (/__desktop/copyimg),
-// Save Image As… reuses the native save dialog (/__desktop/save).
+// --- context menu ---
+//
+// A right click has to produce a menu we control, on every platform.
+//
+// The webview's own menu is not a dependable path. Wails can be told to stop
+// suppressing it (EnableDefaultContextMenu, main.go), but whether one then
+// appears is the platform's business, and when it does not appear the click
+// has ALREADY collapsed the selection: the text you were about to copy is
+// gone before you can look for a Copy item. That is the failure this fixes,
+// and asking the webview more nicely cannot fix it — only taking the event
+// can. preventDefault is what keeps the selection alive.
+//
+// Copy routes through /__desktop/copy like the rest of the shim, for the
+// reason recorded in the desktop copy path above: the webview's own
+// pasteboard write proved unreliable in this app.
+//
+// Images keep their own two items (a data:-URI image, which is the form every
+// chat image takes, is exactly what the native menu could not copy).
 function toast(t){if(window.__desktop_toast)window.__desktop_toast(t);}
 function b64_of(img){
   var src=img.currentSrc||img.src||'';
@@ -165,6 +180,7 @@ function img_name(img,mime){
   var ext=((mime||'image/png').split('/')[1]||'png').split('+')[0];
   return 'image.'+ext;
 }
+
 var menu=null;
 function close_menu(){
   if(menu){menu.remove();menu=null;
@@ -182,36 +198,189 @@ function item(label,fn){
   d.onclick=function(){close_menu();fn();};
   return d;
 }
-function open_menu(x,y,img){
+function separator(){
+  var d=document.createElement('div');
+  d.style.cssText='height:1px;margin:4px 0;background:#30363d;';
+  return d;
+}
+
+// clipboard_reader returns a way to READ the clipboard, or null. Paste is
+// offered only when one exists — an item that cannot work is worse than an
+// item that is not there.
+function clipboard_reader(){
+  if(window.runtime&&window.runtime.ClipboardGetText){
+    return function(){return Promise.resolve(window.runtime.ClipboardGetText());};
+  }
+  if(navigator.clipboard&&navigator.clipboard.readText){
+    return function(){return navigator.clipboard.readText();};
+  }
+  return null;
+}
+
+// provided_selection asks the page whether the selection is its business.
+//
+// Not every selection lives in the DOM. Forge's terminal is the case that
+// forced this: tmux owns the highlight, so window.getSelection() is empty --
+// and the webview helpfully selects the WORD UNDER THE CURSOR when you right
+// click, which is a selection the user never made. A menu that trusted the DOM
+// copied that word instead of the highlight.
+//
+// The provider is handed the element that was clicked and returns the text (or
+// a promise of it) when it owns the selection there, or null to mean "not
+// mine, use the DOM". An empty string is an ANSWER, not a refusal: the copy
+// endpoint falls back to the terminal's own paste buffer on empty text.
+function provided_selection(target){
+  var p=window.__desktopSelectionProvider;
+  if(typeof p!=='function')return null;
+  try{
+    var v=p(target);
+    return (v===null||v===undefined)?null:v;
+  }catch(e){return null;}
+}
+
+// context_at reads EVERYTHING the menu will need, at right-click time.
+// Looking any of it up later is the whole bug: by then the click has landed,
+// focus may have moved, and the selection may be collapsed.
+function context_at(e){
+  var t=e.target;
+  var closest=function(sel){return (t&&t.closest)?t.closest(sel):null;};
+  var img=closest('img');
+  var field=closest('input,textarea');
+  // Only text-bearing inputs. A checkbox or a colour swatch has no selection
+  // and no caret, and offering Cut on one is nonsense.
+  if(field&&field.tagName==='INPUT'&&!/^(|text|search|url|tel|email|password|number)$/i.test(field.type||'')){
+    field=null;
+  }
+  var ce=closest('[contenteditable=""],[contenteditable="true"]');
+  var writable=null;
+  if(field&&!field.readOnly&&!field.disabled)writable=field;
+  else if(ce)writable=ce;
+
+  var text='',start=null,end=null;
+  if(field&&field.selectionStart!=null&&field.selectionEnd>field.selectionStart){
+    start=field.selectionStart;end=field.selectionEnd;
+    text=String(field.value).substring(start,end);
+  }else{
+    if(field&&field.selectionStart!=null){start=end=field.selectionStart;}
+    try{text=String(window.getSelection()||'');}catch(err){text='';}
+  }
+  return {img:img,field:field,writable:writable,text:text,start:start,end:end,
+          provided:provided_selection(t)};
+}
+
+function fire_input(el){
+  try{el.dispatchEvent(new Event('input',{bubbles:true}));}catch(e){}
+}
+// splice_field replaces a range in an input/textarea and fires input, so a
+// framework watching the field sees the change instead of silently
+// overwriting it on the next render.
+function splice_field(f,start,end,ins){
+  var v=String(f.value);
+  f.value=v.substring(0,start)+ins+v.substring(end);
+  var at=start+ins.length;
+  try{f.focus();f.setSelectionRange(at,at);}catch(e){}
+  fire_input(f);
+}
+function insert_text(ctx,ins){
+  if(ctx.field&&ctx.start!=null){
+    splice_field(ctx.field,ctx.start,ctx.end!=null?ctx.end:ctx.start,ins);
+    return true;
+  }
+  if(ctx.writable){
+    try{
+      ctx.writable.focus();
+      if(document.execCommand('insertText',false,ins))return true;
+    }catch(e){}
+  }
+  return false;
+}
+
+function open_menu(x,y,ctx){
   close_menu();
   menu=document.createElement('div');
   menu.style.cssText='position:fixed;z-index:2147483647;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,0.55);font:13px -apple-system,system-ui,sans-serif;padding:4px 0;min-width:170px;-webkit-user-select:none;';
+  // Clicking the menu must not move focus or collapse what is selected
+  // underneath it: mousedown is where a browser does both.
+  menu.addEventListener('mousedown',function(ev){ev.preventDefault();},true);
   menu.style.left=x+'px';menu.style.top=y+'px';
-  menu.appendChild(item('Copy Image',function(){
-    b64_of(img).then(function(d){
-      return fetch('/__desktop/copyimg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({b64:d.b64,mime:d.mime})})
-        .then(function(r){return r.json();})
-        .then(function(res){if(res&&res.ok)toast('Image copied');else toast('Copy failed: '+((res&&res.error)||'unknown'));});
-    }).catch(function(e){toast('Copy failed: '+(e&&e.message||e));});
-  }));
-  menu.appendChild(item('Save Image As…',function(){
-    b64_of(img).then(function(d){
-      return fetch('/__desktop/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:img_name(img,d.mime),mime:d.mime,b64:d.b64})})
-        .then(function(r){return r.json();})
-        .then(function(res){if(res&&res.error)toast('Save failed: '+res.error);else if(res&&res.path)toast('Saved: '+res.path);else toast('Save canceled');});
-    }).catch(function(e){toast('Save failed: '+(e&&e.message||e));});
-  }));
+
+  var count=0;
+  var add=function(el){menu.appendChild(el);count++;};
+
+  if(ctx.img){
+    add(item('Copy Image',function(){
+      b64_of(ctx.img).then(function(d){
+        return fetch('/__desktop/copyimg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({b64:d.b64,mime:d.mime})})
+          .then(function(r){return r.json();})
+          .then(function(res){if(res&&res.ok)toast('Image copied');else toast('Copy failed: '+((res&&res.error)||'unknown'));});
+      }).catch(function(e){toast('Copy failed: '+(e&&e.message||e));});
+    }));
+    add(item('Save Image As…',function(){
+      b64_of(ctx.img).then(function(d){
+        return fetch('/__desktop/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:img_name(ctx.img,d.mime),mime:d.mime,b64:d.b64})})
+          .then(function(r){return r.json();})
+          .then(function(res){if(res&&res.error)toast('Save failed: '+res.error);else if(res&&res.path)toast('Saved: '+res.path);else toast('Save canceled');});
+      }).catch(function(e){toast('Save failed: '+(e&&e.message||e));});
+    }));
+  }
+
+  // A page that claims the selection wins outright: the DOM selection here is
+  // the word the webview picked on our behalf, not anything the user chose.
+  var owns=(ctx.provided!==null);
+  var has_text=owns||!!(ctx.text&&ctx.text.length);
+  if(has_text){
+    if(count)add(separator());
+    if(!owns&&ctx.writable&&ctx.start!=null&&ctx.end>ctx.start){
+      add(item('Cut',function(){
+        window.__desktop_copy_text(ctx.text);
+        insert_text(ctx,'');
+      }));
+    }
+    add(item('Copy',function(){
+      if(!owns){window.__desktop_copy_text(ctx.text);return;}
+      Promise.resolve(ctx.provided).then(function(t){
+        window.__desktop_copy_text(t==null?'':String(t));
+      }).catch(function(){window.__desktop_copy_text('');});
+    }));
+  }
+
+  var read=clipboard_reader();
+  if(ctx.writable&&read){
+    if(count&&!has_text)add(separator());
+    add(item('Paste',function(){
+      Promise.resolve(read()).then(function(txt){
+        if(txt==null||txt==='')return;
+        if(!insert_text(ctx,String(txt)))toast('Paste failed');
+      }).catch(function(e){toast('Paste failed: '+(e&&e.message||e));});
+    }));
+  }
+
+  if(ctx.field&&!owns){
+    add(item('Select All',function(){
+      try{ctx.field.focus();ctx.field.select();}catch(e){}
+    }));
+  }else if(!ctx.img&&!owns){
+    add(item('Select All',function(){
+      try{document.execCommand('selectAll');}catch(e){}
+    }));
+  }
+
+  if(!count)return false; // nothing worth showing; let the click be a click
+
   (document.body||document.documentElement).appendChild(menu);
   var r=menu.getBoundingClientRect();
   if(x+r.width>innerWidth)menu.style.left=Math.max(0,innerWidth-r.width-6)+'px';
   if(y+r.height>innerHeight)menu.style.top=Math.max(0,innerHeight-r.height-6)+'px';
   document.addEventListener('mousedown',on_away,true);
   document.addEventListener('keydown',on_key,true);
+  return true;
 }
+
 document.addEventListener('contextmenu',function(e){
-  var img=e.target&&e.target.closest&&e.target.closest('img');
-  if(!img)return;
+  var ctx=context_at(e);
+  // preventDefault BEFORE anything else: it is what stops the webview
+  // collapsing the selection out from under the menu we are about to draw.
   e.preventDefault();e.stopPropagation();
-  open_menu(e.clientX,e.clientY,img);
+  open_menu(e.clientX,e.clientY,ctx);
 },true);
 })();
