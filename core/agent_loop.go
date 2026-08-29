@@ -18,6 +18,8 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/nfo"
 	"math/rand/v2"
+
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // ToolHandlerFunc is a function that executes a tool call and returns its output.
@@ -2035,11 +2037,26 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		}
 		systemPrompt += "\n\n[Volatile facts: some facts change over time, and you do NOT know their current value no matter how confident it feels. PRICES are the clearest case: any price, rate, fee, cost, or money figure is volatile, so NEVER state one from memory, not even a rough number or a range; a remembered price is always a guess. The same rule covers stock and availability, the CURRENT holder of a changing role or record (who runs a company now, the latest version of something, the current champion or office-holder), and live status, scores, or counts. The test for any specific: could this have changed since your training, and does the user expect today's value? If yes, it is volatile: " + lookupClause + ". Do not fill the gap with a plausible-sounding value. This is not a closed list: any fact that fails the test is volatile even if it is not named here.]"
 	}
+	// Global rules — the deployment's own, ahead of everything else this
+	// section adds. Injected here and ONLY here: the per-namespace rules panels
+	// display them so a person can see the whole set on one screen, and a
+	// display is not a second injection.
+	if clause := prompts.GlobalRulesClause(); clause != "" {
+		systemPrompt += "\n\n" + clause
+	}
 	// Output style — universal (every reply, with or without tools).
 	// Suppresses persistent LLM lexical/punctuation tics the user flagged.
-	// The rule itself is written WITHOUT em-dashes so it doesn't model the
-	// behavior it forbids.
-	systemPrompt += "\n\n[Style: (1) Stop reaching for the word \"classic\"; you lean on it as filler. Drop it unless it's literally accurate (a \"classic car\", a named \"classic\" edition), never as a generic intensifier for something ordinary. (2) Do NOT use em-dashes (the \"—\" character, U+2014) at all. Where you'd reach for one, use a comma, parentheses, a colon, or two sentences instead.]"
+	//
+	// Assembled from the style-rule LIST rather than written here, because a
+	// style rule is a sentence an operator adds or drops when they notice a tic,
+	// not a paragraph encoding an incident. The two shipped rules also carry
+	// transforms (StripFillerClassic, StripEmDashes) bound to the same keys, so
+	// turning one off on the Prompts page stops the sentence AND the transform
+	// together rather than leaving the prompt asking for something the code no
+	// longer does. Empty when every rule is off, and then nothing is appended.
+	if clause := prompts.StyleClause(); clause != "" {
+		systemPrompt += "\n\n" + clause
+	}
 	// Secret handling — universal. Stops any agent from soliciting API
 	// credentials in chat (the OPNsense-controller failure mode); auth is
 	// injected server-side via Admin > APIs credentials, so the secret never

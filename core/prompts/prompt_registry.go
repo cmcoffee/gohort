@@ -16,6 +16,12 @@ type PromptBlock struct {
 	Category string // grouping shown as a section, e.g. "Orchestration"
 	Gate     string // human description of when the block applies
 	Text     string // the block text as injected
+	// Builtin marks a block that shipped with gohort, as opposed to one an
+	// operator added. Set by RegisterPromptBlock, so a code-registered block is
+	// always builtin and only the custom-block store can produce a false. It
+	// decides what a surface may offer: a builtin can be disabled (reversible,
+	// its shipped text stays on the page), a custom one can be deleted outright.
+	Builtin bool
 }
 
 var (
@@ -26,6 +32,7 @@ var (
 // RegisterPromptBlock adds a block to the Prompts registry. Call once per block,
 // typically from an init() co-located with the text it surfaces.
 func RegisterPromptBlock(b PromptBlock) {
+	b.Builtin = true // registered from code, by definition
 	promptBlockMu.Lock()
 	defer promptBlockMu.Unlock()
 	promptBlocks = append(promptBlocks, b)

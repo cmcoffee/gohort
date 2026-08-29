@@ -22,6 +22,11 @@ import (
 
 const docRulesKey = "default"
 
+// InheritedRules returns the deployment-wide rules that apply on top of any
+// namespace's own. Assigned by core at startup; nil in a bare leaf build, where
+// there is simply nothing to inherit.
+var InheritedRules = func() string { return "" }
+
 // DocRulesTable returns the per-user table name backing one app's rules.
 // Namespace is the app's own name ("techwriter", "codewriter", …).
 func DocRulesTable(namespace string) string {
@@ -80,7 +85,15 @@ func HandleDocRules(w http.ResponseWriter, r *http.Request, db Store, namespace 
 		var rules string
 		udb.Get(table, docRulesKey, &rules)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"rules": rules})
+		// inherited is READ-ONLY context, never merged into rules: the global
+		// rules already reach the model through the framework's own Style
+		// clause, so appending them here would send them twice. Showing them is
+		// the point, since "which rules apply to this?" is otherwise answerable
+		// only by reading two screens and knowing that the other one exists.
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"rules":     rules,
+			"inherited": InheritedRules(),
+		})
 	case http.MethodPost:
 		var req struct {
 			Rules string `json:"rules"`

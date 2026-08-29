@@ -253,6 +253,15 @@ func init() {
 	// would belong on this side of the seam too (a leaf's init runs first, so a
 	// leaf registering through a hook registers into nil — v0.5.867); these are
 	// all reads, so a func var is the right shape.
+	// What a per-namespace rules panel shows as inherited. A read, so a func var
+	// is right here too, and it keeps core/docs from importing core/prompts just
+	// to display a list it does not own.
+	docs.InheritedRules = func() string {
+		// Globals first: they are the floor, and reading them after a page of
+		// style notes would bury the ones that are not negotiable.
+		return prompts.GlobalRulesMarkdown() + prompts.EnabledStyleRulesMarkdown()
+	}
+
 	sandbox.WorkspacesDir = WorkspacesDir
 	sandbox.BulkStagingDir = BulkStagingDir
 	sandbox.GohortLibDir = EnsureGohortLibDir
