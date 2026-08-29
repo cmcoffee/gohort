@@ -358,9 +358,26 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		sess = ChatSession{ID: loadSession, AgentID: p.AgentID}
 	}
 
-	// Cap message history so a long-running tracker doesn't accumulate
-	// ever-growing context — same 30-turn cutoff chat uses.
-	history := sess.Messages
+	// Bound the history this fire runs on, with the same rolling-summary
+	// compaction the Cortex thread and every dispatch already use: a running
+	// summary plus a verbatim recent tail, sized by the agent's context depth.
+	// No-op until the thread grows past the fold trigger, so a young task is
+	// unaffected.
+	//
+	// It used to keep the last 30 MESSAGES, described as "the same 30-turn
+	// cutoff chat uses" — which chat had already stopped doing, and which is a
+	// count standing in for a size. That proxy holds while messages are short
+	// human turns and collapses when they are not: an agent whose every reply
+	// is a batch of finished posts writes ~17KB a turn, so thirty of them is
+	// half a megabyte before the fire has done anything. Measured at 523749
+	// chars on a live fire, whose model then narrated three posts in prose and
+	// called no tool, because a prompt that size loses its system prompt to
+	// context-shift.
+	//
+	// The 30 is kept as a BACKSTOP under the fold, for the case compaction
+	// declines to run at all (no worker LLM configured): fewer messages is
+	// still better than every message.
+	history := app.compactOperatorHistory(udb, p.Username, agent, loadSession, sess.Messages)
 	if len(history) > 30 {
 		history = history[len(history)-30:]
 	}
