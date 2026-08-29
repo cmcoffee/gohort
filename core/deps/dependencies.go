@@ -257,3 +257,53 @@ func sandboxDependency() struct {
 		versionArgs: []string{"--version"},
 	}
 }
+
+// StaleNote returns a short parenthetical naming an out-of-date dependency as
+// the likely cause of a failure, or "" when the tool is current, absent, or not
+// date-versioned.
+//
+// It exists because the server already KNEW. yt-dlp went 56 days out of date,
+// LogDependencyHealth warned about it every few minutes, YouTube started
+// answering with HTTP 403, and the agent told the user it was "usually a
+// temporary glitch on their end or a regional block". That guess was not the
+// model being careless: nothing put the staleness anywhere the failure could
+// see it, so an invented explanation was the only kind available.
+//
+// Site extractors rot on a schedule, so for yt-dlp specifically an old build is
+// not one possible cause among many, it is the first thing to check. Saying so
+// in the error costs one exec on a path that only runs when something already
+// failed.
+//
+// Deliberately a SUFFIX rather than a replacement: the tool's own message is
+// what says which URL and which site, and losing that to a tidier sentence
+// would trade a specific failure for a general one.
+func StaleNote(name string) string {
+	for _, d := range knownDependencies {
+		if d.name != name || d.staleAfter <= 0 || len(d.versionArgs) == 0 {
+			continue
+		}
+		if _, err := exec.LookPath(d.name); err != nil {
+			return "" // absent is a different error, and its own message says so
+		}
+		v := probeVersion(d.name, d.versionArgs)
+		stale, note := dateVersionStale(v, d.staleAfter)
+		if !stale {
+			return ""
+		}
+		hint := d.hint
+		if hint == "" {
+			hint = dependencyInstallHint(d.apt, d.brew)
+		}
+		return staleNoteText(d.name, v, note, hint)
+	}
+	return ""
+}
+
+// staleNoteText is the wording, split from the probe so it can be checked
+// without depending on what happens to be installed. The first version of this
+// test could only SKIP on a healthy host, which meant it asserted nothing on
+// exactly the machine where someone had just fixed the problem.
+func staleNoteText(name, version, age, hint string) string {
+	return fmt.Sprintf(" (the installed %s is %s, %s, which is the usual cause of a site suddenly failing; %s)",
+		name, version, age, hint)
+}

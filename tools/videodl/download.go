@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/cmcoffee/gohort/core/deps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,10 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 		if needsAuth(msg) && len(ytDlpAuthArgs()) == 0 {
 			return nil, fmt.Errorf("this video requires a logged-in session to download; the site (e.g. Instagram) blocks anonymous access. Set GOHORT_YTDLP_COOKIES to a cookies.txt exported from a logged-in browser session, then retry. Underlying error: %s", firstLine(msg))
 		}
-		return nil, fmt.Errorf("yt-dlp failed: %s", msg)
+		// The server already knows whether this build is out of date; say so
+		// here, or the agent explains a 403 with a guess. Appended, so the
+		// tool's own message keeps naming the URL and the site.
+		return nil, fmt.Errorf("yt-dlp failed: %s%s", msg, deps.StaleNote("yt-dlp"))
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -133,7 +137,7 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 		}
 	}
 	if videoPath == "" {
-		return nil, fmt.Errorf("yt-dlp produced no output file")
+		return nil, fmt.Errorf("yt-dlp produced no output file%s", deps.StaleNote("yt-dlp"))
 	}
 	info, err := os.Stat(videoPath)
 	if err != nil {
