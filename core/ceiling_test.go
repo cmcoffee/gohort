@@ -41,13 +41,30 @@ import (
 const (
 	// coreFileCeiling is the number of non-test .go files in package core.
 	// Hard: one new file is exactly the decision this exists to catch.
-	coreFileCeiling = 166
+	//
+	// 167 as of v0.6.444, for connector_botframework.go. A connector kind has
+	// nowhere else to live: it implements ConnectorHandler and takes Connector,
+	// both declared here, and docs/core-cuts.md records that outbound TYPE edges
+	// are the thing that kills a cut. Every sibling kind (bridge, restmessaging,
+	// restpoll, mcp, desktop, command) is in the hub for that same reason. The
+	// part of that work with no such edge, JWKS verification, did leave: it is
+	// core/jwks, and this test is why.
+	coreFileCeiling = 167
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
 	// collides: a dot-import puts these names, and only these, into another
 	// package's namespace.
-	coreExportCeiling = 2109
+	//
+	// Re-baselined to 2137 at v0.6.444. 2109 was measured on 2026-08-22; ordinary
+	// growth had since taken it to 2133, most of the slack, so bot_framework's
+	// four (the Kind const, BotFrameworkSpec, BotFrameworkVerifier and
+	// RegisterBotBridge) tripped it. Those four are the whole API two other
+	// packages need. What did NOT get exported is the runner's func type, since
+	// every caller passes a literal, and that is the deal this number is meant to
+	// force: name the ones a caller must say, not the ones that were merely
+	// convenient.
+	coreExportCeiling = 2137
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
