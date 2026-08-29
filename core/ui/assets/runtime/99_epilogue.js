@@ -83,6 +83,38 @@
     // composer out of reach in the first place.
     st.setProperty('--ui-chrome-h', Math.ceil(chrome) + 'px');
     st.setProperty('--ui-vh', Math.floor(vh) + 'px');
+    fitFullHeightPanels(vh);
+  }
+  // A full-height panel measures its OWN top instead of trusting the chrome
+  // figure above.
+  //
+  // --ui-chrome-h counts the page header and #ui-root's padding, which is the
+  // whole story on an app page. It is not the whole story inside ADMIN, where a
+  // section renders below a nav and a section heading that are neither. The
+  // panel then asks for more height than the page has left, overflows the
+  // window, and the composer pinned to its bottom edge ends up below the fold:
+  // the reported "you have to scroll down to reach the input".
+  //
+  // Measuring the element settles it for any host, because where the panel
+  // actually starts already accounts for everything above it, named or not.
+  // Document-space top (rect + scroll) on purpose: the question is whether the
+  // panel fits with the page unscrolled, and reading a viewport-relative top
+  // while the page is scrolled would feed the overflow back in as more height.
+  //
+  // SHRINK ONLY. If this measurement is ever wrong in the growing direction it
+  // is ignored, so the worst case is the CSS height that was there before
+  // rather than a new overflow of our own making.
+  function fitFullHeightPanels(vh) {
+    var panels = document.querySelectorAll('.ui-tw');
+    for (var i = 0; i < panels.length; i++) {
+      var p = panels[i];
+      var top = p.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
+      // Leave the gutter the page would have had below the panel.
+      var avail = Math.floor(vh - top - 8);
+      if (avail < 320) continue;              // too small to be a real measurement
+      if (avail >= p.offsetHeight) continue;  // already fits; do not grow it
+      p.style.height = avail + 'px';
+    }
   }
   // Coalesce bursts (a keyboard opening fires several resizes) into one pass
   // on the next frame — the measurement reads layout, so batching it keeps

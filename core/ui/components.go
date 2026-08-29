@@ -1114,6 +1114,19 @@ type FormField struct {
 	// raw mode has already chosen to work on the document as a whole.
 	SuggestURL string `json:"suggest_url,omitempty"`
 
+	// RowEditor adds an "Edit" button to each row of a Type=="rules" list,
+	// which swaps the field in place for a single-rule editor: a full-height
+	// box for the one line, plus a "describe the change" composer wired to
+	// SuggestURL. For a list whose items are one WORD (a controlled value, a
+	// scope) this is noise, so it is opt-in; for a list whose items are two
+	// sentences of house style, a one-line input shows about a third of what
+	// you are editing.
+	//
+	// In place rather than a nested dialog: the rules field already tends to
+	// live inside a modal, and a dialog inside a dialog costs two layers of
+	// focus and Escape handling to change one sentence.
+	RowEditor bool `json:"row_editor,omitempty"`
+
 	// Presets — small inline static list of one-click fills shown
 	// above the input. Click a preset to populate the field with
 	// its value (and save / mark dirty in the usual way). Use for
@@ -1207,6 +1220,7 @@ type SectionSpec struct {
 	// it does not block saving (a sections field saves continuously, the
 	// same as every other FormPanel input).
 	Required bool `json:"required,omitempty"`
+
 	// AssistPrompt scopes the assist conversation to THIS section, the
 	// way FormField.AssistPrompt does for a whole field. Set it where a
 	// section wants a different voice from its neighbours — a Rules
@@ -2694,6 +2708,12 @@ type ArticleEditor struct {
 	// NoSearch hides the sidebar search box — for a small fixed list where
 	// a search field is just noise.
 	NoSearch bool `json:"no_search,omitempty"`
+	// NoCollapse removes the sidebar collapse control (and the floating
+	// expand tab that brings it back) — for a list that is short and always
+	// relevant, where hiding it buys nothing and the control is just one more
+	// thing on screen. Also ignores any collapsed state another editor left in
+	// localStorage, so the list can never open hidden.
+	NoCollapse bool `json:"no_collapse,omitempty"`
 	// TitleReadOnly makes the title input read-only — the record's NAME is
 	// fixed (framework-defined), so the user edits the body, not the title
 	// (e.g. a record whose name is its key).

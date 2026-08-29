@@ -458,6 +458,20 @@
     overlay.appendChild(dlg);
     var released = false;
     function close() {
+      // A view inside the dialog can own a BACK step. While one is showing,
+      // Close and Escape return to what it replaced instead of dismissing the
+      // whole modal: leaving a sub-view should not cost you the dialog you
+      // opened it from, and the alternative is a nested modal, which costs two
+      // layers of focus and Escape handling to edit one thing.
+      //
+      // Declared on the element (data-ui-modal-back + an __uiModalBack
+      // function) so a component nested anywhere inside needs no handle on the
+      // modal that happens to be hosting it.
+      var back = dlg.querySelector('[data-ui-modal-back]');
+      if (back && typeof back.__uiModalBack === 'function') {
+        back.__uiModalBack();
+        return;
+      }
       overlay.remove();
       document.removeEventListener('keydown', onKey);
       if (!released) { released = true; window.uiReleaseModalZ(); }

@@ -25,7 +25,8 @@
   //                 row tooltip (codewriter puts the language there)
   //   emptyText   — copy for an empty list
   //   currentID() — the open record's id, for the active-row highlight
-  //   onOpen(id)  — a row was clicked
+  //   onOpen(id, rec)  — a row was clicked; rec is the whole record, so a
+  //                     caller can read fields this list does not interpret
   //   deleteURL   — DELETE template with {id}. Absent = no × buttons.
   //   deleteConfirm(label) — confirmation copy for a single delete
   //   onDeleted(id)        — called after a successful delete, before reload
@@ -126,7 +127,12 @@
             class: 'ui-chat-side-item' +
               (id === cur ? ' active' : '') +
               (inMode ? ' selectable' : '') +
-              (selected ? ' selected' : ''),
+              (selected ? ' selected' : '') +
+              // A row that RUNS something rather than opening a record behaves
+              // differently from every other row in the list, so it is marked
+              // and styled differently. Structural, not app-specific: the list
+              // still does not know what the action does.
+              ((it.Action || it.action) ? ' is-action' : ''),
             // Native tooltip carries the full label + metadata, so the
             // row can ellipsize at a narrow sidebar width without
             // hiding information.
@@ -166,7 +172,7 @@
               reload();
               return;
             }
-            if (opts.onOpen) opts.onOpen(id);
+            if (opts.onOpen) opts.onOpen(id, it);
           });
           host.appendChild(row);
         });
@@ -223,11 +229,33 @@
         }},
       ],
       mount: function(body) {
+        // Rules inherited from the deployment, shown READ-ONLY above your own.
+        // They already reach the model by another path, so this is not an input
+        // and editing them here would be a lie; it exists because "which rules
+        // apply to this?" was otherwise answerable only by knowing that a second
+        // screen existed and going to look at it.
+        var inherited = document.createElement('div');
+        inherited.style.cssText = 'display:none;margin-bottom:0.7rem';
+        body.appendChild(inherited);
         ta.style.cssText = 'width:100%;min-height:38vh;flex:1 1 auto;resize:vertical;box-sizing:border-box';
         body.appendChild(ta);
         body.appendChild(status);
         fetchJSON(opts.url).then(function(d) {
           ta.disabled = false;
+          var inh = (d && d.inherited || '').trim();
+          if (inh) {
+            var h = document.createElement('div');
+            // No pointer to where these are edited: naming an admin path here
+            // would put one app's navigation into a shared component. The panel
+            // says they exist and are not yours; finding them is the host's job.
+            h.textContent = 'Also in force everywhere, set by this deployment';
+            h.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin-bottom:0.25rem';
+            var pre = document.createElement('div');
+            pre.textContent = inh;
+            pre.style.cssText = 'white-space:pre-wrap;font-size:0.82rem;line-height:1.5;color:var(--text-mute);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:0.5rem 0.7rem;max-height:22vh;overflow:auto';
+            inherited.appendChild(h); inherited.appendChild(pre);
+            inherited.style.display = 'block';
+          }
           ta.value = (d && d.rules) || '';
           ta.focus();
         }).catch(function() {

@@ -11,8 +11,15 @@
     var side = el('div', {class: 'ui-tw-side'});
     // Collapse state — desktop only. Mobile uses the slide-in drawer
     // mechanism inherited from ChatPanel and ignores this state.
+    // no_collapse: a page whose list is short and always relevant has nothing
+    // to gain from hiding it, and a control that only ever
+    // takes something away is noise. Opting out also ignores any collapsed
+    // state left in localStorage by another editor, so the list cannot open
+    // hidden with no visible way back.
     var sideCollapsed = false;
-    try { sideCollapsed = localStorage.getItem('tw.sideCollapsed') === '1'; } catch(e) {}
+    if (!cfg.no_collapse) {
+      try { sideCollapsed = localStorage.getItem('tw.sideCollapsed') === '1'; } catch(e) {}
+    }
     var collapseBtn = el('button', {
       class: 'ui-tw-collapse', title: 'Hide articles list',
       onclick: function(){ toggleCollapse(); },
@@ -24,7 +31,7 @@
       noNew:     cfg.no_new,
       onNew:     function(){ openArticle(null); },
       onClose:   function(){ closeDrawer(); },
-      leftExtras: [collapseBtn],
+      leftExtras: cfg.no_collapse ? [] : [collapseBtn],
       // List-scoped actions (e.g. "Optimize all") live with the list, built via
       // the hoisted buildActionBtn so they dispatch like the toolbar's.
       rightExtras: (cfg.list_actions || []).map(buildActionBtn),
@@ -544,7 +551,7 @@
 
     wrap.appendChild(side);
     wrap.appendChild(main);
-    wrap.appendChild(expandTab);
+    if (!cfg.no_collapse) wrap.appendChild(expandTab);
     wrap.appendChild(drawerBackdrop);
     if (sideCollapsed) {
       wrap.classList.add('side-collapsed');
@@ -580,7 +587,22 @@
       dateField:  dateF,
       emptyText:  cfg.empty_text || 'No articles yet.',
       currentID:  function(){ return currentID; },
-      onOpen:     function(id){ openArticle(id); closeDrawer(); },
+      onOpen:     function(id, rec){
+        // A row whose record names a client action dispatches it instead of
+        // loading into the editor. Not every entry in a list is a document: a
+        // list can carry a row that opens a settings panel, where the big text
+        // pane would be the wrong instrument. Generic on purpose, the editor
+        // never learns what the action means.
+        var act = rec && (rec.Action || rec.action);
+        if (act) {
+          var fn = window.UIClientActions && window.UIClientActions[act];
+          if (typeof fn === 'function') fn({editor: editorAPI, button: null, action: {url: act}});
+          else showToast('No handler for client action: ' + act);
+          closeDrawer();
+          return;
+        }
+        openArticle(id); closeDrawer();
+      },
       deleteURL:  cfg.delete_url,
       onDeleted:  function(id){ if (currentID === id) openArticle(null); },
       bulk: cfg.bulk_select ? {

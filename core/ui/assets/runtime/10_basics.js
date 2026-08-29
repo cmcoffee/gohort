@@ -1911,6 +1911,69 @@
           var joined = rules.filter(function(r){ return r.trim() !== ''; }).join('\n');
           if (current[f.field] !== joined) save(f.field, joined);
         }
+        // One rule, full size, with a composer that asks for a rewrite. Replaces
+        // the list in place and puts it back on Done, so nothing nests.
+        function renderRuleEditor(idx) {
+          input.innerHTML = '';
+          var box = el('div', {class: 'ui-rules-edit'});
+          // While this editor is up, the hosting modal's Close and Escape come
+          // back to the list rather than dismissing everything.
+          box.setAttribute('data-ui-modal-back', '1');
+          box.__uiModalBack = function() { renderRules(); };
+          var ta = el('textarea', {class: 'ui-rules-edit-ta', placeholder: 'The rule…'});
+          ta.value = rules[idx] || '';
+          box.appendChild(ta);
+
+          if (f.suggest_url) {
+            var ask = el('div', {class: 'ui-rules-edit-ask'});
+            var askIn = el('input', {type: 'text', class: 'ui-rules-edit-askin',
+              placeholder: 'Describe the change, e.g. also allow it in quoted text'});
+            var askBtn = el('button', {class: 'ui-rules-edit-suggest', type: 'button'}, ['Suggest changes']);
+            function askFor() {
+              var msg = (askIn.value || '').trim();
+              if (!msg) { return; }
+              askBtn.disabled = true; askBtn.textContent = 'Thinking…';
+              fetch(f.suggest_url, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                  name: f.field, section: f.label || '', message: msg,
+                  draft: ta.value, assist_prompt: f.assist_prompt || '',
+                }),
+              }).then(function(r){ return r.json(); }).then(function(d) {
+                askBtn.disabled = false; askBtn.textContent = 'Suggest changes';
+                var next = (d && (d.value || d.reply) || '').trim();
+                if (!next) { showToast('No suggestion came back'); return; }
+                // Into the box, not straight onto the rule: a suggestion is a
+                // draft and Done is still what commits it.
+                ta.value = next; askIn.value = ''; ta.focus();
+              }).catch(function(err) {
+                askBtn.disabled = false; askBtn.textContent = 'Suggest changes';
+                showToast('Suggest failed: ' + (err && err.message || err));
+              });
+            }
+            askIn.addEventListener('keydown', function(ev) {
+              if (ev.key === 'Enter') { ev.preventDefault(); askFor(); }
+            });
+            askBtn.addEventListener('click', askFor);
+            ask.appendChild(askIn); ask.appendChild(askBtn);
+            box.appendChild(ask);
+          }
+
+          var bar = el('div', {class: 'ui-rules-edit-bar'});
+          var done = el('button', {class: 'ui-rules-edit-done', type: 'button'}, ['Done']);
+          done.addEventListener('click', function() {
+            rules[idx] = ta.value.replace(/\s+/g, ' ').trim();
+            persist();
+            renderRules();
+          });
+          var cancel = el('button', {class: 'ui-rules-edit-cancel', type: 'button'}, ['Cancel']);
+          cancel.addEventListener('click', function(){ renderRules(); });
+          bar.appendChild(cancel); bar.appendChild(done);
+          box.appendChild(bar);
+
+          input.appendChild(box);
+          ta.focus();
+        }
         function renderRules() {
           input.innerHTML = '';
           if (!rules.length) {
@@ -1935,6 +1998,15 @@
                 if (inputs[idx + 1]) inputs[idx + 1].focus();
               }
             });
+            var edit = null;
+            if (f.row_editor) {
+              // ✎ is the pencil this codebase already uses for "edited" badges.
+              edit = el('button', {class: 'ui-rules-edit-btn', title: 'Edit this rule', type: 'button'}, ['✎']);
+              edit.addEventListener('click', function() {
+                rules[idx] = ti.value; // keep an in-progress edit
+                renderRuleEditor(idx);
+              });
+            }
             var del = el('button', {class: 'ui-rules-del', title: 'Remove this rule', type: 'button'}, ['×']);
             del.addEventListener('click', function() {
               rules.splice(idx, 1);
@@ -1943,6 +2015,9 @@
             });
             row.appendChild(num);
             row.appendChild(ti);
+            // Edit immediately before remove: the destructive control stays
+            // last, where a mis-aimed click is least likely to land on it.
+            if (edit) { row.appendChild(edit); }
             row.appendChild(del);
             input.appendChild(row);
           });
