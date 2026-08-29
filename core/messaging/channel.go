@@ -125,6 +125,13 @@ var bridgeServices = map[string]BridgeService{
 	// text (always safe); flip to true once a connector implements MarkdownV2.
 	"telegram": {"Telegram", false},
 	"slack":    {"Slack", true},
+	// Teams renders markdown when an activity says textFormat "markdown", but the
+	// other Teams transport (the rest_messaging graph preset) posts contentType
+	// "html", where the same text shows literal asterisks. One service id, two
+	// wire formats, so the conservative answer wins: gohort sends plain text and
+	// the bot_framework connector stamps textFormat "plain" to match. Flip to
+	// true only once BOTH transports render it.
+	"teams":    {"Microsoft Teams", false},
 	"whatsapp": {"WhatsApp", false},
 	"signal":   {"Signal", false},
 	"discord":  {"Discord", true},

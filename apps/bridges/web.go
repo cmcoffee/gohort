@@ -56,12 +56,18 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// (trailing "/" = prefix match). It authenticates each request itself via the
 	// provider's signature scheme against the connector's stored signing secret.
 	RegisterPublicPath(prefix + "/api/webhook/")
+	// Bot Framework activity receiver. Public for the same reason, but it
+	// authenticates differently: every request carries a bearer JWT signed by
+	// Microsoft's rotating keys, checked against the connector's app id. There is
+	// no secret to configure on this one.
+	RegisterPublicPath(prefix + "/api/bot/")
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", T.handleDashboard)
 	sub.HandleFunc("/api/hook", T.handleHook)
 	sub.HandleFunc("/api/poll", T.handlePoll)
 	sub.HandleFunc("/api/webhook/", T.handleWebhook)
+	sub.HandleFunc("/api/bot/", T.handleBotActivity)
 	sub.HandleFunc("/api/webhook-secret", T.handleWebhookSecret)
 	sub.HandleFunc("/api/keys", T.handleKeys)
 	sub.HandleFunc("/api/keys/", T.handleKeyOne)
@@ -123,6 +129,18 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		return nil
 	})
 	RegisterMessagingProbe(T.probeMessaging)
+
+	// Bridges half of the bot_framework connector kind. Unlike the graph webhook
+	// there is no subscription to create or renew — Bot Framework routing is
+	// configured once in Azure — so starting one is just its outbound loop; the
+	// inbound route above is always mounted and gates on the connector record.
+	RegisterBotBridge(func(c Connector, start bool) error {
+		if start {
+			return T.startBotBridge(c)
+		}
+		T.stopBotBridge(c.Name)
+		return nil
+	})
 
 	// Graph webhook subscriptions are expiring push subscriptions; the core
 	// push-sub primitive owns their renewal + restart recovery, we supply the
