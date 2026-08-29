@@ -1993,6 +1993,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// it never performed, because its reply text feels like doing the thing.
 		// Written without em-dashes (house style).
 		systemPrompt += "\n\n[Actions: never claim you DID something (sent a message/meme/image/file, posted, scheduled, created, saved, ran a command) unless you called the tool that does it THIS turn and its result confirms success. Your reply text is NOT an action: writing 'I sent it', 'attached', 'posted to the group', or 'done' does nothing by itself. If the thing needs a tool, call it and report what its result says; if you didn't call it, don't say you did. If you couldn't or chose not to, say so plainly. When an action tool errors, times out, or returns empty, treat the action as NOT done and tell the user.]"
+		// Stated where [Actions:] is stated, because they are the same mistake
+		// from opposite ends: that one stops an agent claiming work it never did,
+		// this one stops it withholding work it actually did.
+		if clause := prompts.ToolVisibilityClause(); clause != "" {
+			systemPrompt += "\n\n" + clause
+		}
 		// Contradiction discipline — the sibling of Grounding aimed the OPPOSITE
 		// direction: not the model's own volunteered specifics, but the model
 		// DISPUTING a fact the user stated or assumed. The failure mode is a
