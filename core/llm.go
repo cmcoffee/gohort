@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
 
@@ -844,7 +845,57 @@ func CurrentContextStampIn(loc *time.Location) string {
 
 // WithTools provides tool definitions for the LLM to use.
 func WithTools(tools []Tool) ChatOption {
-	return func(c *ChatConfig) { c.Tools = tools }
+	return func(c *ChatConfig) { c.Tools = houseStyleTools(tools) }
+}
+
+// houseStyleTools strips em-dashes out of tool and parameter DESCRIPTIONS on
+// the way to the model.
+//
+// Every prompt with tools carries their descriptions, both as text through
+// BuildToolPrompt and structurally in each provider's tool schema. Around 310
+// of them contained an em-dash, so an agent read several hundred examples of
+// the character directly below a rule telling it never to produce one. Qwen
+// class models pattern match hard on what is in context (the phantom
+// "[just now]" incident is the same effect), and a rule losing to its own
+// prompt is not the model being stubborn.
+//
+// Done HERE because this is the one funnel: every provider reads ChatConfig
+// .Tools, so one pass covers the structured schemas and tools added later,
+// instead of 310 hand edits that the next contributor undoes.
+//
+// Descriptions only. Names, enum values, and path scopes are identifiers the
+// model must reproduce exactly, and rewriting one would break the call it is
+// meant to make.
+func houseStyleTools(tools []Tool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	out := make([]Tool, len(tools))
+	copy(out, tools)
+	for i := range out {
+		out[i].Description = textutil.StripEmDashes(out[i].Description)
+		out[i].Parameters = houseStyleParams(out[i].Parameters)
+	}
+	return out
+}
+
+func houseStyleParams(in map[string]ToolParam) map[string]ToolParam {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]ToolParam, len(in))
+	for k, p := range in {
+		p.Description = textutil.StripEmDashes(p.Description)
+		p.Properties = houseStyleParams(p.Properties) // object params nest
+		if p.Items != nil {
+			item := *p.Items
+			item.Description = textutil.StripEmDashes(item.Description)
+			item.Properties = houseStyleParams(item.Properties)
+			p.Items = &item
+		}
+		out[k] = p
+	}
+	return out
 }
 
 // WithJSONMode requests JSON output from the LLM.
