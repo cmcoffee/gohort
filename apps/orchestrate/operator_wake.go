@@ -241,9 +241,9 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// credential), but not every watch tool is api-mode. Best-effort: on
 		// failure WorkspaceDir stays empty and shell tools still get the clear
 		// no-sandbox error rather than a silent one.
-		if wd, werr := EnsureWorkspaceDir(owner); werr == nil {
-			sess.WorkspaceDir = wd
-		}
+		// The agent's OWN directory, matching where its turns run — a script
+		// this tool writes has to be the one a later turn reads.
+		sess.WorkspaceDir, sess.WorkspaceFallback = agentTurnWorkspace(owner, agentID)
 		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
 		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
 			if td.Tool.Name == toolName {

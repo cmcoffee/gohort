@@ -437,9 +437,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		IntentText:        p.Prompt, // Tier-1 tool elevation matches against the mission
 		DeniedCredentials: credentialDenySet(agent, p.Username),
 	}
-	if ws, werr := EnsureWorkspaceDir(p.Username); werr == nil {
-		subSess.WorkspaceDir = ws
-	}
+	// The fire runs in ITS AGENT's directory, the same place the agent's own
+	// turns run, so a wake can see what the agent just made.
+	subSess.WorkspaceDir, subSess.WorkspaceFallback = agentTurnWorkspace(p.Username, agent.ID)
 	// A background task's result arrives through this same fire path, and what
 	// it produced is staged against the session rather than described in the
 	// prompt. Fold it in BEFORE the loop: from here the files are ordinary
