@@ -57,10 +57,10 @@ func probeFails(string) bool { return false }
 
 func TestDarwinNeverSelectsBubblewrap(t *testing.T) {
 	found := func(string) (string, error) { return "/opt/homebrew/bin/bwrap", nil }
-	if sb := detectSandboxFor("darwin", found, probeFails); sb.name() == "bubblewrap" {
+	if sb := detectSandboxFor(sandboxSelection{GOOS: "darwin", Look: found, Seatbelt: probeFails, Container: func(containerSandbox) bool { return false }}); sb.name() == "bubblewrap" {
 		t.Error("darwin adopted a bwrap that happened to be on PATH")
 	}
-	if sb := detectSandboxFor("darwin", found, probeFails); sb.confines() {
+	if sb := detectSandboxFor(sandboxSelection{GOOS: "darwin", Look: found, Seatbelt: probeFails, Container: func(containerSandbox) bool { return false }}); sb.confines() {
 		t.Error("darwin reports itself confined")
 	}
 }
@@ -71,13 +71,13 @@ func TestSelectionPerPlatform(t *testing.T) {
 	found := func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	missing := func(string) (string, error) { return "", os.ErrNotExist }
 
-	if sb := detectSandboxFor("linux", found, probeFails); sb.name() != "bubblewrap" {
+	if sb := detectSandboxFor(sandboxSelection{GOOS: "linux", Look: found, Seatbelt: probeFails, Container: func(containerSandbox) bool { return false }}); sb.name() != "bubblewrap" {
 		t.Errorf("linux with bwrap chose %q", sb.name())
 	}
-	if sb := detectSandboxFor("linux", missing, probeFails); sb.confines() {
+	if sb := detectSandboxFor(sandboxSelection{GOOS: "linux", Look: missing, Seatbelt: probeFails, Container: func(containerSandbox) bool { return false }}); sb.confines() {
 		t.Error("linux without bwrap reports itself confined")
 	}
-	if sb := detectSandboxFor("windows", found, probeFails); sb.confines() {
+	if sb := detectSandboxFor(sandboxSelection{GOOS: "windows", Look: found, Seatbelt: probeFails, Container: func(containerSandbox) bool { return false }}); sb.confines() {
 		t.Error("an unsupported platform adopted a backend")
 	}
 }

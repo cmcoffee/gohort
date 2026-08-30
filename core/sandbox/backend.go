@@ -28,8 +28,10 @@ package sandbox
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/cmcoffee/snugforge/nfo"
@@ -196,17 +198,83 @@ func activeSandbox() sandboxBackend {
 // exists: on macOS the old code's silence was indistinguishable from a Linux
 // host that had simply not installed a package.
 func detectSandbox() sandboxBackend {
-	return detectSandboxFor(runtime.GOOS, exec.LookPath, seatbeltUsable)
+	return detectSandboxFor(sandboxSelection{
+		GOOS:      runtime.GOOS,
+		Pick:      strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_BACKEND"))),
+		Image:     containerImage(),
+		Look:      exec.LookPath,
+		Seatbelt:  seatbeltUsable,
+		Container: containerUsable,
+	})
 }
 
-// detectSandboxFor takes the platform, the PATH lookup and the Seatbelt probe as
-// arguments so the selection is testable on any host — including the darwin
-// branch, which is the one that was silently wrong and the one that runs where
-// this suite does not.
-func detectSandboxFor(goos string, look func(string) (string, error), probe func(string) bool) sandboxBackend {
-	switch goos {
+// sandboxSelection is everything the choice depends on, as data.
+//
+// A struct rather than five parameters because the platform, the PATH lookup
+// and two probes were already four, and the probes exist so that the branch
+// which runs on a machine this suite never touches is still exercised. A
+// selection that could only be tested on the host it selects for is the bug
+// this whole file was written to stop repeating.
+type sandboxSelection struct {
+	GOOS  string
+	Pick  string // GOHORT_SANDBOX_BACKEND, lowercased
+	Image string
+	Look  func(string) (string, error)
+	// Seatbelt and Container report whether a located runtime actually WORKS.
+	// Both exist because on this project a binary being on PATH has twice
+	// turned out to mean nothing.
+	Seatbelt  func(string) bool
+	Container func(containerSandbox) bool
+}
+
+// containerRuntimes are tried in order when a container backend is asked for
+// without naming one.
+//
+// podman first, and not as a style preference: reaching /var/run/docker.sock is
+// root-equivalent, so a docker backend hands the gohort daemon a capability it
+// did not have in order to confine the commands it runs. Rootless podman has no
+// daemon and no such socket. docker stays available because some deployments
+// have only it, and an operator who types it gets it.
+var containerRuntimes = []string{"podman", "docker"}
+
+// detectSandboxFor resolves the selection.
+//
+// The container backends are OPT-IN and never reached by "auto". They replace
+// the entire filesystem a command sees, which is a deployment decision rather
+// than a strength ranking — a host with bubblewrap should keep using it, since
+// bwrap confines at least as well and starts about fifty times faster.
+func detectSandboxFor(sel sandboxSelection) sandboxBackend {
+	switch sel.Pick {
+	case "none":
+		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=none — confinement is disabled by configuration")
+		return noSandbox{}
+	case "podman", "docker", "container":
+		if sb := pickContainer(sel); sb != nil {
+			return sb
+		}
+		return noSandbox{}
+	case "bubblewrap", "bwrap":
+		if p, err := sel.Look("bwrap"); err == nil {
+			return bwrapSandbox{path: p}
+		}
+		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=bubblewrap but bwrap is not on PATH — falling back to unconfined")
+		return noSandbox{}
+	case "", "auto":
+		// The historical behaviour, unchanged.
+	default:
+		// Not silently ignored: a typo in the variable that decides how
+		// commands are confined must not read as "use the default and say
+		// nothing". Same rule bypassPolicy applies to its own typos, except
+		// that here the safe answer is the platform default rather than a
+		// refusal — an unrecognized name is not a request for less
+		// confinement, it is a request nobody can act on.
+		nfo.Log("[sandbox] WARNING: GOHORT_SANDBOX_BACKEND=%q is not a known backend "+
+			"(auto, bubblewrap, podman, docker, container, none) — using the platform default",
+			sel.Pick)
+	}
+	switch sel.GOOS {
 	case "linux":
-		if p, err := look("bwrap"); err == nil {
+		if p, err := sel.Look("bwrap"); err == nil {
 			nfo.Debug("[sandbox] bubblewrap at %s — shell tools are OS-sandboxed", p)
 			return bwrapSandbox{path: p}
 		}
@@ -220,17 +288,53 @@ func detectSandboxFor(goos string, look func(string) (string, error), probe func
 		// for a decade and its profile language is undocumented, so the binary
 		// being present is not evidence it accepts what we generate — and
 		// assuming it does would break every shell tool on the Mac at once.
-		if p, err := look(seatbeltBinary); err == nil {
-			if probe(p) {
+		if p, err := sel.Look(seatbeltBinary); err == nil {
+			if sel.Seatbelt(p) {
 				nfo.Debug("[sandbox] seatbelt at %s — shell tools are OS-sandboxed", p)
 				return seatbeltSandbox{path: p}
 			}
 		}
 		nfo.Debug("[sandbox] no usable sandbox backend on macOS — shell tools will run unconfined")
 	default:
-		nfo.Debug("[sandbox] no sandbox backend for %s — shell tools will run unconfined", goos)
+		nfo.Debug("[sandbox] no sandbox backend for %s — shell tools will run unconfined", sel.GOOS)
 	}
 	return noSandbox{}
+}
+
+// pickContainer locates and probes a container runtime, or returns nil having
+// said why.
+//
+// nil rather than noSandbox{} so the caller decides what "no container" means;
+// today that is unconfined, and with the default fail-closed policy unconfined
+// means every shell tool is refused. That is the right outcome for an operator
+// who asked for containers and cannot have them — louder than a silent
+// downgrade to bwrap, which would look like it worked.
+func pickContainer(sel sandboxSelection) sandboxBackend {
+	want := containerRuntimes
+	if sel.Pick == "podman" || sel.Pick == "docker" {
+		want = []string{sel.Pick}
+	}
+	var tried []string
+	for _, kind := range want {
+		p, err := sel.Look(kind)
+		if err != nil {
+			tried = append(tried, kind+" (not on PATH)")
+			continue
+		}
+		c := containerSandbox{path: p, kind: kind, image: sel.Image}
+		if !sel.Container(c) {
+			// containerUsable has already logged what failed and how it
+			// looked; repeating it here would say the same thing twice with
+			// less detail.
+			tried = append(tried, kind+" (unusable)")
+			continue
+		}
+		return c
+	}
+	nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=%s but no container runtime is usable [%s] — "+
+		"falling back to unconfined, which under the default policy means shell tools are REFUSED",
+		sel.Pick, strings.Join(tried, ", "))
+	return nil
 }
 
 // SandboxStatus describes this host's confinement, for the admin panel.
@@ -241,7 +345,7 @@ func detectSandboxFor(goos string, look func(string) (string, error), probe func
 // past days ago, on a platform where the advice it gave was impossible to
 // follow.
 type SandboxStatus struct {
-	Backend  string `json:"backend"`  // "bubblewrap" | "seatbelt" | "none"
+	Backend  string `json:"backend"`  // "bubblewrap" | "seatbelt" | "podman" | "docker" | "none"
 	Confined bool   `json:"confined"` // false means this host has no OS confinement
 	Required bool   `json:"required"` // confinement is mandatory for an unprivileged caller
 	// Bypass is the deployment's tri-state: "off" (default, nothing runs
@@ -302,13 +406,16 @@ func unsandboxedAdvice() string { return unsandboxedAdviceFor(runtime.GOOS) }
 // cross-compile — which proves it parses, not that it says anything useful.
 func unsandboxedAdviceFor(goos string) string {
 	const optOut = " Or set GOHORT_ALLOW_UNSANDBOXED=1 to accept that shell tools run at this account's full privilege."
+	// Named on every platform because it is the one remedy that does not depend
+	// on which one you are reading this from.
+	const container = " A container runtime also works: install podman (rootless) and set GOHORT_SANDBOX_BACKEND=podman."
 	switch goos {
 	case "linux":
-		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)." + optOut
+		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)." + container + optOut
 	case "darwin":
 		return "macOS confinement uses sandbox-exec (Seatbelt), and this host either lacks it or it refused the probe profile — " +
-			"check the log for the refusal. Nothing can be installed to fix that; sandbox-exec ships with macOS or not at all. " +
-			"Either run shell tools on a Linux peer, or accept them unconfined." + optOut
+			"check the log for the refusal. Nothing can be installed to fix that; sandbox-exec ships with macOS or not at all." +
+			container + optOut
 	default:
 		return "gohort has no sandbox backend for " + goos + "." + optOut
 	}

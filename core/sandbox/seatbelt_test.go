@@ -250,10 +250,10 @@ func TestAFailedProbeDemotesRatherThanBreaks(t *testing.T) {
 	// And selection honors it: probe fails → unconfined, probe passes →
 	// seatbelt. Checked from Linux, where it would otherwise never run.
 	found := func(string) (string, error) { return "/usr/bin/sandbox-exec", nil }
-	if sb := detectSandboxFor("darwin", found, func(string) bool { return false }); sb.confines() {
+	if sb := detectSandboxFor(sandboxSelection{GOOS: "darwin", Look: found, Seatbelt: func(string) bool { return false }, Container: func(containerSandbox) bool { return false }}); sb.confines() {
 		t.Error("a failed probe still produced a confining backend")
 	}
-	sb := detectSandboxFor("darwin", found, func(string) bool { return true })
+	sb := detectSandboxFor(sandboxSelection{GOOS: "darwin", Look: found, Seatbelt: func(string) bool { return true }, Container: func(containerSandbox) bool { return false }})
 	if sb.name() != "seatbelt" || !sb.confines() {
 		t.Errorf("a passing probe produced %q (confines=%v)", sb.name(), sb.confines())
 	}
