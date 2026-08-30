@@ -127,6 +127,9 @@ func (t *chatTurn) renderRecallHints(userMsg string) string {
 	// the budget it warns instead, because that is a turn the user waited on and
 	// then got no hints for anyway.
 	total := time.Since(phaseStart)
+	// The prep clock wants this whether it was slow or not — a phase only in
+	// the log when it misbehaves cannot be ruled OUT as the cause of a wait.
+	t.prep.mark("recall", total)
 	timings := fmt.Sprintf("embed=%s knowledge=%s(%d hits) memory=%s(%d hits) graph=%s total=%s",
 		embedMS.Round(time.Millisecond), knMS.Round(time.Millisecond), len(kn),
 		memMS.Round(time.Millisecond), len(mem), graphMS.Round(time.Millisecond),

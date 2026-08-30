@@ -343,6 +343,10 @@ func startKeepalive(sse *sseWriter) func() {
 type chatTurn struct {
 	app   *OrchestrateApp
 	ctx   context.Context
+	// prep measures how long the person waited before their message reached a
+	// model. nil on every turn that is not a live send — a fire, a dispatch, a
+	// test — and every method on it tolerates that.
+	prep *prepClock
 	sse   *sseWriter
 	udb   Database
 	user  string
@@ -4733,6 +4737,9 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 // See app_block_publisher.go for why the binding happens here rather than at
 // tool-build time.
 func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter, r *http.Request, udb Database, user string, agent AgentRecord, appTools []AgentToolDef, appBlockPub *AppBlockPublisher) {
+	// Before anything else: a clock started after the first phase cannot
+	// measure it, and the phases that turned out to be slow are near the front.
+	prep := startPrepClock()
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -5205,6 +5212,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	}
 	turn := &chatTurn{
 		app:         T,
+		prep:        prep,
 		ctx:         ctx,
 		sse:         sse,
 		udb:         udb,
@@ -6887,6 +6895,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// see result, reply) without spinning up plan_set + a worker
 	// round + synthesis for what should be one round.
 	Debug("[orchestrate.orch] runPlan: building tool session")
+	catalogStart := time.Now()
 	sess := t.newToolSession()
 	// Persist any managed-workspace switch this inline turn performs so
 	// the next step/turn's session lands in the same workspace.
@@ -7210,6 +7219,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// rewrite, which is a mechanism that no longer exists — and it is the first
 	// thing anyone greps when tools go missing between turns.
 	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(allTools))
+	// Building the catalog is the other phase big enough to be felt: a hundred
+	// tools resolved, temp tools loaded from the store, schemas built.
+	t.prep.mark("tools", time.Since(catalogStart))
 
 	// (Runtime tool-group rewriting retired. The per-turn
 	// classifier-trim that preceded this block is also gone — every
@@ -7749,6 +7761,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	userSaid := LatestUserContent(llmMsgs)
 
 	orchStart := time.Now()
+	// Everything above this line happened while the person waited and nothing
+	// was accounting for it: [agent_loop] turn time starts on the next line.
+	t.prep.done()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
