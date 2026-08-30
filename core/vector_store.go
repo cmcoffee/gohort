@@ -143,6 +143,35 @@ func invalidateChunkCache() {
 	chunkCache.mu.Unlock()
 }
 
+// invalidateChunkCacheFor drops ONE Database's snapshot, which is all a write
+// to that Database can invalidate.
+//
+// Dropping every entry was the original behavior and it is a rebuild of every
+// other cached corpus, charged to whoever sends the next message — the same
+// shape as the cold-start cost fixed by WarmChunkCache, and one that warming
+// cannot help because it recurs on every write. Invisible on a deployment
+// whose writes are rare; on one that saves knowledge steadily it is a recall
+// that is slow "sometimes", for no reason anybody can see.
+//
+// Scoping is CORRECT and not merely cheaper: a snapshot is built by walking
+// db.Keys(EmbeddedChunks) on one handle, so it contains that handle's rows and
+// nothing else, and a write through a different handle cannot appear in it.
+// Handle interning (core/database.go dbHandles) is what makes that safe — the
+// same logical store reached twice is the same pointer, so a write and a read
+// of one corpus always agree on the key.
+//
+// A nil db means the caller could not name what it changed; the safe answer
+// there is still all of them.
+func invalidateChunkCacheFor(db Database) {
+	if db == nil {
+		invalidateChunkCache()
+		return
+	}
+	chunkCache.mu.Lock()
+	delete(chunkCache.entries, db)
+	chunkCache.mu.Unlock()
+}
+
 // InvalidateChunkCache is the exported wrapper for callers outside the
 // core package that bulk-modify EmbeddedChunks rows (e.g. one-shot
 // maintenance migrations). Normal IngestReport / DeleteReportChunks
@@ -404,7 +433,7 @@ func BackfillChunkTitles(db Database, kind string, resolve func(reportID string)
 		updated++
 	}
 	if updated > 0 {
-		invalidateChunkCache()
+		invalidateChunkCacheFor(db)
 	}
 	return updated
 }
@@ -481,7 +510,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 			db.Set(EmbeddedChunks, row.ID, row)
 		}
 	}
-	invalidateChunkCache()
+	invalidateChunkCacheFor(db)
 	tagSuffix := ""
 	if kind != "" {
 		tagSuffix = " [kind=" + kind + "]"
@@ -559,7 +588,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 			}
 		}
 	}
-	invalidateChunkCache()
+	invalidateChunkCacheFor(db)
 	if split > 0 {
 		Debug("[vector] paged-ingested %s/%s: %d pages, %d chunks → %d rows (%d embedded, %d empty, %d sub-split rows from oversize chunks)",
 			source, reportID, len(pages), totalChunks, embedded+empty, embedded, empty, split)
@@ -722,7 +751,7 @@ func DeleteChunksByIDs(db Database, ids []string) {
 		}
 		db.Unset(EmbeddedChunks, id)
 	}
-	invalidateChunkCache()
+	invalidateChunkCacheFor(db)
 }
 
 // DeleteReportChunks removes every chunk belonging to the given report.
@@ -741,7 +770,7 @@ func DeleteReportChunks(db Database, reportID string) {
 		}
 	}
 	if removed {
-		invalidateChunkCache()
+		invalidateChunkCacheFor(db)
 	}
 }
 
@@ -759,7 +788,7 @@ func WipeVectorStore(db Database) int {
 	for _, k := range keys {
 		db.Unset(EmbeddedChunks, k)
 	}
-	invalidateChunkCache()
+	invalidateChunkCacheFor(db)
 	return len(keys)
 }
 
@@ -788,7 +817,7 @@ func WipeChunksBySourcePrefix(db Database, prefix string) int {
 		removed++
 	}
 	if removed > 0 {
-		invalidateChunkCache()
+		invalidateChunkCacheFor(db)
 	}
 	return removed
 }
@@ -872,7 +901,7 @@ func MigrateLegacyChunksToVectorDB() {
 		}
 	}
 	VectorDB.Set(vectorMetaTable, "legacy_migrated", time.Now().Format(time.RFC3339))
-	invalidateChunkCache()
+	invalidateChunkCacheFor(VectorDB)
 	Log("[vector] migration complete: copied %d chunk(s), scanned %d, elapsed %.1fs; legacy rows left in place for rollback", copied, scanned, time.Since(start).Seconds())
 }
 

@@ -174,3 +174,57 @@ func TestWarmChunkCacheFillsItBeforeTheFirstQuery(t *testing.T) {
 
 // Nothing waits on it and nothing breaks without a store.
 func TestWarmChunkCacheToleratesNoStore(t *testing.T) { WarmChunkCache(nil) }
+
+// A write to one corpus must not throw away another's snapshot. Dropping every
+// entry meant one knowledge save charged the next message a full rebuild of
+// every OTHER cached store — a recall that is slow "sometimes" for no visible
+// reason, and one that warming cannot fix because it recurs on every write.
+func TestInvalidateSpareTheStoresThatDidNotChange(t *testing.T) {
+	invalidateChunkCache()
+	a := &DBase{Store: kvlite.MemStore()}
+	b := &DBase{Store: kvlite.MemStore()}
+	a.Set(EmbeddedChunks, "a1", EmbeddedChunk{ID: "a1", Source: "a", Vector: []float32{1, 0}})
+	b.Set(EmbeddedChunks, "b1", EmbeddedChunk{ID: "b1", Source: "b", Vector: []float32{0, 1}})
+
+	snapshotChunks(a)
+	snapshotChunks(b)
+	if len(chunkCache.entries) != 2 {
+		t.Fatalf("expected both cached, got %d", len(chunkCache.entries))
+	}
+
+	invalidateChunkCacheFor(a)
+	if _, still := chunkCache.entries[a]; still {
+		t.Fatal("the written store kept a stale snapshot")
+	}
+	if _, kept := chunkCache.entries[b]; !kept {
+		t.Fatal("an untouched store lost its snapshot and will rebuild for nothing")
+	}
+}
+
+// Scoping must not hide a write from the store that took it.
+func TestAWriteIsVisibleToTheStoreThatTookIt(t *testing.T) {
+	invalidateChunkCache()
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "c1", EmbeddedChunk{ID: "c1", Source: "s", Vector: []float32{1, 0}})
+	if got := len(snapshotChunks(db)); got != 1 {
+		t.Fatalf("warm snapshot has %d chunks, want 1", got)
+	}
+
+	db.Set(EmbeddedChunks, "c2", EmbeddedChunk{ID: "c2", Source: "s", Vector: []float32{0, 1}})
+	invalidateChunkCacheFor(db)
+	if got := len(snapshotChunks(db)); got != 2 {
+		t.Fatalf("the new chunk never reached search: %d chunks, want 2", got)
+	}
+}
+
+// A caller that cannot name what it changed still gets the whole cache dropped.
+func TestNilTargetDropsEverything(t *testing.T) {
+	invalidateChunkCache()
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "x", EmbeddedChunk{ID: "x", Source: "s", Vector: []float32{1, 0}})
+	snapshotChunks(db)
+	invalidateChunkCacheFor(nil)
+	if len(chunkCache.entries) != 0 {
+		t.Fatalf("nil target left %d entries cached", len(chunkCache.entries))
+	}
+}

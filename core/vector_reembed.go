@@ -100,7 +100,7 @@ func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
 	if fixed > 0 {
 		// The chunk cache holds the pre-repair rows; without this the new
 		// vectors don't reach search until something else invalidates it.
-		invalidateChunkCache()
+		invalidateChunkCacheFor(db)
 	}
 	if candidates == 0 {
 		Log("[vector-reembed] scanned %d chunk(s); none are missing a vector", scanned)
