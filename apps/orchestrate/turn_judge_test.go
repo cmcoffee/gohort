@@ -250,3 +250,29 @@ func TestEvidenceNamesWorkDoneBeforeTheLoop(t *testing.T) {
 		t.Error("a turn whose step ran should not be labelled as having run nothing")
 	}
 }
+
+// The judge is told what RAN, and the unit has to be the action. A tool name
+// alone cannot separate nine reads from three writes.
+func TestEvidenceNamesTheActionNotJustTheTool(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request:   "post the daily comments",
+		Reply:     "Total: 3 comments posted successfully.",
+		ToolCalls: []string{"moltbook/get_feed", "moltbook/get_message"},
+	})
+	if !strings.Contains(msg, "moltbook/get_feed") {
+		t.Fatalf("the action never reached the judge:\n%s", msg)
+	}
+	if !strings.Contains(msg, "ACTIONS") {
+		t.Fatalf("the list is not labelled as actions:\n%s", msg)
+	}
+}
+
+// The prompt has to say an absent action did not run, or the judge is free to
+// read "moltbook ran" as "the post went out".
+func TestPromptRulesOutActionsThatAreNotListed(t *testing.T) {
+	for _, want := range []string{"DID NOT RUN", "Nine reads do not add up to one write"} {
+		if !strings.Contains(turnJudgeSysPrompt, want) {
+			t.Fatalf("the judge is never told %q", want)
+		}
+	}
+}

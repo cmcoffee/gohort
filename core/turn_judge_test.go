@@ -185,3 +185,48 @@ func TestWorkDoneByAStepCountsAsTheTurnsWork(t *testing.T) {
 		t.Error("no recorded step work means the turn is still worth judging")
 	}
 }
+
+// A grouped tool's read and its write share a name. If the evidence carries
+// only names, "moltbook ran nine times" is consistent with a reply claiming
+// three posts — which is how a fire reported three comments it never made.
+func TestProducerMatchReadsTheToolHalfOfALabel(t *testing.T) {
+	if !turnRanProducer([]string{"image/edit"}) {
+		t.Fatal("a labelled producer call stopped counting as one")
+	}
+	if !turnRanProducer([]string{"moltbook/get_feed", "download_video"}) {
+		t.Fatal("a bare producer name alongside labels stopped counting")
+	}
+	if turnRanProducer([]string{"videoconference/join"}) {
+		t.Fatal("matched a tool whose name merely starts with a producer's")
+	}
+	if turnRanProducer([]string{"moltbook/get_feed", "workspace/head"}) {
+		t.Fatal("non-producers counted as producers")
+	}
+}
+
+// The turn that went unjudged: tools ran, none failed, nothing was expected to
+// be delivered. Every evidence arm says there is nothing to look at, and on an
+// interactive turn that is right — a person reads the reply. Unattended, it is
+// how a false report becomes an undisputed transcript.
+func TestUnattendedTurnIsJudgedEvenWhenTheEvidenceLooksFine(t *testing.T) {
+	clean := TurnClaimEvidence{
+		Request:   "post the daily comments",
+		Reply:     "Total: 3 comments posted successfully.",
+		ToolCalls: []string{"moltbook/get_feed", "moltbook/get_feed", "moltbook/get_message"},
+	}
+	if turnClaimWorthJudging(clean) {
+		t.Fatal("an attended clean turn should stay unjudged; the filter is meant to be narrow there")
+	}
+	clean.Unattended = true
+	if !turnClaimWorthJudging(clean) {
+		t.Fatal("an unattended turn went unjudged — the fire that reported three posts it never made")
+	}
+}
+
+// Unattended widens the pre-filter, and only that. An empty reply is still not
+// judged: there is no claim in it to be false.
+func TestUnattendedStillNeedsAReply(t *testing.T) {
+	if turnClaimWorthJudging(TurnClaimEvidence{Reply: "   ", Unattended: true}) {
+		t.Fatal("judged a turn with no reply")
+	}
+}

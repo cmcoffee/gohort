@@ -603,6 +603,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// No PriorWork: a fire has no machine steps running ahead of its loop,
 		// so the tools the loop ran are the whole of what happened.
 		TurnClaimJudge: app.turnClaimJudge(ctx),
+		// And it is asked on every fire, not only the ones whose evidence looks
+		// wrong. The judge was already attached here for the reason above, and
+		// the pre-filter then declined to call it on exactly the turn this
+		// comment describes: nine moltbook reads, no failures, three posts
+		// reported as done. Ran cleanly, claimed everything, judged never.
+		Unattended: true,
 		// And whether it KNOWS what it asserts. The two travel together
 		// everywhere else and a test enforces it, which is the right rule: a
 		// fire stating an unchecked fact as certain is exactly as unwatched as

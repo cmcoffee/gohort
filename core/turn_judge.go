@@ -42,6 +42,14 @@ type TurnClaimEvidence struct {
 	Reply string
 	// ToolCalls names every tool this turn ran, in order, with duplicates —
 	// three image calls are three attempts and the judge should see all three.
+	//
+	// Each entry is the tool's LABEL: "name" for a plain tool, "name/action"
+	// for a grouped one. The action is the load-bearing half. A grouped tool
+	// puts reading and writing behind a single name, so a list of bare names
+	// cannot distinguish a turn that fetched four feeds from one that posted
+	// four comments — and a reply claiming the posts is consistent with it.
+	// Observed on a scheduled fire: nine moltbook calls, every one a read,
+	// reported as three comments posted with invented ids and 201s.
 	ToolCalls []string
 	// PriorWork is work done FOR this turn before its loop began, which the
 	// loop therefore never sees: a machine step that searched, a delegated
@@ -75,6 +83,11 @@ type TurnClaimEvidence struct {
 	// had a rule it could not apply, so it flagged the compliant reply and the
 	// loop retracted a message the framework had asked for in those words.
 	GivenEstimate string
+	// Unattended marks a turn nobody is reading as it happens. It widens the
+	// pre-filter rather than the verdict: the judge asks the same question and
+	// applies the same standard, it just gets asked on turns the evidence
+	// alone would have let through. See turnClaimWorthJudging.
+	Unattended bool
 }
 
 // TurnClaimVerdict is the judge's answer.
@@ -166,6 +179,20 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	if ev.Delivered == 0 && turnRanProducer(ev.ToolCalls) {
 		return true
 	}
+	// Nobody is reading. Every arm above asks "does the framework have reason
+	// to doubt THIS turn"; a turn that ran cleanly and failed nothing has none,
+	// which is the right answer when a person is looking at the reply and can
+	// say "you didn't attach anything". Unattended, that check does not exist:
+	// a fire that reads nine times and reports three finished posts leaves a
+	// transcript nothing disputes and a run ledger recording a success.
+	//
+	// This is the loosest arm by a distance, and it is affordable for the
+	// reason the whole pre-filter is allowed to be sloppy — a false positive
+	// costs one small model call that comes back KEPT. Fires are a small
+	// fraction of turns, so the ceiling on that cost is low and known.
+	if ev.Unattended {
+		return true
+	}
 	return false
 }
 
@@ -175,6 +202,12 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 // producers get them covered by the no-tools and tool-error arms above.
 func turnRanProducer(calls []string) bool {
 	for _, c := range calls {
+		// Entries are labels now ("image/edit"), so match the tool half. Left
+		// as an exact switch on the name rather than a prefix test: "video"
+		// must not be matched by a tool called "videoconference".
+		if i := strings.IndexByte(c, '/'); i >= 0 {
+			c = c[:i]
+		}
 		switch strings.ToLower(strings.TrimSpace(c)) {
 		case "image", "generate_image", "find_image", "fetch_image", "video", "download_video", "create_docx":
 			return true

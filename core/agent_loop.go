@@ -1287,6 +1287,18 @@ type AgentLoopConfig struct {
 	// Nil, and the empty result, both read as "nothing ran before this".
 	PriorWork func() []string
 
+	// Unattended marks a turn nobody is reading as it happens — a scheduled
+	// fire, a task wake, an autonomous run. Set by the host, which is the only
+	// thing that knows how the turn was started.
+	//
+	// It is the one arm of the claim judge's pre-filter that is about the
+	// SITUATION rather than the evidence. Every other arm exists because the
+	// framework has reason to doubt this particular turn; this one exists
+	// because on an unattended turn a false report is never contradicted. The
+	// interactive paths get away with a narrow filter precisely because a
+	// person is there to say "it didn't attach anything".
+	Unattended bool
+
 	// TurnGroundingJudge reads the finished turn and reports whether the reply
 	// states an unchecked claim as established fact. Separate from
 	// TurnClaimJudge because the questions differ: that one asks whether the
@@ -3575,6 +3587,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				Delivered:     cfg.deliveredCount(),
 				Backgrounded:  cfg.backgrounded(),
 				GivenEstimate: cfg.backgroundEstimate(),
+				Unattended:    cfg.Unattended,
 			}); convicted {
 				// Two independent findings share one verdict, so each branch checks
 				// its own. A machinery-only conviction reaching the claim branch
@@ -4610,7 +4623,10 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// Duplicates are kept on purpose — three image calls are three attempts,
 		// and a judge that sees one of them is reading a different turn.
 		for _, w := range work {
-			turnToolCalls = append(turnToolCalls, w.tc.Name)
+			// The LABEL, not the bare name: a grouped tool's read and its write
+			// share a name, and "moltbook ran nine times" is consistent with a
+			// reply claiming three posts. "moltbook/get_feed" is not.
+			turnToolCalls = append(turnToolCalls, toolCallLabel(w.tc))
 			if w.index < len(results) && results[w.index].IsError {
 				lastToolError = results[w.index].Content
 			}
