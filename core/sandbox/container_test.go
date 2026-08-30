@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -267,4 +268,87 @@ func TestPythonVersionParsing(t *testing.T) {
 			t.Errorf("parsePythonVersion(%q) should fail", bad)
 		}
 	}
+}
+
+// --- SELinux -----------------------------------------------------------------
+
+// The bug this backend shipped with. Under SELinux enforcing a container runs
+// as container_t and cannot read a bind mount carrying the host's own label, so
+// the workspace reads as empty or permission-denied with nothing naming
+// SELinux. It was invisible on the dev box (SELinux Disabled) and would have
+// appeared on the first RHEL deployment, which is where gohort mostly runs.
+func TestMountsCarryTheRelabelOptionWhenSELinuxEnforces(t *testing.T) {
+	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "on")
+	resetRelabel(t)
+
+	got := mount("/host/ws", "/host/ws", "rw")
+	if len(got) != 2 || got[1] != "/host/ws:/host/ws:rw,z" {
+		t.Errorf("a writable mount should relabel: %v", got)
+	}
+	// A read-only mount keeps ro AND gains the label; podman takes them
+	// comma-separated in one option field.
+	got = mount("/corpus", "/corpus", "ro")
+	if got[1] != "/corpus:/corpus:ro,z" {
+		t.Errorf("a read-only mount should relabel too: %v", got)
+	}
+	// The hook socket has no options of its own, so `z` must not arrive with a
+	// leading comma — podman rejects ":,z".
+	got = mount("/run/h.sock", "/run/h.sock", "")
+	if got[1] != "/run/h.sock:/run/h.sock:z" {
+		t.Errorf("an option-less mount should get a bare label: %v", got)
+	}
+}
+
+// Lowercase z (shared), never uppercase Z (private to one container). These
+// mounts outlive any single run — several containers touch one workspace in
+// sequence — and a private label would have each one relabel the tree away from
+// the last.
+func TestRelabelIsSharedNotPrivate(t *testing.T) {
+	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "on")
+	resetRelabel(t)
+	if spec := mount("/ws", "/ws", "rw")[1]; strings.Contains(spec, ",Z") {
+		t.Errorf("private relabeling would fight between runs: %q", spec)
+	}
+}
+
+// Off is a real requirement, not decoration: relabeling REWRITES the host
+// directory's label, and a scoped read-only corpus may be labeled for another
+// service. An operator whose web root is httpd_sys_content_t needs to be able
+// to refuse.
+func TestRelabelCanBeRefused(t *testing.T) {
+	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "off")
+	resetRelabel(t)
+	if spec := mount("/ws", "/ws", "rw")[1]; strings.Contains(spec, "z") {
+		t.Errorf("relabeling was disabled but happened anyway: %q", spec)
+	}
+}
+
+// On a host with no SELinux, nothing is added — the flag would be a no-op on
+// most kernels and an error on some.
+func TestNoRelabelWithoutSELinux(t *testing.T) {
+	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "")
+	resetRelabel(t)
+	spec := mount("/ws", "/ws", "rw")[1]
+	if SELinuxState() == "enforcing" {
+		if !strings.HasSuffix(spec, ",z") {
+			t.Errorf("an enforcing host must relabel: %q", spec)
+		}
+		return
+	}
+	if strings.Contains(spec, ",z") {
+		t.Errorf("a host without enforcing SELinux must not relabel: %q", spec)
+	}
+}
+
+// resetRelabel clears the sync.Once so each test decides for itself. Without
+// it the first test to run would fix the answer for every one after it — the
+// same trap seatbeltUsable documents.
+func resetRelabel(t *testing.T) {
+	t.Helper()
+	relabelOnce = sync.Once{}
+	relabelOK = false
+	t.Cleanup(func() {
+		relabelOnce = sync.Once{}
+		relabelOK = false
+	})
 }

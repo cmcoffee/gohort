@@ -126,28 +126,29 @@ func (c containerSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	// Mounts. Same set bwrapArgv binds, minus the system directories: those
 	// come from the image, which is the entire point.
 	if run.Kind == sandboxShellRun && run.WorkspaceDir != "" {
-		args = append(args, "--volume", run.WorkspaceDir+":"+run.WorkspaceDir+":rw", "--workdir", run.WorkspaceDir)
+		args = append(args, mount(run.WorkspaceDir, run.WorkspaceDir, "rw")...)
+		args = append(args, "--workdir", run.WorkspaceDir)
 	} else {
 		args = append(args, "--workdir", "/tmp")
 	}
 	if libDir := gohortLibDir(); libDir != "" {
-		args = append(args, "--volume", libDir+":"+GohortLibMountPath+":ro")
+		args = append(args, mount(libDir, GohortLibMountPath, "ro")...)
 	}
 	if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
-		args = append(args, "--volume", pyDir+":"+deps.SandboxPyDepsMountPath+":ro")
+		args = append(args, mount(pyDir, deps.SandboxPyDepsMountPath, "ro")...)
 	}
 	// The hook socket, by FILE rather than by directory, so a sandboxed script
 	// gets its own and cannot list anyone else's. Same path inside as out, so
 	// GOHORT_HOOK_PATH needs no translation.
 	if p := run.Env["GOHORT_HOOK_PATH"]; p != "" && !withinDir(p, run.WorkspaceDir) {
-		args = append(args, "--volume", p+":"+p)
+		args = append(args, mount(p, p, "")...)
 	}
 	for _, p := range run.ReadOnly {
 		p = strings.TrimSpace(p)
 		if p == "" || withinDir(p, run.WorkspaceDir) {
 			continue
 		}
-		args = append(args, "--volume", p+":"+p+":ro")
+		args = append(args, mount(p, p, "ro")...)
 	}
 
 	// Environment. A container does NOT inherit the parent's env, so unlike the
@@ -337,4 +338,106 @@ func containerImage() string {
 		return s
 	}
 	return defaultContainerImage
+}
+
+// --- SELinux ---------------------------------------------------------------------
+
+// mount builds one --volume flag, adding the SELinux relabel option when this
+// host needs it.
+//
+// WHY THIS EXISTS. Under SELinux enforcing a container runs as container_t and
+// cannot read a bind mount carrying the host's own label — a workspace shows up
+// empty or permission-denied, and nothing in the error says "SELinux". This
+// backend shipped without it, which made it broken on precisely the platform
+// gohort most often runs on: RHEL and Rocky ship SELinux enforcing, and this
+// dev box has container-selinux installed while sitting Disabled, so the bug
+// was invisible here and would have appeared on the first real deployment.
+//
+// `z` rather than `Z`: lowercase relabels SHARED (container_file_t), uppercase
+// relabels private to one container. These mounts outlive any single run — the
+// workspace especially, which several runs touch in sequence — and a private
+// label would make each container relabel the tree away from the last one.
+func mount(host, dest, opts string) []string {
+	if relabelMounts() {
+		if opts == "" {
+			opts = "z"
+		} else {
+			opts += ",z"
+		}
+	}
+	spec := host + ":" + dest
+	if opts != "" {
+		spec += ":" + opts
+	}
+	return []string{"--volume", spec}
+}
+
+var (
+	relabelOnce sync.Once
+	relabelOK   bool
+)
+
+// relabelMounts reports whether --volume specs should carry `z`.
+//
+//	GOHORT_SANDBOX_SELINUX_RELABEL=auto  (default) relabel when SELinux enforces
+//	                              =on              always
+//	                              =off             never
+//
+// The off switch is not decoration. Relabeling REWRITES the SELinux label on
+// the host directory, and for a scoped read-only path — somebody's registered
+// corpus, which core/path_scope.go proved the tool may read — that directory
+// may be labeled for another service entirely (httpd_sys_content_t, say).
+// Turning it into container_file_t would fix gohort and break the web server.
+// An operator in that position needs a way to say no, and then to fix the
+// label themselves rather than have this decide for them.
+func relabelMounts() bool {
+	relabelOnce.Do(func() {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_SELINUX_RELABEL"))) {
+		case "on", "1", "true", "yes":
+			relabelOK = true
+			return
+		case "off", "0", "false", "no":
+			if selinuxEnforcing() {
+				nfo.Log("[sandbox] SELinux is enforcing and GOHORT_SANDBOX_SELINUX_RELABEL=off — " +
+					"bind mounts are NOT relabeled, so a container will likely be unable to read its " +
+					"workspace. Label the paths yourself (chcon -Rt container_file_t <path>) or unset this.")
+			}
+			return
+		}
+		relabelOK = selinuxEnforcing()
+		if relabelOK {
+			// Said once, out loud, because it changes state on the HOST and
+			// the change outlives the process that made it.
+			nfo.Log("[sandbox] SELinux is enforcing — container bind mounts are relabeled shared " +
+				"(container_file_t) so the sandbox can read them. This rewrites the label on the " +
+				"workspace, the gohort lib and deps dirs, and any path a scoped tool reads. " +
+				"`restorecon -R <path>` puts a path back; GOHORT_SANDBOX_SELINUX_RELABEL=off disables it.")
+		}
+	})
+	return relabelOK
+}
+
+// selinuxEnforcing reads the kernel's own answer.
+//
+// The file rather than `getenforce`: it is what getenforce reads, it needs no
+// binary that may not be installed, and "0" (permissive) has to be told apart
+// from "absent" (no SELinux at all) — both of which mean no relabeling, but for
+// different reasons an operator may want to see in a diagnostic.
+func selinuxEnforcing() bool {
+	b, err := os.ReadFile("/sys/fs/selinux/enforce")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(b)) == "1"
+}
+
+// SELinuxState describes this host's SELinux posture for the doctor.
+func SELinuxState() string {
+	if _, err := os.Stat("/sys/fs/selinux/enforce"); err != nil {
+		return "absent"
+	}
+	if selinuxEnforcing() {
+		return "enforcing"
+	}
+	return "permissive"
 }

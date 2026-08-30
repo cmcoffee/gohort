@@ -239,6 +239,7 @@ var (
 	RunSandboxedScript           = sandbox.RunSandboxedScript
 	NewSandboxedShellCmd         = sandbox.NewSandboxedShellCmd
 	GetSandboxStatus             = sandbox.GetSandboxStatus
+	SandboxDoctor                = sandbox.Doctor
 	WithAdminCaller              = sandbox.WithAdminCaller
 	CallerIsAdmin                = sandbox.CallerIsAdmin
 )

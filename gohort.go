@@ -104,6 +104,7 @@ func main() {
 	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
 	version := flags.Bool("version", "")
 	setup := flags.Bool("setup", "Fuzz configuration (LLM, mail, etc).")
+	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
 
 	flags.Footer = " "
 
@@ -251,6 +252,18 @@ func main() {
 
 	if *setup {
 		setup_fuzz()
+		Exit(0)
+	}
+
+	// Diagnose confinement without starting the daemon. Exits non-zero when
+	// shell tools would be refused, so a provisioning run can gate on it
+	// rather than parse the report.
+	if *doctor {
+		report, ok := SandboxDoctor()
+		Stdout("%s", report)
+		if !ok {
+			Exit(1)
+		}
 		Exit(0)
 	}
 
