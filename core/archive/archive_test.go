@@ -227,13 +227,22 @@ func TestExpandZipAndSingleFileStreams(t *testing.T) {
 
 func TestSafeJoinAndUnopened(t *testing.T) {
 	root := t.TempDir()
-	for _, bad := range []string{"", "/etc/passwd", "../x", "a/../../x", `..\..\x`} {
+	// "./../out" earns its place next to "../x": a leading "./" is the shape a
+	// naive Clean-then-prefix check lets through.
+	for _, bad := range []string{"", "/etc/passwd", "../x", "a/../../x", "./../out", `..\..\x`} {
 		if _, ok := SafeJoin(root, bad); ok {
 			t.Errorf("SafeJoin accepted %q", bad)
 		}
 	}
-	if got, ok := SafeJoin(root, "a/b.log"); !ok || !strings.HasPrefix(got, root) {
-		t.Errorf("SafeJoin refused a legitimate member: %q %v", got, ok)
+	for _, good := range []string{"a/b.log", "./a/b.log", "x.log"} {
+		got, ok := SafeJoin(root, good)
+		if !ok {
+			t.Errorf("SafeJoin refused %q, which stays inside the root", good)
+			continue
+		}
+		if !strings.HasPrefix(got, root) {
+			t.Errorf("SafeJoin(%q) = %q, outside %q", good, got, root)
+		}
 	}
 	// Formats with no built-in expander are reported rather than ignored:
 	// a bundle that seems thin because half of it is in a .7z is a

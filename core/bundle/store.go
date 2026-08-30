@@ -1,8 +1,7 @@
-// bundle_store.go — the Type=="bundle" backend: uploaded evidence (a support
-// dump, a log tarball, a diagnostic capture) unpacked, ingested into the
-// hardware-locked-encrypted BundleFilesDB, and read back by decrypting in
-// memory. The staged plaintext is discarded once ingest completes, so nothing
-// but encrypted, derived content persists at rest.
+// The store: uploaded evidence (a support dump, a log tarball, a diagnostic
+// capture) unpacked, ingested into a hardware-locked-encrypted key-value store,
+// and read back by decrypting in memory. The staged plaintext is discarded once
+// ingest completes, so nothing but encrypted, derived content persists at rest.
 //
 // This is the repo backend's sibling (see repo_backend.go) and deliberately
 // mirrors its shape, with one structural difference. A repo file is capped at
@@ -16,7 +15,7 @@
 // detected format, time span, emitting host, severity histogram. Without it
 // every question begins with a full scan. With it the lead can say what the
 // bundle covers before reading a single line of content.
-package servitor
+package bundle
 
 import (
 	"crypto/sha256"
@@ -27,36 +26,34 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	. "github.com/cmcoffee/gohort/core"
 )
 
 const (
-	// bundleFilesTable holds one bundleFile INDEX entry per ingested file,
+	// filesTable holds one File INDEX entry per ingested file,
 	// keyed by the file's normalized path. Deliberately free of content: the
 	// whole index is read to answer "what is in here", and carrying bodies
 	// would make that read the entire bundle.
-	bundleFilesTable = "bundle_files"
-	// bundleSliceTable holds the content, keyed <fileKey>:<sliceIndex>.
-	bundleSliceTable = "bundle_slices"
-	// bundleSliceLines is how many lines live in one slice. The tuning
+	filesTable = "bundle_files"
+	// sliceTable holds the content, keyed <fileKey>:<sliceIndex>.
+	sliceTable = "bundle_slices"
+	// SliceLines is how many lines live in one slice. The tuning
 	// trade-off is per-read waste against key count: 2000 lines is a few
 	// hundred KB of a typical log, so a 40-line range read decrypts a few
 	// hundred KB rather than the whole file, and a 10M-line file needs 5000
 	// keys rather than millions.
-	bundleSliceLines = 2000
-	// bundleMaxLineBytes truncates a single pathological line (a minified
+	SliceLines = 2000
+	// maxLineBytes truncates a single pathological line (a minified
 	// blob, a base64 core dump on one line). The truncation is marked in the
 	// stored text so a reader can tell the line was cut rather than ended.
-	bundleMaxLineBytes = 32 << 10
-	// bundleTruncMarker is appended to a line cut by bundleMaxLineBytes.
-	bundleTruncMarker = "…[line truncated]"
+	maxLineBytes = 32 << 10
+	// truncMarker is appended to a line cut by maxLineBytes.
+	truncMarker = "…[line truncated]"
 )
 
-// bundleFile is one ingested file's index entry. Content lives in the slice
+// File is one ingested file's index entry. Content lives in the slice
 // table; this is everything the tools can answer from without decrypting a
 // byte of the log itself.
-type bundleFile struct {
+type File struct {
 	Path   string // normalized, bundle-relative, forward-slashed
 	Key    string // stable hash of Path; the slice-table key prefix
 	Bytes  int64
@@ -84,49 +81,41 @@ type bundleFile struct {
 	Ingested string // RFC3339
 }
 
-// bundleStore returns the per-(user, appliance) encrypted evidence store.
-func bundleStore(user, applianceID string) Database {
-	if BundleFilesDB == nil {
-		return nil
-	}
-	return BundleFilesDB.Sub("user:" + user).Sub("bundle:" + applianceID)
-}
-
-// bundleFileKey derives the slice-table key prefix for a path. Hashed rather
+// fileKey derives the slice-table key prefix for a path. Hashed rather
 // than used directly because a log path may contain any byte a filesystem
 // allows, and the slice key has to append ":<n>" without the result colliding
 // with a differently-sliced neighbour.
-func bundleFileKey(p string) string {
+func fileKey(p string) string {
 	sum := sha256.Sum256([]byte(p))
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// bundleSliceKey addresses one slice of one file.
-func bundleSliceKey(fileKey string, idx int) string {
+// sliceKey addresses one slice of one file.
+func sliceKey(fileKey string, idx int) string {
 	return fmt.Sprintf("%s:%d", fileKey, idx)
 }
 
-// bundleFileCount reports how many files are ingested — the gate for "this
+// FileCount reports how many files are ingested — the gate for "this
 // bundle has finished ingesting", answered without reading any content.
-func bundleFileCount(user, applianceID string) int {
-	store := bundleStore(user, applianceID)
+func (b Bundle) FileCount() int {
+	store := b.store()
 	if store == nil {
 		return 0
 	}
-	return len(store.Keys(bundleFilesTable))
+	return len(store.Keys(filesTable))
 }
 
-// bundleIndex returns every ingested file's index entry, path-sorted.
-func bundleIndex(user, applianceID string) []bundleFile {
-	store := bundleStore(user, applianceID)
+// Index returns every ingested file's index entry, path-sorted.
+func (b Bundle) Index() []File {
+	store := b.store()
 	if store == nil {
 		return nil
 	}
-	keys := store.Keys(bundleFilesTable)
-	out := make([]bundleFile, 0, len(keys))
+	keys := store.Keys(filesTable)
+	out := make([]File, 0, len(keys))
 	for _, k := range keys {
-		var bf bundleFile
-		if store.Get(bundleFilesTable, k, &bf) {
+		var bf File
+		if store.Get(filesTable, k, &bf) {
 			out = append(out, bf)
 		}
 	}
@@ -134,42 +123,42 @@ func bundleIndex(user, applianceID string) []bundleFile {
 	return out
 }
 
-// lookupBundleFile fetches one index entry by path.
-func lookupBundleFile(user, applianceID, p string) (bundleFile, bool) {
-	store := bundleStore(user, applianceID)
+// Lookup fetches one index entry by path.
+func (b Bundle) Lookup(p string) (File, bool) {
+	store := b.store()
 	if store == nil {
-		return bundleFile{}, false
+		return File{}, false
 	}
-	var bf bundleFile
-	if !store.Get(bundleFilesTable, normBundlePath(p), &bf) {
-		return bundleFile{}, false
+	var bf File
+	if !store.Get(filesTable, NormPath(p), &bf) {
+		return File{}, false
 	}
 	return bf, true
 }
 
-// wipeBundleFiles drops every slice and index entry for one bundle. Slices are
+// Wipe drops every slice and index entry for one bundle. Slices are
 // removed via the index (each entry knows its own slice count) with a sweep of
 // the slice table afterwards, so a half-written file from an interrupted ingest
 // cannot leave orphaned ciphertext behind.
-func wipeBundleFiles(user, applianceID string) {
-	store := bundleStore(user, applianceID)
+func (b Bundle) Wipe() {
+	store := b.store()
 	if store == nil {
 		return
 	}
-	for _, k := range store.Keys(bundleSliceTable) {
-		store.Unset(bundleSliceTable, k)
+	for _, k := range store.Keys(sliceTable) {
+		store.Unset(sliceTable, k)
 	}
-	for _, k := range store.Keys(bundleFilesTable) {
-		store.Unset(bundleFilesTable, k)
+	for _, k := range store.Keys(filesTable) {
+		store.Unset(filesTable, k)
 	}
 }
 
-// normBundlePath canonicalizes a path for use as an index key: forward slashes,
+// NormPath canonicalizes a path for use as an index key: forward slashes,
 // no leading or trailing separator, no "." or ".." elements. Traversal is
 // stripped here as well as at unpack time — this is the key that decides which
 // stored file a tool reaches, so it does its own checking rather than trusting
 // the caller upstream to have done it.
-func normBundlePath(p string) string {
+func NormPath(p string) string {
 	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
 	p = path.Clean("/" + p)
 	return strings.Trim(p, "/")
@@ -177,10 +166,10 @@ func normBundlePath(p string) string {
 
 // --- reads over the encrypted store (decrypt in memory) ---
 
-// bundleSliceLinesAt returns the lines of one slice.
-func bundleSliceLinesAt(store Database, bf bundleFile, idx int) []string {
+// sliceLinesAt returns the lines of one slice.
+func sliceLinesAt(store Store, bf File, idx int) []string {
 	var body string
-	if !store.Get(bundleSliceTable, bundleSliceKey(bf.Key, idx), &body) {
+	if !store.Get(sliceTable, sliceKey(bf.Key, idx), &body) {
 		return nil
 	}
 	if body == "" {
@@ -189,16 +178,16 @@ func bundleSliceLinesAt(store Database, bf bundleFile, idx int) []string {
 	return strings.Split(body, "\n")
 }
 
-// readBundleRange returns lines [start, end] (1-based, inclusive) of one file,
+// ReadRange returns lines [start, end] (1-based, inclusive) of one file,
 // decrypting only the slices that overlap the range. An out-of-range start is
 // an error rather than an empty result, so a caller that guessed at the line
 // numbers is told so instead of concluding the file ends earlier than it does.
-func readBundleRange(user, applianceID, p string, start, end int) ([]string, bundleFile, error) {
-	bf, ok := lookupBundleFile(user, applianceID, p)
+func (b Bundle) ReadRange(p string, start, end int) ([]string, File, error) {
+	bf, ok := b.Lookup(p)
 	if !ok {
-		return nil, bundleFile{}, fmt.Errorf("no file %q in this bundle", p)
+		return nil, File{}, fmt.Errorf("no file %q in this bundle", p)
 	}
-	store := bundleStore(user, applianceID)
+	store := b.store()
 	if store == nil {
 		return nil, bf, fmt.Errorf("bundle store unavailable")
 	}
@@ -212,9 +201,9 @@ func readBundleRange(user, applianceID, p string, start, end int) ([]string, bun
 		return nil, bf, fmt.Errorf("start_line %d is past the end of %s (%d lines)", start, bf.Path, bf.Lines)
 	}
 	out := make([]string, 0, end-start+1)
-	for idx := (start - 1) / bundleSliceLines; idx <= (end-1)/bundleSliceLines; idx++ {
-		lines := bundleSliceLinesAt(store, bf, idx)
-		base := idx*bundleSliceLines + 1 // line number of lines[0]
+	for idx := (start - 1) / SliceLines; idx <= (end-1)/SliceLines; idx++ {
+		lines := sliceLinesAt(store, bf, idx)
+		base := idx*SliceLines + 1 // line number of lines[0]
 		for i, ln := range lines {
 			n := base + i
 			if n < start {
@@ -229,13 +218,13 @@ func readBundleRange(user, applianceID, p string, start, end int) ([]string, bun
 	return out, bf, nil
 }
 
-// scanBundleFile walks every line of one file in order, slice by slice, so a
+// scanFile walks every line of one file in order, slice by slice, so a
 // full scan of a large log holds one slice in memory rather than the file.
 // Returning false from fn stops the walk.
-func scanBundleFile(store Database, bf bundleFile, fn func(lineNo int, text string) bool) {
+func scanFile(store Store, bf File, fn func(lineNo int, text string) bool) {
 	for idx := 0; idx < bf.Slices; idx++ {
-		lines := bundleSliceLinesAt(store, bf, idx)
-		base := idx*bundleSliceLines + 1
+		lines := sliceLinesAt(store, bf, idx)
+		base := idx*SliceLines + 1
 		for i, ln := range lines {
 			if !fn(base+i, ln) {
 				return
@@ -246,9 +235,9 @@ func scanBundleFile(store Database, bf bundleFile, fn func(lineNo int, text stri
 
 // --- search ---
 
-// bundleQuery is one search over a bundle. Every field except Pattern narrows;
+// Query is one search over a bundle. Every field except Pattern narrows;
 // an empty query field means "no restriction on this axis".
-type bundleQuery struct {
+type Query struct {
 	Pattern  string // regular expression
 	Glob     string // path filter, shell-style (path.Match), matched against the full path
 	Before   int    // context lines before each hit
@@ -259,19 +248,19 @@ type bundleQuery struct {
 	MaxFiles int // stop after this many DISTINCT files have produced hits
 }
 
-// bundleHit is one matching line plus its requested context.
-type bundleHit struct {
+// Hit is one matching line plus its requested context.
+type Hit struct {
 	Path    string
 	Line    int
 	Text    string
 	Context []string // rendered "N: text", including the hit line itself
 }
 
-// bundleSearchResult carries the hits plus what the search had to leave out, so
+// SearchResult carries the hits plus what the search had to leave out, so
 // a truncated search reports its own truncation instead of reading as a
 // complete answer.
-type bundleSearchResult struct {
-	Hits      []bundleHit
+type SearchResult struct {
+	Hits      []Hit
 	Truncated bool // hit MaxHits / MaxFiles before finishing
 	Scanned   int  // files actually scanned
 	Skipped   int  // files excluded by the glob or the time window
@@ -281,10 +270,10 @@ type bundleSearchResult struct {
 	TimeUnknown int
 }
 
-// searchBundle runs a regex across the bundle's files with optional path, time,
+// Search runs a regex across the bundle's files with optional path, time,
 // and context narrowing.
-func searchBundle(user, applianceID string, q bundleQuery) (bundleSearchResult, error) {
-	var res bundleSearchResult
+func (b Bundle) Search(q Query) (SearchResult, error) {
+	var res SearchResult
 	if strings.TrimSpace(q.Pattern) == "" {
 		return res, fmt.Errorf("pattern is required")
 	}
@@ -292,17 +281,17 @@ func searchBundle(user, applianceID string, q bundleQuery) (bundleSearchResult, 
 	if err != nil {
 		return res, fmt.Errorf("pattern %q is not a valid regular expression: %w", q.Pattern, err)
 	}
-	store := bundleStore(user, applianceID)
+	store := b.store()
 	if store == nil {
 		return res, fmt.Errorf("bundle store unavailable")
 	}
 	if q.MaxHits <= 0 {
-		q.MaxHits = bundleMaxSearchHits
+		q.MaxHits = MaxSearchHits
 	}
 	windowed := !q.Since.IsZero() || !q.Until.IsZero()
 	filesHit := 0
-	for _, bf := range bundleIndex(user, applianceID) {
-		if q.Glob != "" && !matchBundleGlob(q.Glob, bf.Path) {
+	for _, bf := range b.Index() {
+		if q.Glob != "" && !MatchGlob(q.Glob, bf.Path) {
 			res.Skipped++
 			continue
 		}
@@ -310,7 +299,7 @@ func searchBundle(user, applianceID string, q bundleQuery) (bundleSearchResult, 
 		// known and disjoint — the cheapest possible narrowing on a bundle
 		// where only one day of one file matters.
 		if windowed {
-			first, last, known := bundleFileSpan(bf)
+			first, last, known := FileSpan(bf)
 			if !known {
 				res.TimeUnknown++
 				continue
@@ -325,7 +314,7 @@ func searchBundle(user, applianceID string, q bundleQuery) (bundleSearchResult, 
 			}
 		}
 		res.Scanned++
-		hitsHere := searchOneBundleFile(store, bf, re, q, windowed, &res)
+		hitsHere := searchOneFile(store, bf, re, q, windowed, &res)
 		if hitsHere > 0 {
 			filesHit++
 		}
@@ -337,7 +326,7 @@ func searchBundle(user, applianceID string, q bundleQuery) (bundleSearchResult, 
 	return res, nil
 }
 
-// searchOneBundleFile scans a single file, collecting hits with context. It
+// searchOneFile scans a single file, collecting hits with context. It
 // keeps a rolling window of preceding lines rather than the whole file, and
 // fills trailing context by continuing the scan past each hit.
 //
@@ -345,15 +334,15 @@ func searchBundle(user, applianceID string, q bundleQuery) (bundleSearchResult, 
 // pointer: res.Hits grows during the scan, and a pointer into it would be left
 // addressing a stale backing array the moment append reallocates — trailing
 // context would then be written to a copy nobody reads.
-func searchOneBundleFile(store Database, bf bundleFile, re *regexp.Regexp, q bundleQuery, windowed bool, res *bundleSearchResult) int {
+func searchOneFile(store Store, bf File, re *regexp.Regexp, q Query, windowed bool, res *SearchResult) int {
 	type owed struct{ idx, remaining int }
 	var (
 		prev    []string // rolling "N: text" of the last q.Before lines
 		pending []owed
 		found   int
 	)
-	year := bundleFileYear(bf)
-	scanBundleFile(store, bf, func(n int, text string) bool {
+	year := fileYear(bf)
+	scanFile(store, bf, func(n int, text string) bool {
 		numbered := fmt.Sprintf("%d: %s", n, text)
 		// Pay down trailing context owed to earlier hits.
 		if len(pending) > 0 {
@@ -367,8 +356,8 @@ func searchOneBundleFile(store Database, bf bundleFile, re *regexp.Regexp, q bun
 			pending = kept
 		}
 
-		if re.MatchString(text) && (!windowed || bundleLineInWindow(bf.Format, year, text, q.Since, q.Until)) {
-			hit := bundleHit{Path: bf.Path, Line: n, Text: strings.TrimRight(text, "\r")}
+		if re.MatchString(text) && (!windowed || LineInWindow(bf.Format, year, text, q.Since, q.Until)) {
+			hit := Hit{Path: bf.Path, Line: n, Text: strings.TrimRight(text, "\r")}
 			if q.Before > 0 || q.After > 0 {
 				hit.Context = append(append([]string{}, prev...), numbered)
 			}
@@ -394,10 +383,10 @@ func searchOneBundleFile(store Database, bf bundleFile, re *regexp.Regexp, q bun
 	return found
 }
 
-// matchBundleGlob matches a shell-style pattern against a path. A pattern with
+// MatchGlob matches a shell-style pattern against a path. A pattern with
 // no slash matches the BASENAME, because "*.log" meaning "nothing, since every
 // path has a directory in front of it" is never what the caller wanted.
-func matchBundleGlob(pattern, p string) bool {
+func MatchGlob(pattern, p string) bool {
 	if strings.Contains(pattern, "/") {
 		ok, err := path.Match(pattern, p)
 		return err == nil && ok
@@ -413,37 +402,37 @@ func matchBundleGlob(pattern, p string) bool {
 
 // --- timeline ---
 
-// bundleTimelineEntry is one time-ordered line drawn from some file.
-type bundleTimelineEntry struct {
+// TimelineEntry is one time-ordered line drawn from some file.
+type TimelineEntry struct {
 	When time.Time
 	Path string
 	Line int
 	Text string
 }
 
-// bundleTimeline merges lines from several files into one time-ordered slice —
+// Timeline merges lines from several files into one time-ordered slice —
 // the view a support dump is usually read for, and the one thing no per-file
 // tool can produce. Files whose format carries no parseable timestamp cannot be
 // merged and are named in unmergeable rather than dropped silently.
-func bundleTimeline(user, applianceID string, glob string, since, until time.Time, max int) (entries []bundleTimelineEntry, unmergeable []string, err error) {
-	store := bundleStore(user, applianceID)
+func (b Bundle) Timeline(glob string, since, until time.Time, max int) (entries []TimelineEntry, unmergeable []string, err error) {
+	store := b.store()
 	if store == nil {
 		return nil, nil, fmt.Errorf("bundle store unavailable")
 	}
 	if max <= 0 {
-		max = bundleMaxTimelineLines
+		max = MaxTimelineLines
 	}
-	for _, bf := range bundleIndex(user, applianceID) {
-		if glob != "" && !matchBundleGlob(glob, bf.Path) {
+	for _, bf := range b.Index() {
+		if glob != "" && !MatchGlob(glob, bf.Path) {
 			continue
 		}
-		if _, _, known := bundleFileSpan(bf); !known {
+		if _, _, known := FileSpan(bf); !known {
 			unmergeable = append(unmergeable, bf.Path)
 			continue
 		}
-		year := bundleFileYear(bf)
-		scanBundleFile(store, bf, func(n int, text string) bool {
-			ts, ok := parseBundleTime(bf.Format, year, text)
+		year := fileYear(bf)
+		scanFile(store, bf, func(n int, text string) bool {
+			ts, ok := ParseTime(bf.Format, year, text)
 			if !ok {
 				return true
 			}
@@ -453,7 +442,7 @@ func bundleTimeline(user, applianceID string, glob string, since, until time.Tim
 			if !until.IsZero() && ts.After(until) {
 				return true
 			}
-			entries = append(entries, bundleTimelineEntry{When: ts, Path: bf.Path, Line: n, Text: strings.TrimRight(text, "\r")})
+			entries = append(entries, TimelineEntry{When: ts, Path: bf.Path, Line: n, Text: strings.TrimRight(text, "\r")})
 			return true
 		})
 	}

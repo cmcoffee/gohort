@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // A workspace is a master appliance whose configuration is a list of OTHER
@@ -300,13 +301,13 @@ func (T *Servitor) scoutWorkspace(ws Appliance, members []wsMember, question str
 			// rather than only what was recorded about it. Without this an
 			// un-mapped bundle scouts as empty and the lead skips the one member
 			// that actually holds the answer.
-			if bundleFileCount(m.Owner, m.ID) == 0 {
+			if bundle.Open(m.Owner, m.ID).FileCount() == 0 {
 				s.Note = "no evidence ingested yet — upload this bundle's files to make it searchable"
 				break
 			}
 			seen := make(map[string]bool)
 			for _, term := range terms {
-				res, err := searchBundle(m.Owner, m.ID, bundleQuery{Pattern: regexpQuoteMeta(term), MaxHits: 6})
+				res, err := bundle.Open(m.Owner, m.ID).Search(bundle.Query{Pattern: regexpQuoteMeta(term), MaxHits: 6})
 				if err != nil {
 					continue
 				}

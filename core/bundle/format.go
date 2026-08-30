@@ -1,4 +1,4 @@
-// bundle_format.go — reading shape out of a log file: what format it is, what
+// Reading shape out of a log file: what format it is, what
 // time each line carries, how severe it claims to be, which host emitted it.
 //
 // All of it is derived once during the ingest pass and stored on the file's
@@ -10,7 +10,7 @@
 // Timestamps without a zone are read as UTC. Nothing in a bare log line says
 // otherwise, and a consistent wrong zone still orders a timeline correctly,
 // where a guessed local zone silently shifts one file against another.
-package servitor
+package bundle
 
 import (
 	"fmt"
@@ -20,25 +20,25 @@ import (
 )
 
 const (
-	// bundleMaxSearchHits caps one search_bundle call. Generous compared to
+	// MaxSearchHits caps one search_bundle call. Generous compared to
 	// the repo store's 60 because a log search legitimately wants to see a
 	// burst, and the result is truncation-marked either way.
-	bundleMaxSearchHits = 200
-	// bundleMaxTimelineLines caps one merged timeline.
-	bundleMaxTimelineLines = 300
-	// bundleFormatSample is how many lines are examined to decide a file's
+	MaxSearchHits = 200
+	// MaxTimelineLines caps one merged timeline.
+	MaxTimelineLines = 300
+	// formatSample is how many lines are examined to decide a file's
 	// format. Enough to get past a header banner, small enough that the
 	// decision costs one slice.
-	bundleFormatSample = 60
+	formatSample = 60
 )
 
-// Format names stored on bundleFile.Format.
+// Format names stored on File.Format.
 const (
-	bundleFormatSyslog = "syslog" // "Mar 14 02:11:09 host proc[1]: msg"
-	bundleFormatISO    = "iso"    // leading ISO-8601 / RFC3339 timestamp
-	bundleFormatCLF    = "clf"    // Common/Combined Log Format (web access logs)
-	bundleFormatJSONL  = "jsonl"  // one JSON object per line
-	bundleFormatText   = "text"   // nothing recognized
+	FormatSyslog = "syslog" // "Mar 14 02:11:09 host proc[1]: msg"
+	FormatISO    = "iso"    // leading ISO-8601 / RFC3339 timestamp
+	FormatCLF    = "clf"    // Common/Combined Log Format (web access logs)
+	FormatJSONL  = "jsonl"  // one JSON object per line
+	FormatText   = "text"   // nothing recognized
 )
 
 var (
@@ -49,7 +49,7 @@ var (
 	// reCLFTime matches the bracketed timestamp of a web access log.
 	reCLFTime = regexp.MustCompile(`\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]`)
 	// reSyslogTime matches the classic BSD syslog prefix — which carries no
-	// year, the reason bundleFile.YearInferred exists.
+	// year, the reason File.YearInferred exists.
 	reSyslogTime = regexp.MustCompile(`^([A-Z][a-z]{2}) {1,2}(\d{1,2}) (\d{2}:\d{2}:\d{2})`)
 	// reSyslogHost pulls the hostname that follows the syslog timestamp.
 	reSyslogHost = regexp.MustCompile(`^[A-Z][a-z]{2} {1,2}\d{1,2} \d{2}:\d{2}:\d{2} (\S+) `)
@@ -71,10 +71,10 @@ var severityCanon = map[string]string{
 	"DEBUG": "DEBUG", "TRACE": "TRACE",
 }
 
-// detectBundleFormat decides a file's format from a sample of its lines. A
+// DetectFormat decides a file's format from a sample of its lines. A
 // format has to explain a majority of the non-empty sample to win, so a log
 // with one ISO-stamped banner at the top is not misread as an ISO log.
-func detectBundleFormat(sample []string) string {
+func DetectFormat(sample []string) string {
 	var nonEmpty int
 	counts := map[string]int{}
 	for _, ln := range sample {
@@ -85,44 +85,44 @@ func detectBundleFormat(sample []string) string {
 		nonEmpty++
 		switch {
 		case reCLFTime.MatchString(t):
-			counts[bundleFormatCLF]++
+			counts[FormatCLF]++
 		case reSyslogTime.MatchString(t):
-			counts[bundleFormatSyslog]++
+			counts[FormatSyslog]++
 		case strings.HasPrefix(t, "{") && strings.HasSuffix(t, "}") && reISOTime.MatchString(t):
-			counts[bundleFormatJSONL]++
+			counts[FormatJSONL]++
 		case reISOTime.MatchString(t):
-			counts[bundleFormatISO]++
+			counts[FormatISO]++
 		}
 	}
 	if nonEmpty == 0 {
-		return bundleFormatText
+		return FormatText
 	}
-	best, bestN := bundleFormatText, 0
+	best, bestN := FormatText, 0
 	// Iterated in a fixed order so a tie resolves the same way every ingest;
 	// ranging a map here would make the stored format non-deterministic.
-	for _, f := range []string{bundleFormatCLF, bundleFormatSyslog, bundleFormatJSONL, bundleFormatISO} {
+	for _, f := range []string{FormatCLF, FormatSyslog, FormatJSONL, FormatISO} {
 		if counts[f] > bestN {
 			best, bestN = f, counts[f]
 		}
 	}
 	if bestN*2 < nonEmpty {
-		return bundleFormatText
+		return FormatText
 	}
 	return best
 }
 
-// parseBundleTime extracts the timestamp from one line. year supplies the
+// ParseTime extracts the timestamp from one line. year supplies the
 // missing year for formats that carry none (syslog); it is ignored otherwise.
-func parseBundleTime(format string, year int, line string) (time.Time, bool) {
+func ParseTime(format string, year int, line string) (time.Time, bool) {
 	switch format {
-	case bundleFormatCLF:
+	case FormatCLF:
 		if m := reCLFTime.FindStringSubmatch(line); m != nil {
 			if t, err := time.Parse("02/Jan/2006:15:04:05 -0700", m[1]); err == nil {
 				return t.UTC(), true
 			}
 		}
 		return time.Time{}, false
-	case bundleFormatSyslog:
+	case FormatSyslog:
 		m := reSyslogTime.FindStringSubmatch(line)
 		if m == nil {
 			return time.Time{}, false
@@ -163,12 +163,12 @@ func parseISOish(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// bundleLineInWindow reports whether a line's own timestamp falls inside the
+// LineInWindow reports whether a line's own timestamp falls inside the
 // window. A line with no parseable timestamp is KEPT: continuation lines of a
 // stack trace carry no time of their own, and dropping them would cut the
 // exception off from its message.
-func bundleLineInWindow(format string, year int, line string, since, until time.Time) bool {
-	ts, ok := parseBundleTime(format, year, line)
+func LineInWindow(format string, year int, line string, since, until time.Time) bool {
+	ts, ok := ParseTime(format, year, line)
 	if !ok {
 		return true
 	}
@@ -181,10 +181,10 @@ func bundleLineInWindow(format string, year int, line string, since, until time.
 	return true
 }
 
-// bundleFileSpan returns the file's parsed first/last timestamps. known is
+// FileSpan returns the file's parsed first/last timestamps. known is
 // false when the format carries no timestamp, which is the signal callers use
 // to exclude the file from a timeline rather than mis-order it.
-func bundleFileSpan(bf bundleFile) (first, last time.Time, known bool) {
+func FileSpan(bf File) (first, last time.Time, known bool) {
 	f, err1 := time.Parse(time.RFC3339, bf.First)
 	l, err2 := time.Parse(time.RFC3339, bf.Last)
 	if err1 != nil || err2 != nil {
@@ -193,10 +193,10 @@ func bundleFileSpan(bf bundleFile) (first, last time.Time, known bool) {
 	return f, l, true
 }
 
-// bundleFileYear supplies the year for a format that omits it. Taken from the
+// fileYear supplies the year for a format that omits it. Taken from the
 // span recorded at ingest (which took it from the staged file's modification
 // time), falling back to the ingest timestamp.
-func bundleFileYear(bf bundleFile) int {
+func fileYear(bf File) int {
 	if t, err := time.Parse(time.RFC3339, bf.First); err == nil {
 		return t.Year()
 	}
@@ -206,10 +206,10 @@ func bundleFileYear(bf bundleFile) int {
 	return 0
 }
 
-// bundleSeverity returns the canonical severity token a line declares, or ""
+// severityOf returns the canonical severity token a line declares, or ""
 // for none. Only the FIRST match counts — a line reading "ERROR: failed to
 // parse DEBUG flag" is an error, not one of each.
-func bundleSeverity(line string) string {
+func severityOf(line string) string {
 	m := reSeverity.FindStringSubmatch(line)
 	if m == nil {
 		return ""
@@ -217,9 +217,9 @@ func bundleSeverity(line string) string {
 	return severityCanon[m[1]]
 }
 
-// bundleHost extracts the emitting host, for the one format that names it.
-func bundleHost(format, line string) string {
-	if format != bundleFormatSyslog {
+// hostOf extracts the emitting host, for the one format that names it.
+func hostOf(format, line string) string {
+	if format != FormatSyslog {
 		return ""
 	}
 	if m := reSyslogHost.FindStringSubmatch(line); m != nil {
@@ -228,11 +228,11 @@ func bundleHost(format, line string) string {
 	return ""
 }
 
-// formatBundleSpan renders a file's time span for display, carrying the
+// FormatSpan renders a file's time span for display, carrying the
 // year-inferred caveat with it. The caveat travels with the value rather than
 // being mentioned once elsewhere: a span that is silently a year off is worse
 // than no span at all.
-func formatBundleSpan(bf bundleFile) string {
+func FormatSpan(bf File) string {
 	if bf.First == "" || bf.Last == "" {
 		return "no timestamps"
 	}

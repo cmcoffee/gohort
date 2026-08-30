@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // The workspace lead. It has no transport of its own — every fact it reports
@@ -433,7 +434,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			if strings.TrimSpace(pattern) == "" {
 				return "", fmt.Errorf("pattern is required")
 			}
-			q := bundleQuery{Pattern: pattern, MaxHits: 40}
+			q := bundle.Query{Pattern: pattern, MaxHits: 40}
 			var terr error
 			if q.Since, terr = parseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["since"]))); terr != nil && args["since"] != nil {
 				return "", terr
@@ -441,7 +442,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			if q.Until, terr = parseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["until"]))); terr != nil && args["until"] != nil {
 				return "", terr
 			}
-			res, err := searchBundle(m.Owner, m.ID, q)
+			res, err := bundle.Open(m.Owner, m.ID).Search(q)
 			if err != nil {
 				return "", err
 			}

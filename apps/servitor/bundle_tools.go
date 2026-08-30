@@ -14,6 +14,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // errBundleNotLoaded is returned when the store is empty — an unambiguous
@@ -35,7 +36,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				Description: "Overview of the whole evidence bundle: how many files, what period they cover, which files are noisiest, and which are present but unread (binaries, archives nothing could open). ALWAYS call this first — it tells you what you are looking at and which file to search, without reading any log content.",
 			},
 			Handler: func(args map[string]any) (string, error) {
-				files := bundleIndex(user, applianceID)
+				files := bundle.Open(user, applianceID).Index()
 				if len(files) == 0 {
 					return errBundleNotLoaded, nil
 				}
@@ -51,7 +52,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				files := bundleIndex(user, applianceID)
+				files := bundle.Open(user, applianceID).Index()
 				if len(files) == 0 {
 					return errBundleNotLoaded, nil
 				}
@@ -60,7 +61,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				var b strings.Builder
 				shown := 0
 				for _, bf := range files {
-					if glob != "" && !matchBundleGlob(glob, bf.Path) {
+					if glob != "" && !bundle.MatchGlob(glob, bf.Path) {
 						continue
 					}
 					if shown >= bundleListCap {
@@ -91,10 +92,10 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				Required: []string{"pattern"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				if bundleFileCount(user, applianceID) == 0 {
+				if bundle.Open(user, applianceID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
-				q := bundleQuery{
+				q := bundle.Query{
 					Pattern: strArg(args, "pattern"),
 					Glob:    strArg(args, "glob"),
 					Before:  clampInt(repoIntArg(args, "before"), 0, 20),
@@ -107,7 +108,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				if q.Until, err = parseBundleArgTime(strArg(args, "until")); err != nil {
 					return "", err
 				}
-				res, err := searchBundle(user, applianceID, q)
+				res, err := bundle.Open(user, applianceID).Search(q)
 				if err != nil {
 					return "", err
 				}
@@ -126,7 +127,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				Required: []string{"path"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				if bundleFileCount(user, applianceID) == 0 {
+				if bundle.Open(user, applianceID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
 				path := strArg(args, "path")
@@ -138,10 +139,10 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				if end <= 0 {
 					end = start + 200
 				}
-				if end-start+1 > bundleSliceLines {
-					return "", fmt.Errorf("that range is %d lines — read at most %d at a time, or use search_bundle to find the part that matters", end-start+1, bundleSliceLines)
+				if end-start+1 > bundle.SliceLines {
+					return "", fmt.Errorf("that range is %d lines — read at most %d at a time, or use search_bundle to find the part that matters", end-start+1, bundle.SliceLines)
 				}
-				lines, bf, err := readBundleRange(user, applianceID, path, start, end)
+				lines, bf, err := bundle.Open(user, applianceID).ReadRange(path, start, end)
 				if err != nil {
 					return "", err
 				}
@@ -149,7 +150,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 					return fmt.Sprintf("%s is present in the bundle but was not ingested as text (%s). There is nothing to read.", bf.Path, bf.Format), nil
 				}
 				var b strings.Builder
-				fmt.Fprintf(&b, "%s (%s lines total, %s)\n\n", bf.Path, humanCount(bf.Lines), formatBundleSpan(bf))
+				fmt.Fprintf(&b, "%s (%s lines total, %s)\n\n", bf.Path, humanCount(bf.Lines), bundle.FormatSpan(bf))
 				for i, ln := range lines {
 					fmt.Fprintf(&b, "%d: %s\n", start+i, ln)
 				}
@@ -164,11 +165,11 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 					"glob":      {Type: "string", Description: "Optional path filter limiting which files are merged. Empty merges every file that carries timestamps."},
 					"since":     {Type: "string", Description: "Earliest timestamp, e.g. \"2026-03-14 02:00:00\". Strongly recommended."},
 					"until":     {Type: "string", Description: "Latest timestamp, same format."},
-					"max_lines": {Type: "integer", Description: fmt.Sprintf("Maximum lines to return (default %d).", bundleMaxTimelineLines)},
+					"max_lines": {Type: "integer", Description: fmt.Sprintf("Maximum lines to return (default %d).", bundle.MaxTimelineLines)},
 				},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				if bundleFileCount(user, applianceID) == 0 {
+				if bundle.Open(user, applianceID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
 				since, err := parseBundleArgTime(strArg(args, "since"))
@@ -179,7 +180,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				if err != nil {
 					return "", err
 				}
-				entries, unmergeable, err := bundleTimeline(user, applianceID, strArg(args, "glob"), since, until, repoIntArg(args, "max_lines"))
+				entries, unmergeable, err := bundle.Open(user, applianceID).Timeline(strArg(args, "glob"), since, until, repoIntArg(args, "max_lines"))
 				if err != nil {
 					return "", err
 				}
@@ -192,11 +193,11 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 // --- rendering ---
 
 // renderBundleFileLine is one line of a bundle listing.
-func renderBundleFileLine(bf bundleFile) string {
+func renderBundleFileLine(bf bundle.File) string {
 	switch bf.Format {
-	case bundleFormatArchive:
+	case bundle.FormatArchive:
 		return fmt.Sprintf("%s  [archive — no built-in expander; contents NOT ingested] %s\n", bf.Path, HumanSize(bf.Bytes))
-	case bundleFormatBinary:
+	case bundle.FormatBinary:
 		return fmt.Sprintf("%s  [binary — present, not ingested as text] %s\n", bf.Path, HumanSize(bf.Bytes))
 	}
 	var b strings.Builder
@@ -204,7 +205,7 @@ func renderBundleFileLine(bf bundleFile) string {
 	if bf.Host != "" {
 		fmt.Fprintf(&b, ", host=%s", bf.Host)
 	}
-	fmt.Fprintf(&b, "  [%s]", formatBundleSpan(bf))
+	fmt.Fprintf(&b, "  [%s]", bundle.FormatSpan(bf))
 	if sev := renderSeverity(bf.Severity); sev != "" {
 		fmt.Fprintf(&b, "  %s", sev)
 	}
@@ -232,7 +233,7 @@ func renderSeverity(sev map[string]int) string {
 
 // renderBundleSummary is the whole-bundle overview: scale, span, where the
 // noise is, and what is present but unread.
-func renderBundleSummary(files []bundleFile) string {
+func renderBundleSummary(files []bundle.File) string {
 	var (
 		b            strings.Builder
 		totalLines   int
@@ -249,10 +250,10 @@ func renderBundleSummary(files []bundleFile) string {
 	for _, bf := range files {
 		totalBytes += bf.Bytes
 		switch bf.Format {
-		case bundleFormatArchive:
+		case bundle.FormatArchive:
 			archives++
 			continue
-		case bundleFormatBinary:
+		case bundle.FormatBinary:
 			binaries++
 			continue
 		}
@@ -264,7 +265,7 @@ func renderBundleSummary(files []bundleFile) string {
 		if bf.Host != "" {
 			hosts[bf.Host] = true
 		}
-		if f, l, known := bundleFileSpan(bf); known {
+		if f, l, known := bundle.FileSpan(bf); known {
 			if spanFirst.IsZero() || f.Before(spanFirst) {
 				spanFirst = f
 			}
@@ -303,7 +304,7 @@ func renderBundleSummary(files []bundleFile) string {
 	}
 
 	// The files worth opening first: most errors, then largest.
-	noisy := append([]bundleFile(nil), files...)
+	noisy := append([]bundle.File(nil), files...)
 	sort.Slice(noisy, func(i, j int) bool {
 		ei := noisy[i].Severity["ERROR"] + noisy[i].Severity["CRIT"] + noisy[i].Severity["FATAL"]
 		ej := noisy[j].Severity["ERROR"] + noisy[j].Severity["CRIT"] + noisy[j].Severity["FATAL"]
@@ -318,7 +319,7 @@ func renderBundleSummary(files []bundleFile) string {
 	b.WriteString("### Files most likely to matter\n\n")
 	listed := 0
 	for _, bf := range noisy {
-		if bf.Format == bundleFormatArchive || bf.Format == bundleFormatBinary {
+		if bf.Format == bundle.FormatArchive || bf.Format == bundle.FormatBinary {
 			continue
 		}
 		if listed >= 12 {
@@ -334,7 +335,7 @@ func renderBundleSummary(files []bundleFile) string {
 }
 
 // renderBundleSearch prints hits, and says plainly what the search did not see.
-func renderBundleSearch(res bundleSearchResult, q bundleQuery) string {
+func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 	if len(res.Hits) == 0 {
 		var b strings.Builder
 		fmt.Fprintf(&b, "No matches for %q in %d files scanned.\n", q.Pattern, res.Scanned)
@@ -373,7 +374,7 @@ func renderBundleSearch(res bundleSearchResult, q bundleQuery) string {
 
 // renderBundleTimeline prints a merged timeline and names the files that could
 // not be merged into it.
-func renderBundleTimeline(entries []bundleTimelineEntry, unmergeable []string) string {
+func renderBundleTimeline(entries []bundle.TimelineEntry, unmergeable []string) string {
 	var b strings.Builder
 	if len(entries) == 0 {
 		b.WriteString("No timestamped lines in that window.\n")
@@ -399,7 +400,7 @@ func renderBundleTimeline(entries []bundleTimelineEntry, unmergeable []string) s
 }
 
 // timelineFileCount describes how many distinct files fed a timeline.
-func timelineFileCount(entries []bundleTimelineEntry) string {
+func timelineFileCount(entries []bundle.TimelineEntry) string {
 	seen := map[string]bool{}
 	for _, e := range entries {
 		seen[e.Path] = true

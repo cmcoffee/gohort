@@ -1,18 +1,19 @@
-// bundle_ingest.go — turning a staged upload into an ingested bundle: expand
-// the archives, walk what falls out, slice each text file into the encrypted
-// store with its derived index, then delete the staging tree.
+// Turning a staged upload into an ingested bundle: expand the archives, walk
+// what falls out, slice each text file into the encrypted store with its
+// derived index, then delete the staging tree.
 //
 // Expansion is built-in only (gzip, bzip2, tar, zip). A dump that needs a
 // site-specific tool to open — an encrypted blob, an xz archive, a vendor
 // format — is out of scope here by design: running an operator-supplied command
 // against an uploaded file is a permission question, not a decompression one,
-// and it belongs behind the per-(agent, appliance) grant rather than inside an
-// ingest pass. Such a file is stored as-is and reported unopened, so the gap is
+// and it belongs behind whatever grant the calling app gates execution with,
+// rather than inside an ingest pass. Such a file is stored as-is and reported unopened, so the gap is
 // visible in the bundle listing instead of looking like an empty upload.
-package servitor
+package bundle
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -21,14 +22,14 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/archive"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 const (
-	// maxBundleBytes caps the total EXPANDED size of one bundle. A dump that
+	// MaxBytes caps the total EXPANDED size of one bundle. A dump that
 	// exceeds it fails loudly mid-expansion rather than filling the volume.
-	maxBundleBytes = 8 << 30 // 8 GiB
+	MaxBytes = 8 << 30 // 8 GiB
 	// maxBundleFiles caps how many files one bundle may contain.
 	maxBundleFiles = 50000
 	// maxUnpackDepth bounds nested archives (a tarball of tarballs is normal
@@ -39,9 +40,9 @@ const (
 	maxBundleFileBytes = 2 << 30 // 2 GiB
 )
 
-// bundleIngestStats is what an ingest pass did, for the status line the user
+// IngestStats is what an ingest pass did, for the status line the user
 // sees and the record fields the tools gate on.
-type bundleIngestStats struct {
+type IngestStats struct {
 	Files     int   // index entries written (text + recorded binaries)
 	TextFiles int   // files actually sliced into the store
 	Binaries  int   // recorded present, not ingested as text
@@ -51,20 +52,41 @@ type bundleIngestStats struct {
 	Skipped   int   // entries refused (traversal, symlink, over cap)
 }
 
-// ingestBundleDir expands and ingests everything under stageDir into the
-// bundle's encrypted store, then removes stageDir. The store is REPLACED, not
-// merged: an upload is a new copy of the evidence, and half of one dump plus
-// half of another is not a thing anyone wants to investigate.
-func ingestBundleDir(ctx context.Context, user, applianceID, stageDir string) (bundleIngestStats, error) {
-	var st bundleIngestStats
-	store := bundleStore(user, applianceID)
-	if store == nil {
-		return st, fmt.Errorf("BundleFilesDB is not initialized")
+// binarySniff is how many leading bytes are checked for a NUL before a file is
+// called binary. Its own constant here rather than shared with servitor's repo
+// backend: the two happen to agree on 8000 today, and a shared const would make
+// that agreement look load-bearing when it is a coincidence of two independent
+// heuristics.
+const binarySniff = 8000
+
+// isBinary reports whether a leading chunk contains a NUL byte.
+//
+// Six lines, and servitor's repo backend has its own. Same reasoning as
+// humanCount below: copying a self-contained heuristic across a package
+// boundary is cheaper than a shared home for it, and the two are free to
+// diverge if one ever learns something the other should not.
+func isBinary(b []byte) bool {
+	n := len(b)
+	if n > binarySniff {
+		n = binarySniff
 	}
-	if err := expandArchives(ctx, stageDir, 0, &st); err != nil {
+	return bytes.IndexByte(b[:n], 0) >= 0
+}
+
+// Ingest expands and ingests everything under stageDir into the bundle's
+// encrypted store, then removes stageDir. The store is REPLACED, not merged: an
+// upload is a new copy of the evidence, and half of one dump plus half of
+// another is not a thing anyone wants to investigate.
+func (b Bundle) Ingest(ctx context.Context, stageDir string) (IngestStats, error) {
+	var st IngestStats
+	store := b.store()
+	if store == nil {
+		return st, fmt.Errorf("no bundle store is configured")
+	}
+	if err := expandNested(ctx, stageDir, 0, &st); err != nil {
 		return st, err
 	}
-	wipeBundleFiles(user, applianceID)
+	b.Wipe()
 
 	// st.Bytes was the running expansion budget; from here it becomes the
 	// true expanded total, measured off what is actually on disk. Reset
@@ -77,7 +99,7 @@ func ingestBundleDir(ctx context.Context, user, applianceID, stageDir string) (b
 			// One unreadable entry must not abandon the rest of the dump,
 			// but it is logged: a silently skipped file reads downstream as
 			// evidence that was never in the bundle.
-			Log("[servitor.bundle] skip %q: %v", p, err)
+			nfo.Log("[bundle] skip %q: %v", p, err)
 			st.Skipped++
 			return nil
 		}
@@ -101,20 +123,20 @@ func ingestBundleDir(ctx context.Context, user, applianceID, stageDir string) (b
 			st.Skipped++
 			return nil
 		}
-		bf, ingested, ierr := ingestOneBundleFile(store, normBundlePath(rel), p, info, now)
+		bf, ingested, ierr := ingestOneFile(store, NormPath(rel), p, info, now)
 		if ierr != nil {
-			Log("[servitor.bundle] %q: %v", rel, ierr)
+			nfo.Log("[bundle] %q: %v", rel, ierr)
 			st.Skipped++
 			return nil
 		}
-		store.Set(bundleFilesTable, bf.Path, bf)
+		store.Set(filesTable, bf.Path, bf)
 		st.Files++
 		st.Bytes += bf.Bytes
 		switch {
 		case ingested:
 			st.TextFiles++
 			st.Lines += bf.Lines
-		case bf.Format == bundleFormatArchive:
+		case bf.Format == FormatArchive:
 			st.Unopened++
 		default:
 			st.Binaries++
@@ -125,27 +147,27 @@ func ingestBundleDir(ctx context.Context, user, applianceID, stageDir string) (b
 	if err != nil {
 		return st, err
 	}
-	Log("[servitor.bundle] ingested %s/%s: %d files (%d text, %d binary, %d unopened), %s lines, %s",
-		user, applianceID, st.Files, st.TextFiles, st.Binaries, st.Unopened, humanCount(st.Lines), HumanSize(st.Bytes))
+	nfo.Log("[bundle] ingested %s/%s: %d files (%d text, %d binary, %d unopened), %s lines, %s",
+		b.Owner, b.ID, st.Files, st.TextFiles, st.Binaries, st.Unopened, humanCount(st.Lines), nfo.HumanSize(st.Bytes))
 	return st, nil
 }
 
-// bundleFormatArchive marks a file we recognized as an archive but have no
+// FormatArchive marks a file we recognized as an archive but have no
 // built-in expander for. Distinct from "binary" so the listing can say the
 // difference between "a core dump, nothing to read" and "an archive nobody
 // opened", which are different problems with different fixes.
-const bundleFormatArchive = "archive"
+const FormatArchive = "archive"
 
-// bundleFormatBinary marks a file that is present but not text.
-const bundleFormatBinary = "binary"
+// FormatBinary marks a file that is present but not text.
+const FormatBinary = "binary"
 
-// ingestOneBundleFile writes one file's slices and returns its index entry.
+// ingestOneFile writes one file's slices and returns its index entry.
 // Binary and unopened-archive files get an index entry with no slices, so they
 // appear in the listing as present-but-unread rather than vanishing.
-func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileInfo, now time.Time) (bundleFile, bool, error) {
-	bf := bundleFile{
+func ingestOneFile(store Store, relPath, absPath string, info os.FileInfo, now time.Time) (File, bool, error) {
+	bf := File{
 		Path:     relPath,
-		Key:      bundleFileKey(relPath),
+		Key:      fileKey(relPath),
 		Bytes:    info.Size(),
 		Ingested: now.Format(time.RFC3339),
 		Severity: map[string]int{},
@@ -154,16 +176,16 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 		return bf, false, fmt.Errorf("empty path")
 	}
 	if archive.Unopened(relPath) {
-		bf.Format = bundleFormatArchive
+		bf.Format = FormatArchive
 		return bf, false, nil
 	}
 	if info.Size() == 0 {
-		bf.Format = bundleFormatText
+		bf.Format = FormatText
 		return bf, false, nil
 	}
 	if info.Size() > maxBundleFileBytes {
-		bf.Format = bundleFormatBinary
-		return bf, false, fmt.Errorf("%s is %s, over the %s per-file cap", relPath, HumanSize(info.Size()), HumanSize(maxBundleFileBytes))
+		bf.Format = FormatBinary
+		return bf, false, fmt.Errorf("%s is %s, over the %s per-file cap", relPath, nfo.HumanSize(info.Size()), nfo.HumanSize(maxBundleFileBytes))
 	}
 	f, err := os.Open(absPath)
 	if err != nil {
@@ -174,7 +196,7 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 	head := make([]byte, binarySniff)
 	n, _ := io.ReadFull(f, head)
 	if isBinary(head[:n]) {
-		bf.Format = bundleFormatBinary
+		bf.Format = FormatBinary
 		return bf, false, nil
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -194,40 +216,40 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 		sliceNo int
 		first   time.Time
 		last    time.Time
-		year    = bundleYearFromInfo(info)
+		year    = yearFromInfo(info)
 	)
 	flush := func() {
 		if len(slice) == 0 {
 			return
 		}
-		store.Set(bundleSliceTable, bundleSliceKey(bf.Key, sliceNo), strings.Join(slice, "\n"))
+		store.Set(sliceTable, sliceKey(bf.Key, sliceNo), strings.Join(slice, "\n"))
 		sliceNo++
 		slice = slice[:0]
 	}
 	for {
-		line, err := readBundleLine(rd)
+		line, err := readLine(rd)
 		if line == "" && err == io.EOF {
 			break
 		}
 		lineNo++
-		if len(sample) < bundleFormatSample {
+		if len(sample) < formatSample {
 			sample = append(sample, line)
-			if len(sample) == bundleFormatSample {
-				bf.Format = detectBundleFormat(sample)
+			if len(sample) == formatSample {
+				bf.Format = DetectFormat(sample)
 			}
 		}
 		slice = append(slice, line)
-		if len(slice) >= bundleSliceLines {
+		if len(slice) >= SliceLines {
 			flush()
 		}
-		if sev := bundleSeverity(line); sev != "" {
+		if sev := severityOf(line); sev != "" {
 			bf.Severity[sev]++
 		}
 		if bf.Host == "" && bf.Format != "" {
-			bf.Host = bundleHost(bf.Format, line)
+			bf.Host = hostOf(bf.Format, line)
 		}
 		if bf.Format != "" {
-			if ts, ok := parseBundleTime(bf.Format, year, line); ok {
+			if ts, ok := ParseTime(bf.Format, year, line); ok {
 				if first.IsZero() || ts.Before(first) {
 					first = ts
 				}
@@ -245,7 +267,7 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 	}
 	flush()
 	if bf.Format == "" { // file shorter than the sample window
-		bf.Format = detectBundleFormat(sample)
+		bf.Format = DetectFormat(sample)
 	}
 	// The sample lines were read before the format was known, so neither their
 	// timestamps nor their host field were ever parsed. Re-read them under the
@@ -255,7 +277,7 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 	// a file SHORTER than the sample window this pass is the only one that
 	// runs, which is why it also fills the host.
 	for _, ln := range sample {
-		if ts, ok := parseBundleTime(bf.Format, year, ln); ok {
+		if ts, ok := ParseTime(bf.Format, year, ln); ok {
 			if first.IsZero() || ts.Before(first) {
 				first = ts
 			}
@@ -264,7 +286,7 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 			}
 		}
 		if bf.Host == "" {
-			bf.Host = bundleHost(bf.Format, ln)
+			bf.Host = hostOf(bf.Format, ln)
 		}
 	}
 	bf.Lines = lineNo
@@ -272,26 +294,26 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 	if !first.IsZero() {
 		bf.First = first.Format(time.RFC3339)
 		bf.Last = last.Format(time.RFC3339)
-		bf.YearInferred = bf.Format == bundleFormatSyslog
+		bf.YearInferred = bf.Format == FormatSyslog
 	}
 	return bf, true, nil
 }
 
-// readBundleLine reads one line, dropping the trailing newline and truncating a
+// readLine reads one line, dropping the trailing newline and truncating a
 // pathological one. Written against bufio.Reader rather than bufio.Scanner
 // because a Scanner ERRORS on a line past its buffer, which would abandon the
 // rest of a file over one minified blob; here the line is cut, marked, and the
 // read continues.
-func readBundleLine(rd *bufio.Reader) (string, error) {
+func readLine(rd *bufio.Reader) (string, error) {
 	var b strings.Builder
 	truncated := false
 	for {
 		chunk, err := rd.ReadString('\n')
 		if !truncated {
-			room := bundleMaxLineBytes - b.Len()
+			room := maxLineBytes - b.Len()
 			if len(chunk) > room {
 				b.WriteString(strings.TrimRight(chunk[:room], "\n"))
-				b.WriteString(bundleTruncMarker)
+				b.WriteString(truncMarker)
 				truncated = true
 			} else {
 				b.WriteString(chunk)
@@ -303,10 +325,10 @@ func readBundleLine(rd *bufio.Reader) (string, error) {
 	}
 }
 
-// bundleYearFromInfo supplies the year for year-less formats, taken from the
+// yearFromInfo supplies the year for year-less formats, taken from the
 // staged file's modification time. Recorded as inferred on the index entry
 // (YearInferred) so nothing downstream presents it as read from the log.
-func bundleYearFromInfo(info os.FileInfo) int {
+func yearFromInfo(info os.FileInfo) int {
 	if info == nil {
 		return time.Now().UTC().Year()
 	}
@@ -314,11 +336,11 @@ func bundleYearFromInfo(info os.FileInfo) int {
 }
 
 // unopenedArchive reports whether a path looks like an archive this pass has no
-// built-in expander for — the honest complement to expandArchives.
+// built-in expander for — the honest complement to expandNested.
 
 // --- expansion ---
 
-// expandArchives expands everything under dir, in place, and folds the
+// expandNested expands everything under dir, in place, and folds the
 // result into the ingest stats.
 //
 // The expander itself lives in core (core/archive.go): it was lifted out
@@ -327,12 +349,12 @@ func bundleYearFromInfo(info os.FileInfo) int {
 // one knows an archive is untrusted input, and that knowledge is spread
 // across every function in it rather than sitting in one check somebody
 // could remember to copy.
-func expandArchives(ctx context.Context, dir string, depth int, st *bundleIngestStats) error {
+func expandNested(ctx context.Context, dir string, depth int, st *IngestStats) error {
 	res, err := archive.Expand(ctx, dir, archive.Limits{
 		// The bundle budget is the WHOLE bundle's, and bytes already
 		// ingested count against it, so the expander gets what is left
 		// rather than the full cap.
-		MaxBytes: maxBundleBytes - st.Bytes,
+		MaxBytes: MaxBytes - st.Bytes,
 		MaxDepth: maxUnpackDepth - depth,
 	})
 	st.Bytes += res.Bytes
@@ -342,4 +364,34 @@ func expandArchives(ctx context.Context, dir string, depth int, st *bundleIngest
 	// "there is more in here that nobody has read".
 	st.Unopened += res.Unopened
 	return err
+}
+
+// humanCount formats an integer with thousands separators (12345 -> "12,345").
+//
+// A copy of servitor's, deliberately. It is fifteen lines of pure formatting
+// with no dependency, and the alternative — a shared package for one function,
+// or an export from a hub this package cannot import — costs more than the
+// duplication does. If a third caller wants it, that is the moment it earns a
+// home of its own.
+func humanCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	neg := ""
+	if strings.HasPrefix(s, "-") {
+		neg, s = "-", s[1:]
+	}
+	if len(s) <= 3 {
+		return neg + s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+	}
+	for i := pre; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return neg + b.String()
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 )
@@ -341,10 +342,10 @@ func dedupeStrings(in []string) []string {
 
 // probeEvent is one event emitted by a running session goroutine.
 type probeEvent struct {
-	Kind   string     `json:"kind"` // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
-	Text   string     `json:"text,omitempty"`
-	Reason string     `json:"reason,omitempty"` // destructive reason for confirm events
-	IDs    []string   `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
+	Kind   string         `json:"kind"` // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
+	Text   string         `json:"text,omitempty"`
+	Reason string         `json:"reason,omitempty"` // destructive reason for confirm events
+	IDs    []string       `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
 	Plan   []WorkPlanStep `json:"plan,omitempty"`   // plan_set / plan_step: snapshot of the current plan for the UI to render
 	// PlanID identifies WHICH investigation's plan this snapshot belongs to.
 	// The UI keys blocks by id, and the plan block used to use a constant one —
@@ -1092,7 +1093,7 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 	// Bundles additionally clear any staged upload that never finished
 	// ingesting, which is the one place uploaded evidence exists as plaintext.
 	wipeRepoFiles(userID, applianceID)
-	wipeBundleFiles(userID, applianceID)
+	bundle.Open(userID, applianceID).Wipe()
 	purgeBundleStaging(userID, applianceID)
 
 	dropConn(userID, applianceID)
@@ -2917,7 +2918,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		// cannot be re-fetched. A Map run reads whatever was ingested — if
 		// that is nothing, the fix is an upload, which is the user's move and
 		// not something this session can perform on their behalf.
-		if n := bundleFileCount(ownerUser, appliance.ID); n == 0 {
+		if n := bundle.Open(ownerUser, appliance.ID).FileCount(); n == 0 {
 			msg := "No evidence ingested yet — upload the bundle's files first."
 			if appliance.BundleState == bundleStateIngesting {
 				msg = "The upload is still being expanded and ingested. Wait for it to finish, then ask again."

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // bundleProbeWorkerProtocol is the bundle analogue of probeWorkerProtocol. It
@@ -255,7 +256,7 @@ func bundleDisplayTarget(a Appliance) string {
 // overview of the evidence that gives the mapping investigator a starting
 // point. Reads the index only — no log content is decrypted.
 func runBundleSnapshot(user, applianceID string) string {
-	files := bundleIndex(user, applianceID)
+	files := bundle.Open(user, applianceID).Index()
 	if len(files) == 0 {
 		return ""
 	}

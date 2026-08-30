@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // Bundle lifecycle states, stored on the appliance record so the UI can show
@@ -226,15 +227,15 @@ func streamPartsToStage(mr *multipart.Reader, stage string) ([]string, int64, er
 		// LimitReader caps the whole upload at the expanded-size budget: a
 		// compressed dump larger than what it is allowed to expand into can
 		// only end in a refused ingest, so it is refused at the door.
-		n, cerr := io.Copy(dst, io.LimitReader(part, maxBundleBytes-total+1))
+		n, cerr := io.Copy(dst, io.LimitReader(part, bundle.MaxBytes-total+1))
 		dst.Close()
 		part.Close()
 		total += n
 		if cerr != nil {
 			return names, total, fmt.Errorf("staging %q: %w", name, cerr)
 		}
-		if total > maxBundleBytes {
-			return names, total, fmt.Errorf("the upload exceeds the %s limit", HumanSize(maxBundleBytes))
+		if total > bundle.MaxBytes {
+			return names, total, fmt.Errorf("the upload exceeds the %s limit", HumanSize(bundle.MaxBytes))
 		}
 		names = append(names, name)
 	}
@@ -249,7 +250,7 @@ func (T *Servitor) ingestBundle(ctx context.Context, owner string, ownerUDB Data
 		T.markBundleFailed(ownerUDB, applianceID, err.Error())
 		return
 	}
-	st, err := ingestBundleDir(ctx, owner, applianceID, stage)
+	st, err := bundle.Open(owner, applianceID).Ingest(ctx, stage)
 	var rec Appliance
 	if ownerUDB == nil || !ownerUDB.Get(applianceTable, applianceID, &rec) {
 		return

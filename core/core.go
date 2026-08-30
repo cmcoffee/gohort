@@ -7,6 +7,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/appgroups"
+	"github.com/cmcoffee/gohort/core/bundle"
 	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/docs"
@@ -262,6 +263,19 @@ func init() {
 		// Globals first: they are the floor, and reading them after a page of
 		// style notes would bury the ones that are not negotiable.
 		return prompts.GlobalRulesMarkdown() + prompts.EnabledStyleRulesMarkdown()
+	}
+
+	// The evidence-bundle store's scoping. The layout string lives HERE rather
+	// than in core/bundle, because it is the one thing that package cannot
+	// express: Database.Sub returns Database, so a package under core cannot
+	// name the type it would have to call it on. Keeping it visible next to the
+	// other seams is also where somebody would look before changing it, and
+	// changing it is what would strand every bundle already ingested.
+	bundle.OpenStore = func(owner, id string) bundle.Store {
+		if BundleFilesDB == nil {
+			return nil
+		}
+		return BundleFilesDB.Sub("user:" + owner).Sub("bundle:" + id)
 	}
 
 	sandbox.WorkspacesDir = WorkspacesDir
