@@ -26,8 +26,22 @@
 // A corrupt member is common in a real dump and is NOT a reason to
 // reject the dump: the archive stays in place, gets counted, and the
 // caller decides.
+//
+// WHY IT IS ITS OWN PACKAGE NOW. It was a file in core, which was fine
+// while both callers were apps: an app dot-imports core and the names
+// resolved. The bundle store is being lifted out of servitor into
+// core/bundle, and a package under core cannot import core — the same
+// rule core/sandbox follows, for the same reason. Expansion is the one
+// thing bundle ingest needs from core that is not a type alias, so it
+// moves down to where a sibling can reach it rather than being reached
+// through a function seam assigned at init. It has no dependency of its
+// own beyond stdlib and nfo, which is what made this the cheap direction.
+//
+// The exported names lost their "Archive"/"Expand" prefixes in the move
+// (ExpandArchives is now Expand, UnopenedArchive is Unopened): the
+// package name carries that word, and archive.ExpandArchives stutters.
 
-package core
+package archive
 
 import (
 	"archive/tar"
@@ -41,16 +55,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
-// Defaults, used when ExpandLimits leaves a field at zero.
+// Error is a string error, the same shape core uses. Local rather than
+// imported: a leaf cannot import the package it left.
+type Error string
+
+func (e Error) Error() string { return string(e) }
+
+// Defaults, used when Limits leaves a field at zero.
 const (
 	defaultExpandBytes = 8 << 30 // 8 GiB of expanded output
 	defaultExpandDepth = 6       // nested archives
 )
 
-// ExpandLimits bounds one expansion pass.
-type ExpandLimits struct {
+// Limits bounds one expansion pass.
+type Limits struct {
 	// MaxBytes caps TOTAL expanded output across the whole pass, not per
 	// file. Zero uses the default.
 	MaxBytes int64
@@ -59,21 +81,21 @@ type ExpandLimits struct {
 	MaxDepth int
 }
 
-func (l ExpandLimits) bytes() int64 {
+func (l Limits) bytes() int64 {
 	if l.MaxBytes > 0 {
 		return l.MaxBytes
 	}
 	return defaultExpandBytes
 }
 
-func (l ExpandLimits) depth() int {
+func (l Limits) depth() int {
 	if l.MaxDepth > 0 {
 		return l.MaxDepth
 	}
 	return defaultExpandDepth
 }
 
-// ErrExpandBudget is returned when a pass exceeds its byte cap.
+// ErrBudget is returned when a pass exceeds its byte cap.
 //
 // It ABORTS the whole pass rather than being counted as one archive that
 // would not open, which is the behavior this inherited and the one place
@@ -83,44 +105,44 @@ func (l ExpandLimits) depth() int {
 // same way. Swallowing it meant a directory of fifty oversized captures
 // did fifty futile expansions and reported them as fifty unreadable
 // files.
-var ErrExpandBudget = Error("expansion exceeded its size budget")
+var ErrBudget = Error("expansion exceeded its size budget")
 
-// ExpandResult reports what a pass did.
+// Result reports what a pass did.
 //
 // Skipped and Unopened are separate on purpose: "we refused this" and
 // "we do not know how to open this" are different facts, and a caller
 // that reports a thin result needs to say which happened.
-type ExpandResult struct {
+type Result struct {
 	Opened   int   // archives expanded
 	Unopened int   // archives left alone (no built-in expander, or corrupt)
 	Skipped  int   // members refused: traversal, symlink, over cap
 	Bytes    int64 // expanded bytes written
 }
 
-// ExpandArchives repeatedly expands archives found under dir, in place,
+// Expand repeatedly expands archives found under dir, in place,
 // until nothing is left to expand or the depth cap is reached.
 //
 // Each archive is replaced by a directory of the same name plus ".d", so
 // the path of an extracted file still records where it came from — which
 // is what lets a search result say "this line came out of logs.tar.gz"
 // rather than losing the provenance at unpack time.
-func ExpandArchives(ctx context.Context, dir string, lim ExpandLimits) (ExpandResult, error) {
+func Expand(ctx context.Context, dir string, lim Limits) (Result, error) {
 	run := &expandRun{lim: lim}
 	err := run.pass(ctx, dir, 0)
 	return run.res, err
 }
 
-// ArchiveExpandable reports whether there is a built-in expander for a
+// Expandable reports whether there is a built-in expander for a
 // path.
-func ArchiveExpandable(path string) bool { return expanderFor(path) != nil }
+func Expandable(path string) bool { return expanderFor(path) != nil }
 
-// UnopenedArchive reports whether a path LOOKS like an archive we have
+// Unopened reports whether a path LOOKS like an archive we have
 // no expander for — encrypted, or a format not built in.
 //
 // Worth reporting rather than ignoring: a bundle that seems thin because
 // half of it is in a .7z is a different problem from one that is thin
 // because nothing was captured, and only this can tell them apart.
-func UnopenedArchive(path string) bool {
+func Unopened(path string) bool {
 	l := strings.ToLower(path)
 	for _, ext := range []string{".xz", ".txz", ".tar.xz", ".7z", ".rar", ".zst", ".tar.zst", ".lz4", ".enc", ".gpg", ".pgp", ".aes"} {
 		if strings.HasSuffix(l, ext) {
@@ -153,8 +175,8 @@ func SafeJoin(root, name string) (string, bool) {
 // --- the pass ---------------------------------------------------------
 
 type expandRun struct {
-	lim ExpandLimits
-	res ExpandResult
+	lim Limits
+	res Result
 }
 
 func (r *expandRun) pass(ctx context.Context, dir string, depth int) error {
@@ -189,10 +211,10 @@ func (r *expandRun) pass(ctx context.Context, dir string, depth int) error {
 			// The budget is a property of the PASS, so hitting it stops
 			// everything; a corrupt member is local, so the archive
 			// stays in place, gets counted, and the rest is still read.
-			if errors.Is(err, ErrExpandBudget) {
+			if errors.Is(err, ErrBudget) {
 				return err
 			}
-			Log("[archive] expand %q: %v", filepath.Base(a), err)
+			nfo.Log("[archive] expand %q: %v", filepath.Base(a), err)
 			r.res.Unopened++
 			continue
 		}
@@ -380,7 +402,7 @@ func (r *expandRun) bz2File(p string) error {
 func (r *expandRun) write(target string, src io.Reader, declared int64) error {
 	budget := r.lim.bytes()
 	if declared >= 0 && r.res.Bytes+declared > budget {
-		return fmt.Errorf("%w (%s)", ErrExpandBudget, HumanSize(budget))
+		return fmt.Errorf("%w (%s)", ErrBudget, nfo.HumanSize(budget))
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return err
@@ -397,7 +419,7 @@ func (r *expandRun) write(target string, src io.Reader, declared int64) error {
 		return err
 	}
 	if n > remaining {
-		return fmt.Errorf("%w (%s)", ErrExpandBudget, HumanSize(budget))
+		return fmt.Errorf("%w (%s)", ErrBudget, nfo.HumanSize(budget))
 	}
 	return nil
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/archive"
 )
 
 const (
@@ -152,7 +153,7 @@ func ingestOneBundleFile(store Database, relPath, absPath string, info os.FileIn
 	if relPath == "" {
 		return bf, false, fmt.Errorf("empty path")
 	}
-	if UnopenedArchive(relPath) {
+	if archive.Unopened(relPath) {
 		bf.Format = bundleFormatArchive
 		return bf, false, nil
 	}
@@ -327,7 +328,7 @@ func bundleYearFromInfo(info os.FileInfo) int {
 // across every function in it rather than sitting in one check somebody
 // could remember to copy.
 func expandArchives(ctx context.Context, dir string, depth int, st *bundleIngestStats) error {
-	res, err := ExpandArchives(ctx, dir, ExpandLimits{
+	res, err := archive.Expand(ctx, dir, archive.Limits{
 		// The bundle budget is the WHOLE bundle's, and bytes already
 		// ingested count against it, so the expander gets what is left
 		// rather than the full cap.

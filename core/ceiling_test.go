@@ -49,7 +49,14 @@ const (
 	// restpoll, mcp, desktop, command) is in the hub for that same reason. The
 	// part of that work with no such edge, JWKS verification, did leave: it is
 	// core/jwks, and this test is why.
-	coreFileCeiling = 167
+	//
+	// 166 as of v0.6.467: archive.go left for core/archive. It had no outbound
+	// TYPE edge at all — stdlib plus two nfo calls — so it was always a
+	// candidate, and what finally moved it was a sibling that could not reach
+	// it: the bundle store being lifted out of servitor into core/bundle
+	// cannot import core, and archive expansion is the one thing bundle ingest
+	// needs from the hub that is not a type alias.
+	coreFileCeiling = 166
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/archive"
 )
 
 // maxExpandBytes bounds what one upload may unpack to. Generous, so a
@@ -114,7 +115,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// Unpack whatever arrived as an archive. The budget is generous but
 	// finite: an upload is untrusted input, and a zip bomb should cost a
 	// refusal rather than the disk.
-	exp, err := ExpandArchives(r.Context(), dest, ExpandLimits{MaxBytes: maxExpandBytes})
+	exp, err := archive.Expand(r.Context(), dest, archive.Limits{MaxBytes: maxExpandBytes})
 	if err != nil {
 		// The files are already on disk and searchable as they are, so a
 		// failed unpack is reported, not fatal.
