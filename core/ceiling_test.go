@@ -67,7 +67,25 @@ const (
 	// moving them is a different and much larger cut. So the hub is the right
 	// home here, and the 1,095 lines of store, format and ingest that had no
 	// such edge went to core/bundle instead.
-	coreFileCeiling = 167
+	//
+	// 168 as of v0.6.473, for image_reap.go — the age half of image-store
+	// cleanup, next to the count half that already lived here. `cutmap core
+	// image_reap` reports one outbound type edge (TunableSpec) and 15 func and
+	// value edges across seven files, and the type edge is not the reason it
+	// stays: core registers tunables on behalf of leaf packages already, so
+	// that one could have been inverted.
+	//
+	// What keeps it in the hub is that the file IS a set of recognition rules
+	// for filename schemes two siblings own — the <unixnano>-<uuid>.png the ring
+	// writes in image_space.go, and the att_<uuid> chat_attachments.go writes
+	// and gates with ValidChatAttachmentID. A reaper that deletes only what it
+	// positively recognizes is coupled to those spellings by construction. Put
+	// it a package away and a change to either one silently blinds it: nothing
+	// fails, files simply stop being recognized, and the symptom is a disk that
+	// did not shrink months later. Beside them, that edit is in the reviewer's
+	// diff. The alternative was 15 hooks to move 430 lines further from the two
+	// files they describe.
+	coreFileCeiling = 168
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
