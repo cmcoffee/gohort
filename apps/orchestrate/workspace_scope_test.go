@@ -79,3 +79,65 @@ func TestNoAgentKeepsTheRoot(t *testing.T) {
 		t.Fatalf("no-agent turn: dir=%q fallback=%q, want %q and empty", dir, fallback, root)
 	}
 }
+
+// A delegated sub-agent runs where its delegator runs. agents(run) returns
+// TEXT — no attachments — so a file the sub-agent made reaches its parent by
+// path or not at all, and the two have to share a directory.
+//
+// The shared user root was the directory they shared, which is why it worked
+// and why it was wrong: every delegated agent wrote into one place. The
+// delegator's OWN directory shares it with the one agent that needs it.
+func TestDelegateRunsWhereItsDelegatorRuns(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	const owner, parentID = "cmcoffee@gmail.com", "parent-agent"
+
+	parent := &chatTurn{user: owner, agent: AgentRecord{ID: parentID}}
+	dir, _, fallback := parent.turnWorkspace()
+
+	root, err := EnsureWorkspaceDir(owner)
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	if dir == root {
+		t.Fatal("the delegator itself is running at the shared root")
+	}
+	if fallback != root {
+		t.Fatalf("read fallback = %q, want the user root", fallback)
+	}
+
+	// What the sub-agent writes, the parent finds by name.
+	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte("findings"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	parentSess := &ToolSession{Username: owner, WorkspaceDir: dir, WorkspaceFallback: fallback}
+	abs, err := ResolveWorkspaceRead(parentSess, "report.md")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Fatalf("parent could not read what its delegate wrote: %v", err)
+	}
+
+	// And another agent's directory is not it.
+	other := &chatTurn{user: owner, agent: AgentRecord{ID: "other-agent"}}
+	if od, _, _ := other.turnWorkspace(); od == dir {
+		t.Fatal("two agents resolved to the same directory")
+	}
+}
+
+// A turn that never switched workspaces reports no managed id, so the delegate
+// does not inherit one that was never chosen. (The managed-workspace branch
+// itself needs a live store and is covered where that store is available.)
+func TestATurnWithNoManagedWorkspaceReportsNone(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	const owner = "cmcoffee@gmail.com"
+
+	plain := &chatTurn{user: owner, agent: AgentRecord{ID: "parent-agent"}}
+	agentDir, wsID, _ := plain.turnWorkspace()
+	if wsID != "" {
+		t.Fatalf("a turn with no managed workspace reported one: %q", wsID)
+	}
+	if agentDir == "" {
+		t.Fatal("no directory at all")
+	}
+}

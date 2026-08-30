@@ -983,8 +983,27 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// the child's network access mid-flight as well.
 		Network: t.network,
 	}
-	if ws, werr := EnsureWorkspaceDir(t.user); werr == nil {
-		subSess.WorkspaceDir = ws
+	// The sub-agent runs WHERE ITS DELEGATOR IS RUNNING, which until now meant
+	// the shared user root — the one directory both could name.
+	//
+	// It has to be somewhere they share, because agents(run) hands the result
+	// back as text and nothing else: a file the sub-agent produced reaches its
+	// parent by path or not at all. The root satisfied that and nothing else.
+	// Every delegated agent wrote into the same place, so one agent's name
+	// collided with another's file, and any agent could list, attach and report
+	// work it had not done — the failure per-agent directories exist to stop.
+	//
+	// The delegator's own directory satisfies it too, and only for the pair
+	// that needs it. A ctx stamped by RunDelegation wins when there is one,
+	// since a chain deeper than one hop should stay in the workspace the chain
+	// started in rather than hop into each new delegate's.
+	if inherited := InheritedWorkspaceDir(t.ctx); inherited != "" {
+		subSess.WorkspaceDir = inherited
+		if root, rerr := EnsureWorkspaceDir(t.user); rerr == nil && root != inherited {
+			subSess.WorkspaceFallback = root
+		}
+	} else {
+		subSess.WorkspaceDir, subSess.WorkspaceID, subSess.WorkspaceFallback = t.turnWorkspace()
 	}
 	defer clearAuthoringInProgress(t.udb, subSessID)
 	defer DeleteSessionTempTools(t.udb, subSessID)
