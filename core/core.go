@@ -220,6 +220,7 @@ type (
 	SandboxedShellResult  = sandbox.SandboxedShellResult
 	SandboxedScriptResult = sandbox.SandboxedScriptResult
 	SandboxStatus         = sandbox.SandboxStatus
+	SandboxedCmd          = sandbox.SandboxedCmd
 )
 
 const (
@@ -235,6 +236,7 @@ var (
 	RunSandboxedShellWithHook    = sandbox.RunSandboxedShellWithHook
 	RunSandboxedShellWithHookEnv = sandbox.RunSandboxedShellWithHookEnv
 	RunSandboxedScript           = sandbox.RunSandboxedScript
+	NewSandboxedShellCmd         = sandbox.NewSandboxedShellCmd
 	GetSandboxStatus             = sandbox.GetSandboxStatus
 	WithAdminCaller              = sandbox.WithAdminCaller
 	CallerIsAdmin                = sandbox.CallerIsAdmin

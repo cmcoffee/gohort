@@ -1,10 +1,10 @@
 // Persistent-shell mode for temp tools.
 //
 // Builder-authored temp tools with Mode=="persistent" host a long-lived
-// shell process (bash, psql, ssh, etc.) inside a long-lived bwrap.
+// shell process (bash, psql, ssh, etc.) inside a long-lived sandbox.
 // State (env vars, working dir, mounted FS context, login session)
 // persists across LLM tool calls — unlike one-shot shell mode where
-// each call mints a fresh bwrap. Lets the LLM hold an interactive
+// each call mints a fresh one. Lets the LLM hold an interactive
 // session over many turns.
 //
 // LLM-facing surface: action-based dispatch on a single tool name.
@@ -58,12 +58,12 @@ const (
 	maxBufferedOutput = 256 * 1024
 )
 
-// persistentShell wraps a long-lived bwrap+shell process pair.
+// persistentShell wraps a long-lived sandbox+shell process pair.
 type persistentShell struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	stdout io.ReadCloser // combined stdout+stderr from the bwrap process
+	stdout io.ReadCloser // combined stdout+stderr from the sandboxed process
 
 	// promptRegex is compiled from TempTool.PersistentPromptPattern at
 	// open time. Nil when the author didn't supply a pattern — send
@@ -75,7 +75,7 @@ type persistentShell struct {
 	buf     []byte
 	bufCond *sync.Cond // signaled when new bytes arrive in buf
 
-	// cancel terminates the bwrap process when close fires.
+	// cancel terminates the sandboxed process when close fires.
 	cancel context.CancelFunc
 
 	// closed is true after Close runs. Send/read return errors after.
@@ -219,13 +219,38 @@ func ensurePersistentShell(sess *ToolSession, tt *TempTool) (*persistentShell, e
 		promptRE = re
 	}
 
-	// Launch the bwrap process holding the long-lived shell. Use a
+	// Launch the sandboxed process holding the long-lived shell. Use a
 	// background context that the cancelFunc tears down on close.
+	//
+	// Background rather than the caller's ctx because the shell must outlive
+	// the tool call that opened it — that is the whole feature.
+	//
+	// But the sandbox reads two things off the context that a bare Background
+	// does not carry, and neither used to be stamped here:
+	//
+	//   ContextWithNetworkConnector — the session's Private-mode cap. This
+	//     function has always CLAIMED to honor it ("any new persistent shell
+	//     spawned while Private is on must respect that"), and never did:
+	//     NetworkAllowedFromContext was asked of a context derived from
+	//     Background, where a missing connector reads as allowed. Private mode
+	//     cut network for every one-shot command and silently left it up for
+	//     the long-lived shell.
+	//
+	//   ContextWithSandboxCaller — the admin stamp the "admin" bypass keys on.
+	//     Unstamped is non-admin, so this direction was merely strict rather
+	//     than wrong, but on a host running BypassAdmin it refused the
+	//     operator's own persistent shell for no stated reason.
+	//
+	// Stamped from the session rather than threaded through the dispatch
+	// signature: both facts are properties of WHO opened the shell, and the
+	// session is the thing that knows.
 	ctx, cancel := context.WithCancel(context.Background())
-	c, err := startBwrapShell(ctx, wsDir, open)
+	ctx = sess.ContextWithNetworkConnector(ctx)
+	ctx = sess.ContextWithSandboxCaller(ctx)
+	c, err := startSandboxedShell(ctx, wsDir, open)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("start bwrap shell: %w", err)
+		return nil, fmt.Errorf("open persistent shell: %w", err)
 	}
 	ps := &persistentShell{
 		cmd:         c.cmd,
@@ -243,61 +268,67 @@ func ensurePersistentShell(sess *ToolSession, tt *TempTool) (*persistentShell, e
 	go ps.reader()
 
 	shellRegistry.Store(registryKey(sess, tt.Name), ps)
-	Log("[temptool/persistent] opened shell %q (cmd=%q)", ps.label, open)
+	Log("[temptool/persistent] opened shell %q (cmd=%q backend=%s confined=%v)", ps.label, open, c.backend, c.confined)
 	return ps, nil
 }
 
-// bwrapShell bundles the started bwrap process + its pipes.
-type bwrapShell struct {
+// sandboxedShell bundles the started process + its pipes, and the backend that
+// confined it (reported at open so a later question about what was running has
+// an answer in the log).
+type sandboxedShell struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
+
+	// backend is the confinement mechanism that built cmd ("bubblewrap",
+	// "seatbelt", "none"), and confined is whether it isolates anything.
+	backend  string
+	confined bool
 }
 
-// startBwrapShell launches bwrap with `sh -c <openCmd>` as the long-
-// lived inner command. Same sandbox posture as one-shot shell mode
-// (workspace bind, system dirs read-only, namespaces unshared) but
-// the bwrap process is kept alive — the caller closes it via cancel.
+// startSandboxedShell launches the long-lived inner shell under whatever
+// backend this host has, and hands back its pipes. Same confinement posture as
+// one-shot shell mode; the only difference is that the process outlives the
+// call.
 //
-// Note: this reaches into core's bwrap argv construction. Persistent
-// shells live in the same sandbox category as one-shot shell mode;
-// the only difference is lifetime.
-func startBwrapShell(ctx context.Context, workspaceDir, openCmd string) (*bwrapShell, error) {
-	// detectBwrap is unexported in core; for persistent shells we
-	// shell out via `sh -c` directly when bwrap isn't available
-	// (degraded posture, matches one-shot mode's bwrap-missing path).
-	// We can't call into core's exact bwrap-detection path from here,
-	// so probe via exec.LookPath.
-	bwrap, err := exec.LookPath("bwrap")
-	var c *exec.Cmd
+// It builds NOTHING itself. This used to probe exec.LookPath("bwrap") and
+// assemble a private copy of the bwrap argv (persistentBwrapArgv), on the
+// reasoning that core's helpers were unexported and persistent shells might
+// diverge later. Both halves aged badly. The copy never learned about the
+// second backend, so on macOS it found no bwrap and took its fallback; and the
+// fallback was the real problem — it logged a warning and ran the shell through
+// the host's `sh -c`, unconfined, at the service account's full privilege.
+// Every one-shot command on that same host was being REFUSED for exactly that
+// condition, because core/sandbox's bypass policy is fail-closed by default.
+// A long-lived LLM-driven shell was the one thing that walked past it.
+//
+// So the refusal now comes from the same place as everyone else's, and a new
+// backend reaches persistent shells with no work here at all.
+func startSandboxedShell(ctx context.Context, workspaceDir, openCmd string) (*sandboxedShell, error) {
 	// Network policy: persistent-mode tools NEED network by design
 	// (psql, redis-cli, ssh REPLs are all connection-oriented). Default
 	// is allowed. But the session connector still acts as a hard cap:
 	// Private mode toggles network OFF at the session level, and any
 	// new persistent shell spawned while Private is on must respect
-	// that with --unshare-net. The shell is checked at OPEN time only;
-	// a session that flips to Private after open-time can't re-namespace
-	// the running process — to enforce mid-flight, the chat UI cancels
-	// in-flight dispatches on toggle.
-	allowNet := NetworkAllowedFromContext(ctx)
-	if err == nil && bwrap != "" {
-		// Build the same bwrap argv shape RunSandboxedShell uses,
-		// trailing with `sh -c <openCmd>`. We assemble inline rather
-		// than reusing core helpers because they're unexported AND
-		// because persistent shells may want different defaults
-		// later (e.g., a per-tool bind-mount declaration for SSH
-		// keys — phase 2 work).
-		args := persistentBwrapArgv(workspaceDir, openCmd, allowNet)
-		c = exec.CommandContext(ctx, bwrap, args...)
-	} else {
-		// No bwrap. Match one-shot mode's degraded fallback: run via
-		// host sh -c. This is a security regression vs. the sandboxed
-		// path; deployments should install bubblewrap. Log once at
-		// open so the operator sees it.
-		Log("[temptool/persistent] WARNING: bwrap not found, running persistent shell unsandboxed (install bubblewrap to enable sandbox)")
-		c = exec.CommandContext(ctx, "sh", "-c", openCmd)
-		c.Dir = workspaceDir
+	// that. The shell is checked at OPEN time only; a session that flips
+	// to Private after open-time can't re-namespace the running process
+	// — to enforce mid-flight, the chat UI cancels in-flight dispatches
+	// on toggle. The connector rides ctx, which is what the builder reads.
+	built, err := NewSandboxedShellCmd(ctx, openCmd, workspaceDir, nil)
+	if err != nil {
+		// The fail-closed refusal. Returned rather than logged-and-degraded:
+		// the operator needs the sentence, and the LLM needs to not get a
+		// shell it was never supposed to have.
+		return nil, err
 	}
+	if !built.Confined {
+		// Reachable only when the deployment explicitly opted out
+		// (GOHORT_ALLOW_UNSANDBOXED). core/sandbox has already logged the
+		// warning once; this names the shell that took the exemption, because
+		// a long-lived one is the one worth being able to find later.
+		Log("[temptool/persistent] WARNING: opening persistent shell UNCONFINED (backend=%s) — the deployment permits it", built.Backend)
+	}
+	c := built.Cmd
 	stdin, err := c.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)
@@ -320,54 +351,7 @@ func startBwrapShell(ctx context.Context, workspaceDir, openCmd string) (*bwrapS
 		_ = c.Wait()
 		stdoutW.Close()
 	}()
-	return &bwrapShell{cmd: c, stdin: stdin, stdout: stdoutR}, nil
-}
-
-// persistentBwrapArgv mirrors core/sandbox/exec.go's bwrapArgv shape.
-// Duplicated here because the core function is unexported AND because
-// persistent shells will diverge in phase 2 (per-tool credential
-// bind-mounts). For now: same isolation posture as one-shot shell.
-func persistentBwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
-	args := []string{
-		"--die-with-parent",
-		"--new-session",
-		"--unshare-pid",
-		"--unshare-uts",
-		"--unshare-ipc",
-		"--unshare-cgroup-try",
-	}
-	if !allowNetwork {
-		args = append(args, "--unshare-net")
-	}
-	// PYTHONPATH so `from gohort import fetch` resolves against the
-	// deployed gohort.py from any subdir of the workspace. Same
-	// rationale as the one-shot path in core/sandbox/exec.go.
-	if workspaceDir != "" {
-		args = append(args, "--setenv", "PYTHONPATH", workspaceDir)
-	}
-	args = append(args,
-		"--bind", workspaceDir, workspaceDir,
-		"--chdir", workspaceDir,
-		"--ro-bind", "/usr", "/usr",
-		"--ro-bind-try", "/bin", "/bin",
-		"--ro-bind-try", "/sbin", "/sbin",
-		"--ro-bind-try", "/lib", "/lib",
-		"--ro-bind-try", "/lib32", "/lib32",
-		"--ro-bind-try", "/lib64", "/lib64",
-		"--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
-		"--ro-bind-try", "/etc/hosts", "/etc/hosts",
-		"--ro-bind-try", "/etc/nsswitch.conf", "/etc/nsswitch.conf",
-		"--ro-bind-try", "/etc/ssl", "/etc/ssl",
-		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
-		"--ro-bind-try", "/etc/pki", "/etc/pki",
-		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
-		"--proc", "/proc",
-		"--dev", "/dev",
-		"--tmpfs", "/tmp",
-		"--",
-		"sh", "-c", shellCmd,
-	)
-	return args
+	return &sandboxedShell{cmd: c, stdin: stdin, stdout: stdoutR, backend: built.Backend, confined: built.Confined}, nil
 }
 
 // reader drains stdout into ps.buf. Runs until the underlying pipe
@@ -532,7 +516,7 @@ func (ps *persistentShell) interrupt() error {
 }
 
 // close tears down the persistent shell — closes stdin (signals EOF
-// to the inner shell), cancels the context (which kills bwrap), and
+// to the inner shell), cancels the context (which kills the sandbox), and
 // marks the wrapper closed.
 func (ps *persistentShell) close() {
 	ps.mu.Lock()
@@ -595,7 +579,7 @@ func persistentShellHelp(tt *TempTool) string {
 
 // TerminateSessionShells closes every persistent shell registered for
 // the given session. Called by host apps on session teardown so
-// long-lived bwrap processes don't leak when a chat ends.
+// long-lived sandboxed processes don't leak when a chat ends.
 func TerminateSessionShells(sess *ToolSession) {
 	if sess == nil {
 		return

@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -206,10 +207,45 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	return runSandboxedShellWithBinds(ctx, command, workspaceDir, extraEnv, nil)
 }
 
-// runSandboxedShellWithBinds is the body both variants share. readOnly is
-// empty for every caller that does not use a path scope, which is all of
-// them but one.
-func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
+// SandboxedCmd is a confined command that has been BUILT but not started.
+//
+// It exists for a caller whose process OUTLIVES the call that creates it — a
+// persistent shell holding a psql or ssh session across many LLM turns. Such a
+// caller cannot use RunSandboxedShell, which owns the command start to finish
+// and hands back only the bytes it printed; it needs the *exec.Cmd itself so it
+// can attach its own pipes and keep the process alive.
+//
+// What it must NOT do is build that command itself, which is what
+// tools/temptool did: its own exec.LookPath("bwrap"), its own copy of the argv,
+// and its own idea of what to do when there was no bwrap. See
+// buildSandboxedShellCmd for what that cost.
+//
+// Backend and Confined are reported rather than left to be re-derived, because
+// the caller that logs "running unconfined" must be naming the same decision
+// this package made, not a second guess at it.
+type SandboxedCmd struct {
+	Cmd      *exec.Cmd
+	Backend  string
+	Confined bool
+	// Remaps is the backend's remapsPaths(), carried out so a caller that
+	// resolves its own paths asks the question rather than assuming bwrap.
+	Remaps bool
+}
+
+// buildSandboxedShellCmd assembles one shell run: the PYTHONPATH the helper
+// package needs, the fail-closed policy gate, the backend's argv, and the
+// scrubbed environment. It does not start anything.
+//
+// This is a single copy on purpose. Persistent shells used to hand-roll a
+// parallel bwrap argv (persistentBwrapArgv) behind their own PATH lookup, and
+// the duplicate drifted exactly where it mattered: it never consulted
+// bypassPolicy, so a host with no bwrap logged a warning and dropped a
+// long-lived LLM-driven shell to `sh -c` at the service account's full
+// privilege. That is the precise state sandboxRequired refuses for every
+// one-shot command, reached by a caller that had simply never been told. A
+// second copy of this logic is a second copy of that hole, so both shapes call
+// here.
+func buildSandboxedShellCmd(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) (SandboxedCmd, error) {
 	sb := activeSandbox()
 	allowNetwork := netgate.NetworkAllowedFromContext(ctx)
 
@@ -249,7 +285,7 @@ func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir strin
 	if !sb.confines() {
 		if sandboxRequired(ctx) {
 			warnRefusing("shell tools")
-			return SandboxedShellResult{Err: sandboxUnavailableErr()}
+			return SandboxedCmd{}, sandboxUnavailableErr()
 		}
 		warnUnsandboxed("shell tools")
 	}
@@ -257,7 +293,6 @@ func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir strin
 		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
 		Env: extraEnv, AllowNetwork: allowNetwork, ReadOnly: readOnly,
 	})
-	sandbox := sb.confines()
 	env := sandboxEnv(sb.remapsPaths())
 	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
 	// possible) wins over the inherited PATH inside the subshell.
@@ -265,25 +300,51 @@ func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir strin
 		env = append(env, k+"="+v)
 	}
 	c.Env = env
+	// Spawn breadcrumb: when a dispatch hangs, the gap between this and the
+	// caller's exit line tells us exec is wedged versus the wrapper code
+	// upstream. argv-count distinguishes "tiny argv → exec failed early" from
+	// "fat argv → bind-mount setup stuck".
+	nfo.Debug("[sandbox] spawn: backend=%s argv=%d allowNet=%v workspace=%s", sb.name(), len(c.Args), allowNetwork, workspaceDir)
+	return SandboxedCmd{Cmd: c, Backend: sb.name(), Confined: sb.confines(), Remaps: sb.remapsPaths()}, nil
+}
+
+// NewSandboxedShellCmd builds a confined shell command and hands it back
+// unstarted, for a caller that owns the process lifetime itself.
+//
+// The refusal is returned as an error rather than signalled by a nil Cmd: a
+// caller that forgets to check gets a nil-pointer panic at Start rather than an
+// unconfined shell, which is the direction that mistake should fall.
+//
+// Scoped read-only binds are deliberately NOT offered here. They are a promise
+// about a path (RunSandboxedShellScoped), and a long-lived shell outlives the
+// resolution that proved it.
+func NewSandboxedShellCmd(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) (SandboxedCmd, error) {
+	return buildSandboxedShellCmd(ctx, command, workspaceDir, extraEnv, nil)
+}
+
+// runSandboxedShellWithBinds is the body both one-shot variants share. readOnly
+// is empty for every caller that does not use a path scope, which is all of
+// them but one.
+func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
+	built, err := buildSandboxedShellCmd(ctx, command, workspaceDir, extraEnv, readOnly)
+	if err != nil {
+		return SandboxedShellResult{Err: err}
+	}
+	c := built.Cmd
 
 	var buf bytes.Buffer
 	c.Stdout = &buf
 	c.Stderr = &buf
 	c.WaitDelay = sandboxWaitDelay
-	// Spawn/exit breadcrumbs: when a dispatch hangs, the gap between
-	// these two lines tells us exec is wedged versus the wrapper code
-	// upstream. argv-count distinguishes "tiny argv → exec failed
-	// early" from "fat argv → bind-mount setup stuck".
-	nfo.Debug("[sandbox] spawn: backend=%s argv=%d allowNet=%v workspace=%s", sb.name(), len(c.Args), allowNetwork, workspaceDir)
 	t0 := time.Now()
-	err := c.Run()
+	runErr := c.Run()
 	dur := time.Since(t0)
 	timedOut := ctx.Err() == context.DeadlineExceeded
-	nfo.Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", err, timedOut, buf.Len(), dur)
+	nfo.Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", runErr, timedOut, buf.Len(), dur)
 	return SandboxedShellResult{
-		Output:   explainMissingGohortModule(buf.String(), sb.remapsPaths()),
-		Err:      err,
-		Sandbox:  sandbox,
+		Output:   explainMissingGohortModule(buf.String(), built.Remaps),
+		Err:      runErr,
+		Sandbox:  built.Confined,
 		TimedOut: timedOut,
 	}
 }
