@@ -567,6 +567,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						// natural conclusion is the dangerous one.
 						{Label: "Shell tools refused (no sandbox)", Field: "sandbox_refusing", StatusField: "sandbox_status"},
 						{Label: "Unsandboxed bypass (off / admin / on)", Field: "sandbox_bypass"},
+						// Reach and consumption are different questions, and
+						// the rows above answer only the first.
+						{Label: "Resource limits per command", Field: "sandbox_limits"},
 						{Label: "Sandbox note", Field: "sandbox_advice"},
 					},
 				},

@@ -253,6 +253,15 @@ type SandboxStatus struct {
 	// the default flipped no longer tells you whether anything still runs.
 	Refusing bool   `json:"refusing"`
 	Advice   string `json:"advice"` // what to do about it, or "" when confined
+	// Limits is what a confined command may CONSUME, which is a separate
+	// question from what it may reach and was unanswerable until limits.go.
+	// Reported alongside the backend because "confined: true" reads as a
+	// complete answer and is not one: a command inside a perfect mount
+	// namespace can still fill the disk.
+	Limits Limits `json:"limits"`
+	// LimitSummary renders Limits for a panel row, e.g.
+	// "file 8192MB, fds 512, cpu unlimited, mem unlimited, procs unlimited".
+	LimitSummary string `json:"limit_summary"`
 }
 
 // GetSandboxStatus reports what is confining shell execution on this host.
@@ -271,6 +280,8 @@ func GetSandboxStatus() SandboxStatus {
 		Required: sandboxRequired(context.Background()),
 	}
 	st.Refusing = !st.Confined && st.Required
+	st.Limits = resourceLimits()
+	st.LimitSummary = st.Limits.Summary()
 	if !st.Confined {
 		st.Advice = unsandboxedAdvice()
 	}

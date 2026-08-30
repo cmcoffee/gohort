@@ -232,6 +232,30 @@ type SandboxedCmd struct {
 	Remaps bool
 }
 
+// buildRun applies the deployment's resource ceiling and hands the run to the
+// backend.
+//
+// Every backend goes through here so a limit does not have to be re-taught to
+// each one — the same reason the bypass policy lives in one place. It is the
+// shape the bwrap argv copy in tools/temptool got wrong, and a limit that
+// applied under two backends out of three would be worse than none, because the
+// deployment would believe it was capped.
+//
+// A script run is deliberately NOT limited. Its Command is the script BODY fed
+// to an interpreter with -c, so there is no shell to run `ulimit` in and
+// prefixing the source would be a syntax error in it. Script runs reach no
+// filesystem and every caller bounds them with a wall clock, so the exposure is
+// a spin loop that dies at the deadline. Naming it here rather than leaving the
+// gap to be discovered.
+func buildRun(ctx context.Context, sb sandboxBackend, run sandboxRun) *exec.Cmd {
+	if run.Kind != sandboxScriptRun {
+		if l := resourceLimits(); l.Any() {
+			run.Command = l.apply(run.Command)
+		}
+	}
+	return sb.build(ctx, run)
+}
+
 // buildSandboxedShellCmd assembles one shell run: the PYTHONPATH the helper
 // package needs, the fail-closed policy gate, the backend's argv, and the
 // scrubbed environment. It does not start anything.
@@ -289,7 +313,7 @@ func buildSandboxedShellCmd(ctx context.Context, command, workspaceDir string, e
 		}
 		warnUnsandboxed("shell tools")
 	}
-	c := sb.build(ctx, sandboxRun{
+	c := buildRun(ctx, sb, sandboxRun{
 		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
 		Env: extraEnv, AllowNetwork: allowNetwork, ReadOnly: readOnly,
 	})
@@ -555,7 +579,7 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 		}
 		warnUnsandboxed("response pipes")
 	}
-	c := sb.build(ctx, sandboxRun{Kind: sandboxPipeRun, Command: command})
+	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxPipeRun, Command: command})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
 	// A pipe got NO PYTHONPATH at all, so `from gohort import ...` and
@@ -660,7 +684,7 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 		}
 		warnUnsandboxed("evaluator scripts")
 	}
-	c := sb.build(ctx, sandboxRun{Kind: sandboxScriptRun, Interpreter: interpreter, Command: script})
+	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxScriptRun, Interpreter: interpreter, Command: script})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
 	// The managed python deps reach a remapped run through --setenv on the

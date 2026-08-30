@@ -4981,7 +4981,13 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// Which of the three bypass settings is live. "required: false" alone
 		// cannot distinguish "everyone may run unconfined" from "admins may",
 		// and those are very different deployments.
-		"sandbox_bypass":  sandbox.Bypass,
+		"sandbox_bypass": sandbox.Bypass,
+		// What a confined command may CONSUME. "Confined: true" reads as a
+		// complete answer and is not one — a command inside a perfect mount
+		// namespace can still fill the disk or pin a core — so the ceiling
+		// gets its own row rather than living only in an env var nobody can
+		// see from here.
+		"sandbox_limits":  sandbox.LimitSummary,
 		"sandbox_advice":  sandbox.Advice,
 		"tls_enabled":     TLSEnabled(),
 		"tls_self_signed": TLSSelfSignedEnabled(),
