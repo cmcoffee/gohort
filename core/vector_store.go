@@ -1513,3 +1513,35 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 	}
 	return out
 }
+
+// WarmChunkCache builds the chunk snapshot off the critical path.
+//
+// The cache is process memory, lazily built on first read, so the first recall
+// after every restart pays for the whole corpus — and pays it while somebody is
+// waiting. Measured on a live deployment: knowledge=4.229s and 3.615s on the
+// first recall after a restart, 22-86ms on every one after it, same query, same
+// 12 hits. Every slow recall in that log was a first-after-restart and no other
+// one was slow.
+//
+// Worse than slow: that first recall runs under RecallHintTimeout, so it
+// blew the budget and the turn was sent WITHOUT hints. The user waited four
+// seconds for a result that was then discarded — the cost of the rebuild with
+// none of its benefit.
+//
+// Asynchronous because nothing should wait on it. If a real query arrives first
+// it rebuilds inline exactly as before and this becomes a no-op that finds the
+// entry already there; the two race harmlessly, which rebuildChunkCache already
+// handles (it re-checks the map under the write lock).
+func WarmChunkCache(db Database) {
+	if db == nil {
+		return
+	}
+	go func() {
+		started := time.Now()
+		n := len(snapshotChunks(db))
+		// Logged rather than silent: this is the number that explains a slow
+		// first turn, and if it ever grows enough to matter again the evidence
+		// should already be in the log.
+		Debug("[vector] chunk cache warmed: %d chunks in %s", n, time.Since(started).Round(time.Millisecond))
+	}()
+}

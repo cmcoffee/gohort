@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -141,3 +142,35 @@ func TestKeywordSearch_IDFWeighting(t *testing.T) {
 		t.Fatalf("full single-term coverage should score ~0.85, got %.3f", hits[0].Score)
 	}
 }
+
+// The first recall after a restart paid for the whole corpus while somebody
+// waited — and paid it over the recall budget, so the hints were discarded.
+// Warming means the snapshot is already there when the first query arrives.
+func TestWarmChunkCacheFillsItBeforeTheFirstQuery(t *testing.T) {
+	invalidateChunkCache()
+	db := &DBase{Store: kvlite.MemStore()}
+	for i := 0; i < 25; i++ {
+		db.Set(EmbeddedChunks, fmt.Sprintf("c%d", i), EmbeddedChunk{
+			ID: fmt.Sprintf("c%d", i), Source: "s", Vector: []float32{1, 0},
+		})
+	}
+
+	WarmChunkCache(db)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		chunkCache.mu.RLock()
+		e := chunkCache.entries[db]
+		chunkCache.mu.RUnlock()
+		if e != nil {
+			if len(e.chunks) != 25 {
+				t.Fatalf("warmed with %d chunks, want 25", len(e.chunks))
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("cache never warmed")
+}
+
+// Nothing waits on it and nothing breaks without a store.
+func TestWarmChunkCacheToleratesNoStore(t *testing.T) { WarmChunkCache(nil) }

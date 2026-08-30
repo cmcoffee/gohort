@@ -1393,6 +1393,9 @@ func init_database() {
 	vec_filename := FormatPath(fmt.Sprintf("%s/%s_vectors.db", vector_dir, APPNAME))
 	VectorDB, err = SecureDatabase(vec_filename)
 	Critical(err)
+	// Build the chunk snapshot now, in the background, so the first person to
+	// send a message after a restart does not wait for it. See WarmChunkCache.
+	WarmChunkCache(VectorDB)
 
 	// Dedicated repo-file store — cloned+encrypted source for the repo
 	// browser. A bulk, re-clonable cache (thousands of files per repo), kept
