@@ -3407,6 +3407,39 @@ var (
 	GetInput        = nfo.GetInput        // Prompt user for text input.
 )
 
+// HumanCount formats an integer with thousands separators (12345 -> "12,345").
+//
+// The companion to HumanSize, which nfo supplies and this does not: a count of
+// lines or files is as unreadable at seven digits as a count of bytes.
+//
+// core/bundle carries its own unexported copy. That is not an oversight — a
+// package under core cannot import core, so the alternative to two copies is a
+// third package existing for fifteen lines of formatting. The duplication is
+// forced by the import direction and stops here: everything that CAN reach this
+// one uses it.
+func HumanCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	neg := ""
+	if strings.HasPrefix(s, "-") {
+		neg, s = "-", s[1:]
+	}
+	if len(s) <= 3 {
+		return neg + s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+	}
+	for i := pre; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return neg + b.String()
+}
+
 // traceEnabled mirrors whether the TRACE sink is actually routed
 // somewhere.
 //

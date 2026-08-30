@@ -5,7 +5,7 @@
 //
 // Every one of these is a LOCAL read, which is what qualifies them for the
 // worker allow-list in tool_guard.go.
-package servitor
+package core
 
 import (
 	"fmt"
@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
 )
 
@@ -26,9 +25,9 @@ const errBundleNotLoaded = "BUNDLE NOT INGESTED: this bundle's files are not cur
 // files cannot spend the worker's whole context on a directory listing.
 const bundleListCap = 300
 
-// bundleCodeTools builds the read/search tools bound to one (user, bundle
+// BundleTools builds the read/search tools bound to one (user, bundle
 // appliance), decrypting the store in memory.
-func bundleCodeTools(user, applianceID string) []AgentToolDef {
+func BundleTools(owner, bundleID string) []AgentToolDef {
 	return []AgentToolDef{
 		{
 			Tool: Tool{
@@ -36,11 +35,11 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				Description: "Overview of the whole evidence bundle: how many files, what period they cover, which files are noisiest, and which are present but unread (binaries, archives nothing could open). ALWAYS call this first — it tells you what you are looking at and which file to search, without reading any log content.",
 			},
 			Handler: func(args map[string]any) (string, error) {
-				files := bundle.Open(user, applianceID).Index()
+				files := bundle.Open(owner, bundleID).Index()
 				if len(files) == 0 {
 					return errBundleNotLoaded, nil
 				}
-				return renderBundleSummary(files), nil
+				return RenderBundleSummary(files), nil
 			},
 		},
 		{
@@ -52,7 +51,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				files := bundle.Open(user, applianceID).Index()
+				files := bundle.Open(owner, bundleID).Index()
 				if len(files) == 0 {
 					return errBundleNotLoaded, nil
 				}
@@ -92,23 +91,23 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				Required: []string{"pattern"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				if bundle.Open(user, applianceID).FileCount() == 0 {
+				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
 				q := bundle.Query{
-					Pattern: strArg(args, "pattern"),
-					Glob:    strArg(args, "glob"),
-					Before:  clampInt(repoIntArg(args, "before"), 0, 20),
-					After:   clampInt(repoIntArg(args, "after"), 0, 20),
+					Pattern: bundleStrArg(args, "pattern"),
+					Glob:    bundleStrArg(args, "glob"),
+					Before:  clampInt(IntArg(args, "before"), 0, 20),
+					After:   clampInt(IntArg(args, "after"), 0, 20),
 				}
 				var err error
-				if q.Since, err = parseBundleArgTime(strArg(args, "since")); err != nil {
+				if q.Since, err = ParseBundleArgTime(bundleStrArg(args, "since")); err != nil {
 					return "", err
 				}
-				if q.Until, err = parseBundleArgTime(strArg(args, "until")); err != nil {
+				if q.Until, err = ParseBundleArgTime(bundleStrArg(args, "until")); err != nil {
 					return "", err
 				}
-				res, err := bundle.Open(user, applianceID).Search(q)
+				res, err := bundle.Open(owner, bundleID).Search(q)
 				if err != nil {
 					return "", err
 				}
@@ -127,12 +126,12 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				Required: []string{"path"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				if bundle.Open(user, applianceID).FileCount() == 0 {
+				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
-				path := strArg(args, "path")
-				start := repoIntArg(args, "start_line")
-				end := repoIntArg(args, "end_line")
+				path := bundleStrArg(args, "path")
+				start := IntArg(args, "start_line")
+				end := IntArg(args, "end_line")
 				if start <= 0 {
 					start = 1
 				}
@@ -142,7 +141,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				if end-start+1 > bundle.SliceLines {
 					return "", fmt.Errorf("that range is %d lines — read at most %d at a time, or use search_bundle to find the part that matters", end-start+1, bundle.SliceLines)
 				}
-				lines, bf, err := bundle.Open(user, applianceID).ReadRange(path, start, end)
+				lines, bf, err := bundle.Open(owner, bundleID).ReadRange(path, start, end)
 				if err != nil {
 					return "", err
 				}
@@ -150,7 +149,7 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 					return fmt.Sprintf("%s is present in the bundle but was not ingested as text (%s). There is nothing to read.", bf.Path, bf.Format), nil
 				}
 				var b strings.Builder
-				fmt.Fprintf(&b, "%s (%s lines total, %s)\n\n", bf.Path, humanCount(bf.Lines), bundle.FormatSpan(bf))
+				fmt.Fprintf(&b, "%s (%s lines total, %s)\n\n", bf.Path, HumanCount(bf.Lines), bundle.FormatSpan(bf))
 				for i, ln := range lines {
 					fmt.Fprintf(&b, "%d: %s\n", start+i, ln)
 				}
@@ -169,18 +168,18 @@ func bundleCodeTools(user, applianceID string) []AgentToolDef {
 				},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				if bundle.Open(user, applianceID).FileCount() == 0 {
+				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
-				since, err := parseBundleArgTime(strArg(args, "since"))
+				since, err := ParseBundleArgTime(bundleStrArg(args, "since"))
 				if err != nil {
 					return "", err
 				}
-				until, err := parseBundleArgTime(strArg(args, "until"))
+				until, err := ParseBundleArgTime(bundleStrArg(args, "until"))
 				if err != nil {
 					return "", err
 				}
-				entries, unmergeable, err := bundle.Open(user, applianceID).Timeline(strArg(args, "glob"), since, until, repoIntArg(args, "max_lines"))
+				entries, unmergeable, err := bundle.Open(owner, bundleID).Timeline(bundleStrArg(args, "glob"), since, until, IntArg(args, "max_lines"))
 				if err != nil {
 					return "", err
 				}
@@ -201,7 +200,7 @@ func renderBundleFileLine(bf bundle.File) string {
 		return fmt.Sprintf("%s  [binary — present, not ingested as text] %s\n", bf.Path, HumanSize(bf.Bytes))
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s  %s lines, %s, %s", bf.Path, humanCount(bf.Lines), HumanSize(bf.Bytes), bf.Format)
+	fmt.Fprintf(&b, "%s  %s lines, %s, %s", bf.Path, HumanCount(bf.Lines), HumanSize(bf.Bytes), bf.Format)
 	if bf.Host != "" {
 		fmt.Fprintf(&b, ", host=%s", bf.Host)
 	}
@@ -225,15 +224,15 @@ func renderSeverity(sev map[string]int) string {
 	var parts []string
 	for _, k := range severityOrder {
 		if n := sev[k]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, humanCount(n)))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, HumanCount(n)))
 		}
 	}
 	return strings.Join(parts, " ")
 }
 
-// renderBundleSummary is the whole-bundle overview: scale, span, where the
+// RenderBundleSummary is the whole-bundle overview: scale, span, where the
 // noise is, and what is present but unread.
-func renderBundleSummary(files []bundle.File) string {
+func RenderBundleSummary(files []bundle.File) string {
 	var (
 		b            strings.Builder
 		totalLines   int
@@ -279,7 +278,7 @@ func renderBundleSummary(files []bundle.File) string {
 	}
 
 	fmt.Fprintf(&b, "## Bundle contents\n\n%d files, %s total: %d ingested as text (%s lines), %d binary, %d unopened archives.\n\n",
-		len(files), HumanSize(totalBytes), text, humanCount(totalLines), binaries, archives)
+		len(files), HumanSize(totalBytes), text, HumanCount(totalLines), binaries, archives)
 
 	if !spanFirst.IsZero() {
 		fmt.Fprintf(&b, "Time span: %s → %s\n", spanFirst.Format(time.RFC3339), spanLast.Format(time.RFC3339))
@@ -413,10 +412,14 @@ func timelineFileCount(entries []bundle.TimelineEntry) string {
 
 // --- small argument helpers ---
 
-// strArg reads a trimmed string argument.
-func strArg(args map[string]any, key string) string {
-	s, _ := args[key].(string)
-	return strings.TrimSpace(s)
+// bundleStrArg reads a trimmed string argument.
+//
+// StringArg rather than a type assertion on string: a model that answers a
+// glob with a number should get "123" and a useless match, not "" and a
+// silent search of the whole bundle. Trimmed because every one of these is a
+// pattern or a path, where a stray space changes the result.
+func bundleStrArg(args map[string]any, key string) string {
+	return strings.TrimSpace(StringArg(args, key))
 }
 
 // clampInt bounds n to [lo, hi].
@@ -430,11 +433,11 @@ func clampInt(n, lo, hi int) int {
 	return n
 }
 
-// parseBundleArgTime accepts the timestamp spellings a person actually types.
+// ParseBundleArgTime accepts the timestamp spellings a person actually types.
 // An unparseable value is an ERROR rather than a silently ignored filter: a
 // window that quietly did not apply turns "nothing in that hour" into a
 // confident, wrong answer.
-func parseBundleArgTime(s string) (time.Time, error) {
+func ParseBundleArgTime(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}

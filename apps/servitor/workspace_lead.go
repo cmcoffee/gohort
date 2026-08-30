@@ -436,10 +436,10 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			}
 			q := bundle.Query{Pattern: pattern, MaxHits: 40}
 			var terr error
-			if q.Since, terr = parseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["since"]))); terr != nil && args["since"] != nil {
+			if q.Since, terr = ParseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["since"]))); terr != nil && args["since"] != nil {
 				return "", terr
 			}
-			if q.Until, terr = parseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["until"]))); terr != nil && args["until"] != nil {
+			if q.Until, terr = ParseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["until"]))); terr != nil && args["until"] != nil {
 				return "", terr
 			}
 			res, err := bundle.Open(m.Owner, m.ID).Search(q)

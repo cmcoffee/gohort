@@ -4243,7 +4243,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	} else if appliance.Type == "bundle" {
 		// Bundle workers read the encrypted evidence store. Nothing executes:
 		// there is no host here, only files somebody uploaded.
-		workerTools = append(bundleCodeTools(ownerUser, appliance.ID),
+		workerTools = append(BundleTools(ownerUser, appliance.ID),
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
 		)

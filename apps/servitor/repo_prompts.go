@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // repoProbeWorkerProtocol is the repo analogue of probeWorkerProtocol. It keeps
@@ -358,7 +360,7 @@ func runRepoSnapshot(user, applianceID string) string {
 	}
 
 	var out strings.Builder
-	fmt.Fprintf(&out, "### Repository (%d text files, %s lines ingested)\n\n", len(paths), humanCount(totalLines))
+	fmt.Fprintf(&out, "### Repository (%d text files, %s lines ingested)\n\n", len(paths), HumanCount(totalLines))
 
 	out.WriteString("### Top-level layout\n```\n")
 	for _, d := range dirNames {
@@ -378,7 +380,7 @@ func runRepoSnapshot(user, applianceID string) string {
 		for _, e := range shown {
 			st := extStats[e]
 			pct := st.lines * 100 / totalLines
-			fmt.Fprintf(&out, "%-14s %5d files  %8s lines  (%d%%)\n", e, st.files, humanCount(st.lines), pct)
+			fmt.Fprintf(&out, "%-14s %5d files  %8s lines  (%d%%)\n", e, st.files, HumanCount(st.lines), pct)
 		}
 		out.WriteString("```\n\n")
 	}
@@ -390,7 +392,7 @@ func runRepoSnapshot(user, applianceID string) string {
 			n = 10
 		}
 		for _, fs := range bySize[:n] {
-			fmt.Fprintf(&out, "%6s lines  %s\n", humanCount(fs.lines), fs.path)
+			fmt.Fprintf(&out, "%6s lines  %s\n", HumanCount(fs.lines), fs.path)
 		}
 		out.WriteString("```\n\n")
 	}
@@ -426,28 +428,4 @@ func repoFileLang(path string) string {
 		return "(none)"
 	}
 	return strings.ToLower(base[dot:]) // includes the leading dot, e.g. ".go"
-}
-
-// humanCount formats an integer with thousands separators (e.g. 12345 -> "12,345").
-func humanCount(n int) string {
-	s := fmt.Sprintf("%d", n)
-	neg := ""
-	if strings.HasPrefix(s, "-") {
-		neg, s = "-", s[1:]
-	}
-	if len(s) <= 3 {
-		return neg + s
-	}
-	var b strings.Builder
-	pre := len(s) % 3
-	if pre > 0 {
-		b.WriteString(s[:pre])
-	}
-	for i := pre; i < len(s); i += 3 {
-		if b.Len() > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(s[i : i+3])
-	}
-	return neg + b.String()
 }

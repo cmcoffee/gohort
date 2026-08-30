@@ -260,5 +260,5 @@ func runBundleSnapshot(user, applianceID string) string {
 	if len(files) == 0 {
 		return ""
 	}
-	return renderBundleSummary(files)
+	return RenderBundleSummary(files)
 }

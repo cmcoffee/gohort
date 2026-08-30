@@ -396,3 +396,25 @@ func scopedGraphPromptBlock(a Appliance) string {
 		"Use `map_find` to look one up, `map_neighbors` to see what it connects to, and `map_path` to find how one thing reaches another. "+
 		"It is built from earlier probes, so treat it as a starting point and verify anything load-bearing.\n", ents, edges)
 }
+
+// strArg reads a trimmed string argument.
+//
+// Lived in bundle_tools.go until that moved to core, which is how it came to
+// sit next to its heaviest user. Kept as servitor's own rather than switched to
+// core's StringArg: this one returns "" for a non-string argument, and the map
+// tools below treat that as "not supplied".
+func strArg(args map[string]any, key string) string {
+	s, _ := args[key].(string)
+	return strings.TrimSpace(s)
+}
+
+// clampInt bounds n to [lo, hi].
+func clampInt(n, lo, hi int) int {
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
+}

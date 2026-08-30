@@ -56,7 +56,18 @@ const (
 	// it: the bundle store being lifted out of servitor into core/bundle
 	// cannot import core, and archive expansion is the one thing bundle ingest
 	// needs from the hub that is not a type alias.
-	coreFileCeiling = 166
+	//
+	// 167 as of v0.6.469, for bundle_tools.go. It arrived from servitor in the
+	// same lift that created core/bundle, and it is the half of that lift which
+	// could NOT go down with the rest: `cutmap core bundle_tools` reports three
+	// outbound type edges — AgentToolDef, Tool, ToolParam — and says what this
+	// file's own header says, that a type edge must move or be restated and
+	// cannot be a hook. Those three are the agent-tool vocabulary in
+	// agent_loop.go; every tool constructor in the tree has the same edge, and
+	// moving them is a different and much larger cut. So the hub is the right
+	// home here, and the 1,095 lines of store, format and ingest that had no
+	// such edge went to core/bundle instead.
+	coreFileCeiling = 167
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
