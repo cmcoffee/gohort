@@ -1094,7 +1094,7 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 	// ingesting, which is the one place uploaded evidence exists as plaintext.
 	wipeRepoFiles(userID, applianceID)
 	bundle.Open(userID, applianceID).Wipe()
-	purgeBundleStaging(userID, applianceID)
+	bundle.PurgeStaging(userID, applianceID)
 
 	dropConn(userID, applianceID)
 }

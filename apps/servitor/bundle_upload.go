@@ -11,12 +11,8 @@ package servitor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,71 +28,6 @@ const (
 	bundleStateReady     = "ready"
 	bundleStateFailed    = "failed"
 )
-
-// bundleStagingRoot is where one appliance's in-flight upload lands. Per
-// appliance rather than per request: a second upload to the same bundle
-// REPLACES the first, and sharing the directory is what makes that true even
-// when the first upload is still being written.
-func bundleStagingRoot(owner, applianceID string) (string, error) {
-	base := strings.TrimSpace(BulkStagingDir())
-	if base == "" {
-		return "", fmt.Errorf("no staging directory is configured — set [paths] bundle_dir in the config and restart")
-	}
-	if owner == "" || applianceID == "" {
-		return "", fmt.Errorf("owner and appliance are both required to stage an upload")
-	}
-	return filepath.Join(base, safeBundleComponent(owner), safeBundleComponent(applianceID)), nil
-}
-
-// safeBundleComponent reduces an identifier to one path-safe element. The IDs
-// are ours (a username, a UUID), so this is a belt-and-braces check on the one
-// place a crafted value would become a directory.
-func safeBundleComponent(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
-			b.WriteByte(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	out := strings.Trim(b.String(), "_")
-	if out == "" {
-		out = "unnamed"
-	}
-	if len(out) > 64 {
-		out = out[:64]
-	}
-	return out
-}
-
-// safeUploadName reduces a browser-supplied filename to a basename we are
-// willing to create. The extension is preserved because the expander dispatches
-// on it — a ".tar.gz" that arrives as "dump" is a bundle nobody can open.
-func safeUploadName(name string) string {
-	name = strings.ReplaceAll(strings.TrimSpace(name), "\\", "/")
-	name = filepath.Base(name)
-	if name == "." || name == ".." || name == "/" || name == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '.', r == '-', r == '_', r == '+', r == ' ':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	out := strings.TrimLeft(b.String(), ".") // never create a dotfile
-	if len(out) > 200 {
-		out = out[:200]
-	}
-	return strings.TrimSpace(out)
-}
 
 // handleBundleUpload streams one or more files into a bundle appliance's
 // staging directory. It does NOT ingest: a set of files is uploaded one request
@@ -145,7 +76,7 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the evidence store is not initialized on this deployment", http.StatusServiceUnavailable)
 		return
 	}
-	stage, err := bundleStagingRoot(owner, applianceID)
+	stage, err := bundle.StagingRoot(owner, applianceID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -156,7 +87,7 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("reset") == "1" {
-		purgeBundleStaging(owner, applianceID)
+		bundle.PurgeStaging(owner, applianceID)
 		rec.BundleSources = nil
 	}
 	if err := os.MkdirAll(stage, 0700); err != nil {
@@ -168,7 +99,7 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 	rec.BundleError = ""
 	ownerUDB.Set(applianceTable, applianceID, rec)
 
-	names, total, err := streamPartsToStage(mr, stage)
+	names, total, err := bundle.StreamPartsToStage(mr, stage)
 	if err != nil {
 		// Staging is left in place for the next attempt to overwrite rather
 		// than deleted here: a failed upload of file 9 of 10 should not
@@ -195,57 +126,11 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// streamPartsToStage copies every "file" part of a multipart body onto disk,
-// returning the names staged and the total bytes written.
-func streamPartsToStage(mr *multipart.Reader, stage string) ([]string, int64, error) {
-	var (
-		names []string
-		total int64
-	)
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF {
-			return names, total, nil
-		}
-		if err != nil {
-			return names, total, fmt.Errorf("reading the upload: %w", err)
-		}
-		if part.FileName() == "" {
-			part.Close()
-			continue // a plain form field, not a file
-		}
-		name := safeUploadName(part.FileName())
-		if name == "" {
-			part.Close()
-			return names, total, fmt.Errorf("%q is not a usable filename", part.FileName())
-		}
-		dst, err := os.OpenFile(filepath.Join(stage, name), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-		if err != nil {
-			part.Close()
-			return names, total, fmt.Errorf("staging %q: %w", name, err)
-		}
-		// LimitReader caps the whole upload at the expanded-size budget: a
-		// compressed dump larger than what it is allowed to expand into can
-		// only end in a refused ingest, so it is refused at the door.
-		n, cerr := io.Copy(dst, io.LimitReader(part, bundle.MaxBytes-total+1))
-		dst.Close()
-		part.Close()
-		total += n
-		if cerr != nil {
-			return names, total, fmt.Errorf("staging %q: %w", name, cerr)
-		}
-		if total > bundle.MaxBytes {
-			return names, total, fmt.Errorf("the upload exceeds the %s limit", HumanSize(bundle.MaxBytes))
-		}
-		names = append(names, name)
-	}
-}
-
 // ingestBundle runs the expansion + ingest pass and records the outcome on the
 // appliance. Always leaves the record in a terminal state: an ingest that dies
 // without saying so reads in the UI as one still running, forever.
 func (T *Servitor) ingestBundle(ctx context.Context, owner string, ownerUDB Database, applianceID string) {
-	stage, err := bundleStagingRoot(owner, applianceID)
+	stage, err := bundle.StagingRoot(owner, applianceID)
 	if err != nil {
 		T.markBundleFailed(ownerUDB, applianceID, err.Error())
 		return
@@ -327,7 +212,7 @@ func (T *Servitor) handleBundleIngest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not allowed to ingest this bundle", http.StatusForbidden)
 		return
 	}
-	stage, err := bundleStagingRoot(owner, req.ApplianceID)
+	stage, err := bundle.StagingRoot(owner, req.ApplianceID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -341,20 +226,4 @@ func (T *Servitor) handleBundleIngest(w http.ResponseWriter, r *http.Request) {
 	ownerUDB.Set(applianceTable, req.ApplianceID, rec)
 	go T.ingestBundle(AppContext(), owner, ownerUDB, req.ApplianceID)
 	w.WriteHeader(http.StatusAccepted)
-}
-
-// purgeBundleStaging removes any staged-but-not-yet-ingested upload for an
-// appliance. Called when the appliance is deleted, so evidence does not outlive
-// the record that pointed at it.
-func purgeBundleStaging(owner, applianceID string) {
-	stage, err := bundleStagingRoot(owner, applianceID)
-	if err != nil || stage == "" {
-		return
-	}
-	base := strings.TrimSpace(BulkStagingDir())
-	// Never remove a path this package did not construct.
-	if base == "" || !strings.HasPrefix(stage, filepath.Clean(base)+string(os.PathSeparator)) {
-		return
-	}
-	os.RemoveAll(stage)
 }

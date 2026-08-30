@@ -1,12 +1,17 @@
 package servitor
 
-// What is left of the bundle suite after the store moved to core/bundle: the
-// parts that are about SERVITOR's use of it rather than about the store.
+// One test survives the bundle lift, and it is the only one that could not
+// move: an AGREEMENT between two packages rather than a property of either.
 //
-// Two things survive here, and both are about an AGREEMENT between packages
-// rather than about either side alone: that every tool core builds is on this
-// app's worker allow-list, and that the upload path this app owns sanitizes a
-// browser-supplied filename. The rest moved with the code they cover.
+// core builds the bundle tools; servitor's tool_guard.go names them in a
+// hardcoded allow-list, and a tool missing from it panics the app at session
+// start. Neither side can check that alone — core does not know the list
+// exists, and the list is just strings. Renaming a tool in core without
+// renaming it here is exactly the drift this catches.
+//
+// Everything else went with the code it covers: the store's behaviour to
+// core/bundle, the tools' own promises to core, the staging path's filename
+// and purge guards to core/bundle.
 
 import (
 	"path/filepath"
@@ -39,26 +44,6 @@ func TestBundleToolsAreOnTheWorkerAllowList(t *testing.T) {
 	for _, td := range tools {
 		if !servitorWorkerToolAllowList[td.Tool.Name] {
 			t.Errorf("tool %q is not on the worker allow-list", td.Tool.Name)
-		}
-	}
-}
-
-// TestSafeUploadNameSanitizes locks the browser-supplied filename down to a
-// basename we are willing to create, while KEEPING the extension the expander
-// dispatches on.
-func TestSafeUploadNameSanitizes(t *testing.T) {
-	cases := map[string]string{
-		"dump.tar.gz":         "dump.tar.gz",
-		"../../etc/passwd":    "passwd",
-		`C:\Users\x\logs.zip`: "logs.zip",
-		"weird;name|pipe.log": "weird_name_pipe.log",
-		".hidden":             "hidden",
-		"/":                   "",
-		"..":                  "",
-	}
-	for in, want := range cases {
-		if got := safeUploadName(in); got != want {
-			t.Errorf("safeUploadName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
