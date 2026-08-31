@@ -689,6 +689,33 @@ func InvalidatePeerResolution() {
 // to log it, which put a bare "[peer]" line with no message after it in the log
 // every time a peer recovered. Reading one of those next to a real failure, the
 // obvious conclusion is that something went wrong and could not say what.
+// warnManualPeerEndpointOnce catches a config typed at a peer's URL by hand
+// instead of by selecting the peer.
+//
+// It looks identical in the admin form and it can never work. A peer endpoint
+// authenticates ONLY an access token, minted by exchange; a key pasted into an
+// API-key box is a pairing code, which those endpoints refuse by design. And
+// because the config does not NAME a peer, none of the machinery that would
+// have fixed it engages: no resolver overlays the live endpoint, no transport
+// swaps in a live credential, and refreshing the peer changes nothing, because
+// as far as this config is concerned there is no peer.
+//
+// The failure is then indistinguishable from a genuinely stale peer
+// credential — same 401, same words from the far side — which is what makes it
+// worth a line of its own rather than a shrug.
+func warnManualPeerEndpointOnce(kind, provider, endpoint string) {
+	if !strings.Contains(endpoint, "/api/peer/v1/") {
+		return
+	}
+	warnPeerResolveOnce("manual:"+kind, fmt.Sprintf(
+		"%s is pointed at a PEER endpoint (%s) but its provider is %q rather than a peer. "+
+			"That address only accepts a token obtained by exchange, so a key pasted into the API-key "+
+			"box is refused however correct it looks, and re-checking the peer cannot help because this "+
+			"config does not name one. Re-select the peer in the %s settings instead of entering the "+
+			"address by hand.",
+		kind, endpoint, provider, kind))
+}
+
 func warnPeerResolveOnce(name, msg string) {
 	peerResolveMu.Lock()
 	last, seen := peerResolveWarned[name]
@@ -721,6 +748,7 @@ func warnPeerResolveOnce(name, msg string) {
 func resolveEmbeddingPeer(cfg EmbeddingConfig) EmbeddingConfig {
 	provider := strings.TrimSpace(cfg.Provider)
 	if !strings.HasPrefix(provider, peerProviderPrefix) {
+		warnManualPeerEndpointOnce("embeddings", provider, cfg.Endpoint)
 		return cfg
 	}
 	name := strings.TrimPrefix(provider, peerProviderPrefix)

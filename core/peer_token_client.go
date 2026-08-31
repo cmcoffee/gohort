@@ -605,12 +605,28 @@ func (t *peerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	p, ok := t.peer()
 	if !ok {
+		// Say so. This is one of three ways a request can leave here WITHOUT a
+		// live credential, and all three produce the same bare 401 from the far
+		// side: the config names no peer so this transport was never installed,
+		// the peer record cannot be found so we are here but powerless, or the
+		// record says tokens are not in use so a pairing code goes out instead.
+		// Reaching the transport is not the guarantee it reads as, and an
+		// operator who knows the request is "on the transport" has no way to
+		// learn which of the three happened.
+		warnPeerResolveOnce("transport:"+t.name, fmt.Sprintf(
+			"a request is being sent to peer %q but no such peer is registered here, so it goes out with "+
+				"whatever credential the caller had — which the far side will refuse. The config still "+
+				"names that peer; the peer record is what is missing. Re-add it under Admin > Peers, or "+
+				"repoint the setting that references it.",
+			t.name))
 		// The peer was forgotten out from under a live config. Send it as
 		// written rather than inventing a credential — the caller's own error
 		// will name the endpoint, which is the useful thing to see.
 		return base.RoundTrip(req)
 	}
 
+	// Found it, so any standing "no such peer" warning is stale.
+	warnPeerResolveOnce("transport:"+t.name, "")
 	first := req.Clone(req.Context())
 	setPeerAuth(first, PeerCredentialNow(req.Context(), p))
 	resp, err := base.RoundTrip(first)
