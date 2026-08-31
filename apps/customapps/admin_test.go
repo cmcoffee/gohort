@@ -122,8 +122,8 @@ func TestSharedAppsAreIndividuallyGrantable(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("grantable apps = %+v, want just the shared one", got)
 	}
-	if got[0].Path != "/custom/weather" {
-		t.Errorf("path = %q, want /custom/weather — the per-slug path the grant checks", got[0].Path)
+	if got[0].Path != "/apps/weather" {
+		t.Errorf("path = %q, want /apps/weather — the per-slug path the grant checks", got[0].Path)
 	}
 	// An unshared app in the picker would be a grant that admits nobody to
 	// anything: it is its owner's alone whatever anyone is granted.
@@ -131,5 +131,29 @@ func TestSharedAppsAreIndividuallyGrantable(t *testing.T) {
 		if strings.Contains(g.Path, "private-notes") {
 			t.Error("an unshared app was offered as grantable")
 		}
+	}
+}
+
+// The mount moved from /custom to /apps. Everything stored against the old
+// path — a grant, a published link, an absolute self-reference inside a page —
+// has to keep working, because none of it is ours to invalidate.
+func TestTheLegacyMountIsStillHonoured(t *testing.T) {
+	app := &CustomApps{}
+	if app.WebPath() != "/apps" {
+		t.Fatalf("WebPath = %q, want /apps", app.WebPath())
+	}
+	if customAppsLegacyPath != "/custom" {
+		t.Fatalf("legacy path = %q — the redirect and the grant migration both read it", customAppsLegacyPath)
+	}
+
+	// A page written before the move still rewrites for the public surface.
+	spec := AppSpec{Slug: "weather", Page: []byte(
+		`{"sections":[{"body":{"type":"card","html":"<script>fetch('/custom/weather/data/x')</script>"}}]}`)}
+	got := string(app.publicPageBytes(spec, "TOK"))
+	if strings.Contains(got, "/custom/weather/data/x") {
+		t.Errorf("a pre-move absolute self-reference was left pointing at the gated mount:\n%s", got)
+	}
+	if !strings.Contains(got, "/apps/pub/TOK/data/x") {
+		t.Errorf("it should point at the public capability mount:\n%s", got)
 	}
 }

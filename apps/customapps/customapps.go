@@ -65,6 +65,12 @@ func (T CustomApps) Desc() string {
 	return "Apps: host for data-driven apps composed from ui primitives."
 }
 func (T *CustomApps) Init() error { return T.Flags.Parse() }
+
+// customAppsLegacyPath is where this app was mounted before it moved. Kept as
+// a constant because two things have to agree about it — the redirect and the
+// grant migration — and a second literal is how they stop agreeing.
+const customAppsLegacyPath = "/custom"
+
 func (T *CustomApps) Main() error {
 	Log("customapps is dashboard-only. Start with: gohort serve")
 	return nil
@@ -72,7 +78,17 @@ func (T *CustomApps) Main() error {
 
 // --- core.WebApp (SimpleWebApp) ----------------------------------------------
 
-func (T *CustomApps) WebPath() string { return "/custom" }
+// WebPath is /apps, not /custom.
+//
+// "/custom" named how the app was MADE. Every compiled app owns a top-level
+// path because each has a package to own one; an app authored at runtime has
+// no package, so it shares a host, and /apps is what that host is — the same
+// relationship /agents/<slug> already has to an exposed agent.
+//
+// The old mount still answers (see RegisterLegacyMount below): a published
+// capability link is a URL somebody was HANDED, and breaking those is not a
+// rename, it is a deletion they find out about later.
+func (T *CustomApps) WebPath() string { return "/apps" }
 func (T *CustomApps) WebName() string { return "Custom Apps" }
 func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." }
 
@@ -86,6 +102,18 @@ func (T *CustomApps) Routes() {
 	// middleware. Prefix registration (trailing slash) covers every token + its
 	// sub-paths; handlePublic is then the sole access check for that subtree.
 	RegisterPublicPath(T.WebPath() + "/pub/")
+
+	// This app used to live at /custom. Bookmarks, pasted links and every
+	// published capability URL still say so, and a grant stored against the
+	// old path is rewritten once at startup (MigrateAppPathGrants) rather than
+	// silently ceasing to match.
+	RegisterLegacyMount(customAppsLegacyPath, T.WebPath())
+	if AuthDB != nil {
+		// Once, keyed by the rename. A grant is a path string, so the move has
+		// to reach the three places one is stored or the app is still there
+		// and the grant no longer names it.
+		MigrateAppPathGrants(AuthDB(), customAppsLegacyPath, T.WebPath())
+	}
 
 	// The operator's tab: one section per custom app, contributed as a SOURCE
 	// because these rows are records people write while the server runs.
@@ -1422,12 +1450,27 @@ func (T *CustomApps) handlePublic(w http.ResponseWriter, r *http.Request, rest s
 //     would poll the gated /api/live), and removes the Back link (it points at
 //     the owner's gated /custom/ index — meaningless to an anonymous visitor).
 func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
-	oldPrefix := []byte(T.WebPath() + "/" + spec.Slug + "/")
-	newPrefix := []byte(T.WebPath() + "/pub/" + token + "/")
+	// Both mounts, because a page STORED before the app moved has the old one
+	// baked into any absolute self-reference its author wrote. Rewriting only
+	// the current prefix would leave those pointing at /custom/<slug>/…, which
+	// redirects to the gated mount and sends an anonymous visitor to a login
+	// page — the exact failure this rewrite exists to prevent, reintroduced by
+	// a rename rather than by a bad link.
+	gated := [][]byte{
+		[]byte(T.WebPath() + "/" + spec.Slug + "/"),
+		[]byte(customAppsLegacyPath + "/" + spec.Slug + "/"),
+	}
+	public := []byte(T.WebPath() + "/pub/" + token + "/")
+	rewrite := func(b []byte) []byte {
+		for _, g := range gated {
+			b = bytes.ReplaceAll(b, g, public)
+		}
+		return b
+	}
 	var page map[string]any
 	if err := json.Unmarshal(spec.Page, &page); err != nil {
 		// Unparseable page: still rewrite the raw bytes so data fetches resolve.
-		return bytes.ReplaceAll(spec.Page, oldPrefix, newPrefix)
+		return rewrite(spec.Page)
 	}
 	page["public"] = true    // runtime: suppress the live-sessions pill
 	delete(page, "back_url") // no Back link to the gated dashboard
@@ -1436,7 +1479,7 @@ func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
 	if err != nil {
 		out = spec.Page
 	}
-	return bytes.ReplaceAll(out, oldPrefix, newPrefix)
+	return rewrite(out)
 }
 
 // sessionBoundPanels are the component types whose endpoints exist only on the

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/appassets"
@@ -757,6 +758,84 @@ var (
 // --- appgroups (named bundles of apps a user can be granted at once) --------
 
 type AppGroup = appgroups.AppGroup
+
+const appPathMigrationTable = "app_path_migrations"
+
+// MigrateAppPathGrants rewrites stored app-access grants after an app's mount
+// moves, and reports how many records it changed.
+//
+// A grant is a PATH STRING — "/custom", "/custom/weather" — held in three
+// places: a user's own list, the deployment's defaults for new users, and any
+// app group. Renaming a mount without rewriting them revokes access silently:
+// the app is still there, the person still has a grant, and the two no longer
+// name the same thing. What they see is a 404, which reads as the app having
+// been deleted rather than as a grant pointing somewhere that moved.
+//
+// Runs ONCE per rename, keyed by from→to, because it is not idempotent in the
+// way it looks: running it again is harmless today, but a later rename back to
+// the old path would be undone by a migration that fired a second time.
+//
+// Prefix-aware, so "/custom" and "/custom/<slug>" both move and "/customer"
+// does not.
+func MigrateAppPathGrants(db Database, from, to string) int {
+	from = strings.TrimSuffix(strings.TrimSpace(from), "/")
+	to = strings.TrimSuffix(strings.TrimSpace(to), "/")
+	if db == nil || from == "" || to == "" || from == to {
+		return 0
+	}
+	marker := from + "->" + to
+	var done bool
+	if db.Get(appPathMigrationTable, marker, &done) && done {
+		return 0
+	}
+
+	rewrite := func(paths []string) ([]string, bool) {
+		changed := false
+		out := make([]string, 0, len(paths))
+		for _, p := range paths {
+			switch {
+			case p == from:
+				out, changed = append(out, to), true
+			case strings.HasPrefix(p, from+"/"):
+				out, changed = append(out, to+strings.TrimPrefix(p, from)), true
+			default:
+				out = append(out, p)
+			}
+		}
+		return out, changed
+	}
+
+	moved := 0
+	for _, u := range AuthListUsers(db) {
+		if next, changed := rewrite(u.Apps); changed {
+			AuthSetUserApps(db, u.Username, next)
+			moved++
+			Log("[migrate] %s: app grants moved %s -> %s", u.Username, from, to)
+		}
+	}
+	if next, changed := rewrite(AuthGetDefaultApps(db)); changed {
+		AuthSetDefaultApps(db, next)
+		moved++
+		Log("[migrate] default apps moved %s -> %s", from, to)
+	}
+	for _, g := range appgroups.LoadAppGroups(db) {
+		if next, changed := rewrite(g.Apps); changed {
+			g.Apps = next
+			if _, err := appgroups.SaveAppGroup(db, g); err != nil {
+				Warn("[migrate] app group %q could not be updated: %v", g.Name, err)
+				continue
+			}
+			moved++
+			Log("[migrate] app group %q moved %s -> %s", g.Name, from, to)
+		}
+	}
+
+	db.Set(appPathMigrationTable, marker, true)
+	if moved > 0 {
+		Log("[migrate] %s -> %s: %d record(s) rewritten", from, to, moved)
+	}
+	return moved
+}
 
 var (
 	LoadAppGroups   = appgroups.LoadAppGroups

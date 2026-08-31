@@ -213,7 +213,7 @@ func appPageRuntimeErrors(user, slug string) []string {
 	if BrowserCheckPage == nil {
 		return nil
 	}
-	rep, err := CheckPageAsUser(RootDB, user, "/custom/"+slug+"/", "")
+	rep, err := CheckPageAsUser(RootDB, user, "/apps/"+slug+"/", "")
 	if err != nil || rep == nil {
 		return nil
 	}

@@ -62,7 +62,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "show_html",
-			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat — a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed — no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/custom/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls — the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built — NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
+			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat — a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed — no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls — the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built — NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
 			Parameters: map[string]ToolParam{
 				"title": {
 					Type:        "string",
@@ -74,11 +74,11 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"url": {
 					Type:        "string",
-					Description: "Preview mode: a same-origin path starting with \"/\" (e.g. \"/custom/myapp/\") to render that served page in the pane. External URLs are refused. Omit when passing html.",
+					Description: "Preview mode: a same-origin path starting with \"/\" (e.g. \"/apps/myapp/\") to render that served page in the pane. External URLs are refused. Omit when passing html.",
 				},
 				"data_urls": {
 					Type:        "array",
-					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/custom/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.gohort.fetch(path) — returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
+					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/apps/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.gohort.fetch(path) — returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"id": {
@@ -197,7 +197,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 }
 
 // show_link — a clickable navigation card in the transcript. Prose like
-// "go to /custom/myapp/" leaves the user copy-pasting a path; this drops
+// "go to /apps/myapp/" leaves the user copy-pasting a path; this drops
 // a card with a real Open button instead. Same framework-display-tool
 // posture as show_html: no side effects beyond the user's screen and
 // session record, so it's ungated — and, like show_html, mounted on the WEB
@@ -209,11 +209,11 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "show_link",
-			Description: "Drop a clickable link card into the chat pointing the user at a page. Use it WHENEVER your reply tells the user to go somewhere or open something — an app you just created or updated (app_def returns its url), a settings/admin page, or an external site they must visit (e.g. to create an API key). A bare path in prose is not clickable; this card gives them an Open button. Pass a same-origin path starting with \"/\" (e.g. \"/custom/myapp/\") or a full http(s):// URL. NOT for rendering content — show_html displays a page or dashboard beside the chat; show_link only offers navigation.",
+			Description: "Drop a clickable link card into the chat pointing the user at a page. Use it WHENEVER your reply tells the user to go somewhere or open something — an app you just created or updated (app_def returns its url), a settings/admin page, or an external site they must visit (e.g. to create an API key). A bare path in prose is not clickable; this card gives them an Open button. Pass a same-origin path starting with \"/\" (e.g. \"/apps/myapp/\") or a full http(s):// URL. NOT for rendering content — show_html displays a page or dashboard beside the chat; show_link only offers navigation.",
 			Parameters: map[string]ToolParam{
 				"url": {
 					Type:        "string",
-					Description: "Where the link goes: a same-origin path starting with \"/\" (e.g. \"/custom/myapp/\") or a full http(s):// URL. No other schemes.",
+					Description: "Where the link goes: a same-origin path starting with \"/\" (e.g. \"/apps/myapp/\") or a full http(s):// URL. No other schemes.",
 				},
 				"title": {
 					Type:        "string",

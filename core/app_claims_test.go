@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Attribution is DECLARED, never inferred from the key. The prefixes look like
 // a convention and are two conventions plus exceptions — app.techwriter beside
@@ -74,4 +77,48 @@ func TestAnUnknownClaimIsReportedRatherThanDropped(t *testing.T) {
 		t.Error("an unknown claim was dropped at registration; it must survive to be reported")
 	}
 	reportUnknownAppClaims() // must not panic with nothing registered to match
+}
+
+// A grant is a PATH STRING held in three places. Renaming a mount without
+// rewriting them revokes access silently: the app is there, the person has a
+// grant, and the two no longer name the same thing.
+func TestGrantsFollowAMountRename(t *testing.T) {
+	db := memDB(t)
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+
+	AuthSetUser(db, "alice", "pw", false)
+	AuthSetUserApps(db, "alice", []string{"/custom", "/custom/weather", "/customer-portal", "/servitor"})
+	AuthSetDefaultApps(db, []string{"/custom"})
+
+	if n := MigrateAppPathGrants(db, "/custom", "/apps"); n == 0 {
+		t.Fatal("migration reported no changes")
+	}
+	user, _ := AuthGetUser(db, "alice")
+	want := map[string]bool{"/apps": true, "/apps/weather": true, "/customer-portal": true, "/servitor": true}
+	for _, p := range user.Apps {
+		if !want[p] {
+			t.Errorf("unexpected grant after migration: %q", p)
+		}
+		delete(want, p)
+	}
+	for p := range want {
+		t.Errorf("grant missing after migration: %q", p)
+	}
+	// Prefix-aware, not substring: "/customer-portal" starts with "/custom"
+	// and is a different app.
+	for _, p := range user.Apps {
+		if strings.HasPrefix(p, "/appser") {
+			t.Errorf("a neighbouring path was mangled: %q", p)
+		}
+	}
+	if got := AuthGetDefaultApps(db); len(got) != 1 || got[0] != "/apps" {
+		t.Errorf("default apps = %v, want [/apps]", got)
+	}
+
+	// Once, keyed by the rename: a second run must not re-fire.
+	if n := MigrateAppPathGrants(db, "/custom", "/apps"); n != 0 {
+		t.Errorf("migration ran twice, changing %d more record(s)", n)
+	}
 }

@@ -8,9 +8,9 @@ import "strings"
 // "must be http:// or https://" message.
 //
 // The refusal is correct — fetch_url and browse_page reach the public
-// internet, and "/custom/foo/" is not out there. But "must be an http:// URL"
+// internet, and "/apps/foo/" is not out there. But "must be an http:// URL"
 // answers a question the caller wasn't asking. An agent that had just patched
-// one of its own apps tried to LOOK at it: /custom/<slug>/ against fetch_url,
+// one of its own apps tried to LOOK at it: /apps/<slug>/ against fetch_url,
 // then browse_page, then a guessed public hostname that 404'd, then treating
 // the app as an agent — six tool errors, none of which pointed at the two
 // tools that actually do this. The capability existed the whole time.
@@ -32,10 +32,17 @@ func SameOriginURLHint(target string) string {
 	return " — that is a path on THIS server, not a public URL. These tools reach the public internet. To display a page from this server to the user, call show_html(url=\"" + t + "\")."
 }
 
-// customAppSlug extracts the app slug from a /custom/<slug>/… path, or "" when
+// customAppSlug extracts the app slug from a /apps/<slug>/… path, or "" when
 // the path isn't a custom-app page.
 func customAppSlug(path string) string {
-	const prefix = "/custom/"
+	// Both mounts. The app moved from /custom to /apps and the old path still
+	// answers (it redirects), so a /custom/ URL is a real page and the hint
+	// that explains it has to fire for one — a model working from an older
+	// prompt, or a person pasting a bookmark, gets the same help.
+	prefix := "/apps/"
+	if !strings.HasPrefix(path, prefix) {
+		prefix = "/custom/"
+	}
 	if !strings.HasPrefix(path, prefix) {
 		return ""
 	}
@@ -43,7 +50,7 @@ func customAppSlug(path string) string {
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
 		rest = rest[:i]
 	}
-	// "/custom/" alone, or a reserved sub-route, names no app.
+	// "/apps/" alone, or a reserved sub-route, names no app.
 	if rest == "" || rest == "pub" {
 		return ""
 	}

@@ -190,6 +190,55 @@ func reportUnknownAppClaims() {
 	// where they are rendered instead, which is the only place they exist.
 }
 
+// legacyRedirects maps an app's OLD mount prefix to its current one.
+var (
+	legacyRedirectMu sync.Mutex
+	legacyRedirects  = map[string]string{}
+)
+
+// RegisterLegacyMount keeps an app's former path answering after it moves.
+//
+// A mount is not a private detail: it is in bookmarks, in capability links
+// somebody was handed, and in every place a URL was pasted. Renaming one
+// without this turns all of those into 404s, which reads to whoever holds one
+// as the app having been deleted rather than moved.
+//
+// 308, not 302: the method and body survive, so a POST to an old API path
+// lands as a POST. A 302 would turn it into a GET and the caller would see a
+// silent no-op instead of a redirect.
+func RegisterLegacyMount(oldPrefix, newPrefix string) {
+	oldPrefix = strings.TrimSuffix(strings.TrimSpace(oldPrefix), "/")
+	newPrefix = strings.TrimSuffix(strings.TrimSpace(newPrefix), "/")
+	if oldPrefix == "" || newPrefix == "" || oldPrefix == newPrefix {
+		return
+	}
+	legacyRedirectMu.Lock()
+	legacyRedirects[oldPrefix] = newPrefix
+	legacyRedirectMu.Unlock()
+}
+
+func mountLegacyRedirects(mux *http.ServeMux) {
+	legacyRedirectMu.Lock()
+	defer legacyRedirectMu.Unlock()
+	for oldPrefix, newPrefix := range legacyRedirects {
+		from, to := oldPrefix, newPrefix
+		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			target := to + strings.TrimPrefix(r.URL.Path, from)
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusPermanentRedirect)
+		})
+		mux.Handle(from, h)
+		mux.Handle(from+"/", h)
+		// The old subtree has to stay past the cookie gate too, or an
+		// anonymous capability link redirects to a login page instead of to
+		// where it moved — which is the one case this exists for.
+		RegisterPublicPath(from + "/")
+		Log("  Legacy mount: %s/ -> %s/\n", from, to)
+	}
+}
+
 // RegisteredWebApps returns all registered web apps.
 func RegisteredWebApps() []WebApp {
 	webAppMu.Lock()
@@ -932,6 +981,10 @@ func ServeDashboard(addr string) error {
 			SetupWebAgentFunc(agent)
 		}
 	}
+
+	// Legacy mounts, before the real ones: an app that has moved keeps
+	// answering at its old path so links people were GIVEN still work.
+	mountLegacyRedirects(mux)
 
 	// Pre-initialize the scheduler DB so apps can call ScheduleTask during RegisterRoutes.
 	PreInitScheduler()

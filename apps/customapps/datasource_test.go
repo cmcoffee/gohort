@@ -238,12 +238,15 @@ func TestPublicPageBytes(t *testing.T) {
 		Page: json.RawMessage(`{"title":"HN","back_url":"/custom/","show_title":true,` +
 			`"sections":[{"body":{"type":"card","html":"<script>fetch('/custom/hn-top-stories/data/hn-stories')</script>"}}]}`),
 	}
+	// The fixture keeps the LEGACY /custom/ prefix on purpose: a page stored
+	// before the app moved is precisely the case the rewrite has to keep
+	// handling, and it is the one a rename would have broken silently.
 	out := T.publicPageBytes(spec, "TOK")
 	s := string(out)
 	if strings.Contains(s, "/custom/hn-top-stories/data/hn-stories") {
 		t.Errorf("gated slug path not rewritten:\n%s", s)
 	}
-	if !strings.Contains(s, "/custom/pub/TOK/data/hn-stories") {
+	if !strings.Contains(s, "/apps/pub/TOK/data/hn-stories") {
 		t.Errorf("public token path missing:\n%s", s)
 	}
 	var m map[string]any

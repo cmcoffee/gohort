@@ -2,7 +2,7 @@
 // interactive, e.g. a canvas game): real
 // in-dashboard surfaces composed from ui primitives (FormPanel, Table,
 // DisplayPanel, EmptyState), stored as an AppSpec and served by apps/customapps
-// at /custom/<slug>/. This is the tool that lets Builder answer "build me an
+// at /apps/<slug>/. This is the tool that lets Builder answer "build me an
 // app" with an ACTUAL gohort app instead of a standalone HTML file.
 //
 //	create / update — author an app (name, sections[]).
@@ -16,7 +16,7 @@
 // ConfigJSON, and stores the bytes via core.SaveAppSpec. customapps serves the
 // stored page + a generic per-app record store (the form writes records, the
 // table lists them) with no per-app Go code. A chat section binds the app's
-// agent (agent_id) to a live chat panel served under /custom/<slug>/chat/*.
+// agent (agent_id) to a live chat panel served under /apps/<slug>/chat/*.
 //
 // Specs are stored owner-keyed in the SHARED deployment root (core/appspec.go),
 // NOT this app's DB bucket — otherwise a spec written here would be invisible to
@@ -45,7 +45,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "app_def",
-			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /custom/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nReach for this whenever the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort — never a standalone downloadable HTML file. Actions: create · update · list · get · delete. Call action=\"help\" for every section field and the good defaults.",
+			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /apps/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nReach for this whenever the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort — never a standalone downloadable HTML file. Actions: create · update · list · get · delete. Call action=\"help\" for every section field and the good defaults.",
 			Parameters: map[string]ToolParam{
 				"action": {Type: "string", Description: "One of: create | update | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help. Every save keeps the version it replaced: if an edit turns out to have broken or deleted something, use revert (see revisions) — never try to reconstruct the app from memory, which is how the damage happens in the first place. To change PART of an html app, edit in place instead of re-sending the whole document through update — re-typing a long document is how working code gets silently rewritten around the fix. Rewriting a whole FUNCTION is replace_function (name it, hand over the new one; you never reproduce the old text). Anything smaller — a constant, a one-line bug, a couple of lines — is patch_html (exact find/replace). After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
 				"find": {
@@ -82,7 +82,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 					Description: "(test) Optional query-param inputs to simulate alongside sample, handed to each script as env vars (for filter-style data sources that read a param). Most form-driven apps don't need this — inputs come from sample/records, not params.",
 				},
 				"name":        {Type: "string", Description: "App name (shown in the dashboard). Required for create."},
-				"slug":        {Type: "string", Description: "(create) URL slug, e.g. 'reading-list' → /custom/reading-list/. Optional — derived from the name when omitted. Lowercase letters, digits, hyphens."},
+				"slug":        {Type: "string", Description: "(create) URL slug, e.g. 'reading-list' → /apps/reading-list/. Optional — derived from the name when omitted. Lowercase letters, digits, hyphens."},
 				"id":          {Type: "string", Description: "(update/get/delete) The app's slug, identifying which app to act on."},
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the app is for (shown on the Custom Apps index)."},
 				"record_key":  {Type: "string", Description: "(create/update) The primary-key field of each record. Default 'id' — the host allocates one on save. Only override if the records have a natural key."},
@@ -141,7 +141,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 }
 
 const appDefHelpText = `app_def actions:
-- create {name, slug?, description?, record_key?, sections:[…]} — author an app, served at /custom/<slug>/. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
+- create {name, slug?, description?, record_key?, sections:[…]} — author an app, served at /apps/<slug>/. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
 - update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document AND a sections array means the WHOLE set — a section you leave out is a section you delete. Dropping the one that runs the app (pipeline / chat / workbench) is REFUSED for that reason: the page still renders and verify still passes without it, so the loss is invisible everywhere else. Call action="get" first; it returns the sections in the shape update accepts. An update that shrinks an html app sharply, or that drops functions the rest of the code still calls, is REFUSED (pass confirm_rewrite:true if you really are re-authoring from scratch) — that shape is a half-finished rewrite, and it deletes working code while still parsing and loading clean.
 - replace_function {id(slug), function, replace, section?} — swap ONE named function in an html section. Name it, hand over the whole new function, and the server finds the old one: you never reproduce a line of it, so this cannot fail on whitespace and does not need the current document in front of you. THE action for "rewrite drawBird" / "fix the collision function" / "make the car look different".
 - patch_html {id(slug), find, replace, section?} — change PART of an html section by exact find/replace. For edits smaller than a function (a constant, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. Both in-place edits are parsed, checked for calls to code they would delete, and loaded in a real browser BEFORE they are kept — an edit that breaks any of those is rolled back and the previous revision keeps serving.
@@ -150,16 +150,16 @@ const appDefHelpText = `app_def actions:
 - list — your apps: [{slug, name, desc}].
 - get  {id(slug)} — one app's full section definition.
 - test {id(slug), sample?:[{...}], params?:{...}} — RUN every data_source + action script and report each one's output/errors (catches broken scripts before the user opens the app). Run this after authoring any app with scripts. Pass sample=[{field:value,...}] (example form submissions, keyed by the form's field names) to exercise the full form→record→data-source→output chain even before any real records exist — e.g. test that adding {"city":"Santa Cruz, CA"} actually yields a forecast.
-- verify {id(slug), sample?:[{...}]} — the FINAL gate before telling the user the app is ready: runs every script (like test) AND loads /custom/<slug>/ in a real headless browser as the user, reporting JS console errors, uncaught exceptions, failed requests, whether the sections actually rendered, and — per data source — whether the page really fetched its live endpoint (catches a working script no section is wired to). An app is NOT done until verify passes.
+- verify {id(slug), sample?:[{...}]} — the FINAL gate before telling the user the app is ready: runs every script (like test) AND loads /apps/<slug>/ in a real headless browser as the user, reporting JS console errors, uncaught exceptions, failed requests, whether the sections actually rendered, and — per data source — whether the page really fetched its live endpoint (catches a working script no section is wired to). An app is NOT done until verify passes.
 - delete {id(slug)}.
 
 Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | pipeline (submit a run, watch its stages stream, browse past runs — requires pipeline_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (a full HTML/CSS/JS canvas — set the html field; inline <script> RUNS, so this covers anything the typed kinds can't express: games, canvas animation, simulations, custom visualizations, bespoke widgets).
 
 Minimal good app = a form (modal=true) + a table (editable, deletable) over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
 
-For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that reads the app's records with 'records = json.loads(os.environ.get("records", "[]"))' (the records env var is a JSON STRING; never json.loads("records")) + query params, and PRINTS JSON; reach external data with 'from gohort import fetch_url; r = fetch_url(url)' (granted by default; r is {status,headers,body}; it RAISES on transport failure so wrap it in try/except and still print JSON). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Run app_def action=test to execute the scripts and see their output/errors before telling the user it's ready. Owner-only.
+For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that reads the app's records with 'records = json.loads(os.environ.get("records", "[]"))' (the records env var is a JSON STRING; never json.loads("records")) + query params, and PRINTS JSON; reach external data with 'from gohort import fetch_url; r = fetch_url(url)' (granted by default; r is {status,headers,body}; it RAISES on transport failure so wrap it in try/except and still print JSON). Then a table/display sets source_script:"<name>" to render the script's output. Served at /apps/<slug>/data/<name>. Run app_def action=test to execute the scripts and see their output/errors before telling the user it's ready. Owner-only.
 
-For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?, schedule?}] at the TOP LEVEL of the call, beside sections (NOT inside a section) — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Add a section of kind "actions" to render the buttons; that section takes no fields of its own. Served at /custom/<slug>/action/<name>.
+For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?, schedule?}] at the TOP LEVEL of the call, beside sections (NOT inside a section) — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Add a section of kind "actions" to render the buttons; that section takes no fields of its own. Served at /apps/<slug>/action/<name>.
 
 An action on an app with a pipeline_id ALSO receives the last FINISHED run, so a button can move a run into the record store: pipeline_output (the final stage's text) and pipeline_run (JSON: id, title, date, output, and blocks — one per stage, so the rounds survive, not just the verdict). Both are empty strings when nothing has finished, so read them with a default: run = json.loads(os.environ.get('pipeline_run') or '{}'). This is how "save this debate to history" is written — there is no other route from a run to the records, and inventing an env var name yields a script that prints valid JSON and does nothing forever.
 
@@ -182,7 +182,7 @@ kind="empty" — a centered empty-state placeholder (for a 'nothing selected' pa
 
 GRAPHICS IN AN html SECTION: draw them in code. There is NO static asset route for apps — an app cannot reference /images/sprite.png — and generate_image is a CHAT tool that shows the user a picture, not an asset pipeline. So build visuals from: canvas 2D primitives (fillRect / arc / paths / gradients), inline <svg>, CSS shapes and animation, emoji or text glyphs as sprites, or a data: URI embedded in the markup. For a side-scroller that means drawing the runner and the obstacles with canvas calls rather than loading sprite files — which is also less to go wrong, since there is nothing to 404. Do not stall a build waiting on art that has nowhere to live.
 
-kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> RUNS) and optional 'height' (any CSS length, e.g. "640px" / "80vh" — only used when the blob is a whole document; default min(80vh, 860px)). WRITE A COMPLETE DOCUMENT for anything with its own layout (a game, a canvas animation, a simulation): doctype, <head>, <style>, <body>. A whole document is given its OWN FRAME, so its CSS reset and body rules style only itself and its 100vh measures its own box; a bare fragment is spliced into the page and its styles apply page-wide. Same origin either way — a framed document still fetches 'data/<name>' and shares the page's cookies/storage. Anything that runs in a browser page runs here: <canvas> with a requestAnimationFrame loop, keyboard/pointer handlers, physics, collision, audio, SVG, WebGL. So YES — a game, an animation, a simulation, or a custom visualization is buildable, and this is how you build one. Do not tell the user an interactive or graphical app is out of scope; the typed sections are not the limit of what an app can be. The steer is about FIT, not permission: for a DATA app (records, forms, lists, dashboards) reach for a typed section first, because those give you the record store, editing, refresh, and styling for free, and hand-rolling that in html is wasted work. When the thing genuinely isn't a data app, html is the right and intended choice — use it without apology. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it. CUSTOMIZING A pipeline SECTION'S CARDS: an html section's inline script is the only way a declarative app reaches the runtime's extension registries. Two rules, and BOTH fail silently rather than erroring. (1) FRAGMENT, always: a whole document is rendered in a frame, and a frame has its OWN window, so anything registered there is invisible to the page. Watch for a stray <body> tag (or a doctype, or <html>) anywhere near the top, which is enough on its own to make the blob count as a whole document and turn a working registration inert. (2) ORDER, for BLOCK RENDERERS specifically: list the html section BEFORE the pipeline section. A pipeline panel COPIES the renderer registry when it mounts, and sections mount in the order you list them, so an html section placed after it registers into a map nothing reads again and every card renders in the default style. Markdown extensions (window.uiRegisterMarkdownExtension) are read at RENDER time instead, so those work from anywhere on the page. Client actions (window.uiRegisterClientAction) are reached by a pipeline section's toolbar button with method "client", and the runtime looks THOSE up at CLICK time, so an html section registering one can sit anywhere on the page — the ordering rule above is block renderers only. WHAT TO REGISTER FOR: a pipeline block's type is the STAGE KIND that produced it (worker, panel, tool, agent, machine, loop, branch, fanout, synthesize), not a name you choose, and its title is the STAGE NAME. So register ONE renderer for the kind and branch on d.title inside it when different stages need different cards.
+kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> RUNS) and optional 'height' (any CSS length, e.g. "640px" / "80vh" — only used when the blob is a whole document; default min(80vh, 860px)). WRITE A COMPLETE DOCUMENT for anything with its own layout (a game, a canvas animation, a simulation): doctype, <head>, <style>, <body>. A whole document is given its OWN FRAME, so its CSS reset and body rules style only itself and its 100vh measures its own box; a bare fragment is spliced into the page and its styles apply page-wide. Same origin either way — a framed document still fetches 'data/<name>' and shares the page's cookies/storage. Anything that runs in a browser page runs here: <canvas> with a requestAnimationFrame loop, keyboard/pointer handlers, physics, collision, audio, SVG, WebGL. So YES — a game, an animation, a simulation, or a custom visualization is buildable, and this is how you build one. Do not tell the user an interactive or graphical app is out of scope; the typed sections are not the limit of what an app can be. The steer is about FIT, not permission: for a DATA app (records, forms, lists, dashboards) reach for a typed section first, because those give you the record store, editing, refresh, and styling for free, and hand-rolling that in html is wasted work. When the thing genuinely isn't a data app, html is the right and intended choice — use it without apology. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /apps/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it. CUSTOMIZING A pipeline SECTION'S CARDS: an html section's inline script is the only way a declarative app reaches the runtime's extension registries. Two rules, and BOTH fail silently rather than erroring. (1) FRAGMENT, always: a whole document is rendered in a frame, and a frame has its OWN window, so anything registered there is invisible to the page. Watch for a stray <body> tag (or a doctype, or <html>) anywhere near the top, which is enough on its own to make the blob count as a whole document and turn a working registration inert. (2) ORDER, for BLOCK RENDERERS specifically: list the html section BEFORE the pipeline section. A pipeline panel COPIES the renderer registry when it mounts, and sections mount in the order you list them, so an html section placed after it registers into a map nothing reads again and every card renders in the default style. Markdown extensions (window.uiRegisterMarkdownExtension) are read at RENDER time instead, so those work from anywhere on the page. Client actions (window.uiRegisterClientAction) are reached by a pipeline section's toolbar button with method "client", and the runtime looks THOSE up at CLICK time, so an html section registering one can sit anywhere on the page — the ordering rule above is block renderers only. WHAT TO REGISTER FOR: a pipeline block's type is the STAGE KIND that produced it (worker, panel, tool, agent, machine, loop, branch, fanout, synthesize), not a name you choose, and its title is the STAGE NAME. So register ONE renderer for the kind and branch on d.title inside it when different stages need different cards.
 
 kind="chat" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: 'list_title', 'empty_text', 'placeholder'. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.
 
@@ -396,7 +396,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		}
 	}
 	saved := SaveAppSpecAs(spec, reason)
-	msg := fmt.Sprintf("%s app %q at /custom/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
+	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug)
 
 	msg += "\n\n" + t.appInventoryLine(saved)
@@ -480,7 +480,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// a verify batched alongside the NEXT update reports on the revision being
 	// replaced, and its findings read as fresh.
 	if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
-		msg += "\nThis save already parsed the inline JavaScript AND loaded /custom/" + saved.Slug + "/ in a real browser — it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
+		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser — it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
 	} else {
 		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\") — it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
@@ -520,7 +520,7 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 			return ui.Page{
 				Title:     spec.Name,
 				ShowTitle: true,
-				BackURL:   "/custom/",
+				BackURL:   "/apps/",
 				MaxWidth:  "100%",
 				Sections:  []ui.Section{{NoChrome: true, Body: wb}},
 			}, nil
@@ -545,7 +545,7 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 	page := ui.Page{
 		Title:     spec.Name,
 		ShowTitle: true,
-		BackURL:   "/custom/",
+		BackURL:   "/apps/",
 		MaxWidth:  maxWidth,
 	}
 	// The first form section's fields are the natural default for an editable
@@ -2057,7 +2057,7 @@ func (t *chatTurn) appDefList() (string, error) {
 	}
 	out := make([]row, len(specs))
 	for i, s := range specs {
-		out[i] = row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/custom/" + s.Slug + "/"}
+		out[i] = row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/"}
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
@@ -2080,7 +2080,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		// update that silently drops it.
 		"pipeline_id": spec.PipelineID,
 		"full_width":  spec.FullWidth,
-		"url":         "/custom/" + spec.Slug + "/",
+		"url":         "/apps/" + spec.Slug + "/",
 	}
 	// Hand back the AUTHORING sections — the shape action=update accepts — not
 	// the rendered page. Returning the page invited the obvious next move (feed
@@ -2250,7 +2250,7 @@ func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
 		return "", errors.New("no matching app to delete")
 	}
 	DeleteAppSpec(t.user, spec.Slug)
-	return fmt.Sprintf("Deleted app %q (/custom/%s/).", spec.Name, spec.Slug), nil
+	return fmt.Sprintf("Deleted app %q (/apps/%s/).", spec.Name, spec.Slug), nil
 }
 
 // appDefTest executes every script-backed component of an app — each data source
@@ -2379,7 +2379,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			frames: frames.length
 		});
 	}`
-	rep, err := CheckPageAsUser(RootDB, t.user, "/custom/"+spec.Slug+"/", probe)
+	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe)
 	if err != nil {
 		failures++
 		fmt.Fprintf(&b, "Page check: COULD NOT RUN — %v\n", err)
@@ -2408,7 +2408,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		// but the page never calls it" disconnect the script checks
 		// can't see.
 		for _, ds := range spec.DataSources {
-			endpoint := "/custom/" + spec.Slug + "/data/" + ds.Name
+			endpoint := "/apps/" + spec.Slug + "/data/" + ds.Name
 			status := 0
 			for _, req := range rep.Requests {
 				if pathOfURL(req.URL) == endpoint {

@@ -100,7 +100,11 @@ const (
 	// every caller passes a literal, and that is the deal this number is meant to
 	// force: name the ones a caller must say, not the ones that were merely
 	// convenient.
-	coreExportCeiling = 2137
+	// Raised 2137 -> 2139 for the mount rename (RegisterLegacyMount,
+	// MigrateAppPathGrants). Both are called from apps/customapps so neither
+	// can be unexported, and a subpackage for two functions about the root mux
+	// and stored auth grants would be further from their subjects, not closer.
+	coreExportCeiling = 2139
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
