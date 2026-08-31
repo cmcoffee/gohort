@@ -189,3 +189,34 @@ func TestDelegationFoldNoOpWithoutSection(t *testing.T) {
 		t.Error("an unrelated section was modified")
 	}
 }
+
+// The fold used to match the section TITLE exactly, so renaming the heading
+// silently dropped the picker back into a standalone card — the split the fold
+// exists to close, undone by an edit that looks like copywriting.
+func TestDelegationFoldSurvivesARenamedHeading(t *testing.T) {
+	sections := []ui.Section{
+		{Title: "Access & visibility", Body: ui.FormPanel{Fields: []ui.FormField{{Field: "published"}}}},
+		{Title: "Delegation — who calls whom", Body: ui.FormPanel{Fields: []ui.FormField{
+			{Field: "hidden"}, {Field: "dispatch_mode"}, {Field: "allow_builder_dispatch"},
+		}}},
+	}
+	if !foldIntoDelegation(sections, ui.ChipPicker{}) {
+		t.Fatal("the picker was not folded into the section holding dispatch_mode")
+	}
+	if _, ok := sections[1].Body.(ui.Stack); !ok {
+		t.Fatalf("delegation body is %T, want a Stack holding the form + picker", sections[1].Body)
+	}
+	// And it must not land on a section that merely sounds related.
+	if _, wrong := sections[0].Body.(ui.Stack); wrong {
+		t.Error("the picker was folded into the wrong section")
+	}
+}
+
+// No policy field anywhere (create mode) means no fold, so the caller still
+// adds its standalone card rather than dropping the list entirely.
+func TestNoPolicyFieldMeansNoFold(t *testing.T) {
+	sections := []ui.Section{{Title: "Delegation", Body: ui.FormPanel{Fields: []ui.FormField{{Field: "hidden"}}}}}
+	if foldIntoDelegation(sections, ui.ChipPicker{}) {
+		t.Error("folded into a section that does not hold the policy it serves")
+	}
+}

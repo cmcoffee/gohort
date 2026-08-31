@@ -340,22 +340,30 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// the list this policy governs. They used to live inside the
 			// collapsed "Cortex & delegation" accordion, so that card pointed
 			// at a control the reader could not see.
+			//
+			// ONE section, both directions. There were two headers here, both
+			// called Delegation and adjacent — an uncollapsed one holding the
+			// fleet toggle and a collapsed one holding the policy — which is
+			// what two separate moves toward the target list leave behind when
+			// neither removes the other. The split also put the wrong half
+			// away: the target-list card is governed by Dispatch policy, and
+			// that was the field inside the accordion, so the card still
+			// pointed at a control the reader could not see.
+			//
+			// Ordered inbound then outbound, and within outbound the governor
+			// before its exception: Allow none overrides the Builder grant, so
+			// reading the grant first states a permission the next field can
+			// take away.
 			ui.FormField{Type: "header", Label: "Delegation — who calls whom",
 				Help: "Both directions of agent-to-agent calling. Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy + the target list below, which is only consulted in the two \"selected\" modes)."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
 				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
 
-			// Delegation gets its OWN group so it lands in the same page section
-			// as the target list it governs. Left under "Access & visibility"
-			// the policy select sat one rail entry away from the list it
-			// chooses from, which is the split this section exists to close.
-			ui.FormField{Type: "header", Label: "Delegation", Collapsed: true,
-				Help: "Which other agents this one may call, and the list those choices draw from."},
-			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
-				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
 			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
 				Options: dispatchModeOptions(dispatchModeFirst),
 				Help:    "Which OTHER agents this one may call via agents(action=\"run\") — this governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all = any non-hidden agent (default). Only allow / Allow all except draw from the target list directly below. Allow none blocks all dispatch — the actual delegation kill switch. Same control as the in-chat Configure → Security & Access modal."},
+			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
+				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
 			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
 				Help: "Optional structured input form + saved test cases."},
 			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
@@ -917,24 +925,41 @@ func machineSelectField(udb Database, user string) ui.FormField {
 	}
 }
 
-// foldIntoDelegation appends the dispatch-target picker into the "Delegation"
-// section, so the policy select and the list it draws from live in one place.
+// foldIntoDelegation appends the dispatch-target picker into the section that
+// holds the dispatch policy, so the select and the list it draws from live in
+// one place.
 //
 // Split apart they were one rail entry away from each other: you would set
-// "Only allow" in Delegation and then have to find a different section to say
-// WHICH agents. Returns false when there is no Delegation section (create
-// mode, which does not split), leaving the caller to add a standalone one.
+// "Only allow" and then have to find a different section to say WHICH agents.
+// Returns false when no section holds the policy (create mode, which does not
+// split), leaving the caller to add a standalone one.
+//
+// Found by the FIELD it serves, not by the section's title. It matched the
+// title "Delegation" exactly, and the moment those headers were merged under a
+// fuller name the match stopped hitting — silently, because the caller's
+// fallback is a standalone card, which is precisely the split this closes. A
+// renamed heading is a normal thing to do to a form; quietly undoing a layout
+// decision is not what it should cost.
 func foldIntoDelegation(sections []ui.Section, picker ui.ChipPicker) bool {
 	for i := range sections {
-		if sections[i].Title != "Delegation" {
-			continue
-		}
 		panel, ok := sections[i].Body.(ui.FormPanel)
 		if !ok {
-			return false
+			continue
+		}
+		if !panelHasField(panel, "dispatch_mode") {
+			continue
 		}
 		sections[i].Body = ui.Stack{Children: []ui.Component{panel, picker}}
 		return true
+	}
+	return false
+}
+
+func panelHasField(panel ui.FormPanel, field string) bool {
+	for _, f := range panel.Fields {
+		if f.Field == field {
+			return true
+		}
 	}
 	return false
 }
