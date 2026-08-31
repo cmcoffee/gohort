@@ -15,6 +15,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -57,11 +58,30 @@ func (T *OrchestrateApp) ListGrantableApps() []GrantableApp {
 }
 
 func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
+	var out []DashboardCard
+
+	// Evals get their own tile rather than hiding a rail entry inside the
+	// agents app. The whole reason the primitive exists is that nobody was
+	// measuring anything — a surface reachable only by somebody who already
+	// went looking for it would leave that exactly as it was.
+	//
+	// Sorted late (Order 60) so it sits after the apps somebody opens daily.
+	// It is the thing you go to after an edit, not the thing you start in.
+	if udb := UserDB(T.DB, AuthCurrentUser(r)); udb != nil {
+		if suites := ListEvalSuites(udb); len(suites) > 0 {
+			out = append(out, DashboardCard{
+				Name:  "Evals",
+				Desc:  evalCardDesc(udb, suites),
+				Path:  "/orchestrate/evals",
+				Order: 60,
+			})
+		}
+	}
+
 	entries := T.ListExposedAgents()
 	if len(entries) == 0 {
-		return nil
+		return out
 	}
-	out := make([]DashboardCard, 0, len(entries))
 	for _, e := range entries {
 		path := "/agents/" + e.Slug
 		// Per-agent access gate — a published agent is a normal app (app-access /
@@ -83,6 +103,35 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 		})
 	}
 	return out
+}
+
+// evalCardDesc says what the suites last REPORTED rather than how many there
+// are. A count is a fact about the list; the reason to open it is whether
+// anything moved, and a card that already answers "is anything failing" saves
+// the trip that would have answered it.
+func evalCardDesc(udb Database, suites []EvalSuite) string {
+	var graded, failing, never int
+	for _, s := range suites {
+		runs := ListEvalRuns(udb, s.ID)
+		if len(runs) == 0 {
+			never++
+			continue
+		}
+		graded++
+		if runs[0].Passed < runs[0].Total {
+			failing++
+		}
+	}
+	switch {
+	case graded == 0:
+		// Written but never run is its own state, and the one most worth
+		// saying: a suite nobody has run has told nobody anything.
+		return fmt.Sprintf("%d suite%s, none run yet.", never, plural(never))
+	case failing == 0:
+		return fmt.Sprintf("%d suite%s passing.", graded, plural(graded))
+	default:
+		return fmt.Sprintf("%d suite%s with failures, %d passing.", failing, plural(failing), graded-failing)
+	}
 }
 
 // jsonEncode + jsonDecode are tiny adapters so PublicHandleSessionOne

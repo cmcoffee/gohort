@@ -578,3 +578,35 @@ func TestSuiteRowsCarryTheScoreAndTheTrend(t *testing.T) {
 		t.Errorf("trend = %v, want the movement since the previous version", rows[0]["trend"])
 	}
 }
+
+// The card says what the suites REPORTED, not how many exist. A count is a
+// fact about the list; the reason to open it is whether anything moved.
+func TestEvalCardDescribesTheState(t *testing.T) {
+	db := evalDB(t)
+	a, _ := SaveEvalSuite(db, goodSuite())
+	b, _ := SaveEvalSuite(db, goodSuite())
+
+	// Written but never run is its own state, and the one most worth saying:
+	// a suite nobody has run has told nobody anything.
+	if got := evalCardDesc(db, ListEvalSuites(db)); !strings.Contains(got, "none run yet") {
+		t.Errorf("desc = %q, want the never-run state called out", got)
+	}
+
+	SaveEvalRun(db, EvalRun{SuiteID: a.ID, Passed: 30, Total: 30, Started: a.Created})
+	SaveEvalRun(db, EvalRun{SuiteID: b.ID, Passed: 30, Total: 30, Started: b.Created})
+	if got := evalCardDesc(db, ListEvalSuites(db)); !strings.Contains(got, "2 suites passing") {
+		t.Errorf("desc = %q, want both reported passing", got)
+	}
+
+	// A failure is the thing worth surfacing on a dashboard.
+	SaveEvalRun(db, EvalRun{SuiteID: b.ID, Passed: 21, Total: 30, Started: b.Created.Add(1)})
+	got := evalCardDesc(db, ListEvalSuites(db))
+	if !strings.Contains(got, "1 suite with failures") || !strings.Contains(got, "1 passing") {
+		t.Errorf("desc = %q, want the failing count first", got)
+	}
+	// Singular, because "1 suites" on a dashboard is a small ugliness in a
+	// place people look every day.
+	if strings.Contains(got, "1 suites") {
+		t.Errorf("desc = %q should read singular", got)
+	}
+}
