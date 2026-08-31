@@ -432,6 +432,7 @@ var (
 	RegisterAdminSection       = sections.RegisterAdminSection
 	AdminSectionEntries        = sections.AdminSectionEntries
 	AdminSectionEntriesFor     = sections.AdminSectionEntriesFor
+	AdminSectionEntriesForApp  = sections.AdminSectionEntriesForApp
 	RegisterAdminSectionSource = sections.RegisterAdminSectionSource
 	RegisterAccountSection     = sections.RegisterAccountSection
 	AccountSectionEntries      = sections.AccountSectionEntries

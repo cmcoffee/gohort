@@ -850,6 +850,16 @@ type RouteStage struct {
 	DefaultBudget int    // default thinking budget tokens for this stage; 0 means fall back to global
 	Group         string // display group in the admin routing UI; derived from key prefix if empty
 	Private       bool   // when true, the stage is locked to worker tier (private-only app)
+	// App names the app this call site belongs to, as its WebPath
+	// ("/techwriter"). Empty means framework-level routing that belongs to no
+	// single app, which is what every existing registration means today.
+	//
+	// DECLARED, and never inferred from Key. The key prefixes look like a
+	// convention and are two conventions plus exceptions — app.techwriter
+	// beside blogger.editor beside admin.tool_groups.suggest — and a wrong
+	// guess here does not read as a guess to whoever finds it: it reads as a
+	// dial that is theirs to move.
+	App string
 }
 
 var routeRegistry struct {
@@ -879,6 +889,25 @@ func ListRouteStages() []RouteStage {
 	defer routeRegistry.mu.RUnlock()
 	out := make([]RouteStage, len(routeRegistry.stages))
 	copy(out, routeRegistry.stages)
+	return out
+}
+
+// RouteStagesForApp returns the stages an app has CLAIMED, in registration
+// order. Empty for an app that has claimed none, which is every app until it
+// declares them — a control with no declared owner stays on its mechanism tab
+// and appears under nobody.
+func RouteStagesForApp(appPath string) []RouteStage {
+	if appPath == "" {
+		return nil
+	}
+	routeRegistry.mu.RLock()
+	defer routeRegistry.mu.RUnlock()
+	var out []RouteStage
+	for _, s := range routeRegistry.stages {
+		if s.App == appPath {
+			out = append(out, s)
+		}
+	}
 	return out
 }
 

@@ -17,6 +17,14 @@ import (
 type AdminSectionEntry struct {
 	Section ui.Section
 	Head    string // ExtraHeadHTML fragment (client-action registrations, etc.); may be empty
+	// App names the app this section configures, as its WebPath. Empty means a
+	// section that belongs to no single app.
+	//
+	// Group and App answer different questions and both are needed: Group is
+	// the TAB this lands on, App is whose settings these are. A section can
+	// have one, the other, or both — the prompt-block editor lands under
+	// Extensions and belongs to the prompts app.
+	App string
 }
 
 // AdminSectionSource contributes admin sections that vary at RUNTIME, the way
@@ -60,6 +68,22 @@ func RegisterAdminSectionSource(fn AdminSectionSource) {
 // runtime sources. Kept because it is the honest answer to the question it
 // asks, and a caller with no request in hand cannot ask the other one.
 func AdminSectionEntries() []AdminSectionEntry { return adminSections }
+
+// AdminSectionEntriesForApp returns the sections an app has CLAIMED, for one
+// request. Asks the runtime sources too, so a section that only exists for
+// some requests is found the same way it is anywhere else.
+func AdminSectionEntriesForApp(r *http.Request, appPath string) []AdminSectionEntry {
+	if appPath == "" {
+		return nil
+	}
+	var out []AdminSectionEntry
+	for _, e := range AdminSectionEntriesFor(r) {
+		if e.App == appPath {
+			out = append(out, e)
+		}
+	}
+	return out
+}
 
 // AdminSectionEntriesFor returns every admin section for one request: the
 // statically registered ones first, then whatever the runtime sources report.

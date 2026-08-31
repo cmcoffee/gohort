@@ -53,6 +53,11 @@ type TunableSpec struct {
 	Min      float64
 	Max      float64
 	Decimals int // float display precision (KindFloat only)
+	// App names the app this knob belongs to, as its WebPath. Empty means a
+	// framework-level knob owned by no single app — which is every knob today,
+	// since Category groups them by SUBJECT (Retrieval, Timeouts) rather than
+	// by owner. Declared, never inferred; see RouteStage.App.
+	App string
 }
 
 var (
@@ -177,6 +182,20 @@ func AllTunableSpecs() []TunableSpec {
 	sort.SliceStable(out, func(i, j int) bool {
 		return catOrder[out[i].Category] < catOrder[out[j].Category]
 	})
+	return out
+}
+
+// TunablesForApp returns the knobs an app has CLAIMED, in registration order.
+func TunablesForApp(appPath string) []TunableSpec {
+	if appPath == "" {
+		return nil
+	}
+	var out []TunableSpec
+	for _, s := range AllTunableSpecs() {
+		if s.App == appPath {
+			out = append(out, s)
+		}
+	}
 	return out
 }
 

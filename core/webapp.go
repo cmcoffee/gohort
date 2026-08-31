@@ -153,6 +153,43 @@ func RegisterWebApp(app WebApp) {
 	registeredWebApps = append(registeredWebApps, app)
 }
 
+// reportUnknownAppClaims warns about controls claiming an app that is not
+// registered, once, at startup.
+//
+// A typo in a claim is a control that VANISHES from the app view while still
+// working on its mechanism tab — the quietest possible failure, because the
+// dial is fine and only its home is wrong. Nothing can be done about it
+// automatically (dropping the claim and guessing are both worse than saying
+// so), and saying so costs one line at boot.
+//
+// Runs after every init has registered, which is why it is called from the
+// serve path rather than from an init of its own. Unexported: the only
+// caller is ServeDashboard, three functions down, and core is at its export
+// ceiling — a symbol nobody outside needs should not spend one of the seats.
+func reportUnknownAppClaims() {
+	known := map[string]bool{}
+	for _, wa := range RegisteredWebApps() {
+		known[wa.WebPath()] = true
+	}
+	warn := func(kind, name, claim string) {
+		Warn("[apps] %s %q claims app %q, which no registered app serves — it will not appear under any app (its own tab still shows it)",
+			kind, name, claim)
+	}
+	for _, st := range ListRouteStages() {
+		if st.App != "" && !known[st.App] {
+			warn("route stage", st.Key, st.App)
+		}
+	}
+	for _, tn := range AllTunableSpecs() {
+		if tn.App != "" && !known[tn.App] {
+			warn("tunable", tn.Key, tn.App)
+		}
+	}
+	// Admin sections are not checked here: the runtime sources that produce
+	// some of them take a request, and there is none at boot. They are checked
+	// where they are rendered instead, which is the only place they exist.
+}
+
 // RegisteredWebApps returns all registered web apps.
 func RegisteredWebApps() []WebApp {
 	webAppMu.Lock()
@@ -1215,6 +1252,10 @@ func ServeDashboard(addr string) error {
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.
 	QueueRestore()
+
+	// Every app has registered by now, so a claim naming none of them can be
+	// reported rather than silently producing a control with no home.
+	reportUnknownAppClaims()
 
 	PleaseWait.Hide()
 	scheme := "http"
