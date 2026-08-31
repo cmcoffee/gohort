@@ -196,6 +196,11 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 	if provider == "" {
 		provider = "duckduckgo"
 	}
+	// The config was resolved without blocking, which for a peer means it may
+	// carry the static pairing key rather than a live token. Resolve it
+	// properly now that a request is actually being made — see
+	// RefreshPeerCredential.
+	cfg.APIKey = RefreshPeerCredential(context.Background(), cfg.Source, cfg.APIKey)
 
 	result, err := SearchWithProvider(SearchRequest{
 		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,
@@ -882,6 +887,7 @@ func CrossProviderSearch(query string) (string, error) {
 	if provider == "" {
 		provider = "duckduckgo"
 	}
+	cfg.APIKey = RefreshPeerCredential(context.Background(), cfg.Source, cfg.APIKey)
 
 	out, err := SearchWithProvider(SearchRequest{
 		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,

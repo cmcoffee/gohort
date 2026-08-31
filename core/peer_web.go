@@ -19,6 +19,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -354,6 +355,48 @@ func ResolveSearchProvider(cfg WebSearchConfig, provider string) (WebSearchConfi
 	// config that worked only while the static key was still accepted.
 	cfg.APIKey = PeerCredential(p)
 	return cfg, nil
+}
+
+// RefreshPeerCredential returns the credential to SEND for a config whose
+// Source names a peer, waiting for a token exchange when the cached one has
+// expired. Anything not sourced from a peer comes back untouched.
+//
+// The gap this closes. Config resolution runs under LoadWebSearchConfig and
+// GetTranscribeConfig, which answer questions as small as "is search enabled"
+// during a page render, so they use the NON-BLOCKING PeerCredential — and that
+// one, with no usable token, hands back the static pairing key and schedules a
+// renewal. The far side stopped accepting pairing keys when exchange became
+// mandatory, so the request goes out on a credential that cannot work and earns
+//
+//	401 {"error":"unrecognized or disabled peer key"}
+//
+// milliseconds before the renewal it triggered lands. Which is why testing the
+// same peer from the admin UI a moment later succeeds, and why the failure
+// looks intermittent and untraceable: the first search after the token expires
+// fails, and everything after it works.
+//
+// The transport-based peer paths already recover by reading that 401 string and
+// retrying. A config seam cannot: it holds a STRING, not a round trip, and by
+// the time the 401 exists the string is three call frames away. So it resolves
+// the credential properly at the point of sending instead — which is where a
+// wait costs nothing, because a request is about to be made anyway.
+func RefreshPeerCredential(ctx context.Context, source, current string) string {
+	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(source), peerProviderPrefix))
+	if name == "" || !strings.HasPrefix(strings.TrimSpace(source), peerProviderPrefix) {
+		return current
+	}
+	p, ok := lookupPeerCached(name)
+	if !ok {
+		// The peer is gone. resolveSearchPeer has already warned about that
+		// and kept the last known values; second-guessing them here would
+		// swap a stale credential for an empty one, which fails the same way
+		// with less to go on.
+		return current
+	}
+	if cred := strings.TrimSpace(PeerCredentialNow(ctx, p)); cred != "" {
+		return cred
+	}
+	return current
 }
 
 // resolveSearchPeer overlays the CURRENT peer record onto a stored web-search

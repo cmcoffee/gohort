@@ -104,7 +104,11 @@ const (
 	// MigrateAppPathGrants). Both are called from apps/customapps so neither
 	// can be unexported, and a subpackage for two functions about the root mux
 	// and stored auth grants would be further from their subjects, not closer.
-	coreExportCeiling = 2139
+	//
+	// 2139 -> 2140 for RefreshPeerCredential, which fixes the peer-key 401 on
+	// search. tools/websearch calls it at the point of sending, so it cannot be
+	// unexported, and it belongs beside the peer resolution it corrects.
+	coreExportCeiling = 2140
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
