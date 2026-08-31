@@ -4090,7 +4090,7 @@ func (t *chatTurn) emitStatus(text string) {
 }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_ack_timeout", Category: "Timeouts", Label: "Acknowledgment timeout", Help: "Bounds the fast \"On it…\" acknowledgment call.", Kind: KindSeconds, Default: 8, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_ack_timeout", Category: "Timeouts", Label: "Acknowledgment timeout", Help: "Bounds the fast \"On it…\" acknowledgment call.", Kind: KindSeconds, Default: 8, Min: 1, Max: 60})
 }
 
 // ackTimeout bounds the fast acknowledgment call. Short — the ack

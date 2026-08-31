@@ -43,6 +43,7 @@ const TunableUnifiedMemory = "tune_unified_memory"
 
 func init() {
 	RegisterTunable(TunableSpec{
+		App:      "/orchestrate",
 		Key:      TunableUnifiedMemory,
 		Category: "Memory",
 		Label:    "Unified memory tools (remember/recall/forget)",

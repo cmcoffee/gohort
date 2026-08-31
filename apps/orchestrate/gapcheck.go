@@ -33,8 +33,8 @@ import (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_gap_check_timeout", Category: "Timeouts", Label: "Gap-check timeout", Help: "Caps the structural-gap detection LLM call.", Kind: KindSeconds, Default: 90, Min: 15, Max: 600})
-	RegisterTunable(TunableSpec{Key: "tune_max_gaps_per_check", Category: "Limits", Label: "Max gaps per check", Help: "Max extra worker steps the gap pass may inject.", Kind: KindInt, Default: 3, Min: 1, Max: 15})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_gap_check_timeout", Category: "Timeouts", Label: "Gap-check timeout", Help: "Caps the structural-gap detection LLM call.", Kind: KindSeconds, Default: 90, Min: 15, Max: 600})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_max_gaps_per_check", Category: "Limits", Label: "Max gaps per check", Help: "Max extra worker steps the gap pass may inject.", Kind: KindInt, Default: 3, Min: 1, Max: 15})
 }
 
 // gapCheckTimeout caps the gap-detection LLM call. Pays its way only

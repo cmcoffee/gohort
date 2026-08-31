@@ -42,7 +42,7 @@ import (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_dispatch_fanout_lanes", Category: "Limits",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_dispatch_fanout_lanes", Category: "Limits",
 		Label: "Parallel sibling dispatch lanes",
 		Help: "How many agents(run) calls from ONE model response may execute at once. 1 (the default) runs them strictly one after another. " +
 			"Higher fans out across DISTINCT targets only — two dispatches to the same agent always stay sequential, because they share a sub-session id and would overwrite each other's continuity thread and tear down each other's session temp tools. " +

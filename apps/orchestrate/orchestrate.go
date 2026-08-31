@@ -54,6 +54,7 @@ func init() {
 	// The function is kept for its deny-list diagnostic, not registered.
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.orchestrator",
+		App:     "/orchestrate",
 		Label:   "Agents: Orchestrator (thinking)",
 		Default: "worker (thinking)",
 		Group:   "Agents",
@@ -67,6 +68,7 @@ func init() {
 	// read.)
 	RegisterRouteStage(RouteStage{
 		Key:   "app.orchestrate.orchestrator.lead",
+		App:   "/orchestrate",
 		Label: "Agents: Agent reasoning (lead-escalated agents)",
 		// Per-agent opt-in: agents with "Use Lead model" enabled route their
 		// main reasoning (plan + synthesis) here instead of the worker-locked
@@ -102,6 +104,7 @@ func init() {
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.worker",
+		App:     "/orchestrate",
 		Label:   "Agents: Worker (no-think)",
 		Default: "worker",
 		Group:   "Agents",
@@ -109,6 +112,7 @@ func init() {
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.consolidator",
+		App:     "/orchestrate",
 		Label:   "Agents: Memory consolidator (background)",
 		Default: "worker",
 		Group:   "Agents",
@@ -116,6 +120,7 @@ func init() {
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.gap_check",
+		App:     "/orchestrate",
 		Label:   "Agents: Gap detection (post-plan review)",
 		Default: "worker (thinking)",
 		Group:   "Agents",
@@ -123,6 +128,7 @@ func init() {
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.suggest",
+		App:     "/orchestrate",
 		Label:   "Agents: Editor field-suggest",
 		Default: "worker",
 		Group:   "Agents",
@@ -130,6 +136,7 @@ func init() {
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.title",
+		App:     "/orchestrate",
 		Label:   "Agents: Session title summarizer (background)",
 		Default: "worker",
 		Group:   "Agents",

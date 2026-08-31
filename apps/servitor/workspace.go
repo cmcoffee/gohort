@@ -32,6 +32,7 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_servitor_workspace_drill_cap",
+		App:      "/servitor",
 		Category: "Limits",
 		Label:    "Workspace members drilled per question",
 		Help:     "Maximum member appliances a single workspace question may investigate. Members beyond the cap are reported as skipped rather than silently dropped.",
@@ -42,6 +43,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		Key:      "tune_servitor_workspace_parallel",
+		App:      "/servitor",
 		Category: "Limits",
 		Label:    "Workspace cluster fan-out width",
 		Help:     "How many cluster nodes a single investigate_cluster call queries at once. Higher finishes sooner; each node holds an SSH session and an LLM worker while it runs.",

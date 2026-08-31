@@ -28,7 +28,7 @@ import (
 const TunableConflictDetection = "tune_conflict_detection"
 
 func init() {
-	RegisterTunable(TunableSpec{Key: TunableConflictDetection, Category: "Memory",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: TunableConflictDetection, Category: "Memory",
 		Label: "Finding conflict detection (0 = off)",
 		Help:  "When saving a finding, run a worker-LLM check for an existing finding it contradicts and surface the conflict in the tool result. Never auto-deletes — the user decides. Costs one worker call per save that has a related neighbor. Findings only for now; facts already supersede and graph edges use replace.",
 		Kind:  KindBool, Default: 0, Min: 0, Max: 1})

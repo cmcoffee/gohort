@@ -780,11 +780,11 @@ func strconvAtoi(s string) (int, error) {
 // --- Autofill ---------------------------------------------------------------
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_autofill_max_docs", Category: "Limits", Label: "Autofill max docs", Help: "Max documents a single autofill run ingests.", Kind: KindInt, Default: 50, Min: 5, Max: 250})
-	RegisterTunable(TunableSpec{Key: "tune_autofill_max_queries", Category: "Limits", Label: "Autofill max queries", Help: "Hard ceiling on autofill search queries per run.", Kind: KindInt, Default: 20, Min: 4, Max: 100})
-	RegisterTunable(TunableSpec{Key: "tune_autofill_fetch_limit", Category: "Limits", Label: "Autofill per-file fetch limit (bytes)", Help: "Max bytes fetched per autofill candidate file.", Kind: KindInt, Default: 52428800, Min: 1048576, Max: 268435456})
-	RegisterTunable(TunableSpec{Key: "tune_autofill_timeout", Category: "Timeouts", Label: "Autofill total timeout", Help: "Overall wall-clock cap for one autofill run.", Kind: KindMinutes, Default: 10, Min: 1, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_autofill_per_fetch", Category: "Timeouts", Label: "Autofill per-fetch timeout", Help: "Per-candidate fetch timeout during autofill.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_autofill_max_docs", Category: "Limits", Label: "Autofill max docs", Help: "Max documents a single autofill run ingests.", Kind: KindInt, Default: 50, Min: 5, Max: 250})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_autofill_max_queries", Category: "Limits", Label: "Autofill max queries", Help: "Hard ceiling on autofill search queries per run.", Kind: KindInt, Default: 20, Min: 4, Max: 100})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_autofill_fetch_limit", Category: "Limits", Label: "Autofill per-file fetch limit (bytes)", Help: "Max bytes fetched per autofill candidate file.", Kind: KindInt, Default: 52428800, Min: 1048576, Max: 268435456})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_autofill_timeout", Category: "Timeouts", Label: "Autofill total timeout", Help: "Overall wall-clock cap for one autofill run.", Kind: KindMinutes, Default: 10, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_autofill_per_fetch", Category: "Timeouts", Label: "Autofill per-fetch timeout", Help: "Per-candidate fetch timeout during autofill.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
 }
 
 func autofillMaxDocs() int            { return TuneInt("tune_autofill_max_docs") }
@@ -1705,7 +1705,7 @@ const ingestMinChars = 200
 func ingestBrowserMaxChars() int { return TuneInt("tune_ingest_browser_max_chars") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_ingest_browser_max_chars", Category: "Limits", Label: "Ingest browser max chars", Help: "Caps rendered text the headless-browser ingest fallback returns.", Kind: KindInt, Default: 1048576, Min: 65536, Max: 16777216})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_ingest_browser_max_chars", Category: "Limits", Label: "Ingest browser max chars", Help: "Caps rendered text the headless-browser ingest fallback returns.", Kind: KindInt, Default: 1048576, Min: 65536, Max: 16777216})
 }
 
 // fetchAndExtractForIngest pulls a URL and returns a display name plus

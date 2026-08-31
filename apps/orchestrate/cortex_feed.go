@@ -195,7 +195,7 @@ func cortexContextBlock(db Database, agentID string) string {
 const tuneCortexFeedLines = "tune_cortex_feed_lines"
 
 func init() {
-	RegisterTunable(TunableSpec{Key: tuneCortexFeedLines, Category: "Limits",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneCortexFeedLines, Category: "Limits",
 		Label: "Cortex standing-activity lines",
 		Help:  "How many recent cortex observations to inject as background awareness at the top of a forked session. Lower to save context; 0 hides the block.",
 		Kind:  KindInt, Default: 5, Min: 0, Max: 20})

@@ -41,8 +41,8 @@ import (
 func spillThresholdBytes() int { return TuneInt("tune_spill_threshold_bytes") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_spill_threshold_bytes", Category: "Limits", Label: "Tool-result spill threshold (bytes)", Help: "Tool results larger than this spill to a workspace file.", Kind: KindInt, Default: 102400, Min: 8192, Max: 10485760})
-	RegisterTunable(TunableSpec{Key: "tune_attachment_spill_threshold_bytes", Category: "Limits", Label: "Attachment spill threshold (bytes)", Help: "Attachments larger than this spill to a workspace file.", Kind: KindInt, Default: 102400, Min: 8192, Max: 10485760})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_spill_threshold_bytes", Category: "Limits", Label: "Tool-result spill threshold (bytes)", Help: "Tool results larger than this spill to a workspace file.", Kind: KindInt, Default: 102400, Min: 8192, Max: 10485760})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_attachment_spill_threshold_bytes", Category: "Limits", Label: "Attachment spill threshold (bytes)", Help: "Attachments larger than this spill to a workspace file.", Kind: KindInt, Default: 102400, Min: 8192, Max: 10485760})
 }
 
 // spillHeadBytes / spillTailBytes are sampled from the start/end of

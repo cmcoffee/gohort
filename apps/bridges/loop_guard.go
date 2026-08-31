@@ -88,6 +88,7 @@ const (
 // that costs a setting rather than a rebuild.
 func init() {
 	RegisterTunable(TunableSpec{
+		App: "/bridges",
 		Key: "tune_bridge_reply_budget", Category: "Limits",
 		Label:   "Loop guard: agent replies per conversation",
 		Help:    "How many replies the agent may send into ONE conversation inside the window below before routing is cut as a suspected loop. Every reply counts, including a guardrail decline — so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
@@ -95,6 +96,7 @@ func init() {
 		Default: replyBudgetDefault, Min: 2, Max: 200,
 	})
 	RegisterTunable(TunableSpec{
+		App: "/bridges",
 		Key: "tune_bridge_reply_window_min", Category: "Limits",
 		Label:   "Loop guard: reply window (minutes)",
 		Help:    "The window the reply budget is counted over. It has to outlast a slow loop (an agent loop runs at ~13s per round) while staying short enough that a normal conversation's replies age out.",
@@ -102,6 +104,7 @@ func init() {
 		Default: float64(replyWindowDefault / time.Minute), Min: 1, Max: 120,
 	})
 	RegisterTunable(TunableSpec{
+		App: "/bridges",
 		Key: "tune_bridge_self_thread_budget", Category: "Limits",
 		Label:   "Loop guard: replies into your own thread",
 		Help:    "The stricter budget for a thread addressed to YOURSELF, where an agent can end up answering its own messages. Anywhere else a person has to type, so a runaway cannot start. Note this only applies when the transport keys the conversation by your handle; a conversation keyed by chat id falls under the general budget above.",
@@ -109,6 +112,7 @@ func init() {
 		Default: selfThreadBudgetDefault, Min: 1, Max: 50,
 	})
 	RegisterTunable(TunableSpec{
+		App: "/bridges",
 		Key: "tune_bridge_loop_cooldown_min", Category: "Limits",
 		Label:   "Loop guard: cooldown (minutes)",
 		Help:    "How long routing stays cut for a conversation after the budget trips. Inbound messages are still recorded to the transcript throughout; nothing wakes the agent until it expires.",

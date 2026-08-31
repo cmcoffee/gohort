@@ -25,6 +25,7 @@ const operatorCompactStateTable = "operator_compact_state"
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_compaction_fold_trigger_pct",
+		App:      "/orchestrate",
 		Category: "Limits",
 		Label:    "Compaction fold trigger (% of context depth)",
 		Help:     "How far a persistent thread's unsummarized tail may grow, as a percent of the agent's Context Depth, before the rolling summary folds it back down to the depth. 150 = fold at 1.5x depth, so the prompt floats between depth and 1.5x depth (e.g. depth 100 → prompt stays 100-150). Higher folds less often (looser prompt, fewer summary LLM calls); lower keeps the prompt tighter at the cost of more frequent folds. Was effectively 300 (3x) before this was configurable.",

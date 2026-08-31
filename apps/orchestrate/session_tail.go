@@ -24,6 +24,7 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_chat_tail_messages",
+		App:      "/orchestrate",
 		Category: "Limits",
 		Label:    "Messages loaded when opening a thread",
 		Help:     "How many of a conversation's most recent messages are sent to the browser when you open it. Older ones stay stored and stay in the agent's context — this only bounds what the page renders at once, so a long-running channel thread opens quickly instead of building thousands of bubbles. \"Load earlier\" fetches more. 0 loads the whole thread every time.",
@@ -34,6 +35,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		Key:      "tune_cortex_tail_messages",
+		App:      "/orchestrate",
 		Category: "Limits",
 		Label:    "Messages loaded when opening a cortex thread",
 		Help:     "The same bound for an agent's standing thread (its cortex), which is append-only and never ends — so it outgrows an ordinary conversation by a wide margin and is the one that opens slowly. Its cards are pointers whose value is recency, and the first screen is what anyone actually reads. \"Load earlier\" fetches more. 0 falls back to the general thread limit.",

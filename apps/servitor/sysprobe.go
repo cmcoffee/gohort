@@ -38,6 +38,7 @@ func command_timeout() time.Duration { return TuneDuration("tune_sysprobe_comman
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_sysprobe_command_timeout",
+		App:      "/servitor",
 		Category: "Timeouts",
 		Label:    "Sysprobe command timeout",
 		Help:     "Per-command wall-clock cap for SSH probe commands before they are killed.",

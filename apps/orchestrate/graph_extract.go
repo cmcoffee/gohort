@@ -38,7 +38,7 @@ import (
 const TunableGraphExtract = "tune_graph_extract"
 
 func init() {
-	RegisterTunable(TunableSpec{Key: TunableGraphExtract, Category: "Memory",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: TunableGraphExtract, Category: "Memory",
 		Label: "Automatic entity extraction (0 = off)",
 		Help:  "After a turn, run a worker-LLM pass over the user's message and auto-populate the graph memory with the entity relationships it states. Off the hot path (background, single-flight + cooldown). Conservative: explicit relationships between named entities only, alias-merged, never auto-replacing. Extracted edges are marked observed.",
 		Kind:  KindBool, Default: 0, Min: 0, Max: 1})

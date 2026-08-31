@@ -65,9 +65,9 @@ func runOutcomeStatus(runErr error, hasResult bool) string {
 }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_run_max_events", Category: "Limits", Label: "Run event ring size", Help: "Max in-memory SSE events buffered per run.", Kind: KindInt, Default: 500, Min: 100, Max: 5000})
-	RegisterTunable(TunableSpec{Key: "tune_run_cleanup_age", Category: "Cache", Label: "Run buffer retention", Help: "How long a completed run's buffer is kept for reconnect.", Kind: KindMinutes, Default: 30, Min: 5, Max: 240})
-	RegisterTunable(TunableSpec{Key: "tune_run_cleanup_interval", Category: "Timeouts", Label: "Run sweep interval", Help: "How often the registry sweeps for old completed runs.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_run_max_events", Category: "Limits", Label: "Run event ring size", Help: "Max in-memory SSE events buffered per run.", Kind: KindInt, Default: 500, Min: 100, Max: 5000})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_run_cleanup_age", Category: "Cache", Label: "Run buffer retention", Help: "How long a completed run's buffer is kept for reconnect.", Kind: KindMinutes, Default: 30, Min: 5, Max: 240})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_run_cleanup_interval", Category: "Timeouts", Label: "Run sweep interval", Help: "How often the registry sweeps for old completed runs.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
 }
 
 // runMaxEvents bounds the in-memory ring per run. Chat turns are

@@ -26,12 +26,14 @@ const (
 
 func init() {
 	RegisterTunable(TunableSpec{
+		App: "/guides",
 		Key: tuneCuratorThreshold, Category: "Limits",
 		Label: "Guide curator batch threshold",
 		Help:  "Run the Guide Curator once this many findings are waiting for a user. 0 disables threshold firing, leaving only the interval.",
 		Kind:  KindInt, Default: 5, Min: 0, Max: 100,
 	})
 	RegisterTunable(TunableSpec{
+		App: "/guides",
 		Key: tuneCuratorInterval, Category: "Limits",
 		Label: "Guide curator interval (minutes)",
 		Help:  "Run the Guide Curator for any user with waiting findings at least this often, even if the threshold was never reached. 0 disables interval firing.",

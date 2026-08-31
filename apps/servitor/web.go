@@ -26,6 +26,7 @@ func init() {
 	registerServitorMCPTools()
 	RegisterRouteStage(RouteStage{
 		Key:     "app.servitor",
+		App:     "/servitor",
 		Label:   "Servitor (worker — runs SSH commands)",
 		Default: "worker",
 		Group:   "Servitor",
@@ -33,6 +34,7 @@ func init() {
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.servitor.orchestrator",
+		App:     "/servitor",
 		Label:   "Servitor: Orchestrator",
 		Default: "worker (thinking)",
 		Group:   "Servitor",
@@ -454,6 +456,7 @@ func termBufferCap() int { return TuneInt("tune_term_buffer_cap") }
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_term_buffer_cap",
+		App:      "/servitor",
 		Category: "Limits",
 		Label:    "Terminal buffer cap (bytes)",
 		Help:     "Max bytes retained per live terminal buffer before old output is trimmed.",
