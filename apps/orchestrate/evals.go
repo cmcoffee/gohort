@@ -169,6 +169,35 @@ func agentFingerprint(agent AgentRecord) string {
 	return EvalTargetFingerprint(agent.OrchestratorPrompt, strings.Join(tools, ","), tier)
 }
 
+// gradeEvalText applies the substring assertions to whatever a target produced.
+//
+// Extracted so agents and pipelines grade text the SAME way. Two copies of
+// "does the reply contain this" is two definitions of passing, and they drift
+// in the direction of whichever was edited last.
+func gradeEvalText(c EvalCase, output string) (reasons []string, pass bool) {
+	lower := strings.ToLower(output)
+	pass = true
+	for _, want := range c.MustInclude {
+		if want = strings.TrimSpace(want); want == "" {
+			continue
+		}
+		if !strings.Contains(lower, strings.ToLower(want)) {
+			reasons = append(reasons, fmt.Sprintf("missing required substring: %q", want))
+			pass = false
+		}
+	}
+	for _, bad := range c.MustNotInclude {
+		if bad = strings.TrimSpace(bad); bad == "" {
+			continue
+		}
+		if strings.Contains(lower, strings.ToLower(bad)) {
+			reasons = append(reasons, fmt.Sprintf("found forbidden substring: %q", bad))
+			pass = false
+		}
+	}
+	return reasons, pass
+}
+
 // aggregateEvalRuns collapses the N runs of one case into a single row: the pass
 // RATE (Passes/Runs), a representative sample (the first FAILING run if any, else
 // the last), the union of tools called across runs, and any run error. Passed is
@@ -295,28 +324,9 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 	res.Output = truncateForEval(output, 1200)
 
 	// Substring grading (cheap, runs first).
-	lower := strings.ToLower(output)
-	allPass := true
-	for _, want := range c.MustInclude {
-		want = strings.TrimSpace(want)
-		if want == "" {
-			continue
-		}
-		if !strings.Contains(lower, strings.ToLower(want)) {
-			res.Reasons = append(res.Reasons, fmt.Sprintf("missing required substring: %q", want))
-			allPass = false
-		}
-	}
-	for _, bad := range c.MustNotInclude {
-		bad = strings.TrimSpace(bad)
-		if bad == "" {
-			continue
-		}
-		if strings.Contains(lower, strings.ToLower(bad)) {
-			res.Reasons = append(res.Reasons, fmt.Sprintf("found forbidden substring: %q", bad))
-			allPass = false
-		}
-	}
+	textReasons, textPass := gradeEvalText(c, output)
+	res.Reasons = append(res.Reasons, textReasons...)
+	allPass := textPass
 
 	// Tool-use grading — did the model actually CALL the tools the scenario
 	// expects (or avoid the ones it shouldn't)? This is the part that catches a

@@ -377,10 +377,119 @@ func (T *OrchestrateApp) resolveEvalTarget(udb Database, user string, suite Eval
 			// live the suite has already said so deliberately.
 			Exec: T.agentEvalExecutor(udb, agent, suite.Stubbed(), !suite.Stubbed()),
 		}, nil
+	case EvalTargetPipeline:
+		def, ok := T.LookupAppPipeline(user, suite.TargetID)
+		if !ok {
+			return evalTarget{}, EvalTargetMissing{Kind: suite.TargetKind, ID: suite.TargetID}
+		}
+		return evalTarget{
+			Fingerprint: pipelineFingerprint(def),
+			Exec:        T.pipelineEvalExecutor(context.Background(), udb, user, def),
+		}, nil
 	default:
 		// Refused rather than silently scoring nothing. The kinds arrive in
 		// their own steps; until then a suite for one is an authoring mistake
 		// with a clear message, not a run that reports 0/30.
 		return evalTarget{}, Error(fmt.Sprintf("grading a %s is not wired up yet — this suite cannot run", suite.TargetKind))
 	}
+}
+
+// pipelineEvalExecutor grades a pipeline: the case prompt is the run's input,
+// the final stage's text is the output, and MustFields asserts on the declared
+// fields behind it.
+//
+// Structured assertions are the reason grading a pipeline is worth doing
+// separately at all. A debate's verdict is three paragraphs; "wins" appearing
+// somewhere in them is not the same claim as winner == "for", and only one of
+// those two is a test.
+func (T *OrchestrateApp) pipelineEvalExecutor(ctx context.Context, udb Database, user string, def PipelineDef) evalExecutor {
+	hooks := PipelineHooks{
+		Dispatch: func(ctx context.Context, agentID, stageInput string) (string, error) {
+			if _, found := findAgentByNameOrID(udb, user, agentID); !found {
+				return "", ErrNoSuchAgent
+			}
+			return T.RunAgentSync(ctx, user, user, agentID, stageInput)
+		},
+		Tools: T.pipelineStandaloneTools(ctx, user, def),
+	}
+	return func(ctx context.Context, c EvalCase) EvalResult {
+		out, fields, err := T.RunPipelineDefHooks(ctx, def, c.Prompt, hooks)
+		row := EvalResult{Name: c.Name, Output: truncateForEval(out, 2000)}
+		if err != nil {
+			row.ErrText = err.Error()
+			row.Reasons = append(row.Reasons, "the pipeline errored: "+err.Error())
+			return row
+		}
+		textReasons, textPass := gradeEvalText(c, out)
+		fieldReasons, fieldPass := gradeEvalFields(c, fields)
+		row.Reasons = append(textReasons, fieldReasons...)
+		row.Passed = textPass && fieldPass
+		return row
+	}
+}
+
+// gradeEvalFields checks MustFields against a stage's declared output.
+//
+// A field the pipeline does not declare is a FAILURE rather than a skip: the
+// case asserts something about a shape, and a shape that changed out from under
+// it is exactly the regression evals exist to catch. Silently passing would
+// make a renamed field read as continued success.
+func gradeEvalFields(c EvalCase, fields map[string]any) (reasons []string, pass bool) {
+	pass = true
+	// Sorted, so a failing case reads the same way twice — map order would
+	// shuffle the reasons between two runs of an identical failure.
+	names := make([]string, 0, len(c.MustFields))
+	for name := range c.MustFields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		want := c.MustFields[name]
+		got, present := fields[name]
+		if !present {
+			reasons = append(reasons, fmt.Sprintf("no field %q in the final stage's output (it declares: %s)", name, declaredFieldNames(fields)))
+			pass = false
+			continue
+		}
+		gotStr := strings.TrimSpace(fmt.Sprint(got))
+		if !strings.EqualFold(gotStr, strings.TrimSpace(want)) {
+			reasons = append(reasons, fmt.Sprintf("%s = %q, want %q", name, gotStr, want))
+			pass = false
+			continue
+		}
+		reasons = append(reasons, fmt.Sprintf("ok: %s = %q", name, gotStr))
+	}
+	return reasons, pass
+}
+
+func declaredFieldNames(fields map[string]any) string {
+	if len(fields) == 0 {
+		return "none — the final stage has no output contract"
+	}
+	names := make([]string, 0, len(fields))
+	for n := range fields {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// pipelineFingerprint hashes what makes a pipeline BEHAVE as it does: each
+// stage's name, kind, prompt, tier and declared output shape.
+//
+// Not the pipeline's name or description, for the same reason an agent's are
+// left out: a rename that read as a change would put every run under a fresh
+// hash and the history would compare nothing to nothing.
+func pipelineFingerprint(def PipelineDef) string {
+	parts := make([]string, 0, len(def.Stages)*2)
+	for _, st := range def.Stages {
+		fields := make([]string, 0, len(st.Output))
+		for _, f := range st.Output {
+			fields = append(fields, f.Name+":"+string(f.Type))
+		}
+		parts = append(parts, strings.Join([]string{
+			st.Name, string(st.Kind), st.Prompt, st.Model, strings.Join(fields, ","),
+		}, "|"))
+	}
+	return EvalTargetFingerprint(parts...)
 }

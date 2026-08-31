@@ -315,3 +315,86 @@ func TestFailingCaseBodyLeadsWithTheReason(t *testing.T) {
 		t.Errorf("the reason should come first:\n%s", body)
 	}
 }
+
+// Structured assertions are the reason grading a pipeline differs from grading
+// an agent: "wins" appearing somewhere in three paragraphs is not the same
+// claim as winner == "for", and only one of the two is a test.
+func TestFieldAssertionsGradeTheDeclaredShape(t *testing.T) {
+	c := EvalCase{MustFields: map[string]string{"winner": "for", "confidence": "high"}}
+	fields := map[string]any{"winner": "FOR", "confidence": "high", "verdict": "prose"}
+
+	reasons, pass := gradeEvalFields(c, fields)
+	if !pass {
+		t.Errorf("case should pass; enum values are compared case-insensitively: %v", reasons)
+	}
+
+	fields["winner"] = "against"
+	reasons, pass = gradeEvalFields(c, fields)
+	if pass {
+		t.Error("a changed verdict must fail")
+	}
+	if !strings.Contains(strings.Join(reasons, " "), `want "for"`) {
+		t.Errorf("the reason should say what was expected: %v", reasons)
+	}
+}
+
+// A field the pipeline no longer declares is a FAILURE, not a skip. A renamed
+// field silently passing would read as continued success, which is exactly the
+// regression evals exist to catch.
+func TestAMissingFieldFailsRatherThanSkipping(t *testing.T) {
+	reasons, pass := gradeEvalFields(
+		EvalCase{MustFields: map[string]string{"winner": "for"}},
+		map[string]any{"victor": "for"}, // renamed out from under the case
+	)
+	if pass {
+		t.Fatal("an assertion on a field that no longer exists must fail")
+	}
+	joined := strings.Join(reasons, " ")
+	if !strings.Contains(joined, "victor") {
+		t.Errorf("the reason should name what the stage DOES declare, so the fix is one read away: %v", reasons)
+	}
+}
+
+// Two runs of an identical failure must read the same way; map order would
+// shuffle the reasons between them.
+func TestFieldReasonsAreStable(t *testing.T) {
+	c := EvalCase{MustFields: map[string]string{"zebra": "1", "alpha": "2", "middle": "3"}}
+	first, _ := gradeEvalFields(c, map[string]any{})
+	for i := 0; i < 20; i++ {
+		again, _ := gradeEvalFields(c, map[string]any{})
+		if strings.Join(again, "|") != strings.Join(first, "|") {
+			t.Fatal("reason order is not stable across runs")
+		}
+	}
+}
+
+// The fingerprint tracks BEHAVIOUR: a renamed pipeline is the same pipeline,
+// an edited prompt is not.
+func TestPipelineFingerprintTracksBehaviourNotNames(t *testing.T) {
+	base := PipelineDef{Name: "Debate", Stages: []PipelineStage{
+		{Name: "judge", Kind: StageWorker, Prompt: "decide", Model: "lead",
+			Output: []PipelineField{{Name: "winner", Type: FieldString}}},
+	}}
+	renamed := base
+	renamed.Name = "Debate v2"
+	renamed.Description = "now with feeling"
+	if pipelineFingerprint(base) != pipelineFingerprint(renamed) {
+		t.Error("a rename must not read as a behaviour change, or every comparison is against a fresh hash")
+	}
+
+	edited := PipelineDef{Stages: []PipelineStage{
+		{Name: "judge", Kind: StageWorker, Prompt: "decide, carefully", Model: "lead",
+			Output: []PipelineField{{Name: "winner", Type: FieldString}}},
+	}}
+	if pipelineFingerprint(base) == pipelineFingerprint(edited) {
+		t.Error("an edited prompt must change the fingerprint")
+	}
+
+	retiered := PipelineDef{Stages: []PipelineStage{
+		{Name: "judge", Kind: StageWorker, Prompt: "decide", Model: "worker",
+			Output: []PipelineField{{Name: "winner", Type: FieldString}}},
+	}}
+	if pipelineFingerprint(base) == pipelineFingerprint(retiered) {
+		t.Error("a tier change must change the fingerprint")
+	}
+}

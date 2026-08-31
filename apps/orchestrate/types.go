@@ -1457,7 +1457,19 @@ type EvalCase struct {
 	// with no entry returns a generic stub notice. Ignored unless stub mode is on.
 	StubResults map[string]string `json:"stub_results,omitempty"`
 	JudgePrompt string            `json:"judge_prompt,omitempty"` // optional. When set, an LLM judge grades the reply against this criterion (yes/no)
-	Notes       string            `json:"notes,omitempty"`        // admin notes, not used by the grader
+	// MustFields asserts on a pipeline's DECLARED output fields rather than on
+	// its prose: {"winner": "for"}. Compared case-insensitively against the
+	// FINAL stage's declared fields.
+	//
+	// Sharper than substring-matching a verdict paragraph, which is the whole
+	// reason to grade a pipeline differently from an agent — "wins" appearing
+	// somewhere in three paragraphs is not the same claim as winner == "for".
+	//
+	// Final stage only, and named plainly rather than as {stage:NAME.field},
+	// because that is what the interpreter hands back. A syntax implying any
+	// stage is reachable would be a promise the runner cannot keep.
+	MustFields map[string]string `json:"must_fields,omitempty"`
+	Notes      string            `json:"notes,omitempty"` // admin notes, not used by the grader
 }
 
 // EvalResult is one row from a harness run.
