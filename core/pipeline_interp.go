@@ -225,6 +225,7 @@ func (T *AppCore) executePipelineHooks(ctx context.Context, def PipelineDef, inp
 		vars:        vars,
 		outputs:     make(map[string]stageOutput, len(def.Stages)),
 		blockSeq:    new(atomic.Int64),
+		defID:       def.ID,
 		sessionMeta: def.SessionMeta,
 	}
 	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
@@ -261,6 +262,10 @@ type pipelineRun struct {
 	// block is the artifact somebody wants. Branch PROGRESS still emits, as
 	// status.
 	quiet bool
+	// defID names the definition being run, so a stage can find the operator
+	// override for its tier. Empty for a run with no stored definition behind
+	// it, which resolves to the authored tier — the same answer as no override.
+	defID string
 	// sessionMeta is the def's SessionMeta list, carried so a finished stage
 	// can promote the fields it names without the runner holding the whole
 	// definition. Shared into branches like the sink is: validation keeps
@@ -295,6 +300,7 @@ func (r *pipelineRun) forBranch() *pipelineRun {
 		outputs:     outs,
 		blockSeq:    r.blockSeq,
 		quiet:       true,
+		defID:       r.defID,
 		sessionMeta: r.sessionMeta,
 	}
 }
@@ -671,7 +677,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			think := StageThinks(stage)
 			// JSON mode only helps the tool-less path — see runWorkerStage.
 			jsonMode := len(stage.ModelOutput()) > 0
-			tier := stageTier(stage)
+			tier := r.stageTierFor(stage)
 			if tier == LEAD {
 				kindLabel += " model=lead"
 			}
@@ -1240,6 +1246,42 @@ func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, pre
 // stageTier resolves a stage's declared model tier. Empty or "worker"
 // is WORKER; only an explicit "lead" escalates. Validate already
 // rejected anything else and every kind this can't apply to.
+// PipelineStageRouteKey names the operator dial for one stage's tier.
+//
+// Derived from the definition rather than registered, because these keys are
+// born when somebody saves a pipeline and the route registry lives in memory:
+// a key that has to be registered to resolve is a key that resolves wrongly
+// for the first stretch after every restart. Nothing registers this; the admin
+// page enumerates the stored definition to draw the dials, and only the
+// OVERRIDE is stored.
+func PipelineStageRouteKey(pipelineID, stageName string) string {
+	if pipelineID == "" || stageName == "" {
+		return ""
+	}
+	return "pipeline." + pipelineID + "." + stageName
+}
+
+// stageTierFor resolves a stage's tier: an operator's override when one is
+// stored, otherwise the tier the pipeline's author declared.
+//
+// Read through RouteOverride and NOT RouteToLead. An unset route value means
+// "lead" to that function, because a compiled call site has no other default
+// to fall back to. Here there is one — stage.Model — and treating unset as
+// lead would promote every stage of every pipeline to the precision tier the
+// moment nothing had been stored for it, which is most stages, most of the
+// time. Nothing would fail: the runs would cost more and read slightly better.
+func (r *pipelineRun) stageTierFor(stage PipelineStage) LLMTier {
+	if r != nil {
+		if v := RouteOverride(PipelineStageRouteKey(r.defID, stage.Name)); v != "" {
+			if RouteValueIsLead(v) {
+				return LEAD
+			}
+			return WORKER
+		}
+	}
+	return stageTier(stage)
+}
+
 func stageTier(stage PipelineStage) LLMTier {
 	if strings.EqualFold(strings.TrimSpace(stage.Model), "lead") {
 		return LEAD
@@ -1314,7 +1356,7 @@ func (r *pipelineRun) runFanoutStage(ctx context.Context, stage PipelineStage, p
 	}
 
 	think := StageThinks(stage)
-	tier := stageTier(stage)
+	tier := r.stageTierFor(stage)
 	agent := strings.TrimSpace(stage.Agent)
 
 	results := make([]string, len(items))
@@ -1450,7 +1492,7 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 	}
 
 	think := StageThinks(stage)
-	tier := stageTier(stage)
+	tier := r.stageTierFor(stage)
 
 	var transcript []panelSaid
 	var b strings.Builder

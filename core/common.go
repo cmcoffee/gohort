@@ -920,6 +920,26 @@ var LookupRouteThinkBudgetFunc func(key string) *int
 
 // routeEffectiveVal returns the effective routing value for key,
 // falling back to the stage's Default when the DB has no stored value.
+// RouteOverride returns the route value an operator has STORED for a key, and
+// nothing else: no registry default, no fallback.
+//
+// It exists because routeEffectiveVal answers a different question than some
+// callers are asking. Its fallback chain ends at the empty string, and
+// RouteValueIsLead treats the empty string as lead — correct for a compiled
+// call site, which is registered at startup and whose author decided lead was
+// the right default. It is wrong for a call site that already HAS a default of
+// its own and only wants to know whether somebody overrode it. Asking
+// RouteToLead about a key nobody registered gets "lead" for an answer, which
+// is how an unregistered key silently becomes the expensive one.
+//
+// Empty means nobody has set it. That is the whole point.
+func RouteOverride(key string) string {
+	if key == "" || LookupRouteFunc == nil {
+		return ""
+	}
+	return strings.TrimSpace(LookupRouteFunc(key))
+}
+
 func routeEffectiveVal(key string) string {
 	val := ""
 	if LookupRouteFunc != nil {
