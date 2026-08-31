@@ -520,3 +520,61 @@ func TestLiftingAnAgentWithNoCasesSaysSo(t *testing.T) {
 		t.Errorf("the error should say what is missing: %v", err)
 	}
 }
+
+// The trend column is the reason the list exists, and it compares across a
+// VERSION boundary rather than against the previous run. Two runs of an
+// unchanged target differ by noise, and reporting that as movement is how a
+// flaky case gets read as a regression.
+func TestTrendComparesAcrossVersionsNotRuns(t *testing.T) {
+	v2, v1 := "hash-v2", "hash-v1"
+	// Newest first, as ListEvalRuns returns them: two runs of v2, then v1.
+	runs := []EvalRun{
+		{Passed: 29, Total: 30, TargetHash: v2},
+		{Passed: 26, Total: 30, TargetHash: v2}, // same version — noise, not movement
+		{Passed: 24, Total: 30, TargetHash: v1},
+	}
+	got := evalTrend(runs)
+	if !strings.Contains(got, "+5") || !strings.Contains(got, "24/30") {
+		t.Errorf("trend = %q, want the delta against the last DIFFERENT version (24/30)", got)
+	}
+
+	// A regression reads as one.
+	runs[0].Passed = 20
+	if got := evalTrend(runs); !strings.Contains(got, "-4") {
+		t.Errorf("trend = %q, want a negative delta", got)
+	}
+
+	// Nothing to compare against yet says so rather than implying stability.
+	if got := evalTrend([]EvalRun{{Passed: 24, Total: 30, TargetHash: v1}}); !strings.Contains(got, "first") {
+		t.Errorf("a single run should say it is the first version graded, got %q", got)
+	}
+
+	// Every run on one version: still nothing to compare across.
+	same := []EvalRun{{Passed: 29, Total: 30, TargetHash: v2}, {Passed: 26, Total: 30, TargetHash: v2}}
+	if got := evalTrend(same); !strings.Contains(got, "first") {
+		t.Errorf("runs of one version have no cross-version comparison, got %q", got)
+	}
+}
+
+// The list is what somebody opens to ask "did anything get worse".
+func TestSuiteRowsCarryTheScoreAndTheTrend(t *testing.T) {
+	db := evalDB(t)
+	suite, _ := SaveEvalSuite(db, goodSuite())
+	rows := evalSuiteRows(db)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows", len(rows))
+	}
+	if rows[0]["last"] != "never run" {
+		t.Errorf("an ungraded suite should say so, not show a zero: %v", rows[0]["last"])
+	}
+
+	SaveEvalRun(db, EvalRun{SuiteID: suite.ID, Passed: 24, Total: 30, TargetHash: "v1", Started: suite.Created})
+	SaveEvalRun(db, EvalRun{SuiteID: suite.ID, Passed: 29, Total: 30, TargetHash: "v2", Started: suite.Created.Add(1)})
+	rows = evalSuiteRows(db)
+	if rows[0]["last"] != "29/30" {
+		t.Errorf("last = %v, want the newest run", rows[0]["last"])
+	}
+	if !strings.Contains(rows[0]["trend"].(string), "+5") {
+		t.Errorf("trend = %v, want the movement since the previous version", rows[0]["trend"])
+	}
+}

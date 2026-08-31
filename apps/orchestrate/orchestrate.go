@@ -540,6 +540,10 @@ func (T *OrchestrateApp) Routes() {
 	// Eval suites on the shared run surface: stream | cancel | reconnect |
 	// sessions, the same protocol a pipeline run speaks.
 	T.HandleFunc("/api/evals/", g(T.handleEvalRuns))
+	T.HandleFunc("/api/eval-suites", g(T.handleEvalSuitesAPI))
+	T.HandleFunc("/api/eval-suites/", g(T.handleEvalSuiteOne))
+	T.HandleFunc("/evals", g(T.handleEvalsPage))
+	T.HandleFunc("/eval", g(T.handleEvalSuitePage))
 	// Phase machines (machines_http.go, docs/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
 	// session, so there is nothing to invoke from here.
