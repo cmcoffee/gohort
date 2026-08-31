@@ -214,6 +214,23 @@ func (d dbCFG) search() WebSearchConfig {
 	global.db.Get(SearchTable, "provider", &c.Provider)
 	global.db.Get(SearchTable, "api_key", &c.APIKey)
 	global.db.Get(SearchTable, "endpoint", &c.Endpoint)
+	// Source, without which a peer-backed search cannot work at all.
+	//
+	// It is the pointer at the peer, and BOTH mechanisms that keep such a
+	// search alive key off it: resolveSearchPeer overlays the peer's current
+	// endpoint and credential onto the stored config, and searchSearXNG picks
+	// the peer TRANSPORT — the one that authenticates with a freshly resolved
+	// token and replays a refused request. Load the config without Source and
+	// neither engages: the request goes out on whatever key was snapshotted
+	// when the peer was first selected, and the far side answers
+	//
+	//	401 {"error":"unrecognized or disabled peer key"}
+	//
+	// The admin page wrote this key and read it back, so testing the peer there
+	// resolved correctly and passed, while every search the agents actually ran
+	// failed. Two surfaces disagreeing about which fields a config has is the
+	// worst version of this bug: each looks right on its own.
+	global.db.Get(SearchTable, "source", &c.Source)
 	return c
 }
 
@@ -405,10 +422,15 @@ func setup_fuzz() {
 	setup.Options("LLM Settings", llmSettings, false)
 
 	// --- External Sources ---
-	var searchProvider, searchAPIKey, searchEndpoint string
+	var searchProvider, searchAPIKey, searchEndpoint, searchSource string
 	global.db.Get(SearchTable, "provider", &searchProvider)
 	global.db.Get(SearchTable, "api_key", &searchAPIKey)
 	global.db.Get(SearchTable, "endpoint", &searchEndpoint)
+	// Read and written back untouched: this menu offers no way to pick a peer,
+	// and saving without it would silently unpair a search configured on the
+	// web admin page. A CLI visit that answers nothing about peers should
+	// change nothing about them.
+	global.db.Get(SearchTable, "source", &searchSource)
 
 	search := NewOptions(" [Web Search] ", "(selection or 'q' to return to previous)", 'q')
 	search.StringSelectVar(&searchProvider, "Search Provider", searchProvider, "duckduckgo", "brave", "google", "serper", "searxng")
@@ -688,6 +710,7 @@ func setup_fuzz() {
 	// Save search configuration.
 	global.db.Set(SearchTable, "provider", searchProvider)
 	global.db.Set(SearchTable, "endpoint", searchEndpoint)
+	global.db.Set(SearchTable, "source", searchSource)
 	if searchAPIKey != "" {
 		global.db.CryptSet(SearchTable, "api_key", searchAPIKey)
 	}

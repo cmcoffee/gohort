@@ -8,7 +8,6 @@ package core
 // browse — the guard that stops a peer key becoming a LAN proxy.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -386,43 +385,5 @@ func TestAPeerThatStoppedOfferingSearchKeepsItsKey(t *testing.T) {
 
 	if got := LoadWebSearchConfig(); got.APIKey != "first-key" {
 		t.Errorf("a peer that dropped the capability still had its key applied: %q", got.APIKey)
-	}
-}
-
-// The peer-key 401. A config seam resolves its credential WITHOUT blocking,
-// because the same call answers "is search enabled" during a page render — and
-// with no usable token that hands back the static pairing key, which the far
-// side stopped accepting when exchange became mandatory. The request then earns
-//
-//	401 {"error":"unrecognized or disabled peer key"}
-//
-// milliseconds before the renewal it triggered lands, which is why the same
-// peer tests fine from the admin UI a moment later.
-//
-// RefreshPeerCredential is what the SEND site calls instead. These pin the two
-// paths that must not disturb a config, because getting them wrong turns a
-// working non-peer search into a broken one.
-func TestRefreshPeerCredentialLeavesNonPeerConfigsAlone(t *testing.T) {
-	const key = "sk-a-real-serper-key"
-	for name, source := range map[string]string{
-		"no source at all": "",
-		"a plain provider": "serper",
-		"something else":   "searxng",
-	} {
-		if got := RefreshPeerCredential(context.Background(), source, key); got != key {
-			t.Errorf("%s: credential was rewritten to %q — only a peer-sourced config may be touched", name, got)
-		}
-	}
-}
-
-// A peer that is no longer registered keeps its last known credential. Blanking
-// it would swap a stale credential for an empty one, which fails the same way
-// with less to go on — and resolveSearchPeer has already warned about the
-// missing peer by the time this runs.
-func TestRefreshPeerCredentialKeepsWhatItHasForAMissingPeer(t *testing.T) {
-	const last = "last-known-token"
-	got := RefreshPeerCredential(context.Background(), peerProviderPrefix+"no-such-peer", last)
-	if got != last {
-		t.Errorf("credential = %q, want the last known value kept", got)
 	}
 }
