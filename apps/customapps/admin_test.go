@@ -1,6 +1,7 @@
 package customapps
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cmcoffee/gohort/core/appadmin"
@@ -75,5 +76,28 @@ func TestTierDialsOnlyExistForAnAppWithAPipeline(t *testing.T) {
 		if f, isForm := c.(ui.FormPanel); isForm && len(f.Fields) == 0 {
 			t.Error("an unresolvable pipeline rendered a form with no fields")
 		}
+	}
+}
+
+// An app with nothing sandboxed has nothing to review, and the control has to
+// be absent rather than an empty panel promising a look at nothing.
+func TestReviewControlOnlyForAppsThatRunCode(t *testing.T) {
+	RegisterCustomAppReviewControl("/custom/_admin")
+	for _, c := range appadmin.For(appadmin.App{Slug: "plain", Owner: "u"}) {
+		if d, isDisplay := c.(ui.DisplayPanel); isDisplay && strings.Contains(d.Source, "/review") {
+			t.Error("an app with no scripts rendered the review panel")
+		}
+	}
+}
+
+// "none declared" is a statement about the DECLARATION, not about the reach:
+// fetch is granted by default and the owner's credentials are auto-granted to
+// app scripts, so an operator reading an empty list must not read it as inert.
+func TestEmptyCapabilityListSaysWhatItActuallyMeans(t *testing.T) {
+	if got := capsOrNone(nil); got != "none declared" {
+		t.Errorf("capsOrNone(nil) = %q", got)
+	}
+	if got := capsOrNone([]string{"fetch", "log"}); got != "fetch, log" {
+		t.Errorf("capsOrNone = %q", got)
 	}
 }

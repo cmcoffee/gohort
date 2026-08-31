@@ -194,6 +194,7 @@ func (T *CustomApps) registerAdminControls() {
 	// one form would be the worse trade. The control's OWNER is still free to
 	// take it over later without this package changing.
 	RegisterCustomAppTierControl(base)
+	RegisterCustomAppReviewControl(base)
 }
 
 // RegisterCustomAppTierControl adds the per-stage tier dials.
@@ -237,6 +238,39 @@ func RegisterCustomAppTierControl(base string) {
 				PostURL:     base + "/tiers" + q,
 				SubmitLabel: "Save tiers",
 				Fields:      fields,
+			}
+		},
+	})
+}
+
+// RegisterCustomAppReviewControl adds the script-review surface.
+//
+// The bundle import gate already lands an imported app disabled precisely so
+// somebody looks before anything runs, and until now there was nowhere to look
+// FROM. This is that place.
+func RegisterCustomAppReviewControl(base string) {
+	appadmin.Register(appadmin.Control{
+		Key: "customapps.review", Label: "Scripts", Group: "Review", Order: 10,
+		Render: func(app appadmin.App) ui.Component {
+			spec, ok := loadSpec(app.Owner, app.Slug)
+			if !ok || (len(spec.DataSources) == 0 && len(spec.Actions) == 0) {
+				return nil // nothing sandboxed to review
+			}
+			q := fmt.Sprintf("?owner=%s&slug=%s", url.QueryEscape(app.Owner), url.QueryEscape(app.Slug))
+			return ui.DisplayPanel{
+				Source: base + "/review" + q,
+				Pairs: []ui.DisplayPair{
+					{Label: "Data sources", Field: "sources"},
+					{Label: "Action scripts", Field: "actions"},
+					{Label: "Capabilities declared", Field: "capabilities"},
+					{Label: "Runs as", Field: "runs_as"},
+				},
+				Actions: []ui.ToolbarAction{{
+					Label:  "Show scripts",
+					Method: "open",
+					Title:  "Read the sandboxed code this app runs. Opening it is recorded.",
+					URL:    base + "/scripts" + q,
+				}},
 			}
 		},
 	})
@@ -364,7 +398,69 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		}
 		Log("[customapps] admin %q set stage tiers on %q/%q", user, owner, slug)
 		writeJSON(w, map[string]any{"ok": true, "message": "Saved."})
+	case "review":
+		caps := map[string]bool{}
+		for _, d := range spec.DataSources {
+			for _, c := range d.Capabilities {
+				caps[c] = true
+			}
+		}
+		for _, a := range spec.Actions {
+			for _, c := range a.Capabilities {
+				caps[c] = true
+			}
+		}
+		declared := make([]string, 0, len(caps))
+		for c := range caps {
+			declared = append(declared, c)
+		}
+		sort.Strings(declared)
+		shown := strings.Join(declared, ", ")
+		if shown == "" {
+			// Not the same as "none declared and therefore harmless": fetch is
+			// granted by default and the owner's credentials are auto-granted
+			// to app scripts, so an empty list is a statement about the
+			// DECLARATION, not about the reach.
+			shown = "none declared (fetch and the owner's credentials are granted by default)"
+		}
+		writeJSON(w, map[string]any{
+			"sources":      len(spec.DataSources),
+			"actions":      len(spec.Actions),
+			"capabilities": shown,
+			"runs_as":      owner,
+		})
+	case "scripts":
+		// Logged, always. Reading somebody else's code is a legitimate operator
+		// act and an unrecorded one is indistinguishable from a quiet look.
+		Log("[customapps] admin %q read the scripts of %q/%q", user, owner, slug)
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s — %s\nowner: %s\nscripts run in the owner's sandbox, as the owner\n",
+			spec.Name, spec.Slug, owner)
+		for _, d := range spec.DataSources {
+			fmt.Fprintf(&b, "\n=== data source: %s (%s) ===\ncapabilities: %s\n\n%s\n",
+				d.Name, firstNonEmptyText(d.Language, "python"), capsOrNone(d.Capabilities), d.Script)
+		}
+		for _, a := range spec.Actions {
+			fmt.Fprintf(&b, "\n=== action: %s (%s) ===\ncapabilities: %s\n\n%s\n",
+				a.Name, firstNonEmptyText(a.Language, "python"), capsOrNone(a.Capabilities), a.Script)
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(b.String()))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func capsOrNone(caps []string) string {
+	if len(caps) == 0 {
+		return "none declared"
+	}
+	return strings.Join(caps, ", ")
+}
+
+func firstNonEmptyText(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }
