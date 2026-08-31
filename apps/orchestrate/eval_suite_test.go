@@ -224,3 +224,94 @@ func TestEachCaseRunsNTimesAndReportsTheRate(t *testing.T) {
 		t.Error("Passed is strict — a case that failed half its runs did not pass")
 	}
 }
+
+// The streaming half: one block per case as it lands, a meta event carrying the
+// score, and an EvalRun written with the per-case detail the transcript does
+// not keep.
+func TestStreamingASuiteEmitsPerCaseAndRecordsTheRun(t *testing.T) {
+	db := evalDB(t)
+	suite := goodSuite()
+	suite.TargetKind = EvalTargetAgent
+	suite.TargetID = "a1"
+	suite, _ = SaveEvalSuite(db, suite)
+
+	app := &OrchestrateApp{}
+	var events []PipelineEvent
+	// Stub the target resolution by grading with a canned executor: this test
+	// is about the streaming and recording, not about the agent loop.
+	target := evalTarget{Fingerprint: "abc123", Exec: func(context.Context, EvalCase) EvalResult {
+		return EvalResult{Passed: true, Output: "fine"}
+	}}
+	out := app.streamEvalWith(context.Background(), db, suite, "trying a shorter prompt", target,
+		func(ev PipelineEvent) { events = append(events, ev) })
+
+	var blocks, metas int
+	for _, ev := range events {
+		switch ev.Kind {
+		case "block":
+			blocks++
+			if ev.Type != "eval_case" {
+				t.Errorf("block type = %q, want eval_case so a renderer can style it", ev.Type)
+			}
+		case "meta":
+			metas++
+			if ev.Meta["Score"] != "2/2" {
+				t.Errorf("meta Score = %q, want 2/2", ev.Meta["Score"])
+			}
+			if ev.Meta["Version"] != "abc123" {
+				t.Errorf("meta Version = %q — the row should carry which version was graded", ev.Meta["Version"])
+			}
+		}
+	}
+	if blocks != 2 {
+		t.Errorf("emitted %d case blocks, want one per case", blocks)
+	}
+	if metas != 1 {
+		t.Errorf("emitted %d meta events, want exactly 1", metas)
+	}
+	if !strings.Contains(out, "2/2") {
+		t.Errorf("the run's result text should carry the rate, got %q", out)
+	}
+
+	runs := ListEvalRuns(db, suite.ID)
+	if len(runs) != 1 {
+		t.Fatalf("recorded %d runs, want 1", len(runs))
+	}
+	rec := runs[0]
+	if rec.Passed != 2 || rec.Total != 2 || len(rec.Results) != 2 {
+		t.Errorf("record = %d/%d with %d results", rec.Passed, rec.Total, len(rec.Results))
+	}
+	if rec.TargetHash != "abc123" || rec.Note != "trying a shorter prompt" {
+		t.Errorf("the record should carry the fingerprint and the note: %+v", rec)
+	}
+	if rec.Finished.IsZero() {
+		t.Error("a completed run should be marked finished")
+	}
+}
+
+// A pill is read in a list, so the word is coarse and the number carries the
+// detail.
+func TestOutcomeWordIsCoarse(t *testing.T) {
+	for _, tc := range []struct {
+		passed, total int
+		want          string
+	}{
+		{2, 2, "all passed"}, {0, 2, "all failed"}, {1, 2, "mixed"}, {0, 0, "empty"},
+	} {
+		if got := evalOutcome(EvalRun{Passed: tc.passed, Total: tc.total}); got != tc.want {
+			t.Errorf("%d/%d = %q, want %q", tc.passed, tc.total, got, tc.want)
+		}
+	}
+}
+
+// A failing case is opened for its REASON, so the reason comes before the
+// output rather than after it.
+func TestFailingCaseBodyLeadsWithTheReason(t *testing.T) {
+	body := evalCaseBody(EvalResult{
+		Name: "cites", Reasons: []string{"missing \"10080\""},
+		ToolsCalled: []string{"web_search"}, Output: "a long reply nobody needs first",
+	})
+	if strings.Index(body, "missing") > strings.Index(body, "a long reply") {
+		t.Errorf("the reason should come first:\n%s", body)
+	}
+}

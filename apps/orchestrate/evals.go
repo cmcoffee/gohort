@@ -77,6 +77,16 @@ type evalExecutor func(ctx context.Context, c EvalCase) EvalResult
 // model is an anecdote. Same prefix every run, so the host prompt cache stays
 // warm across them.
 func runEvalCases(ctx context.Context, cases []EvalCase, runs int, exec evalExecutor) []EvalResult {
+	return runEvalCasesWith(ctx, cases, runs, exec, nil)
+}
+
+// runEvalCasesWith is runEvalCases with a per-case hook, so a caller streaming
+// a suite can report each row as it lands rather than everything at the end.
+//
+// A thirty-case suite is minutes of work; handing back one blob when it
+// finishes means a reader watching it has nothing to watch, and no way to tell
+// a slow suite from a stuck one.
+func runEvalCasesWith(ctx context.Context, cases []EvalCase, runs int, exec evalExecutor, onCase func(EvalResult)) []EvalResult {
 	if runs < 1 {
 		runs = 1
 	}
@@ -94,7 +104,11 @@ func runEvalCases(ctx context.Context, cases []EvalCase, runs int, exec evalExec
 			}
 			perRun = append(perRun, exec(ctx, c))
 		}
-		results = append(results, aggregateEvalRuns(c.Name, perRun))
+		row := aggregateEvalRuns(c.Name, perRun)
+		results = append(results, row)
+		if onCase != nil {
+			onCase(row)
+		}
 	}
 	return results
 }
