@@ -1573,9 +1573,13 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     background-clip: text;
   }
   .subtitle { color: #8b949e; margin-bottom: 3rem; font-size: 1rem; }
+  /* Column width for the PHONE layout, where one centred column is the right
+     answer. Desktop stops being that shape entirely — see the wide layout
+     below — so this is not a cap that grows, it is the narrow case's width. */
+  :root { --dash-w: 700px; }
   .grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.5rem; width: 100%; max-width: 700px;
+    gap: 1.5rem; width: 100%; max-width: var(--dash-w);
   }
   .card {
     display: block; text-decoration: none; color: #c9d1d9;
@@ -1596,7 +1600,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
   }
   .card.featured:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
   .card.featured .card-name { font-size: 1.9rem; margin-bottom: 0.6rem; }
-  .card.featured .card-desc { font-size: 1.02rem; }
+  /* Capped by MEASURE, not by the card: the hero spans every column, and at
+     four of them its one line of description would run the width of the
+     screen. A line that long is measurably harder to read, and the card looks
+     empty rather than generous. */
+  .card.featured .card-desc { font-size: 1.02rem; max-width: 62ch; }
   /* Wide card — spans the full grid row at the REGULAR card height (a
      "double" button). Used for a bottom utility entry like Administrator. */
   .card.wide { grid-column: 1 / -1; }
@@ -1619,7 +1627,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     gap: 1rem;
   }
   #live-panel {
-    width: 100%; max-width: 700px; margin-top: 2rem;
+    width: 100%; max-width: var(--dash-w); margin-top: 2rem;
   }
   #live-panel h3 { color: #8b949e; font-size: 0.9rem; margin-bottom: 0.75rem; cursor: pointer; }
   #live-panel h3:hover { color: #c9d1d9; }
@@ -1661,6 +1669,53 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
   }
   .auth-link:hover { border-color: #58a6ff; color: #f0f6fc; }
   .auth-logout { display: inline; margin: 0; padding: 0; }
+  /* DESKTOP: stop being a phone. Below this the page is one centred column,
+     which is the right answer on a handset and the wrong one on a monitor —
+     the same 700px ribbon sat in the middle of a 27-inch screen with two feet
+     of nothing either side, and widening the ribbon would only have made a
+     bigger ribbon.
+     So the shape changes rather than the size. Body becomes a two-region grid:
+     the apps take the room, and Live Sessions moves out of the stack below
+     them into a rail on the right, where the horizontal space it is given is
+     space it can use. The masthead still spans and centres, because a logo
+     that slides left to sit over one column reads as misaligned rather than as
+     laid out.
+     1100px is where the rail earns its place: it needs ~300px and the grid
+     needs two comfortable columns beside it, and below that sum the rail is
+     stealing width rather than using it. */
+  @media (min-width: 1100px) {
+    body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      column-gap: 2.5rem;
+      align-content: start;
+      /* The base rule centres items for the phone column; in a grid that
+         would centre the shorter of the two regions against the taller, so a
+         short rail would float halfway down beside a long card grid. */
+      align-items: start;
+      width: 100%;
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 72px 40px 48px;
+    }
+    /* Masthead spans both regions and stays centred over them. */
+    .ascii-logo, .subtitle { grid-column: 1 / -1; justify-self: center; }
+    /* The grid drops its cap and fills its region — auto-fill then decides the
+       column count from the space it actually has, which is the whole point of
+       auto-fill and was never reachable behind a fixed max-width. */
+    .grid { grid-column: 1; grid-row: 3; max-width: none; }
+    #live-panel {
+      grid-column: 2; grid-row: 3;
+      max-width: none; margin-top: 0;
+      position: sticky; top: 72px;
+    }
+  }
+  /* Past a point the cards stop growing and the page gains margin instead: a
+     tile wide enough to hold a paragraph it will never contain is not using
+     the space, it is padding it. */
+  @media (min-width: 1900px) {
+    body { max-width: 1800px; }
+  }
   @media (max-width: 640px) {
     body { padding: 60px 12px 20px; }
     .auth-bar { top: 8px; right: 8px; gap: 0.4rem; }
