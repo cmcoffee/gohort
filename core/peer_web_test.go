@@ -422,7 +422,7 @@ func TestARefusedStaticKeyExplainsItselfOnce(t *testing.T) {
 	}
 	// It has to name the FIX. A line saying only that something was refused
 	// leaves the operator exactly where they were.
-	for _, want := range []string{"Admin > Peers", "pairing key", "den"} {
+	for _, want := range []string{"Re-check", "Admin > Peers", "Update key", "den"} {
 		if !strings.Contains(logged[0], want) {
 			t.Errorf("the message should mention %q: %s", want, logged[0])
 		}

@@ -673,8 +673,12 @@ func renewRefusedPeerCredential(req *http.Request, p RemotePeer) (string, bool) 
 		warnPeerResolveOnce("tokens:"+p.Name, fmt.Sprintf(
 			"peer %q refused our credential, and this instance is still sending it the static pairing key: "+
 				"its local record does not say that peer requires credential exchange. "+
-				"Refresh it under Admin > Peers to pick that up. Until then every peer-backed capability "+
-				"(embeddings, search, transcription, images) answers 401 \"unrecognized or disabled peer key\".",
+				"Press Re-check on it under Admin > Peers. If the key is still good that adopts the token "+
+				"flow and everything recovers on its own; if it fails, the Status column then carries that "+
+				"peer's OWN words, which are the only thing that can tell a spent pairing code from a "+
+				"disabled one. Neither can be repaired from this side — a code is single use — so that case "+
+				"ends at re-issuing it there and pasting the new one with Update key. Until then every "+
+				"peer-backed capability (embeddings, search, transcription, images) answers 401.",
 			p.Name))
 		return "", false
 	}
