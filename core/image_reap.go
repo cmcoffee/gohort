@@ -406,8 +406,12 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: TunableImageReapDeliveredDays, Category: "Images", Label: "Chat attachment retention",
 		Help: "How long a delivered chat attachment is stored before age alone removes it. Past this, " +
-			"an old message renders without its picture, so keep it comfortably longer than anyone " +
-			"scrolls back. 0 disables it, leaving only the 500-per-user cap.",
+			"an old message renders without its picture, so raise it if your users reopen threads " +
+			"older than this. Attachments are typically most of the store's bytes, so this is the " +
+			"knob that decides what the sweep actually reclaims — and the one to lower deliberately " +
+			"rather than by default, since a store younger than the window you pick loses its whole " +
+			"history in one sweep once it ages past it. 0 disables it, leaving only the 500-per-user " +
+			"cap.",
 		Kind: KindDays, Default: 90, Min: 0, Max: 3650})
 	RegisterTunable(TunableSpec{
 		Key: TunableImageReapOrphanHours, Category: "Images", Label: "Orphaned render retention",

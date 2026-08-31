@@ -237,8 +237,16 @@ func TestDefaultWindowsAreLiveAndOrdered(t *testing.T) {
 	if !w.Any() {
 		t.Fatal("the shipped defaults must leave the sweep able to reclaim something")
 	}
-	if w.Orphan >= w.Ring || w.Ring >= w.Delivered {
-		t.Errorf("windows = %+v; a handoff file should expire before a ring entry, and a ring entry before an attachment someone may scroll back to", w)
+	// A handoff file is transient by construction, so it must expire strictly
+	// sooner than anything a conversation can still refer to. Ring against
+	// attachments is a policy call rather than a law -- an attachment is
+	// somebody's photo and a ring entry is an agent's working set, so an
+	// attachment may outlive one, but it should never expire FIRST.
+	if w.Orphan >= w.Ring {
+		t.Errorf("windows = %+v; a handoff file must expire before a ring entry", w)
+	}
+	if w.Delivered < w.Ring {
+		t.Errorf("windows = %+v; an attachment someone may scroll back to must not expire before the agent's own working set", w)
 	}
 	if reapWindowLabel(0) != "disabled" {
 		t.Error("a zero window must read as disabled rather than as 0s")
