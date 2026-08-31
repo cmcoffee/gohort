@@ -85,6 +85,11 @@ func (T *CustomApps) Routes() {
 	// middleware. Prefix registration (trailing slash) covers every token + its
 	// sub-paths; handlePublic is then the sole access check for that subtree.
 	RegisterPublicPath(T.WebPath() + "/pub/")
+
+	// The operator's tab: one section per custom app, contributed as a SOURCE
+	// because these rows are records people write while the server runs.
+	T.registerAdminControls()
+	RegisterAdminSectionSource(T.adminSections)
 }
 
 // route parses "/<slug>/<rest>" off the (prefix-stripped) sub-mux and
@@ -129,6 +134,12 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case "_app/public":
 		// POST ?slug=&on=… mints / revokes the anonymous capability URL.
 		T.handlePublishApp(w, r, user)
+		return
+	case "_admin/revoke-link", "_admin/reach":
+		// Operator controls on somebody else's app. Admin-gated inside the
+		// handler rather than by where the control was rendered: a URL is a
+		// URL, and whoever finds it is not necessarily who was shown it.
+		T.handleAdmin(w, r, user, strings.TrimPrefix(path, "_admin/"))
 		return
 	case "_app/schedule":
 		// POST ?slug=&on=… pauses / resumes an app's self-updating schedule.
@@ -1178,6 +1189,13 @@ func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
 	}
 	if owner, ok := LookupSharedOwner(T.DB, sharedAppsIndex, slug); ok && owner != reqUser {
 		if s, ok := loadSpec(owner, slug); ok && s.Shared {
+			// An operator may narrow who a shared app reaches. An unset
+			// allowlist is every signed-in user, which is what sharing has
+			// always meant — so this changes nothing until somebody sets one,
+			// and adding it locks nobody out of an app they already had.
+			if !CustomAppUserMayReach(owner, slug, reqUser) {
+				return AppSpec{}, "", false
+			}
 			return s, owner, true
 		}
 	}
