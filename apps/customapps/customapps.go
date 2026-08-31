@@ -163,6 +163,13 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// A shared app is somebody else's: the framework grant has to admit this
+	// user to it. Own apps skip this — an owner needs no grant to their own
+	// work — and the operator allowlist was already applied in resolveSpec.
+	if ownerUser != user && !T.sharedAppReachableBy(r, slug) {
+		http.NotFound(w, r)
+		return
+	}
 	// A disabled app serves NOTHING — no page, no records, and above all no
 	// data-source/action scripts. Bundle imports land disabled; the Custom
 	// Apps index's Enable button is the review gate.
@@ -592,6 +599,50 @@ func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
 	return UserDB(T.DB, uid)
 }
 
+// sharedAppReachableBy reports whether a request's user may open somebody
+// else's shared app, by the FRAMEWORK's access model.
+//
+// Two grants admit it and both have to keep working. The coarse /custom grant
+// has always meant every shared app, so a deployment that has been handing it
+// out loses nothing. A grant to /custom/<slug> admits that app alone, which is
+// what makes a custom app individually grantable from the Users picker.
+//
+// This is separate from — and ANDed with — the operator allowlist on the admin
+// tab. They answer different questions: a grant says whether this person uses
+// custom apps at all, and an allowlist narrows ONE app regardless of who has
+// been granted the coarse path. Neither can be expressed with the other, which
+// is why both exist; the tab's copy says so where an operator will read it.
+func (T *CustomApps) sharedAppReachableBy(r *http.Request, slug string) bool {
+	return UserHasAppAccess(r, T.WebPath()) || UserHasAppAccess(r, T.WebPath()+"/"+slug)
+}
+
+// ListGrantableApps surfaces every SHARED custom app as its own grantable path,
+// so an admin can hand out one app rather than the whole surface.
+//
+// Shared only: an unshared app is its owner's alone, and offering it in the
+// picker would be a grant that admits nobody to anything. Returns the full list
+// unfiltered by access, like the other sources — an admin has to see paths
+// nobody has been granted yet, which is the point of granting.
+func (T *CustomApps) ListGrantableApps() []GrantableApp {
+	var out []GrantableApp
+	for slug, ownerName := range ListSharedOwners(T.DB, sharedAppsIndex) {
+		s, ok := loadSpec(ownerName, slug)
+		if !ok || !s.Shared {
+			continue
+		}
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			name = slug
+		}
+		out = append(out, GrantableApp{
+			Path: T.WebPath() + "/" + slug,
+			Name: name + " (custom app)",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
 	out := []map[string]string{}
 	seen := map[string]bool{}
@@ -649,6 +700,11 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		}
 		s, ok := loadSpec(ownerName, slug)
 		if !ok || !s.Shared || s.Disabled {
+			continue
+		}
+		// Listing an app the reader cannot open is worse than not listing it:
+		// they click it, get a 404, and read that as the app being broken.
+		if !T.sharedAppReachableBy(r, slug) || !appadmin.UserMayReach(RootDB, ownerName, slug, owner) {
 			continue
 		}
 		out = append(out, map[string]string{

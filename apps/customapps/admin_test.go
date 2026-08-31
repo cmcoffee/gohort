@@ -4,8 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A control that has nothing to say must be ABSENT, not empty. A present
@@ -99,5 +101,35 @@ func TestEmptyCapabilityListSaysWhatItActuallyMeans(t *testing.T) {
 	}
 	if got := capsOrNone([]string{"fetch", "log"}); got != "fetch, log" {
 		t.Errorf("capsOrNone = %q", got)
+	}
+}
+
+// A shared custom app becomes its own grantable path, so an admin can hand out
+// one app from the Users picker instead of the whole surface.
+func TestSharedAppsAreIndividuallyGrantable(t *testing.T) {
+	app := &CustomApps{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+
+	shared := AppSpec{Slug: "weather", Name: "Weather", Owner: "alice", RecordKey: "id", Shared: true}
+	SaveAppSpec(shared)
+	SaveAppSpec(AppSpec{Slug: "private-notes", Name: "Notes", Owner: "alice", RecordKey: "id"})
+	SetSharedOwner(app.DB, sharedAppsIndex, "weather", "alice", true)
+
+	got := app.ListGrantableApps()
+	if len(got) != 1 {
+		t.Fatalf("grantable apps = %+v, want just the shared one", got)
+	}
+	if got[0].Path != "/custom/weather" {
+		t.Errorf("path = %q, want /custom/weather — the per-slug path the grant checks", got[0].Path)
+	}
+	// An unshared app in the picker would be a grant that admits nobody to
+	// anything: it is its owner's alone whatever anyone is granted.
+	for _, g := range got {
+		if strings.Contains(g.Path, "private-notes") {
+			t.Error("an unshared app was offered as grantable")
+		}
 	}
 }

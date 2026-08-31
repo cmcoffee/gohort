@@ -178,8 +178,10 @@ func (T *CustomApps) registerAdminControls() {
 				PostTo:        base + "/reach" + q,
 				SaveKey:       "users",
 				NameField:     "name",
-				Intro: "Leave every chip off for all signed-in users, which is what sharing means on its own. " +
-					"Turning any on narrows it to those people. The owner always has access.",
+				Intro: "Narrows this ONE app. Leave every chip off and it stays open to everyone who can " +
+					"reach custom apps at all; turning any on restricts it to those people regardless of what " +
+					"they have been granted. This is ANDed with the app grant in Users — that one says whether " +
+					"somebody uses custom apps, this one says who gets into this app. The owner always has access.",
 				EmptyText: "This deployment has no other users to grant.",
 			}
 		},
