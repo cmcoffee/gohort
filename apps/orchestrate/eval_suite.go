@@ -13,6 +13,7 @@
 package orchestrate
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -297,5 +298,89 @@ func ListEvalRuns(udb Database, suiteID string) []EvalRun {
 func DeleteEvalRun(udb Database, suiteID, runID string) {
 	if udb != nil && suiteID != "" && runID != "" {
 		udb.Unset(EvalRunsTable, EvalRunKey(suiteID, runID))
+	}
+}
+
+// --- running a suite ---------------------------------------------------------
+
+// EvalTargetMissing is what a suite reports when the thing it grades is gone.
+//
+// Its own error because it is a different situation from a failing target and
+// must not read as one: a suite whose agent was deleted has not scored 0/30, it
+// has scored nothing, and recording a zero would put a fabricated cliff in the
+// score history at the moment somebody renamed something.
+type EvalTargetMissing struct {
+	Kind EvalTargetKind
+	ID   string
+}
+
+func (e EvalTargetMissing) Error() string {
+	return fmt.Sprintf("this suite grades the %s %q, which no longer exists — point it at another one or delete the suite", e.Kind, e.ID)
+}
+
+// evalTarget is a resolved thing to grade: how to run one case against it, and
+// what fingerprints the version being graded.
+type evalTarget struct {
+	Fingerprint string
+	Exec        evalExecutor
+}
+
+// RunEvalSuite grades a suite and RECORDS the result.
+//
+// The recording is the point. Running cases was already possible; what was not
+// is asking afterwards whether the last edit helped, which needs a before.
+func (T *OrchestrateApp) RunEvalSuite(ctx context.Context, udb Database, user string, suite EvalSuite, note string) (EvalRun, error) {
+	run := EvalRun{
+		SuiteID: suite.ID,
+		Owner:   suite.Owner,
+		Started: time.Now(),
+		Total:   len(suite.Cases),
+		Note:    note,
+	}
+	target, err := T.resolveEvalTarget(udb, user, suite)
+	if err != nil {
+		run.Err = err.Error()
+		run.Finished = time.Now()
+		// Recorded even so: a suite pointing at something deleted is a fact
+		// worth keeping, and a run that vanishes leaves somebody wondering
+		// whether they clicked the button.
+		return SaveEvalRun(udb, run), err
+	}
+	run.TargetHash = target.Fingerprint
+	// Persisted before the work starts so an in-flight run is visible and a
+	// process that dies mid-suite leaves a record with no Finished rather than
+	// no trace — the same reason PipelineRun is written up front.
+	run = SaveEvalRun(udb, run)
+
+	run.Results = runEvalCases(ctx, suite.Cases, suite.RunCount(), target.Exec)
+	for _, r := range run.Results {
+		if r.Passed {
+			run.Passed++
+		}
+	}
+	run.Finished = time.Now()
+	return SaveEvalRun(udb, run), nil
+}
+
+// resolveEvalTarget turns a suite's {kind, id} into something runnable.
+func (T *OrchestrateApp) resolveEvalTarget(udb Database, user string, suite EvalSuite) (evalTarget, error) {
+	switch suite.TargetKind {
+	case EvalTargetAgent:
+		agent, ok := findAgentByNameOrID(udb, user, suite.TargetID)
+		if !ok {
+			return evalTarget{}, EvalTargetMissing{Kind: suite.TargetKind, ID: suite.TargetID}
+		}
+		return evalTarget{
+			Fingerprint: agentFingerprint(agent),
+			// allowConsequential is the inverse of stubbing: with tools
+			// scripted there is nothing consequential to allow, and with them
+			// live the suite has already said so deliberately.
+			Exec: T.agentEvalExecutor(udb, agent, suite.Stubbed(), !suite.Stubbed()),
+		}, nil
+	default:
+		// Refused rather than silently scoring nothing. The kinds arrive in
+		// their own steps; until then a suite for one is an authoring mistake
+		// with a clear message, not a run that reports 0/30.
+		return evalTarget{}, Error(fmt.Sprintf("grading a %s is not wired up yet — this suite cannot run", suite.TargetKind))
 	}
 }

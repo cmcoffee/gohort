@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -137,5 +139,88 @@ func TestDeletingASuiteTakesItsHistory(t *testing.T) {
 	}
 	if n := len(ListEvalRuns(db, other.ID)); n != 1 {
 		t.Errorf("another suite's history was deleted too: %d runs left", n)
+	}
+}
+
+// A suite whose target is gone has not scored zero — it has scored nothing.
+// Recording a 0/30 would put a fabricated cliff in the score history at the
+// moment somebody renamed something.
+func TestAMissingTargetIsNotAFailingScore(t *testing.T) {
+	db := evalDB(t)
+	suite := goodSuite()
+	suite.TargetKind = EvalTargetAgent
+	suite.TargetID = "no-such-agent"
+	suite, _ = SaveEvalSuite(db, suite)
+
+	app := &OrchestrateApp{}
+	run, err := app.RunEvalSuite(context.Background(), db, "u", suite, "")
+	if err == nil {
+		t.Fatal("expected an error for a target that does not exist")
+	}
+	var missing EvalTargetMissing
+	if !errors.As(err, &missing) {
+		t.Errorf("want a typed EvalTargetMissing so callers can tell it from a low score, got %T", err)
+	}
+	if run.Passed != 0 || len(run.Results) != 0 {
+		t.Error("a missing target must produce no results at all, not zero passes out of N")
+	}
+	if run.Err == "" {
+		t.Error("the run should record WHY it could not run")
+	}
+	// Still recorded: a run that vanishes leaves somebody wondering whether
+	// they clicked the button.
+	if len(ListEvalRuns(db, suite.ID)) != 1 {
+		t.Error("the failed run should still be in the history")
+	}
+}
+
+// A kind that has not been wired up yet is refused with a message, not scored.
+func TestAnUnwiredTargetKindIsRefused(t *testing.T) {
+	db := evalDB(t)
+	suite, _ := SaveEvalSuite(db, goodSuite()) // pipeline kind, not wired yet
+	app := &OrchestrateApp{}
+	run, err := app.RunEvalSuite(context.Background(), db, "u", suite, "")
+	if err == nil {
+		t.Fatal("expected a refusal for an unwired target kind")
+	}
+	if run.Total != len(suite.Cases) || run.Passed != 0 {
+		t.Errorf("run = %d/%d; a refusal should not read as a score", run.Passed, run.Total)
+	}
+}
+
+// The generic half: cancelling returns what was graded rather than nothing.
+func TestCancellingKeepsWhatWasAlreadyGraded(t *testing.T) {
+	cases := []EvalCase{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	ctx, stop := context.WithCancel(context.Background())
+	n := 0
+	got := runEvalCases(ctx, cases, 1, func(context.Context, EvalCase) EvalResult {
+		n++
+		if n == 2 {
+			stop() // cancelled partway through the second case
+		}
+		return EvalResult{Passed: true}
+	})
+	if len(got) != 2 {
+		t.Errorf("graded %d cases, want the 2 that completed before the stop", len(got))
+	}
+}
+
+// The rate, not a boolean: a single run of a non-deterministic model is an
+// anecdote.
+func TestEachCaseRunsNTimesAndReportsTheRate(t *testing.T) {
+	call := 0
+	got := runEvalCases(context.Background(), []EvalCase{{Name: "flaky"}}, 4,
+		func(context.Context, EvalCase) EvalResult {
+			call++
+			return EvalResult{Passed: call%2 == 0} // passes half the time
+		})
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1 aggregated row", len(got))
+	}
+	if got[0].Runs != 4 || got[0].Passes != 2 {
+		t.Errorf("rate = %d/%d, want 2/4", got[0].Passes, got[0].Runs)
+	}
+	if got[0].Passed {
+		t.Error("Passed is strict — a case that failed half its runs did not pass")
 	}
 }

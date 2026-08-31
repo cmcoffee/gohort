@@ -61,11 +61,57 @@ func stubTools(tools []AgentToolDef, scripted map[string]string) []AgentToolDef 
 	return out
 }
 
-func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int, stub, allowConsequential bool) []EvalResult {
+// evalExecutor runs ONE case against whatever is being graded and returns the
+// graded result.
+//
+// The seam between the half of evals that is generic and the half that is not.
+// Everything above it — run each case N times, aggregate into a pass rate,
+// stop when the context is cancelled — is true of grading anything. Everything
+// below it is what "send a case" means for one kind of target, and an agent is
+// only the first of four.
+type evalExecutor func(ctx context.Context, c EvalCase) EvalResult
+
+// runEvalCases is the generic half: N runs per case, aggregated to a rate.
+//
+// The rate rather than a boolean because a single run of a non-deterministic
+// model is an anecdote. Same prefix every run, so the host prompt cache stays
+// warm across them.
+func runEvalCases(ctx context.Context, cases []EvalCase, runs int, exec evalExecutor) []EvalResult {
 	if runs < 1 {
 		runs = 1
 	}
-	results := make([]EvalResult, 0, len(agent.Evals))
+	results := make([]EvalResult, 0, len(cases))
+	for _, c := range cases {
+		if ctx.Err() != nil {
+			// Cancelled: return what was graded rather than nothing. A stopped
+			// suite still measured the cases it reached.
+			return results
+		}
+		perRun := make([]EvalResult, 0, runs)
+		for i := 0; i < runs; i++ {
+			if ctx.Err() != nil {
+				break
+			}
+			perRun = append(perRun, exec(ctx, c))
+		}
+		results = append(results, aggregateEvalRuns(c.Name, perRun))
+	}
+	return results
+}
+
+// RunAgentEvals grades an agent against its own saved cases.
+//
+// Kept as-is for its existing caller (the per-agent eval endpoint); it is now
+// the agent-shaped executor plus the generic loop, which is the whole of the
+// generalization — behaviour is unchanged.
+func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int, stub, allowConsequential bool) []EvalResult {
+	return runEvalCases(ctx, agent.Evals, runs, T.agentEvalExecutor(udb, agent, stub, allowConsequential))
+}
+
+// agentEvalExecutor resolves an agent's prompt and tools ONCE and returns the
+// per-case runner. Resolved once because it is the same set for every case and
+// every repeat of it.
+func (T *OrchestrateApp) agentEvalExecutor(udb Database, agent AgentRecord, stub, allowConsequential bool) evalExecutor {
 	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
 
 	// Pre-resolve the agent's tool set once; same set for every case.
@@ -88,23 +134,25 @@ func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user s
 	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts, agentOperatingNotes(udb, agent))
 	sysPrompt = StripPromptSectionsForTools(sysPrompt, nil)
 
-	for _, c := range agent.Evals {
-		if err := ctx.Err(); err != nil {
-			return results
-		}
-		// Run each case `runs` times and report the pass RATE — a single run of a
-		// non-deterministic model is noise; the rate is the signal (and cheap on
-		// a local GPU). Same prefix every run, so the host prompt cache stays warm.
-		perRun := make([]EvalResult, 0, runs)
-		for i := 0; i < runs; i++ {
-			if err := ctx.Err(); err != nil {
-				break
-			}
-			perRun = append(perRun, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c, stub, allowConsequential))
-		}
-		results = append(results, aggregateEvalRuns(c.Name, perRun))
+	return func(ctx context.Context, c EvalCase) EvalResult {
+		return T.runOneEvalCase(ctx, agent, sysPrompt, tools, c, stub, allowConsequential)
 	}
-	return results
+}
+
+// agentFingerprint hashes what makes an agent BEHAVE as it does: its prompt,
+// its tool surface and its tier.
+//
+// Not its name, description or timestamps. A rename that read as a change
+// would put every run under a fresh hash and the score history would compare
+// nothing to nothing.
+func agentFingerprint(agent AgentRecord) string {
+	tools := append([]string{}, agent.AllowedTools...)
+	sort.Strings(tools) // reordering an allowlist is not a behaviour change
+	tier := "worker"
+	if agent.LeadModel {
+		tier = "lead"
+	}
+	return EvalTargetFingerprint(agent.OrchestratorPrompt, strings.Join(tools, ","), tier)
 }
 
 // aggregateEvalRuns collapses the N runs of one case into a single row: the pass
