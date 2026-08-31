@@ -39,6 +39,8 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleNew(w, r, udb, user)
 	case path == "settings":
 		T.handleSettings(w, r, udb, user)
+	case path == "revision":
+		T.handleRevisionPreview(w, r, udb, user)
 	case path == "revisions":
 		T.handleRevisions(w, r, udb, user)
 	case path == "restore":
@@ -298,6 +300,34 @@ func (T *Guides) handleRevisions(w http.ResponseWriter, r *http.Request, udb Dat
 		out = append(out, row{ID: revs[i].ID, At: revs[i].At, Note: revs[i].Note})
 	}
 	writeJSON(w, out)
+}
+
+// handleRevisionPreview renders one revision read-only, marking the sections it
+// has that the current guide has lost. History is opened far more often to
+// recover a wiped section than to roll the whole document back, and Restore was
+// a bad way to ask that question — it would discard everything written since
+// just to find out what a paragraph used to say. Read access, not edit: anyone
+// who can see the guide can read its past.
+func (T *Guides) handleRevisionPreview(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	cur, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	rev, ok := loadRevision(ownerUDB, id, strings.TrimSpace(r.URL.Query().Get("rev")))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	title := rev.At
+	if note := strings.TrimSpace(rev.Note); note != "" {
+		title = note + " — " + rev.At
+	}
+	writeJSON(w, map[string]string{
+		"title": title,
+		"html":  renderRevisionHTML(rev.Guide, cur, rev.At),
+	})
 }
 
 // handleRestore makes a revision's snapshot the current guide (recording the

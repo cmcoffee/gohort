@@ -383,3 +383,102 @@ func renderGuideMarkdownPlain(g Guide) string {
 	}
 	return b.String()
 }
+
+// --- revision preview --------------------------------------------------------
+
+// sectionKey identifies a section across revisions. The ID is authoritative — an
+// edited section keeps it — with the normalized title as the fallback for
+// sections that predate stable IDs or were re-created by hand under the same
+// heading.
+func sectionKey(s Section) (string, string) {
+	return strings.TrimSpace(s.ID), strings.ToLower(strings.Join(strings.Fields(s.Title), " "))
+}
+
+// missingFromCurrent returns the sections of rev that no longer exist in cur, in
+// rev's own order. This is the question History is actually opened to answer:
+// something was here and now it isn't.
+func missingFromCurrent(rev, cur Guide) []Section {
+	haveID := map[string]bool{}
+	haveTitle := map[string]bool{}
+	for _, s := range cur.Sections {
+		id, title := sectionKey(s)
+		if id != "" {
+			haveID[id] = true
+		}
+		if title != "" {
+			haveTitle[title] = true
+		}
+	}
+	var gone []Section
+	for _, s := range rev.sorted() {
+		id, title := sectionKey(s)
+		if (id != "" && haveID[id]) || (title != "" && haveTitle[title]) {
+			continue
+		}
+		gone = append(gone, s)
+	}
+	return gone
+}
+
+// renderRevisionHTML renders a snapshot read-only, with the sections that are
+// gone from the current guide called out at the top and marked in place. Read-
+// only is the point: the reader wants the paragraph back, not the document
+// rolled back, so this hands them the text to copy and leaves the guide alone.
+func renderRevisionHTML(rev, cur Guide, at string) string {
+	gone := missingFromCurrent(rev, cur)
+	goneIDs := map[string]bool{}
+	for _, s := range gone {
+		goneIDs[s.ID] = true
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div class="guide-rev">`)
+	b.WriteString(`<div class="guide-rev-banner">`)
+	if len(gone) == 0 {
+		b.WriteString(`<div class="guide-rev-head">Nothing here is missing from the current guide.</div>` +
+			`<div class="guide-rev-sub">Every section in this version still exists. Wording may differ — compare the ones you care about below.</div>`)
+	} else {
+		b.WriteString(`<div class="guide-rev-head">` + fmt.Sprint(len(gone)) + ` section` + plural(len(gone)) + ` in this version ` + wasWere(len(gone)) + ` not in the current guide:</div><ul class="guide-rev-list">`)
+		for i, s := range gone {
+			b.WriteString(`<li><a href="#rev-gone-` + fmt.Sprint(i+1) + `">` + HTMLEscape(sectionHeading(s, i)) + `</a></li>`)
+		}
+		b.WriteString(`</ul><div class="guide-rev-sub">Copy what you need — this is a read-only look at ` + HTMLEscape(at) + `, and nothing here changes the guide.</div>`)
+	}
+	b.WriteString(`</div>`)
+
+	secs := rev.sorted()
+	if len(secs) == 0 {
+		b.WriteString(`<p class="guide-doc-empty">This version had no sections.</p></div>`)
+		return b.String()
+	}
+
+	b.WriteString(`<article class="guide-doc">`)
+	goneSeen := 0
+	for i, s := range secs {
+		cls := "guide-section"
+		anchor := ""
+		if goneIDs[s.ID] {
+			goneSeen++
+			cls += " guide-section-gone"
+			anchor = ` id="rev-gone-` + fmt.Sprint(goneSeen) + `"`
+		}
+		b.WriteString(`<section class="` + cls + `"` + anchor + `>`)
+		if goneIDs[s.ID] {
+			b.WriteString(`<div class="guide-rev-tag">Not in the current guide</div>`)
+		}
+		b.WriteString(`<h2>` + HTMLEscape(sectionHeading(s, i)) + `</h2>`)
+		b.WriteString(`<div class="guide-section-body">` + MarkdownToHTML(s.Markdown) + `</div>`)
+		b.WriteString(`</section>`)
+	}
+	b.WriteString(`</article></div>`)
+	return b.String()
+}
+
+// wasWere keeps the banner reading like a sentence for one section as well as
+// several.
+func wasWere(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}

@@ -50,11 +50,15 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 				{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
 			}},
+			// Second, not eighth. Reaching for an earlier version is a recovery
+			// move — a section is gone and you want it back — so it should not be
+			// hunted for at the far end of the toolbar.
+			{Label: "History", Kind: "history", URL: "revisions?id={id}",
+				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
 			{Label: "Curator", Kind: "client", URL: "guides_curator"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
-			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
 			{Label: "Reorganize", Kind: "report", URL: "reorganize?id={id}", Spinner: "Reorganizing…", Invalidate: []string{"guides"}},
 			{Label: "Update from sources", Kind: "report", URL: "update-sources?id={id}", Spinner: "Updating…", Invalidate: []string{"guides"}},
@@ -65,6 +69,19 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		ActiveURL: "chat/active",
 		// Right — the Guide Author chat (endpoints; WorkbenchPanel builds the panel).
 		Chat: ui.AgentLoopPanel{
+			// The session rail. The endpoints behind these three have existed
+			// since the app shipped — every conversation with the Guide Author was
+			// already being written to the same store orchestrate uses — but the
+			// panel never declared them, so the rail never rendered and the work
+			// was unreachable the moment the page was left. The rail is opt-in on
+			// all three URLs together and defaults to COLLAPSED behind a ☰ tab,
+			// which is what makes it affordable here: the chat column is the third
+			// of three in a workbench and cannot spare 260px to a list.
+			ListURL:   "chat/sessions",
+			LoadURL:   "chat/sessions/{id}",
+			DeleteURL: "chat/sessions/{id}",
+			ListTitle: "Past sessions",
+			NewLabel:  "New session",
 			SendURL:   "chat/send",
 			CancelURL: "chat/cancel",
 			// Where a mid-flight message goes. A guide is written over a long
@@ -159,6 +176,17 @@ const guideDocCSS = `<style>
   /* Let wide tables scroll instead of forcing the page wider than the viewport. */
   .guide-section-body table { display: block; overflow-x: auto; max-width: 100%; }
 }
+
+/* Reading an earlier version (History -> View). The whole point of the screen is
+   the section that is GONE, so it gets the accent and everything else recedes. */
+.guide-rev-banner { background: var(--surface-2, rgba(99,102,241,0.06)); border: 1px solid var(--border); border-left: 3px solid #6366f1; border-radius: 6px; padding: 0.7rem 0.9rem; margin-bottom: 1.4rem; }
+.guide-rev-head { font-size: 0.9rem; font-weight: 600; }
+.guide-rev-sub { font-size: 0.8rem; color: var(--text-mute); margin-top: 0.35rem; }
+.guide-rev-list { margin: 0.45rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; }
+.guide-rev-list a { color: #6366f1; }
+.guide-rev .guide-section { opacity: 0.62; }
+.guide-rev .guide-section-gone { opacity: 1; border-left: 3px solid #6366f1; padding-left: 0.9rem; }
+.guide-rev-tag { display: inline-block; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: #6366f1; font-weight: 600; margin-bottom: 0.3rem; }
 </style>`
 
 // guideSectionCtrlCSS styles the inline per-section controls (hover-revealed),

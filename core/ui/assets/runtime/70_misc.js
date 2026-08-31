@@ -291,6 +291,34 @@
                   el('span', {class: 'ui-wb-hist-note', text: it.note || '(change)'}),
                   el('span', {class: 'ui-wb-hist-at', text: it.at || ''}),
                 ]));
+                // Read a version without taking it. The usual reason to open
+                // history is that one section went missing and you want it
+                // back — restoring to find out what it said would throw away
+                // everything written since.
+                if (a.preview_url) {
+                  var vb = el('button', {class: 'ui-wb-action-btn', text: 'View'});
+                  vb.addEventListener('click', function() {
+                    var purl = a.preview_url.replace('{id}', encodeURIComponent(selectedId)).replace('{rev}', encodeURIComponent(it.id));
+                    vb.disabled = true; vb.textContent = 'Opening…';
+                    fetchJSON(purl)
+                      .then(function(res) {
+                        vb.disabled = false; vb.textContent = 'View';
+                        window.uiOpenSimpleModal({title: (res && res.title) || it.note || 'Earlier version', width: '900px', mount: function(pbody) {
+                          var wrap = el('div', {class: 'ui-wb-hist-preview'});
+                          // Server-built and trusted, same posture as the
+                          // viewer's own body_is_html.
+                          if (res && res.html) { wrap.innerHTML = res.html; }
+                          else { uiRenderMarkdown(wrap, (res && res.markdown) || '_This version recorded nothing._'); }
+                          pbody.appendChild(wrap);
+                        }});
+                      })
+                      .catch(function(err) {
+                        vb.disabled = false; vb.textContent = 'View';
+                        alert('Could not open that version: ' + (err && err.message || err));
+                      });
+                  });
+                  row.appendChild(vb);
+                }
                 var rb = el('button', {class: 'ui-wb-action-btn', text: 'Restore'});
                 rb.addEventListener('click', function() {
                   window.uiConfirm('Restore this version? The current state is saved to history first, so this is undoable.').then(function(ok) {

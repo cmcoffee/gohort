@@ -3236,7 +3236,12 @@ type WorkbenchPanel struct {
 //     one-click apply without re-deriving its findings, while staying generic.
 //   - "history"  — GET URL → [{id, at, note}]; render a list with Restore
 //     buttons that POST RestoreURL (with {id} = record, {rev} = entry id), then
-//     refresh the viewer.
+//     refresh the viewer. When PreviewURL is also set each entry gets a View
+//     button that GETs it ({id}/{rev} substituted the same way) and shows that
+//     snapshot read-only — the common reason to open history is not to roll the
+//     document back but to read one paragraph that went missing and copy it
+//     forward, and restoring to do that would throw away everything written
+//     since.
 //   - "client"   — browser-side action: URL carries the name of a handler
 //     registered via window.uiRegisterClientAction. The handler receives
 //     ({recordId, button, action, refresh}) so an app can mount its own toolbar
@@ -3246,6 +3251,11 @@ type WorkbenchAction struct {
 	URL        string `json:"url"`
 	Kind       string `json:"kind"`
 	RestoreURL string `json:"restore_url,omitempty"`
+	// PreviewURL — "history" only. GET ({id}/{rev} substituted) → {title?, html?,
+	// markdown?}; rendered read-only in a modal. html is server-built and trusted
+	// (same posture as WorkbenchPanel.BodyIsHTML), so the app owns what it says —
+	// including any marking of what this version has that the current one lost.
+	PreviewURL string `json:"preview_url,omitempty"`
 	Confirm    string `json:"confirm,omitempty"`
 	Spinner    string `json:"spinner,omitempty"` // busy label for "report" (default "Working…")
 	// Invalidate — for a "report" action that CHANGES the open record (e.g. an
