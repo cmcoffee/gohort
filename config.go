@@ -746,11 +746,21 @@ func setup_fuzz() {
 	// Save embedding configuration. SaveEmbeddingConfigToDB also
 	// updates the in-memory config so the change takes effect without
 	// a restart.
-	newEmbedCfg := EmbeddingConfig{
-		Endpoint: strings.TrimSpace(embedEndpoint),
-		Model:    strings.TrimSpace(embedModel),
-		Enabled:  embedEnabled == "yes",
-	}
+	//
+	// Built FROM the stored config rather than from scratch, so the fields this
+	// menu does not offer survive it. Constructing a fresh struct here silently
+	// erased Provider and APIKey — and for a peer-backed setup that is not a
+	// blanked field, it is a conversion: Provider drops, the resolved peer
+	// endpoint stays behind in Endpoint, and what was "embed on peer den"
+	// becomes "embed on this URL by hand". Nothing then overlays the peer's
+	// live endpoint or swaps in a live credential, because the config no longer
+	// mentions a peer, and every embed answers 401 while the peer itself is
+	// perfectly healthy. A CLI visit that answers nothing about peers must
+	// change nothing about them.
+	newEmbedCfg := storedEmbed
+	newEmbedCfg.Endpoint = strings.TrimSpace(embedEndpoint)
+	newEmbedCfg.Model = strings.TrimSpace(embedModel)
+	newEmbedCfg.Enabled = embedEnabled == "yes"
 	if err := SaveEmbeddingConfigToDB(global.db, newEmbedCfg); err != nil {
 		Err("Failed to save embedding config: %s", err)
 	}
@@ -758,12 +768,13 @@ func setup_fuzz() {
 	// Save STT (transcription) configuration. Same pattern as
 	// embeddings — DB save also installs the process-wide config so
 	// the change takes effect without a restart.
-	newSTT := TranscribeConfig{
-		Endpoint: strings.TrimSpace(sttEndpoint),
-		Model:    strings.TrimSpace(sttModel),
-		APIKey:   strings.TrimSpace(sttKey),
-		Enabled:  sttEnabled == "yes",
-	}
+	// Same shape, same reason: Provider carries the peer selection and this
+	// menu has no field for it.
+	newSTT := storedSTT
+	newSTT.Endpoint = strings.TrimSpace(sttEndpoint)
+	newSTT.Model = strings.TrimSpace(sttModel)
+	newSTT.APIKey = strings.TrimSpace(sttKey)
+	newSTT.Enabled = sttEnabled == "yes"
 	if err := SaveTranscribeConfigToDB(global.db, newSTT); err != nil {
 		Err("Failed to save transcription config: %s", err)
 	}

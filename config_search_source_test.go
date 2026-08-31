@@ -77,3 +77,38 @@ func TestTheSetupMenuCarriesSourceThrough(t *testing.T) {
 		t.Error("source is written by the menu but never read into it — the save would blank it")
 	}
 }
+
+// The setup menu edits a handful of fields on configs that carry more than it
+// shows. Rebuilding one from scratch does not blank a field, it CONVERTS the
+// config: for a peer-backed setup, Provider drops while the resolved peer
+// endpoint stays behind, and "embed on peer den" silently becomes "embed on
+// this URL by hand" — after which nothing overlays the peer's live endpoint or
+// swaps in a live credential, because the config no longer mentions a peer, and
+// every request 401s while the peer itself is healthy.
+//
+// Observed exactly that way: a peer-backed embeddings config found sitting on a
+// manual endpoint pointing at the peer's own URL.
+func TestTheSetupMenuPreservesFieldsItDoesNotShow(t *testing.T) {
+	src, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	// Each of these must be built FROM what was stored, not from scratch. A
+	// composite literal here is the bug: it says "these are all the fields",
+	// and the struct disagrees.
+	for _, tc := range []struct{ built, from string }{
+		{"newEmbedCfg", "storedEmbed"},
+		{"newSTT", "storedSTT"},
+	} {
+		if strings.Contains(body, tc.built+" := EmbeddingConfig{") ||
+			strings.Contains(body, tc.built+" := TranscribeConfig{") {
+			t.Errorf("%s is rebuilt from a literal — every field the menu does not show is erased, "+
+				"which converts a peer-backed config into a manual one pointed at the peer's URL", tc.built)
+		}
+		if !strings.Contains(body, tc.built+" := "+tc.from) {
+			t.Errorf("%s should start from %s so unshown fields survive the save", tc.built, tc.from)
+		}
+	}
+}
