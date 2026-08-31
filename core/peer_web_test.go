@@ -459,3 +459,64 @@ func TestAdoptingTokensClearsTheWarning(t *testing.T) {
 		t.Errorf("the warning should be cleared once the peer adopts tokens, still: %q", msg)
 	}
 }
+
+// A form that does not RENDER the provider dropdown must not be read as
+// choosing "local".
+//
+// The dropdown is added and removed with the peers that populate it, so it
+// disappears whenever no peer currently offers the capability — a peer that
+// briefly stops advertising it is enough. Any save of that form while it is
+// away then submits no provider at all, and treating that as local converted a
+// peer-backed config into a manual one: the selection reset while the resolved
+// peer endpoint and its credential stayed behind, leaving a config pointed at
+// the peer's URL with a credential nothing refreshes. Every request 401s while
+// the peer is healthy, and nobody touched the provider.
+func TestABlankProviderKeepsAPeerSelection(t *testing.T) {
+	prev := GetEmbeddingConfig()
+	SetEmbeddingConfig(EmbeddingConfig{
+		Provider: peerProviderPrefix + "den",
+		Endpoint: "https://den.example/api/peer/v1/embeddings",
+		APIKey:   "a-token-that-will-expire",
+		Enabled:  true,
+	})
+	t.Cleanup(func() { SetEmbeddingConfig(prev) })
+
+	// The shape a form without the dropdown submits: everything else, no
+	// provider.
+	got, err := ResolveEmbeddingProvider(EmbeddingConfig{
+		Endpoint: "https://den.example/api/peer/v1/embeddings",
+		APIKey:   "a-token-that-will-expire",
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.Provider == EmbeddingProviderLocal {
+		t.Error("a submission that says nothing about the provider was read as choosing local — that silently unpairs the peer")
+	}
+
+	// An EXPLICIT local is still honoured: that one is a choice somebody made.
+	got, err = ResolveEmbeddingProvider(EmbeddingConfig{Provider: EmbeddingProviderLocal, Enabled: true})
+	if err != nil {
+		t.Fatalf("resolve local: %v", err)
+	}
+	if got.Provider != EmbeddingProviderLocal {
+		t.Errorf("an explicit local must be kept, got %q", got.Provider)
+	}
+}
+
+// Transcription carries the same dropdown and the same trap.
+func TestABlankTranscribeProviderKeepsAPeerSelection(t *testing.T) {
+	cfg := TranscribeConfig{
+		Provider: peerProviderPrefix + "den",
+		Endpoint: "https://den.example/api/peer/v1/audio/transcriptions",
+		APIKey:   "a-token-that-will-expire",
+	}
+	got, err := ResolveTranscribeProvider(cfg, "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !strings.HasPrefix(got.Provider, peerProviderPrefix) {
+		t.Errorf("a blank provider unpaired the peer: %q", got.Provider)
+	}
+}

@@ -184,6 +184,18 @@ func (p RemotePeer) TranscribeURL() string {
 // back would send audio somewhere the operator did not choose.
 func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (TranscribeConfig, error) {
 	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		// Same rule as ResolveEmbeddingProvider, and the same trap: the "local"
+		// option submits the string "local", so blank means the dropdown was
+		// not rendered — which happens whenever no peer currently offers
+		// transcription. Reading that as "go local" would reset the selection
+		// while leaving the peer's endpoint and credential in place, and the
+		// resulting config points at the peer with a credential nothing
+		// refreshes.
+		if strings.HasPrefix(strings.TrimSpace(cfg.Provider), peerProviderPrefix) {
+			return cfg, nil
+		}
+	}
 	if provider == "" || provider == EmbeddingProviderLocal {
 		return cfg, nil
 	}

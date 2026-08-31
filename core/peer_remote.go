@@ -603,8 +603,29 @@ func PeerFromProvider(provider string) (RemotePeer, bool) {
 // An unknown peer is an error rather than a silent fall back to local: falling
 // back would point the vector store at a DIFFERENT embedder than the operator
 // selected, and mixing spaces is the failure that never announces itself.
+//
+// EMPTY is not a choice. The form's own local option submits the string
+// "local", so a blank provider means the field was never rendered — which
+// happens whenever no peer currently OFFERS embeddings, since the dropdown is
+// added and removed with the peers that populate it. Treating that as "local"
+// converted a peer-backed config into a manual one on the next save: Provider
+// reset while the resolved peer endpoint and its credential stayed behind, so
+// the config kept pointing at the peer's URL with a credential nothing would
+// ever refresh, and every embed answered 401 while the peer was healthy.
+//
+// It takes only a peer that briefly stops advertising embeddings and any save
+// of that form while it is away. Nobody has to touch the provider, or know the
+// dropdown was missing.
 func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	provider := strings.TrimSpace(cfg.Provider)
+	if provider == "" {
+		if stored := GetEmbeddingConfig(); strings.HasPrefix(strings.TrimSpace(stored.Provider), peerProviderPrefix) {
+			// A submission that says nothing about the provider cannot mean
+			// "stop using the peer". Keep the selection and let the resolver
+			// overlay it as usual.
+			return cfg, nil
+		}
+	}
 	if provider == "" || provider == EmbeddingProviderLocal {
 		cfg.Provider = EmbeddingProviderLocal
 		return cfg, nil
