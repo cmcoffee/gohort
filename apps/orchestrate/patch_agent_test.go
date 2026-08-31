@@ -196,7 +196,7 @@ func TestDelegationFoldNoOpWithoutSection(t *testing.T) {
 func TestDelegationFoldSurvivesARenamedHeading(t *testing.T) {
 	sections := []ui.Section{
 		{Title: "Access & visibility", Body: ui.FormPanel{Fields: []ui.FormField{{Field: "published"}}}},
-		{Title: "Delegation — who calls whom", Body: ui.FormPanel{Fields: []ui.FormField{
+		{Title: "Delegation, renamed since", Body: ui.FormPanel{Fields: []ui.FormField{
 			{Field: "hidden"}, {Field: "dispatch_mode"}, {Field: "allow_builder_dispatch"},
 		}}},
 	}

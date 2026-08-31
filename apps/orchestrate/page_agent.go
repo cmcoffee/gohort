@@ -354,7 +354,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// before its exception: Allow none overrides the Builder grant, so
 			// reading the grant first states a permission the next field can
 			// take away.
-			ui.FormField{Type: "header", Label: "Delegation — who calls whom",
+			ui.FormField{Type: "header", Label: "Delegation",
 				Help: "Both directions of agent-to-agent calling. Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy + the target list below, which is only consulted in the two \"selected\" modes)."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
 				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
