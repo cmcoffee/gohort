@@ -348,7 +348,27 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 // --- revisions ---------------------------------------------------------------
 
 const promptRevTable = "prompt_revisions"
-const maxRevisionsPerBlock = 10
+
+// TunablePromptRevisionCap bounds the per-block undo history. Same reasoning as
+// the guides revision cap: how far back an operator can reach is a deployment
+// decision, and the shipped 10 is tight for anyone who runs Optimize often.
+const TunablePromptRevisionCap = "tune_prompt_revision_cap"
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key: TunablePromptRevisionCap, Category: "Limits", App: "/prompts",
+		Label: "Prompt revision history",
+		Help: "How many past versions of each prompt block are kept. Every edit and every Optimize " +
+			"snapshots the text it replaced, so this is how many rewrites back you can reach to " +
+			"restore one — the reason to keep revisions at all. Snapshots are single blocks of " +
+			"text, so the storage is cheap and raising this is close to free. Lowering it prunes " +
+			"on the next edit to each block, and the dropped snapshots are gone.",
+		Kind: KindInt, Default: 10, Min: 2, Max: 200})
+}
+
+// maxRevisionsPerBlock is the effective cap, read per snapshot so an admin
+// change applies to the next edit rather than waiting for a restart.
+func maxRevisionsPerBlock() int { return TuneInt(TunablePromptRevisionCap) }
 
 // promptRevision is one snapshot of a block's text just before an edit replaced
 // it. Deployment-level (T.DB), matching the overrides they mirror.
@@ -364,7 +384,8 @@ type promptRevision struct {
 }
 
 // snapshotRevision stores `text` as a revision of blockKey and prunes to the
-// most recent maxRevisionsPerBlock. revID is a nanosecond timestamp (URL-safe
+// most recent (per the operator's revision-history setting). revID is a
+// nanosecond timestamp (URL-safe
 // digits), so lexical order == chronological order.
 func (T *PromptsApp) snapshotRevision(blockKey, text, via string) {
 	if T.DB == nil {
@@ -385,7 +406,8 @@ func (T *PromptsApp) snapshotRevision(blockKey, text, via string) {
 		}
 	}
 	sort.Strings(ids) // oldest first
-	for len(ids) > maxRevisionsPerBlock {
+	keep := maxRevisionsPerBlock()
+	for len(ids) > keep {
 		T.DB.Unset(promptRevTable, ids[0])
 		ids = ids[1:]
 	}

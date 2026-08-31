@@ -211,7 +211,31 @@ func ensureGuideCollection(udb Database, user string, g Guide) (string, Guide) {
 // --- revisions ---------------------------------------------------------------
 
 const revisionsTable = "guide_revisions"
-const maxRevisions = 50
+
+// TunableGuideRevisionCap bounds the undo history kept per guide. Operator-set
+// because the right value is a property of the deployment, not of the code: how
+// destructive the co-author tools are allowed to feel depends on how far back
+// the author can reach, and the storage that buys is a function of how large
+// these particular guides are.
+const TunableGuideRevisionCap = "tune_guide_revision_cap"
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key: TunableGuideRevisionCap, Category: "Limits", App: "/guides",
+		Label: "Guide revision history",
+		Help: "How many past versions of a guide are kept. Every destructive co-author pass — a " +
+			"reorganize, an audit's edits, a restore — saves one first, so this is how far back an " +
+			"author can reach for a section that got wiped. Each entry is a FULL copy of the guide, " +
+			"so the cost scales with document size, not edit count: raise it for a deployment of " +
+			"short guides, and watch it for one with large ones. Lowering it is not free and is not " +
+			"deferred — the next save on each guide trims that guide to the new number and the " +
+			"dropped versions are gone, so lower it deliberately rather than to tidy up.",
+		Kind: KindInt, Default: 50, Min: 5, Max: 500})
+}
+
+// maxRevisions is the effective cap, read per save so an admin change applies to
+// the next write rather than waiting for a restart.
+func maxRevisions() int { return TuneInt(TunableGuideRevisionCap) }
 
 // GuideRevision is a point-in-time snapshot of a guide + a note describing the
 // change that produced it.
@@ -229,7 +253,7 @@ type guideRevisions struct {
 
 // saveGuideRev saves the guide AND records a revision snapshot of the resulting
 // state with a note. The revision timeline is the undo history for the destructive
-// co-author tools. Capped at maxRevisions (oldest dropped).
+// co-author tools. Capped at the operator's revision-history setting (oldest dropped).
 // sanitizeGuideArtifacts strips stray LLM output that leaked into a section body
 // during drafting/co-authoring but is NOT part of the guide: reasoning
 // delimiters (<think>…</think>), framework markers (<gohort-meta>, [ATTACH:…]),
@@ -255,8 +279,8 @@ func saveGuideRev(udb Database, g Guide, note string) Guide {
 		Note:  strings.TrimSpace(note),
 		Guide: saved,
 	})
-	if len(rl.Revisions) > maxRevisions {
-		rl.Revisions = rl.Revisions[len(rl.Revisions)-maxRevisions:]
+	if keep := maxRevisions(); len(rl.Revisions) > keep {
+		rl.Revisions = rl.Revisions[len(rl.Revisions)-keep:]
 	}
 	udb.Set(revisionsTable, saved.ID, rl)
 	return saved
