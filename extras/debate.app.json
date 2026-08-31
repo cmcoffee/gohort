@@ -20,20 +20,72 @@
     },
     {
       "kind": "pipeline",
-      "input_label": "What should be debated?",
-      "placeholder": "A question with a real trade-off, not one with a lookup answer",
       "submit_label": "Start Debate",
       "empty_text": "Submit a question to begin a debate, or pick a saved one from the sidebar.",
       "suggest_script": "topic ideas",
       "suggest_label": "Suggest",
       "toolbar": [
-        {"label": "Copy Link", "method": "copy", "title": "Copy a shareable link to this debate"},
-        {"label": "Export", "method": "client", "url": "debate_export", "title": "Print the transcript (save as PDF from the print dialog)"}
+        {
+          "label": "Copy Link",
+          "method": "copy",
+          "title": "Copy a shareable link to this debate"
+        },
+        {
+          "label": "Export",
+          "method": "client",
+          "url": "debate_export",
+          "title": "Print the transcript (save as PDF from the print dialog)"
+        }
       ],
       "meta": [
-        {"field": "verdict", "style": "text", "truncate": 240},
-        {"field": "winner", "style": "pill", "variants": {"for": "#3fb950", "against": "#f85149"}},
-        {"field": "confidence", "style": "pill", "truncate": 32, "variants": {"very high": "#3fb950", "high": "#3fb950", "moderate": "#e3b341", "low": "#f85149", "very low": "#f85149"}}
+        {
+          "field": "verdict",
+          "style": "text",
+          "truncate": 240
+        },
+        {
+          "field": "winner",
+          "style": "pill",
+          "variants": {
+            "for": "#3fb950",
+            "against": "#f85149"
+          }
+        },
+        {
+          "field": "confidence",
+          "style": "pill",
+          "truncate": 32,
+          "variants": {
+            "very high": "#3fb950",
+            "high": "#3fb950",
+            "moderate": "#e3b341",
+            "low": "#f85149",
+            "very low": "#f85149"
+          }
+        }
+      ],
+      "fields": [
+        {
+          "name": "topic",
+          "label": "Topic",
+          "type": "textarea",
+          "rows": 3,
+          "required": true,
+          "placeholder": "A question with a real trade-off, not one with a lookup answer"
+        },
+        {
+          "name": "rounds",
+          "label": "Rounds",
+          "type": "select",
+          "default": "3",
+          "options": [
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ]
+        }
       ]
     }
   ]

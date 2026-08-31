@@ -362,6 +362,43 @@ func (r *pipelineRun) promoteSessionMeta(stageName string, fields map[string]any
 	}
 }
 
+// resolveCount works out how many times a stage repeats, honoring CountFrom.
+//
+// Every way of getting it wrong ends somewhere defined and SAID: a reference
+// nobody filled falls back to Count silently (a blank optional field is not a
+// mistake), one that resolves to something that is not a count falls back
+// loudly, and one over the ceiling is clamped loudly. The alternative is a
+// stage that runs a different number of times than the person who submitted
+// the form believes it did, which is not a thing they can see from the result.
+func (r *pipelineRun) resolveCount(stage PipelineStage, ceiling int, status func(string)) int {
+	n := stage.Count
+	if ref := strings.TrimSpace(stage.CountFrom); ref != "" {
+		raw := strings.TrimSpace(r.applyRunVars(resolveStageTemplate(ref, r.input, "", r.outputs)))
+		parsed, err := strconv.Atoi(raw)
+		switch {
+		case err == nil && parsed > 0:
+			n = parsed
+		case raw == "" || raw == ref:
+			// Nothing supplied it — an empty form field, or a run started from
+			// somewhere with no form at all. Count is the answer, quietly.
+		default:
+			if status != nil {
+				status(fmt.Sprintf("%s: count_from %s gave %q, which is not a number of times — running %d", stage.Name, ref, raw, n))
+			}
+		}
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > ceiling {
+		if status != nil {
+			status(fmt.Sprintf("%s: %d is over the ceiling — running %d", stage.Name, n, ceiling))
+		}
+		n = ceiling
+	}
+	return n
+}
+
 // transcriptBody renders what a stage produced for a HUMAN reading the run.
 //
 // A stage that declares output fields returns JSON — that is the point, it is
@@ -1403,13 +1440,7 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 		}
 		voices = voices[:panelMaxVoices]
 	}
-	rounds := stage.Count
-	if rounds < 1 {
-		rounds = 1
-	}
-	if rounds > panelMaxRounds {
-		rounds = panelMaxRounds
-	}
+	rounds := r.resolveCount(stage, panelMaxRounds, status)
 	if status != nil {
 		// The multiplication, before it is paid. Voices times rounds is the
 		// number nobody works out from a stage count, and it is the number
@@ -1605,14 +1636,15 @@ func (r *pipelineRun) runLoopStage(ctx context.Context, stage PipelineStage, pre
 
 	var passes []string
 	carry := prev
-	for i := 1; i <= stage.Count; i++ {
+	count := r.resolveCount(stage, loopMaxIterations, func(text string) { r.status(text) })
+	for i := 1; i <= count; i++ {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		r.status(fmt.Sprintf("%s: pass %d/%d", stage.Name, i, stage.Count))
+		r.status(fmt.Sprintf("%s: pass %d/%d", stage.Name, i, count))
 		vars := map[string]string{
 			"{iteration}":  strconv.Itoa(i),
-			"{iterations}": strconv.Itoa(stage.Count),
+			"{iterations}": strconv.Itoa(count),
 		}
 		// A body branch can only skip WITHIN the pass (Validate rejects
 		// a pipeline-ending branch inside a loop), so the stop flag is

@@ -187,3 +187,71 @@ func TestFormValuesReachEveryStageKindsPrompt(t *testing.T) {
 		}
 	}
 }
+
+// The number of rounds is the one thing about a debate that belongs to the
+// QUESTION rather than to the recipe, and a definition is written once for
+// every question it will ever run. count_from moves it to the run.
+func TestCountFromTakesTheCountFromTheRun(t *testing.T) {
+	var said []string
+	status := func(s string) { said = append(said, s) }
+	run := func(vars map[string]string, stage PipelineStage) int {
+		r := &pipelineRun{input: "q", vars: vars, outputs: map[string]stageOutput{}}
+		return r.resolveCount(stage, 8, status)
+	}
+	stage := PipelineStage{Name: "rounds", Count: 3, CountFrom: "{rounds}"}
+
+	if got := run(map[string]string{"{rounds}": "5"}, stage); got != 5 {
+		t.Errorf("a form value of 5 gave %d rounds", got)
+	}
+	// An empty optional field is not a mistake, so it falls back QUIETLY.
+	before := len(said)
+	if got := run(nil, stage); got != 3 {
+		t.Errorf("an unfilled field gave %d rounds, want the fallback", got)
+	}
+	if len(said) != before {
+		t.Errorf("falling back on an unfilled field should say nothing, said: %v", said[before:])
+	}
+	// Anything else falls back LOUDLY: a stage that ran a different number of
+	// times than the submitter asked for is not visible from the result.
+	before = len(said)
+	if got := run(map[string]string{"{rounds}": "lots"}, stage); got != 3 {
+		t.Errorf("a non-number gave %d rounds, want the fallback", got)
+	}
+	if len(said) == before {
+		t.Error("a value that is not a count must be reported, not silently ignored")
+	}
+	// The ceiling is the ceiling, and it says so too.
+	before = len(said)
+	if got := run(map[string]string{"{rounds}": "99"}, stage); got != 8 {
+		t.Errorf("99 rounds gave %d, want the ceiling", got)
+	}
+	if len(said) == before {
+		t.Error("clamping to the ceiling must be reported")
+	}
+}
+
+// An earlier stage deciding how many rounds the question warrants is the
+// declarative form of debate's "auto".
+func TestCountFromCanReadAnEarlierStage(t *testing.T) {
+	r := &pipelineRun{
+		input: "q",
+		outputs: map[string]stageOutput{
+			"plan": {Fields: map[string]any{"rounds": float64(4)}},
+		},
+	}
+	got := r.resolveCount(PipelineStage{Name: "rounds", Count: 2, CountFrom: "{stage:plan.rounds}"}, 8, nil)
+	if got != 4 {
+		t.Errorf("count from an earlier stage = %d, want 4", got)
+	}
+}
+
+// A field that exists on the shared stage struct but is read by only some
+// kinds is the lying-control pattern this codebase keeps refusing.
+func TestCountFromIsRefusedWhereNothingRepeats(t *testing.T) {
+	def := PipelineDef{Name: "d", Stages: []PipelineStage{
+		{Name: "s", Kind: StageWorker, Prompt: "x", CountFrom: "{rounds}"},
+	}}
+	if err := def.Validate(); err == nil {
+		t.Error("count_from on a worker stage should be refused — nothing there repeats")
+	}
+}

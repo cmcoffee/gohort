@@ -360,6 +360,26 @@ type PipelineStage struct {
 	// second.
 	Count int `json:"count,omitempty"`
 
+	// CountFrom makes Count a RUN-TIME value: a template resolved when the
+	// stage starts, so a panel's rounds can come from the submit form
+	// ("{rounds}") or from an earlier stage that decided how many the question
+	// warrants ("{stage:plan.rounds}"), instead of being fixed when the
+	// pipeline was written.
+	//
+	// It exists because the number of rounds is the one thing about a debate
+	// that belongs to the QUESTION rather than to the recipe, and a definition
+	// is written once for every question it will ever run.
+	//
+	// Count stays the fallback and still bounds the stage. A reference that
+	// does not resolve (nobody filled the field), does not parse, or asks for
+	// more than the ceiling falls back or clamps — and says so in the
+	// transcript, because a stage that quietly ran a different number of times
+	// than the reader asked for is worse than one that refused.
+	//
+	// Only panel and loop read a count at all. Anywhere else it is refused
+	// rather than ignored.
+	CountFrom string `json:"count_from,omitempty"`
+
 	// Until optionally ends a loop early, as a "NAME.field" reference to
 	// a bool field declared by one of the Body stages. Checked after
 	// each full pass; true means stop. Requires that stage to declare
@@ -778,6 +798,13 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 				probs = append(probs, "stage "+s.Name+": "+strconv.Itoa(s.Count)+" rounds is past the cap of "+
 					strconv.Itoa(panelMaxRounds))
 			}
+		}
+		// count_from is honored by the two kinds that repeat. On anything else
+		// it is a control that does nothing, and an author who set it believes
+		// their stage takes its count from the form.
+		if strings.TrimSpace(s.CountFrom) != "" && s.Kind != StagePanel && s.Kind != StageLoop {
+			probs = append(probs, "stage "+s.Name+": count_from is only read by kind=panel (rounds) and kind=loop (passes) — "+
+				"nothing else repeats, so there is no count for it to set")
 		}
 		if s.Kind != StagePanel && len(s.Panel) > 0 {
 			probs = append(probs, "stage "+s.Name+": only a kind \"panel\" stage has voices")
