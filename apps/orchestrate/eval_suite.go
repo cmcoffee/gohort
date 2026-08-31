@@ -588,3 +588,41 @@ func toolEvalExecutor(tool AgentToolDef) evalExecutor {
 		return row
 	}
 }
+
+// --- migrating an agent's inline cases --------------------------------------
+
+// EvalSuiteFromAgent lifts an agent's inline cases into a suite.
+//
+// The migration is a COPY rather than a move, and the field it copies from
+// keeps working. Deleting somebody's saved cases out from under them to prove
+// a point about primitives is not a migration, it is a data loss with a
+// rationale — and an agent whose cases still run where they always did loses
+// nothing by also having a suite.
+//
+// What the suite adds is everything the field cannot have: a history, a
+// fingerprint per run, and a surface to watch it on.
+func EvalSuiteFromAgent(agent AgentRecord) (EvalSuite, error) {
+	if len(agent.Evals) == 0 {
+		return EvalSuite{}, Error("this agent has no eval cases to lift — add some in the agent editor first")
+	}
+	name := strings.TrimSpace(agent.Name)
+	if name == "" {
+		name = agent.ID
+	}
+	return EvalSuite{
+		Name:       name + " evals",
+		Desc:       "Lifted from the agent's inline cases.",
+		TargetKind: EvalTargetAgent,
+		TargetID:   agent.ID,
+		// Copied, not aliased: editing the suite must not silently rewrite the
+		// agent's field, and editing the field must not silently rewrite the
+		// suite. Two places that quietly change each other is worse than two
+		// places that do not.
+		Cases: append([]EvalCase{}, agent.Evals...),
+		// The rate is the signal, so a suite lifted from a field that only ever
+		// ran once starts asking for enough runs to have one. Three is the
+		// smallest number that can show a flake as a flake rather than as a
+		// pass or a failure.
+		Runs: 3,
+	}, nil
+}

@@ -479,3 +479,44 @@ func TestToolFingerprintCoversDescriptionAndParams(t *testing.T) {
 		t.Error("the signature must be stable across calls")
 	}
 }
+
+// The migration is a COPY. Deleting somebody's saved cases to prove a point
+// about primitives is not a migration, it is data loss with a rationale.
+func TestLiftingAnAgentsCasesLeavesThemAlone(t *testing.T) {
+	agent := AgentRecord{ID: "a1", Name: "Scribe", Evals: []EvalCase{
+		{Name: "asks", Prompt: "compare these", JudgePrompt: "asks a clarifying question"},
+	}}
+	suite, err := EvalSuiteFromAgent(agent)
+	if err != nil {
+		t.Fatalf("lift: %v", err)
+	}
+	if suite.TargetKind != EvalTargetAgent || suite.TargetID != "a1" {
+		t.Errorf("the suite should point back at the agent: %+v", suite)
+	}
+	if len(agent.Evals) != 1 {
+		t.Error("the agent's own cases must be untouched")
+	}
+	// Copied, not aliased: editing one must not silently rewrite the other.
+	suite.Cases[0].Name = "renamed in the suite"
+	if agent.Evals[0].Name != "asks" {
+		t.Error("editing the suite rewrote the agent's field — they share a backing array")
+	}
+	// A field that only ever ran once starts asking for enough runs to have a
+	// rate; three is the smallest number that shows a flake as a flake.
+	if suite.RunCount() < 3 {
+		t.Errorf("lifted suite runs %d times, want enough to distinguish a flake", suite.RunCount())
+	}
+	if err := suite.Validate(); err != nil {
+		t.Errorf("a lifted suite should be valid as-is: %v", err)
+	}
+}
+
+func TestLiftingAnAgentWithNoCasesSaysSo(t *testing.T) {
+	_, err := EvalSuiteFromAgent(AgentRecord{ID: "a1", Name: "Empty"})
+	if err == nil {
+		t.Fatal("expected an error rather than an empty suite that grades nothing")
+	}
+	if !strings.Contains(err.Error(), "no eval cases") {
+		t.Errorf("the error should say what is missing: %v", err)
+	}
+}
