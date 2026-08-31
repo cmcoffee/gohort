@@ -2719,7 +2719,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any
 	// client actions the section's controls need.
-	for _, e := range AdminSectionEntries() {
+	for _, e := range AdminSectionEntriesFor(r) {
 		page.Sections = append(page.Sections, e.Section)
 		page.ExtraHeadHTML += e.Head
 	}

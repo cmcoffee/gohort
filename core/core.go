@@ -423,15 +423,18 @@ var (
 
 type (
 	AdminSectionEntry     = sections.AdminSectionEntry
+	AdminSectionSource    = sections.AdminSectionSource
 	AccountSectionEntry   = sections.AccountSectionEntry
 	ExtensionSectionEntry = sections.ExtensionSectionEntry
 )
 
 var (
-	RegisterAdminSection   = sections.RegisterAdminSection
-	AdminSectionEntries    = sections.AdminSectionEntries
-	RegisterAccountSection = sections.RegisterAccountSection
-	AccountSectionEntries  = sections.AccountSectionEntries
+	RegisterAdminSection       = sections.RegisterAdminSection
+	AdminSectionEntries        = sections.AdminSectionEntries
+	AdminSectionEntriesFor     = sections.AdminSectionEntriesFor
+	RegisterAdminSectionSource = sections.RegisterAdminSectionSource
+	RegisterAccountSection     = sections.RegisterAccountSection
+	AccountSectionEntries      = sections.AccountSectionEntries
 
 	RegisterExtensionSection = sections.RegisterExtensionSection
 	ExtensionSectionEntries  = sections.ExtensionSectionEntries
