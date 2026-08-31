@@ -184,6 +184,72 @@ func (T *CustomApps) registerAdminControls() {
 			}
 		},
 	})
+
+	// Cost: which tier each stage of the bound pipeline runs on.
+	//
+	// Registered HERE rather than from the pipeline layer, which is where the
+	// concern nominally lives, because this is the package that already
+	// resolves (owner, slug) to a definition and already has an admin-gated
+	// mount. The registry does not care who registers; a second mount serving
+	// one form would be the worse trade. The control's OWNER is still free to
+	// take it over later without this package changing.
+	RegisterCustomAppTierControl(base)
+}
+
+// RegisterCustomAppTierControl adds the per-stage tier dials.
+func RegisterCustomAppTierControl(base string) {
+	appadmin.Register(appadmin.Control{
+		Key: "customapps.pipeline_tiers", Label: "Model tier", Group: "Cost", Order: 10,
+		Render: func(app appadmin.App) ui.Component {
+			if app.PipelineID == "" {
+				return nil // no pipeline: no stages, and no dial for nothing
+			}
+			def, ok := lookupAdminPipeline(app.Owner, app.PipelineID)
+			if !ok || len(def.Stages) == 0 {
+				return nil
+			}
+			// The dials are DERIVED from the stored definition every time this
+			// renders, not registered when it was saved. That is what makes
+			// them survive a restart, and what makes a renamed stage lose its
+			// dial instead of keeping one that applies to nothing.
+			fields := make([]ui.FormField, 0, len(def.Stages))
+			for _, st := range def.Stages {
+				authored := "worker"
+				if strings.EqualFold(strings.TrimSpace(st.Model), "lead") {
+					authored = "lead"
+				}
+				opts := []ui.SelectOption{{
+					Value: "",
+					Label: "As authored (" + authored + ")",
+					Help:  "No override: the stage runs on the tier the pipeline's author chose.",
+				}}
+				for _, v := range RouteValues() {
+					opts = append(opts, ui.SelectOption{Value: v, Label: v})
+				}
+				fields = append(fields, ui.FormField{
+					Field: st.Name, Label: st.Name, Type: "select", Options: opts,
+					Help: "kind=" + string(st.Kind),
+				})
+			}
+			q := fmt.Sprintf("?owner=%s&slug=%s", url.QueryEscape(app.Owner), url.QueryEscape(app.Slug))
+			return ui.FormPanel{
+				Source:      base + "/tiers" + q,
+				PostURL:     base + "/tiers" + q,
+				SubmitLabel: "Save tiers",
+				Fields:      fields,
+			}
+		},
+	})
+}
+
+// lookupAdminPipeline resolves an app's bound pipeline against its OWNER, the
+// same way serving it does.
+func lookupAdminPipeline(owner, pipelineID string) (PipelineDef, bool) {
+	orch := findOrchestrate()
+	if orch == nil {
+		return PipelineDef{}, false
+	}
+	return orch.LookupAppPipeline(owner, pipelineID)
 }
 
 // --- the endpoints ----------------------------------------------------------
@@ -248,6 +314,55 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		st.Updated = time.Now().UTC().Format(time.RFC3339)
 		appadmin.Save(RootDB, owner, slug, st)
 		Log("[customapps] admin %q set the allowlist on %q/%q to %d user(s)", user, owner, slug, len(st.AllowedUsers))
+		writeJSON(w, map[string]any{"ok": true, "message": "Saved."})
+	case "tiers":
+		def, ok := lookupAdminPipeline(owner, spec.PipelineID)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodGet {
+			// Only the OVERRIDE is stored, so an unset stage comes back empty
+			// and the form shows "As authored" — which is the true statement
+			// about it, where a filled-in value would claim a decision nobody
+			// made.
+			out := map[string]any{}
+			for _, st := range def.Stages {
+				out[st.Name] = RouteOverride(PipelineStageRouteKey(def.ID, st.Name))
+			}
+			writeJSON(w, out)
+			return
+		}
+		var in map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		legal := map[string]bool{"": true}
+		for _, v := range RouteValues() {
+			legal[v] = true
+		}
+		for _, st := range def.Stages {
+			raw, present := in[st.Name]
+			if !present {
+				continue
+			}
+			val := strings.TrimSpace(fmt.Sprint(raw))
+			if !legal[val] {
+				http.Error(w, "invalid tier for stage "+st.Name, http.StatusBadRequest)
+				return
+			}
+			key := PipelineStageRouteKey(def.ID, st.Name)
+			if val == "" {
+				// Clearing an override returns the stage to its author, which
+				// is a different thing from pinning it to worker and has to
+				// stay expressible.
+				RootDB.Unset(RoutingTable, key)
+				continue
+			}
+			RootDB.Set(RoutingTable, key, val)
+		}
+		Log("[customapps] admin %q set stage tiers on %q/%q", user, owner, slug)
 		writeJSON(w, map[string]any{"ok": true, "message": "Saved."})
 	default:
 		http.NotFound(w, r)

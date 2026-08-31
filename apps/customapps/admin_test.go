@@ -55,3 +55,25 @@ func TestAnUnsetAllowlistIsEverySignedInUser(t *testing.T) {
 		t.Error("an anonymous request must never pass the reach check")
 	}
 }
+
+// The tier dials are DERIVED from the stored definition when the pane renders,
+// never registered when it was saved. That is what makes them survive a restart
+// — and what makes a renamed stage lose its dial rather than keep one that
+// applies to a stage no longer there.
+func TestTierDialsOnlyExistForAnAppWithAPipeline(t *testing.T) {
+	RegisterCustomAppTierControl("/custom/_admin")
+	// No binding: no dial. A cost control on an app with no stages is a dial
+	// for nothing, which is exactly what Render returning nil is for.
+	for _, c := range appadmin.For(appadmin.App{Slug: "a", Owner: "u"}) {
+		if _, isForm := c.(ui.FormPanel); isForm {
+			t.Error("an app with no pipeline rendered a tier form")
+		}
+	}
+	// With a binding but no resolvable definition (no orchestrate in a unit
+	// test), it must still decline rather than render an empty form.
+	for _, c := range appadmin.For(appadmin.App{Slug: "a", Owner: "u", PipelineID: "nope"}) {
+		if f, isForm := c.(ui.FormPanel); isForm && len(f.Fields) == 0 {
+			t.Error("an unresolvable pipeline rendered a form with no fields")
+		}
+	}
+}

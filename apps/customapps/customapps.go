@@ -136,7 +136,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// POST ?slug=&on=… mints / revokes the anonymous capability URL.
 		T.handlePublishApp(w, r, user)
 		return
-	case "_admin/revoke-link", "_admin/reach":
+	case "_admin/revoke-link", "_admin/reach", "_admin/tiers":
 		// Operator controls on somebody else's app. Admin-gated inside the
 		// handler rather than by where the control was rendered: a URL is a
 		// URL, and whoever finds it is not necessarily who was shown it.
