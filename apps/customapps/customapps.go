@@ -38,6 +38,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -1193,7 +1194,7 @@ func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
 			// allowlist is every signed-in user, which is what sharing has
 			// always meant — so this changes nothing until somebody sets one,
 			// and adding it locks nobody out of an app they already had.
-			if !CustomAppUserMayReach(owner, slug, reqUser) {
+			if !appadmin.UserMayReach(RootDB, owner, slug, reqUser) {
 				return AppSpec{}, "", false
 			}
 			return s, owner, true

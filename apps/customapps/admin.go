@@ -24,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -74,8 +75,7 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 	out := make([]AdminSectionEntry, 0, len(rows))
 	for _, rw := range rows {
 		spec := rw.spec
-		spec.Owner = rw.owner // ListAppSpecs keys by owner; make it explicit for the controls
-		body := CustomAppControlsFor(spec)
+		body := appadmin.For(adminAppView(spec, rw.owner))
 		if len(body) == 0 {
 			body = []ui.Component{ui.EmptyState{
 				Icon: "—", Title: "Nothing to set", Hint: "This app has no operator controls that apply to it.",
@@ -97,7 +97,7 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 func adminRowSubtitle(spec AppSpec, owner string) string {
 	var state []string
 	if spec.Disabled {
-		if st := LoadCustomAppOperatorState(owner, spec.Slug); st.DisabledBy != "" {
+		if st := appadmin.Load(RootDB, owner, spec.Slug); st.DisabledBy != "" {
 			state = append(state, "disabled by "+st.DisabledBy)
 		} else {
 			state = append(state, "disabled")
@@ -115,6 +115,20 @@ func adminRowSubtitle(spec AppSpec, owner string) string {
 	return owner + " · " + strings.Join(state, " · ")
 }
 
+// adminAppView narrows a stored spec to what a control needs. ListAppSpecs
+// keys by owner rather than carrying it, so the owner is supplied here.
+func adminAppView(spec AppSpec, owner string) appadmin.App {
+	return appadmin.App{
+		Owner:       owner,
+		Slug:        spec.Slug,
+		Name:        spec.Name,
+		Shared:      spec.Shared,
+		Disabled:    spec.Disabled,
+		PublicToken: spec.PublicToken,
+		PipelineID:  spec.PipelineID,
+	}
+}
+
 // --- the controls -----------------------------------------------------------
 
 func (T *CustomApps) registerAdminControls() {
@@ -123,9 +137,9 @@ func (T *CustomApps) registerAdminControls() {
 	// Exposure: the anonymous capability link. The owner can revoke it from
 	// their own index; an operator needs to as well, and unlike a setting it is
 	// not an edit to what the app IS.
-	RegisterCustomAppControl(CustomAppControl{
+	appadmin.Register(appadmin.Control{
 		Key: "customapps.public_link", Label: "Public link", Group: "Exposure", Order: 10,
-		Render: func(spec AppSpec) ui.Component {
+		Render: func(spec appadmin.App) ui.Component {
 			if spec.PublicToken == "" {
 				return nil // nothing published: no control, rather than a dead button
 			}
@@ -150,9 +164,9 @@ func (T *CustomApps) registerAdminControls() {
 
 	// Access: who may open a SHARED app. Empty is every authenticated user,
 	// which is what sharing has always meant, so an unset list changes nothing.
-	RegisterCustomAppControl(CustomAppControl{
+	appadmin.Register(appadmin.Control{
 		Key: "customapps.allowed_users", Label: "Who can open it", Group: "Access", Order: 10,
-		Render: func(spec AppSpec) ui.Component {
+		Render: func(spec appadmin.App) ui.Component {
 			if !spec.Shared {
 				return nil // an unshared app is already only its owner's
 			}
@@ -203,7 +217,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		}
 		writeJSON(w, map[string]any{"ok": true, "message": "Link revoked."})
 	case "reach":
-		st := LoadCustomAppOperatorState(owner, slug)
+		st := appadmin.Load(RootDB, owner, slug)
 		if r.Method == http.MethodGet {
 			// One response carries BOTH the options and the current selection,
 			// which is what lets the picker skip a second fetch for a record
@@ -232,7 +246,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		st.AllowedUsers = in.Users
 		st.UpdatedBy = user
 		st.Updated = time.Now().UTC().Format(time.RFC3339)
-		SaveCustomAppOperatorState(owner, slug, st)
+		appadmin.Save(RootDB, owner, slug, st)
 		Log("[customapps] admin %q set the allowlist on %q/%q to %d user(s)", user, owner, slug, len(st.AllowedUsers))
 		writeJSON(w, map[string]any{"ok": true, "message": "Saved."})
 	default:
