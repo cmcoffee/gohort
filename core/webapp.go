@@ -1623,7 +1623,14 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     text-transform: uppercase; color: #8b949e; margin-bottom: 0.9rem;
   }
   .cluster-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    /* auto-FIT, not auto-fill. The cluster holds a bounded set — the apps that
+       are also hub tabs, four of them — so a reserved empty track reads as a
+       missing app rather than as spare room, and invites filling a hole by
+       moving something in that does not belong. auto-fit collapses the empty
+       track and the members share the width instead.
+       The main grid above keeps auto-fill on purpose: it is an open-ended list
+       where a short last row is just the end of the list. */
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
   }
   #live-panel {
