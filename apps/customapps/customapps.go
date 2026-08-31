@@ -409,6 +409,10 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Data
 			return
 		}
 		orch.PublicHandleSend(w, r, agent)
+	case sub == "inject":
+		// Same landing every other chat surface has: a mid-flight message joins
+		// the turn instead of replacing it.
+		orch.PublicHandleInject(w, r)
 	case sub == "cancel":
 		orch.PublicHandleCancel(w, r, agent)
 	case sub == "sessions":

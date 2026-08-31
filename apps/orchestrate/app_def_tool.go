@@ -950,6 +950,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			LoadURL:      "chat/sessions/{id}",
 			DeleteURL:    "chat/sessions/{id}",
 			SendURL:      "chat/send",
+			InjectURL:    "chat/inject",
 			CancelURL:    "chat/cancel",
 			ListTitle:    firstNonEmptyStr(mapStr(m, "list_title"), "Sessions"),
 			NewLabel:     "New",
@@ -1114,6 +1115,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 	// replies never render. See sseWriter.SendChatEvent vs Send.
 	chat := ui.AgentLoopPanel{
 		SendURL:      "chat/send",
+		InjectURL:    "chat/inject",
 		CancelURL:    "chat/cancel",
 		Markdown:     true,
 		LockActivity: true,

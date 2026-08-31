@@ -87,6 +87,18 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleChatSend(w, r, udb, user)
 	case path == "chat/cancel":
 		T.dispatchChat(w, r, "cancel", "")
+	case path == "chat/inject":
+		// A message typed while a turn is running joins that turn's note queue
+		// rather than starting a new one. Without this route the panel has
+		// nowhere to put it and falls back to its ordinary send, which tears
+		// down the running stream — which is what an author sees as "Could not
+		// complete this turn — cancelled" after asking for one more thing.
+		orch := findOrchestrate()
+		if orch == nil {
+			http.Error(w, "orchestrate is not initialized", http.StatusServiceUnavailable)
+			return
+		}
+		orch.PublicHandleInject(w, r)
 	case path == "chat/sessions":
 		T.dispatchChat(w, r, "sessions", "")
 	case strings.HasPrefix(path, "chat/sessions/"):

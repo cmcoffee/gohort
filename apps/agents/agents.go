@@ -126,6 +126,12 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleSend(w, r, agent)
 	case rest == "api/cancel":
 		orch.PublicHandleCancel(w, r, agent)
+	case rest == "api/inject":
+		// A message typed while a turn is running joins it. Without this the
+		// panel falls back to an ordinary send, which tears the running stream
+		// down — read by whoever typed as the app cancelling their work
+		// because they had a second thought.
+		orch.PublicHandleInject(w, r)
 	case rest == "api/runs/active":
 		orch.PublicHandleRunsActive(w, r)
 	case strings.HasPrefix(rest, "api/runs/"):
@@ -321,6 +327,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		ListPosition: "top",
 		SendURL:      "api/send",
 		CancelURL:    "api/cancel",
+		InjectURL:    "api/inject",
 		// Run-stream reconnect: if the live /api/send socket drops mid-turn (a long
 		// RAG turn over a flaky link), the panel resumes from the run buffer instead
 		// of silently losing the reply until reload. Matches the admin console.

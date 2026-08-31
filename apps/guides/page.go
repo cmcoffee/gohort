@@ -65,8 +65,14 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		ActiveURL: "chat/active",
 		// Right — the Guide Author chat (endpoints; WorkbenchPanel builds the panel).
 		Chat: ui.AgentLoopPanel{
-			SendURL:      "chat/send",
-			CancelURL:    "chat/cancel",
+			SendURL:   "chat/send",
+			CancelURL: "chat/cancel",
+			// Where a mid-flight message goes. A guide is written over a long
+			// turn — the author reads a section as it lands and thinks of one
+			// more thing — so this is the panel most likely to be typed into
+			// while it is busy, and without it that second thought cancelled
+			// the first.
+			InjectURL:    "chat/inject",
 			Markdown:     true,
 			LockActivity: true,
 			EmptyText:    "Ask me to draft or revise a section — e.g. \"Add an introduction\" or \"Expand the setup section.\"",
