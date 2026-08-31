@@ -1307,8 +1307,10 @@ func (r *pipelineRun) runFanoutStage(ctx context.Context, stage PipelineStage, p
 				return
 			}
 			// {item} is the per-branch element; the rest of the templating
-			// vocabulary ({input}/{prev}/{stage:NAME}) resolves as usual.
-			p := resolveStageTemplate(strings.ReplaceAll(stage.Prompt, "{item}", it), input, prev, outputs)
+			// vocabulary ({input}/{prev}/{stage:NAME}) resolves as usual, and
+			// the run's form values last — see runStage, which does the same
+			// in the same order.
+			p := r.applyRunVars(resolveStageTemplate(strings.ReplaceAll(stage.Prompt, "{item}", it), input, prev, outputs))
 			var out string
 			var err error
 			if agent != "" {
@@ -1438,7 +1440,7 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 			lg.Add(1)
 			go func(idx int, voice string) {
 				defer lg.Done()
-				p := resolveStageTemplate(panelPrompt(stage.Prompt, voice, round, rounds, sofar), input, prev, outputs)
+				p := r.applyRunVars(resolveStageTemplate(panelPrompt(stage.Prompt, voice, round, rounds, sofar), input, prev, outputs))
 				var out string
 				var err error
 				// A voice that names one of your agents IS that agent: its

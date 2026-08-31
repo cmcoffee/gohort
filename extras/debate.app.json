@@ -1,0 +1,40 @@
+{
+  "_note": "Arguments for the app_def tool (action=create). Pair it with debate.pipeline.json: author the pipeline first, then this app binds it. The html section MUST stay first — a pipeline panel copies the block-renderer registry when it mounts, so a renderer registered after it is never read.",
+  "name": "Debate",
+  "slug": "debate",
+  "description": "Argue a question from both sides and judge it.",
+  "full_width": true,
+  "pipeline_id": "Debate",
+  "record_key": "id",
+  "data_sources": [
+    {
+      "name": "topic ideas",
+      "language": "python",
+      "script": "import json\n# Suggestions for the Suggest button. A JSON array becomes a popover of\n# choices; each entry's 'topic' fills the field and 'hook' is the muted\n# second line. Static here so the button costs nothing to press — swap in\n# fetch_url and this becomes \"debate what is on the front page today\".\nprint(json.dumps([\n    {\"topic\": \"Should we adopt a monorepo?\", \"hook\": \"build times against release independence\"},\n    {\"topic\": \"Is a four-day week worth the coordination cost?\", \"hook\": \"output per hour against availability\"},\n    {\"topic\": \"Should this service own its own database?\", \"hook\": \"autonomy against the cost of a second source of truth\"}\n]))\n"
+    }
+  ],
+  "sections": [
+    {
+      "kind": "html",
+      "html": "<script>\n// Registered BEFORE the pipeline section mounts, because the panel copies\n// the renderer registry at mount time. A renderer added later is silently\n// ignored: the cards render in the default style and nothing errors.\n//\n// A block's type is the STAGE KIND that produced it, so every worker stage\n// arrives as 'worker'. The stage NAME comes through as the title, which is\n// what tells the verdict apart from the positions.\nwindow.uiRegisterBlockRenderer('worker', function(d) {\n  var accent = d.title === 'judge' ? '#6366f1' : '#8b949e';\n  var wrap = document.createElement('div');\n  wrap.style.cssText = 'border-left:3px solid ' + accent + ';padding:2px 0 2px 12px;margin:10px 0';\n  var head = document.createElement('div');\n  head.style.cssText = 'font:600 12px/1.6 ui-monospace,Menlo,monospace;letter-spacing:.04em;text-transform:uppercase;color:' + accent;\n  head.textContent = d.title || 'stage';\n  var body = document.createElement('div');\n  wrap.appendChild(head);\n  wrap.appendChild(body);\n  return {wrap: wrap, body: body};\n});\n\n// The Export button. A client action is looked up at CLICK time, so this one\n// is not order-sensitive the way the renderer above is.\nwindow.uiRegisterClientAction('debate_export', function(ctx) {\n  window.print();\n});\n</script>"
+    },
+    {
+      "kind": "pipeline",
+      "input_label": "What should be debated?",
+      "placeholder": "A question with a real trade-off, not one with a lookup answer",
+      "submit_label": "Start Debate",
+      "empty_text": "Submit a question to begin a debate, or pick a saved one from the sidebar.",
+      "suggest_script": "topic ideas",
+      "suggest_label": "Suggest",
+      "toolbar": [
+        {"label": "Copy Link", "method": "copy", "title": "Copy a shareable link to this debate"},
+        {"label": "Export", "method": "client", "url": "debate_export", "title": "Print the transcript (save as PDF from the print dialog)"}
+      ],
+      "meta": [
+        {"field": "verdict", "style": "text", "truncate": 240},
+        {"field": "winner", "style": "pill", "variants": {"for": "#3fb950", "against": "#f85149"}},
+        {"field": "confidence", "style": "pill", "truncate": 32, "variants": {"very high": "#3fb950", "high": "#3fb950", "moderate": "#e3b341", "low": "#f85149", "very low": "#f85149"}}
+      ]
+    }
+  ]
+}

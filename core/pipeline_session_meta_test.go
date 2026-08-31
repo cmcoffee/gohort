@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -149,5 +150,40 @@ func TestPromotedMetaIsNotSuppressedByQuiet(t *testing.T) {
 	r.promoteSessionMeta("judge", map[string]any{"winner": "against"})
 	if len(got) != 1 {
 		t.Fatalf("a quiet run still files its summary; got %v", got)
+	}
+}
+
+// A pipeline backing an app takes the submit form's fields as {name} in a
+// stage prompt — the tool's help says so without qualification. It was true of
+// a worker stage and quietly false of a fanout and a panel, which re-derive
+// the prompt from stage.Prompt and used to stop at resolveStageTemplate. The
+// failure is silent and it lands in the two kinds a debate-shaped app leans on
+// hardest: the placeholder reaches the model as literal text.
+func TestFormValuesReachEveryStageKindsPrompt(t *testing.T) {
+	r := &pipelineRun{
+		input:   "the question",
+		vars:    map[string]string{"{tone}": "harsh"},
+		outputs: map[string]stageOutput{},
+	}
+	const tmpl = "argue in a {tone} register"
+	const want = "argue in a harsh register"
+
+	// The worker path, which always worked, as the reference.
+	if got := r.applyRunVars(resolveStageTemplate(tmpl, r.input, "", r.outputs)); got != want {
+		t.Fatalf("worker prompt = %q, want %q", got, want)
+	}
+	// The two that did not: same composition, checked at the source so a
+	// future edit that drops one is caught rather than shipped.
+	src, err := os.ReadFile("pipeline_interp.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, site := range []string{
+		`r.applyRunVars(resolveStageTemplate(strings.ReplaceAll(stage.Prompt, "{item}", it)`,
+		`r.applyRunVars(resolveStageTemplate(panelPrompt(stage.Prompt`,
+	} {
+		if !strings.Contains(string(src), site) {
+			t.Errorf("a stage kind stopped applying the run's form values: %s", site)
+		}
 	}
 }

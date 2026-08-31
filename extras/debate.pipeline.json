@@ -1,0 +1,137 @@
+{
+  "name": "Debate",
+  "description": "Argue a question from both sides, research it first, then judge it. Two advocates take opposite positions and answer each other over several rounds; a judge that never argued reads the transcript and says which side actually carried it, with a confidence it has to justify. Use it on a question where the disagreement is the point — a decision with a real trade-off, a claim you want stress-tested — not on a question with a lookup answer.",
+  "session_meta": [
+    "judge.winner",
+    "judge.confidence",
+    "judge.verdict"
+  ],
+  "stages": [
+    {
+      "name": "positions",
+      "kind": "worker",
+      "model": "lead",
+      "think": "on",
+      "reach": "none",
+      "prompt": "Turn the question below into a debate that can actually be held.\n\nWrite the two positions as CLAIMS somebody could defend, not as topics. \"We should adopt X\" and \"We should not adopt X\" are claims. \"The pros and cons of X\" is a topic, and a debate on a topic goes nowhere because neither side has anything to be wrong about.\n\nGive each side a domain the arguer would come from — the discipline whose evidence decides this, not a job title. It becomes the voice that argues, so \"the security engineer\" and \"the person who has to run this at 3am\" are useful; \"the pro side\" is not.\n\nThen plan the research. Write the searches that would settle the question for EITHER side: the numbers, the precedents, the documented outcomes. Not one set for each side — a debate where both sides brought their own facts is two speeches.\n\nSome questions cannot be debated. A matter of taste with nothing at stake, a request for something harmful dressed as a question, a factual lookup with one right answer. Say so plainly in not_debatable, give the reason, and leave the rest empty rather than inventing a disagreement.\n\nThe question:\n\n{input}",
+      "output": [
+        {
+          "name": "not_debatable",
+          "type": "bool",
+          "required": true,
+          "desc": "true when this cannot be honestly debated — a settled fact, a matter of pure taste, or a harmful request in the shape of a question"
+        },
+        {
+          "name": "refusal",
+          "type": "string",
+          "desc": "when not_debatable, one sentence on why, addressed to the person who asked"
+        },
+        {
+          "name": "for_position",
+          "type": "string",
+          "desc": "the claim the FOR side defends, written as a claim"
+        },
+        {
+          "name": "against_position",
+          "type": "string",
+          "desc": "the claim the AGAINST side defends, written as a claim"
+        },
+        {
+          "name": "for_expertise",
+          "type": "string",
+          "desc": "the domain the FOR advocate argues from"
+        },
+        {
+          "name": "against_expertise",
+          "type": "string",
+          "desc": "the domain the AGAINST advocate argues from"
+        },
+        {
+          "name": "queries",
+          "type": "list",
+          "desc": "searches that would settle the question for either side — shared, not one set per side"
+        }
+      ]
+    },
+    {
+      "name": "stop_if_undebatable",
+      "kind": "branch",
+      "when": "positions.not_debatable",
+      "prompt": "The question was not debatable; the run ends here with the reason."
+    },
+    {
+      "name": "research",
+      "kind": "fanout",
+      "fan_over": "positions.queries",
+      "reach": "read",
+      "think": "off",
+      "prompt": "Find what is actually known about ONE question below. This is the shared evidence both sides of a debate will argue from, so it is not yours to shade.\n\nReport what you found and where each piece came from — the URL, the document, the figure with its date. A finding whose source you drop cannot be checked afterwards by the judge or by anybody else, which is most of what it was worth.\n\nWhere the evidence is contested, say that it is contested and give both readings. That is the useful answer, not a problem to resolve on your own: an even-handed summary of a genuine disagreement is worth more to a debate than a confident pick.\n\nWhere you found nothing, say so. An empty result stated is worth more than a plausible paragraph, because an advocate will cite whatever you write here.\n\nYour question:\n\n{item}"
+    },
+    {
+      "name": "rounds",
+      "kind": "panel",
+      "panel": [
+        "the advocate FOR",
+        "the advocate AGAINST"
+      ],
+      "count": 3,
+      "reach": "none",
+      "think": "on",
+      "prompt": "You are {voice} in a debate. Argue your side and only your side.\n\nFOR defends: {stage:positions.for_position}\nAGAINST defends: {stage:positions.against_position}\n\nArgue from the domain your role names — FOR argues as {stage:positions.for_expertise}, AGAINST as {stage:positions.against_expertise} — and take that seriously: it decides which evidence you find decisive and what you consider a cost worth paying.\n\nThis is the shared research. Cite it by name when you use it, and do not invent a source that is not here:\n\n{stage:research}\n\nAfter the first round you are REPLYING. Name the strongest thing the other side said and answer that, rather than restating your opening at greater length. An argument that ignores what was just said to it reads as though nobody was listening, and the judge will read it that way too. If they made a point you cannot answer, concede it and show why your case survives anyway — a concession costs you one point and buys the rest of your credibility.\n\nWhat has been said so far:\n\n{panel}\n\nThe question: {input}"
+    },
+    {
+      "name": "citation_audit",
+      "kind": "tool",
+      "tool": "debate_audit_citations",
+      "args": {
+        "transcript": "{stage:rounds}",
+        "sources": "{stage:research}"
+      }
+    },
+    {
+      "name": "judge",
+      "kind": "worker",
+      "model": "lead",
+      "think": "on",
+      "reach": "none",
+      "prompt": "You are judging a debate you did not take part in. Decide which side carried it — not which side you agree with, and not which question you would rather they had argued.\n\nJudge the ARGUMENTS. A side wins by supporting its claims, answering what was put to it, and conceding what it could not answer. A side loses by asserting, by repeating itself louder, or by walking past the strongest point against it. The more elegant writer is not the winner.\n\nThe citation audit below is ground truth. A claim it marks as unsupported is unsupported, whatever confidence it was delivered with, and a side that leaned on one has lost that argument rather than won it stylishly.\n\nSay your confidence and mean it. High is for a debate one side plainly carried. Low is for a close one, or one where both sides missed what actually decides the question — and saying so is a real verdict, not a failure to reach one. Do not manufacture a decisive winner out of a draw; a reader who acts on a confident verdict you did not have is worse off than one told it was close.\n\nThe question: {input}\n\nThe transcript:\n\n{stage:rounds}\n\nThe citation audit:\n\n{stage:citation_audit}",
+      "output": [
+        {
+          "name": "winner",
+          "type": "string",
+          "required": true,
+          "enum": [
+            "for",
+            "against"
+          ],
+          "desc": "which side carried the debate on the arguments"
+        },
+        {
+          "name": "confidence",
+          "type": "string",
+          "required": true,
+          "enum": [
+            "very high",
+            "high",
+            "moderate",
+            "low",
+            "very low"
+          ],
+          "desc": "how clearly they carried it — low is an honest answer for a close debate"
+        },
+        {
+          "name": "verdict",
+          "type": "string",
+          "required": true,
+          "desc": "one line: who won and on what, e.g. \"AGAINST wins on the migration cost nobody priced\""
+        },
+        {
+          "name": "reasoning",
+          "type": "string",
+          "required": true,
+          "desc": "the argument that decided it, what the losing side failed to answer, and anything the audit flagged"
+        }
+      ]
+    }
+  ]
+}
