@@ -64,7 +64,7 @@ func init() {
 	// request time, after startup wires it — the same pattern the account
 	// section and servitor's source use.
 	RegisterReferenceSource(storeSource{app: app})
-	RegisterAdminSection(AdminSectionEntry{Section: app.adminSection(), Head: adminHeadHTML()})
+	RegisterAdminSection(AdminSectionEntry{Section: app.adminSection(), Head: adminHeadHTML(), App: "/filestore"})
 	// The visibility half. The reference source says what an agent CAN be
 	// given; this says what one HOLDS, on the agent editor where somebody
 	// asks "what can this thing reach". Without it a file store was the

@@ -17,6 +17,10 @@ func init() {
 		Label:   "TechWriter",
 		Default: "worker (thinking)",
 		Group:   "Apps",
+		// Claimed, so this dial also shows on TechWriter's own row in Apps.
+		// It stays on the LLMs tab: the claim adds a second place to find it,
+		// never moves it.
+		App:     "/techwriter",
 		Private: true,
 	})
 }

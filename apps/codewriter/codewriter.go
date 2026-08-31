@@ -8,7 +8,7 @@ import (
 
 func init() {
 	RegisterApp(new(CodeWriterAgent))
-	RegisterRouteStage(RouteStage{Key: "app.codewriter", Label: "Codewriter", Default: "worker (thinking)", Group: "Apps"})
+	RegisterRouteStage(RouteStage{Key: "app.codewriter", Label: "Codewriter", Default: "worker (thinking)", Group: "Apps", App: "/codewriter"})
 }
 
 type CodeWriterAgent struct {

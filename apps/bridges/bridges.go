@@ -37,6 +37,7 @@ func init() {
 		Label:   "Bridges",
 		Default: "worker (thinking)",
 		Group:   "Apps",
+		App:     "/bridges",
 	})
 }
 

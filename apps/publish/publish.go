@@ -34,7 +34,7 @@ func init() {
 	registeredApp = app
 	RegisterApp(app)
 	registerPublisherAgent()
-	RegisterAdminSection(AdminSectionEntry{Section: adminSection()})
+	RegisterAdminSection(AdminSectionEntry{Section: adminSection(), App: "/publish"})
 }
 
 // PublishApp carries the framework boilerplate and the deployment's destination

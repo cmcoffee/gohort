@@ -31,7 +31,7 @@ func init() {
 	// self-registered here rather than surfaced as an agent-facing hub app. The
 	// app's routes below still serve the editor; WebHidden keeps it off the
 	// dashboard and there's no HubTab, so it's reached only from admin.
-	RegisterAdminSection(AdminSectionEntry{Section: promptsAdminSection(), Head: promptsHeadHTML()})
+	RegisterAdminSection(AdminSectionEntry{Section: promptsAdminSection(), Head: promptsHeadHTML(), App: "/prompts"})
 }
 
 // PromptsApp is the app entry point. Embedding AppCore wires in shared state
