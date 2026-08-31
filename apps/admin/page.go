@@ -2726,6 +2726,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// instance. Lands under Capabilities via sectionGroup, next to the
 	// Embeddings and Image Generation settings it shares.
 	page.Sections = append(page.Sections, peerSharingSections()...)
+	// The Apps tab: one row per compiled app. Custom apps land on the SAME tab
+	// through the runtime section source below, which is why this is appended
+	// first — compiled apps, then whatever people have authored.
+	page.Sections = append(page.Sections, a.appsTabSections()...)
 	// App-contributed admin sections — framework tuning that belongs in admin
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any
@@ -2736,7 +2740,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range page.Sections {
 		t := page.Sections[i].Title
-		if g, ok := sectionGroup[t]; ok {
+		// The map keys on TITLE, and an Apps row's title is an app's NAME —
+		// which nobody here chose and which could one day be "Catalog" or
+		// "Skills". A collision would yank that app's row onto another tab,
+		// where it would read as the app having vanished. Sections that have
+		// already declared this group keep it.
+		if g, ok := sectionGroup[t]; ok && page.Sections[i].Group != AppsTabGroup {
 			page.Sections[i].Group = g
 		}
 		if wideSections[t] {

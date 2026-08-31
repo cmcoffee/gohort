@@ -28,7 +28,14 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-const customAppsAdminGroup = "Custom Apps"
+// customAppsAdminGroup is the admin TAB these rows land on. The same one the
+// compiled apps use: a custom app is an app, and a tab that said otherwise
+// would be sorting by how a thing was built rather than by what it is.
+//
+// A literal rather than a reference to admin's constant, because admin imports
+// nothing from here and this imports nothing from admin — the two agree through
+// the section source, which is the whole point of that seam.
+const customAppsAdminGroup = "Apps"
 
 // adminSections builds one section per custom app, across every owner.
 //
@@ -62,12 +69,12 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 	if len(rows) == 0 {
 		// An empty rail reads as a broken tab. Say what is true instead.
 		return []AdminSectionEntry{{Section: ui.Section{
-			Title: "Custom Apps",
+			Title: "Custom apps",
 			Group: customAppsAdminGroup,
 			Body: ui.EmptyState{
 				Icon:  "🧩",
-				Title: "No custom apps yet",
-				Hint:  "Apps authored from a chat with the Builder appear here, one per row, with the operator controls for each.",
+				Title: "None authored yet",
+				Hint:  "An app built from a chat with the Builder joins this list, beneath the apps that ship with the framework, with its own operator controls.",
 			},
 		}}}
 	}

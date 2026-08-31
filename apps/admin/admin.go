@@ -834,6 +834,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	})
 
 	// API: settings (signup toggle, etc.).
+	sub.HandleFunc("/api/app-summary", a.handleAppSummary)
 	sub.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
