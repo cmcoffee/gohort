@@ -574,7 +574,7 @@
   //          no direct same-origin fetches. Dashboards, reports, mockups.
   //          Live data reaches it ONLY through the declared-allowlist
   //          bridge below (data_urls + gohort.fetch).
-  //   url  — a SAME-ORIGIN relative path ("/custom/foo/"), rendered as a
+  //   url  — a SAME-ORIGIN relative path ("/apps/foo/"), rendered as a
   //          normal iframe WITHOUT sandbox: it's this app's own page,
   //          the same trust as the user opening it in a tab. Used to
   //          preview real served surfaces (a just-authored custom app).

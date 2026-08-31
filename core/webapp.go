@@ -982,10 +982,6 @@ func ServeDashboard(addr string) error {
 		}
 	}
 
-	// Legacy mounts, before the real ones: an app that has moved keeps
-	// answering at its old path so links people were GIVEN still work.
-	mountLegacyRedirects(mux)
-
 	// Pre-initialize the scheduler DB so apps can call ScheduleTask during RegisterRoutes.
 	PreInitScheduler()
 
@@ -1019,6 +1015,13 @@ func ServeDashboard(addr string) error {
 		})
 		Log("  Registered: %s -> %s/\n", wa.WebName(), prefix)
 	}
+
+	// Legacy mounts, AFTER the loop above: an app declares its old path from
+	// inside Routes(), so mounting these any earlier mounts an empty map and
+	// the old path 404s — which is the one thing a legacy mount exists to
+	// prevent, and it fails exactly where nobody is looking, on the links that
+	// were already out in the world.
+	mountLegacyRedirects(mux)
 
 	// All apps are registered — start the global scheduler so handlers added
 	// during RegisterRoutes are in place before any tasks can fire.

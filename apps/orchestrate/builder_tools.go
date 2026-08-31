@@ -736,7 +736,7 @@ func surveyWorkspace(owner string) string {
 
 	apps := ListAppSpecs(owner)
 	section("APPS", len(apps))
-	fmt.Fprintf(&b, "  (author with app_def -> /custom/<slug>/)\n")
+	fmt.Fprintf(&b, "  (author with app_def -> /apps/<slug>/)\n")
 	for i, a := range apps {
 		if i >= cap {
 			break
@@ -745,7 +745,7 @@ func surveyWorkspace(owner string) string {
 		if a.AgentID != "" {
 			agentNote = " agent=" + a.AgentID
 		}
-		fmt.Fprintf(&b, "  • %s (/custom/%s/)%s — %s\n", a.Name, a.Slug, agentNote, oneLine(a.Desc, 70))
+		fmt.Fprintf(&b, "  • %s (/apps/%s/)%s — %s\n", a.Name, a.Slug, agentNote, oneLine(a.Desc, 70))
 	}
 	capNote(len(apps))
 

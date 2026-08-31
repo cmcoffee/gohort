@@ -8,12 +8,12 @@
 // `app_def` Builder tool that authors AppSpecs instead of hardcoding them, and
 // moving AppSpec to core so orchestrate can reach it.
 //
-// Mount: /custom/                 → index (a normal Go page listing apps)
+// Mount: /apps/                 → index (a normal Go page listing apps)
 //
-//	/custom/<slug>/          → render the stored spec's Page (from JSON)
-//	/custom/<slug>/records   → GET list | POST upsert  (Table / FormPanel)
-//	/custom/<slug>/record    → DELETE one              (row action)
-//	/custom/_apps            → JSON app list (index Table source)
+//	/apps/<slug>/          → render the stored spec's Page (from JSON)
+//	/apps/<slug>/records   → GET list | POST upsert  (Table / FormPanel)
+//	/apps/<slug>/record    → DELETE one              (row action)
+//	/apps/_apps            → JSON app list (index Table source)
 //
 // Every endpoint a component references resolves here, relative to the app's
 // own mount — a spec cannot point a data binding outside it.
@@ -97,7 +97,7 @@ func (T *CustomApps) Routes() {
 	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
 	// the spec-lifecycle hooks that keep each app's standing triggers in sync.
 	T.registerScheduling()
-	// The anonymous capability-URL surface (/custom/pub/<token>/…) authenticates
+	// The anonymous capability-URL surface (/apps/pub/<token>/…) authenticates
 	// via the unguessable token itself, so it must bypass the cookie-auth
 	// middleware. Prefix registration (trailing slash) covers every token + its
 	// sub-paths; handlePublic is then the sole access check for that subtree.
@@ -632,7 +632,7 @@ func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
 //
 // Two grants admit it and both have to keep working. The coarse /custom grant
 // has always meant every shared app, so a deployment that has been handing it
-// out loses nothing. A grant to /custom/<slug> admits that app alone, which is
+// out loses nothing. A grant to /apps/<slug> admits that app alone, which is
 // what makes a custom app individually grantable from the Users picker.
 //
 // This is separate from — and ANDed with — the operator allowlist on the admin
@@ -795,7 +795,7 @@ func (T *CustomApps) handleEnableApp(w http.ResponseWriter, r *http.Request, use
 // --- script-backed data sources (the "logic" seam) ---------------------------
 
 // handleData serves a table/display section's script-backed data endpoint:
-// GET /custom/<slug>/data/<name>. It runs the named AppDataSource script
+// GET /apps/<slug>/data/<name>. It runs the named AppDataSource script
 // (sandboxed) with the REQUESTER's stored records + the request's query params
 // as input, and passes the script's JSON stdout straight through. The script
 // runs in the OWNER's sandbox (owner param) with the owner's network gate and
@@ -1017,7 +1017,7 @@ func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, s
 	writeJSON(w, out)
 }
 
-// handleAction runs a named action script: POST /custom/<slug>/action/<name>.
+// handleAction runs a named action script: POST /apps/<slug>/action/<name>.
 // The app's stored records + the request's params go in; the script prints a
 // JSON object {message?, records?}. The FRAMEWORK upserts any returned records
 // into the store (so they reach the viewer — the script never writes the store),
@@ -1216,7 +1216,7 @@ func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
 //     per-user COPY — shared definition + owner-run scripts, each user's own
 //     records. A global slug→owner index makes it discoverable; slugs are a
 //     single shared namespace (collisions rejected at share time).
-//   • Public (anonymous): the app is published at /custom/pub/<token>/ as a
+//   • Public (anonymous): the app is published at /apps/pub/<token>/ as a
 //     STATELESS, read/compute-only capability URL. A token→(owner,slug) index
 //     resolves it; the token is the sole credential; unpublishing revokes it.
 // Both indexes live in the customapps app-wide store (T.DB), NOT a per-user DB —
@@ -1288,7 +1288,7 @@ func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
 }
 
 // handleShareApp toggles authenticated (per-user-copy) sharing for an app the
-// requester owns: POST /custom/_app/share?slug=…&on=true|false. Owner-gated by
+// requester owns: POST /apps/_app/share?slug=…&on=true|false. Owner-gated by
 // construction (the spec is looked up in the requester's own store). Sharing a
 // slug another user already shares is rejected — shared slugs are one global
 // namespace.
@@ -1317,7 +1317,7 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 }
 
 // handlePublishApp mints or revokes the anonymous capability URL for an app the
-// requester owns: POST /custom/_app/public?slug=…&on=true|false. Publishing
+// requester owns: POST /apps/_app/public?slug=…&on=true|false. Publishing
 // mints a fresh token (if none) and registers it; unpublishing deletes the
 // token from the index — instantly revoking any shared link — and clears it
 // from the spec. Returns the public URL on publish so the UI can surface it.
@@ -1370,7 +1370,7 @@ var (
 )
 
 // handlePublic serves the anonymous capability-URL surface:
-// /custom/pub/<token>/… . The token (validated against the public index) is the
+// /apps/pub/<token>/… . The token (validated against the public index) is the
 // sole credential — this subtree is a registered public path, so the cookie
 // middleware already passed it through unauthenticated. STATELESS and
 // read/compute-only: the page renders, data sources RUN in the owner's sandbox
@@ -1438,21 +1438,21 @@ func (T *CustomApps) handlePublic(w http.ResponseWriter, r *http.Request, rest s
 }
 
 // publicPageBytes adapts the owner's stored page for anonymous serving:
-//   - Rewrites the app's own AUTH-GATED mount prefix (/custom/<slug>/) to the
-//     public capability mount (/custom/pub/<token>/). The typed sections use
+//   - Rewrites the app's own AUTH-GATED mount prefix (/apps/<slug>/) to the
+//     public capability mount (/apps/pub/<token>/). The typed sections use
 //     RELATIVE sources ("data/<name>") that already resolve against the page
 //     URL, but a hand-written html section commonly fetches an ABSOLUTE path
-//     ("/custom/<slug>/data/<name>") — served verbatim that points back at the
+//     ("/apps/<slug>/data/<name>") — served verbatim that points back at the
 //     gated slug route and 302s to login (works for the owner, breaks for an
 //     anonymous visitor). The prefix rewrite makes those absolute self-refs hit
 //     the token-scoped endpoint instead.
 //   - Marks the page public so the runtime drops the live-sessions pill (which
 //     would poll the gated /api/live), and removes the Back link (it points at
-//     the owner's gated /custom/ index — meaningless to an anonymous visitor).
+//     the owner's gated /apps/ index — meaningless to an anonymous visitor).
 func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
 	// Both mounts, because a page STORED before the app moved has the old one
 	// baked into any absolute self-reference its author wrote. Rewriting only
-	// the current prefix would leave those pointing at /custom/<slug>/…, which
+	// the current prefix would leave those pointing at /apps/<slug>/…, which
 	// redirects to the gated mount and sends an anonymous visitor to a login
 	// page — the exact failure this rewrite exists to prevent, reintroduced by
 	// a rename rather than by a bad link.

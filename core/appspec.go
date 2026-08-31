@@ -69,12 +69,12 @@ type AppSpec struct {
 	// (PrivateDB=false) keep using the shared store untouched.
 	PrivateDB bool `json:"private_db,omitempty"`
 	// DataSources are script-backed data endpoints (see AppDataSource), referenced
-	// by a table/display section's source_script. Served at /custom/<slug>/data/<name>.
+	// by a table/display section's source_script. Served at /apps/<slug>/data/<name>.
 	// This is the "logic" seam: structure stays declarative, computation/integration
 	// is a sandboxed script.
 	DataSources []AppDataSource `json:"data_sources,omitempty"`
 	// Actions are script-backed buttons (see AppAction) — the write-side of the
-	// logic seam. Served at /custom/<slug>/action/<name>; surfaced by an "actions"
+	// logic seam. Served at /apps/<slug>/action/<name>; surfaced by an "actions"
 	// section.
 	Actions []AppAction `json:"actions,omitempty"`
 	// Disabled blocks the app from serving (the host 403s every sub-route) until
@@ -91,7 +91,7 @@ type AppSpec struct {
 	// discovery source of truth; this bool mirrors it for the owner's list and
 	// export stripping. Deployment-local — cleared on export.
 	Shared bool `json:"shared,omitempty"`
-	// PublicToken, when non-empty, publishes the app at /custom/pub/<token>/ as a
+	// PublicToken, when non-empty, publishes the app at /apps/pub/<token>/ as a
 	// STATELESS, read/compute-only CAPABILITY URL: anyone with the (unguessable)
 	// link loads the page and runs its data sources — in the OWNER's sandbox,
 	// input via query params — but nothing is stored and every write endpoint is
