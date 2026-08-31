@@ -269,7 +269,19 @@ func (T *CustomApps) handlePipeline(w http.ResponseWriter, r *http.Request, spec
 		http.Error(w, "the app's pipeline could not be resolved", http.StatusNotFound)
 		return
 	}
-	orch.PublicHandlePipeline(w, r, def, sub)
+	// Where this app's runs can be watched and stopped from the global activity
+	// ribbon. Without it a run that outlives its tab is listed with nowhere to
+	// go — visible, which is the important half, but not reachable.
+	base := T.WebPath() + "/" + spec.Slug
+	appName := strings.TrimSpace(spec.Name)
+	if appName == "" {
+		appName = spec.Slug
+	}
+	orch.PublicHandlePipelineLive(w, r, def, sub, RunLiveInfo{
+		App:       appName,
+		URL:       base + "/?session={id}",
+		CancelURL: base + "/pipeline/cancel?id={id}",
+	})
 }
 
 // recordsInvalidationBridge returns a <script> that refreshes the app's

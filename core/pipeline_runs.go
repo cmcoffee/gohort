@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -263,12 +264,13 @@ type PipelineRunSurface struct {
 	Machine  PipelineMachineRunner // kind=machine stages; nil = none available
 	Tools    []AgentToolDef        // catalog a stage's declared tool names resolve against
 	Timeout  time.Duration         // 0 = defaultPipelineRunTimeout
+	Live     RunLiveInfo           // where these runs can be watched and stopped; see RunSurface.Live
 }
 
 // ServePipelineRuns is ServeRuns with a pipeline as the thing that runs.
 func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s PipelineRunSurface, sub string) {
 	T.ServeRuns(w, r, RunSurface{
-		DB: s.DB, User: s.User, OwnerID: s.Def.ID, Timeout: s.Timeout,
+		DB: s.DB, User: s.User, OwnerID: s.Def.ID, Timeout: s.Timeout, Live: s.Live,
 		Work: func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error) {
 			// executePipelineHooks, not an exported Run*: the form's fields are
 			// run-scoped template values and this is the only entry point that
@@ -299,15 +301,31 @@ type RunSurface struct {
 	OwnerID string        // what ran: the id its past runs are listed under
 	Work    RunWork       // the run itself
 	Timeout time.Duration // 0 = defaultPipelineRunTimeout
+	// Live places this surface's runs on the global activity ribbon. Optional:
+	// a host that fills nothing still gets its runs LISTED, because a run that
+	// outlives its request and appears nowhere is the failure this exists to
+	// prevent — it just gets listed without a way back to it.
+	Live RunLiveInfo
+}
+
+// RunLiveInfo is what a host knows about where its runs live on the web, which
+// core cannot work out for itself: the surface is mounted by somebody else,
+// under a path it was never told.
+type RunLiveInfo struct {
+	App       string // app name shown beside the entry
+	URL       string // where to send a viewer to watch it; {id} substituted
+	CancelURL string // where a POST stops it; {id} substituted
 }
 
 // ServeRuns serves the PipelinePanel protocol for any RunSurface. sub is the
 // path after the host's own prefix: "stream" | "sessions" | "sessions/<id>".
 //
-//	POST   stream        → run it, streaming the transcript
-//	GET    sessions      → past runs, newest first
-//	GET    sessions/<id> → one run's stored blocks
-//	DELETE sessions/<id> → drop a run
+//	POST   stream          → run it, streaming the transcript
+//	GET    reconnect/<id>  → attach to a run still going, from the top
+//	POST   cancel?id=<id>  → stop one
+//	GET    sessions        → past runs, newest first
+//	GET    sessions/<id>   → one run's stored blocks
+//	DELETE sessions/<id>   → drop a run
 //
 // The host owns authentication and routing; by the time this is called, User is
 // already decided.
@@ -315,6 +333,10 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 	switch {
 	case sub == "stream":
 		T.streamRun(w, r, s)
+	case sub == "cancel":
+		T.cancelRun(w, r, s)
+	case strings.HasPrefix(sub, "reconnect/"):
+		T.reconnectRun(w, r, s, strings.TrimPrefix(sub, "reconnect/"))
 	case sub == "sessions":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -369,9 +391,93 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 	}
 }
 
-// streamRun runs the surface's work and streams its transcript in the shape
-// PipelinePanel speaks. The run is recorded as it goes, so closing the tab
-// loses the live view but not the result.
+// --- live runs ---------------------------------------------------------------
+//
+// A run used to be owned by the request that started it: the work ran inline
+// on r.Context(), so closing the tab cancelled it. Every completed stage was
+// still persisted, which made the loss quiet — the history showed a run that
+// simply stopped, and the reason was somewhere in the reader's browser rather
+// than anywhere in the logs.
+//
+// So the work is detached and the request only WATCHES it. That buys the two
+// things a long recipe needs (come back to a run in progress, stop one that is
+// going nowhere) and costs one thing worth stating plainly: a run now keeps
+// spending on model calls after its reader has gone. That is the point, and it
+// is why the same change has to put every run somewhere it can be seen and
+// stopped — an invisible run with a budget is strictly worse than one that
+// dies with the tab.
+
+// runFrame is one SSE frame, buffered so a client that arrives late is handed
+// the same stream from the beginning rather than joining halfway through a
+// transcript it cannot make sense of.
+type runFrame struct {
+	Name string
+	Data map[string]any
+}
+
+// liveRuns holds every in-flight run of every surface. Keyed by run id, which
+// is a UUID slice, so the shared namespace needs no per-host partition — but
+// every reader still proves the run is THEIRS against the store before
+// touching it, because a shared registry is exactly the shape that turns one
+// guessed id into somebody else's transcript.
+var liveRuns = NewLiveSessionMap[runFrame](0)
+
+// runLinks remembers where a live run can be watched and stopped. Kept beside
+// the registry rather than inside LiveSession so the generic map stays
+// ignorant of web paths, which are the host's business.
+var (
+	runLinkMu sync.Mutex
+	runLinks  = map[string]RunLiveInfo{}
+)
+
+func init() {
+	RegisterLiveProvider(func() []LiveEntry {
+		entries := liveRuns.ActiveSessions()
+		runLinkMu.Lock()
+		defer runLinkMu.Unlock()
+		for i := range entries {
+			info, ok := runLinks[entries[i].ID]
+			if !ok {
+				continue
+			}
+			entries[i].App = info.App
+			entries[i].URL = strings.ReplaceAll(info.URL, "{id}", url.QueryEscape(entries[i].ID))
+			entries[i].CancelURL = strings.ReplaceAll(info.CancelURL, "{id}", url.QueryEscape(entries[i].ID))
+		}
+		return entries
+	})
+}
+
+func setRunLink(id string, info RunLiveInfo) {
+	if info == (RunLiveInfo{}) {
+		return
+	}
+	runLinkMu.Lock()
+	runLinks[id] = info
+	runLinkMu.Unlock()
+}
+
+func clearRunLink(id string) {
+	runLinkMu.Lock()
+	delete(runLinks, id)
+	runLinkMu.Unlock()
+}
+
+// ownsRun reports whether this surface's user may touch this run id.
+//
+// The store is the authority, not the live registry: a run is filed under
+// (user, pipeline, id), so loading it back proves all three at once. The
+// registry could only answer "somebody with this id is running something".
+func ownsRun(s RunSurface, runID string) bool {
+	if runID == "" || strings.Contains(runID, "/") {
+		return false
+	}
+	_, ok := LoadPipelineRun(s.DB, s.User, s.OwnerID, runID)
+	return ok
+}
+
+// streamRun starts a run and streams its transcript. The work outlives this
+// request; the request is one viewer of it.
 func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -384,14 +490,6 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 		return
 	}
 
-	sse, err := NewSSEWriter(w)
-	if err != nil {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	stopKeepalive := sse.StartKeepalive(20 * time.Second)
-	defer stopKeepalive()
-
 	run := PipelineRun{
 		ID:         UUIDv4()[:12],
 		PipelineID: s.OwnerID,
@@ -400,69 +498,178 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 		Running:    true,
 	}
 	SavePipelineRun(s.DB, s.User, run)
-	_ = sse.SendNamed("session", map[string]any{"id": run.ID, "title": run.Title})
-
-	// One mutex guards both the SSE writer's ordering and the run record:
-	// fanout branches emit from parallel goroutines, so blocks would
-	// otherwise interleave mid-write and the stored transcript would race.
-	var mu sync.Mutex
-	blockIdx := map[string]int{}
-	sink := func(ev PipelineEvent) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch ev.Kind {
-		case "status":
-			_ = sse.SendNamed("status", map[string]any{"text": ev.Text})
-		case "block":
-			run.Blocks = append(run.Blocks, PipelineRunBlock{ID: ev.ID, Type: ev.Type, Title: ev.Title})
-			blockIdx[ev.ID] = len(run.Blocks) - 1
-			_ = sse.SendNamed("block", map[string]any{"id": ev.ID, "type": ev.Type, "title": ev.Title})
-		case "chunk":
-			if i, ok := blockIdx[ev.ID]; ok {
-				run.Blocks[i].Body += ev.Text
-			}
-			_ = sse.SendNamed("chunk", map[string]any{"id": ev.ID, "text": ev.Text})
-		case "meta":
-			// Filed, not shown. The sidebar picks it up on its next load,
-			// which the panel does when the run finishes.
-			if run.Meta == nil {
-				run.Meta = map[string]string{}
-			}
-			for k, v := range ev.Meta {
-				run.Meta[k] = v
-			}
-		case "block_done":
-			_ = sse.SendNamed("block_done", map[string]any{"id": ev.ID})
-			// Persist per completed block, not once at the end: a long run
-			// should survive the browser going away.
-			SavePipelineRun(s.DB, s.User, run)
-		}
-	}
 
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = defaultPipelineRunTimeout
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
+	// context.Background, deliberately: r.Context() dies with the response, and
+	// this run is meant to survive it. The timeout is what bounds it now, so it
+	// is the only thing standing between a stuck stage and a goroutine that
+	// runs until the process does.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	liveRuns.Register(run.ID, run.Title, cancel).SetOwner(s.User)
+	setRunLink(run.ID, s.Live)
 
-	out, runErr := s.Work(ctx, input, vars, sink)
-
-	mu.Lock()
-	run.Running = false
-	run.Output = out
-	if runErr != nil {
-		run.Err = runErr.Error()
+	emit := func(name string, data map[string]any, done bool) {
+		liveRuns.AppendEvent(run.ID, runFrame{Name: name, Data: data}, done)
 	}
-	SavePipelineRun(s.DB, s.User, run)
-	mu.Unlock()
+	emit("session", map[string]any{"id": run.ID, "title": run.Title}, false)
 
-	if runErr != nil {
-		_ = sse.SendNamed("error", map[string]any{"message": runErr.Error()})
+	go func() {
+		defer cancel()
+		// One mutex over the run record: fanout branches emit from parallel
+		// goroutines, so the stored transcript would otherwise race. The SSE
+		// ordering it used to also guard is no longer its problem — each
+		// viewer writes from its own goroutine, reading a snapshot.
+		var mu sync.Mutex
+		blockIdx := map[string]int{}
+		sink := func(ev PipelineEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch ev.Kind {
+			case "status":
+				liveRuns.UpdateStatus(run.ID, ev.Text)
+				emit("status", map[string]any{"text": ev.Text}, false)
+			case "block":
+				run.Blocks = append(run.Blocks, PipelineRunBlock{ID: ev.ID, Type: ev.Type, Title: ev.Title})
+				blockIdx[ev.ID] = len(run.Blocks) - 1
+				emit("block", map[string]any{"id": ev.ID, "type": ev.Type, "title": ev.Title}, false)
+			case "chunk":
+				if i, ok := blockIdx[ev.ID]; ok {
+					run.Blocks[i].Body += ev.Text
+				}
+				emit("chunk", map[string]any{"id": ev.ID, "text": ev.Text}, false)
+			case "meta":
+				if run.Meta == nil {
+					run.Meta = map[string]string{}
+				}
+				for k, v := range ev.Meta {
+					run.Meta[k] = v
+				}
+			case "block_done":
+				emit("block_done", map[string]any{"id": ev.ID}, false)
+				// Persist per completed block, not once at the end: a long run
+				// should survive the process going away, not just the browser.
+				SavePipelineRun(s.DB, s.User, run)
+			}
+		}
+
+		out, runErr := s.Work(ctx, input, vars, sink)
+
+		mu.Lock()
+		run.Running = false
+		run.Output = out
+		if runErr != nil {
+			run.Err = runErr.Error()
+			// A cancel arrives as a context error, which reads to a user as
+			// though something broke. It did not; they stopped it.
+			if ctx.Err() == context.Canceled {
+				run.Err = "stopped"
+			}
+		}
+		SavePipelineRun(s.DB, s.User, run)
+		mu.Unlock()
+
+		if runErr != nil {
+			emit("error", map[string]any{"message": run.Err}, true)
+		} else {
+			emit("done", map[string]any{"id": run.ID}, true)
+		}
+		clearRunLink(run.ID)
+		// Kept around briefly so a viewer that reconnects just after the end
+		// still gets the transcript rather than a 404 and a blank panel.
+		liveRuns.ScheduleCleanup(run.ID)
+	}()
+
+	tailRun(w, r, run.ID)
+}
+
+// reconnectRun attaches a viewer to a run that is still going.
+//
+// 404 when it is not live is the CONTRACT, not a failure: the panel reads it
+// as "this one has finished" and loads the stored record instead, which is the
+// right answer and the reason this needs no way to say "done, look elsewhere".
+func (T *AppCore) reconnectRun(w http.ResponseWriter, r *http.Request, s RunSurface, runID string) {
+	if !ownsRun(s, runID) {
+		http.NotFound(w, r)
 		return
 	}
-	_ = sse.SendNamed("done", map[string]any{"id": run.ID})
+	if frames, _ := liveRuns.SnapshotEvents(runID); frames == nil {
+		http.NotFound(w, r)
+		return
+	}
+	tailRun(w, r, runID)
 }
+
+// cancelRun stops a run. POST, with the id in the query, which is what the
+// panel's Cancel button sends.
+func (T *AppCore) cancelRun(w http.ResponseWriter, r *http.Request, s RunSurface) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if !ownsRun(s, runID) {
+		// 404 rather than 403: whether somebody else is running something is
+		// not this viewer's business either.
+		http.NotFound(w, r)
+		return
+	}
+	// Not an error when there was nothing to stop. The button fires on a run
+	// that may have finished a moment ago, and reporting that as a failure
+	// would make a successful outcome look like a broken control.
+	liveRuns.CancelSession(runID)
+	clearRunLink(runID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// tailRun streams one run's buffered frames to one viewer, and keeps streaming
+// until the run ends or the viewer leaves.
+//
+// Everything goes through the buffer, including the frames for the client that
+// started the run. Writing live to that one and buffering for the others would
+// be faster by the poll interval and would mean two paths that have to agree
+// forever about a transcript's contents; the events here are per-STAGE, so the
+// interval is well under what anybody notices.
+//
+// Send before sleeping, so a viewer gets everything that already happened at
+// once instead of a beat late.
+func tailRun(w http.ResponseWriter, r *http.Request, runID string) {
+	sse, err := NewSSEWriter(w)
+	if err != nil {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	stopKeepalive := sse.StartKeepalive(20 * time.Second)
+	defer stopKeepalive()
+
+	sent := 0
+	for {
+		frames, done := liveRuns.SnapshotEvents(runID)
+		if frames == nil {
+			return // cleaned up under us
+		}
+		for ; sent < len(frames); sent++ {
+			if err := sse.SendNamed(frames[sent].Name, frames[sent].Data); err != nil {
+				return // viewer gone; the run carries on
+			}
+		}
+		if done {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(runTailInterval):
+		}
+	}
+}
+
+// runTailInterval is how often a watching viewer looks for new frames. A
+// pipeline emits one block per stage rather than a token at a time, so this is
+// well inside the gap between two events rather than a throttle on them.
+const runTailInterval = 250 * time.Millisecond
 
 func writePipelineJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

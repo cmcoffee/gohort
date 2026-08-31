@@ -1988,6 +1988,31 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 	}
 }
 
+// CancelSession stops one live session and marks it done, reporting whether
+// there was anything running to stop.
+//
+// The plain half of HandleCancel, for callers that do their own authorization
+// because they can do it more precisely: a run surface knows which pipeline
+// and which user a run id has to belong to, which is a narrower question than
+// MayView can answer, and answering the narrow one is what keeps a global
+// registry from becoming a way to reach across apps.
+func (m *LiveSessionMap[T]) CancelSession(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok || s.Done {
+		return false
+	}
+	if s.Cancel != nil {
+		s.Cancel()
+	}
+	// Marked here rather than left to the work's own exit so the session stops
+	// being listed as live immediately; the goroutine unwinding on a cancelled
+	// context can take as long as the call it is waiting on.
+	s.Done = true
+	return true
+}
+
 // LiveEntry is a JSON-serializable summary of an active or queued session.
 type LiveEntry struct {
 	ID      string `json:"id"`

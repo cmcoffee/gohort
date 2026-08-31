@@ -324,11 +324,24 @@ func (T *OrchestrateApp) LookupAppPipeline(owner, pipelineID string) (PipelineDe
 // runs the same recipe and sees only their own history. Same shape as the
 // records store, where the definition is shared and the data is not.
 func (T *OrchestrateApp) PublicHandlePipeline(w http.ResponseWriter, r *http.Request, def PipelineDef, sub string) {
+	T.PublicHandlePipelineLive(w, r, def, sub, RunLiveInfo{})
+}
+
+// PublicHandlePipelineLive is PublicHandlePipeline for a host that can say
+// WHERE its runs live.
+//
+// A run outlives the request that started it, so it has to be reachable from
+// somewhere other than the tab it was started in. Core knows a run is going;
+// only the host knows the page it belongs to, because core never learns the
+// path its surface was mounted under.
+func (T *OrchestrateApp) PublicHandlePipelineLive(w http.ResponseWriter, r *http.Request, def PipelineDef, sub string, live RunLiveInfo) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	T.handlePipelineRuns(w, r, user, def, sub)
+	surface := T.pipelineRunSurface(r.Context(), user, def)
+	surface.Live = live
+	T.ServePipelineRuns(w, r, surface, sub)
 }
 
 // PublicLatestPipelineRun returns a user's most recent run of a pipeline —
