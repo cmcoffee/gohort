@@ -182,11 +182,11 @@ kind="empty" — a centered empty-state placeholder (for a 'nothing selected' pa
 
 GRAPHICS IN AN html SECTION: draw them in code. There is NO static asset route for apps — an app cannot reference /images/sprite.png — and generate_image is a CHAT tool that shows the user a picture, not an asset pipeline. So build visuals from: canvas 2D primitives (fillRect / arc / paths / gradients), inline <svg>, CSS shapes and animation, emoji or text glyphs as sprites, or a data: URI embedded in the markup. For a side-scroller that means drawing the runner and the obstacles with canvas calls rather than loading sprite files — which is also less to go wrong, since there is nothing to 404. Do not stall a build waiting on art that has nowhere to live.
 
-kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> RUNS) and optional 'height' (any CSS length, e.g. "640px" / "80vh" — only used when the blob is a whole document; default min(80vh, 860px)). WRITE A COMPLETE DOCUMENT for anything with its own layout (a game, a canvas animation, a simulation): doctype, <head>, <style>, <body>. A whole document is given its OWN FRAME, so its CSS reset and body rules style only itself and its 100vh measures its own box; a bare fragment is spliced into the page and its styles apply page-wide. Same origin either way — a framed document still fetches 'data/<name>' and shares the page's cookies/storage. Anything that runs in a browser page runs here: <canvas> with a requestAnimationFrame loop, keyboard/pointer handlers, physics, collision, audio, SVG, WebGL. So YES — a game, an animation, a simulation, or a custom visualization is buildable, and this is how you build one. Do not tell the user an interactive or graphical app is out of scope; the typed sections are not the limit of what an app can be. The steer is about FIT, not permission: for a DATA app (records, forms, lists, dashboards) reach for a typed section first, because those give you the record store, editing, refresh, and styling for free, and hand-rolling that in html is wasted work. When the thing genuinely isn't a data app, html is the right and intended choice — use it without apology. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it. CUSTOMIZING A pipeline SECTION'S CARDS: an html section's inline script is the only way a declarative app reaches the runtime's extension registries. Two rules, and BOTH fail silently rather than erroring. (1) FRAGMENT, always: a whole document is rendered in a frame, and a frame has its OWN window, so anything registered there is invisible to the page. Watch for a stray <body> tag (or a doctype, or <html>) anywhere near the top, which is enough on its own to make the blob count as a whole document and turn a working registration inert. (2) ORDER, for BLOCK RENDERERS specifically: list the html section BEFORE the pipeline section. A pipeline panel COPIES the renderer registry when it mounts, and sections mount in the order you list them, so an html section placed after it registers into a map nothing reads again and every card renders in the default style. Markdown extensions (window.uiRegisterMarkdownExtension) are read at RENDER time instead, so those work from anywhere on the page. window.uiRegisterClientAction registers fine but nothing can call it yet: no section kind emits a client-method button. WHAT TO REGISTER FOR: a pipeline block's type is the STAGE KIND that produced it (worker, panel, tool, agent, machine, loop, branch, fanout, synthesize), not a name you choose, and its title is the STAGE NAME. So register ONE renderer for the kind and branch on d.title inside it when different stages need different cards.
+kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered VERBATIM and unescaped; inline <script> RUNS) and optional 'height' (any CSS length, e.g. "640px" / "80vh" — only used when the blob is a whole document; default min(80vh, 860px)). WRITE A COMPLETE DOCUMENT for anything with its own layout (a game, a canvas animation, a simulation): doctype, <head>, <style>, <body>. A whole document is given its OWN FRAME, so its CSS reset and body rules style only itself and its 100vh measures its own box; a bare fragment is spliced into the page and its styles apply page-wide. Same origin either way — a framed document still fetches 'data/<name>' and shares the page's cookies/storage. Anything that runs in a browser page runs here: <canvas> with a requestAnimationFrame loop, keyboard/pointer handlers, physics, collision, audio, SVG, WebGL. So YES — a game, an animation, a simulation, or a custom visualization is buildable, and this is how you build one. Do not tell the user an interactive or graphical app is out of scope; the typed sections are not the limit of what an app can be. The steer is about FIT, not permission: for a DATA app (records, forms, lists, dashboards) reach for a typed section first, because those give you the record store, editing, refresh, and styling for free, and hand-rolling that in html is wasted work. When the thing genuinely isn't a data app, html is the right and intended choice — use it without apology. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — 'fetch('data/<name>').then(r => r.json())' — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side 'gohort' object on app pages (the 'from gohort import fetch_url' helper is PYTHON-side, inside the data-source script, not the browser) — calling 'gohort.fetch(...)' in html throws "gohort is not defined". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it. CUSTOMIZING A pipeline SECTION'S CARDS: an html section's inline script is the only way a declarative app reaches the runtime's extension registries. Two rules, and BOTH fail silently rather than erroring. (1) FRAGMENT, always: a whole document is rendered in a frame, and a frame has its OWN window, so anything registered there is invisible to the page. Watch for a stray <body> tag (or a doctype, or <html>) anywhere near the top, which is enough on its own to make the blob count as a whole document and turn a working registration inert. (2) ORDER, for BLOCK RENDERERS specifically: list the html section BEFORE the pipeline section. A pipeline panel COPIES the renderer registry when it mounts, and sections mount in the order you list them, so an html section placed after it registers into a map nothing reads again and every card renders in the default style. Markdown extensions (window.uiRegisterMarkdownExtension) are read at RENDER time instead, so those work from anywhere on the page. Client actions (window.uiRegisterClientAction) are reached by a pipeline section's toolbar button with method "client", and the runtime looks THOSE up at CLICK time, so an html section registering one can sit anywhere on the page — the ordering rule above is block renderers only. WHAT TO REGISTER FOR: a pipeline block's type is the STAGE KIND that produced it (worker, panel, tool, agent, machine, loop, branch, fanout, synthesize), not a name you choose, and its title is the STAGE NAME. So register ONE renderer for the kind and branch on d.title inside it when different stages need different cards.
 
 kind="chat" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: 'list_title', 'empty_text', 'placeholder'. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.
 
-kind="pipeline" — the RUN surface: a submit form on top, the run's stages streaming in below it as they finish, and every past run in a sidebar. REQUIRES pipeline_id on the app. Fields: 'fields' (the submit form — array of {name, label, type, placeholder, default, required, rows, options}; DEFAULTS to one required textarea named "topic", which is what the run surface reads as the pipeline's input), 'submit_label' (default "Start"), 'empty_text'. The stage transcript renders as markdown and past runs are batch-deletable. Nothing to wire: the endpoints are relative to the app, the transcript persists per completed stage (so closing the tab loses the live view, never the result), and each user of a shared app gets their own run history over the owner's recipe.
+kind="pipeline" — the RUN surface: a submit form on top, the run's stages streaming in below it as they finish, and every past run in a sidebar. REQUIRES pipeline_id on the app. Fields: 'fields' (the submit form — array of {name, label, type, placeholder, default, required, rows, options}; DEFAULTS to one required textarea named "topic", which is what the run surface reads as the pipeline's input), 'submit_label' (default "Start"), 'empty_text'. The stage transcript renders as markdown and past runs are batch-deletable. 'toolbar' (array of buttons shown above the transcript once a run is open, each {label, method, url?, title?, variant?, confirm?}) — method is one of: "copy" (copy the link to this run; url defaults to "?session={id}", which is the whole Copy Link button), "open" (a new tab), "post" (run one of this app's OWN action scripts — url is "action/<name>?id={id}", and the script gets id plus pipeline_output and pipeline_run for the last finished run), or "client" (url is the NAME of a handler an html section registered with window.uiRegisterClientAction — this is how Export/Print buttons work). The panel also has stream, modal, related and load; all four are REFUSED here and the error says why, because none of them can work against the endpoints a custom app has. 'suggest_script' (name of one of this app's data_sources) puts a Suggest button on the form: the script prints a JSON ARRAY for a popover of choices, or an object with a topic/text/suggestion key to fill the field directly. 'suggest_label' (default "Suggest") and 'suggest_target' (which field it fills; defaults to the first) go with it. NOT available on a custom app: cancelling a run mid-flight, reconnecting to one after closing the tab, and per-run pills in the sidebar — the run surface serves stream/sessions only and a session summary carries ID, Title and Date, so do not promise any of the three. Nothing to wire: the endpoints are relative to the app, the transcript persists per completed stage (so closing the tab loses the live view, never the result), and each user of a shared app gets their own run history over the owner's recipe.
 
 EVERY field is a PARAMETER: it arrives in the pipeline's prompts as {field_name}. So a debate form asking for proposition / side_a / side_b lets the stages say "Argue {side_a} on: {proposition}". The RUN'S INPUT — what {input} resolves to and what titles the run in the sidebar — is the field named "input" or "topic", or else the first one. Non-strings come through as text ({rounds} is "3", a toggle is "true"). The interpreter's own tokens are reserved: a field named input, prev, item or iteration is not substituted, because it would redefine the template language. A loop's count is NOT templatable — how many passes is authored in the pipeline, not asked on the form.
 
@@ -583,8 +583,8 @@ var sectionKeys = map[string][]string{
 	"actions":   {"empty_text"},
 	"empty":     {"icon", "hint"},
 	"chat":      {"list_title", "empty_text", "placeholder"},
-	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id"},
-	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id"},
+	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target"},
+	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target"},
 	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder"},
 	"html":      {"html", "height"},
 	"card":      {"html", "height"},
@@ -677,6 +677,8 @@ func appShapeNotes(raw any, boundPipeline bool) []string {
 	var notes []string
 	pipelineAt := -1
 	var recordViews []string
+	var clientButtonAt []int
+	htmlSection := false
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -688,6 +690,9 @@ func appShapeNotes(raw any, boundPipeline bool) []string {
 			if pipelineAt < 0 {
 				pipelineAt = i
 			}
+			if appToolbarUsesClient(m["toolbar"]) {
+				clientButtonAt = append(clientButtonAt, i+1)
+			}
 			// Extra submit fields are the pipeline's PARAMETERS: each arrives as
 			// {name} in every stage's prompt. Nothing to warn about — the note
 			// that used to live here said they went nowhere, which was true of
@@ -698,7 +703,22 @@ func appShapeNotes(raw any, boundPipeline bool) []string {
 			if strings.TrimSpace(mapStr(m, "source_script")) == "" {
 				recordViews = append(recordViews, strconv.Itoa(i+1))
 			}
+		case "html", "card":
+			htmlSection = true
 		}
+	}
+	// A client-method button dispatches by NAME to a handler the app has to
+	// register itself, and an html section's inline script is the only place a
+	// declarative app can do that. With no html section anywhere the button
+	// renders perfectly and toasts "No handler for client action" on click.
+	//
+	// Anywhere, not before: the runtime looks a client handler up at CLICK
+	// time, unlike a block renderer, which the panel snapshots at mount. Two
+	// registries, two different rules, and asserting the stricter one here
+	// would send an author reordering a page that was already correct.
+	if len(clientButtonAt) > 0 && !htmlSection {
+		notes = append(notes, fmt.Sprintf("section(s) %s have a toolbar button with method \"client\", but the app has no html section — nothing registers the handler, so the button renders and does nothing but toast an error when clicked. Add an html section whose script calls window.uiRegisterClientAction(\"<the button's url>\", fn).",
+			strings.Join(intsToStrings(clientButtonAt), ", ")))
 	}
 	// A pipeline bound with nothing to run it. The app carries a pipeline_id,
 	// so the author means to run it — and without the section there is no
@@ -956,7 +976,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 				Placeholder: mapStr(m, "placeholder"),
 			}}
 		}
-		sec.Body = ui.PipelinePanel{
+		panel := ui.PipelinePanel{
 			SessionsListURL:  "pipeline/sessions",
 			SessionLoadURL:   "pipeline/sessions/{id}",
 			SessionDeleteURL: "pipeline/sessions/{id}",
@@ -975,6 +995,18 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			BulkSelect: true,
 			EmptyText:  firstNonEmptyStr(mapStr(m, "empty_text"), "Start a run to see it here."),
 		}
+		// The furniture: a per-run toolbar and a Suggest button. Both are
+		// OPTIONAL and both refuse rather than render when they are pointed at
+		// something this app cannot serve.
+		toolbar, err := appPipelineToolbar(spec, m["toolbar"])
+		if err != nil {
+			return ui.Section{}, err
+		}
+		panel.Actions = toolbar
+		if err := appPipelinePrefill(spec, m, fields, &panel); err != nil {
+			return ui.Section{}, err
+		}
+		sec.Body = panel
 	case "chart":
 		// A chart is either STATIC (inline labels + series) or COMPUTED by
 		// a data source that prints {labels, series[, chart_type, title,
@@ -1285,6 +1317,251 @@ func appPipelineFields(raw any) []ui.PipelineField {
 		out = append(out, pf)
 	}
 	return out
+}
+
+// --- pipeline section: toolbar + suggest -------------------------------------
+//
+// The pipeline SECTION is a preset over ui.PipelinePanel, and for a long time
+// it set four URLs and nothing else — so an app authored declaratively got the
+// run surface but none of the furniture a compiled app hangs on it (a Copy
+// Link button, a Suggest button, an export). These two knobs close most of
+// that gap. What they deliberately do NOT expose is anything the declarative
+// surface cannot actually serve; see appPipelineToolbarRefusals.
+
+// appPipelineToolbarAllowed is what a toolbar button may DO here.
+//
+//	open   — navigate to the url in a new tab
+//	copy   — copy the substituted url to the clipboard
+//	post   — POST to one of the app's own action scripts, then refresh
+//	client — call a browser-side handler the app registered itself
+var appPipelineToolbarAllowed = map[string]bool{
+	"open": true, "copy": true, "post": true, "client": true,
+}
+
+// appPipelineToolbarRefusals is the rest of what ui.PipelinePanel supports,
+// with the reason each one cannot work on an app built out of sections.
+//
+// Refused at AUTHORING time rather than rendered, because every one of them
+// fails at CLICK time instead: the button draws correctly, sits there looking
+// finished, and breaks one user at a time long after the author declared the
+// app done. An error here costs one retry; the alternative costs a bug report
+// that starts in the wrong place.
+var appPipelineToolbarRefusals = map[string]string{
+	"stream": "it POSTs and expects an SSE transcript back, and the only endpoint " +
+		"a custom app has that speaks SSE is pipeline/stream — the recipe itself, which " +
+		"the Start button already runs. Pointed at anything else the transcript just empties",
+	"modal": "it streams SSE into a dialog, and a custom app has no second streaming " +
+		"endpoint to stream from (a data source answers once, in JSON, and the modal would " +
+		"sit empty). Generate-a-report belongs in a second pipeline the app binds, not here",
+	"related": "it fetches a list of RELATED runs keyed off fields on the session " +
+		"summary, and a custom app's summary carries ID, Title and Date only",
+	"load": "it jumps to another run named by a {FieldName} placeholder read off the " +
+		"session summary, which here carries ID, Title and Date only — every other " +
+		"placeholder renders empty and the button goes nowhere",
+}
+
+// appPipelineToolbar parses the pipeline section's toolbar: the row of buttons
+// that appears above the transcript once a run is open.
+func appPipelineToolbar(spec AppSpec, raw any) ([]ui.PipelineAction, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("a pipeline section's toolbar must be an ARRAY of buttons, got %T — pass toolbar:[{\"label\":\"Copy Link\", \"method\":\"copy\"}]", raw)
+	}
+	var out []ui.PipelineAction
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("toolbar entry %d is not an object — each button is {label, method, url?}", i+1)
+		}
+		label := strings.TrimSpace(mapStr(m, "label"))
+		if label == "" {
+			return nil, fmt.Errorf("toolbar entry %d needs a label (it is the button's text)", i+1)
+		}
+		method := strings.ToLower(strings.TrimSpace(firstNonEmptyStr(mapStr(m, "method"), "open")))
+		if why, refused := appPipelineToolbarRefusals[method]; refused {
+			return nil, fmt.Errorf("toolbar button %q asks for method %q, which a custom app cannot honor: %s", label, method, why)
+		}
+		if !appPipelineToolbarAllowed[method] {
+			return nil, fmt.Errorf("toolbar button %q has method %q — use open (new tab), copy (to clipboard), post (run one of this app's action scripts) or client (a handler the app registered itself)", label, method)
+		}
+		url := strings.TrimSpace(mapStr(m, "url"))
+		if url == "" {
+			// The overwhelmingly common copy button is a link to the run being
+			// looked at, and making the author spell that out is a chance to
+			// get it subtly wrong for no gain.
+			if method != "copy" {
+				return nil, fmt.Errorf("toolbar button %q needs a url — for method %q that is %s", label, method, appPipelineToolbarURLHint(method))
+			}
+			url = "?session={id}"
+		}
+		if err := appPipelineToolbarTarget(spec, label, method, url); err != nil {
+			return nil, err
+		}
+		out = append(out, ui.PipelineAction{
+			Label:   label,
+			URL:     url,
+			Method:  method,
+			Title:   strings.TrimSpace(mapStr(m, "title")),
+			Variant: strings.ToLower(strings.TrimSpace(mapStr(m, "variant"))),
+			Confirm: strings.TrimSpace(mapStr(m, "confirm")),
+		})
+	}
+	return out, nil
+}
+
+func appPipelineToolbarURLHint(method string) string {
+	switch method {
+	case "post":
+		return "\"action/<one of this app's actions>\" (add {id} as a query param to tell the script which run was open)"
+	case "client":
+		return "the NAME of a handler registered with window.uiRegisterClientAction, not a path"
+	default:
+		return "the address to open — an absolute URL, or one relative to this app like \"data/<source>\""
+	}
+}
+
+// appPipelineToolbarTarget refuses a button pointed at something this app does
+// not have.
+//
+// action/ and data/ names are slugified on the way in, so an action declared as
+// "Save Run" is reachable at action/save-run and nowhere else. Getting that
+// wrong produces a 404 the author meets by clicking their own finished app,
+// which is late; the spec already knows every script it declares, so the check
+// is free here.
+func appPipelineToolbarTarget(spec AppSpec, label, method, url string) error {
+	if method == "client" {
+		// Not a path: the url field carries the registered handler's name.
+		if strings.ContainsAny(url, "/?#") {
+			return fmt.Errorf("toolbar button %q is method \"client\", so its url must be the NAME of a handler registered with window.uiRegisterClientAction (e.g. \"print_transcript\"), not the path %q", label, url)
+		}
+		return nil
+	}
+	path := url
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	switch {
+	case strings.HasPrefix(path, "action/"):
+		name := strings.TrimPrefix(path, "action/")
+		if !appHasNamed(appActionNames(spec), name) {
+			return fmt.Errorf("toolbar button %q points at action/%s, which this app does not declare%s", label, name, appDeclaredList("actions", appActionNames(spec)))
+		}
+		if method != "post" {
+			return fmt.Errorf("toolbar button %q opens action/%s with method %q, but an action endpoint answers POST only — use method:\"post\"", label, name, method)
+		}
+	case strings.HasPrefix(path, "data/"):
+		name := strings.TrimPrefix(path, "data/")
+		if !appHasNamed(appDataSourceNames(spec), name) {
+			return fmt.Errorf("toolbar button %q points at data/%s, which this app does not declare%s", label, name, appDeclaredList("data_sources", appDataSourceNames(spec)))
+		}
+	}
+	return nil
+}
+
+// appPipelinePrefill wires the Suggest button to one of the app's own data
+// sources: the script prints a JSON array (a popover of choices) or an object
+// with a topic/text/suggestion key (dropped straight into the field), and the
+// panel does the rest. It is the declarative form of the hand-written suggest
+// endpoints the compiled apps carry.
+func appPipelinePrefill(spec AppSpec, m map[string]any, fields []ui.PipelineField, panel *ui.PipelinePanel) error {
+	given := strings.TrimSpace(mapStr(m, "suggest_script"))
+	if given == "" {
+		// A label or a target with nothing behind it renders no button at all,
+		// so say which key is missing rather than quietly dropping both.
+		if strings.TrimSpace(mapStr(m, "suggest_label")) != "" || strings.TrimSpace(mapStr(m, "suggest_target")) != "" {
+			return errors.New("this pipeline section sets suggest_label/suggest_target but no suggest_script — the Suggest button is the data source, so without one there is nothing to render")
+		}
+		return nil
+	}
+	name := slugify(given)
+	if !appHasNamed(appDataSourceNames(spec), name) {
+		return fmt.Errorf("suggest_script names %q, which this app does not declare%s", name, appDeclaredList("data_sources", appDataSourceNames(spec)))
+	}
+	target := strings.TrimSpace(mapStr(m, "suggest_target"))
+	if target == "" && len(fields) > 0 {
+		target = fields[0].Name
+	}
+	// A target that names no field is the silent failure this check exists for:
+	// the button fetches, the script runs, and the value lands nowhere.
+	if !appHasPipelineField(fields, target) {
+		return fmt.Errorf("suggest_target names the field %q, which this section's form does not have%s", target, appDeclaredList("fields", appPipelineFieldNames(fields)))
+	}
+	panel.PrefillURL = "data/" + name
+	panel.PrefillLabel = firstNonEmptyStr(strings.TrimSpace(mapStr(m, "suggest_label")), "Suggest")
+	panel.PrefillTarget = target
+	return nil
+}
+
+func appActionNames(spec AppSpec) []string {
+	out := make([]string, 0, len(spec.Actions))
+	for _, a := range spec.Actions {
+		out = append(out, a.Name)
+	}
+	return out
+}
+
+func appDataSourceNames(spec AppSpec) []string {
+	out := make([]string, 0, len(spec.DataSources))
+	for _, d := range spec.DataSources {
+		out = append(out, slugify(d.Name))
+	}
+	return out
+}
+
+func appPipelineFieldNames(fields []ui.PipelineField) []string {
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, f.Name)
+	}
+	return out
+}
+
+func appHasNamed(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appHasPipelineField(fields []ui.PipelineField, want string) bool {
+	for _, f := range fields {
+		if strings.EqualFold(f.Name, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// appDeclaredList names what the app DOES have, so a typo is one read away
+// from its fix instead of sending the author back to action=get.
+func appDeclaredList(kind string, names []string) string {
+	if len(names) == 0 {
+		return " (it declares no " + kind + " at all)"
+	}
+	return " — its " + kind + ": " + strings.Join(names, ", ")
+}
+
+// appToolbarUsesClient reports whether any button in a toolbar dispatches to a
+// browser-side handler, which is what makes the html-section ordering rule
+// apply to this app (see appSectionNotes).
+func appToolbarUsesClient(raw any) bool {
+	arr, ok := raw.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range arr {
+		if m, ok := item.(map[string]any); ok {
+			if strings.EqualFold(strings.TrimSpace(mapStr(m, "method")), "client") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func appSelectOptions(raw any) []ui.SelectOption {
@@ -2281,4 +2558,15 @@ func firstNonEmptyStr(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// intsToStrings renders section positions for a note. Sections are addressed
+// by their 1-based position everywhere an author reads about them, so the
+// notes have to agree with the array they were written from.
+func intsToStrings(in []int) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		out = append(out, strconv.Itoa(v))
+	}
+	return out
 }
