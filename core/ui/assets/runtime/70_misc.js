@@ -84,15 +84,35 @@
     // No-list (no session URLs) + lock_activity = one clean chat window.
     var right = el('div', {class: 'ui-wb-col ui-wb-chat'});
     var chatCfg = cfg.chat || {};
-    mountComponent({
-      type:          'agent_loop_panel',
-      send_url:      chatCfg.send_url   || 'chat/send',
-      cancel_url:    chatCfg.cancel_url || 'chat/cancel',
-      lock_activity: true,
-      markdown:      true,
-      empty_text:    chatCfg.empty_text || 'Ask the assistant to draft or add a section.',
-      placeholder:   chatCfg.placeholder || 'Ask the assistant…',
-    }, right);
+    // Carry the app's OWN chat config through. This used to be rebuilt field by
+    // field from a fixed list of six, which silently discarded everything else
+    // an app declared — a mid-turn inject_url, a session rail, a truncate_url —
+    // with no error anywhere: the field simply never reached the panel, and the
+    // app author is left looking at their own correct-looking Go.
+    //
+    // What the workbench genuinely imposes is forced, and only that:
+    //   type          — chat/send emits the agent_loop_panel SSE format
+    //                   (sse.Send); a ChatPanel's parser ignores those frames,
+    //                   so its replies never render. Forcing it also means a
+    //                   workbench authored before that was understood renders
+    //                   correctly with no rebuild.
+    //   lock_activity — the chat is the third of three columns and has no room
+    //                   for an activity pane beside it.
+    // Everything else is the app's call, including whether to offer a session
+    // rail at all: declare the three session URLs and it appears (collapsed,
+    // behind a hamburger), omit them and the column stays one clean window.
+    var chatMount = {};
+    for (var ck in chatCfg) {
+      if (Object.prototype.hasOwnProperty.call(chatCfg, ck)) chatMount[ck] = chatCfg[ck];
+    }
+    chatMount.type          = 'agent_loop_panel';
+    chatMount.lock_activity = true;
+    chatMount.send_url      = chatCfg.send_url   || 'chat/send';
+    chatMount.cancel_url    = chatCfg.cancel_url || 'chat/cancel';
+    chatMount.empty_text    = chatCfg.empty_text || 'Ask the assistant to draft or add a section.';
+    chatMount.placeholder   = chatCfg.placeholder || 'Ask the assistant…';
+    if (chatMount.markdown === undefined) chatMount.markdown = true;
+    mountComponent(chatMount, right);
 
     // Mobile: the list column becomes a slide-in drawer, reusing the same
     // makeDrawer machinery (hamburger header + backdrop) as the chat/
