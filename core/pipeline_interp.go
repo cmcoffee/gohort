@@ -78,11 +78,19 @@ type PipelineHooks struct {
 // stage is working and what it produced". A pipeline that can only report
 // "stage 3 starting" cannot replace them however expressive its stages are.
 type PipelineEvent struct {
-	Kind  string // "block" | "chunk" | "block_done" | "status"
+	Kind  string // "block" | "chunk" | "block_done" | "status" | "meta"
 	ID    string // stable block id within one run; empty for status
 	Type  string // block type — the stage kind, so a surface can style per kind
 	Title string // human label for the block
 	Text  string // chunk body, or the status line
+	// Meta carries the promoted summary fields of a Kind=="meta" event: the
+	// stage output values a def named in SessionMeta, keyed by field name.
+	//
+	// Its own kind rather than a block, because it is not part of the
+	// transcript. A block is something a reader looks at; this is something
+	// the run is FILED under, and a host that records runs picks it up while a
+	// host that only renders them ignores it, with no case to add either way.
+	Meta map[string]string
 }
 
 // PipelineSink receives progress events. Must tolerate being called from
@@ -208,15 +216,16 @@ func (T *AppCore) executePipelineHooks(ctx context.Context, def PipelineDef, inp
 		return "", nil, err
 	}
 	r := &pipelineRun{
-		app:       T,
-		input:     input,
-		dispatch:  h.Dispatch,
-		machines:  h.Machine,
-		sink:      sink,
-		inherited: h.Tools,
-		vars:      vars,
-		outputs:   make(map[string]stageOutput, len(def.Stages)),
-		blockSeq:  new(atomic.Int64),
+		app:         T,
+		input:       input,
+		dispatch:    h.Dispatch,
+		machines:    h.Machine,
+		sink:        sink,
+		inherited:   h.Tools,
+		vars:        vars,
+		outputs:     make(map[string]stageOutput, len(def.Stages)),
+		blockSeq:    new(atomic.Int64),
+		sessionMeta: def.SessionMeta,
 	}
 	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
 	return out, r, err
@@ -252,6 +261,12 @@ type pipelineRun struct {
 	// block is the artifact somebody wants. Branch PROGRESS still emits, as
 	// status.
 	quiet bool
+	// sessionMeta is the def's SessionMeta list, carried so a finished stage
+	// can promote the fields it names without the runner holding the whole
+	// definition. Shared into branches like the sink is: validation keeps
+	// stage names unique across the pipeline, so a branch or loop body can
+	// never collide with the top-level stage a reference points at.
+	sessionMeta []string
 }
 
 // forBranch is one fanout branch's scope.
@@ -270,16 +285,17 @@ func (r *pipelineRun) forBranch() *pipelineRun {
 		outs[k] = v
 	}
 	return &pipelineRun{
-		app:       r.app,
-		input:     r.input,
-		dispatch:  r.dispatch,
-		machines:  r.machines,
-		sink:      r.sink,
-		inherited: r.inherited,
-		vars:      r.vars,
-		outputs:   outs,
-		blockSeq:  r.blockSeq,
-		quiet:     true,
+		app:         r.app,
+		input:       r.input,
+		dispatch:    r.dispatch,
+		machines:    r.machines,
+		sink:        r.sink,
+		inherited:   r.inherited,
+		vars:        r.vars,
+		outputs:     outs,
+		blockSeq:    r.blockSeq,
+		quiet:       true,
+		sessionMeta: r.sessionMeta,
 	}
 }
 
@@ -312,6 +328,37 @@ func (r *pipelineRun) openBlock(stage PipelineStage, title string) (string, func
 			r.emit(PipelineEvent{Kind: "chunk", ID: id, Text: body})
 		}
 		r.emit(PipelineEvent{Kind: "block_done", ID: id})
+	}
+}
+
+// promoteSessionMeta files the finished stage's declared fields that the def
+// asked to see on the run's sidebar row.
+//
+// Emitted per STAGE rather than gathered at the end because a run that dies
+// halfway has still answered part of the question, and a row that carries what
+// was established before the failure is more use than an empty one. It goes
+// through the sink for the same reason the transcript does: the interpreter
+// does not know whether anybody is storing this run, and should not have to.
+func (r *pipelineRun) promoteSessionMeta(stageName string, fields map[string]any) {
+	if r == nil || r.sink == nil || len(r.sessionMeta) == 0 || len(fields) == 0 {
+		return
+	}
+	meta := map[string]string{}
+	for _, raw := range r.sessionMeta {
+		stage, field, ok := strings.Cut(strings.TrimSpace(raw), ".")
+		if !ok || stage != stageName {
+			continue
+		}
+		v, present := fields[field]
+		if !present {
+			continue
+		}
+		meta[field] = renderFieldValue(v)
+	}
+	if len(meta) > 0 {
+		// Not gated on r.quiet: quiet suppresses the TRANSCRIPT, and a
+		// summary is not part of one.
+		r.emit(PipelineEvent{Kind: "meta", Meta: meta})
 	}
 }
 
@@ -681,6 +728,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			}
 		}
 		outputs[stage.Name] = stageOutput{Text: out, Fields: fields}
+		r.promoteSessionMeta(stage.Name, fields)
 		// Which stage the run's returned text belongs to. A caller that
 		// wants the FIELDS behind that text (a machine phase taking a
 		// pipeline's declared shape as its own) cannot work it out from

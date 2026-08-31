@@ -547,6 +547,22 @@ type PipelineDef struct {
 	Name        string          `json:"name"`                  // human-readable pipeline name
 	Description string          `json:"description,omitempty"` // what it does / when to use it
 	Stages      []PipelineStage `json:"stages"`                // ordered stages
+	// SessionMeta promotes declared output fields onto a run's SUMMARY: the
+	// sidebar row a PipelinePanel lists it as, alongside its title and date.
+	// Each entry is a "stage.field" reference into a TOP-LEVEL stage's declared
+	// Output, and the field's value is carried by its own name.
+	//
+	// It exists because a run history is browsed, not read. A list of titles
+	// and timestamps answers "when did I run this"; what a reader actually
+	// scans for is the ANSWER — which side won, how confident the judge was,
+	// whether anything was flagged — and without this the only way to that is
+	// opening runs one at a time until the right one turns up.
+	//
+	// Top-level stages only, for the same reason nothing after a loop may
+	// reference its body by name: a body stage holds a different value every
+	// pass, so promoting one would summarize a run by whatever the last
+	// iteration happened to leave behind.
+	SessionMeta []string `json:"session_meta,omitempty"`
 	// Global scopes the pipeline to ALL of the owner's agents (minus any that
 	// deny it via AgentRecord.DisabledPipelines), the way a global tool lives
 	// in the user-wide pool. Off = available only to the agents that list its
@@ -602,7 +618,74 @@ func (d PipelineDef) Validate() error {
 	// fields. Built as the walk proceeds, so a lookup miss IS the
 	// forward/unknown-reference error.
 	done := make(map[string]map[string]PipelineFieldType, len(d.Stages))
-	return validateStageList(d.Stages, done, false)
+	if err := validateStageList(d.Stages, done, false); err != nil {
+		return err
+	}
+	return d.validateSessionMeta()
+}
+
+// reservedSessionMetaKeys are the summary's own columns. A promoted field
+// named for one of them would overwrite the row's id, its title or its date —
+// which does not read as a bad field name, it reads as a sidebar that lost its
+// entries or started sorting wrongly.
+var reservedSessionMetaKeys = map[string]bool{"id": true, "title": true, "date": true, "blocks": true}
+
+// validateSessionMeta checks every field a def promotes onto its runs' rows.
+//
+// Everything here fails INVISIBLY when it is wrong: a bad reference does not
+// error at run time, it produces a row with a blank pill, and the author's
+// first theory is always that the panel is broken rather than that the name
+// does not resolve. So the reference has to be proven against the definition
+// at save time, where it is cheap.
+func (d PipelineDef) validateSessionMeta() error {
+	if len(d.SessionMeta) == 0 {
+		return nil
+	}
+	declared := make(map[string]map[string]bool, len(d.Stages))
+	for _, st := range d.Stages {
+		fields := make(map[string]bool, len(st.Output))
+		for _, f := range st.Output {
+			fields[f.Name] = true
+		}
+		declared[st.Name] = fields
+	}
+	var probs []string
+	seen := map[string]bool{}
+	for _, raw := range d.SessionMeta {
+		ref := strings.TrimSpace(raw)
+		stage, field, ok := strings.Cut(ref, ".")
+		if !ok || strings.TrimSpace(stage) == "" || strings.TrimSpace(field) == "" {
+			probs = append(probs, "session_meta "+strconv.Quote(raw)+" is not a \"stage.field\" reference")
+			continue
+		}
+		fields, isStage := declared[stage]
+		if !isStage {
+			probs = append(probs, "session_meta "+ref+": no top-level stage named "+strconv.Quote(stage)+
+				" (a loop body stage cannot be promoted — it holds a different value every pass)")
+			continue
+		}
+		if !fields[field] {
+			probs = append(probs, "session_meta "+ref+": stage "+stage+" declares no output field "+strconv.Quote(field)+
+				" — only a stage with an `output` contract has fields to promote")
+			continue
+		}
+		if reservedSessionMetaKeys[strings.ToLower(field)] {
+			probs = append(probs, "session_meta "+ref+": "+strconv.Quote(field)+" is one of the summary's own columns and would overwrite it")
+			continue
+		}
+		if seen[field] {
+			probs = append(probs, "session_meta "+ref+": a field named "+strconv.Quote(field)+" is already promoted — a row carries one value per name")
+			continue
+		}
+		seen[field] = true
+	}
+	switch len(probs) {
+	case 0:
+		return nil
+	case 1:
+		return Error(probs[0])
+	}
+	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " session_meta problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
 // validateStageList validates one stage list against the scope built so

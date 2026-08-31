@@ -186,7 +186,7 @@ kind="html" — a full HTML/CSS/JS canvas. Fields: 'html' (the markup, rendered 
 
 kind="chat" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: 'list_title', 'empty_text', 'placeholder'. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.
 
-kind="pipeline" — the RUN surface: a submit form on top, the run's stages streaming in below it as they finish, and every past run in a sidebar. REQUIRES pipeline_id on the app. Fields: 'fields' (the submit form — array of {name, label, type, placeholder, default, required, rows, options}; DEFAULTS to one required textarea named "topic", which is what the run surface reads as the pipeline's input), 'submit_label' (default "Start"), 'empty_text'. The stage transcript renders as markdown and past runs are batch-deletable. 'toolbar' (array of buttons shown above the transcript once a run is open, each {label, method, url?, title?, variant?, confirm?}) — method is one of: "copy" (copy the link to this run; url defaults to "?session={id}", which is the whole Copy Link button), "open" (a new tab), "post" (run one of this app's OWN action scripts — url is "action/<name>?id={id}", and the script gets id plus pipeline_output and pipeline_run for the last finished run), or "client" (url is the NAME of a handler an html section registered with window.uiRegisterClientAction — this is how Export/Print buttons work). The panel also has stream, modal, related and load; all four are REFUSED here and the error says why, because none of them can work against the endpoints a custom app has. 'suggest_script' (name of one of this app's data_sources) puts a Suggest button on the form: the script prints a JSON ARRAY for a popover of choices, or an object with a topic/text/suggestion key to fill the field directly. 'suggest_label' (default "Suggest") and 'suggest_target' (which field it fills; defaults to the first) go with it. NOT available on a custom app: cancelling a run mid-flight, reconnecting to one after closing the tab, and per-run pills in the sidebar — the run surface serves stream/sessions only and a session summary carries ID, Title and Date, so do not promise any of the three. Nothing to wire: the endpoints are relative to the app, the transcript persists per completed stage (so closing the tab loses the live view, never the result), and each user of a shared app gets their own run history over the owner's recipe.
+kind="pipeline" — the RUN surface: a submit form on top, the run's stages streaming in below it as they finish, and every past run in a sidebar. REQUIRES pipeline_id on the app. Fields: 'fields' (the submit form — array of {name, label, type, placeholder, default, required, rows, options}; DEFAULTS to one required textarea named "topic", which is what the run surface reads as the pipeline's input), 'submit_label' (default "Start"), 'empty_text'. The stage transcript renders as markdown and past runs are batch-deletable. 'toolbar' (array of buttons shown above the transcript once a run is open, each {label, method, url?, title?, variant?, confirm?}) — method is one of: "copy" (copy the link to this run; url defaults to "?session={id}", which is the whole Copy Link button), "open" (a new tab), "post" (run one of this app's OWN action scripts — url is "action/<name>?id={id}", and the script gets id plus pipeline_output and pipeline_run for the last finished run), or "client" (url is the NAME of a handler an html section registered with window.uiRegisterClientAction — this is how Export/Print buttons work). The panel also has stream, modal, related and load; all four are REFUSED here and the error says why, because none of them can work against the endpoints a custom app has. 'suggest_script' (name of one of this app's data_sources) puts a Suggest button on the form: the script prints a JSON ARRAY for a popover of choices, or an object with a topic/text/suggestion key to fill the field directly. 'suggest_label' (default "Suggest") and 'suggest_target' (which field it fills; defaults to the first) go with it. 'meta' (array of {field, label?, style?, variants?, truncate?}) puts extra values under each sidebar row's title, so a run history can be SCANNED for its answer instead of opened one run at a time — style is "text" (a line), "badge" (a small neutral pill) or "pill" (colored per value via variants:{"for":"#3fb950", "against":"#f85149"}). The VALUES come from the pipeline, not from here: the pipeline must promote them with session_meta:["<stage>.<field>"], naming fields a stage declares in its "output" contract. A meta field the pipeline does not promote renders blank, and you are told so at authoring time. NOT available on a custom app: cancelling a run mid-flight and reconnecting to one after closing the tab — the run surface serves stream/sessions only, so do not promise either. Nothing to wire: the endpoints are relative to the app, the transcript persists per completed stage (so closing the tab loses the live view, never the result), and each user of a shared app gets their own run history over the owner's recipe.
 
 EVERY field is a PARAMETER: it arrives in the pipeline's prompts as {field_name}. So a debate form asking for proposition / side_a / side_b lets the stages say "Argue {side_a} on: {proposition}". The RUN'S INPUT — what {input} resolves to and what titles the run in the sidebar — is the field named "input" or "topic", or else the first one. Non-strings come through as text ({rounds} is "3", a toggle is "true"). The interpreter's own tokens are reserved: a field named input, prev, item or iteration is not substituted, because it would redefine the template language. A loop's count is NOT templatable — how many passes is authored in the pipeline, not asked on the form.
 
@@ -290,9 +290,15 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if pipeRef == "" {
 		pipeRef = sectionPipelineRef(args["sections"])
 	}
+	// promoted is what the bound pipeline puts on a run's sidebar row. Captured
+	// here because this is the only place the DEFINITION is in hand; a meta
+	// field naming something it does not promote renders an empty pill, which
+	// reads as a broken panel rather than as a name that does not resolve.
+	var promoted []string
 	if pipeRef != "" {
 		if def, ok := t.app.LookupAppPipeline(t.user, pipeRef); ok {
 			spec.PipelineID = def.ID
+			promoted = def.SessionMeta
 		} else {
 			spec.PipelineID = pipeRef
 		}
@@ -376,6 +382,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		}
 		parseNotes = append(parseNotes, unknownSectionKeyNotes(raw)...)
 		parseNotes = append(parseNotes, appShapeNotes(raw, strings.TrimSpace(spec.PipelineID) != "")...)
+		parseNotes = append(parseNotes, appSessionMetaNotes(raw, promoted)...)
 	} else if !isUpdate {
 		return "", errors.New("sections is required to create an app")
 	}
@@ -583,8 +590,8 @@ var sectionKeys = map[string][]string{
 	"actions":   {"empty_text"},
 	"empty":     {"icon", "hint"},
 	"chat":      {"list_title", "empty_text", "placeholder"},
-	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target"},
-	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target"},
+	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
+	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
 	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder"},
 	"html":      {"html", "height"},
 	"card":      {"html", "height"},
@@ -1006,6 +1013,11 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		if err := appPipelinePrefill(spec, m, fields, &panel); err != nil {
 			return ui.Section{}, err
 		}
+		metaFields, err := appPipelineMetaFields(m["meta"])
+		if err != nil {
+			return ui.Section{}, err
+		}
+		panel.SessionMetaFields = metaFields
 		sec.Body = panel
 	case "chart":
 		// A chart is either STATIC (inline labels + series) or COMPUTED by
@@ -1562,6 +1574,125 @@ func appToolbarUsesClient(raw any) bool {
 		}
 	}
 	return false
+}
+
+// appPipelineMetaStyles is what a sidebar row can render a promoted field as.
+var appPipelineMetaStyles = map[string]bool{"text": true, "badge": true, "pill": true}
+
+// appPipelineMetaFields parses the pipeline section's `meta`: the extra values
+// shown under each sidebar row's title, so a run history can be SCANNED for
+// its answer instead of opened one run at a time.
+//
+// The values themselves come from the pipeline, not from here — a def promotes
+// declared stage output fields with session_meta, and this only says how to
+// draw them.
+func appPipelineMetaFields(raw any) ([]ui.SessionMetaField, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("a pipeline section's meta must be an ARRAY, got %T — pass meta:[{\"field\":\"winner\", \"style\":\"pill\"}]", raw)
+	}
+	var out []ui.SessionMetaField
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("meta entry %d is not an object — each is {field, label?, style?, variants?, truncate?}", i+1)
+		}
+		field := strings.TrimSpace(firstNonEmptyStr(mapStr(m, "field"), mapStr(m, "name")))
+		if field == "" {
+			return nil, fmt.Errorf("meta entry %d needs a field (the name the pipeline promotes it under)", i+1)
+		}
+		style := strings.ToLower(strings.TrimSpace(mapStr(m, "style")))
+		if style != "" && !appPipelineMetaStyles[style] {
+			return nil, fmt.Errorf("meta entry %d (%s) has style %q — use \"text\" (a line under the title), \"badge\" (a small neutral pill) or \"pill\" (colored by value, see variants)", i+1, field, style)
+		}
+		smf := ui.SessionMetaField{
+			Field:    field,
+			Label:    strings.TrimSpace(mapStr(m, "label")),
+			Style:    style,
+			Truncate: intFromArgs(m, "truncate"),
+		}
+		// variants colors a pill per VALUE ("for" green, "against" red). Only
+		// a pill reads them, so a variants map on a text row is a instruction
+		// that quietly does nothing.
+		if v, ok := m["variants"].(map[string]any); ok && len(v) > 0 {
+			if style != "pill" {
+				return nil, fmt.Errorf("meta entry %d (%s) sets variants but its style is %q — only a pill is colored by value", i+1, field, firstNonEmptyStr(style, "text"))
+			}
+			smf.Variants = map[string]string{}
+			for key, val := range v {
+				smf.Variants[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(fmt.Sprint(val))
+			}
+		}
+		out = append(out, smf)
+	}
+	return out, nil
+}
+
+// appSessionMetaNotes reports meta fields the bound pipeline does not promote.
+//
+// A NOTE and not a refusal, deliberately: the app and the pipeline are edited
+// separately, so a field that resolves today can stop resolving tomorrow when
+// somebody trims the def, and a check here can never be the guarantee. What it
+// can do is catch the common case — the name was guessed — at the moment the
+// author is looking, and say which names would have worked.
+func appSessionMetaNotes(raw any, promoted []string) []string {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	have := map[string]bool{}
+	for _, ref := range promoted {
+		if _, field, ok := strings.Cut(strings.TrimSpace(ref), "."); ok {
+			have[field] = true
+		}
+	}
+	var notes []string
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		m = normalizeSection(m)
+		switch strings.ToLower(strings.TrimSpace(mapStr(m, "kind"))) {
+		case "pipeline", "run":
+		default:
+			continue
+		}
+		fields, err := appPipelineMetaFields(m["meta"])
+		if err != nil || len(fields) == 0 {
+			continue
+		}
+		var missing []string
+		for _, f := range fields {
+			if !have[f.Field] {
+				missing = append(missing, f.Field)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		if len(have) == 0 {
+			notes = append(notes, fmt.Sprintf("section %d shows meta field(s) %s, but the bound pipeline promotes NOTHING onto its run rows — those rows will render blank. Add session_meta:[\"<stage>.<field>\"] to the pipeline (the field must be one the stage declares in its output).",
+				i+1, strings.Join(missing, ", ")))
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("section %d shows meta field(s) %s, which the bound pipeline does not promote — it promotes: %s. Those rows will render blank.",
+			i+1, strings.Join(missing, ", "), strings.Join(promotedFieldNames(promoted), ", ")))
+	}
+	return notes
+}
+
+func promotedFieldNames(promoted []string) []string {
+	out := make([]string, 0, len(promoted))
+	for _, ref := range promoted {
+		if _, field, ok := strings.Cut(strings.TrimSpace(ref), "."); ok {
+			out = append(out, field)
+		}
+	}
+	return out
 }
 
 func appSelectOptions(raw any) []ui.SelectOption {

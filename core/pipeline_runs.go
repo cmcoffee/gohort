@@ -59,6 +59,11 @@ type PipelineRun struct {
 	Blocks     []PipelineRunBlock `json:"blocks"`
 	Output     string             `json:"output,omitempty"`
 	Err        string             `json:"error,omitempty"`
+	// Meta is the run's promoted summary: the stage output fields the def
+	// named in SessionMeta, keyed by field name. Filled as the stages that
+	// declare them finish, so an interrupted run still carries whatever it had
+	// established by the time it stopped.
+	Meta map[string]string `json:"meta,omitempty"`
 	// Running marks a run still in flight. A run that never completes (server
 	// restart, cancelled request) stays marked rather than silently reading as
 	// finished-with-no-output, which would look like the pipeline produced
@@ -73,6 +78,32 @@ type PipelineSessionRow struct {
 	ID    string    `json:"ID"`
 	Title string    `json:"Title"`
 	Date  time.Time `json:"Date"`
+	// Meta is the run's promoted summary fields. Marshalled FLAT onto the row
+	// (see MarshalJSON), never as a nested object.
+	Meta map[string]string `json:"-"`
+}
+
+// MarshalJSON writes the row with its promoted fields spread across it.
+//
+// Flat because that is the shape every reader on the other side already
+// expects: SessionMetaField.Field names a key on the row object itself, and so
+// do PipelineAction.ShowIfField and the {FieldName} placeholders an action URL
+// carries. Nesting them under a container would mean teaching all three about
+// it for the benefit of nobody.
+//
+// The row's own columns are written LAST and win any collision. Validate
+// refuses a def that promotes one of them, so this can only fire on a run
+// stored before a stage was renamed — and a sidebar whose rows lost their ids
+// is a considerably worse failure than one missing a pill.
+func (row PipelineSessionRow) MarshalJSON() ([]byte, error) {
+	out := make(map[string]any, len(row.Meta)+3)
+	for k, v := range row.Meta {
+		out[k] = v
+	}
+	out["ID"] = row.ID
+	out["Title"] = row.Title
+	out["Date"] = row.Date
+	return json.Marshal(out)
 }
 
 // PipelineRunKey is the storage key for one run. Exported because the key
@@ -299,7 +330,7 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 		runs := ListPipelineRuns(s.DB, s.User, s.OwnerID)
 		out := make([]PipelineSessionRow, 0, len(runs))
 		for _, run := range runs {
-			out = append(out, PipelineSessionRow{ID: run.ID, Title: run.Title, Date: run.Date})
+			out = append(out, PipelineSessionRow{ID: run.ID, Title: run.Title, Date: run.Date, Meta: run.Meta})
 		}
 		writePipelineJSON(w, out)
 	case strings.HasPrefix(sub, "sessions/"):
@@ -318,10 +349,21 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 			http.NotFound(w, r)
 			return
 		}
-		writePipelineJSON(w, map[string]any{
-			"ID": run.ID, "Title": run.Title, "Date": run.Date,
-			"Blocks": run.Blocks, "Output": run.Output, "Error": run.Err,
-		})
+		// Same flat shape as a row: the panel reads a loaded run through the
+		// same field names it reads the sidebar with, so a promoted field that
+		// only appeared in the list would show on the row and vanish the
+		// moment the run was opened.
+		one := map[string]any{}
+		for k, v := range run.Meta {
+			one[k] = v
+		}
+		one["ID"] = run.ID
+		one["Title"] = run.Title
+		one["Date"] = run.Date
+		one["Blocks"] = run.Blocks
+		one["Output"] = run.Output
+		one["Error"] = run.Err
+		writePipelineJSON(w, one)
 	default:
 		http.NotFound(w, r)
 	}
@@ -380,6 +422,15 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 				run.Blocks[i].Body += ev.Text
 			}
 			_ = sse.SendNamed("chunk", map[string]any{"id": ev.ID, "text": ev.Text})
+		case "meta":
+			// Filed, not shown. The sidebar picks it up on its next load,
+			// which the panel does when the run finishes.
+			if run.Meta == nil {
+				run.Meta = map[string]string{}
+			}
+			for k, v := range ev.Meta {
+				run.Meta[k] = v
+			}
 		case "block_done":
 			_ = sse.SendNamed("block_done", map[string]any{"id": ev.ID})
 			// Persist per completed block, not once at the end: a long run

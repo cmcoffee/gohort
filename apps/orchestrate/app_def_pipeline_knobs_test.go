@@ -204,3 +204,77 @@ func TestNewPipelineKeysAreNotReportedAsIgnored(t *testing.T) {
 		}
 	}
 }
+
+// meta draws what the PIPELINE promotes. The section only chooses the label,
+// the style and the colors.
+func TestPipelineMetaFieldsRenderOnTheRow(t *testing.T) {
+	panel, err := buildPipelineSection(t, map[string]any{
+		"meta": []any{
+			map[string]any{"field": "verdict", "style": "text", "truncate": float64(240)},
+			map[string]any{"field": "winner", "style": "pill",
+				"variants": map[string]any{"For": "#3fb950", "against": "#f85149"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building: %v", err)
+	}
+	if len(panel.SessionMetaFields) != 2 {
+		t.Fatalf("got %d meta fields, want 2", len(panel.SessionMetaFields))
+	}
+	if panel.SessionMetaFields[0].Truncate != 240 {
+		t.Errorf("truncate = %d", panel.SessionMetaFields[0].Truncate)
+	}
+	// Variants are matched against a lowercased value at render time, so the
+	// keys are lowercased here or "For" never matches.
+	if got := panel.SessionMetaFields[1].Variants["for"]; got != "#3fb950" {
+		t.Errorf("variant keys must be lowercased for matching, got %v", panel.SessionMetaFields[1].Variants)
+	}
+}
+
+func TestPipelineMetaRefusesAStyleThatDrawsNothing(t *testing.T) {
+	if _, err := buildPipelineSection(t, map[string]any{
+		"meta": []any{map[string]any{"field": "winner", "style": "chip"}},
+	}); err == nil {
+		t.Error("expected a refusal for an unknown style")
+	}
+	if _, err := buildPipelineSection(t, map[string]any{
+		"meta": []any{map[string]any{"style": "pill"}},
+	}); err == nil {
+		t.Error("expected a refusal for a meta entry with no field")
+	}
+	// Only a pill is colored by value, so variants anywhere else is an
+	// instruction that quietly does nothing.
+	if _, err := buildPipelineSection(t, map[string]any{
+		"meta": []any{map[string]any{"field": "winner", "style": "text",
+			"variants": map[string]any{"for": "#3fb950"}}},
+	}); err == nil {
+		t.Error("expected a refusal for variants on a non-pill style")
+	}
+}
+
+// The app and the pipeline are edited separately, so this is a note rather
+// than a refusal — but the common case is a guessed name, and it should be
+// caught while the author is looking.
+func TestMetaFieldsThePipelineDoesNotPromoteAreNoted(t *testing.T) {
+	sections := []any{map[string]any{"kind": "pipeline", "meta": []any{
+		map[string]any{"field": "winner"}, map[string]any{"field": "guessed"}}}}
+
+	notes := strings.Join(appSessionMetaNotes(sections, []string{"judge.winner"}), " ")
+	if !strings.Contains(notes, "guessed") {
+		t.Errorf("expected the unpromoted field to be named, got %q", notes)
+	}
+	if strings.Contains(notes, "winner,") {
+		t.Errorf("a promoted field should not be reported as missing: %q", notes)
+	}
+
+	// Nothing promoted at all is the more common mistake, and the fix is on
+	// the pipeline rather than the app, so the note has to say which.
+	none := strings.Join(appSessionMetaNotes(sections, nil), " ")
+	if !strings.Contains(none, "session_meta") {
+		t.Errorf("expected the note to name the pipeline-side fix, got %q", none)
+	}
+
+	if n := appSessionMetaNotes(sections, []string{"judge.winner", "judge.guessed"}); len(n) != 0 {
+		t.Errorf("everything promoted should be quiet, got %v", n)
+	}
+}
