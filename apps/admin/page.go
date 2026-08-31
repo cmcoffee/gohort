@@ -665,8 +665,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						// Apps access via chip picker. RecordSource hits the
 						// per-user GET we just added so the picker shows the
 						// user's actual current apps (not the global list).
+						//
+						// "App access" and not "Apps": the bare noun had come to
+						// mean two things, this one (which apps a PERSON may
+						// open) and the operator controls ON an app, which live
+						// on their own tab. Inside a user's row the qualifier
+						// costs nothing and the noun was the ambiguous half.
 						func() ui.RowAction {
-							a := ui.Expand("Apps", ui.ChipPicker{
+							a := ui.Expand("App access", ui.ChipPicker{
 								OptionsSource: "api/apps",
 								RecordSource:  "api/users/{username}",
 								Field:         "apps",
@@ -680,10 +686,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						}(),
 						// App groups — assign whole bundles of apps at once.
 						// Value stored is the group ID; access resolves the group
-						// to its apps at check time. Sits alongside Apps: a user's
-						// access is the union of both.
+						// to its apps at check time. Sits alongside App access: a
+						// user's access is the union of both.
+						//
+						// "App groups" for the same reason its neighbour is "App
+						// access": a bare "Groups" in a user's row reads as user
+						// groups, which are not a thing here, and the section
+						// that manages these is already called App Groups.
 						func() ui.RowAction {
-							a := ui.Expand("Groups", ui.ChipPicker{
+							a := ui.Expand("App groups", ui.ChipPicker{
 								OptionsSource: "api/app-groups",
 								RecordSource:  "api/users/{username}",
 								Field:         "groups",
