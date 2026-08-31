@@ -398,3 +398,84 @@ func TestPipelineFingerprintTracksBehaviourNotNames(t *testing.T) {
 		t.Error("a tier change must change the fingerprint")
 	}
 }
+
+// Grading a tool runs it directly, so "it called the tool" is a tautology that
+// would pass every time while looking like a real assertion.
+func TestToolSuiteRefusesToolCallAssertions(t *testing.T) {
+	s := goodSuite()
+	s.TargetKind = EvalTargetTool
+	s.Cases[0].MustCallTools = []string{"whatever"}
+	err := s.Validate()
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "no model deciding") {
+		t.Errorf("the error should say why it is vacuous: %v", err)
+	}
+	// The same assertion is legitimate on an agent, where a model chooses.
+	s.TargetKind = EvalTargetAgent
+	if err := s.Validate(); err != nil {
+		t.Errorf("an agent suite may assert on tool calls: %v", err)
+	}
+}
+
+// A field assertion is enough on its own — it was not counted as an assertion
+// when MustFields was added, which would have refused every pipeline suite that
+// graded only its declared shape.
+func TestFieldAssertionAloneIsEnough(t *testing.T) {
+	s := goodSuite()
+	s.Cases = []EvalCase{{Name: "verdict", Prompt: "go", MustFields: map[string]string{"winner": "for"}}}
+	if err := s.Validate(); err != nil {
+		t.Errorf("a case asserting only on declared fields grades something: %v", err)
+	}
+}
+
+// A tool case's prompt is ARGUMENTS, not a sentence: the point of grading a
+// tool this way is asking whether it works without a model in the middle to be
+// blamed for the answer.
+func TestToolCasePromptIsJSONArguments(t *testing.T) {
+	called := map[string]any(nil)
+	tool := AgentToolDef{
+		Tool:    Tool{Name: "adder"},
+		Handler: func(args map[string]any) (string, error) { called = args; return "42", nil },
+	}
+	exec := toolEvalExecutor(tool)
+
+	row := exec(context.Background(), EvalCase{Name: "adds", Prompt: `{"a":1,"b":2}`, MustInclude: []string{"42"}})
+	if !row.Passed {
+		t.Errorf("case should pass: %v", row.Reasons)
+	}
+	if called["a"] != float64(1) {
+		t.Errorf("the prompt should reach the tool as arguments, got %v", called)
+	}
+
+	bad := exec(context.Background(), EvalCase{Name: "prose", Prompt: "please add one and two", MustInclude: []string{"42"}})
+	if bad.Passed {
+		t.Error("a prose prompt is not arguments and must fail rather than call the tool with nothing")
+	}
+	if !strings.Contains(bad.ErrText, "JSON arguments") {
+		t.Errorf("the error should say what was expected: %q", bad.ErrText)
+	}
+}
+
+// A description edit changes what a MODEL does with a tool even when the code
+// behind it is untouched, and it is the most common change a tool ever gets.
+func TestToolFingerprintCoversDescriptionAndParams(t *testing.T) {
+	a := Tool{Name: "t", Description: "does a thing", Parameters: map[string]ToolParam{"x": {Type: "string"}}}
+	b := a
+	b.Description = "does a thing, carefully"
+	c := Tool{Name: "t", Description: a.Description, Parameters: map[string]ToolParam{"x": {Type: "number"}}}
+
+	fa := EvalTargetFingerprint("tool", a.Name, a.Description, toolParamSignature(a))
+	fb := EvalTargetFingerprint("tool", b.Name, b.Description, toolParamSignature(b))
+	fc := EvalTargetFingerprint("tool", c.Name, c.Description, toolParamSignature(c))
+	if fa == fb {
+		t.Error("a description edit must change the fingerprint")
+	}
+	if fa == fc {
+		t.Error("a retyped parameter must change the fingerprint")
+	}
+	if toolParamSignature(a) != toolParamSignature(a) {
+		t.Error("the signature must be stable across calls")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -126,8 +127,15 @@ func (s EvalSuite) Validate() error {
 		if strings.TrimSpace(c.Prompt) == "" {
 			probs = append(probs, fmt.Sprintf("case %q has no prompt — there is nothing to send", name))
 		}
+		if s.TargetKind == EvalTargetTool && (len(c.MustCallTools) > 0 || len(c.MustNotCallTools) > 0) {
+			// Grading a tool runs it directly, with no model to decide whether
+			// to call it. "It called the tool" is a tautology here, and one
+			// that would pass every time while looking like a real assertion.
+			probs = append(probs, fmt.Sprintf("case %q asserts on tool CALLS, but this suite grades a tool directly — there is no model deciding whether to call it", name))
+		}
 		if len(c.MustInclude) == 0 && len(c.MustNotInclude) == 0 &&
 			len(c.MustCallTools) == 0 && len(c.MustNotCallTools) == 0 &&
+			len(c.MustFields) == 0 &&
 			strings.TrimSpace(c.JudgePrompt) == "" {
 			// A case that asserts nothing passes unconditionally, which is
 			// worse than no case: it raises the score and grades nothing.
@@ -303,6 +311,22 @@ func DeleteEvalRun(udb Database, suiteID, runID string) {
 
 // --- running a suite ---------------------------------------------------------
 
+// toolParamSignature renders a tool's parameter shape for fingerprinting:
+// sorted names with their types, so adding, removing or retyping one reads as
+// a change while reordering the map does not.
+func toolParamSignature(t Tool) string {
+	names := make([]string, 0, len(t.Parameters))
+	for n := range t.Parameters {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, n+":"+t.Parameters[n].Type)
+	}
+	return strings.Join(parts, ",")
+}
+
 // EvalTargetMissing is what a suite reports when the thing it grades is gone.
 //
 // Its own error because it is a different situation from a failing target and
@@ -386,11 +410,30 @@ func (T *OrchestrateApp) resolveEvalTarget(udb Database, user string, suite Eval
 			Fingerprint: pipelineFingerprint(def),
 			Exec:        T.pipelineEvalExecutor(context.Background(), udb, user, def),
 		}, nil
+	case EvalTargetMachine:
+		return evalTarget{
+			// The machine's reference, not its resolved definition: the runner
+			// resolves it per call and enforces its own nesting rules, and
+			// reaching past that to fingerprint the record would be this
+			// package deciding what a machine is.
+			Fingerprint: EvalTargetFingerprint("machine", suite.TargetID),
+			Exec:        T.machineEvalExecutor(user, suite.TargetID),
+		}, nil
+	case EvalTargetTool:
+		tools, err := GetAgentTools(suite.TargetID)
+		if err != nil || len(tools) == 0 {
+			return evalTarget{}, EvalTargetMissing{Kind: suite.TargetKind, ID: suite.TargetID}
+		}
+		tool := tools[0]
+		return evalTarget{
+			// Description and parameters, because both change what a MODEL
+			// does with a tool even when the code behind it is untouched — and
+			// a description edit is the most common change a tool ever gets.
+			Fingerprint: EvalTargetFingerprint("tool", tool.Tool.Name, tool.Tool.Description, toolParamSignature(tool.Tool)),
+			Exec:        toolEvalExecutor(tool),
+		}, nil
 	default:
-		// Refused rather than silently scoring nothing. The kinds arrive in
-		// their own steps; until then a suite for one is an authoring mistake
-		// with a clear message, not a run that reports 0/30.
-		return evalTarget{}, Error(fmt.Sprintf("grading a %s is not wired up yet — this suite cannot run", suite.TargetKind))
+		return evalTarget{}, Error(fmt.Sprintf("unknown target kind %q — use agent | pipeline | tool | machine", suite.TargetKind))
 	}
 }
 
@@ -492,4 +535,56 @@ func pipelineFingerprint(def PipelineDef) string {
 		}, "|"))
 	}
 	return EvalTargetFingerprint(parts...)
+}
+
+// machineEvalExecutor grades a machine: the case prompt is its input, its
+// terminal step's text is the output, and MustFields asserts on that step's
+// declared fields — the same contract a pipeline gets, because a machine hands
+// back the same pair.
+func (T *OrchestrateApp) machineEvalExecutor(user, ref string) evalExecutor {
+	run := T.pipelineMachineRunner(user)
+	return func(ctx context.Context, c EvalCase) EvalResult {
+		out, fields, err := run(ctx, ref, c.Prompt)
+		row := EvalResult{Name: c.Name, Output: truncateForEval(out, 2000)}
+		if err != nil {
+			row.ErrText = err.Error()
+			row.Reasons = append(row.Reasons, "the machine errored: "+err.Error())
+			return row
+		}
+		textReasons, textPass := gradeEvalText(c, out)
+		fieldReasons, fieldPass := gradeEvalFields(c, fields)
+		row.Reasons = append(textReasons, fieldReasons...)
+		row.Passed = textPass && fieldPass
+		return row
+	}
+}
+
+// toolEvalExecutor grades a tool DIRECTLY: no model, no persona, no rounds.
+//
+// The case prompt is the tool's arguments as JSON, because a tool takes
+// arguments rather than a sentence. That is the whole point of grading one
+// this way — the question "does this tool work" is being asked without a model
+// in the middle to be blamed for the answer.
+//
+// Tool cases therefore have no tool-call assertions: MustCallTools on a tool
+// is a tautology, and it is refused at save time rather than passing vacuously.
+func toolEvalExecutor(tool AgentToolDef) evalExecutor {
+	return func(_ context.Context, c EvalCase) EvalResult {
+		row := EvalResult{Name: c.Name}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(c.Prompt)), &args); err != nil {
+			row.ErrText = "the case prompt is not JSON arguments: " + err.Error()
+			row.Reasons = append(row.Reasons, row.ErrText)
+			return row
+		}
+		out, err := tool.Handler(args)
+		row.Output = truncateForEval(out, 2000)
+		if err != nil {
+			row.ErrText = err.Error()
+			row.Reasons = append(row.Reasons, "the tool errored: "+err.Error())
+			return row
+		}
+		row.Reasons, row.Passed = gradeEvalText(c, out)
+		return row
+	}
 }
