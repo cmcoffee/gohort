@@ -655,8 +655,32 @@ func setPeerAuth(req *http.Request, cred string) {
 // with a confusing one.
 func renewRefusedPeerCredential(req *http.Request, p RemotePeer) (string, bool) {
 	if !p.UseTokens {
+		// The silent case, and the one worth a line.
+		//
+		// Three separate places decline to act on this and none of them said
+		// so: PeerCredentialNow hands back the static key without comment
+		// because the record says tokens are not in use, the far side refuses
+		// it, and recovery declines here for the same reason. What an operator
+		// sees is a 401 from another machine, on every peer-backed capability
+		// at once, with nothing anywhere naming the cause — the failure is
+		// entirely in the DISAGREEMENT between two records, and neither of them
+		// is wrong on its own.
+		//
+		// Once per peer, and cleared when the peer adopts tokens, because this
+		// fires on every request of a bulk ingest — seven 401s in one second is
+		// what prompted writing it, and seven copies of the explanation would
+		// have buried the ingest log it appeared in.
+		warnPeerResolveOnce("tokens:"+p.Name, fmt.Sprintf(
+			"peer %q refused our credential, and this instance is still sending it the static pairing key: "+
+				"its local record does not say that peer requires credential exchange. "+
+				"Refresh it under Admin > Peers to pick that up. Until then every peer-backed capability "+
+				"(embeddings, search, transcription, images) answers 401 \"unrecognized or disabled peer key\".",
+			p.Name))
 		return "", false
 	}
+	// Recovered, or at least trying: clear any standing warning so a peer that
+	// has since adopted tokens stops being reported as broken.
+	warnPeerResolveOnce("tokens:"+p.Name, "")
 	InvalidatePeerAccessToken(p.Name)
 	InvalidatePeerResolution()
 	if fresh, ok := GetRemotePeer(p.Name); ok {

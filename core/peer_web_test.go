@@ -387,3 +387,75 @@ func TestAPeerThatStoppedOfferingSearchKeepsItsKey(t *testing.T) {
 		t.Errorf("a peer that dropped the capability still had its key applied: %q", got.APIKey)
 	}
 }
+
+// The silent 401. A peer whose local record says tokens are not in use gets
+// sent the static pairing key; a peer that requires exchange refuses it; and
+// recovery declines for the same reason. Three declines, no explanation — an
+// operator sees a 401 from another machine on every peer-backed capability at
+// once, with nothing naming the cause.
+//
+// The failure lives entirely in the DISAGREEMENT between two records, and
+// neither is wrong on its own, so the line has to name the reconciliation.
+func TestARefusedStaticKeyExplainsItselfOnce(t *testing.T) {
+	var logged []string
+	prev := peerResolveWarned
+	peerResolveWarned = map[string]string{}
+	t.Cleanup(func() { peerResolveWarned = prev })
+
+	capture := func() {
+		peerResolveMu.Lock()
+		defer peerResolveMu.Unlock()
+		if msg := peerResolveWarned["tokens:den"]; msg != "" {
+			logged = append(logged, msg)
+		}
+	}
+
+	p := RemotePeer{Name: "den", Key: "pairing-code", UseTokens: false}
+	req, _ := http.NewRequest(http.MethodPost, "https://den.example/api/peer/v1/embeddings", nil)
+
+	if _, ok := renewRefusedPeerCredential(req, p); ok {
+		t.Fatal("a peer not using tokens has nothing to exchange; recovery must decline")
+	}
+	capture()
+	if len(logged) != 1 {
+		t.Fatalf("expected the decline to explain itself once, got %d message(s)", len(logged))
+	}
+	// It has to name the FIX. A line saying only that something was refused
+	// leaves the operator exactly where they were.
+	for _, want := range []string{"Admin > Peers", "pairing key", "den"} {
+		if !strings.Contains(logged[0], want) {
+			t.Errorf("the message should mention %q: %s", want, logged[0])
+		}
+	}
+
+	// A bulk ingest sends hundreds of these. Seven 401s in one second is what
+	// prompted the line; seven copies of it would bury the log it appears in.
+	before := len(logged)
+	for i := 0; i < 5; i++ {
+		renewRefusedPeerCredential(req, p)
+	}
+	capture()
+	if len(logged) != before+1 { // capture() re-reads the same stored message
+		t.Error("the warning repeated; it must be once per peer")
+	}
+}
+
+// An operator who follows the instruction should see the warning stop, rather
+// than having to infer that refreshing worked.
+func TestAdoptingTokensClearsTheWarning(t *testing.T) {
+	prev := peerResolveWarned
+	peerResolveWarned = map[string]string{"tokens:den": "peer \"den\" refused our credential…"}
+	t.Cleanup(func() { peerResolveWarned = prev })
+
+	required := true
+	got := adoptPeerTokenFlow(RemotePeer{Name: "den", UseTokens: false},
+		PeerManifest{Token: &PeerTokenInfo{Required: required}})
+	if !got {
+		t.Fatal("a manifest requiring exchange must flip the record")
+	}
+	peerResolveMu.Lock()
+	defer peerResolveMu.Unlock()
+	if msg := peerResolveWarned["tokens:den"]; msg != "" {
+		t.Errorf("the warning should be cleared once the peer adopts tokens, still: %q", msg)
+	}
+}

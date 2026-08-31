@@ -198,6 +198,10 @@ func adoptPeerTokenFlow(p RemotePeer, m PeerManifest) bool {
 	if m.Token != nil && m.Token.Required {
 		if !p.UseTokens {
 			Log("[peer] %q now requires credential exchange — switching to rotating tokens", p.Name)
+			// The refresh that fixes it clears the warning that named it, so
+			// an operator who followed the instruction sees it stop rather
+			// than having to infer that it worked.
+			warnPeerResolveOnce("tokens:"+p.Name, "")
 		}
 		return true
 	}
