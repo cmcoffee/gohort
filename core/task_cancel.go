@@ -136,6 +136,22 @@ func CancelBackgroundJobs(sessionID, runID string) []TaskRun {
 type backgroundWorkTool struct{}
 
 func (t *backgroundWorkTool) Name() string { return "background_work" }
+
+// IsFrameworkTool hides it from every tool picker.
+//
+// The runner force-includes this for every agent that has tools at all,
+// because detaching is the framework's decision and not the agent's: work it
+// started as one call keeps running after the turn whether it chose that or
+// not. So the picker was offering a switch that did nothing — turn it off,
+// save, and the runner adds it back on the next turn.
+//
+// The honest reading is that this is not a capability at all. It is the brake
+// on one the framework grants unilaterally, and a list of capabilities is the
+// wrong place to offer the brake: withholding it would not make an agent do
+// less, it would make an agent that starts unstoppable work. The one real off
+// switch stays the no-tools sentinel, where an agent has no tools to start
+// anything with and so nothing to stop.
+func (t *backgroundWorkTool) IsFrameworkTool() bool { return true }
 func (t *backgroundWorkTool) Desc() string {
 	return "See and STOP work you started that is still running in the background (a long render, a set of pictures, a dispatched agent). " +
 		"actions: list (what is still running for this conversation), stop (stop it). " +
