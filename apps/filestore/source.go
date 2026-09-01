@@ -473,8 +473,24 @@ func (s storeSource) boundToolDefs(sess *ToolSession, user string, st Store) []A
 	if ws, err := EnsureWorkspaceDir(user); err == nil {
 		bound.WorkspaceDir = ws
 	}
+	// The store's own tools first. These are global to the store — minted
+	// against the folder, not against whoever mapped it — so every user who can
+	// reach the store gets the same bundle. That is the difference between a
+	// property of the folder and a note in one person's pool.
+	seen := map[string]bool{}
+	for _, t := range StoreTools(s.app.DB, st.Slug) {
+		if want[t.Name] {
+			c := t
+			bound.TempTools = append(bound.TempTools, &c)
+			seen[t.Name] = true
+		}
+	}
+	// Then the caller's own, for a binding that names a tool they authored
+	// themselves. The store's copy wins a tie: a name bound on the store is
+	// about the folder, and a personal tool that happens to share it should not
+	// quietly replace it for one user.
 	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-		if want[p.Tool.Name] {
+		if want[p.Tool.Name] && !seen[p.Tool.Name] {
 			t := p.Tool
 			bound.TempTools = append(bound.TempTools, &t)
 		}

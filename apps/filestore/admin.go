@@ -82,12 +82,26 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						// table below went on listing what was there before.
 						Invalidate: []string{"/filestore/api/commands"},
 					}),
+					// Where the mapping happens. A conversation rather than a
+					// button, because the first --help rarely says everything
+					// and what a flag MEANS is a judgement an admin should be
+					// able to push back on before it becomes a description
+					// other agents trust.
+					ui.Expand("Map commands", ui.AgentLoopPanel{
+						SendURL:      "/filestore/api/map/chat/send?slug={slug}",
+						Markdown:     true,
+						LockActivity: true,
+						EmptyText: "Ask it to map a command — \"work out what decrypt can do and propose tools for it\". " +
+							"It can run the registered binary to read its help and try things, and write down what it finds as proposed tools. " +
+							"Nothing it proposes can be called until you bind it under Tools; that binding is the approval.",
+						Placeholder: "Map the commands on this store…",
+					}),
 					// The tool bundle that travels with this folder. Same picker
 					// as "Assigned to" for the same reason: the candidates are
 					// LIVE, and a list baked into the section at startup would
 					// be the tools that existed when the process booted.
 					ui.Expand("Tools", ui.ACLPicker(ui.ACLPickerConfig{
-						OptionsSource: "/filestore/api/tool-candidates",
+						OptionsSource: "/filestore/api/tool-candidates?slug={slug}",
 						RecordSource:  "/filestore/api/stores?slug={slug}",
 						Field:         "toolset",
 						PostTo:        "/filestore/api/stores",
@@ -219,6 +233,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands/run", T.handleCommand)
 	T.HandleFunc("/api/commands", T.handleCommands)
 	T.HandleFunc("/api/tool-candidates", T.handleToolCandidates)
+	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/folders", T.handleFolders)
 }
 
@@ -484,6 +499,16 @@ func (T *FileStoreApp) handleToolCandidates(w http.ResponseWriter, r *http.Reque
 		Desc  string `json:"desc,omitempty"`
 	}
 	out := []opt{}
+	// The store's own tools first — including ones just proposed by a mapping
+	// session, which is how an admin sees a proposal at all. Binding one here is
+	// what approves it; until then it is a record nothing can call.
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	for _, t := range StoreTools(T.DB, slug) {
+		if t.Name == "" || t.Disabled {
+			continue
+		}
+		out = append(out, opt{Value: t.Name, Label: t.Name, Desc: "mapped here · " + firstLine(t.Description)})
+	}
 	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 		if p.Tool.Name == "" || p.Tool.Disabled {
 			continue
