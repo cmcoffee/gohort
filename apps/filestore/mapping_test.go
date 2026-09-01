@@ -117,10 +117,35 @@ func TestMapConversationIsScopedToOneCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, `"/filestore/api/map/chat/send?slug={slug}&command={name}"`) {
-		t.Error("the mapping conversation must name both the folder and the command it was opened on")
+	if !strings.Contains(src, `"/filestore/api/map/chat/send?id={id}"`) {
+		t.Error("the mapping conversation must name the command it was opened on, by the composite id its row carries")
 	}
 	if !strings.Contains(src, `ui.Expand("Map"`) {
 		t.Error("Map belongs on the command's own row — that is what makes the result land where it came from")
+	}
+}
+
+// Mapping has a known shape — look, map, correct — so the way in is buttons,
+// not a blank box. An empty composer asks an admin to guess the wording of a
+// job the page already knows, and the wording is what decides whether the agent
+// probes before it proposes.
+func TestMappingIsGuidedRatherThanTyped(t *testing.T) {
+	raw, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	for _, want := range []string{"Map it", "Show its help", "Refine"} {
+		if !strings.Contains(src, `Label: "`+want+`"`) {
+			t.Errorf("the mapping panel must offer %q as a button", want)
+		}
+	}
+	if strings.Count(src, "Prompt:") < 3 {
+		t.Error("each mapping button has to carry what it says — a label with no Prompt is a button that does nothing")
+	}
+	// The panel opens inside a row of a table inside a row of another table.
+	// At the viewport-tall default it buries the folder it belongs to.
+	if !strings.Contains(src, `Height: "420px"`) {
+		t.Error("a conversation mounted in a row expander must be bounded, or it takes the whole page")
 	}
 }

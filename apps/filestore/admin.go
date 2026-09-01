@@ -87,14 +87,47 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// replaces wrote loose tools into a global list
 								// where they read as orphaned, waiting to be
 								// found from a different expander.
+								//
+								// Addressed by {id}, never by {name}. A nested
+								// table's placeholders are filled TWICE: once at
+								// expand time against the store row, and again
+								// per inner row. Whatever the store row can
+								// answer, it answers first — and a store row has
+								// a name, so {name} here arrives as the FOLDER's
+								// name and the command is never found. {id} is
+								// the composite slug/name the row already
+								// carries, and no store row defines it. Enforced
+								// by TestInnerRowKeysAreNotShadowedByTheStoreRow.
 								ui.Expand("Map", ui.AgentLoopPanel{
-									SendURL:      "/filestore/api/map/chat/send?slug={slug}&command={name}",
+									SendURL:      "/filestore/api/map/chat/send?id={id}",
 									Markdown:     true,
 									LockActivity: true,
-									EmptyText: "Ask it to map this command — \"work out what this can do and propose a toolbox\". " +
-										"It can run the binary to read its help and try things, and writes what it finds as a toolbox on this row. " +
+									// A pane, not a page. This opens inside a row
+									// of a table inside a row of another table;
+									// the viewport-tall default buried the folder
+									// it belongs to.
+									Height: "420px",
+									// The three things worth saying, as buttons.
+									// Mapping has a known shape — look, map,
+									// correct — and asking someone to type "map
+									// out this command" is asking them to guess
+									// the wording of a job the page already knows.
+									// The composer stays for everything after.
+									Actions: []ui.ToolbarAction{
+										{Label: "Map it", Variant: "primary",
+											Title:  "Read its help, try what it needs to, and propose a toolbox",
+											Prompt: "Map this command. Read its help, try whatever you need to understand what it does, then propose a toolbox for it. Say what you verified and what you did not."},
+										{Label: "Show its help",
+											Title:  "Just run the help flag and show the output",
+											Prompt: "Run this command's help flag and show me exactly what it printed. Do not propose anything yet."},
+										{Label: "Refine",
+											Title:  "Check the proposal against what the command really does, and correct it",
+											Prompt: "Check the toolbox you proposed against what the command actually does — run it again where you were guessing — and propose a corrected version."},
+									},
+									EmptyText: "Map it, and what it finds is written as a toolbox on this row. " +
+										"It can run the binary to read its help and try things. " +
 										"Nothing it proposes can be called until you attach that toolbox to a folder under Toolboxes; the attachment is the approval.",
-									Placeholder: "Map this command…",
+									Placeholder: "Or ask it something…",
 								}),
 								{Type: "button", Label: "Delete", Method: "DELETE",
 									PostTo:     "/filestore/api/commands?id={id}",
@@ -121,7 +154,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							"Capabilities that travel with this folder — an agent gets them only while this store is attached to it. A toolbox is mapped once and attached to every folder of the same kind, so a second folder costs an attachment rather than a re-mapping.")},
 						ui.Table{
 							Source: "/filestore/api/toolboxes?slug={slug}",
-							RowKey: "name",
+							RowKey: "id",
 							Columns: []ui.Col{
 								{Field: "name", Label: "Toolbox", Flex: 1},
 								{Field: "actions", Mute: true},
@@ -134,8 +167,14 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// a folder deciding it no longer wants a
 								// capability is not a statement that the
 								// capability was wrong.
+								//
+								// {id}, not {name} — see the Map action above:
+								// the store row's own name would be substituted
+								// in at expand time, and a detach naming the
+								// FOLDER matches no attachment, so this removed
+								// nothing and said it had worked.
 								{Type: "button", Label: "Detach", Method: "DELETE",
-									PostTo:     "/filestore/api/toolboxes?slug={slug}&name={name}",
+									PostTo:     "/filestore/api/toolboxes?slug={slug}&toolbox={id}",
 									Confirm:    "Detach this toolbox from this folder? It stays mapped and stays attached to any other folder using it.",
 									Optimistic: true,
 									Invalidate: []string{"/filestore/api/commands"}},

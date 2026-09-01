@@ -48,13 +48,18 @@ func (T *FileStoreApp) handleMapChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := AuthCurrentUser(r)
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	// One id, not a slug and a name. The panel is mounted inside a store row,
+	// and a {slug}/{name} pair there is answered by the STORE — so the command
+	// arrived as the folder's own display name and never resolved. The row
+	// already carries the composite the command is stored under; that is what
+	// it sends. See the Map action in admin.go.
+	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
 	st, ok := LoadStore(T.DB, slug)
 	if !ok || user == "" {
 		http.NotFound(w, r)
 		return
 	}
-	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(strings.TrimSpace(r.URL.Query().Get("command"))))
+	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(name))
 	if !ok {
 		http.Error(w, "that command is not registered against this folder", http.StatusNotFound)
 		return

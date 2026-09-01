@@ -255,7 +255,7 @@ func (T *FileStoreApp) handleToolboxes(w http.ResponseWriter, r *http.Request) {
 				// time, so the folder is quietly missing a capability, and the
 				// only place that can be noticed is here.
 				rows = append(rows, map[string]any{
-					"name": name, "actions": "—",
+					"id": name, "name": name, "actions": "—",
 					"origin": "missing — the toolbox this names has been deleted",
 				})
 				continue
@@ -264,7 +264,12 @@ func (T *FileStoreApp) handleToolboxes(w http.ResponseWriter, r *http.Request) {
 			if tb.FromStore != slug {
 				origin = "mapped on another folder, from " + tb.FromCommand
 			}
+			// id duplicates name because the row is addressed by id: this
+			// table is nested inside a store row, and a {name} placeholder is
+			// answered by the STORE's name before the toolbox row is ever
+			// consulted. See the Detach action in admin.go.
 			rows = append(rows, map[string]any{
+				"id":   tb.Tool.Name,
 				"name": tb.Tool.Name, "actions": countOf(len(tb.Tool.Actions), "action", "actions"),
 				"origin": origin, "description": firstLine(tb.Tool.Description),
 			})
@@ -274,7 +279,15 @@ func (T *FileStoreApp) handleToolboxes(w http.ResponseWriter, r *http.Request) {
 		if !adminOnly(w, r) {
 			return
 		}
-		name := RefToolSlug(strings.TrimSpace(r.URL.Query().Get("name")))
+		// "toolbox", not "name" — the caller is a table nested in a store
+		// row, where a {name} placeholder resolves to the folder. Detaching
+		// by a name that matches no attachment used to succeed and remove
+		// nothing, which reads as a button that does not work.
+		name := RefToolSlug(strings.TrimSpace(r.URL.Query().Get("toolbox")))
+		if name == "" {
+			http.Error(w, "say which toolbox to detach", http.StatusBadRequest)
+			return
+		}
 		kept := st.Toolboxes[:0]
 		for _, n := range st.Toolboxes {
 			if !strings.EqualFold(RefToolSlug(strings.TrimSpace(n)), name) {

@@ -2518,6 +2518,14 @@ type AgentLoopPanel struct {
 	// to "Channel" when unset rather than hardcoding any one app's term.
 	AltPrimaryLabel string `json:"alt_primary_label,omitempty"`
 
+	// Height overrides the panel's default size — any CSS length ("360px",
+	// "50vh"). The default fills the viewport, which is right for a page whose
+	// whole job is the conversation and wrong everywhere else: mounted inside a
+	// row expander or a modal, a viewport-tall chat pushes the thing it belongs
+	// to off the screen. Set it whenever the conversation is a PART of a page
+	// rather than the page.
+	Height string `json:"height,omitempty"`
+
 	// NewVariants, when set, turns the rail's "+ New" button into a split
 	// control: the primary button starts an ordinary new session, and a
 	// caret (▾) opens a menu of alternate new-session modes. Each variant
@@ -2836,6 +2844,20 @@ type ToolbarAction struct {
 	// flat buttons (the always-visible primaries). Lets a crowded toolbar shed
 	// its rarely-used actions into a few overflow menus without per-app JS.
 	Group string `json:"group,omitempty"`
+	// Prompt makes this a GUIDED action: clicking it types this text into the
+	// composer and sends it as the user's turn. URL and Method are ignored —
+	// nothing is called, a message is sent, and the reply is an ordinary turn.
+	//
+	// For surfaces where the useful things to say are a short known list and
+	// the person should not have to guess the wording. A chat box is the right
+	// control when the next thing to say is open-ended, and the wrong one when
+	// there are three of them: "Map this command" is a button, not a sentence
+	// somebody should have to compose. The text lands in the conversation
+	// verbatim, so write it as the person would say it.
+	//
+	// Composed with the ordinary composer, never instead of it: the buttons are
+	// the way in, and the box is still there for everything after.
+	Prompt string `json:"prompt,omitempty"`
 }
 
 func (ArticleEditor) componentType() string { return "article_editor" }

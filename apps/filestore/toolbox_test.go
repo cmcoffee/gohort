@@ -197,9 +197,10 @@ func TestFolderPanelIsScopedToItsFolder(t *testing.T) {
 			t.Errorf("panel source %s is missing or unscoped — an unscoped one shows another folder's rows", want)
 		}
 	}
-	// Detach has to name both the folder and the toolbox: without the name it
-	// would clear the wrong row, and without the slug the wrong folder.
-	if !strings.Contains(src, `"/filestore/api/toolboxes?slug={slug}&name={name}"`) {
+	// Detach has to name both the folder and the toolbox: without the toolbox it
+	// would clear the wrong row, and without the slug the wrong folder. By {id}
+	// rather than {name} — see TestNestedRowURLsDoNotAddressRowsByName.
+	if !strings.Contains(src, `"/filestore/api/toolboxes?slug={slug}&toolbox={id}"`) {
 		t.Error("detach must name both the folder and the toolbox")
 	}
 	// The command row shows what mapping produced. That column is what makes an

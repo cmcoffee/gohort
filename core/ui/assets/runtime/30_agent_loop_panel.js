@@ -100,6 +100,12 @@
     var bulkState    = {mode: false};
 
     var wrap = el('div', {class: 'ui-agent' + (hasList ? '' : ' ui-agent-no-list')});
+    // cfg.height overrides the viewport-tall default. Set inline rather than
+    // via a class because it is a length the app chose, not one of a few sizes
+    // the framework knows about. A panel mounted inside a row expander or a
+    // modal is a PART of the page, and a viewport-tall one pushes whatever it
+    // belongs to off the screen.
+    if (cfg.height) { wrap.style.height = cfg.height; wrap.style.minHeight = '0'; }
 
     // --- Optional list sidebar -------------------------------------------
     var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
@@ -1066,6 +1072,23 @@
     // grouped-dropdown items so both behave identically.
     async function runToolbarAction(action, btn) {
       if (action.confirm && !(await window.uiConfirm(action.confirm))) return;
+      // A guided action SAYS something rather than calling something: the text
+      // goes into the composer and is sent as the user's turn, so the button
+      // and a person typing the same sentence produce the identical
+      // conversation. Nothing app-specific reaches this code — the app owns
+      // every word. Declared prompt wins over any method: an action carrying
+      // one has already said what it does.
+      if (action.prompt) {
+        // A half-typed draft is not the framework's to throw away: sendMessage
+        // reads the composer, so the prompt has to pass through it, and
+        // whatever was in there comes back afterwards.
+        var draft = inputArea.value;
+        inputArea.value = action.prompt;
+        sendMessage();
+        if (inputArea.value === action.prompt) inputArea.value = draft; // refused to send
+        else if (draft.trim()) inputArea.value = draft;
+        return;
+      }
       var method = action.method || 'post';
       if (method === 'client') {
         var name = action.url || '';
