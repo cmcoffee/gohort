@@ -46,6 +46,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// (attachments and frozen path_scope refs are keyed on
 					// it) and looks broken unless the page says so.
 					{Field: "tools", Label: "Agent tools", Mute: true, Flex: 2},
+					{Field: "carries", Label: "Toolboxes", Mute: true},
 					{Field: "assigned", Label: "Assigned to", Mute: true},
 					{Field: "retention", Label: "Retention", Mute: true},
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
@@ -382,6 +383,13 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			// the names in force, which after a rename are not the names
 			// the Name column would suggest.
 			"tools": strings.Join(storeToolNames(st.Slug), ", "),
+			// What this folder CARRIES, as opposed to what it mints. A mapped
+			// toolbox is deliberately absent from the deployment tool list — it
+			// is a capability of a folder, not a tool of the installation — so
+			// the folder is the only place it can be seen, and a stores list
+			// that did not say would make a folder holding four capabilities
+			// look identical to one holding none.
+			"carries": storeCarriesLabel(T.DB, st),
 			// Stated on the row because it is the one setting whose effect
 			// is destructive and whose default (forever) is invisible.
 			"retention": retentionLabel(st),
@@ -451,7 +459,7 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 				if tb.FromCommand != a.Name {
 					continue
 				}
-				mapped = fmt.Sprintf("%s · %s", tb.Tool.Name, countOf(len(tb.Tool.Actions), "action"))
+				mapped = fmt.Sprintf("%s · %s", tb.Tool.Name, countOf(len(tb.Tool.Actions), "action", "actions"))
 				if !storeHasToolbox(st, tb.Tool.Name) {
 					// Mapped but not attached HERE is the one state worth
 					// calling out: the work is done and the folder is not

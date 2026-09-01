@@ -139,7 +139,7 @@ grant.
 
 ## Staging
 
-*(Built. Steps 1-4 shipped in v0.6.539-542; step 5 is what remains.)*
+*(Built, v0.6.539-543.)*
 
 1. **`TempToolAction` learns shell.** A `CommandTemplate` field and a dispatcher
    branch, argv-only. Reviewed on its own — it is a shared type.
@@ -150,7 +150,13 @@ grant.
 4. **Mapping returns to the command row.** The conversation writes a toolbox
    against the command it was opened from, and the row shows it on return.
 5. **Retire the global-list appearance.** A mapped toolbox is not a deployment
-   tool and should not be listed as one.
+   tool and should not be listed as one. This turned out to hold by
+   construction — toolboxes live in filestore's own table and are never written
+   to the persistent tool pool the admin tool pages enumerate — so what step 5
+   actually needed was a guard against somebody later "helpfully" writing one
+   there too, and the other half of the same idea: if a toolbox is not in the
+   deployment list, the FOLDER is the only place it can be seen, so the stores
+   list has to say what each carries.
 
 Steps 1 and 2 are the substance; 3 and 4 are what the user actually asked for,
 and neither is worth doing before the model underneath is right.

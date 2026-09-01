@@ -214,10 +214,16 @@ func storeHasToolbox(st Store, name string) bool {
 }
 
 // countOf renders a count with its noun, so a row reads as a sentence rather
-// than as a number beside a label. (plural() already exists here and answers a
-// different question — the suffix alone.)
-func countOf(n int, noun string) string {
-	return fmt.Sprintf("%d %s%s", n, noun, plural(n))
+// than as a number beside a label.
+//
+// Both forms are passed rather than derived: "toolbox" takes -es, and a rule
+// that appends -s would print "2 toolboxs" on the stores list. Spelling the
+// plural is cheaper than a rule that is wrong for the second noun it meets.
+func countOf(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // handleToolboxes serves the Toolboxes list on a folder (GET ?slug=) and
@@ -259,7 +265,7 @@ func (T *FileStoreApp) handleToolboxes(w http.ResponseWriter, r *http.Request) {
 				origin = "mapped on another folder, from " + tb.FromCommand
 			}
 			rows = append(rows, map[string]any{
-				"name": tb.Tool.Name, "actions": countOf(len(tb.Tool.Actions), "action"),
+				"name": tb.Tool.Name, "actions": countOf(len(tb.Tool.Actions), "action", "actions"),
 				"origin": origin, "description": firstLine(tb.Tool.Description),
 			})
 		}
@@ -302,7 +308,7 @@ func (T *FileStoreApp) handleToolboxCandidates(w http.ResponseWriter, r *http.Re
 		}
 		out = append(out, opt{
 			Value: tb.Tool.Name, Label: tb.Tool.Name,
-			Desc: countOf(len(tb.Tool.Actions), "action") + " · from " + where,
+			Desc: countOf(len(tb.Tool.Actions), "action", "actions") + " · from " + where,
 		})
 	}
 	writeJSON(w, out)
@@ -319,4 +325,45 @@ func firstLine(s string) string {
 		s = s[:117] + "…"
 	}
 	return s
+}
+
+// storeCarriesLabel summarises the toolboxes attached to a folder, for the
+// stores list.
+//
+// It exists because a mapped toolbox is deliberately NOT in the deployment tool
+// list: it is a capability of a folder, not a tool of the installation. That
+// makes the folder the only place it can be seen, and a stores list that said
+// nothing would render a folder holding four capabilities identically to one
+// holding none.
+//
+// A stale attachment is counted separately rather than quietly excluded. At call
+// time such a name is skipped, so the folder is missing a capability somebody
+// thinks it has, and a count that hid it would be the reason nobody noticed.
+func storeCarriesLabel(db Database, st Store) string {
+	if len(st.Toolboxes) == 0 {
+		return "—"
+	}
+	live, missing := 0, 0
+	seen := map[string]bool{}
+	for _, name := range st.Toolboxes {
+		name = RefToolSlug(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if _, ok := LoadToolbox(db, name); ok {
+			live++
+		} else {
+			missing++
+		}
+	}
+	switch {
+	case live == 0 && missing == 0:
+		return "—"
+	case missing == 0:
+		return countOf(live, "toolbox", "toolboxes")
+	case live == 0:
+		return fmt.Sprintf("⚠ %s missing", countOf(missing, "toolbox", "toolboxes"))
+	}
+	return fmt.Sprintf("%s · ⚠ %d missing", countOf(live, "toolbox", "toolboxes"), missing)
 }

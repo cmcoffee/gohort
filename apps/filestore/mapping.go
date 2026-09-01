@@ -169,7 +169,7 @@ func (T *FileStoreApp) proposeToolbox(st Store, cmd StoreCommand, args map[strin
 	}
 	return fmt.Sprintf(
 		"Mapped %s into the toolbox %q (%s). It shows on this command's row now, and it cannot be called yet: an admin attaches it to a folder under Toolboxes, and that attachment is the approval. Call this again to correct it.",
-		cmd.Label, saved.Tool.Name, countOf(len(saved.Tool.Actions), "action")), nil
+		cmd.Label, saved.Tool.Name, countOf(len(saved.Tool.Actions), "action", "actions")), nil
 }
 
 // templatePlaceholders lists the {name} placeholders in a command template.

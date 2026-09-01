@@ -208,3 +208,57 @@ func TestFolderPanelIsScopedToItsFolder(t *testing.T) {
 		t.Error("the commands table must show mapped state, or a toolbox can exist with nothing on screen explaining it")
 	}
 }
+
+// A mapped toolbox is a capability of a FOLDER, not a tool of the installation.
+// It must never appear in the deployment tool list — which is true by
+// construction (it lives in filestore's own table, never in the persistent
+// temp-tool pool the admin tool pages enumerate) and worth pinning, because the
+// way this would regress is somebody "helpfully" also writing it to the pool so
+// it shows up somewhere familiar.
+func TestAMappedToolboxIsNotADeploymentTool(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if _, err := SaveToolbox(db, mappedToolbox("capture_tools", "bundles", "decrypt")); err != nil {
+		t.Fatal(err)
+	}
+	// The pool the admin tool surfaces read is untouched.
+	if tools := LoadPersistentTempTools(db, "u"); len(tools) != 0 {
+		t.Errorf("mapping wrote %d tool(s) into the user pool; a mapped toolbox belongs to its folder", len(tools))
+	}
+	// And it stays bound-only, so it would still be hidden if one were ever
+	// copied there.
+	tb, _ := LoadToolbox(db, "capture_tools")
+	if !tb.Tool.BoundOnly {
+		t.Error("bound-only is the belt to that braces")
+	}
+}
+
+// The other half of not being in the deployment list: the folder becomes the
+// only place a toolbox can be seen, so the stores list has to say. Without it a
+// folder holding four capabilities looks identical to one holding none.
+func TestStoresListSaysWhatAFolderCarries(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if _, err := SaveToolbox(db, mappedToolbox("capture_tools", "bundles", "decrypt")); err != nil {
+		t.Fatal(err)
+	}
+	if got := storeCarriesLabel(db, Store{Slug: "bundles"}); got != "—" {
+		t.Errorf("a folder carrying nothing reads as nothing, got %q", got)
+	}
+	if got := storeCarriesLabel(db, Store{Slug: "bundles", Toolboxes: []string{"capture_tools"}}); got != "1 toolbox" {
+		t.Errorf("got %q, want the singular", got)
+	}
+
+	// A stale attachment is counted, never quietly dropped. At call time the
+	// name is skipped, so the folder is missing a capability somebody thinks it
+	// has, and a count that hid it would be why nobody noticed.
+	got := storeCarriesLabel(db, Store{Slug: "bundles", Toolboxes: []string{"capture_tools", "deleted"}})
+	if !strings.Contains(got, "1 toolbox") || !strings.Contains(got, "1 missing") {
+		t.Errorf("got %q, want the live count and the missing one", got)
+	}
+	if got := storeCarriesLabel(db, Store{Toolboxes: []string{"gone", "also_gone"}}); !strings.Contains(got, "2 toolboxes missing") {
+		t.Errorf("got %q, want a plural that is not \"toolboxs\"", got)
+	}
+	// Duplicates and blanks are not capabilities.
+	if got := storeCarriesLabel(db, Store{Toolboxes: []string{"capture_tools", "capture_tools", "  "}}); got != "1 toolbox" {
+		t.Errorf("got %q, want one", got)
+	}
+}
