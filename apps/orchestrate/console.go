@@ -1834,13 +1834,18 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)
 		}
-		// Only trust the ledger when this schedule's name is unambiguous. A
-		// collision would otherwise show another agent's status here as if it
-		// were this schedule's own.
-		if clash, ok := standingNameCollision(udb, user, sa); ok {
-			row.State = "⚠ name is also an agent (" + chFirst(clash.Name, clash.ID) + ") — rename one; run history cannot tell them apart"
-		} else if latest := ListRuns(RootDB, user, RunFilter{Agent: sa.Name, Limit: 1}); len(latest) > 0 {
+		// By identity, with the display name as the legacy fallback for runs
+		// recorded before subjects existed (see RunFilter.Subject).
+		if latest := ListRuns(RootDB, user, RunFilter{Limit: 1}.AboutStanding(sa.Name)); len(latest) > 0 {
 			row.Status = string(latest[0].Status)
+		}
+		// Warn only while a subject-less run could actually be crossing the two.
+		// New runs carry a subject and cannot; saying otherwise would send
+		// someone renaming a pair that is already fine, and the warning would
+		// never go away.
+		if clash, ok := standingNameCollision(udb, user, sa); ok && hasLegacyRunsNamed(user, sa.Name) {
+			row.State = "⚠ shares a name with the agent " + chFirst(clash.Name, clash.ID) +
+				", and runs recorded before this release cannot tell them apart — rename one, or wait for those runs to age out"
 		}
 		rows = append(rows, row)
 	}
@@ -1868,6 +1873,19 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 // never see it. Matching is case-insensitive and trims, because the ledger
 // lookup is exact — a pair that differs only in case does NOT actually cross,
 // and flagging it would be a false alarm. Those are excluded below.
+// hasLegacyRunsNamed reports whether any run filed under this display name
+// predates RunRecord.Subject — the only runs a name collision can still cross.
+// Every run written since carries an identity, so the ambiguity is bounded and
+// drains as pruneRuns ages those rows out.
+func hasLegacyRunsNamed(owner, name string) bool {
+	for _, r := range ListRuns(RootDB, owner, RunFilter{Agent: name}) {
+		if r.Subject == "" {
+			return true
+		}
+	}
+	return false
+}
+
 func standingNameCollision(udb Database, owner string, sa StandingAgent) (AgentRecord, bool) {
 	name := strings.TrimSpace(sa.Name)
 	if udb == nil || name == "" {

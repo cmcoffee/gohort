@@ -522,7 +522,7 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 		Trigger: trigger,
 		Brief:   sa.Mission,
 		Started: time.Now(),
-	}
+	}.AboutStanding(sa.Name)
 
 	if runner == nil {
 		rec.Status = RunAttention

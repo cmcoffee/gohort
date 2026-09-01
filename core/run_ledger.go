@@ -85,7 +85,7 @@ type RunStep struct {
 type RunRecord struct {
 	ID        string        `json:"id"`
 	Owner     string        `json:"owner"`
-	Agent     string        `json:"agent"`           // standing-agent / job name
+	Agent     string        `json:"agent"`           // DISPLAY label for a feed a person reads; see Subject
 	Trigger   string        `json:"trigger"`         // "schedule" | "dispatch" | "channel" | "manual"
 	Brief     string        `json:"brief"`           // what it was asked to do
 	Status    RunStatus     `json:"status"`          // ok | attention | failed | running
@@ -96,15 +96,113 @@ type RunRecord struct {
 	Started   time.Time     `json:"started"`
 	Ended     time.Time     `json:"ended,omitempty"`
 	Err       string        `json:"err,omitempty"` // set when Status == failed
+
+	// Subject is the stable identity of what ran, namespaced by kind:
+	// "agent:<id>", "standing:<name>", "monitor:<name>", "trigger:<name>".
+	//
+	// Agent cannot serve as identity. It is a label written by four kinds of
+	// caller — a standing schedule writes its own name, an event monitor writes
+	// its monitor name, a scheduled update writes the AGENT's display name,
+	// agent CRUD writes an agent's ID — into one flat string. So a schedule
+	// called "daily-stories" and an agent called "daily-stories" were the same
+	// key, and asking for one's history returned the other's, silently, in a
+	// place that looked authoritative.
+	//
+	// Namespacing by kind is what makes that impossible rather than unlikely:
+	// two different KINDS that share a display name can no longer collide at
+	// all, whatever anyone names anything.
+	//
+	// Empty on records written before this field existed. Readers must fall
+	// back to matching Agent for those (see RunFilter.Subject), or a ledger's
+	// whole history would vanish the day identity arrived.
+	Subject string `json:"subject,omitempty"`
 }
 
 // RunFilter narrows a ListRuns query. Zero value = all of the owner's
 // runs, newest first, up to the default limit.
+// Run subjects: the stable identity written into RunRecord.Subject, namespaced
+// by kind so nothing a user names can make two different kinds of thing share
+// one identity.
+//
+// Reached through methods rather than exported constructors on purpose. Every
+// exported name here lands in the namespace of every file that dot-imports core
+// (see coreExportCeiling), and four spellings of one idea is a poor way to spend
+// that. Methods also make the pairing hard to get wrong: About* on a filter sets
+// the legacy label fallback at the same time, which a caller assembling the two
+// fields by hand would eventually forget.
+func runSubject(kind, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	return kind + ":" + id
+}
+
+// AboutAgent / AboutStanding / AboutMonitor / AboutTrigger stamp what a run was
+// about. Chain them onto the literal: RecordRun(db, RunRecord{…}.AboutAgent(id)).
+func (r RunRecord) AboutAgent(agentID string) RunRecord {
+	r.Subject = runSubject("agent", agentID)
+	return r
+}
+func (r RunRecord) AboutStanding(name string) RunRecord {
+	r.Subject = runSubject("standing", name)
+	return r
+}
+func (r RunRecord) AboutMonitor(name string) RunRecord {
+	r.Subject = runSubject("monitor", name)
+	return r
+}
+func (r RunRecord) AboutTrigger(name string) RunRecord {
+	r.Subject = runSubject("trigger", name)
+	return r
+}
+
+// AboutAgent / AboutStanding on a filter narrow to one thing's runs by
+// identity, and set the display label as the fallback for records written
+// before subjects existed — the two belong together, so they are set together.
+func (f RunFilter) AboutAgent(agentID, displayName string) RunFilter {
+	f.Subject, f.Agent = runSubject("agent", agentID), displayName
+	return f
+}
+func (f RunFilter) AboutStanding(name string) RunFilter {
+	f.Subject, f.Agent = runSubject("standing", name), name
+	return f
+}
+
 type RunFilter struct {
-	Agent  string    // restrict to one agent/job
-	Status RunStatus // restrict to one status
-	Since  time.Time // only runs started at/after this time
-	Limit  int       // max rows returned (0 = no extra cap beyond storage)
+	// Subject restricts to one thing's runs by identity (RunSubjectAgent and
+	// friends). This is the correct way to ask; Agent below is a display label
+	// and two unrelated things can share one.
+	//
+	// A record with no Subject predates the field, and falls back to matching
+	// Agent when that is also set — imprecise, and exactly as imprecise as it
+	// always was, but a ledger that forgets everything older than the fix is
+	// worse than one that keeps answering the old way for old rows. Those rows
+	// age out through pruneRuns, so the ambiguity drains rather than persists.
+	Subject string
+	Agent   string    // restrict by DISPLAY label — legacy fallback; prefer Subject
+	Status  RunStatus // restrict to one status
+	Since   time.Time // only runs started at/after this time
+	Limit   int       // max rows returned (0 = no extra cap beyond storage)
+}
+
+// matches reports whether one record satisfies the filter's subject/agent
+// narrowing. Subject wins when both the filter and the record carry one; a
+// record without a Subject is matched the old way so its history stays
+// reachable.
+func (f RunFilter) matches(r RunRecord) bool {
+	switch {
+	case f.Subject != "" && r.Subject != "":
+		return r.Subject == f.Subject
+	case f.Subject != "":
+		// Legacy record. Fall back to the label only when the caller supplied
+		// one — a subject-only query must not silently widen to every row that
+		// happens to have no subject.
+		return f.Agent != "" && r.Agent == f.Agent
+	case f.Agent != "":
+		return r.Agent == f.Agent
+	}
+	return true
 }
 
 // NewRunID returns a short stable id for a run, unique per invocation via
@@ -192,7 +290,7 @@ func ListRuns(db Database, owner string, filter RunFilter) []RunRecord {
 		if !db.Get(runLedgerTable, k, &r) {
 			continue
 		}
-		if filter.Agent != "" && r.Agent != filter.Agent {
+		if !filter.matches(r) {
 			continue
 		}
 		if filter.Status != "" && r.Status != filter.Status {

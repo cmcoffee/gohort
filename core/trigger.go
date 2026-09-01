@@ -596,5 +596,5 @@ func recordTriggerRun(db Database, t ScheduledTrigger, summary string) {
 		Ended:   time.Now(),
 		Status:  RunOK,
 		Summary: "Trigger fired: " + truncateEvent(desc, 200),
-	})
+	}.AboutTrigger(t.Name))
 }

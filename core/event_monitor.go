@@ -1244,7 +1244,7 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 		Trigger: trigger,
 		Brief:   summary,
 		Started: time.Now(),
-	}
+	}.AboutMonitor(name)
 	if waker == nil {
 		rec.Status = RunAttention
 		rec.Summary = "Event fired but no Operator waker is registered."

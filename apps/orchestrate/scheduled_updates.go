@@ -670,7 +670,10 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	record := func(status RunStatus, summary, raw, errStr string) {
 		RecordRun(RootDB, RunRecord{
-			Owner:   p.Username,
+			Owner: p.Username,
+			// The label is the agent's display name; identity is its id (see
+			// AboutAgent below), so a schedule that happens to be named after
+			// this agent no longer shares its history.
 			Agent:   agentLabel,
 			Trigger: trigger,
 			Brief:   p.Prompt,
@@ -681,7 +684,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			Started: started,
 			Ended:   time.Now(),
 			Err:     errStr,
-		})
+		}.AboutAgent(agent.ID))
 	}
 
 	// NOTE: the next occurrence was pre-armed above, so the failure / empty /
