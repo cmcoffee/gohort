@@ -30,8 +30,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-
-	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 type storeSource struct{ app *FileStoreApp }
@@ -169,21 +167,6 @@ func (s storeSource) folderMenu(st Store) string {
 // "read_<slug>_file" within a minute of being written.)
 func storeToolNames(slug string) []string {
 	return []string{"list_" + slug, "search_" + slug, "read_" + slug, "list_" + slug + "_commands"}
-}
-
-// ItemToolsWithSession is ItemTools plus the store's bound tool bundle. It needs
-// a session because a bound tool runs with one — a credential to resolve, a
-// workspace to write into, a context to be cancelled by.
-func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
-	tools := s.ItemTools(user, itemID)
-	if sess == nil || len(tools) == 0 {
-		return tools
-	}
-	st, ok := LoadStore(s.app.DB, itemID)
-	if !ok {
-		return tools
-	}
-	return append(tools, s.boundToolDefs(sess, user, st)...)
 }
 
 func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
@@ -439,61 +422,3 @@ func numArg(args map[string]any, key string) (int, bool) {
 }
 
 var _ = time.Time{}
-
-// boundToolDefs renders the tools bound to a store (Store.Toolset) as agent
-// tools, so they arrive with the folder and nowhere else.
-//
-// The resolution path is deliberately the one servitor's appliance toolset uses
-// — the caller's own tool records, carried on a session into
-// temptool.BuildAgentToolDefs — so a bound tool behaves at call time exactly as
-// it does when its author calls it directly, rather than through a second
-// implementation that drifts from the first.
-//
-// A named tool the user no longer has is skipped rather than reported as an
-// error: the binding outliving the tool is an authoring problem to fix where
-// tools are edited, and refusing to hand over the OTHER four because one was
-// deleted would take a working store down with it.
-func (s storeSource) boundToolDefs(sess *ToolSession, user string, st Store) []AgentToolDef {
-	if len(st.Toolset) == 0 {
-		return nil
-	}
-	want := map[string]bool{}
-	for _, n := range st.Toolset {
-		if n = strings.TrimSpace(n); n != "" {
-			want[n] = true
-		}
-	}
-	if len(want) == 0 {
-		return nil
-	}
-	// DB is required, not decoration: an api-mode tool resolves its credential
-	// through the session and fails at call time without one, on a tool that
-	// looks correctly configured everywhere else.
-	bound := &ToolSession{Username: user, DB: AuthDB(), Ctx: sess.Context()}
-	if ws, err := EnsureWorkspaceDir(user); err == nil {
-		bound.WorkspaceDir = ws
-	}
-	// The store's own tools first. These are global to the store — minted
-	// against the folder, not against whoever mapped it — so every user who can
-	// reach the store gets the same bundle. That is the difference between a
-	// property of the folder and a note in one person's pool.
-	seen := map[string]bool{}
-	for _, t := range StoreTools(s.app.DB, st.Slug) {
-		if want[t.Name] {
-			c := t
-			bound.TempTools = append(bound.TempTools, &c)
-			seen[t.Name] = true
-		}
-	}
-	// Then the caller's own, for a binding that names a tool they authored
-	// themselves. The store's copy wins a tie: a name bound on the store is
-	// about the folder, and a personal tool that happens to share it should not
-	// quietly replace it for one user.
-	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-		if want[p.Tool.Name] && !seen[p.Tool.Name] {
-			t := p.Tool
-			bound.TempTools = append(bound.TempTools, &t)
-		}
-	}
-	return temptool.BuildAgentToolDefs(bound)
-}

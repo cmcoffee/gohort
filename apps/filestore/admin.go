@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -82,37 +81,6 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						// table below went on listing what was there before.
 						Invalidate: []string{"/filestore/api/commands"},
 					}),
-					// Where the mapping happens. A conversation rather than a
-					// button, because the first --help rarely says everything
-					// and what a flag MEANS is a judgement an admin should be
-					// able to push back on before it becomes a description
-					// other agents trust.
-					ui.Expand("Map commands", ui.AgentLoopPanel{
-						SendURL:      "/filestore/api/map/chat/send?slug={slug}",
-						Markdown:     true,
-						LockActivity: true,
-						EmptyText: "Ask it to map a command — \"work out what decrypt can do and propose tools for it\". " +
-							"It can run the registered binary to read its help and try things, and write down what it finds as proposed tools. " +
-							"Nothing it proposes can be called until you bind it under Tools; that binding is the approval.",
-						Placeholder: "Map the commands on this store…",
-					}),
-					// The tool bundle that travels with this folder. Same picker
-					// as "Assigned to" for the same reason: the candidates are
-					// LIVE, and a list baked into the section at startup would
-					// be the tools that existed when the process booted.
-					ui.Expand("Tools", ui.ACLPicker(ui.ACLPickerConfig{
-						OptionsSource: "/filestore/api/tool-candidates?slug={slug}",
-						RecordSource:  "/filestore/api/stores?slug={slug}",
-						Field:         "toolset",
-						PostTo:        "/filestore/api/stores",
-						Method:        "POST",
-						Noun:          "tool",
-						Intro: "Tools handed to an agent only when this store is attached to it — the bundle that travels with the folder. " +
-							"A tool marked bound-only appears in no other catalog at all, which is the point: a set of tools authored for one folder of packed captures has no business in every chat. " +
-							"Bound by NAME, so the tool stays the one its author edits and fixing it fixes it everywhere it is bound.",
-						EmptyText:  "No tools to bind yet. Author one against this folder first.",
-						Invalidate: []string{"/filestore/api/stores"},
-					})),
 					ui.Expand("Assigned to", ui.ACLPicker(ui.ACLPickerConfig{
 						OptionsSource: "/admin/api/user-candidates",
 						RecordSource:  "/filestore/api/stores?slug={slug}",
@@ -232,8 +200,6 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/commands/run", T.handleCommand)
 	T.HandleFunc("/api/commands", T.handleCommands)
-	T.HandleFunc("/api/tool-candidates", T.handleToolCandidates)
-	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/folders", T.handleFolders)
 }
 
@@ -478,63 +444,4 @@ func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 	}
 	http.Error(w, "File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.", http.StatusForbidden)
 	return false
-}
-
-// handleToolCandidates lists the caller's own tools for the store's Tools
-// picker: {value, label, desc}, the shape ACLPicker's attach mode reads.
-//
-// The caller's, not a global pool, because that is who a bound tool resolves
-// against at call time (see boundToolDefs). Offering a name the binding could
-// never resolve would produce a store that looks configured and hands over
-// nothing.
-func (T *FileStoreApp) handleToolCandidates(w http.ResponseWriter, r *http.Request) {
-	user := AuthCurrentUser(r)
-	if user == "" {
-		writeJSON(w, []any{})
-		return
-	}
-	type opt struct {
-		Value string `json:"value"`
-		Label string `json:"label"`
-		Desc  string `json:"desc,omitempty"`
-	}
-	out := []opt{}
-	// The store's own tools first — including ones just proposed by a mapping
-	// session, which is how an admin sees a proposal at all. Binding one here is
-	// what approves it; until then it is a record nothing can call.
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
-	for _, t := range StoreTools(T.DB, slug) {
-		if t.Name == "" || t.Disabled {
-			continue
-		}
-		out = append(out, opt{Value: t.Name, Label: t.Name, Desc: "mapped here · " + firstLine(t.Description)})
-	}
-	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-		if p.Tool.Name == "" || p.Tool.Disabled {
-			continue
-		}
-		desc := firstLine(p.Tool.Description)
-		// Say which ones already hide from every other catalog, because that is
-		// the property that makes binding them here the whole point rather than
-		// a duplicate of the agent's own allowlist.
-		if p.Tool.BoundOnly {
-			desc = "bound-only · " + desc
-		}
-		out = append(out, opt{Value: p.Tool.Name, Label: p.Tool.Name, Desc: desc})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
-	writeJSON(w, out)
-}
-
-// firstLine trims a tool description to its opening sentence for a chip's
-// subtitle — the rest is written for a model, not for a row.
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	if len(s) > 120 {
-		s = s[:117] + "…"
-	}
-	return s
 }
