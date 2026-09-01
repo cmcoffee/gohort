@@ -71,9 +71,9 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// first field asked for the handle, with help telling you
 					// to read it off the Agent tools column and copy it — a
 					// value already on screen, retyped, and wrong when mistyped.
-					ui.Expand("Add action", ui.FormPanel{
+					ui.Expand("Add command", ui.FormPanel{
 						PostURL:     "/filestore/api/actions?slug={slug}",
-						SubmitLabel: "Add action",
+						SubmitLabel: "Add command",
 						Fields:      actionFormFields(),
 						// The save broadcasts its own PostURL, and the slug in
 						// the query means that is never the actions table's
@@ -105,12 +105,22 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				},
 				EmptyText: "No file stores yet. Add a folder on this server for an agent to search.",
 			},
+			// Named for what it holds. "Action" is the most overloaded word on this
+			// page — every table row here has RowActions, and ui.Table's own
+			// column type is an action — so a column headed Action listing
+			// binaries, beside a row action that deletes them, was two meanings
+			// of one word within an inch of each other. The file that defines
+			// these opens by calling them "admin-registered commands"; the form's
+			// primary field is Command; the subtitle above points at servitor's
+			// appliances of type "command" for the model-invoked equivalent. The
+			// label was the last place still saying action.
+			ui.Card{HTML: `<h3 style="margin:1.4rem 0 0.4rem;font-size:0.95rem">Commands</h3>`},
 			ui.Table{
 				Source: "/filestore/api/actions",
 				RowKey: "id",
 				Columns: []ui.Col{
 					{Field: "store", Label: "Store", Flex: 1},
-					{Field: "label", Label: "Action", Flex: 1},
+					{Field: "label", Label: "Button", Flex: 1},
 					{Field: "command", Mute: true, Flex: 2},
 					{Field: "phases", Label: "Asks for input", Mute: true},
 				},
@@ -118,10 +128,10 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/filestore/api/actions?id={id}",
 						Variant:    "danger",
-						Confirm:    "Remove this action? The binary is left alone; the button for it disappears.",
+						Confirm:    "Remove this command? The binary is left alone; the button for it disappears.",
 						Optimistic: true},
 				},
-				EmptyText: "No actions yet — add one from a store's row above. An action is a command that runs against ONE folder — decrypt it, redact it, unpack a proprietary container, build an index — after which the files are ready to read.",
+				EmptyText: "No commands yet — add one from a store's row above. A command is a registered binary run against ONE folder — decrypt it, redact it, unpack a proprietary container, build an index — after which the files are ready to read. It is run for a person who clicks it, never called by an agent.",
 			},
 			ui.ModalButton{
 				Label:    "Add file store",
@@ -143,11 +153,11 @@ func (T *FileStoreApp) adminSection() ui.Section {
 func actionFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "decrypt",
-			Help: "Short handle for the action, snake_case. It is how the endpoint names it."},
+			Help: "Short handle for the command, snake_case. It is how the endpoint names it."},
 		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Decrypt bundle",
 			Help: "What the button says. Name it for what it DOES to the folder, since that is what the person clicking it is deciding."},
 		{Field: "command", Type: "text", Label: "Command", Placeholder: "/opt/bin/diag_decrypt",
-			Help: "Absolute path. It is called as `<command> <folder>`, and for a two-phase action a second time as `<command> <folder> <input>`. Run with NO shell, so quoting and metacharacters have nowhere to happen."},
+			Help: "Absolute path. It is called as `<command> <folder>`, and for a two-phase command a second time as `<command> <folder> <input>`. Run with NO shell, so quoting and metacharacters have nowhere to happen."},
 		{Field: "two_phase", Type: "toggle", Label: "Two phases (asks for input)",
 			Help: "On: the first run prints something — a challenge, a summary, a prompt — which is shown to the person, who supplies a value; the command then runs again with it. Off: one call and the folder is ready. Use two phases when a value has to come from OUTSIDE this system and nothing here can obtain it."},
 		{Field: "input_label", Type: "text", Label: "Input label", Placeholder: "Response key",
