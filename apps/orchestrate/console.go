@@ -1807,13 +1807,13 @@ type consoleAgentRow struct {
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
 // joined with the status of its most recent run.
 func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	// Scope to the agent this pane is for — a standing agent runs (and was
-	// created from) AgentID, so without this every agent's pane shows every
-	// agent's scheduled agents with no way to tell which belongs where.
+	// Scope to the agent this pane is for — see standingAgentOnRailOf — so a
+	// pane shows the schedules that are this agent's business and not everyone
+	// else's.
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	rows := []consoleAgentRow{}
 	for _, sa := range ListStandingAgents(RootDB, user) {
@@ -1834,12 +1834,52 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)
 		}
-		if latest := ListRuns(RootDB, user, RunFilter{Agent: sa.Name, Limit: 1}); len(latest) > 0 {
+		// Only trust the ledger when this schedule's name is unambiguous. A
+		// collision would otherwise show another agent's status here as if it
+		// were this schedule's own.
+		if clash, ok := standingNameCollision(udb, user, sa); ok {
+			row.State = "⚠ name is also an agent (" + chFirst(clash.Name, clash.ID) + ") — rename one; run history cannot tell them apart"
+		} else if latest := ListRuns(RootDB, user, RunFilter{Agent: sa.Name, Limit: 1}); len(latest) > 0 {
 			row.Status = string(latest[0].Status)
 		}
 		rows = append(rows, row)
 	}
 	writeJSON(w, rows)
+}
+
+// standingNameCollision reports the agent whose Name is the same as this
+// standing agent's, if there is one.
+//
+// It matters because the run ledger's Agent field is a shared, free-text
+// namespace — "standing-agent / job name", per its own comment — and different
+// writers put different things in it: a machine run and a guardrail run record
+// an agent's NAME, agent CRUD records an agent's ID, and a standing run records
+// the schedule's name. So looking up a standing agent's history with
+// RunFilter{Agent: sa.Name} matches any run filed under that same text,
+// including every run of an agent that happens to be called that.
+//
+// The result is a status and a last-run that belong to something else, shown
+// without a hint that anything is wrong — a wrong answer being strictly worse
+// than no answer, since nothing about the row invites doubt.
+//
+// Detection lives HERE, at the read, rather than as a guard at creation:
+// renaming is the user's call, an agent can be renamed into a collision long
+// after the schedule was made, and a check that only ran at creation would
+// never see it. Matching is case-insensitive and trims, because the ledger
+// lookup is exact — a pair that differs only in case does NOT actually cross,
+// and flagging it would be a false alarm. Those are excluded below.
+func standingNameCollision(udb Database, owner string, sa StandingAgent) (AgentRecord, bool) {
+	name := strings.TrimSpace(sa.Name)
+	if udb == nil || name == "" {
+		return AgentRecord{}, false
+	}
+	for _, a := range listAgents(udb, owner) {
+		// Exact, because that is what ListRuns compares.
+		if strings.TrimSpace(a.Name) == name {
+			return a, true
+		}
+	}
+	return AgentRecord{}, false
 }
 
 // handleConsoleAgentDelete removes a standing agent (and cancels its schedule)
