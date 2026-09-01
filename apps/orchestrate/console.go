@@ -334,8 +334,65 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 // standing runs by AgentID (the agent that runs on the schedule) — matching
 // introspect(section="schedules"). Each row embeds its own pause/resume/delete
 // URLs so the rail JS stays generic across the two record types.
+// standingAgentOnRailOf reports whether a standing agent belongs on agentID's
+// surfaces. Two agents can have a legitimate claim and BOTH get it:
+//
+//	AgentID       the agent that RUNS it every fire
+//	ReportAgentID the agent whose session created it, and where runs report
+//
+// Scoping by the reporter alone hid a job from the agent actually doing it —
+// you could watch an agent run a mission every morning and find nothing about
+// it anywhere on that agent. Scoping by the runner alone hid it from its own
+// controller, which is why it was changed to the reporter in the first place.
+// They are not alternatives; each was half the answer.
+//
+// Its siblings on these surfaces already scope by who runs: event monitors by
+// WakeAgent, recurring tasks by AgentID — the recurring block's comment even
+// claims it matches "the monitor / standing-run scoping above", which until now
+// it did not.
+//
+// A schedule that targets a PIPELINE or a MACHINE has no runner agent at all
+// (exactly one of AgentID / PipelineID / MachineID is set), so the reporter is
+// the only link it will ever have to an agent — it lives on the rail of
+// whichever agent's session created it, and nowhere else. That is inherent, not
+// a filter to relax: nothing else about it is an agent.
+func standingAgentOnRailOf(sa StandingAgent, agentID string) bool {
+	if agentID == "" {
+		return true // unscoped view: everything
+	}
+	if sa.AgentID == agentID || sa.ReportAgentID == agentID {
+		return true
+	}
+	// Knows neither who runs it nor who manages it: show it rather than let it
+	// fall out of every surface there is.
+	return sa.AgentID == "" && sa.ReportAgentID == ""
+}
+
+// standingRoleSuffix says WHY a standing agent is on this particular rail, when
+// the answer is not the obvious one. A row that appears on two agents needs to
+// read correctly on both, or it looks duplicated by mistake.
+func standingRoleSuffix(udb Database, sa StandingAgent, agentID string) string {
+	runner, manager := sa.AgentID, sa.ReportAgentID
+	if agentID == "" || runner == "" || manager == "" || runner == manager {
+		return ""
+	}
+	name := func(id string) string {
+		if a, ok := loadAgent(udb, id); ok && strings.TrimSpace(a.Name) != "" {
+			return a.Name
+		}
+		return id
+	}
+	switch agentID {
+	case runner:
+		return " · set up from " + name(manager)
+	case manager:
+		return " · runs as " + name(runner)
+	}
+	return ""
+}
+
 func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -381,11 +438,7 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		// it's managed, not on the sub-agent that merely executes it. Fall back to
 		// the runner AgentID for legacy records that carry no controller, so they
 		// still surface somewhere.
-		manager := sa.ReportAgentID
-		if manager == "" {
-			manager = sa.AgentID
-		}
-		if agentID != "" && manager != agentID {
+		if !standingAgentOnRailOf(sa, agentID) {
 			continue
 		}
 		// Say what it RUNS, not just that it is scheduled. A row reading
@@ -414,7 +467,7 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		id := url.QueryEscape(sa.Name)
 		rows = append(rows, map[string]any{
 			"name":           sa.Name,
-			"detail":         what + " · " + StandingScheduleLabel(sa) + surfaceSuffix(sa.Surface),
+			"detail":         what + " · " + StandingScheduleLabel(sa) + surfaceSuffix(sa.Surface) + standingRoleSuffix(udb, sa, agentID),
 			"paused":         sa.Paused,
 			"pause_url":      "api/console/agents/pause?id=" + id,
 			"resume_url":     "api/console/agents/resume?id=" + id,
@@ -1764,14 +1817,9 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	rows := []consoleAgentRow{}
 	for _, sa := range ListStandingAgents(RootDB, user) {
-		// A standing agent belongs to the CONTROLLER that created and manages it
-		// (ReportAgentID) — that's whose console this pane is. AgentID is the
-		// target agent it RUNS (e.g. a "Market Research" job created from the
-		// Operator), which is a different agent, so scoping by it hid the job
-		// from its own controller. Empty ReportAgentID (legacy) stays visible
-		// everywhere rather than vanishing.
-		controller := sa.ReportAgentID
-		if agentID != "" && controller != "" && controller != agentID {
+		// Both the agent that runs it and the one that manages it — see
+		// standingAgentOnRailOf. Either alone leaves a blind spot.
+		if !standingAgentOnRailOf(sa, agentID) {
 			continue
 		}
 		state := "active"
