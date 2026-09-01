@@ -39,6 +39,7 @@ package filestore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -340,4 +341,40 @@ func (T *FileStoreApp) handleFolders(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, rows)
+}
+
+// describeStoreCommands renders a store's registered commands for an agent.
+//
+// Written for a reader who has to decide whether to TELL somebody to run one,
+// so it leads with what the command does to the folder and says plainly when a
+// person is required. A two-phase command cannot be driven from here at all:
+// its first phase prints a challenge whose answer is looked up out-of-band, and
+// nothing in this process can obtain that — so the honest thing is to name the
+// input it will ask for, not to imply it could be supplied.
+func describeStoreCommands(db Database, st Store) string {
+	cmds := StoreCommandsFor(db, st.Slug)
+	if len(cmds) == 0 {
+		return fmt.Sprintf("No commands are registered against %q. If a folder here is unreadable, that is not because a step is missing — nothing is set up to transform it.", st.Name)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Commands registered against %q, run by a person from the Files page (never by you):\n", st.Name)
+	for _, c := range cmds {
+		label := strings.TrimSpace(c.Label)
+		if label == "" {
+			label = c.Name
+		}
+		fmt.Fprintf(&b, "\n- %s (%s)", label, c.Name)
+		if note := strings.TrimSpace(c.Help); note != "" {
+			fmt.Fprintf(&b, "\n  %s", note)
+		}
+		if c.TwoPhase {
+			ask := strings.TrimSpace(c.InputLabel)
+			if ask == "" {
+				ask = "a value"
+			}
+			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside gohort — so it cannot be run unattended.", ask)
+		}
+	}
+	b.WriteString("\n\nIf a folder looks empty or unreadable, say which of these to run on it and let the user click it.")
+	return b.String()
 }

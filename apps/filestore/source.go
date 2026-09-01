@@ -166,7 +166,7 @@ func (s storeSource) folderMenu(st Store) string {
 // prints a name nothing answers to is worse than no column. (It printed
 // "read_<slug>_file" within a minute of being written.)
 func storeToolNames(slug string) []string {
-	return []string{"list_" + slug, "search_" + slug, "read_" + slug}
+	return []string{"list_" + slug, "search_" + slug, "read_" + slug, "list_" + slug + "_commands"}
 }
 
 func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
@@ -182,6 +182,32 @@ func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 	about := strings.TrimSpace(st.Description)
 	if about != "" {
 		about = " " + about
+	}
+
+	// What an admin has registered against this store, and what each one is
+	// for. Read-only and instant — it names the commands, it does not run them.
+	//
+	// The gap it closes: a store whose folders arrive encrypted or packed reads
+	// as EMPTY to an agent. It searches, finds nothing, and reports nothing
+	// found — when the truth is that a Decrypt bundle command is registered and
+	// nobody has clicked it. The agent could not say that, because the commands
+	// were invisible to it.
+	//
+	// Mirrors servitor's shape deliberately: the cheap read-only tool that maps
+	// what is THERE (search_<system>_knowledge / get_<system>_facts) is separate
+	// from the slow one that reaches the live thing (investigate_<system>). This
+	// is the first half. Naming a command is safe in a way running one is not,
+	// and it is most of the value: an agent that can say "this folder needs
+	// Decrypt bundle run on it first" has turned a dead end into an instruction.
+	commandsTool := AgentToolDef{
+		Tool: Tool{
+			Name:        "list_" + slug + "_commands",
+			Description: fmt.Sprintf("List the commands an admin has registered against the %q file store — what each one does to a folder, and whether it asks a person for input. Read-only and instant: this NAMES them, it does not run them. Reach for it when a folder looks empty, unreadable, or still packaged: the usual reason is that one of these has to be run on it first, and telling the user WHICH one is the useful answer. Running one is a person's click in Files, not a tool call.", label),
+			Caps:        []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			return describeStoreCommands(s.app.DB, st), nil
+		},
 	}
 
 	return []AgentToolDef{
@@ -302,6 +328,7 @@ func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 				return b.String(), nil
 			},
 		},
+		commandsTool,
 	}
 }
 

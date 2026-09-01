@@ -296,3 +296,52 @@ func TestMigrateStoreCommandsKeepsTheNewerRecord(t *testing.T) {
 		t.Error("the stale duplicate should still be cleared")
 	}
 }
+
+// A store whose folders arrive encrypted or packed reads as EMPTY to an agent:
+// it searches, finds nothing, and reports nothing found — when the truth is
+// that a registered command has to be run on the folder first and nobody has
+// clicked it. Naming the commands turns that dead end into an instruction.
+func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	st := Store{Slug: "bundles", Name: "Support bundles"}
+
+	empty := describeStoreCommands(db, st)
+	if !strings.Contains(empty, "No commands are registered") {
+		t.Errorf("with none registered it must say so plainly: %q", empty)
+	}
+	// "Nothing is set up to transform it" and "a step was skipped" are opposite
+	// conclusions, and the agent has to be able to tell them apart.
+	if !strings.Contains(empty, "nothing is set up to transform it") {
+		t.Error("an empty list must rule the explanation OUT, not leave the agent guessing that something is missing")
+	}
+
+	// Written directly: SaveStoreCommand insists the store exists on disk, and
+	// this test is about the SENTENCE it produces, not about store validation.
+	put := func(c StoreCommand) { db.Set(commandsTable, commandKey(c.Slug, c.Name), c) }
+	put(StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Decrypt bundle",
+		Command: "/opt/bin/dec", Help: "Run before reading a freshly uploaded bundle."})
+	put(StoreCommand{Slug: "bundles", Name: "unseal", Label: "Unseal archive",
+		Command: "/opt/bin/unseal", TwoPhase: true, InputLabel: "Response key"})
+	// Another store's command must not leak into this one's answer.
+	put(StoreCommand{Slug: "other", Name: "redact", Command: "/opt/bin/red"})
+
+	got := describeStoreCommands(db, st)
+	for _, want := range []string{"Decrypt bundle", "decrypt", "Run before reading", "Unseal archive"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q from:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "redact") {
+		t.Error("commands belong to one store; another store's must not appear")
+	}
+	// The two-phase one cannot be driven from here at all — its answer is looked
+	// up outside gohort. Saying so is the difference between the agent asking a
+	// person and the agent trying.
+	if !strings.Contains(got, "Response key") || !strings.Contains(got, "cannot be run unattended") {
+		t.Errorf("a two-phase command must name the input AND say a person is required:\n%s", got)
+	}
+	// It must never read as something the agent can call.
+	if !strings.Contains(got, "never by you") {
+		t.Errorf("the answer must be explicit that running one is a person's click:\n%s", got)
+	}
+}
