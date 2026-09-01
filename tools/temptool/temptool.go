@@ -3298,6 +3298,51 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 	// declared params + required list. Name encodes both layers so the
 	// inner machinery's logs (rendered URL, response pipe failures)
 	// stay attributable to the toolbox+action pair.
+	// An action declares one template or the other. Both is not a richer action,
+	// it is two actions wearing one name, and picking a winner silently would
+	// make the toolbox do something its author did not write.
+	hasURL := strings.TrimSpace(act.URLTemplate) != ""
+	hasCmd := strings.TrimSpace(act.CommandTemplate) != ""
+	switch {
+	case hasURL && hasCmd:
+		return "", fmt.Errorf("toolbox %q action %q declares both url_template and command_template — an action is an HTTP call or a local command, not both", tt.Name, act.Name)
+	case !hasURL && !hasCmd:
+		return "", fmt.Errorf("toolbox %q action %q declares neither url_template nor command_template, so there is nothing for it to run", tt.Name, act.Name)
+	}
+
+	// A SHELL action. Built as an ordinary shell-mode tool and handed to the
+	// ordinary shell path, so it behaves at call time exactly as the same
+	// command would as a standalone tool — same quoting, same sandbox, same
+	// workspace. Anything else would be a second execution semantic living
+	// inside the toolbox, which is where drift starts.
+	if hasCmd {
+		shellAct := TempTool{
+			Name:            tt.Name + "." + act.Name,
+			Description:     act.Description,
+			Params:          act.Params,
+			Required:        act.Required,
+			Mode:            TempToolModeShell,
+			CommandTemplate: act.CommandTemplate,
+			// The parent's recipe and workspace posture travel with the action:
+			// a toolbox that packages a binary has one deployment, not one per
+			// verb, and an action that ran somewhere else would not find it.
+			Recipe:         tt.Recipe,
+			WorkspaceFiles: tt.WorkspaceFiles,
+			StatePath:      tt.StatePath,
+		}
+		for _, r := range shellAct.Required {
+			v, ok := lookupArgCI(inner, r)
+			if !ok || v == nil {
+				return "", fmt.Errorf("toolbox %q action %q: missing required arg %q", tt.Name, act.Name, r)
+			}
+			if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+				return "", fmt.Errorf("toolbox %q action %q: required arg %q is empty", tt.Name, act.Name, r)
+			}
+		}
+		inner = canonicalizeArgKeys(inner, shellAct.Required, shellAct.Params)
+		return dispatchTempToolUncached(sess, &shellAct, inner)
+	}
+
 	synthetic := TempTool{
 		Name:            tt.Name + "." + act.Name,
 		Description:     act.Description,

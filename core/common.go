@@ -2485,13 +2485,30 @@ const (
 // it per action. To call: <toolbox_name>(action="<sub-action name>",
 // <action-specific args>).
 type TempToolAction struct {
-	Name         string               `json:"name"`
-	Description  string               `json:"description"`
-	Params       map[string]ToolParam `json:"params,omitempty"`
-	Required     []string             `json:"required,omitempty"`
-	URLTemplate  string               `json:"url_template"`
-	Method       string               `json:"method,omitempty"`
-	BodyTemplate string               `json:"body_template,omitempty"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Params      map[string]ToolParam `json:"params,omitempty"`
+	Required    []string             `json:"required,omitempty"`
+	URLTemplate string               `json:"url_template"`
+	// CommandTemplate makes this action a SHELL action instead of an HTTP one:
+	// a command line with {placeholder} arguments, run exactly the way a
+	// shell-mode TempTool's template is (placeholders shell-quoted, executed
+	// through the sandbox). Exactly one of URLTemplate / CommandTemplate is set.
+	//
+	// It exists because "several related commands under one name" is the same
+	// shape as "several related endpoints under one name", and a toolbox that
+	// could only wrap an API was half a toolbox. A local binary is one thing
+	// with several verbs — unpack, verify, list — and mapping it into loose
+	// tools scattered across a catalog loses the fact that they are one thing.
+	//
+	// The dispatcher builds a synthetic shell-mode tool from the action and
+	// hands it to the ordinary shell path, so an action behaves at call time
+	// exactly as the same command would as a standalone tool: same quoting,
+	// same sandbox, same workspace. A second execution semantic living inside
+	// the toolbox is the thing to avoid — that is where drift starts.
+	CommandTemplate string `json:"command_template,omitempty"`
+	Method          string `json:"method,omitempty"`
+	BodyTemplate    string `json:"body_template,omitempty"`
 	// ContentType drives raw (non-JSON) body substitution for THIS action, the
 	// same way TempTool.ContentType does for a single api tool. Empty = JSON
 	// (placeholders JSON-encoded + validated); a non-JSON value like

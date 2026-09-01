@@ -109,13 +109,14 @@ func BuildToolDef() *GroupedTool {
 				}},
 			"pipeline_tools":      {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(pipeline mode) Names of tools the sub-agent (adaptive) or step executor (deterministic) may call. Must include every tool referenced in pipeline_steps."},
 			"pipeline_max_rounds": {Type: "integer", Description: "(pipeline mode, adaptive only) Cap on sub-agent LLM rounds. Default 6. Ignored when pipeline_steps is set."},
-			"actions": {Type: "array", Description: "(toolbox) Sub-action endpoints, each one api-mode: {name, description, url_template, params, required?, method?, body_template?, content_type?, response_pipe?}. Names unique within the toolbox; called as <toolbox>(action=\"<sub>\", ...). All actions share the toolbox's credential. See action=\"help\".",
+			"actions": {Type: "array", Description: "(toolbox) Sub-actions, each either an HTTP endpoint (url_template) or a local command (command_template) — one or the other, never both. HTTP: {name, description, url_template, params, required?, method?, body_template?, content_type?, response_pipe?}, sharing the toolbox's credential. Local: {name, description, command_template, params, required?} — a command line with {placeholders}, shell-quoted and sandboxed exactly as a shell-mode tool's is. Use command_template for several verbs of ONE local binary (unpack / verify / list): they are one thing, and loose tools scattered across the catalog lose that. Names unique within the toolbox; called as <toolbox>(action=\"<sub>\", ...). See action=\"help\".",
 				Items: &ToolParam{
 					Type: "object",
 					Properties: map[string]ToolParam{
 						"name":             {Type: "string", Description: "Sub-action name, unique within the toolbox."},
 						"description":      {Type: "string", Description: "What this sub-action does, in one sentence (cap 250 chars). The toolbox pays for this line once per action, on every turn."},
-						"url_template":     {Type: "string", Description: "Endpoint URL with {param} placeholders. Use {param:encoded} when a nested path must arrive as ONE percent-encoded segment (GitLab files, and any API that takes a path as an id)."},
+						"url_template":     {Type: "string", Description: "(HTTP action) Endpoint URL with {param} placeholders. Use {param:encoded} when a nested path must arrive as ONE percent-encoded segment (GitLab files, and any API that takes a path as an id). Give this OR command_template."},
+						"command_template": {Type: "string", Description: "(local action) Command line with {param} placeholders, shell-quoted at dispatch and run in the sandbox exactly as a shell-mode tool is. Give this OR url_template. The HTTP-only fields (method, body_template, content_type, headers) do not apply."},
 						"method":           {Type: "string", Description: "HTTP method. Default GET."},
 						"params":           {Type: "object", Description: "Object of {param: {type, description}}. One line per description (cap 250 chars)."},
 						"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
@@ -126,7 +127,10 @@ func BuildToolDef() *GroupedTool {
 						"response_extract": {Type: "object", Description: responseExtractDesc},
 						"disabled":         {Type: "boolean", Description: "Quarantine this ONE action without touching the rest of the toolbox."},
 					},
-					Required: []string{"name", "url_template"},
+					// Not url_template: an action declares one template or the
+					// other, and requiring the HTTP one would make every local
+					// action fail schema validation before it was read.
+					Required: []string{"name"},
 				}},
 			"expand": {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
 		},
