@@ -509,34 +509,40 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 	// human behind it) initiated the dispatch. Standing/autonomous runs must
 	// NOT auto-approve; they call runAgentSyncConfirm with a deny-by-default
 	// confirm so high-consequence tools route through approval instead.
-	text, _, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
+	text, _, _, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
 		func(string, string) bool { return true }, via...)
 	return text, err
 }
 
-// runAgentSyncConfirm returns (text, hitRoundCap, error) — hitRoundCap tells the
-// caller the run stopped because it exhausted its worker rounds (so a standing
-// run can flag itself incomplete rather than reporting a truncated result as ok).
-func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (string, bool, error) {
+// runAgentSyncConfirm returns (text, hitRoundCap, toolTrace, error) — hitRoundCap
+// tells the caller the run stopped because it exhausted its worker rounds (so a
+// standing run can flag itself incomplete rather than reporting a truncated
+// result as ok).
+// The []PersistedToolCall return is the run's tool trace. A caller that records
+// the run to the ledger needs it: without it the record says what the agent
+// said and nothing about what it did, which is the difference between a log and
+// a receipt. Computed here regardless (the commitment ledger reads it), so
+// handing it back costs nothing.
+func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (string, bool, []PersistedToolCall, error) {
 	if T == nil || T.LLM == nil {
-		return "", false, errors.New("orchestrate runtime not initialized")
+		return "", false, nil, errors.New("orchestrate runtime not initialized")
 	}
 	if agentOwner == "" {
-		return "", false, errors.New("agentOwner is required")
+		return "", false, nil, errors.New("agentOwner is required")
 	}
 	if runtimeUser == "" {
 		runtimeUser = agentOwner
 	}
 	if strings.TrimSpace(message) == "" {
-		return "", false, errors.New("message is required")
+		return "", false, nil, errors.New("message is required")
 	}
 	ownerDB := UserDB(T.DB, agentOwner)
 	if ownerDB == nil {
-		return "", false, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+		return "", false, nil, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
 	}
 	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
 	if !ok {
-		return "", false, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+		return "", false, nil, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
@@ -545,7 +551,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if runtimeUser != agentOwner {
 		runtimeDB = UserDB(T.DB, runtimeUser)
 		if runtimeDB == nil {
-			return "", false, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+			return "", false, nil, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
 		}
 		// Layered rules (enabler #2): a scoped INSTANCE adds its own rules over the
 		// template's base. Modifying the local target copy means the standard prompt
@@ -805,9 +811,12 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	})
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, len(message), runErr)
+	// The turn's tool trace, read once: the commitment ledger asks whether the
+	// turn did anything, and the caller recording the run wants the trace itself.
+	toolTrace := persistedToolCallsFromTranscript(syncTranscript)
 	// Close the books on what this turn said it would do. See commitment_ledger.go.
 	if runErr == nil && resp != nil {
-		recordTurnCommitment(runtimeDB, subSessID, resp.Content, len(persistedToolCallsFromTranscript(syncTranscript)) > 0)
+		recordTurnCommitment(runtimeDB, subSessID, resp.Content, len(toolTrace) > 0)
 	}
 	// Per-sub-agent telemetry summary — same shape as the orchestrator
 	// and worker step summaries so the same greps work uniformly.
@@ -827,12 +836,12 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// reaching here — a genuine setup failure).
 	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
 	if runErr != nil {
-		return "", false, runErr
+		return "", false, toolTrace, runErr
 	}
 	if resp == nil {
-		return "", false, errors.New("agent returned no response")
+		return "", false, toolTrace, errors.New("agent returned no response")
 	}
-	return strings.TrimSpace(resp.Content), resp.HitRoundCap, nil
+	return strings.TrimSpace(resp.Content), resp.HitRoundCap, toolTrace, nil
 }
 
 // RunAgentSyncContinuing is RunAgentSync's continuation variant —

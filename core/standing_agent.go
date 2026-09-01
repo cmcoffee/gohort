@@ -115,6 +115,13 @@ type StandingRunResult struct {
 	Raw       string
 	Artifacts []RunArtifact
 	Err       string
+	// Steps is the run's tool trace, and the reason it is here is that there was
+	// nowhere to put it: a standing fire recorded its text and nothing about what
+	// it DID, while every other scheduled surface recorded both. So the one kind
+	// of run nobody watches happen — it fires at 5am with the tab closed — was
+	// also the only one whose record could not answer "did it actually call
+	// anything, and what came back".
+	Steps []RunStep
 }
 
 // StandingRunnerFunc executes one run of a standing agent. Provided by an
@@ -544,6 +551,7 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 	rec.Summary = res.Summary
 	rec.Raw = res.Raw
 	rec.Artifacts = res.Artifacts
+	rec.Steps = res.Steps
 	rec.Err = res.Err
 	rec.Ended = time.Now()
 	fullOutput := rec.Raw // capture before RecordRun moves Raw to the encrypted side table

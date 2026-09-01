@@ -17,6 +17,7 @@ package orchestrate
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -86,17 +87,22 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// sa.DispatchedBy is set only on a DELEGATION (a transient record built
 		// by RunDelegation) — it hands the delegate the delegator's channel
 		// reach. A stored schedule leaves it empty and keeps its own scope.
-		out, hitRoundCap, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
+		out, hitRoundCap, toolTrace, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
 		if err != nil {
 			liveRun.Complete(RunStatusFailed)
 		} else {
 			liveRun.Complete(RunStatusCompleted)
 		}
+		// The trace goes in on BOTH paths. A failed fire is the one whose steps
+		// are most worth having — what it managed to do before it broke is the
+		// question you open a failed run to answer.
+		steps := runStepsFromToolCalls(toolTrace)
 		if err != nil {
 			return StandingRunResult{
 				Status:  RunFailed,
 				Summary: "Run failed: " + err.Error(),
 				Err:     err.Error(),
+				Steps:   steps,
 			}
 		}
 
@@ -104,6 +110,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 			Status:  RunOK,
 			Summary: standingSummary(out),
 			Raw:     out,
+			Steps:   steps,
 		}
 		if blockedTool := gate.blocked(); blockedTool != "" {
 			res.Status = RunAttention
@@ -246,24 +253,45 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 		Describe("standing", display, truncateObs(input, 100))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
+	// A pipeline makes no tool calls of its own — its agent stages do, and
+	// those are the calls somebody opening this run wants to see. Collect each
+	// stage's trace as it returns. Guarded because a fanout stage runs its
+	// branches concurrently, so these arrive from several goroutines at once.
+	var (
+		traceMu    sync.Mutex
+		stageTrace []PersistedToolCall
+	)
 	dispatch := func(c context.Context, agentID, stageInput string) (string, error) {
-		return app.RunAgentSync(c, sa.Owner, sa.Owner, agentID, stageInput)
+		// Same auto-approving confirm RunAgentSync uses — this is the identical
+		// dispatch, just one that keeps the trace instead of discarding it.
+		text, _, trace, err := app.runAgentSyncConfirm(c, sa.Owner, sa.Owner, agentID, stageInput,
+			func(string, string) bool { return true })
+		if len(trace) > 0 {
+			traceMu.Lock()
+			stageTrace = append(stageTrace, trace...)
+			traceMu.Unlock()
+		}
+		return text, err
 	}
 	out, _, err := app.RunPipelineDefHooks(ctx, def, input, PipelineHooks{
 		Dispatch: dispatch,
 		Machine:  app.pipelineMachineRunner(sa.Owner),
 	})
+	traceMu.Lock()
+	steps := runStepsFromToolCalls(stageTrace)
+	traceMu.Unlock()
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
 		return StandingRunResult{
 			Status:  RunFailed,
 			Summary: "Pipeline " + strconv.Quote(def.Name) + " failed: " + err.Error(),
+			Steps:   steps,
 		}
 	}
 	liveRun.Complete(RunStatusCompleted)
-	Log("[orchestrate.standing] user=%q fired pipeline %q (%d stages, %d bytes out)",
-		sa.Owner, def.Name, len(def.Stages), len(out))
-	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out)}
+	Log("[orchestrate.standing] user=%q fired pipeline %q (%d stages, %d bytes out, %d tool calls)",
+		sa.Owner, def.Name, len(def.Stages), len(out), len(steps))
+	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out), Steps: steps}
 }
 
 // runStandingMachine fires a schedule whose target is a machine.
