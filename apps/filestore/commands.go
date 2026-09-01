@@ -49,16 +49,54 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// actionsTable holds registered actions, keyed "<store-slug>/<name>".
-const actionsTable = "file_store_actions"
+// commandsTable holds registered commands, keyed "<store-slug>/<name>".
+const commandsTable = "file_store_commands"
 
-// actionTimeout bounds one run. Generous: these unpack real captures,
+// legacyCommandsTable is where they lived when they were called actions. Kept
+// only so MigrateStoreCommands can empty it.
+const legacyCommandsTable = "file_store_actions"
+
+// MigrateStoreCommands moves records out of the old table on startup.
+//
+// A rename that leaves data behind is not a rename, it is a deletion with extra
+// steps: the admin page would come up with no commands and no error, and an
+// operator would rebuild by hand what was already there. Idempotent — a record
+// already at the new name is left alone, so this is a no-op on every boot after
+// the first, and safe if it runs twice.
+//
+// The old row is removed only after the new one is written. If the process dies
+// between the two, the next boot finds the record in both places and keeps the
+// new one; losing the old copy first and then failing would lose it outright.
+func MigrateStoreCommands(db Database) int {
+	if db == nil {
+		return 0
+	}
+	moved := 0
+	for _, k := range db.Keys(legacyCommandsTable) {
+		var a StoreCommand
+		if !db.Get(legacyCommandsTable, k, &a) {
+			continue
+		}
+		var existing StoreCommand
+		if !db.Get(commandsTable, k, &existing) {
+			db.Set(commandsTable, k, a)
+			moved++
+		}
+		db.Unset(legacyCommandsTable, k)
+	}
+	if moved > 0 {
+		Log("[filestore] moved %d registered command(s) from the old actions table", moved)
+	}
+	return moved
+}
+
+// commandTimeout bounds one run. Generous: these unpack real captures,
 // and killing one halfway leaves a folder half-processed, which is worse
 // than waiting.
-const actionTimeout = 30 * time.Minute
+const commandTimeout = 30 * time.Minute
 
-// StoreAction is one registered command.
-type StoreAction struct {
+// StoreCommand is one registered command.
+type StoreCommand struct {
 	Slug string `json:"slug"` // which store it belongs to
 	Name string `json:"name"` // stable handle, snake_case: "decrypt"
 	// Label is what the button says. Named for what it DOES to the
@@ -75,18 +113,18 @@ type StoreAction struct {
 	Help       string `json:"help,omitempty"`
 }
 
-func actionKey(slug, name string) string { return slug + "/" + name }
+func commandKey(slug, name string) string { return slug + "/" + name }
 
-// SaveStoreAction validates and stores one action.
-func SaveStoreAction(db Database, a StoreAction) (StoreAction, error) {
+// SaveStoreCommand validates and stores one action.
+func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	a.Slug = strings.TrimSpace(a.Slug)
 	a.Name = RefToolSlug(strings.TrimSpace(a.Name))
 	a.Command = strings.TrimSpace(a.Command)
 	switch {
 	case a.Slug == "":
-		return a, Error("say which store this action belongs to")
+		return a, Error("say which store this command belongs to")
 	case a.Name == "":
-		return a, Error("give the action a name — a short handle like \"decrypt\"")
+		return a, Error("give the command a name — a short handle like \"decrypt\"")
 	case a.Command == "":
 		return a, Error("give the absolute path of the command to run")
 	case !strings.HasPrefix(a.Command, "/"):
@@ -98,20 +136,20 @@ func SaveStoreAction(db Database, a StoreAction) (StoreAction, error) {
 	if strings.TrimSpace(a.Label) == "" {
 		a.Label = strings.ToUpper(a.Name[:1]) + strings.ReplaceAll(a.Name[1:], "_", " ")
 	}
-	db.Set(actionsTable, actionKey(a.Slug, a.Name), a)
+	db.Set(commandsTable, commandKey(a.Slug, a.Name), a)
 	return a, nil
 }
 
-// ListStoreActions returns every registered action, sorted for a stable
+// ListStoreCommands returns every registered action, sorted for a stable
 // table.
-func ListStoreActions(db Database) []StoreAction {
+func ListStoreCommands(db Database) []StoreCommand {
 	if db == nil {
 		return nil
 	}
-	var out []StoreAction
-	for _, k := range db.Keys(actionsTable) {
-		var a StoreAction
-		if db.Get(actionsTable, k, &a) {
+	var out []StoreCommand
+	for _, k := range db.Keys(commandsTable) {
+		var a StoreCommand
+		if db.Get(commandsTable, k, &a) {
 			out = append(out, a)
 		}
 	}
@@ -124,10 +162,10 @@ func ListStoreActions(db Database) []StoreAction {
 	return out
 }
 
-// StoreActionsFor returns the actions registered against one store.
-func StoreActionsFor(db Database, slug string) []StoreAction {
-	var out []StoreAction
-	for _, a := range ListStoreActions(db) {
+// StoreCommandsFor returns the actions registered against one store.
+func StoreCommandsFor(db Database, slug string) []StoreCommand {
+	var out []StoreCommand
+	for _, a := range ListStoreCommands(db) {
 		if a.Slug == slug {
 			out = append(out, a)
 		}
@@ -135,47 +173,47 @@ func StoreActionsFor(db Database, slug string) []StoreAction {
 	return out
 }
 
-// LoadStoreAction resolves one by store and name.
-func LoadStoreAction(db Database, slug, name string) (StoreAction, bool) {
-	var a StoreAction
-	ok := db != nil && db.Get(actionsTable, actionKey(slug, strings.TrimSpace(name)), &a)
+// LoadStoreCommand resolves one by store and name.
+func LoadStoreCommand(db Database, slug, name string) (StoreCommand, bool) {
+	var a StoreCommand
+	ok := db != nil && db.Get(commandsTable, commandKey(slug, strings.TrimSpace(name)), &a)
 	return a, ok
 }
 
-// DeleteStoreAction removes one.
-func DeleteStoreAction(db Database, slug, name string) {
+// DeleteStoreCommand removes one.
+func DeleteStoreCommand(db Database, slug, name string) {
 	if db != nil {
-		db.Unset(actionsTable, actionKey(slug, name))
+		db.Unset(commandsTable, commandKey(slug, name))
 	}
 }
 
-// runAction executes one phase and returns its combined output.
+// runRegisteredCommand executes one phase and returns its combined output.
 //
 // Combined stdout+stderr because the output belongs to a tool this code
 // does not own, on a stream it should not assume: capturing only stdout
 // is how a challenge printed to stderr becomes "it printed nothing".
-func runAction(ctx context.Context, bin string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, actionTimeout)
+func runRegisteredCommand(ctx context.Context, bin string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {
-		return text, Error("the command did not finish within " + actionTimeout.String() +
+		return text, Error("the command did not finish within " + commandTimeout.String() +
 			" and was stopped. The folder may be half-processed — check it before retrying.")
 	}
 	return text, err
 }
 
-// handleAction runs a registered action against one folder.
+// handleCommand runs a registered action against one folder.
 //
-//	POST /filestore/api/action?slug=<store>&within=<folder>&action=<name>
+//	POST /filestore/api/commands/run?slug=<store>&within=<folder>&command=<name>
 //	     {}              → one-phase: {"output": "..."} ; two-phase: {"challenge": "..."}
 //	     {"input":"..."} → two-phase second call: {"output": "..."}
 //
 // Output is passed through VERBATIM in both directions. Nothing here
 // parses it: the format belongs to the registered binary, and a parser
 // guessing at it is how the first real bundle breaks.
-func (T *FileStoreApp) handleAction(w http.ResponseWriter, r *http.Request) {
+func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -192,22 +230,22 @@ func (T *FileStoreApp) handleAction(w http.ResponseWriter, r *http.Request) {
 	// An action REWRITES the folder, so it takes the write grant rather
 	// than the read one — the same gate as upload, for the same reason.
 	if !st.UploadsAllowedFor(user, RequestIsAdmin(r)) {
-		http.Error(w, "you may read "+st.Name+" but not write to it, and an action rewrites the folder.", http.StatusForbidden)
+		http.Error(w, "you may read "+st.Name+" but not write to it, and a command rewrites the folder.", http.StatusForbidden)
 		return
 	}
-	name := strings.TrimSpace(r.URL.Query().Get("action"))
-	act, ok := LoadStoreAction(T.DB, st.Slug, name)
+	name := strings.TrimSpace(r.URL.Query().Get("command"))
+	act, ok := LoadStoreCommand(T.DB, st.Slug, name)
 	if !ok {
 		avail := "none are registered"
-		if list := StoreActionsFor(T.DB, st.Slug); len(list) > 0 {
+		if list := StoreCommandsFor(T.DB, st.Slug); len(list) > 0 {
 			var names []string
 			for _, a := range list {
 				names = append(names, a.Name)
 			}
 			avail = "registered here: " + strings.Join(names, ", ")
 		}
-		http.Error(w, "no action called "+strconv.Quote(name)+" on "+st.Name+" ("+avail+
-			"). An admin registers actions under Admin → Files.", http.StatusNotFound)
+		http.Error(w, "no command called "+strconv.Quote(name)+" on "+st.Name+" ("+avail+
+			"). An admin registers commands under Admin → Files.", http.StatusNotFound)
 		return
 	}
 	dir, err := SubRoot(st.Path, r.URL.Query().Get("within"))
@@ -235,15 +273,15 @@ func (T *FileStoreApp) handleAction(w http.ResponseWriter, r *http.Request) {
 	if input != "" {
 		args = append(args, input)
 	}
-	out, err := runAction(r.Context(), act.Command, args...)
+	out, err := runRegisteredCommand(r.Context(), act.Command, args...)
 	if err != nil {
-		Log("[filestore.action] %s: %s on %s/%s failed: %v", user, act.Name, st.Name, dir, err)
+		Log("[filestore.command] %s: %s on %s/%s failed: %v", user, act.Name, st.Name, dir, err)
 		// The tool's own words first: "exit status 1" tells a person
 		// nothing and the line above it usually tells them everything.
 		http.Error(w, chFirstNonEmpty(out, err.Error()), http.StatusBadGateway)
 		return
 	}
-	Log("[filestore.action] %s ran %s on %s/%s", user, act.Name, st.Name, dir)
+	Log("[filestore.command] %s ran %s on %s/%s", user, act.Name, st.Name, dir)
 	// A two-phase action with nothing supplied yet returns a CHALLENGE,
 	// which the caller shows to a person. Same bytes either way; the key
 	// name is what tells the UI whether to ask for something.
@@ -251,11 +289,11 @@ func (T *FileStoreApp) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"challenge":   out,
 			"input_label": chFirstNonEmpty(act.InputLabel, "Response"),
-			"action":      act.Name,
+			"command":     act.Name,
 		})
 		return
 	}
-	writeJSON(w, map[string]any{"output": out, "action": act.Name})
+	writeJSON(w, map[string]any{"output": out, "command": act.Name})
 }
 
 // chFirstNonEmpty returns the first non-blank string.

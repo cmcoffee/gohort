@@ -72,14 +72,14 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// to read it off the Agent tools column and copy it — a
 					// value already on screen, retyped, and wrong when mistyped.
 					ui.Expand("Add command", ui.FormPanel{
-						PostURL:     "/filestore/api/actions?slug={slug}",
+						PostURL:     "/filestore/api/commands?slug={slug}",
 						SubmitLabel: "Add command",
 						Fields:      actionFormFields(),
 						// The save broadcasts its own PostURL, and the slug in
 						// the query means that is never the actions table's
 						// source. Without this the action was added and the
 						// table below went on listing what was there before.
-						Invalidate: []string{"/filestore/api/actions"},
+						Invalidate: []string{"/filestore/api/commands"},
 					}),
 					ui.Expand("Assigned to", ui.ACLPicker(ui.ACLPickerConfig{
 						OptionsSource: "/admin/api/user-candidates",
@@ -116,7 +116,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 			// label was the last place still saying action.
 			ui.Card{HTML: `<h3 style="margin:1.4rem 0 0.4rem;font-size:0.95rem">Commands</h3>`},
 			ui.Table{
-				Source: "/filestore/api/actions",
+				Source: "/filestore/api/commands",
 				RowKey: "id",
 				Columns: []ui.Col{
 					{Field: "store", Label: "Store", Flex: 1},
@@ -126,7 +126,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				},
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "/filestore/api/actions?id={id}",
+						PostTo:     "/filestore/api/commands?id={id}",
 						Variant:    "danger",
 						Confirm:    "Remove this command? The binary is left alone; the button for it disappears.",
 						Optimistic: true},
@@ -192,10 +192,14 @@ func adminHeadHTML() string { return "" }
 
 // Routes registers the store CRUD the admin section talks to.
 func (T *FileStoreApp) Routes() {
+	// Routes runs once at startup with T.DB wired, which is the earliest point
+	// the stored commands can be reached — so it is where the table rename gets
+	// finished. See MigrateStoreCommands.
+	MigrateStoreCommands(T.DB)
 	T.HandleFunc("/api/stores", T.handleStores)
 	T.HandleFunc("/api/upload", T.handleUpload)
-	T.HandleFunc("/api/action", T.handleAction)
-	T.HandleFunc("/api/actions", T.handleActions)
+	T.HandleFunc("/api/commands/run", T.handleCommand)
+	T.HandleFunc("/api/commands", T.handleCommands)
 	T.HandleFunc("/api/folders", T.handleFolders)
 }
 
@@ -338,13 +342,13 @@ func retentionLabel(st Store) string {
 	return window
 }
 
-// handleActions is the admin CRUD behind the actions table.
+// handleCommands is the admin CRUD behind the actions table.
 //
 // Admin-only, and for a sharper reason than the store list: this names a
 // BINARY the server will execute. Registering one is the same decision
 // as registering the directory it runs against, and neither is a user's
 // to make.
-func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
+func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -364,7 +368,7 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 		// store they are assigned to.
 		only := strings.TrimSpace(r.URL.Query().Get("slug"))
 		rows := make([]map[string]any, 0)
-		for _, a := range ListStoreActions(T.DB) {
+		for _, a := range ListStoreCommands(T.DB) {
 			if only != "" && a.Slug != only {
 				continue
 			}
@@ -378,7 +382,7 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 				phases = chFirstNonEmpty(a.InputLabel, "yes")
 			}
 			rows = append(rows, map[string]any{
-				"id": actionKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
+				"id": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
 				"name": a.Name, "label": a.Label, "command": a.Command,
 				"phases": phases, "two_phase": a.TwoPhase,
 				"input_label": a.InputLabel, "help": a.Help,
@@ -386,7 +390,7 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
-		var a StoreAction
+		var a StoreCommand
 		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -399,7 +403,7 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 		if s := strings.TrimSpace(r.URL.Query().Get("slug")); s != "" {
 			a.Slug = s
 		}
-		saved, err := SaveStoreAction(T.DB, a)
+		saved, err := SaveStoreCommand(T.DB, a)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -409,7 +413,7 @@ func (T *FileStoreApp) handleActions(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		slug, name, _ := strings.Cut(id, "/")
-		DeleteStoreAction(T.DB, slug, name)
+		DeleteStoreCommand(T.DB, slug, name)
 		Log("[filestore] %s removed action %q from %s", user, name, slug)
 		writeJSON(w, map[string]any{"deleted": id})
 	default:

@@ -46,7 +46,7 @@ func actionFixture(t *testing.T, twoPhase bool) (*FileStoreApp, Store, string, s
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SaveStoreAction(app.DB, StoreAction{
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "decrypt", Command: bin, TwoPhase: twoPhase, InputLabel: "Response key",
 	}); err != nil {
 		t.Fatal(err)
@@ -68,9 +68,9 @@ func asAdmin(t *testing.T, r *http.Request, user string) *http.Request {
 func TestTwoPhaseActionAsksThenRuns(t *testing.T) {
 	app, st, argvLog, _ := actionFixture(t, true)
 	post := func(body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/api/action?slug="+st.Slug+"&within=bundle-1&action=decrypt", strings.NewReader(body))
+		r := httptest.NewRequest("POST", "/api/commands/run?slug="+st.Slug+"&within=bundle-1&command=decrypt", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleAction(w, asAdmin(t, r, "alice"))
+		app.handleCommand(w, asAdmin(t, r, "alice"))
 		return w
 	}
 
@@ -115,9 +115,9 @@ func TestTwoPhaseActionAsksThenRuns(t *testing.T) {
 // A one-phase action must not stop to ask for something it does not want.
 func TestOnePhaseActionJustRuns(t *testing.T) {
 	app, st, _, _ := actionFixture(t, false)
-	r := httptest.NewRequest("POST", "/api/action?slug="+st.Slug+"&within=bundle-1&action=decrypt", nil)
+	r := httptest.NewRequest("POST", "/api/commands/run?slug="+st.Slug+"&within=bundle-1&command=decrypt", nil)
 	w := httptest.NewRecorder()
-	app.handleAction(w, asAdmin(t, r, "alice"))
+	app.handleCommand(w, asAdmin(t, r, "alice"))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -135,9 +135,9 @@ func TestActionRefusals(t *testing.T) {
 	app, st, _, bin := actionFixture(t, true)
 
 	call := func(slug, within, action string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/api/action?slug="+slug+"&within="+within+"&action="+action, nil)
+		r := httptest.NewRequest("POST", "/api/commands/run?slug="+slug+"&within="+within+"&command="+action, nil)
 		w := httptest.NewRecorder()
-		app.handleAction(w, asAdmin(t, r, "bob"))
+		app.handleCommand(w, asAdmin(t, r, "bob"))
 		return w
 	}
 	if w := call(st.Slug, "../..", "decrypt"); w.Code == 200 {
@@ -148,9 +148,9 @@ func TestActionRefusals(t *testing.T) {
 	if w.Code != 404 || !strings.Contains(w.Body.String(), "decrypt") {
 		t.Errorf("refusal should list what exists: %d %s", w.Code, w.Body.String())
 	}
-	// Read-only store: an action rewrites the folder, so it takes the write grant.
+	// Read-only store: a command rewrites the folder, so it takes the write grant.
 	ro, _ := SaveStore(app.DB, Store{Name: "ReadOnly", Path: t.TempDir()})
-	if _, err := SaveStoreAction(app.DB, StoreAction{Slug: ro.Slug, Name: "decrypt", Command: bin}); err != nil {
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: ro.Slug, Name: "decrypt", Command: bin}); err != nil {
 		t.Fatal(err)
 	}
 	if w := call(ro.Slug, "", "decrypt"); w.Code != 403 {
@@ -165,13 +165,13 @@ func TestActionRegistrationRules(t *testing.T) {
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	st, _ := SaveStore(app.DB, Store{Name: "Bundles", Path: t.TempDir()})
 
-	if _, err := SaveStoreAction(app.DB, StoreAction{Slug: st.Slug, Name: "x", Command: "diag_decrypt"}); err == nil {
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "x", Command: "diag_decrypt"}); err == nil {
 		t.Error("a relative command should be refused — it resolves against whatever directory the server is in")
 	}
-	if _, err := SaveStoreAction(app.DB, StoreAction{Slug: "nosuch", Name: "x", Command: "/bin/true"}); err == nil {
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: "nosuch", Name: "x", Command: "/bin/true"}); err == nil {
 		t.Error("an action on a store that does not exist should be refused")
 	}
-	saved, err := SaveStoreAction(app.DB, StoreAction{Slug: st.Slug, Name: "Decrypt Bundle", Command: "/bin/true"})
+	saved, err := SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "Decrypt Bundle", Command: "/bin/true"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,13 +190,13 @@ func TestActionListIsReadableByAnAssignedUser(t *testing.T) {
 	app, st, _, bin := actionFixture(t, true)
 	// A second store the user cannot reach, with its own action.
 	other, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), AllowedUsers: []string{"someone_else"}})
-	if _, err := SaveStoreAction(app.DB, StoreAction{Slug: other.Slug, Name: "secret", Command: bin}); err != nil {
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: other.Slug, Name: "secret", Command: bin}); err != nil {
 		t.Fatal(err)
 	}
 
-	r := httptest.NewRequest("GET", "/api/actions", nil)
+	r := httptest.NewRequest("GET", "/api/commands", nil)
 	w := httptest.NewRecorder()
-	app.handleActions(w, asAdmin(t, r, "alice"))
+	app.handleCommands(w, asAdmin(t, r, "alice"))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -212,9 +212,9 @@ func TestActionListIsReadableByAnAssignedUser(t *testing.T) {
 		t.Fatalf("expected only the reachable store's action, got %v", names)
 	}
 	// Filtering to one store is what a page actually asks for.
-	r = httptest.NewRequest("GET", "/api/actions?slug="+st.Slug, nil)
+	r = httptest.NewRequest("GET", "/api/commands?slug="+st.Slug, nil)
 	w = httptest.NewRecorder()
-	app.handleActions(w, asAdmin(t, r, "alice"))
+	app.handleCommands(w, asAdmin(t, r, "alice"))
 	rows = nil
 	_ = json.Unmarshal(w.Body.Bytes(), &rows)
 	if len(rows) != 1 {
@@ -247,5 +247,52 @@ func TestFolderListing(t *testing.T) {
 	app.handleFolders(w, asAdmin(t, r, "alice"))
 	if w.Code != 404 {
 		t.Errorf("expected 404 for an unreachable store, got %d", w.Code)
+	}
+}
+
+// A rename that leaves data behind is a deletion with extra steps: the page
+// would come up with no commands and no error, and an operator would rebuild by
+// hand what was already registered.
+func TestMigrateStoreCommandsMovesTheOldTable(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	old := StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Decrypt bundle", Command: "/opt/bin/dec"}
+	db.Set(legacyCommandsTable, commandKey(old.Slug, old.Name), old)
+
+	if moved := MigrateStoreCommands(db); moved != 1 {
+		t.Fatalf("moved %d, want the one registered command", moved)
+	}
+	got, ok := LoadStoreCommand(db, "bundles", "decrypt")
+	if !ok || got.Command != "/opt/bin/dec" {
+		t.Fatalf("the command must be readable at its new name: %+v ok=%v", got, ok)
+	}
+	if len(db.Keys(legacyCommandsTable)) != 0 {
+		t.Error("the old row must be gone, or the next boot moves it again forever")
+	}
+
+	// Idempotent: every boot after the first is a no-op.
+	if moved := MigrateStoreCommands(db); moved != 0 {
+		t.Errorf("a second run must move nothing, moved %d", moved)
+	}
+	if _, ok := LoadStoreCommand(db, "bundles", "decrypt"); !ok {
+		t.Error("and must not disturb what it already moved")
+	}
+}
+
+// If the process died mid-migration the record exists in both places. The new
+// one is authoritative — it may have been edited since — and the old copy is
+// dropped rather than written over it.
+func TestMigrateStoreCommandsKeepsTheNewerRecord(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	key := commandKey("bundles", "decrypt")
+	db.Set(legacyCommandsTable, key, StoreCommand{Slug: "bundles", Name: "decrypt", Command: "/old/path"})
+	db.Set(commandsTable, key, StoreCommand{Slug: "bundles", Name: "decrypt", Command: "/edited/path"})
+
+	MigrateStoreCommands(db)
+	got, _ := LoadStoreCommand(db, "bundles", "decrypt")
+	if got.Command != "/edited/path" {
+		t.Errorf("the migration must not overwrite a record already at the new name; got %q", got.Command)
+	}
+	if len(db.Keys(legacyCommandsTable)) != 0 {
+		t.Error("the stale duplicate should still be cleared")
 	}
 }

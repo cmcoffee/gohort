@@ -116,9 +116,9 @@ func TestAnActionTakesItsStoreFromTheURL(t *testing.T) {
 		// No slug in the body at all — the form no longer asks for one.
 		"name": "decrypt", "label": "Decrypt bundle", "command": "/bin/true",
 	})
-	r := httptest.NewRequest("POST", "/filestore/api/actions?slug=support_bundles", strings.NewReader(string(body)))
+	r := httptest.NewRequest("POST", "/filestore/api/commands?slug=support_bundles", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
-	app.handleActions(w, asStoreAdmin(t, r))
+	app.handleCommands(w, asStoreAdmin(t, r))
 	if w.Code != http.StatusOK {
 		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
@@ -132,17 +132,17 @@ func TestAnActionTakesItsStoreFromTheURL(t *testing.T) {
 	other, _ := json.Marshal(map[string]any{
 		"slug": "somewhere_else", "name": "redact", "label": "Redact", "command": "/bin/true",
 	})
-	r2 := httptest.NewRequest("POST", "/filestore/api/actions?slug=support_bundles", strings.NewReader(string(other)))
-	app.handleActions(httptest.NewRecorder(), asStoreAdmin(t, r2))
+	r2 := httptest.NewRequest("POST", "/filestore/api/commands?slug=support_bundles", strings.NewReader(string(other)))
+	app.handleCommands(httptest.NewRecorder(), asStoreAdmin(t, r2))
 	if got := actionsOf(app, "support_bundles"); len(got) != 2 {
 		t.Errorf("the URL's store should have taken it, got %d action(s)", len(got))
 	}
 }
 
 // actionsOf is the store's actions, since the lister is deployment-wide.
-func actionsOf(app *FileStoreApp, slug string) []StoreAction {
-	var out []StoreAction
-	for _, a := range ListStoreActions(app.DB) {
+func actionsOf(app *FileStoreApp, slug string) []StoreCommand {
+	var out []StoreCommand
+	for _, a := range ListStoreCommands(app.DB) {
 		if a.Slug == slug {
 			out = append(out, a)
 		}
