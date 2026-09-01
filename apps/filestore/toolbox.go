@@ -1,0 +1,202 @@
+// Toolboxes mapped from local commands, and the folders they may run in.
+//
+// Step 2 of docs/local-command-tools.md. The model is three nouns, each owning
+// the next: a STORE is a folder, a COMMAND is a binary registered against one,
+// and a TOOLBOX is what mapping a command produces — the actions that binary can
+// perform, under one name.
+//
+// The toolbox is stored ONCE and attached to the folders it may run in. That is
+// the correction to the arrangement reverted in v0.6.538, where a tool was
+// minted into a single store and then appeared as a loose record in the global
+// tool list, reachable by nothing until an admin found a second expander and
+// bound it. Two things follow from getting it this way round:
+//
+// A second folder of the same kind costs an ATTACHMENT, not a re-mapping. One
+// `/opt/bin/cap` mapped once serves every folder of captures.
+//
+// Nothing is ever orphaned. A toolbox is reached from the command it was mapped
+// from, which is reached from the store that command belongs to. The worst state
+// it can be in is "attached to no folder yet", which reads as not attached —
+// next to the command it maps, not adrift in a catalog.
+
+package filestore
+
+import (
+	"sort"
+	"strings"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+
+	"github.com/cmcoffee/gohort/tools/temptool"
+)
+
+// toolboxesTable holds mapped toolboxes, keyed by name.
+//
+// Keyed by NAME and not by store, because the toolbox belongs to the binary
+// rather than to any one folder — which is the whole point of being able to
+// attach it to several. Deployment-wide, so two admins do not map the same
+// binary twice under two names.
+const toolboxesTable = "file_store_toolboxes"
+
+// StoreToolbox is a toolbox mapped from a local command, plus where it came
+// from.
+//
+// Provenance is not decoration: it is what lets the interface show the toolbox
+// on the row of the command it maps, and what tells a reader looking at an
+// attached toolbox on some other folder where to go to change it.
+type StoreToolbox struct {
+	// Tool is the toolbox itself — Mode: toolbox, with one action per thing the
+	// command can do. BoundOnly, always: a toolbox mapped from one deployment's
+	// capture binary has no business in every chat, and the whole reason a
+	// folder's bundle can be narrow is that its members opt out of the catalog.
+	Tool TempTool `json:"tool"`
+	// FromStore / FromCommand name the command this was mapped from. Kept even
+	// when that command is later deleted — a toolbox that outlives its origin
+	// still ran against something, and blanking the field would leave a reader
+	// with no thread to pull.
+	FromStore   string    `json:"from_store,omitempty"`
+	FromCommand string    `json:"from_command,omitempty"`
+	Created     time.Time `json:"created"`
+}
+
+// SaveToolbox records a mapped toolbox. Inert on arrival: it runs nowhere until
+// attached to a store, and attaching is a person's act.
+func SaveToolbox(db Database, tb StoreToolbox) (StoreToolbox, error) {
+	tb.Tool.Name = RefToolSlug(strings.TrimSpace(tb.Tool.Name))
+	switch {
+	case tb.Tool.Name == "":
+		return tb, Error("give the toolbox a name — a short handle like \"capture_tools\"")
+	case strings.TrimSpace(tb.Tool.Description) == "":
+		return tb, Error("give the toolbox a description: it is what another agent reads before opening it")
+	case len(tb.Tool.Actions) == 0:
+		return tb, Error("a toolbox with no actions does nothing — map at least one thing the command can do")
+	}
+	for i, a := range tb.Tool.Actions {
+		if strings.TrimSpace(a.Name) == "" {
+			return tb, Error("every action needs a name")
+		}
+		if strings.TrimSpace(a.CommandTemplate) == "" {
+			return tb, Error("action " + a.Name + " has no command to run")
+		}
+		// A local command mapped into an HTTP action is a mistake worth catching
+		// here rather than at the first call, where it would read as a network
+		// failure.
+		if strings.TrimSpace(a.URLTemplate) != "" {
+			return tb, Error("action " + a.Name + " declares a url_template; a mapped command is local, not an HTTP call")
+		}
+		tb.Tool.Actions[i].Name = strings.TrimSpace(a.Name)
+	}
+	tb.Tool.Mode = TempToolModeToolbox
+	tb.Tool.BoundOnly = true
+	if tb.Created.IsZero() {
+		tb.Created = time.Now()
+	}
+	// A name already taken by a DIFFERENT command is refused rather than
+	// overwritten. Two binaries answering to one name would make an attachment
+	// mean something other than what the admin who made it read.
+	if prev, ok := LoadToolbox(db, tb.Tool.Name); ok {
+		if prev.FromStore != tb.FromStore || prev.FromCommand != tb.FromCommand {
+			return tb, Error("a toolbox called " + tb.Tool.Name + " is already mapped from " +
+				prev.FromCommand + " on " + prev.FromStore + " — pick another name, or re-map that one")
+		}
+		tb.Created = prev.Created // a re-map keeps its original date
+	}
+	db.Set(toolboxesTable, tb.Tool.Name, tb)
+	return tb, nil
+}
+
+// LoadToolbox returns one mapped toolbox.
+func LoadToolbox(db Database, name string) (StoreToolbox, bool) {
+	var tb StoreToolbox
+	if db == nil || strings.TrimSpace(name) == "" {
+		return tb, false
+	}
+	ok := db.Get(toolboxesTable, RefToolSlug(strings.TrimSpace(name)), &tb)
+	return tb, ok
+}
+
+// ListToolboxes returns every mapped toolbox, by name.
+func ListToolboxes(db Database) []StoreToolbox {
+	var out []StoreToolbox
+	if db == nil {
+		return out
+	}
+	for _, k := range db.Keys(toolboxesTable) {
+		var tb StoreToolbox
+		if db.Get(toolboxesTable, k, &tb) {
+			out = append(out, tb)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tool.Name < out[j].Tool.Name })
+	return out
+}
+
+// DeleteToolbox drops a mapped toolbox. Attachments naming it are left alone: a
+// name in a store's Toolboxes that resolves to nothing is skipped, and tidying
+// the list is the admin's business rather than something a delete should do
+// behind them.
+func DeleteToolbox(db Database, name string) {
+	if db != nil {
+		db.Unset(toolboxesTable, RefToolSlug(strings.TrimSpace(name)))
+	}
+}
+
+// ToolboxesMappedFrom returns the toolboxes mapped from one store's commands —
+// what the command rows on that folder show.
+func ToolboxesMappedFrom(db Database, slug string) []StoreToolbox {
+	var out []StoreToolbox
+	for _, tb := range ListToolboxes(db) {
+		if tb.FromStore == slug {
+			out = append(out, tb)
+		}
+	}
+	return out
+}
+
+// attachedToolboxDefs renders the toolboxes attached to a store as agent tools,
+// so they arrive with the folder and nowhere else.
+//
+// Resolution goes through the same path servitor's appliance toolset uses — the
+// tools carried on a session into temptool.BuildAgentToolDefs — so an attached
+// toolbox behaves at call time exactly as it does when called directly, rather
+// than through a second implementation that drifts from the first.
+//
+// A name that resolves to nothing is skipped rather than reported: the
+// attachment outliving the toolbox is an authoring problem to fix where
+// toolboxes are managed, and refusing to hand over the other three because one
+// was deleted would take a working folder down with it.
+func (s storeSource) attachedToolboxDefs(sess *ToolSession, user string, st Store) []AgentToolDef {
+	if len(st.Toolboxes) == 0 {
+		return nil
+	}
+	// AuthDB is a function VARIABLE, nil until startup wires it. Calling it
+	// unguarded panics — on a path reached from a tool catalog, which is a
+	// worse way to find out than a toolbox quietly not resolving.
+	var authDB Database
+	if AuthDB != nil {
+		authDB = AuthDB()
+	}
+	bound := &ToolSession{Username: user, DB: authDB, Ctx: sess.Context()}
+	if ws, err := EnsureWorkspaceDir(user); err == nil {
+		bound.WorkspaceDir = ws
+	}
+	seen := map[string]bool{}
+	for _, name := range st.Toolboxes {
+		name = RefToolSlug(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		tb, ok := LoadToolbox(s.app.DB, name)
+		if !ok {
+			continue
+		}
+		t := tb.Tool
+		bound.TempTools = append(bound.TempTools, &t)
+	}
+	if len(bound.TempTools) == 0 {
+		return nil
+	}
+	return temptool.BuildAgentToolDefs(bound)
+}
