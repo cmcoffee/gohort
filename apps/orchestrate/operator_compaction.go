@@ -34,6 +34,20 @@ func init() {
 		Min:      110,
 		Max:      300,
 	})
+	RegisterTunable(TunableSpec{
+		Key:      "tune_persistent_tail_pct",
+		App:      "/orchestrate",
+		Category: "Limits",
+		Label:    "Persistent-thread tail budget (% of context)",
+		Help: "How much of the lead model's context window a persistent thread's verbatim tail may fill, before older messages in it are left to the rolling summary. " +
+			"This is the only bound here measured in TOKENS — Context Depth and the fold trigger count MESSAGES, which works until a message stops being a chat turn. " +
+			"On a Cortex or channel thread the messages are standing reports, monitor wakes and daily briefs, so a thread sitting exactly at depth 12 can still arrive having eaten most of the window while every message-shaped setting reads as healthy. " +
+			"Lower it if talking to a standing thread is slow while a fresh one is fast — that gap IS this. 0 turns the budget off and leaves only the message count.",
+		Kind:    KindInt,
+		Default: 35,
+		Min:     0,
+		Max:     90,
+	})
 }
 
 // foldTriggerPct is the unsummarized-tail size (as a percent of the agent's
@@ -151,12 +165,70 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		through = len(msgs)
 	}
 	tail := collapseMonitorWakes(msgs[through:], 3)
+	tail = capTailTokens(tail, T.LeadContextSize(), agent.ID, sessID)
 	out := make([]ChatMessage, 0, len(tail)+1)
 	if strings.TrimSpace(block) != "" {
 		out = append(out, ChatMessage{Role: "user", Content: block})
 	}
 	out = append(out, tail...)
 	return out
+}
+
+// capTailTokens bounds the verbatim tail by TOKENS, which is the unit the
+// context window is actually measured in.
+//
+// Everything else here counts MESSAGES: ContextDepth is a message count, and the
+// fold trigger is a percent of it. That works while a message is a chat turn.
+// On a persistent thread it is not — the Cortex home thread and channel rooms
+// are where standing-agent reports, monitor wakes and daily briefs land, and one
+// of those is worth a hundred ordinary turns. So a thread sitting exactly at its
+// configured depth of 12, with the fold cursor advancing correctly and nothing
+// broken anywhere, still arrived at the model having eaten most of the window —
+// while every message-shaped diagnostic said it was fine.
+//
+// The budget is a percent of the lead model's context (see
+// tune_persistent_tail_pct), not an absolute, so it travels between deployments
+// with different windows.
+//
+// Trimming is from the FRONT: the newest messages are the ones the turn is
+// about, and the older ones are what the rolling summary exists to carry. The
+// last message is always kept whatever it costs — it is the user's just-typed
+// turn, and a bound that can drop it produces a model answering from a summary
+// about a question it was never shown.
+//
+// Run-only, like everything else this function returns. The fold cursor indexes
+// the FULL stored history and is not moved by this, so a message trimmed here is
+// still folded and archived normally later and stays reachable through
+// recall_history.
+func capTailTokens(tail []ChatMessage, contextSize int, agentID, sessID string) []ChatMessage {
+	pct := TuneInt("tune_persistent_tail_pct")
+	if pct <= 0 || len(tail) <= 1 {
+		return tail // operator turned the budget off, or there is nothing to trim to
+	}
+	if contextSize <= 0 {
+		// No declared window to take a percent of. A guess here would be a
+		// budget nobody chose, applied to every deployment that never set the
+		// size — leave the tail alone and let the message bound govern.
+		return tail
+	}
+	budget := contextSize * pct / 100
+	kept := 0
+	total := 0
+	for i := len(tail) - 1; i >= 0; i-- {
+		n := EstimateTokens(tail[i].Content)
+		// The newest message is kept unconditionally: it is the turn.
+		if kept > 0 && total+n > budget {
+			break
+		}
+		total += n
+		kept++
+	}
+	if kept >= len(tail) {
+		return tail
+	}
+	Log("[operator.compact] %s:%s tail trimmed to %d of %d messages (~%d tokens, budget %d) — a persistent thread's messages are reports, not turns",
+		agentID, sessID, kept, len(tail), total, budget)
+	return tail[len(tail)-kept:]
 }
 
 // operatorFoldInFlight single-flights the background fold per (agent, session).
