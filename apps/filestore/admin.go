@@ -80,6 +80,21 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								{Field: "mapped", Label: "Mapped", Mute: true, Flex: 2},
 							},
 							RowActions: []ui.RowAction{
+								// Opened from the command, and what it produces
+								// lands on the command. That round trip is the
+								// whole correction: the arrangement this
+								// replaces wrote loose tools into a global list
+								// where they read as orphaned, waiting to be
+								// found from a different expander.
+								ui.Expand("Map", ui.AgentLoopPanel{
+									SendURL:      "/filestore/api/map/chat/send?slug={slug}&command={name}",
+									Markdown:     true,
+									LockActivity: true,
+									EmptyText: "Ask it to map this command — \"work out what this can do and propose a toolbox\". " +
+										"It can run the binary to read its help and try things, and writes what it finds as a toolbox on this row. " +
+										"Nothing it proposes can be called until you attach that toolbox to a folder under Toolboxes; the attachment is the approval.",
+									Placeholder: "Map this command…",
+								}),
 								{Type: "button", Label: "Delete", Method: "DELETE",
 									PostTo:     "/filestore/api/commands?id={id}",
 									Variant:    "danger",
@@ -243,6 +258,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/commands/run", T.handleCommand)
 	T.HandleFunc("/api/commands", T.handleCommands)
+	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/toolboxes", T.handleToolboxes)
 	T.HandleFunc("/api/toolbox-candidates", T.handleToolboxCandidates)
 	T.HandleFunc("/api/folders", T.handleFolders)

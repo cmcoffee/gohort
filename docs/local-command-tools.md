@@ -139,6 +139,8 @@ grant.
 
 ## Staging
 
+*(Built. Steps 1-4 shipped in v0.6.539-542; step 5 is what remains.)*
+
 1. **`TempToolAction` learns shell.** A `CommandTemplate` field and a dispatcher
    branch, argv-only. Reviewed on its own — it is a shared type.
 2. **Toolbox records, attached to stores.** Replaces `Store.Toolset` and the
@@ -152,6 +154,12 @@ grant.
 
 Steps 1 and 2 are the substance; 3 and 4 are what the user actually asked for,
 and neither is worth doing before the model underneath is right.
+
+One correction found while building step 1: the argv-only requirement above
+overstated the risk. Shell-mode placeholders are already shellQuote'd, so an
+argument cannot become a second command. What remains is that the TEMPLATE is
+authored as a shell string, which is a question for whoever approves the tool
+rather than an injection hole.
 
 ## What to do with what shipped
 
