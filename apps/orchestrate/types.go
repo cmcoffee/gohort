@@ -1006,6 +1006,24 @@ type ChatSession struct {
 	// sidebar's unread dot. Not persisted — derived from the two timestamps.
 	Unread bool `json:"unread,omitempty"`
 
+	// AppContext scopes a session to whatever the hosting app says it is about —
+	// a document, a record, a project. Opaque to orchestrate: it is stored,
+	// matched for equality when listing, and never interpreted.
+	//
+	// Chats embedded in an app are ABOUT something. A guide's co-author, a
+	// custom app's workbench: the conversation only makes sense beside the thing
+	// it was working on, and a flat per-agent list of every conversation the user
+	// ever had with that agent is close to useless — the more the app is used,
+	// the worse it gets, because the sessions that matter are buried under the
+	// ones about other documents.
+	//
+	// Set from the send request on the turn that CREATES the session (and
+	// back-filled onto a session that has none, so conversations that predate
+	// this get scoped the moment they are continued rather than staying
+	// unfiled). Not updated afterwards: it records which document a conversation
+	// belongs to, not which one happens to be open now.
+	AppContext string `json:"AppContext,omitempty"`
+
 	// Incognito marks a "clean room" session (cortex preset): it does NOT inherit
 	// the agent's cortex standing context OR its memory/facts, and (write side)
 	// does not store facts back. A one-off with no baggage in and nothing out.

@@ -4754,6 +4754,10 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// Incognito (clean-room session) — honored only on the FIRST turn, when
 		// the session is created; afterwards the stored session flag governs.
 		Incognito bool `json:"incognito,omitempty"`
+		// AppContext scopes the session to what the hosting app is working on
+		// (see ChatSession.AppContext). Apps set it server-side on the way past,
+		// where the open document is already known, so no client has to carry it.
+		AppContext string `json:"app_context,omitempty"`
 		// Hidden marks the user message as already-shown-in-prior-bubble
 		// (e.g. an ask_user card's submitted state). LLM still sees the
 		// content in history; the chat panel just skips rendering a
@@ -4912,6 +4916,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			Title:     titleFromFirstMessage(req.Message),
 			Created:   time.Now(),
 			Incognito: req.Incognito, // clean-room session, set at creation
+			// What this conversation is about, for an app that scopes its
+			// sessions to a document.
+			AppContext: req.AppContext,
 		}
 		var err error
 		sess, err = saveChatSession(udb, sess)
@@ -4922,6 +4929,14 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			tmp.Send(map[string]any{"kind": "error", "text": "save session: " + err.Error()})
 			return
 		}
+	}
+
+	// Back-fill the scope onto a session that has none — one that predates
+	// AppContext, or was started somewhere that did not set it. Continuing a
+	// conversation beside a document is a clear enough statement of what it is
+	// about. Never OVERWRITES: a session belongs to where it started.
+	if !isNewSession && sess.AppContext == "" && req.AppContext != "" {
+		sess.AppContext = req.AppContext
 	}
 
 	// The user is actively in this session for the whole turn, so clear its

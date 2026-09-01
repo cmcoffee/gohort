@@ -4,8 +4,10 @@
 package guides
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -1010,7 +1012,47 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 			tools = FilterToolsByCaps(tools, []Capability{CapRead, CapWrite})
 		}
 	}
+	stampAppContext(r, activeGuideID(udb))
 	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
+}
+
+// stampAppContext writes the open guide's id into the send body as app_context,
+// so the session orchestrate creates records which document the conversation was
+// about (see ChatSession.AppContext) and can be listed beside it later.
+//
+// Server-side, on the way past, rather than asking the panel to carry it: the
+// open document is already known HERE on every send, including the first one
+// that creates the session — the one turn no client could name a session id for.
+// A browser-side scheme would also be a browser-side promise, and what a session
+// is filed under should not be something the page can get wrong.
+//
+// Best-effort by design. A body that will not parse is left exactly as it came
+// in and the send proceeds unscoped; failing to file a conversation is not a
+// reason to refuse to have it.
+func stampAppContext(r *http.Request, guideID string) {
+	if guideID == "" || r.Body == nil {
+		return
+	}
+	raw, err := io.ReadAll(r.Body)
+	r.Body.Close()
+	if err != nil {
+		r.Body = io.NopCloser(bytes.NewReader(nil))
+		return
+	}
+	restore := func() { r.Body = io.NopCloser(bytes.NewReader(raw)) }
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
+		restore()
+		return
+	}
+	body["app_context"] = guideID
+	stamped, err := json.Marshal(body)
+	if err != nil {
+		restore()
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(stamped))
+	r.ContentLength = int64(len(stamped))
 }
 
 // guideDispatchPolicy returns the dispatch mode + target list a turn on this
@@ -1116,7 +1158,7 @@ func (T *Guides) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid 
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
 	}
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -1129,7 +1171,11 @@ func (T *Guides) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid 
 	case "cancel":
 		orch.PublicHandleCancel(w, r, agent)
 	case "sessions":
-		orch.PublicHandleSessionList(w, r, agent.ID)
+		// Scoped to the guide that is open. A flat list of every conversation
+		// ever had with the Guide Author is close to useless once the app has
+		// been used for a while: the sessions about THIS document are buried
+		// under the ones about the others.
+		orch.PublicHandleSessionListFor(w, r, agent.ID, activeGuideID(udb))
 	case "session-one":
 		orch.PublicHandleSessionOne(w, r, agent.ID, sid)
 	default:

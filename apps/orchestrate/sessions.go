@@ -135,6 +135,11 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 			Created: s.Created,
 			LastAt:  s.LastAt,
 			Unread:  s.LastAt.After(s.LastSeen),
+			// Carried so a caller can scope the list to one document. Dropping
+			// it here would make every session read as unfiled and the filter a
+			// no-op — silently, since an unfiled session is deliberately shown
+			// in every scope.
+			AppContext: s.AppContext,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastAt.After(out[j].LastAt) })

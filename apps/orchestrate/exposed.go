@@ -839,7 +839,27 @@ func (T *OrchestrateApp) PublicHandleAgentKnowledgeSourceDelete(w http.ResponseW
 // the request and reads from orchestrate's own DB — apps/agents
 // can't pass its per-app bucket here because the sessions are
 // stored under orchestrate.
+// PublicHandleSessionListFor is PublicHandleSessionList narrowed to one app
+// context (see ChatSession.AppContext) — the sessions about ONE document rather
+// than every conversation the user has had with this agent.
+//
+// A session with no context set is shown in every scope rather than nowhere:
+// conversations that predate the field, or came from a surface that sets none,
+// stay reachable instead of disappearing the day scoping arrives. Continuing
+// one files it (the send path back-fills), so the unfiled set drains rather
+// than growing.
+//
+// An empty appContext means "no scoping" and behaves exactly like
+// PublicHandleSessionList.
+func (T *OrchestrateApp) PublicHandleSessionListFor(w http.ResponseWriter, r *http.Request, agentID, appContext string) {
+	T.publicSessionList(w, r, agentID, appContext)
+}
+
 func (T *OrchestrateApp) PublicHandleSessionList(w http.ResponseWriter, r *http.Request, agentID string) {
+	T.publicSessionList(w, r, agentID, "")
+}
+
+func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Request, agentID, appContext string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -859,6 +879,9 @@ func (T *OrchestrateApp) PublicHandleSessionList(w http.ResponseWriter, r *http.
 	filtered := sessions[:0]
 	for _, s := range sessions {
 		if strings.HasPrefix(s.ID, "channel:") {
+			continue
+		}
+		if appContext != "" && s.AppContext != "" && s.AppContext != appContext {
 			continue
 		}
 		filtered = append(filtered, s)
