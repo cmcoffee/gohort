@@ -824,7 +824,7 @@
     // view and for every normal agent.
     orchView = el('div', {class: 'ui-orch-view', style: 'display:none;position:absolute;inset:0;overflow:auto;background:var(--bg-1, #1b1b2b);padding:0.85rem;z-index:5'});
     main.appendChild(orchView);
-    if (drawer) main.appendChild(drawer.mobileHdr);
+    if (drawer && !listPosModal) main.appendChild(drawer.mobileHdr);
 
     // Floating expand-tab shown when the left rail is collapsed on
     // desktop. Sits pinned against the conversation pane's left edge
@@ -903,6 +903,38 @@
     // buttons only. No ☰ toggle, no "+ New session" duplicate — the
     // sidebar header already carries New, and the rail isn't meant
     // to collapse in this mode.
+    // "modal" — the list is a BUTTON, not a rail. Nothing is given up to a
+    // column that is usually empty: the toolbar carries one control, it opens
+    // the same list the rail would have shown, and picking a session cuts
+    // straight to it and closes. For a panel that is already the narrowest
+    // column on its page (a workbench chat), a collapsed rail is the worst of
+    // both — it still costs the hamburger, the expand tab, and a mental model,
+    // to reach a list you wanted for two seconds.
+    var listPosModal = hasList && cfg.list_position === 'modal';
+    var sessionModal = null;
+    function openSessionPicker() {
+      if (sessionModal) return;
+      loadSessions(); // the rail may have been built before the first load
+      sessionModal = window.uiOpenSimpleModal({
+        title: cfg.list_title || 'Sessions',
+        width: '520px',
+        mount: function(body) {
+          body.classList.add('ui-agent-session-picker');
+          body.appendChild(side); // the rail itself — search, unread, rename, delete
+        },
+      });
+      var closed = sessionModal.close;
+      sessionModal.close = function() { closed(); sessionModal = null; };
+    }
+    function closeSessionPicker() {
+      if (sessionModal) sessionModal.close();
+    }
+
+    if (listPosModal) {
+      sideCollapsed = true; // the grid has no rail column to hold open
+      applySideCollapse();
+    }
+
     var listPosTop = hasList && cfg.list_position === 'top';
     if (listPosTop) {
       wrap.classList.add('ui-agent-list-top');
@@ -1107,6 +1139,14 @@
     }
     // Render ungrouped actions as flat buttons; collapse each Group into a
     // "<Group> ▾" dropdown so a crowded toolbar sheds its rarely-used actions.
+    // The picker's own control, ahead of the app's actions: it is navigation,
+    // not one more thing to do to the open session.
+    if (listPosModal) {
+      actionsBar.appendChild(el('button', {
+        class: 'ui-row-btn', title: 'Open a past session',
+        onclick: function(){ openSessionPicker(); },
+      }, [cfg.list_title || 'Sessions']));
+    }
     (function() {
       var groupOrder = [], groupMap = {};
       (cfg.actions || []).forEach(function(action) {
@@ -4886,6 +4926,9 @@
     // keepLimit is set by loadEarlierMessages so the re-open does not reset the
     // ask it was made for.
     function openSession(sid, keepLimit) {
+      // Picked from the modal picker: the choice is made, so get out of the way
+      // rather than leaving the reader to dismiss a list they are done with.
+      closeSessionPicker();
       // -1, NOT 0. Both read as "reset" here, but they are opposite requests on
       // the wire: -1 sends no limit at all and lets the server apply its own
       // default, while 0 IS a limit, and the one value the server defines as
@@ -5442,11 +5485,13 @@
     } else {
       wrap.appendChild(topbar);
     }
-    if (hasList) {
+    // In modal mode `side` stays detached until the picker opens — it is the
+    // same element, mounted somewhere else.
+    if (hasList && !listPosModal) {
       gridRow.appendChild(side);
       wrap.appendChild(drawer.backdrop);
     }
-    if (expandTab) {
+    if (expandTab && !listPosModal) {
       // Always absolute-position over the grid row. Earlier we
       // experimented with inserting into the Agency topBundle as a
       // flex/grid child — that shifted the bundle's action buttons

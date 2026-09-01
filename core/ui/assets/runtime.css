@@ -2011,6 +2011,17 @@ select:-webkit-autofill {
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
   display: flex; flex-direction: column; overflow: hidden;
 }
+/* list_position:"modal" — the rail mounted inside the session picker. It is
+   the same element the sidebar would have used, so it only needs to stop
+   looking like a sidebar: no card border inside a card, and a height that comes
+   from the dialog rather than from a grid column. */
+.ui-agent-session-picker .ui-chat-side {
+  border: 0; border-radius: 0; background: transparent;
+  max-height: min(60vh, 460px);
+}
+.ui-agent-session-picker .ui-chat-side-list { overflow-y: auto; }
+.ui-agent-session-picker .ui-chat-side-item { cursor: pointer; }
+
 .ui-chat-mobile-hdr { display: none; }
 .ui-chat-backdrop { display: none; }
 

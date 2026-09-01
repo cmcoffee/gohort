@@ -1,6 +1,7 @@
 package guides
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -59,15 +60,25 @@ func TestRevisionPreviewIgnoresRewrites(t *testing.T) {
 // a partial declaration renders nothing at all — which is how this shipped
 // unreachable in the first place. The endpoints already existed.
 func TestGuideAuthorSessionsAreReachable(t *testing.T) {
+	// Field alignment moves whenever a longer field name joins the literal, so
+	// match the name and value and let gofmt put the spaces where it likes.
 	page := readSource(t, "page.go")
-	for _, want := range []string{`ListURL:   "chat/sessions"`, `LoadURL:   "chat/sessions/{id}"`, `DeleteURL: "chat/sessions/{id}"`} {
-		if !strings.Contains(page, want) {
-			t.Errorf("the session rail needs all three URLs; missing %s", want)
+	for _, want := range [][2]string{
+		{"ListURL", `"chat/sessions"`},
+		{"LoadURL", `"chat/sessions/{id}"`},
+		{"DeleteURL", `"chat/sessions/{id}"`},
+	} {
+		if !regexp.MustCompile(want[0] + `:\s+` + regexp.QuoteMeta(want[1])).MatchString(page) {
+			t.Errorf("the session list needs all three URLs; missing %s: %s", want[0], want[1])
 		}
 	}
 	web := readSource(t, "web.go")
 	if !strings.Contains(web, `case path == "chat/sessions":`) || !strings.Contains(web, `strings.HasPrefix(path, "chat/sessions/")`) {
 		t.Error("the rail's URLs must be served, or every past session 404s")
+	}
+	// As a button, not a rail — the chat column has nothing to give a list.
+	if !strings.Contains(page, `ListPosition: "modal"`) {
+		t.Error("the guides chat is the narrowest of three columns; a rail (even collapsed) costs more than the list is worth here")
 	}
 	if !strings.Contains(page, `PreviewURL: "revision?id={id}&rev={rev}"`) {
 		t.Error("History without a PreviewURL offers only Restore, which cannot answer 'what did that section say'")

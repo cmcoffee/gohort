@@ -69,21 +69,24 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		ActiveURL: "chat/active",
 		// Right — the Guide Author chat (endpoints; WorkbenchPanel builds the panel).
 		Chat: ui.AgentLoopPanel{
-			// The session rail. The endpoints behind these three have existed
+			// Past conversations. The endpoints behind these three have existed
 			// since the app shipped — every conversation with the Guide Author was
 			// already being written to the same store orchestrate uses — but the
-			// panel never declared them, so the rail never rendered and the work
-			// was unreachable the moment the page was left. The rail is opt-in on
-			// all three URLs together and defaults to COLLAPSED behind a ☰ tab,
-			// which is what makes it affordable here: the chat column is the third
-			// of three in a workbench and cannot spare 260px to a list.
-			ListURL:   "chat/sessions",
-			LoadURL:   "chat/sessions/{id}",
-			DeleteURL: "chat/sessions/{id}",
-			ListTitle: "Past sessions",
-			NewLabel:  "New session",
-			SendURL:   "chat/send",
-			CancelURL: "chat/cancel",
+			// panel never declared them, so the work was unreachable the moment
+			// the page was left.
+			//
+			// As a BUTTON, not a rail: the chat is the third of three columns
+			// here and has nothing to give a list. Sessions opens the list,
+			// picking one cuts straight to it, and the column is back to being a
+			// conversation.
+			ListURL:      "chat/sessions",
+			LoadURL:      "chat/sessions/{id}",
+			DeleteURL:    "chat/sessions/{id}",
+			ListTitle:    "Past sessions",
+			NewLabel:     "New session",
+			ListPosition: "modal",
+			SendURL:      "chat/send",
+			CancelURL:    "chat/cancel",
 			// Where a mid-flight message goes. A guide is written over a long
 			// turn — the author reads a section as it lands and thinks of one
 			// more thing — so this is the panel most likely to be typed into

@@ -2340,15 +2340,22 @@ type AgentLoopPanel struct {
 	MessageScrub bool   `json:"msg_scrub,omitempty"`
 	NewLabel     string `json:"new_label,omitempty"`  // default "New"
 	ListTitle    string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
-	// ListPosition picks where the sessions list lives:
-	//   "rail" (default) — persistent left rail, collapsible.
-	//   "top"            — no inline rail; topbar gets a "Sessions"
-	//                      button that opens the rail as a slide-in
-	//                      drawer over the conversation. One
-	//                      conversation owns the whole pane and
-	//                      history is a click away rather than always
-	//                      taking column real estate. Also moves the
-	//                      "New" button into the topbar.
+	// ListPosition picks where the sessions list lives. All three show the same
+	// list — search, unread marks, rename, delete, New — and differ only in what
+	// it costs to have around:
+	//   "rail" (default) — a left rail, collapsed by default behind a ☰ tab.
+	//   "top"            — a permanent 260px rail on desktop, not collapsible
+	//                      (the toggles are hidden); the drawer still applies on
+	//                      mobile. The chat-app shape, for a page whose whole
+	//                      job is the conversation.
+	//   "modal"          — no rail at all. The toolbar gets one button that
+	//                      opens the list as a dialog, and picking a session
+	//                      loads it and closes. For a panel that is already the
+	//                      narrowest column on its page — a workbench chat,
+	//                      where a rail cannot fit and a COLLAPSED rail is the
+	//                      worst of both: it still costs a hamburger, an expand
+	//                      tab, and a layout mode, all to reach a list you
+	//                      wanted for two seconds.
 	ListPosition string `json:"list_position,omitempty"`
 	// Record field overrides (defaults match capitalized
 	// chat-style schemas: ID / Title / LastAt / Messages).
