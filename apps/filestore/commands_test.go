@@ -345,3 +345,49 @@ func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 		t.Errorf("the answer must be explicit that running one is a person's click:\n%s", got)
 	}
 }
+
+// The bundle: tools bound to a store must arrive WITH the store and not
+// otherwise. A tool named by a binding the user no longer owns is skipped
+// rather than fatal — the binding outliving the tool is an authoring problem,
+// and taking the other four down with it would break a working store.
+func TestBoundToolsTravelWithTheStore(t *testing.T) {
+	st := Store{Slug: "bundles", Name: "Support bundles",
+		Toolset: []string{"unpack_capture", "gone_tool"}}
+
+	if len(st.Toolset) != 2 {
+		t.Fatal("fixture")
+	}
+	// A store with no bundle must add nothing at all — the three read tools are
+	// what an unbound store has always handed over.
+	plain := Store{Slug: "plain", Name: "Plain"}
+	s := storeSource{}
+	if defs := s.boundToolDefs(&ToolSession{Username: "u"}, "u", plain); len(defs) != 0 {
+		t.Errorf("a store with no bound tools must contribute none, got %d", len(defs))
+	}
+	// Empty and whitespace-only names are not bindings.
+	blank := Store{Slug: "blank", Toolset: []string{"", "   "}}
+	if defs := s.boundToolDefs(&ToolSession{Username: "u"}, "u", blank); len(defs) != 0 {
+		t.Errorf("blank names are not tools, got %d defs", len(defs))
+	}
+}
+
+// storeToolNames is what the admin table PRINTS as the tools in force, and a
+// column that names something nothing answers to is worse than no column. The
+// bundle is deliberately absent from it: those names are the operator's own,
+// listed in the Tools picker, and repeating them here would imply this store
+// mints them.
+func TestStoreToolNamesCoversWhatTheStoreMints(t *testing.T) {
+	got := storeToolNames("bundles")
+	want := map[string]bool{
+		"list_bundles": true, "search_bundles": true,
+		"read_bundles": true, "list_bundles_commands": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("storeToolNames = %v, want exactly the four minted names", got)
+	}
+	for _, n := range got {
+		if !want[n] {
+			t.Errorf("unexpected tool name %q", n)
+		}
+	}
+}

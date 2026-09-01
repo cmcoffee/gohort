@@ -69,6 +69,23 @@ type Store struct {
 	// kind of thing to reclaim automatically at 3am.
 	RetentionDays int `json:"retention_days,omitempty"`
 
+	// Toolset names the tools bound to this store — the bundle that travels with
+	// the folder. They are handed to an agent only when the store is ATTACHED to
+	// it, and (when marked BoundOnly) appear in no other catalog at all: a set of
+	// tools authored for one folder of packed bundles has no business in every
+	// chat the user has.
+	//
+	// Names rather than copies, so a bound tool is the same record its author
+	// edits — fixing it fixes it everywhere it is bound, and a store cannot
+	// accumulate a private fork of a tool that has since been corrected.
+	//
+	// This is the second binder. The first is a servitor appliance's toolset,
+	// and BoundOnly was written for it with "another binder later" in its
+	// documentation; this is that. Keeping the concept rather than inventing a
+	// per-store authority is the point — a bound tool is scoped, approved and
+	// repaired by the machinery that already does those things for every other
+	// tool, instead of by a rule only this app understands.
+	Toolset []string `json:"toolset,omitempty"`
 }
 
 // UploadsAllowedFor reports whether user may upload into this store.
