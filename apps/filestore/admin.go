@@ -9,6 +9,7 @@ package filestore
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -50,53 +51,123 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
-					ui.Expand("Edit", ui.FormPanel{
-						Source:      "/filestore/api/stores?slug={slug}",
-						PostURL:     "/filestore/api/stores",
-						SubmitLabel: "Save changes",
-						Fields:      storeFormFields(),
-					}),
-					// Who may reach it, picked from the accounts that exist
-					// rather than typed from memory. Its own action because
-					// the candidate list is LIVE: the section is built once at
-					// startup, so a list baked into the form above would be the
-					// users who existed when the process started. The picker
-					// fetches instead, and a user added this morning is there.
+					// ONE expander, not four. Everything about a folder lives on
+					// the folder: its settings, the commands registered against
+					// it, the toolboxes those commands were mapped into, and who
+					// may reach it.
 					//
-					// ui.ACLPicker is the shared shape for exactly this — the
-					// same editor credentials, tools and shared agents use, so
-					// "+ Add user" means one thing across the admin page.
-					// Added from the STORE it belongs to, so the handle comes
-					// from the row. It used to be a page-level button whose
-					// first field asked for the handle, with help telling you
-					// to read it off the Agent tools column and copy it — a
-					// value already on screen, retyped, and wrong when mistyped.
-					ui.Expand("Add command", ui.FormPanel{
-						PostURL:     "/filestore/api/commands?slug={slug}",
-						SubmitLabel: "Add command",
-						Fields:      actionFormFields(),
-						// The save broadcasts its own PostURL, and the slug in
-						// the query means that is never the actions table's
-						// source. Without this the action was added and the
-						// table below went on listing what was there before.
-						Invalidate: []string{"/filestore/api/commands"},
-					}),
-					ui.Expand("Assigned to", ui.ACLPicker(ui.ACLPickerConfig{
-						OptionsSource: "/admin/api/user-candidates",
-						RecordSource:  "/filestore/api/stores?slug={slug}",
-						Field:         "allowed_users",
-						PostTo:        "/filestore/api/stores",
-						Method:        "POST",
-						Noun:          "user",
-						Intro: "Who may reach this store. Empty means EVERY user — a folder of customer captures is rarely something every account should hold, " +
-							"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
-							"Applies to admins too: admin manages the list, membership decides reach.",
-						EmptyText: "No approved users to assign yet.",
-						// The row this picker opened from renders the list it
-						// writes, in "Assigned to". A picker broadcasts nothing
-						// on its own, so the column kept the old answer.
-						Invalidate: []string{"/filestore/api/stores"},
-					})),
+					// It used to be four separate row actions with no visible
+					// relationship, and the result of mapping a command landed
+					// somewhere else entirely — in the global tool list, attached
+					// to nothing, reading as orphaned, waiting for an admin to
+					// find a second expander and bind it. Four expanders on one
+					// subject is what made that possible: nothing on screen said
+					// these were parts of one thing.
+					ui.Expand("Manage", ui.Stack{Children: []ui.Component{
+						ui.Card{HTML: folderPanelHeading("Commands",
+							"Binaries registered against this folder. A person runs one from Files; an agent can name which one a folder needs but never runs it. Mapping a command turns what it can do into a toolbox.")},
+						ui.Table{
+							Source: "/filestore/api/commands?slug={slug}",
+							RowKey: "id",
+							Columns: []ui.Col{
+								{Field: "label", Label: "Command", Flex: 1},
+								{Field: "command", Mute: true, Flex: 2},
+								{Field: "phases", Label: "Asks for input", Mute: true},
+								// The state that makes this row worth reading:
+								// what mapping produced, on the command it came
+								// from. There is no longer a place a toolbox can
+								// exist with nothing on screen explaining it.
+								{Field: "mapped", Label: "Mapped", Mute: true, Flex: 2},
+							},
+							RowActions: []ui.RowAction{
+								{Type: "button", Label: "Delete", Method: "DELETE",
+									PostTo:     "/filestore/api/commands?id={id}",
+									Variant:    "danger",
+									Confirm:    "Remove this command? The binary is left alone; the button for it disappears.",
+									Optimistic: true},
+							},
+							EmptyText: "No commands registered against this folder.",
+						},
+						ui.ModalButton{
+							Label:    "+ Add a command",
+							Title:    "Register a command against this folder",
+							Subtitle: "An absolute path on this server, run as `<command> <folder>` with no shell.",
+							Width:    "620px",
+							Body: ui.FormPanel{
+								PostURL:     "/filestore/api/commands?slug={slug}",
+								SubmitLabel: "Add command",
+								Fields:      actionFormFields(),
+								Invalidate:  []string{"/filestore/api/commands"},
+							},
+						},
+
+						ui.Card{HTML: folderPanelHeading("Toolboxes",
+							"Capabilities that travel with this folder — an agent gets them only while this store is attached to it. A toolbox is mapped once and attached to every folder of the same kind, so a second folder costs an attachment rather than a re-mapping.")},
+						ui.Table{
+							Source: "/filestore/api/toolboxes?slug={slug}",
+							RowKey: "name",
+							Columns: []ui.Col{
+								{Field: "name", Label: "Toolbox", Flex: 1},
+								{Field: "actions", Mute: true},
+								{Field: "origin", Label: "Where from", Mute: true, Flex: 2},
+								{Field: "description", Label: "What it does", Mute: true, Flex: 2},
+							},
+							RowActions: []ui.RowAction{
+								// Detach removes the ATTACHMENT, never the
+								// toolbox. The mapping was work somebody did, and
+								// a folder deciding it no longer wants a
+								// capability is not a statement that the
+								// capability was wrong.
+								{Type: "button", Label: "Detach", Method: "DELETE",
+									PostTo:     "/filestore/api/toolboxes?slug={slug}&name={name}",
+									Confirm:    "Detach this toolbox from this folder? It stays mapped and stays attached to any other folder using it.",
+									Optimistic: true,
+									Invalidate: []string{"/filestore/api/commands"}},
+							},
+							EmptyText: "No toolboxes attached. Map a command above, then attach what it produced.",
+						},
+						ui.ModalButton{
+							Label:    "+ Attach a toolbox",
+							Title:    "Attach a toolbox to this folder",
+							Subtitle: "Attaching is the approval — a mapped toolbox runs nowhere until a folder names it.",
+							Width:    "620px",
+							Body: ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "/filestore/api/toolbox-candidates",
+								RecordSource:  "/filestore/api/stores?slug={slug}",
+								Field:         "toolboxes",
+								PostTo:        "/filestore/api/stores",
+								Method:        "POST",
+								Noun:          "toolbox",
+								Intro: "Attaching is the approval: a mapped toolbox runs nowhere until a folder names it. " +
+									"Anything mapped anywhere can be attached here — one binary mapped once serves every folder of the same kind.",
+								EmptyText:  "Nothing mapped yet. Map a command above first.",
+								Invalidate: []string{"/filestore/api/toolboxes", "/filestore/api/commands"},
+							}),
+						},
+
+						ui.Card{HTML: folderPanelHeading("Who may reach it", "")},
+						ui.ACLPicker(ui.ACLPickerConfig{
+							OptionsSource: "/admin/api/user-candidates",
+							RecordSource:  "/filestore/api/stores?slug={slug}",
+							Field:         "allowed_users",
+							PostTo:        "/filestore/api/stores",
+							Method:        "POST",
+							Noun:          "user",
+							Intro: "Empty means EVERY user — a folder of customer captures is rarely something every account should hold, " +
+								"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
+								"Applies to admins too: admin manages the list, membership decides reach.",
+							EmptyText:  "No approved users to assign yet.",
+							Invalidate: []string{"/filestore/api/stores"},
+						}),
+
+						ui.Card{HTML: folderPanelHeading("Settings", "")},
+						ui.FormPanel{
+							Source:      "/filestore/api/stores?slug={slug}",
+							PostURL:     "/filestore/api/stores",
+							SubmitLabel: "Save changes",
+							Fields:      storeFormFields(),
+						},
+					}}),
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/filestore/api/stores?slug={slug}",
 						Variant:    "danger",
@@ -104,34 +175,6 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						Optimistic: true},
 				},
 				EmptyText: "No file stores yet. Add a folder on this server for an agent to search.",
-			},
-			// Named for what it holds. "Action" is the most overloaded word on this
-			// page — every table row here has RowActions, and ui.Table's own
-			// column type is an action — so a column headed Action listing
-			// binaries, beside a row action that deletes them, was two meanings
-			// of one word within an inch of each other. The file that defines
-			// these opens by calling them "admin-registered commands"; the form's
-			// primary field is Command; the subtitle above points at servitor's
-			// appliances of type "command" for the model-invoked equivalent. The
-			// label was the last place still saying action.
-			ui.Card{HTML: `<h3 style="margin:1.4rem 0 0.4rem;font-size:0.95rem">Commands</h3>`},
-			ui.Table{
-				Source: "/filestore/api/commands",
-				RowKey: "id",
-				Columns: []ui.Col{
-					{Field: "store", Label: "Store", Flex: 1},
-					{Field: "label", Label: "Button", Flex: 1},
-					{Field: "command", Mute: true, Flex: 2},
-					{Field: "phases", Label: "Asks for input", Mute: true},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "/filestore/api/commands?id={id}",
-						Variant:    "danger",
-						Confirm:    "Remove this command? The binary is left alone; the button for it disappears.",
-						Optimistic: true},
-				},
-				EmptyText: "No commands yet — add one from a store's row above. A command is a registered binary run against ONE folder — decrypt it, redact it, unpack a proprietary container, build an index — after which the files are ready to read. It is run for a person who clicks it, never called by an agent.",
 			},
 			ui.ModalButton{
 				Label:    "Add file store",
@@ -200,6 +243,8 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/commands/run", T.handleCommand)
 	T.HandleFunc("/api/commands", T.handleCommands)
+	T.HandleFunc("/api/toolboxes", T.handleToolboxes)
+	T.HandleFunc("/api/toolbox-candidates", T.handleToolboxCandidates)
 	T.HandleFunc("/api/folders", T.handleFolders)
 }
 
@@ -381,10 +426,28 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 			if a.TwoPhase {
 				phases = chFirstNonEmpty(a.InputLabel, "yes")
 			}
+			// What mapping this command produced, on the command's own row.
+			// This is the whole point of the arrangement: a toolbox is shown
+			// where it came from, so there is no state in which one exists and
+			// nothing on screen explains it.
+			mapped := "Not mapped"
+			for _, tb := range ToolboxesMappedFrom(T.DB, a.Slug) {
+				if tb.FromCommand != a.Name {
+					continue
+				}
+				mapped = fmt.Sprintf("%s · %s", tb.Tool.Name, countOf(len(tb.Tool.Actions), "action"))
+				if !storeHasToolbox(st, tb.Tool.Name) {
+					// Mapped but not attached HERE is the one state worth
+					// calling out: the work is done and the folder is not
+					// using it, which looks identical to unmapped otherwise.
+					mapped += " · not attached"
+				}
+				break
+			}
 			rows = append(rows, map[string]any{
 				"id": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
 				"name": a.Name, "label": a.Label, "command": a.Command,
-				"phases": phases, "two_phase": a.TwoPhase,
+				"phases": phases, "two_phase": a.TwoPhase, "mapped": mapped,
 				"input_label": a.InputLabel, "help": a.Help,
 			})
 		}
@@ -444,4 +507,15 @@ func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 	}
 	http.Error(w, "File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.", http.StatusForbidden)
 	return false
+}
+
+// folderPanelHeading renders a section heading inside the folder panel. The
+// panel stacks four subjects that used to be four separate expanders, and
+// without headings they read as one long form.
+func folderPanelHeading(title, blurb string) string {
+	h := `<h3 style="margin:1.3rem 0 0.2rem;font-size:0.95rem">` + HTMLEscape(title) + `</h3>`
+	if strings.TrimSpace(blurb) != "" {
+		h += `<p style="margin:0 0 0.6rem;font-size:0.8rem;opacity:0.72;max-width:62ch">` + HTMLEscape(blurb) + `</p>`
+	}
+	return h
 }

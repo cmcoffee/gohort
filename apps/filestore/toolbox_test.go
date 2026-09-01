@@ -1,6 +1,7 @@
 package filestore
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -161,5 +162,49 @@ func TestAStaleAttachmentIsSkipped(t *testing.T) {
 
 	if got := s.attachedToolboxDefs(&ToolSession{Username: "u"}, "u", Store{Slug: "none"}); len(got) != 0 {
 		t.Errorf("a folder with no attachments contributes nothing, got %d", len(got))
+	}
+}
+
+// The folder panel is one expander over four subjects. What makes it work is
+// that every part addresses the SAME folder — a source that forgot {slug} would
+// silently show another folder's commands, which is the failure the old layout
+// had in a different form.
+func TestFolderPanelIsScopedToItsFolder(t *testing.T) {
+	raw, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+
+	// One "Manage" expander, not four separate ones. The four were what let a
+	// mapped toolbox land somewhere with no visible relationship to the folder.
+	for _, gone := range []string{`ui.Expand("Edit"`, `ui.Expand("Add command"`, `ui.Expand("Assigned to"`} {
+		if strings.Contains(src, gone) {
+			t.Errorf("%s is still a separate row action; the folder panel replaced it", gone)
+		}
+	}
+	if !strings.Contains(src, `ui.Expand("Manage"`) {
+		t.Fatal("the folder panel is gone")
+	}
+
+	// Every source inside the panel carries the folder.
+	for _, want := range []string{
+		`"/filestore/api/commands?slug={slug}"`,
+		`"/filestore/api/toolboxes?slug={slug}"`,
+		`"/filestore/api/stores?slug={slug}"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("panel source %s is missing or unscoped — an unscoped one shows another folder's rows", want)
+		}
+	}
+	// Detach has to name both the folder and the toolbox: without the name it
+	// would clear the wrong row, and without the slug the wrong folder.
+	if !strings.Contains(src, `"/filestore/api/toolboxes?slug={slug}&name={name}"`) {
+		t.Error("detach must name both the folder and the toolbox")
+	}
+	// The command row shows what mapping produced. That column is what makes an
+	// orphan impossible: a toolbox is always visible from its own command.
+	if !strings.Contains(src, `{Field: "mapped"`) {
+		t.Error("the commands table must show mapped state, or a toolbox can exist with nothing on screen explaining it")
 	}
 }

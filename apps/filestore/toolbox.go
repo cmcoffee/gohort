@@ -22,6 +22,8 @@
 package filestore
 
 import (
+	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -199,4 +201,122 @@ func (s storeSource) attachedToolboxDefs(sess *ToolSession, user string, st Stor
 		return nil
 	}
 	return temptool.BuildAgentToolDefs(bound)
+}
+
+// storeHasToolbox reports whether a folder carries a toolbox by name.
+func storeHasToolbox(st Store, name string) bool {
+	for _, n := range st.Toolboxes {
+		if strings.EqualFold(strings.TrimSpace(n), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// countOf renders a count with its noun, so a row reads as a sentence rather
+// than as a number beside a label. (plural() already exists here and answers a
+// different question — the suffix alone.)
+func countOf(n int, noun string) string {
+	return fmt.Sprintf("%d %s%s", n, noun, plural(n))
+}
+
+// handleToolboxes serves the Toolboxes list on a folder (GET ?slug=) and
+// detaches one (DELETE ?slug=&name=).
+//
+// Detaching removes the ATTACHMENT, never the toolbox: the mapping was work
+// somebody did, and a folder deciding it no longer wants a capability is not a
+// statement that the capability was wrong. The toolbox stays on the row of the
+// command it was mapped from, which is where deleting it belongs.
+func (T *FileStoreApp) handleToolboxes(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	st, found := LoadStore(T.DB, slug)
+	if !found || !st.AllowsUser(user) {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rows := make([]map[string]any, 0, len(st.Toolboxes))
+		for _, name := range st.Toolboxes {
+			tb, ok := LoadToolbox(T.DB, name)
+			if !ok {
+				// The attachment outlived the toolbox. Shown rather than
+				// hidden: a name that resolves to nothing is skipped at call
+				// time, so the folder is quietly missing a capability, and the
+				// only place that can be noticed is here.
+				rows = append(rows, map[string]any{
+					"name": name, "actions": "—",
+					"origin": "missing — the toolbox this names has been deleted",
+				})
+				continue
+			}
+			origin := "mapped here, from " + tb.FromCommand
+			if tb.FromStore != slug {
+				origin = "mapped on another folder, from " + tb.FromCommand
+			}
+			rows = append(rows, map[string]any{
+				"name": tb.Tool.Name, "actions": countOf(len(tb.Tool.Actions), "action"),
+				"origin": origin, "description": firstLine(tb.Tool.Description),
+			})
+		}
+		writeJSON(w, rows)
+	case http.MethodDelete:
+		if !adminOnly(w, r) {
+			return
+		}
+		name := RefToolSlug(strings.TrimSpace(r.URL.Query().Get("name")))
+		kept := st.Toolboxes[:0]
+		for _, n := range st.Toolboxes {
+			if !strings.EqualFold(RefToolSlug(strings.TrimSpace(n)), name) {
+				kept = append(kept, n)
+			}
+		}
+		st.Toolboxes = kept
+		if _, err := SaveStore(T.DB, st); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleToolboxCandidates lists every mapped toolbox for the Attach picker,
+// saying where each came from so a name means something to whoever is choosing.
+func (T *FileStoreApp) handleToolboxCandidates(w http.ResponseWriter, r *http.Request) {
+	type opt struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+		Desc  string `json:"desc,omitempty"`
+	}
+	out := []opt{}
+	for _, tb := range ListToolboxes(T.DB) {
+		where := tb.FromCommand
+		if st, ok := LoadStore(T.DB, tb.FromStore); ok {
+			where += " on " + st.Name
+		}
+		out = append(out, opt{
+			Value: tb.Tool.Name, Label: tb.Tool.Name,
+			Desc: countOf(len(tb.Tool.Actions), "action") + " · from " + where,
+		})
+	}
+	writeJSON(w, out)
+}
+
+// firstLine trims a description to its opening sentence for a row's subtitle —
+// the rest is written for a model, not for a table.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 120 {
+		s = s[:117] + "…"
+	}
+	return s
 }
