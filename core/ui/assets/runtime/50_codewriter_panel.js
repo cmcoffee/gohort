@@ -67,6 +67,42 @@
       langSelect.appendChild(el('option', {value: l}, [l || 'other']));
     });
 
+    // Name the snippet from its code. The app has always served this — an LLM
+    // call that reads the script and returns a snake_case name — and declared
+    // the URL for it, but the panel never rendered anything to call it, so a
+    // whole working feature sat unreachable behind a field nothing read.
+    var suggestNameBtn = null;
+    if (cfg.suggest_name_url) {
+      suggestNameBtn = el('button', {
+        class: 'ui-row-btn', title: 'Suggest a name from the code',
+        onclick: function() {
+          var code = editor.value || '';
+          if (!code.trim()) { showToast('Write some code first'); return; }
+          suggestNameBtn.disabled = true;
+          var orig = suggestNameBtn.textContent;
+          suggestNameBtn.textContent = '…';
+          fetch(cfg.suggest_name_url, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({code: code, lang: langSelect.value || ''}),
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          }).then(function(res) {
+            var name = (res && (res[nameF] || res.name) || '').trim();
+            if (!name) throw new Error('no name came back');
+            nameInput.value = name;
+            nameInput.focus();
+          }).catch(function(err) {
+            showToast('Suggest failed: ' + (err && err.message || err));
+          }).then(function() {
+            suggestNameBtn.disabled = false;
+            suggestNameBtn.textContent = orig;
+          });
+        },
+      }, ['✨']);
+    }
+
     var saveBtn = el('button', {class: 'ui-row-btn primary', onclick: function(){ saveSnippet(); }}, ['Save']);
     var copyBtn = el('button', {class: 'ui-row-btn', onclick: function(){ copyEditor(); }}, ['Copy']);
     var newBtn  = el('button', {class: 'ui-row-btn', onclick: function(){ openSnippet(null); }}, ['New']);
@@ -111,6 +147,7 @@
     var revGroup = revNav.group;
 
     var toolbarKids = [nameInput];
+    if (suggestNameBtn) toolbarKids.push(suggestNameBtn);
     if (revGroup) toolbarKids.push(revGroup);
     toolbarKids.push(langSelect);
     toolbarKids.push(varsBtn);

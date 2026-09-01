@@ -1908,10 +1908,6 @@ type ChatPanel struct {
 	// Debate uses this for the "Suggest a topic" button.
 	PrefillURL   string `json:"prefill_url,omitempty"`
 	PrefillLabel string `json:"prefill_label,omitempty"` // default "Suggest"
-	// SessionArchiveURL — when set, each session in the sidebar gets
-	// an Archive toggle action. POSTed with the session id; server
-	// flips the archive flag and returns the new state.
-	SessionArchiveURL string `json:"session_archive_url,omitempty"`
 	// ToolsURL — when set, the modes bar shows an expandable
 	// "N tools" badge that fetches the URL on first open. Server
 	// returns a JSON array of {name, desc}. Useful for showing the
@@ -2002,17 +1998,16 @@ type PipelinePanel struct {
 	// server emits a session event without a separate title.
 	Fields []PipelineField `json:"fields,omitempty"`
 
-	// Prefill — button that fetches a suggestion and either drops it
-	// straight into the field named by PrefillTarget ("text" mode) or
-	// pops a list of clickable choices ("list" mode). List mode
-	// expects the response to be a JSON array; each entry uses
-	// PrefillListQuestionField (default "question") for the value
-	// inserted into the field, and PrefillListHookField (default
-	// "hook") for an optional muted second line shown alongside.
+	// Prefill — button that fetches a suggestion for the field named by
+	// PrefillTarget. The RESPONSE decides how it lands, so there is no mode to
+	// declare: a JSON array pops a list of clickable choices, an object or a
+	// bare string drops straight into the field. Each list entry uses
+	// PrefillListQuestionField (default: topic / text / question) for the value
+	// inserted, and PrefillListHookField (default: hook / description /
+	// summary) for an optional muted second line.
 	PrefillURL               string `json:"prefill_url,omitempty"`
 	PrefillLabel             string `json:"prefill_label,omitempty"`
 	PrefillTarget            string `json:"prefill_target,omitempty"` // field name to populate
-	PrefillMode              string `json:"prefill_mode,omitempty"`   // "text" (default) | "list"
 	PrefillListQuestionField string `json:"prefill_list_question_field,omitempty"`
 	PrefillListHookField     string `json:"prefill_list_hook_field,omitempty"`
 	// PrefillMethod — HTTP method used to fetch suggestions.
@@ -2867,7 +2862,6 @@ type CodeWriterPanel struct {
 	SuggestNameURL   string `json:"suggest_name_url,omitempty"`
 	RevisionsListURL string `json:"revisions_list_url,omitempty"` // GET {id}
 	RevisionLoadURL  string `json:"revision_load_url,omitempty"`  // GET {revid}
-	MarkLatestURL    string `json:"mark_latest_url,omitempty"`    // POST {revid}
 	ValuesListURL    string `json:"values_list_url,omitempty"`
 	ValueURL         string `json:"value_url,omitempty"` // GET/PUT/DELETE {id}
 	ContextsListURL  string `json:"contexts_list_url,omitempty"`
@@ -2946,7 +2940,6 @@ type CodeWriterPanel struct {
 	NameField string `json:"name_field,omitempty"` // default "name"
 	LangField string `json:"lang_field,omitempty"` // default "lang"
 	CodeField string `json:"code_field,omitempty"` // default "code"
-	VarsField string `json:"vars_field,omitempty"` // default "vars"
 	DateField string `json:"date_field,omitempty"` // default "date"
 
 	// Languages populates the lang dropdown. Leave nil to use defaults
