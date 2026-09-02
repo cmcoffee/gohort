@@ -176,6 +176,8 @@ register is eating it. Same information the refusal gives the agent.
 
 ## Staging
 
+*(Steps 1 and 2 built, v0.6.552.)*
+
 1. **The parser.** `splitSections` / `joinSections` / `ApplyNoteSection` in
    `core/notes`, with the round-trip property test and the cases that break naive
    splitting: a `##` inside a fenced code block, a heading with trailing
@@ -193,6 +195,12 @@ register is eating it. Same information the refusal gives the agent.
 
 Steps 1 and 2 are the feature. 3 through 5 are what stop it becoming a thing
 only the model knows about.
+
+One thing the build added that the scope did not name: a section write splices
+into the RESOLVED notes, seed included. An agent configured with SeedNotes whose
+store is still empty would otherwise have its first section write silently
+discard the notes it was set up with — the seed renders in the prompt but is not
+stored, so a splice against storage alone starts from blank.
 
 ## Explicitly out of scope
 
