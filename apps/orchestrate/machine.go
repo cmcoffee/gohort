@@ -518,6 +518,66 @@ func (t *chatTurn) priorWorkForJudge() []string {
 	return append([]string(nil), t.priorWork...)
 }
 
+// judgeReportWindow / judgeReportsShown bound what priorReportsForJudge reads
+// and hands over: a standing thread can hold hundreds of reports, and the judge
+// needs to know they exist, not to re-read the day.
+const (
+	judgeReportWindow = 40
+	judgeReportsShown = 8
+)
+
+// priorReportsForJudge names the automated reports already filed into this
+// thread — standing runs, monitor wakes, recurring tasks — that a reply may be
+// recapping.
+//
+// This is the Cortex shape of the PriorWork gap. The thread's whole purpose is
+// that scheduled work reports into it, so "just wrapped today's engagement
+// cycle, three comments landed" is a summary of messages sitting in the
+// conversation — while the judge's evidence, which covers only the turn now
+// answering, says no tool ran. It convicted the reply, and the correction sent
+// the agent off to redo work it had already done.
+//
+// Producer and opening line only. The judge needs to know the work happened and
+// roughly what it was; the bodies are what make these threads enormous in the
+// first place.
+func (t *chatTurn) priorReportsForJudge() []string {
+	if t.session == nil {
+		return nil
+	}
+	msgs := t.session.Messages
+	if len(msgs) > judgeReportWindow {
+		msgs = msgs[len(msgs)-judgeReportWindow:]
+	}
+	var out []string
+	for _, m := range msgs {
+		from := strings.TrimSpace(m.ReportFrom)
+		if from == "" {
+			continue
+		}
+		if line := judgeFirstLine(m.Content, 160); line != "" {
+			out = append(out, from+" — "+line)
+		} else {
+			out = append(out, from)
+		}
+	}
+	if len(out) > judgeReportsShown {
+		out = out[len(out)-judgeReportsShown:]
+	}
+	return out
+}
+
+// judgeFirstLine is the opening of a report, for a one-line mention of it.
+func judgeFirstLine(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if len(s) > max {
+		s = s[:max-1] + "…"
+	}
+	return s
+}
+
 // noteAttachedTools records what an attachment minted this turn, so the
 // phase filter can tell a GRANT apart from a selection. Additive: the
 // sources build and the pipelines build both call it.

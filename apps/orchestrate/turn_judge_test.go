@@ -276,3 +276,60 @@ func TestPromptRulesOutActionsThatAreNotListed(t *testing.T) {
 		}
 	}
 }
+
+// The Cortex shape of the PriorWork gap. A standing thread exists so that
+// scheduled work reports into it, so the ordinary thing to say there is a recap
+// — and a recap reaches the judge with an empty action list, because the runs
+// it describes happened in earlier turns.
+//
+// Reported live: "Just wrapped today's engagement cycle — three comments landed
+// across Tech, Philosophy, and the Palantir thread" was convicted as fabricated,
+// and the correction sent the agent to redo work it had already done.
+func TestReportsAlreadyFiledAreEvidence(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request:      "how did today go?",
+		Reply:        "Just wrapped today's engagement cycle — three comments landed.",
+		PriorReports: []string{"Engagement cycle — posted 3 comments (Tech, Philosophy, Palantir)"},
+	})
+	if !strings.Contains(msg, "Engagement cycle — posted 3 comments") {
+		t.Error("the judge must be shown the reports the reply is recapping")
+	}
+	if !strings.Contains(msg, "EARLIER turns") || !strings.Contains(msg, "KEPT") {
+		t.Error("and told why they are absent from the action list, or it convicts on the absence")
+	}
+	// Silent when there are none: an evidence line about an empty list is a
+	// prompt the judge has to reason past on every ordinary turn.
+	plain := turnJudgeEvidenceMessage(TurnClaimEvidence{Request: "hi", Reply: "hello"})
+	if strings.Contains(plain, "SCHEDULED RUNS") {
+		t.Error("a turn with no prior reports must not mention them")
+	}
+	// The rule has to be in the judge's instructions too — the evidence line
+	// alone leaves it to infer what an unexplained section means.
+	if !strings.Contains(turnJudgeSysPrompt, "scheduled runs already reported") {
+		t.Error("the KEPT list must name recaps of the agent's own standing work")
+	}
+}
+
+// Producer and opening line only. The bodies of these reports are what make a
+// standing thread enormous; the judge needs to know the work happened.
+func TestPriorReportsAreNamedNotQuoted(t *testing.T) {
+	turn := &chatTurn{session: &ChatSession{Messages: []ChatMessage{
+		{Role: "user", Content: "morning"},
+		{Role: "assistant", Content: "Engagement cycle done.\nPosted 3 comments.\nAll 201.",
+			ReportFrom: "Daily engagement"},
+		{Role: "assistant", Content: "an ordinary reply with no producer"},
+	}}}
+	got := turn.priorReportsForJudge()
+	if len(got) != 1 {
+		t.Fatalf("expected the one report, got %d: %v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0], "Daily engagement — Engagement cycle done.") {
+		t.Errorf("want producer and opening line, got %q", got[0])
+	}
+	if strings.Contains(got[0], "All 201") {
+		t.Error("the body is what makes these threads enormous; the judge gets the opening")
+	}
+	if (&chatTurn{}).priorReportsForJudge() != nil {
+		t.Error("no session, no reports")
+	}
+}

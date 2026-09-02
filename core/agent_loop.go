@@ -1286,6 +1286,10 @@ type AgentLoopConfig struct {
 	// turn's behalf; the loop's own accounting begins when the loop does.
 	// Nil, and the empty result, both read as "nothing ran before this".
 	PriorWork func() []string
+	// PriorReports supplies TurnClaimEvidence.PriorReports: the automated
+	// reports this agent's own scheduled runs already filed into the thread,
+	// which a reply may be recapping. Nil = none.
+	PriorReports func() []string
 
 	// Unattended marks a turn nobody is reading as it happens — a scheduled
 	// fire, a task wake, an autonomous run. Set by the host, which is the only
@@ -3582,6 +3586,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				Reply:         resp.Content,
 				ToolCalls:     turnToolCalls,
 				PriorWork:     cfg.priorWork(),
+				PriorReports:  cfg.priorReports(),
 				ToolErrors:    cumulativeToolErrors,
 				LastToolError: lastToolError,
 				Delivered:     cfg.deliveredCount(),
@@ -5006,6 +5011,15 @@ func (c AgentLoopConfig) priorWork() []string {
 		return nil
 	}
 	return c.PriorWork()
+}
+
+// priorReports is the host's account of what this agent's own scheduled runs
+// already filed into the thread. Nil-safe for the same reason.
+func (c AgentLoopConfig) priorReports() []string {
+	if c.PriorReports == nil {
+		return nil
+	}
+	return c.PriorReports()
 }
 
 func (c AgentLoopConfig) backgrounded() bool {

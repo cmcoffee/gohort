@@ -63,6 +63,20 @@ type TurnClaimEvidence struct {
 	// happened. Reported live, and it is the whole class: any turn whose work
 	// was done by a step rather than by the model answering.
 	PriorWork []string
+	// PriorReports names the automated reports already filed INTO THIS THREAD
+	// by this agent's own scheduled work — a standing run, a monitor wake, a
+	// recurring task. Each entry is the producer and the opening of what it
+	// filed.
+	//
+	// A different gap from PriorWork, and a wider one. PriorWork covers work
+	// done for THIS turn before the loop began; this covers work the agent did
+	// in an EARLIER turn and already told the user about. On a Cortex thread
+	// that is most of what there is to talk about, so "just wrapped today's
+	// engagement cycle — three comments landed" is a recap of the thread the
+	// judge is not shown, arriving at a judge whose entire evidence says no
+	// tool ran. Convicting it retracts a true reply and re-prompts the agent to
+	// go and do work it already did.
+	PriorReports []string
 	// ToolErrors counts the calls that failed.
 	ToolErrors int
 	// LastToolError is the most recent failure text, so the judge can tell a

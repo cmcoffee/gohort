@@ -7839,6 +7839,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// step did the searching as a turn that did nothing and convicts the
 		// reply for reporting it.
 		PriorWork: t.priorWorkForJudge,
+		// And what this agent's own scheduled runs already filed into the
+		// thread — the work a recap is about, which this turn did not do.
+		PriorReports: t.priorReportsForJudge,
 		// And whether the reply KNOWS what it asserts. Scope is the notes the
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.
@@ -8589,6 +8592,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// step did the searching as a turn that did nothing and convicts the
 		// reply for reporting it.
 		PriorWork: t.priorWorkForJudge,
+		// And what this agent's own scheduled runs already filed into the
+		// thread — the work a recap is about, which this turn did not do.
+		PriorReports: t.priorReportsForJudge,
 		// And whether the reply KNOWS what it asserts. Scope is the notes the
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.
