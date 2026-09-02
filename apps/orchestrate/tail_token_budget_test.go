@@ -116,3 +116,35 @@ func TestASmallWindowCapsTheBudget(t *testing.T) {
 		t.Error("the cap must still leave the turn itself")
 	}
 }
+
+// The weight of a standing thread is not in what anybody said. A monitor wake
+// or a standing report is a paragraph of content over pages of tool results,
+// and those results are replayed into the prompt — so a budget that weighs
+// Content alone never binds on the exact threads it exists for.
+//
+// Live: a cortex measured "4,635 tokens over 22 messages" by that reading and
+// reached the model at 151k by the loop's own, which counts the bodies.
+func TestTheBudgetWeighsToolResultsToo(t *testing.T) {
+	report := func(body string) ChatMessage {
+		return ChatMessage{Role: "assistant", Content: "Standing report filed.",
+			ToolCalls: []PersistedToolCall{{Name: "fetch_url", Result: body}}}
+	}
+	big := strings.Repeat("x", 80_000) // ~20k tokens of result apiece
+	tail := []ChatMessage{report(big), report(big), report(big), report(big)}
+
+	// By content alone these are ~6 tokens each and nothing would ever trim.
+	if content := EstimateTokens(tail[0].Content); content > 50 {
+		t.Fatalf("fixture is wrong: the CONTENT should be trivial, got %d tokens", content)
+	}
+	got := capTailTokens(tail, 262_144, "ag", "channel:ag")
+	if len(got) >= len(tail) {
+		t.Fatalf("all %d kept — the budget is still weighing what was said, not what it costs", len(tail))
+	}
+	total := 0
+	for _, m := range got {
+		total += chatMessageTokens(m)
+	}
+	if budget := TuneInt("tune_persistent_tail_tokens"); total > budget {
+		t.Errorf("kept ~%d tokens against a budget of %d", total, budget)
+	}
+}

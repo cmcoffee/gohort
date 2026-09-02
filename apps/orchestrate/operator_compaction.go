@@ -214,6 +214,13 @@ const tailWindowShareCapPct = 35
 // the FULL stored history and is not moved by this, so a message trimmed here is
 // still folded and archived normally later and stays reachable through
 // recall_history.
+//
+// AND IT MEASURES THE WHOLE MESSAGE. The first two versions of this weighed
+// Content alone, which on a standing thread is the smallest part of a message:
+// what a monitor wake or a standing report COSTS is the tool results hanging
+// off it. A live cortex read as "4,635 tokens over 22 messages" and went to the
+// model at 151k, so the budget never bound and the setting looked applied for a
+// second time. See chatMessageTokens.
 func capTailTokens(tail []ChatMessage, contextSize int, agentID, sessID string) []ChatMessage {
 	budget := TuneInt("tune_persistent_tail_tokens")
 	if budget <= 0 || len(tail) <= 1 {
@@ -227,7 +234,7 @@ func capTailTokens(tail []ChatMessage, contextSize int, agentID, sessID string) 
 	}
 	kept, total := 0, 0
 	for i := len(tail) - 1; i >= 0; i-- {
-		n := EstimateTokens(tail[i].Content)
+		n := chatMessageTokens(tail[i])
 		// The newest message is kept unconditionally: it is the turn.
 		if kept > 0 && total+n > budget {
 			break
@@ -241,6 +248,25 @@ func capTailTokens(tail []ChatMessage, contextSize int, agentID, sessID string) 
 	Log("[operator.compact] %s:%s tail trimmed to %d of %d messages (~%d tokens, %s %d) — a persistent thread's messages are reports, not turns",
 		agentID, sessID, kept, len(tail), total, why, budget)
 	return tail[len(tail)-kept:]
+}
+
+// chatMessageTokens estimates one stored message the way the model will see it:
+// what was said, plus every tool result persisted on it.
+//
+// The results are the weight. A standing report's own text is a paragraph; the
+// tool calls behind it carry the pages, and they are replayed into the prompt.
+// Counting only Content is how a thread measures small and arrives enormous.
+func chatMessageTokens(m ChatMessage) int {
+	n := EstimateTokens(m.Content)
+	for _, tc := range m.ToolCalls {
+		n += EstimateTokens(tc.Result) + EstimateTokens(tc.Err)
+		for _, v := range tc.Args {
+			if s, ok := v.(string); ok {
+				n += EstimateTokens(s)
+			}
+		}
+	}
+	return n
 }
 
 // operatorFoldInFlight single-flights the background fold per (agent, session).

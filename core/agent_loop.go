@@ -5692,15 +5692,37 @@ func EstimateTokens(text string) int {
 }
 
 // EstimateMessagesTokens sums the estimated token count across a slice
-// of Messages. Convenience wrapper for callers sizing think budgets
-// from a chat history. Counts content only — message-role overhead is
-// negligible at the scales DynamicThinkBudget cares about.
+// of Messages — content AND the tool-result bodies hanging off it.
+//
+// The bodies are the point. A message's own content is a sentence; a tool
+// result on it can be a hundred kilobytes, and a conversation's whole weight
+// routinely lives there rather than in anything anybody typed. This counted
+// content alone once, and the reading it produced ("history 4,635 tokens over
+// 22 messages") was off by a factor of thirty on a thread the loop's own
+// compaction measured at 151k — which is the sort of wrong that sends two
+// fixes at the wrong layer before anyone doubts the instrument.
+//
+// Message-role overhead is still ignored: negligible at the scales any caller
+// here cares about.
 func EstimateMessagesTokens(msgs []Message) int {
 	total := 0
-	for _, m := range msgs {
-		total += len(m.Content) / 4
+	for i := range msgs {
+		total += estimateMessageTokens(msgs[i])
 	}
 	return total
+}
+
+// estimateMessageTokens estimates one message: its content plus every tool
+// result carried on it. The single definition of "how big is a message",
+// shared by history compaction and by EstimateMessagesTokens, so two numbers
+// about the same conversation cannot disagree. Unexported — callers outside
+// core size whole histories, never one message.
+func estimateMessageTokens(m Message) int {
+	n := len(m.Content) / 4
+	for _, tr := range m.ToolResults {
+		n += len(tr.Content) / 4
+	}
+	return n
 }
 
 // compactHistory bounds the agent loop's working history so a long
@@ -5766,17 +5788,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 			budget = floor // never starve history below 25% of the window
 		}
 	}
-	msgTokens := func(m Message) int {
-		n := len(m.Content) / 4
-		for _, tr := range m.ToolResults {
-			n += len(tr.Content) / 4
-		}
-		return n
-	}
-	total := 0
-	for i := range msgs {
-		total += msgTokens(msgs[i])
-	}
+	total := EstimateMessagesTokens(msgs)
 	// Per-round breadcrumb — fires every compaction call so a long
 	// session's history trajectory is visible under --debug without
 	// waiting for an elision to fire the Log line below.

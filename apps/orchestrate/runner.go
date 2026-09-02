@@ -9354,6 +9354,10 @@ func logPromptComposition(kind, sessID, sys string, tools []AgentToolDef, msgs [
 		}
 	}
 	sysTokens := EstimateTokens(sys)
+	// EstimateMessagesTokens counts tool-result bodies, which is where a
+	// standing thread's weight actually lives — this line read "history 4635"
+	// against a conversation the loop measured at 151k while it counted only
+	// what was said.
 	histTokens := EstimateMessagesTokens(msgs)
 	Log("[orchestrate.orch] session=%s %s prompt~%d tokens = system %d + tools %d (%d) + history %d (%d msgs)",
 		sessID, kind, sysTokens+toolTokens+histTokens, sysTokens, toolTokens, len(tools), histTokens, len(msgs))
