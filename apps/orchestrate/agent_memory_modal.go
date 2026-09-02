@@ -337,6 +337,14 @@ const agentMemoryModalTemplate = `<script>
       notesStatus.style.cssText = 'color:var(--text-mute);font-size:0.76rem';
       notesBar.appendChild(notesStatus);
       notesWrap.appendChild(notesBar);
+      // What each register costs. The agent names its own sections and one of
+      // them eventually eats the block; the total alone says it is full and not
+      // which part to trim. Server-measured (see notes.SectionSizes) and
+      // refreshed on load and after each save, so this and the refusal the
+      // agent gets quote the same number rather than two parsers' opinions.
+      var notesSizes = document.createElement('div');
+      notesSizes.style.cssText = 'margin-top:0.35rem;color:var(--text-mute);font-size:0.74rem';
+      notesWrap.appendChild(notesSizes);
       body.appendChild(notesWrap);
 
       var notesCap = 0;
@@ -349,6 +357,21 @@ const agentMemoryModalTemplate = `<script>
         notesMeta.style.color = n > notesCap ? 'var(--danger,#ff7b72)' : 'var(--text-mute)';
       }
       notesArea.addEventListener('input', function() { notesCount(); notesStatus.textContent = ''; });
+      function renderNotesSizes(sections) {
+        // Only worth showing once there is a choice to make: naming the single
+        // section of a one-section block tells the reader what they can already
+        // see. Editing goes stale until the next save, which is honest — this
+        // is a measurement of what is STORED.
+        if (!sections || sections.length < 2) { notesSizes.textContent = ''; return; }
+        notesSizes.textContent = 'Sections: ' + sections.slice(0, 4).map(function(x) {
+          return x.name + ' (' + x.runes + ')';
+        }).join(', ') + (sections.length > 4 ? ', …' : '');
+      }
+      function refreshNotesSizes() {
+        fetch(MEMBASE + 'notes').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
+          if (d) renderNotesSizes(d.sections);
+        }).catch(function() {});
+      }
       function notesPut(text, okMsg) {
         notesStatus.style.color = 'var(--text-mute)';
         notesStatus.textContent = 'Saving...';
@@ -360,6 +383,7 @@ const agentMemoryModalTemplate = `<script>
           if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
           notesStatus.textContent = okMsg;
           notesCount();
+          refreshNotesSizes();
         }).catch(function(e) {
           notesStatus.style.color = 'var(--danger,#ff7b72)';
           notesStatus.textContent = String(e.message || e);
@@ -391,6 +415,7 @@ const agentMemoryModalTemplate = `<script>
         notesCap = d.cap || 0;
         notesArea.value = d.text || '';
         notesCount();
+        renderNotesSizes(d.sections);
         if (d.from_seed) {
           notesStatus.textContent = 'Showing the configured seed — the agent has not written notes yet.';
         } else if (d.updated_at && String(d.updated_at).indexOf('0001-01-01') !== 0) {

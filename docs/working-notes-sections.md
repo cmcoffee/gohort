@@ -170,13 +170,18 @@ The Memory modal's Working notes textarea already edits the raw document, so it
 works on day one with no change — sections are visible as headings because they
 ARE headings.
 
-Worth adding after, not before: the character counter showing the largest
-section beside the total, so an owner looking at a full block can see which
-register is eating it. Same information the refusal gives the agent.
+A line under the counter now names what each register costs, biggest first —
+the same measurement the over-cap refusal quotes at the agent. Served by
+`notes.SectionSizes` rather than counted in the browser: a second parser would
+disagree the first time a heading appeared inside a code fence, and then the
+person trimming the block and the model trimming it would be reading two
+different numbers. It refreshes on load and after each save, and stays quiet
+below two sections — naming the only section of a one-section block tells the
+reader what they can already see.
 
 ## Staging
 
-*(Steps 1 and 2 built, v0.6.552.)*
+*(Built, v0.6.552-553.)*
 
 1. **The parser.** `splitSections` / `joinSections` / `ApplyNoteSection` in
    `core/notes`, with the round-trip property test and the cases that break naive

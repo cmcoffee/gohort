@@ -104,6 +104,12 @@ func (T *OrchestrateApp) handleAgentNotes(w http.ResponseWriter, r *http.Request
 			// operator at a Linux package. The panel hides itself instead.
 			"can_enable": !isAppAgent(agentID),
 			"cap":        OperatingNotesCap,
+			// What each register costs, biggest first — the same measurement
+			// the over-cap refusal quotes at the agent. Served rather than
+			// computed in the panel so the person trimming the block and the
+			// model trimming it read one number; a browser-side count would
+			// disagree the first time a heading appeared inside a code fence.
+			"sections": notes.SectionSizes(eff.Text),
 			// Distinguishes "the agent wrote this" from "nobody has written
 			// anything, you're looking at the configured seed" — clearing is
 			// meaningless in the second case, and the panel says which it is.
@@ -113,14 +119,32 @@ func (T *OrchestrateApp) handleAgentNotes(w http.ResponseWriter, r *http.Request
 	case http.MethodPost:
 		var body struct {
 			Text string `json:"text"`
+			// Optional, and the same semantics update_notes has: replace one
+			// named part, remove it when the text is empty, leave the rest
+			// alone. The owner's path and the agent's path go through one
+			// implementation because two of them is how they come to disagree
+			// about where a note lives.
+			Section string `json:"section"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		text := strings.TrimSpace(body.Text)
+		if section := strings.TrimSpace(body.Section); section != "" {
+			next, err := notes.ApplyNoteSection(ResolveOperatingNotes(udb, ns, a.SeedNotes).Text, section, text)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			text = next
+		}
 		if n := len([]rune(text)); n > OperatingNotesCap {
-			http.Error(w, fmt.Sprintf("notes are %d characters, over the %d limit", n, OperatingNotesCap), http.StatusBadRequest)
+			msg := fmt.Sprintf("notes are %d characters, over the %d limit", n, OperatingNotesCap)
+			if advice := notes.OverCapAdvice(text); advice != "" {
+				msg += ". " + advice
+			}
+			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
 		if _, over := SaveOperatingNotes(udb, ns, text); over {

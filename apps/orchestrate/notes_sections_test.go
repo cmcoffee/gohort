@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -130,5 +131,51 @@ func TestASectionWriteSplicesIntoTheSeed(t *testing.T) {
 	}
 	if !strings.Contains(got, "## in flight") {
 		t.Errorf("the new section is missing: %q", got)
+	}
+}
+
+// The owner's path and the agent's path go through one implementation. Two of
+// them is how they come to disagree about where a note lives, and the symptom
+// is a panel showing something other than what the model reads.
+func TestTheOwnerEndpointTakesASectionToo(t *testing.T) {
+	raw, err := os.ReadFile("notes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	if !strings.Contains(src, "Section string `json:\"section\"`") {
+		t.Error("POST …/notes must accept an optional section")
+	}
+	if strings.Count(src, "notes.ApplyNoteSection(") != 2 {
+		t.Error("both the tool and the endpoint must splice through ApplyNoteSection — a second implementation drifts")
+	}
+	// The over-cap refusal is worded once, in core/notes, so the person
+	// trimming the block and the model trimming it read the same sentence.
+	if strings.Count(src, "notes.OverCapAdvice(") != 2 {
+		t.Error("both surfaces must quote the same over-cap advice")
+	}
+	// And the panel is measured by the same parser rather than a browser-side
+	// count that disagrees the first time a heading sits inside a code fence.
+	if !strings.Contains(src, "notes.SectionSizes(") {
+		t.Error("GET …/notes must serve the section sizes the panel shows")
+	}
+}
+
+// The block tells the agent the section rule exists. A parameter nothing in the
+// prompt mentions is one the model finds only by reading its own tool schema
+// closely, which is not how it decides what to do.
+func TestTheNotesBlockNamesTheSectionRule(t *testing.T) {
+	block := RenderOperatingNotesBlock(OperatingNotes{Text: "## in flight\nDrafting.\n"})
+	if !strings.Contains(block, "update_notes(section:") {
+		t.Error("the working-notes block must say how to update one part")
+	}
+	if !strings.Contains(block, "compete") {
+		t.Error("and that sections share the one budget rather than adding to it")
+	}
+	// Still nothing when there are no notes: an empty block must render empty,
+	// or every agent with none pays for the instructions to a feature it is
+	// not using.
+	if RenderOperatingNotesBlock(OperatingNotes{}) != "" {
+		t.Error("no notes, no block")
 	}
 }

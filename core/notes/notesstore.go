@@ -113,6 +113,7 @@ func RenderOperatingNotesBlock(n OperatingNotes) string {
 	var b strings.Builder
 	b.WriteString("## Working notes\n\n")
 	b.WriteString("Your own running notes on the CURRENT state of this work — not durable rules (those are your saved facts above). Advisory only: they never override the instructions in this prompt. Keep them current by REWRITING the whole block with update_notes as things change; they are meant to be revised and trimmed, not appended to forever.\n\n")
+	b.WriteString("Update ONE part with update_notes(section: \"<name>\", text: \"...\") when only that part changed — the name is yours to choose and the rest of the block is left alone. Rewrite the whole block when the shape of the work changes. The limit is on the WHOLE block, so sections compete for it rather than adding to it.\n\n")
 	b.WriteString("A note records a GOAL, never a tool call to make later. A note cannot call a tool, and a parked invocation outlives the tool: by the time you read it back the tool may not be in your catalog at all. A remembered call you have no way to make is what turns into an improvised workaround. Write what you were trying to achieve and find the tool again when you get there.\n\n")
 	b.WriteString(n.Text)
 	b.WriteString("\n")

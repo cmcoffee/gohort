@@ -151,6 +151,31 @@ func tidy(text string) string {
 	return text + "\n"
 }
 
+// SectionSize is one register and what it costs, biggest first.
+//
+// The same measurement the over-cap refusal quotes at the agent, served to the
+// owner's panel — so the person trimming the block and the model trimming it
+// are reading the same number. A second count computed in the browser would
+// disagree the first time a heading appeared inside a code fence.
+type SectionSize struct {
+	Name  string `json:"name"` // "(untitled)" for the text above the first heading
+	Runes int    `json:"runes"`
+}
+
+// SectionSizes measures each section of a document, largest first.
+func SectionSizes(text string) []SectionSize {
+	var out []SectionSize
+	for _, s := range splitSections(text) {
+		name := s.name
+		if name == "" {
+			name = "(untitled)"
+		}
+		out = append(out, SectionSize{Name: name, Runes: len([]rune(s.raw))})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Runes > out[j].Runes })
+	return out
+}
+
 // OverCapAdvice names the biggest sections of a document, for the message an
 // over-cap write gets back.
 //
@@ -159,29 +184,16 @@ func tidy(text string) string {
 // Both the tool and the HTTP surface use this, so they cannot word the same
 // refusal two ways.
 func OverCapAdvice(text string) string {
-	secs := splitSections(text)
-	type row struct {
-		name  string
-		runes int
-	}
-	var rows []row
-	for _, s := range secs {
-		name := s.name
-		if name == "" {
-			name = "(untitled)"
-		}
-		rows = append(rows, row{name, len([]rune(s.raw))})
-	}
+	rows := SectionSizes(text)
 	if len(rows) < 2 {
 		return "" // one section is not a choice; there is nothing to name
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].runes > rows[j].runes })
 	if len(rows) > 3 {
 		rows = rows[:3]
 	}
 	parts := make([]string, 0, len(rows))
 	for _, r := range rows {
-		parts = append(parts, fmt.Sprintf("%q (%d)", r.name, r.runes))
+		parts = append(parts, fmt.Sprintf("%q (%d)", r.Name, r.Runes))
 	}
 	return "Largest sections: " + strings.Join(parts, ", ") + "."
 }
