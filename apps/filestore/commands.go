@@ -112,7 +112,45 @@ type StoreCommand struct {
 	// key"). Only meaningful when TwoPhase.
 	InputLabel string `json:"input_label,omitempty"`
 	Help       string `json:"help,omitempty"`
+
+	// --- what mapping this command produced -----------------------------
+	//
+	// One record, not two. A command IS the tool; these fields are how an
+	// agent makes use of it. The arrangement this replaces stored the mapping
+	// as a separate toolbox that then had to be ATTACHED back to the folder
+	// its command was already registered against — a second noun, a second
+	// table and a second approval for a thing that never existed apart from
+	// the command it came from. Deleting the command now takes its tools with
+	// it, and there is no state in which one exists without the other.
+
+	// Tools is one action per thing the binary does, written by the mapping
+	// conversation onto the row it was opened from.
+	Tools []TempToolAction `json:"tools,omitempty"`
+	// ToolDesc is what this binary is FOR, in a sentence, as an agent reads it
+	// before opening the bundle. Distinct from Help, which is written for the
+	// person clicking the button.
+	ToolDesc string `json:"tool_desc,omitempty"`
+	// Approved is the gate, and the only one: off, the mapping is inert; on,
+	// every agent that reaches this folder can call these actions with
+	// arguments of its own choosing.
+	//
+	// Worth its own switch even though an admin registered the binary and can
+	// already run it by hand. Running one command on one folder because you
+	// chose to is not the same grant as an agent calling it unattended, and
+	// the mapping that decided WHAT it can be called with was written by a
+	// model. Off by default: a proposal is not an approval.
+	Approved bool `json:"approved,omitempty"`
 }
+
+// ToolName is the tool an approved command is offered as. The store's slug
+// folds in so two folders carrying commands of the same name cannot collide in
+// one agent's catalog — the same reason the store's own tools carry it.
+func (a StoreCommand) ToolName() string {
+	return RefToolSlug(a.Name + "_" + a.Slug)
+}
+
+// Mapped reports whether this command has been mapped into anything callable.
+func (a StoreCommand) Mapped() bool { return len(a.Tools) > 0 }
 
 func commandKey(slug, name string) string { return slug + "/" + name }
 

@@ -4,29 +4,22 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/snugforge/kvlite"
 )
 
+// mappingFixture is a folder with one command registered against it, reached
+// through the tools the mapping conversation actually hands the agent.
 func mappingFixture(t *testing.T) (*FileStoreApp, Store, StoreCommand) {
 	t.Helper()
-	app := &FileStoreApp{}
-	app.DB = &DBase{Store: kvlite.MemStore()}
-	return app,
-		Store{Slug: "bundles", Name: "Support bundles"},
-		StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Decrypt bundle", Command: "/opt/bin/cap"}
+	return commandFixture(t)
 }
 
-// What mapping produces lands on the command it came from. That round trip is
-// the whole correction: the reverted arrangement wrote loose tools into the
-// global tool list, where they read as orphaned until someone found a different
-// expander and bound them.
-func TestAMappedToolboxLandsOnItsCommand(t *testing.T) {
+// What mapping produces lands on the command it came from, because there is
+// nowhere else for it to land: the actions are fields on that record.
+func TestAMappingLandsOnItsCommandRecord(t *testing.T) {
 	app, st, cmd := mappingFixture(t)
 
-	msg, err := app.proposeToolbox(st, cmd, map[string]any{
-		"name": "capture_tools", "description": "What the capture binary does.",
+	msg, err := app.proposeTools(st, cmd, map[string]any{
+		"description": "What the capture binary does.",
 		"actions": `[{"name":"unpack","description":"Unpack a capture.",
 		             "command_template":"/opt/bin/cap unpack {folder}",
 		             "params":{"folder":{"type":"string","description":"subfolder"}},
@@ -35,21 +28,38 @@ func TestAMappedToolboxLandsOnItsCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tb, ok := LoadToolbox(app.DB, "capture_tools")
-	if !ok {
-		t.Fatal("the toolbox was not stored")
-	}
-	if tb.FromStore != "bundles" || tb.FromCommand != "decrypt" {
-		t.Errorf("provenance is what puts it on the command's row: %+v", tb)
-	}
-	if got := ToolboxesMappedFrom(app.DB, "bundles"); len(got) != 1 {
-		t.Errorf("the command's folder must list it: %+v", got)
+	got, ok := LoadStoreCommand(app.DB, st.Slug, cmd.Name)
+	if !ok || len(got.Tools) != 1 {
+		t.Fatalf("the mapping was not written onto the command: %+v", got)
 	}
 
 	// The agent must be told its work is inert, or it will report success to a
-	// person who then waits for something to happen.
-	if !strings.Contains(msg, "cannot be called yet") || !strings.Contains(msg, "attach") {
+	// person who then waits for something to happen — and it must name the one
+	// switch that changes that.
+	if !strings.Contains(msg, "cannot be called yet") || !strings.Contains(msg, "Agents") {
 		t.Errorf("the reply must say it is inert and what makes it live: %q", msg)
+	}
+	// And the tool name it reports has to be the name in force.
+	if !strings.Contains(msg, got.ToolName()) {
+		t.Errorf("the reply must name the tool it made: %q", msg)
+	}
+}
+
+// A correction to an approved command is LIVE on save. Telling the agent it is
+// parked would leave an admin believing agents are still calling the old one.
+func TestTheReplySaysWhenACorrectionIsAlreadyLive(t *testing.T) {
+	app, st, cmd := mappingFixture(t)
+	mapIt(t, app, st, cmd)
+	if _, err := SetCommandApproved(app.DB, st.Slug, cmd.Name, true); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := app.proposeTools(st, cmd, map[string]any{
+		"description": "d", "actions": `[{"name":"unpack","command_template":"/opt/bin/cap unpack"}]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "LIVE") {
+		t.Errorf("a correction to an approved command must say it is already in force: %q", msg)
 	}
 }
 
@@ -58,8 +68,7 @@ func TestAMappedToolboxLandsOnItsCommand(t *testing.T) {
 func TestReMappingReplacesTheProposal(t *testing.T) {
 	app, st, cmd := mappingFixture(t)
 	mk := func(actions string) error {
-		_, err := app.proposeToolbox(st, cmd, map[string]any{
-			"name": "capture_tools", "description": "d", "actions": actions})
+		_, err := app.proposeTools(st, cmd, map[string]any{"description": "d", "actions": actions})
 		return err
 	}
 	if err := mk(`[{"name":"unpack","command_template":"/opt/bin/cap unpack"}]`); err != nil {
@@ -69,9 +78,9 @@ func TestReMappingReplacesTheProposal(t *testing.T) {
 	               {"name":"verify","command_template":"/opt/bin/cap verify"}]`); err != nil {
 		t.Fatalf("re-mapping the same command must be allowed: %v", err)
 	}
-	tb, _ := LoadToolbox(app.DB, "capture_tools")
-	if len(tb.Tool.Actions) != 2 {
-		t.Errorf("the correction must replace the proposal, got %d actions", len(tb.Tool.Actions))
+	got, _ := LoadStoreCommand(app.DB, st.Slug, cmd.Name)
+	if len(got.Tools) != 2 {
+		t.Errorf("the correction must replace the proposal, got %d actions", len(got.Tools))
 	}
 }
 
@@ -79,21 +88,21 @@ func TestReMappingReplacesTheProposal(t *testing.T) {
 // first time it is called, and nobody finds out until then.
 func TestProposalRejectsAnUndeclaredPlaceholder(t *testing.T) {
 	app, st, cmd := mappingFixture(t)
-	_, err := app.proposeToolbox(st, cmd, map[string]any{
-		"name": "capture_tools", "description": "d",
+	_, err := app.proposeTools(st, cmd, map[string]any{
+		"description": "d",
 		"actions": `[{"name":"unpack","command_template":"/opt/bin/cap unpack {folder} --key {key}",
 		              "params":{"folder":{"type":"string"}}}]`,
 	})
 	if err == nil || !strings.Contains(err.Error(), "key") {
 		t.Fatalf("the refusal must name the offending placeholder: %v", err)
 	}
-	if _, ok := LoadToolbox(app.DB, "capture_tools"); ok {
+	if got, _ := LoadStoreCommand(app.DB, st.Slug, cmd.Name); got.Mapped() {
 		t.Error("a refused proposal must not have been stored")
 	}
 }
 
 // Malformed input from a model is expected, not exceptional: it has to come back
-// as a sentence the agent can act on rather than as a stored half-toolbox.
+// as a sentence the agent can act on rather than as a stored half-mapping.
 func TestProposalHandlesBadActions(t *testing.T) {
 	app, st, cmd := mappingFixture(t)
 	for name, actions := range map[string]string{
@@ -101,8 +110,8 @@ func TestProposalHandlesBadActions(t *testing.T) {
 		"not an array": `{"name":"unpack"}`,
 		"empty":        ``,
 	} {
-		if _, err := app.proposeToolbox(st, cmd, map[string]any{
-			"name": "t", "description": "d", "actions": actions}); err == nil {
+		if _, err := app.proposeTools(st, cmd, map[string]any{
+			"description": "d", "actions": actions}); err == nil {
 			t.Errorf("%s: must be refused", name)
 		}
 	}

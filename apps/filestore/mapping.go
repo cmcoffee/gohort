@@ -1,27 +1,24 @@
 // The mapping conversation: working out what a registered command can do, and
-// writing it down as a toolbox on that command's own row.
+// writing it down on that command's own row.
 //
-// Step 4 of docs/local-command-tools.md. A registered command is one binary an
-// admin pointed at a folder, called as `<cmd> <folder>`. That shape is all
-// gohort knows about it — enough for a person to click, not enough for an agent
-// to use well. What it can actually DO lives in its --help and in trying it, and
-// only a person had ever read that.
+// A registered command is one binary an admin pointed at a folder, called as
+// `<cmd> <folder>`. That shape is all gohort knows about it — enough for a
+// person to click, not enough for an agent to use well. What it can actually DO
+// lives in its --help and in trying it, and only a person had ever read that.
 //
 // A conversation rather than a button, because the first --help rarely says
 // everything and what a flag MEANS is a judgement an admin should be able to
 // push back on before it becomes a description other agents trust.
 //
-// WHY THE AGENT NEEDS NO AUTHORITY. What it produces is inert. Mapping writes a
-// toolbox; nothing can call it until a person attaches it to a folder, and that
-// attachment is the approval. Probing runs only the ONE command this
-// conversation was opened on — an admin chose that binary, and the agent is
-// choosing flags for it.
+// WHY THE AGENT NEEDS NO AUTHORITY. What it produces is inert. Mapping writes
+// onto the command and nothing else; no agent can call any of it until an admin
+// turns Agents on for that command, on the same row, and that switch is the
+// approval. Probing runs only the ONE command this conversation was opened on —
+// an admin chose that binary, and the agent is choosing flags for it.
 //
-// And it lands where it came from. The toolbox carries FromStore/FromCommand, so
-// the command's row shows it the moment the conversation ends. The arrangement
-// this replaces (v0.6.537, reverted) wrote loose tools into the global tool list
-// where they read as orphaned, waiting to be found and bound from a different
-// expander.
+// And it lands where it came from, because there is nowhere else for it to
+// land. See command_tools.go: a mapping is fields on the command record, not a
+// noun of its own.
 
 package filestore
 
@@ -100,21 +97,20 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 		},
 		{
 			Tool: Tool{
-				Name: "propose_toolbox",
+				Name: "propose_tools",
 				Description: fmt.Sprintf(
-					"Write down what %s can do, as ONE toolbox with an action per thing it does. Propose narrow actions rather than one that takes a mode argument — unpack and verify are two actions, not one with a switch. The toolbox is inert: nobody can call it until an admin attaches it to a folder, so propose what you actually verified and say in each description what you did not. Calling this again REPLACES the previous proposal for this command, which is how you correct one.",
+					"Write down what %s can do, as one action per thing it does. Propose narrow actions rather than one that takes a mode argument — unpack and verify are two actions, not one with a switch. What you write is inert: no agent can call it until an admin turns Agents on for this command, so propose what you actually verified and say in each description what you did not. Calling this again REPLACES what you proposed before, which is how you correct it.",
 					cmd.Label),
 				Parameters: map[string]ToolParam{
-					"name":        {Type: "string", Description: "snake_case handle for the toolbox, e.g. \"capture_tools\". Name it for the BINARY, not for this folder — it will be attached to every folder of the same kind."},
-					"description": {Type: "string", Description: "What this binary is for, in a sentence. Read before the toolbox is opened."},
+					"description": {Type: "string", Description: "What this binary is for, in a sentence. It is what an agent reads before opening the bundle."},
 					"actions": {Type: "string", Description: "JSON array of actions: [{\"name\":\"unpack\",\"description\":\"...\",\"command_template\":\"/opt/bin/cap unpack {folder}\",\"params\":{\"folder\":{\"type\":\"string\",\"description\":\"...\"}},\"required\":[\"folder\"]}]. " +
 						"Every {placeholder} in a command_template must be declared in that action's params."},
 				},
-				Required: []string{"name", "description", "actions"},
+				Required: []string{"description", "actions"},
 				Caps:     []Capability{CapWrite},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				return T.proposeToolbox(st, cmd, args)
+				return T.proposeTools(st, cmd, args)
 			},
 		},
 	}
@@ -140,12 +136,12 @@ func (T *FileStoreApp) probeCommand(ctx context.Context, cmd StoreCommand, argLi
 	return out, nil
 }
 
-// proposeToolbox writes the mapped toolbox against the command it came from.
-func (T *FileStoreApp) proposeToolbox(st Store, cmd StoreCommand, args map[string]any) (string, error) {
+// proposeTools writes what mapping worked out onto the command it came from.
+func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]any) (string, error) {
 	var acts []TempToolAction
 	raw := strings.TrimSpace(stringArg(args, "actions"))
 	if raw == "" {
-		return "", Error("actions is required — a toolbox with none does nothing")
+		return "", Error("actions is required — a mapping with none does nothing")
 	}
 	if err := json.Unmarshal([]byte(raw), &acts); err != nil {
 		return "", Error("actions must be a JSON array of {name, description, command_template, params}: " + err.Error())
@@ -160,21 +156,19 @@ func (T *FileStoreApp) proposeToolbox(st Store, cmd StoreCommand, args map[strin
 			}
 		}
 	}
-	saved, err := SaveToolbox(T.DB, StoreToolbox{
-		Tool: TempTool{
-			Name:        stringArg(args, "name"),
-			Description: strings.TrimSpace(stringArg(args, "description")),
-			Actions:     acts,
-		},
-		FromStore:   st.Slug,
-		FromCommand: cmd.Name,
-	})
+	saved, err := SaveCommandTools(T.DB, st.Slug, cmd.Name, stringArg(args, "description"), acts)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(
-		"Mapped %s into the toolbox %q (%s). It shows on this command's row now, and it cannot be called yet: an admin attaches it to a folder under Toolboxes, and that attachment is the approval. Call this again to correct it.",
-		cmd.Label, saved.Tool.Name, countOf(len(saved.Tool.Actions), "action", "actions")), nil
+	live := "and it cannot be called yet: an admin turns Agents on for this command, on this row, and that switch is the approval"
+	if saved.Approved {
+		// A re-map of an already-approved command IS live on save. Saying
+		// otherwise would leave an admin believing a correction was parked
+		// when it had in fact replaced what agents are calling right now.
+		live = "and it is LIVE — this command is already approved for agents, so this replaces what they were calling"
+	}
+	return fmt.Sprintf("Mapped %s: %s as %s, %s. Call this again to correct it.",
+		cmd.Label, countOf(len(saved.Tools), "action", "actions"), saved.ToolName(), live), nil
 }
 
 // templatePlaceholders lists the {name} placeholders in a command template.

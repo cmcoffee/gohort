@@ -169,9 +169,9 @@ func storeToolNames(slug string) []string {
 	return []string{"list_" + slug, "search_" + slug, "read_" + slug, "list_" + slug + "_commands"}
 }
 
-// ItemToolsWithSession is ItemTools plus the toolboxes attached to this folder.
-// It needs a session because a mapped action runs with one — a workspace to work
-// in, a context to be cancelled by.
+// ItemToolsWithSession is ItemTools plus the approved commands mapped on this
+// folder. It needs a session because a mapped action runs with one — a
+// workspace to work in, a context to be cancelled by.
 func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
 	tools := s.ItemTools(user, itemID)
 	if sess == nil || len(tools) == 0 {
@@ -181,7 +181,7 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	if !ok {
 		return tools
 	}
-	return append(tools, s.attachedToolboxDefs(sess, user, st)...)
+	return append(tools, s.commandToolDefs(sess, user, st)...)
 }
 
 func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {

@@ -46,7 +46,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// (attachments and frozen path_scope refs are keyed on
 					// it) and looks broken unless the page says so.
 					{Field: "tools", Label: "Agent tools", Mute: true, Flex: 2},
-					{Field: "carries", Label: "Toolboxes", Mute: true},
+					{Field: "carries", Label: "Agent commands", Mute: true},
 					{Field: "assigned", Label: "Assigned to", Mute: true},
 					{Field: "retention", Label: "Retention", Mute: true},
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
@@ -66,7 +66,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// these were parts of one thing.
 					ui.Expand("Manage", ui.Stack{Children: []ui.Component{
 						ui.Card{HTML: folderPanelHeading("Commands",
-							"Binaries registered against this folder. A person runs one from Files; an agent can name which one a folder needs but never runs it. Mapping a command turns what it can do into a toolbox.")},
+							"Binaries registered against this folder. A person runs one from Files. Map a command and it becomes a tool as well — turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
 						ui.Table{
 							Source: "/filestore/api/commands?slug={slug}",
 							RowKey: "id",
@@ -74,19 +74,19 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								{Field: "label", Label: "Command", Flex: 1},
 								{Field: "command", Mute: true, Flex: 2},
 								{Field: "phases", Label: "Asks for input", Mute: true},
-								// The state that makes this row worth reading:
-								// what mapping produced, on the command it came
-								// from. There is no longer a place a toolbox can
-								// exist with nothing on screen explaining it.
-								{Field: "mapped", Label: "Mapped", Mute: true, Flex: 2},
+								// What mapping produced, on the command it came
+								// from. There is nowhere else it could be: the
+								// actions are fields on this record.
+								{Field: "mapped", Label: "As a tool", Mute: true, Flex: 2},
 							},
 							RowActions: []ui.RowAction{
-								// Opened from the command, and what it produces
-								// lands on the command. That round trip is the
-								// whole correction: the arrangement this
-								// replaces wrote loose tools into a global list
-								// where they read as orphaned, waiting to be
-								// found from a different expander.
+								// The approval, on the row it approves. Shown
+								// only once there is something to approve — a
+								// switch offering to enable nothing is a
+								// question the reader cannot answer.
+								{Type: "toggle", Field: "approved", Label: "Agents",
+									OnlyIf: "mapped_ok",
+									PostTo: "/filestore/api/commands/approve?id={id}"},
 								//
 								// Addressed by {id}, never by {name}. A nested
 								// table's placeholders are filled TWICE: once at
@@ -115,24 +115,24 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									// The composer stays for everything after.
 									Actions: []ui.ToolbarAction{
 										{Label: "Map it", Variant: "primary",
-											Title:  "Read its help, try what it needs to, and propose a toolbox",
-											Prompt: "Map this command. Read its help, try whatever you need to understand what it does, then propose a toolbox for it. Say what you verified and what you did not."},
+											Title:  "Read its help, try what it needs to, and write down what it can do",
+											Prompt: "Map this command. Read its help, try whatever you need to understand what it does, then write down what it can do. Say what you verified and what you did not."},
 										{Label: "Show its help",
 											Title:  "Just run the help flag and show the output",
 											Prompt: "Run this command's help flag and show me exactly what it printed. Do not propose anything yet."},
 										{Label: "Refine",
-											Title:  "Check the proposal against what the command really does, and correct it",
-											Prompt: "Check the toolbox you proposed against what the command actually does — run it again where you were guessing — and propose a corrected version."},
+											Title:  "Check what you wrote against what the command really does, and correct it",
+											Prompt: "Check what you wrote against what the command actually does — run it again where you were guessing — and propose a corrected version."},
 									},
-									EmptyText: "Map it, and what it finds is written as a toolbox on this row. " +
+									EmptyText: "Map it, and what it finds lands on this row as the actions an agent can call. " +
 										"It can run the binary to read its help and try things. " +
-										"Nothing it proposes can be called until you attach that toolbox to a folder under Toolboxes; the attachment is the approval.",
+										"Nothing it writes can be called until you turn Agents on for this command; that switch is the approval.",
 									Placeholder: "Or ask it something…",
 								}),
 								{Type: "button", Label: "Delete", Method: "DELETE",
 									PostTo:     "/filestore/api/commands?id={id}",
 									Variant:    "danger",
-									Confirm:    "Remove this command? The binary is left alone; the button for it disappears.",
+									Confirm:    "Remove this command? Its mapping goes with it; the binary is left alone.",
 									Optimistic: true},
 							},
 							EmptyText: "No commands registered against this folder.",
@@ -148,56 +148,6 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								Fields:      actionFormFields(),
 								Invalidate:  []string{"/filestore/api/commands"},
 							},
-						},
-
-						ui.Card{HTML: folderPanelHeading("Toolboxes",
-							"Capabilities that travel with this folder — an agent gets them only while this store is attached to it. A toolbox is mapped once and attached to every folder of the same kind, so a second folder costs an attachment rather than a re-mapping.")},
-						ui.Table{
-							Source: "/filestore/api/toolboxes?slug={slug}",
-							RowKey: "id",
-							Columns: []ui.Col{
-								{Field: "name", Label: "Toolbox", Flex: 1},
-								{Field: "actions", Mute: true},
-								{Field: "origin", Label: "Where from", Mute: true, Flex: 2},
-								{Field: "description", Label: "What it does", Mute: true, Flex: 2},
-							},
-							RowActions: []ui.RowAction{
-								// Detach removes the ATTACHMENT, never the
-								// toolbox. The mapping was work somebody did, and
-								// a folder deciding it no longer wants a
-								// capability is not a statement that the
-								// capability was wrong.
-								//
-								// {id}, not {name} — see the Map action above:
-								// the store row's own name would be substituted
-								// in at expand time, and a detach naming the
-								// FOLDER matches no attachment, so this removed
-								// nothing and said it had worked.
-								{Type: "button", Label: "Detach", Method: "DELETE",
-									PostTo:     "/filestore/api/toolboxes?slug={slug}&toolbox={id}",
-									Confirm:    "Detach this toolbox from this folder? It stays mapped and stays attached to any other folder using it.",
-									Optimistic: true,
-									Invalidate: []string{"/filestore/api/commands"}},
-							},
-							EmptyText: "No toolboxes attached. Map a command above, then attach what it produced.",
-						},
-						ui.ModalButton{
-							Label:    "+ Attach a toolbox",
-							Title:    "Attach a toolbox to this folder",
-							Subtitle: "Attaching is the approval — a mapped toolbox runs nowhere until a folder names it.",
-							Width:    "620px",
-							Body: ui.ACLPicker(ui.ACLPickerConfig{
-								OptionsSource: "/filestore/api/toolbox-candidates",
-								RecordSource:  "/filestore/api/stores?slug={slug}",
-								Field:         "toolboxes",
-								PostTo:        "/filestore/api/stores",
-								Method:        "POST",
-								Noun:          "toolbox",
-								Intro: "Attaching is the approval: a mapped toolbox runs nowhere until a folder names it. " +
-									"Anything mapped anywhere can be attached here — one binary mapped once serves every folder of the same kind.",
-								EmptyText:  "Nothing mapped yet. Map a command above first.",
-								Invalidate: []string{"/filestore/api/toolboxes", "/filestore/api/commands"},
-							}),
 						},
 
 						ui.Card{HTML: folderPanelHeading("Who may reach it", "")},
@@ -294,13 +244,13 @@ func (T *FileStoreApp) Routes() {
 	// the stored commands can be reached — so it is where the table rename gets
 	// finished. See MigrateStoreCommands.
 	MigrateStoreCommands(T.DB)
+	MigrateToolboxesOntoCommands(T.DB)
 	T.HandleFunc("/api/stores", T.handleStores)
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/commands/run", T.handleCommand)
 	T.HandleFunc("/api/commands", T.handleCommands)
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
-	T.HandleFunc("/api/toolboxes", T.handleToolboxes)
-	T.HandleFunc("/api/toolbox-candidates", T.handleToolboxCandidates)
+	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
 	T.HandleFunc("/api/folders", T.handleFolders)
 }
 
@@ -423,12 +373,12 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			// the Name column would suggest.
 			"tools": strings.Join(storeToolNames(st.Slug), ", "),
 			// What this folder CARRIES, as opposed to what it mints. A mapped
-			// toolbox is deliberately absent from the deployment tool list — it
+			// command is deliberately absent from the deployment tool list — it
 			// is a capability of a folder, not a tool of the installation — so
 			// the folder is the only place it can be seen, and a stores list
 			// that did not say would make a folder holding four capabilities
 			// look identical to one holding none.
-			"carries": storeCarriesLabel(T.DB, st),
+			"carries": storeCarriesLabel(T.DB, st.Slug),
 			// Stated on the row because it is the one setting whose effect
 			// is destructive and whose default (forever) is invisible.
 			"retention": retentionLabel(st),
@@ -489,28 +439,24 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 			if a.TwoPhase {
 				phases = chFirstNonEmpty(a.InputLabel, "yes")
 			}
-			// What mapping this command produced, on the command's own row.
-			// This is the whole point of the arrangement: a toolbox is shown
-			// where it came from, so there is no state in which one exists and
-			// nothing on screen explains it.
+			// What mapping produced, on the command's own row — and whether
+			// it is switched on. Mapped-but-off is the state worth naming:
+			// the work is done and nothing can use it, which looks identical
+			// to unmapped from any distance.
 			mapped := "Not mapped"
-			for _, tb := range ToolboxesMappedFrom(T.DB, a.Slug) {
-				if tb.FromCommand != a.Name {
-					continue
+			if a.Mapped() {
+				mapped = fmt.Sprintf("%s · %s", a.ToolName(), countOf(len(a.Tools), "action", "actions"))
+				if !a.Approved {
+					mapped += " · off"
 				}
-				mapped = fmt.Sprintf("%s · %s", tb.Tool.Name, countOf(len(tb.Tool.Actions), "action", "actions"))
-				if !storeHasToolbox(st, tb.Tool.Name) {
-					// Mapped but not attached HERE is the one state worth
-					// calling out: the work is done and the folder is not
-					// using it, which looks identical to unmapped otherwise.
-					mapped += " · not attached"
-				}
-				break
 			}
 			rows = append(rows, map[string]any{
 				"id": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
 				"name": a.Name, "label": a.Label, "command": a.Command,
 				"phases": phases, "two_phase": a.TwoPhase, "mapped": mapped,
+				// mapped_ok gates the Agents switch: a toggle offering to
+				// enable nothing is a question the reader cannot answer.
+				"mapped_ok": a.Mapped(), "approved": a.Approved,
 				"input_label": a.InputLabel, "help": a.Help,
 			})
 		}

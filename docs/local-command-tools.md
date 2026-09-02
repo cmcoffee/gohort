@@ -177,3 +177,74 @@ representation and the separate Tools picker.
 Reverting first is cleaner than migrating: nothing has been mapped in anger yet,
 and carrying a store-scoped tool table forward into a model that does not have
 one costs more than it saves.
+
+---
+
+# Addendum: the third noun goes away (v0.6.546)
+
+The model above shipped, and the first thing the user said about it was the same
+thing they had said about the arrangement it replaced:
+
+> why can't it just be the single record of the tool, the toolbox is just how it
+> makes use of the tool provided
+
+They were right, and the model above is why they had to say it twice. Mapping a
+command on a folder still cost a round trip through a *second* table on that same
+folder, to attach a record back to the command it had just been mapped from.
+
+## What changed
+
+**Two nouns, not three.** A store is a folder; a command is a binary registered
+against one. Mapping writes what a command can do ONTO that command:
+`StoreCommand.Tools`, `.ToolDesc`, `.Approved`. There is no toolbox record, no
+toolboxes table, no attachment list, and no Attach picker.
+
+```
+Support bundles   /var/log/bundles   4 subfolders   3 users
+
+  Commands
+    Decrypt bundle   /opt/bin/diag_decrypt   asks for input: Response key
+                     decrypt_bundles · 4 actions          [Agents ●] [Map] [Delete]
+    Unseal archive   /opt/bin/unseal
+                     Not mapped                                      [Map] [Delete]
+                                                            [ + Add a command ]
+  Who may reach it
+    …
+```
+
+**The approval survived; the attachment did not.** They were doing one job in the
+old model and it is worth keeping, because it is not the same act as
+registering: an admin registering a binary decides a PERSON may run it here,
+while approving decides an AGENT may call it unattended, with arguments a model
+chose, from a mapping a model wrote. It is now a switch on the command's own
+row, shown only once there is something to approve.
+
+**Deleting a command takes its mapping with it.** The orphan the original spec
+worked so hard to prevent is now impossible by construction rather than by
+provenance fields and a column that explains them.
+
+## What was given up
+
+Reuse. One binary mapped once could be attached to several folders. That was
+worth less than it looked: a command is registered per folder already, so a
+second folder was never free — it cost a registration, and the attachment only
+saved the *conversation*. If it bites, the answer is a "copy the mapping from…"
+action on the command row: still one record, still one place to look.
+
+## Migration
+
+`MigrateToolboxesOntoCommands` runs at startup. Each stored toolbox is folded
+onto the command it names, and the folder's attachment comes across AS the
+approval — an admin who approved something should not have to approve it again
+under a new name. A toolbox attached nowhere arrives unapproved; one whose
+command is gone is dropped. Idempotent, and the old table is emptied only after
+the command is written.
+
+## The lesson worth keeping
+
+Both wrong versions were wrong the same way: the mapping was given a life of its
+own, and then an interface had to exist to reconnect it to the thing it had
+never been separable from. The first version scattered it into a global list;
+the second gave it a table beside its own command. The question that would have
+caught both is *can this record exist without the one it describes?* — and if
+not, it is fields, not a noun.

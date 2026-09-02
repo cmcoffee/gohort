@@ -69,20 +69,13 @@ type Store struct {
 	// kind of thing to reclaim automatically at 3am.
 	RetentionDays int `json:"retention_days,omitempty"`
 
-	// Toolboxes names the mapped toolboxes attached to this folder — the
-	// capabilities that travel with it. An agent gets them only when the store
-	// is attached to it, and (being BoundOnly) they appear in no other catalog
-	// at all: a toolbox mapped from one deployment's capture binary has no
-	// business in every chat the user has.
+	// Toolboxes is dead weight kept for one reason: an existing deployment's
+	// attachments have to be readable ONCE so they can be carried onto the
+	// commands they belonged to. See MigrateToolboxesOntoCommands, which
+	// empties it. Nothing writes it, and a mapped command's approval now lives
+	// on the command.
 	//
-	// Names, not copies. The toolbox is stored once and referenced by every
-	// folder it runs in, so re-mapping a binary fixes it everywhere and a folder
-	// cannot accumulate a private fork of a toolbox that has since been
-	// corrected. A second folder of the same kind costs an entry here.
-	//
-	// Attaching is the approval. A mapping conversation can propose a toolbox;
-	// nothing can call it until a person names it on a folder, which is why the
-	// mapping agent needs no authority of its own.
+	// Deprecated: read by the migration and by nothing else.
 	Toolboxes []string `json:"toolboxes,omitempty"`
 }
 
