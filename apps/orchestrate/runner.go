@@ -7786,7 +7786,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// one of them is ever the answer. Cost is one marshal of the catalog per
 	// turn, against a request that is about to process every one of these
 	// tokens anyway.
-	logPromptComposition(sessID, sys, allTools, llmMsgs)
+	logPromptComposition("plan", sessID, sys, allTools, llmMsgs)
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
@@ -8559,6 +8559,13 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		hardCap = explorerHardCap
 	}
 	roundsUsed := 0
+	// The step's own composition. The plan round is not the turn: a turn runs
+	// one plan call and a call per step, each re-sending the whole catalog, and
+	// the usage report totals ALL of them — so a 43k prompt and a 212k turn are
+	// the same turn seen from two ends. Without this line the difference has to
+	// be inferred, and it was: the 212k read as one enormous prompt for days.
+	logPromptComposition(fmt.Sprintf("step %d", cur.ID), t.chatSessionID(), sysPrompt, tools,
+		[]Message{{Role: "user", Content: stepUser}})
 	resp, _, err := t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: stepUser}}, AgentLoopConfig{
 		SendGuardKey:         sendGuardKey,
 		SystemPrompt:         sysPrompt,
@@ -9339,7 +9346,7 @@ func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 // slow. The tool catalog is measured from its serialized form because that is
 // what the provider is sent; name and description alone would understate a
 // catalog whose weight is in its parameter schemas.
-func logPromptComposition(sessID, sys string, tools []AgentToolDef, msgs []Message) {
+func logPromptComposition(kind, sessID, sys string, tools []AgentToolDef, msgs []Message) {
 	toolTokens := 0
 	for _, td := range tools {
 		if b, err := json.Marshal(td.Tool); err == nil {
@@ -9348,6 +9355,6 @@ func logPromptComposition(sessID, sys string, tools []AgentToolDef, msgs []Messa
 	}
 	sysTokens := EstimateTokens(sys)
 	histTokens := EstimateMessagesTokens(msgs)
-	Log("[orchestrate.orch] session=%s prompt~%d tokens = system %d + tools %d (%d) + history %d (%d msgs)",
-		sessID, sysTokens+toolTokens+histTokens, sysTokens, toolTokens, len(tools), histTokens, len(msgs))
+	Log("[orchestrate.orch] session=%s %s prompt~%d tokens = system %d + tools %d (%d) + history %d (%d msgs)",
+		sessID, kind, sysTokens+toolTokens+histTokens, sysTokens, toolTokens, len(tools), histTokens, len(msgs))
 }
