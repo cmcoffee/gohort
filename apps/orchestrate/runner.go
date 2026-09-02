@@ -7780,6 +7780,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// was accounting for it: [agent_loop] turn time starts on the next line.
 	t.prep.done()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
+	// What the prompt is MADE OF, every turn. Without this, "the turn is slow
+	// and the prompt is 205k" is a number with nowhere to go: the system
+	// prompt, the tool catalog and the conversation are all plausible and only
+	// one of them is ever the answer. Cost is one marshal of the catalog per
+	// turn, against a request that is about to process every one of these
+	// tokens anyway.
+	logPromptComposition(sessID, sys, allTools, llmMsgs)
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
@@ -9322,4 +9329,25 @@ func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 		tpl = strings.ReplaceAll(tpl, "{tool_names}", strings.Join(names, ", "))
 	}
 	return tpl
+}
+
+
+// logPromptComposition reports the estimated token split of one turn's prompt.
+//
+// Rough by design: EstimateTokens is chars/4, and the point is proportion, not
+// precision — which of three things is big enough to be the reason a turn is
+// slow. The tool catalog is measured from its serialized form because that is
+// what the provider is sent; name and description alone would understate a
+// catalog whose weight is in its parameter schemas.
+func logPromptComposition(sessID, sys string, tools []AgentToolDef, msgs []Message) {
+	toolTokens := 0
+	for _, td := range tools {
+		if b, err := json.Marshal(td.Tool); err == nil {
+			toolTokens += len(b) / 4
+		}
+	}
+	sysTokens := EstimateTokens(sys)
+	histTokens := EstimateMessagesTokens(msgs)
+	Log("[orchestrate.orch] session=%s prompt~%d tokens = system %d + tools %d (%d) + history %d (%d msgs)",
+		sessID, sysTokens+toolTokens+histTokens, sysTokens, toolTokens, len(tools), histTokens, len(msgs))
 }
