@@ -16,11 +16,13 @@ does" for subjects Servitor does not cover.
 Three reasons, and the third is the one that bites later.
 
 - **Its transcript stays in its own session.** An investigation is dozens of
-  probe results; run inline, every one of them lands in the parent's persisted
-  history and is replayed into its prompt forever after. On a standing thread
-  that is unrecoverable — the parent gets slower every day and nothing in its
-  settings explains why. Dispatched, the parent receives the ANSWER and nothing
-  else.
+  probe results; put the probe tools in the parent's OWN catalog and every one
+  of them lands in its persisted history and is replayed into its prompt forever
+  after. On a standing thread that is unrecoverable — the parent gets slower
+  every day and nothing in its settings explains why. Dispatched, the parent
+  receives the ANSWER and nothing else. (A machine phase escapes this too, and
+  is the "built in" variant at the end of this doc: a transient phase runs on a
+  session of its own, before the turn's loop exists.)
 - **Read-only is a property of the sub-agent, not a promise in a prompt.** See
   reach, below.
 - **It accumulates its own picture.** The investigator's memory is about the
@@ -111,6 +113,83 @@ The parent needs one thing: to know when to hand over. Add a beat to ITS prompt:
 That last clause matters. A parent holding both the investigator and the
 subject's own tools will use the tools — they are closer — and the transcript
 lands in its thread, which is the thing this archetype exists to avoid.
+
+## Built into one agent, with no second record
+
+Everything above gives the parent an investigator it dispatches to. The other
+shape puts the investigation INSIDE the agent, as a transient machine phase, and
+it is the one most people actually want: one agent, one record, and the looking
+happens before the answer rather than because the model remembered to ask for it.
+
+It escapes the transcript problem for the same reason a delegate does. A
+transient phase runs during system-prompt assembly, before the turn's own loop
+exists, on a session of its own — its probe calls never enter the thread. What
+survives is the fields it declares, which arrive in the persona as
+`{state:<phase>.<field>}`.
+
+### The phase shape
+
+Two phases: a transient one that looks, and the resident one that answers.
+
+```
+machine_def(action: "create", name: "grounded_answers",
+  start: "look",
+  attach_to_agents: ["<the agent>"],
+  phases: [
+    { "name": "look", "desc": "Find out what is actually true right now.",
+      "reach": "read",
+      "think": "on",
+      "prompt": "The user asked: {input}\n\nFind out what is actually the case. Probe narrowly, read the result, then decide the next look. Record only what you SAW — no inferred versions, no assumed paths. Name what you could not determine.",
+      "output": [
+        {"name": "findings",     "type": "string", "desc": "What you established, each traceable to what produced it", "required": true},
+        {"name": "undetermined", "type": "string", "desc": "What you could not settle, and what would settle it"}
+      ],
+      "next": "answer" },
+
+    { "name": "answer", "desc": "Answer from what was found.", "resident": true,
+      "guard": "the user is asking about the CURRENT state of something rather than about what you already established",
+      "guard_to": "look",
+      "prompt": "Answer from these findings:\n\n{state:look.findings}\n\nNot established: {state:look.undetermined}\n\nDo not state a value that is not above. If the answer needs something not established, say so." }
+  ])
+```
+
+`attach_to_agents` in the same call: an unattached machine does nothing at all.
+
+### The three settings that carry it
+
+- **`reach: "read"`** — the gate, and the reason this is safe to run unattended.
+  A capability class, not a tool list, so it survives a catalog that moves. It
+  fails closed; see above.
+- **`think: "on"`** — transient phases default to thinking OFF, which is right
+  for a router and wrong here. Deciding what to probe next, and whether an
+  answer actually settles the question, is judgement.
+- **`guard` + `guard_to`** — what stops it investigating on every turn. The
+  machine starts at `look`, so the FIRST turn establishes the ground; after that
+  the cursor rests on `answer` and only returns to `look` when the guard fires.
+  Without the guard you pay a full investigation on "thanks, that's great".
+
+### What you give up
+
+**A memory of its own.** The separate investigator accumulates facts about the
+SUBJECT in its own namespace, which is what makes its second answer better than
+its first. A phase writes into the parent's memory, where findings about the
+subject mix with everything else that agent knows — or into phase state, which
+goes when the session does. Mitigate it by having the `look` phase `remember`
+what is durable and keep a working-notes SECTION per subject
+(`update_notes(section: "<subject>", …)`), so the subject's running picture stays
+separate from the rest of the parent's notes.
+
+**The choice of when.** The machine decides, not the model. That is the trade in
+both directions: a phase cannot forget to look, and it cannot decide that this
+particular turn did not need to.
+
+### Choosing between them
+
+- The agent's job IS the subject — a support agent whose every question is about
+  one system — build it in. Always look, then answer.
+- Investigating is occasional, or several agents want the same investigator, or
+  the subject deserves a memory that outlives one agent's sessions — use the
+  sub-agent. The second record earns itself.
 
 ## What to tell the user
 
