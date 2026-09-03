@@ -921,7 +921,15 @@ func machineSelectField(udb Database, user string) ui.FormField {
 	}
 	return ui.FormField{
 		Field: "machine", Type: "select", Label: "Phase machine", Options: opts,
-		Help: "Optional. A machine gives this agent PHASES it moves through and stays in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The persona above still supplies identity and voice — the machine supplies procedure. Sessions already open keep the machine they started with; this applies to new ones. Author machines from chat with the `machine` tool.",
+		Help: "Optional. A machine gives this agent PHASES it moves through and stays in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The persona above still supplies identity and voice — the machine supplies procedure. Sessions already open keep the machine they started with; this applies to new ones. " +
+			// The shape people ask for by name and cannot find, because it is
+			// not a setting anywhere: an agent that goes and LOOKS before it
+			// answers. It is a two-phase machine, and the reason it is not a
+			// checkbox here is that what \"look\" means — which tools, what
+			// counts as determined — is different for every subject, and a
+			// checkbox has nowhere to say it.
+			"This is also how you make an agent that INVESTIGATES before it answers: a first phase that goes and looks (set its reach to read-only, so it can inspect and never act), then a phase that answers only from what it found. Its probes never enter the conversation, so the thread stays small. " +
+			"Author machines from chat with the `machine` tool, or describe one in plain words at Extensions → Machines → Describe one.",
 	}
 }
 

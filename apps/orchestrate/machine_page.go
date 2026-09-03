@@ -643,7 +643,12 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
 					Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
-					Help:        "It runs a model, so it takes a moment. If it cannot produce something usable it says so here rather than failing quietly.",
+					Help: "It runs a model, so it takes a moment. If it cannot produce something usable it says so here rather than failing quietly. " +
+						// One shape named concretely, because it is the one
+						// people arrive wanting and describe badly: they ask
+						// for an agent that "checks first" and get a machine
+						// that reasons about checking.
+						"A shape worth asking for by name: a first step that goes and LOOKS, read-only, and a step that answers only from what it found.",
 				}},
 			},
 		}, {

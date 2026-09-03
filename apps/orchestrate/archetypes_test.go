@@ -1,11 +1,12 @@
 package orchestrate
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
-// TestArchetypeLibrary pins the embedded archetype docs: all three shapes load,
+// TestArchetypeLibrary pins the embedded archetype docs: every shape loads,
 // each has a non-empty summary, and slug resolution tolerates the aliases the
 // model is likely to use.
 func TestArchetypeLibrary(t *testing.T) {
@@ -109,5 +110,30 @@ func TestInvestigatorRecipeKeepsItsLoadBearingParts(t *testing.T) {
 	// short. An investigation that reports only findings reads as complete.
 	if !strings.Contains(a.Body, "Not determined") {
 		t.Error("the recipe must require the answer to name what it could not determine")
+	}
+}
+
+// The built-in variant is a two-phase machine, and nothing in the product said
+// so — which is why it kept being asked for as a setting. A checkbox cannot
+// carry it (what "look" means differs per subject), so the answer is a pointer
+// where the question arises: the agent editor's machine field, and the drafter.
+func TestTheLookBeforeAnsweringShapeIsSignposted(t *testing.T) {
+	for _, f := range []struct{ file, want string }{
+		{"page_agent.go", "INVESTIGATES before it answers"},
+		{"machine_page.go", "a first step that goes and LOOKS"},
+	} {
+		raw, err := os.ReadFile(f.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), f.want) {
+			t.Errorf("%s must point at the look-before-answering shape (%q)", f.file, f.want)
+		}
+	}
+	// And the pointer has to name the gate, or somebody builds an agent that
+	// can act while it is meant to be looking.
+	raw, _ := os.ReadFile("page_agent.go")
+	if !strings.Contains(string(raw), "read-only") {
+		t.Error("the signpost must say the looking phase is read-only")
 	}
 }
