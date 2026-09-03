@@ -106,6 +106,8 @@ func normalizeArchetypeSlug(s string) string {
 		return "knowledge_base"
 	case "chat", "assistant", "general", "conversation":
 		return "conversational"
+	case "investigate", "investigation", "probe", "scout", "inspector":
+		return "investigator"
 	}
 	return s
 }
