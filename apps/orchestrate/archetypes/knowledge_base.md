@@ -24,6 +24,14 @@ only answers from what I upload and admits when it doesn't know."
 - **Memory**: the corpus is the memory. Leave Reference memory off if you want a
   pure corpus reader; the grounding comes from the attached collection, not
   saved findings.
+- **rules vs. persona** — the no-outside-knowledge contract is the clearest case
+  in the library for `rules` rather than persona. It renders above memory and
+  above the persona and wins every conflict, which is exactly what you want from
+  "answer only from the attached corpus; when it does not cover the question, say
+  so rather than filling the gap from training". A persona sentence saying the
+  same thing is one voice among many in a long prompt, and the turn where it
+  matters is the turn something else is pulling the other way. The tight
+  allowlist is still the real guarantee; the rule is what governs the words.
 
 ## Orchestrator prompt — the shape
 

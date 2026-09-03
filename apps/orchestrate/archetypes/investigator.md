@@ -54,6 +54,12 @@ Three reasons, and the third is the one that bites later.
 - **gap_check** ON — it re-checks that the answer covers the question, which is
   exactly the failure an investigation makes: answering the part that was easy
   to find out.
+- **rules vs. persona** — `rules` renders above memory and above the persona and
+  wins every conflict. Two of the beats below are constraints rather than craft
+  and belong there: "never state a value you did not see" and "always say what
+  you could not determine". Both are what a model drops under pressure to produce
+  a clean answer, which is the moment they exist for. How to probe, how to
+  report, when to widen — persona.
 
 ## The read-only gate
 

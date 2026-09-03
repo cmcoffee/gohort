@@ -137,3 +137,32 @@ func TestTheLookBeforeAnsweringShapeIsSignposted(t *testing.T) {
 		t.Error("the signpost must say the looking phase is read-only")
 	}
 }
+
+// `rules` renders above memory and above the persona and wins every conflict —
+// the strongest slot in the prompt — and the word appeared in no recipe and
+// nowhere in Builder's own prompt. A parameter nothing teaches is a parameter
+// nothing uses: Builder wrote constraints into the persona, where they are one
+// voice among many on exactly the turn something else pulls the other way.
+//
+// Every recipe now says which of its beats are constraints and which are craft.
+func TestEveryRecipeSaysWhatBelongsInRules(t *testing.T) {
+	got := loadArchetypes()
+	if len(got) < 4 {
+		t.Fatalf("expected the library, got %d", len(got))
+	}
+	for _, a := range got {
+		if !strings.Contains(a.Body, "rules vs. persona") {
+			t.Errorf("%s: no guidance on rules vs persona", a.Slug)
+		}
+		// The reason, not just the pointer. "Put it in rules" without the
+		// precedence is advice a reader cannot apply to their own case.
+		if !strings.Contains(a.Body, "above the persona") {
+			t.Errorf("%s: must say WHY rules is the stronger slot", a.Slug)
+		}
+		// And a worked example: each shape has a different constraint worth
+		// promoting, which is the whole reason this is not one shared line.
+		if !strings.Contains(a.Body, "persona") || !strings.Contains(a.Body, "\"") {
+			t.Errorf("%s: needs a concrete rule to copy", a.Slug)
+		}
+	}
+}

@@ -23,6 +23,13 @@ questions from the internet with citations".
 - **gap_check** ON — re-checks the answer covers the question before finishing.
 - No attached collections by default (its corpus is the live web); attach one
   only if the user names a specific reference set to prefer.
+- **rules vs. persona** — `rules` renders above memory and above the persona and
+  wins every conflict, so the citation contract belongs there: "never state a
+  fact from training as if it were sourced — search it or say you could not
+  verify it". That is the one this archetype exists to hold, and it is precisely
+  the one a long persona loses on the turn a plausible answer is already in the
+  model's head. Decomposition style, citation FORMAT and the ask-vs-search
+  judgement stay in the persona; they are craft, not constraint.
 
 ## Orchestrator prompt — the shape
 

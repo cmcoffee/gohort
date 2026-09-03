@@ -23,6 +23,13 @@ default shape when no more specific archetype fits.
   the visible build-plan card.
 - **allow_private_mode** ON — surface the per-turn Private toggle for
   network-only-when-asked turns (personal notes, local-doc Q&A).
+- **rules vs. persona** — `rules` renders ABOVE memory and above the persona and
+  is framed as non-negotiable: when anything in the prompt conflicts with a rule,
+  the rule wins. So a constraint that must hold on every turn whatever else is
+  going on belongs there, not buried in a paragraph of voice. For a general
+  assistant that is usually about reach and disclosure — "never send a message on
+  my behalf without showing me the text first". Voice, approach and when to reach
+  for what stay in the persona, where the model can weigh them against the turn.
 
 ### The conductor variant
 
