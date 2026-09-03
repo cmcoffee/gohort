@@ -219,7 +219,16 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 			msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
 				monitorName, summary, brief)
-			if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, wakeAgent, wakeTarget, "", msg, false); err != nil {
+			// Stored as a monitor CARD, not as the owner's message. The
+			// direct path above has always recorded one; this path handed the
+			// same event to the agent as a user turn, so the owner's cortex
+			// showed the whole wake prompt — diff payload, closing instruction
+			// and all — in a bubble attributed to them.
+			if _, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
+				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
+				SubSessionID: wakeTarget, Message: msg,
+				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
+			}); err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 			}
 		}

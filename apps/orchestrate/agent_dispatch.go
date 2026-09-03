@@ -876,6 +876,23 @@ type AgentSyncRun struct {
 	AgentKey         string
 	SubSessionID     string
 	InjectionQueueID string
+	// InputReportFrom / InputReportKind mark the STORED input as something that
+	// HAPPENED rather than something the user typed — a monitor firing, a
+	// scheduled fire — naming the producer and its card kind.
+	//
+	// The live turn is unaffected: the message is still the user turn this run
+	// answers, because that is what it is. What changes is the record left
+	// behind. Without these, a monitor wake sat in the owner's cortex as their
+	// own message — the whole "[EVENT — monitor "x" fired] …" prompt, diff
+	// payload and closing instruction included, in a user bubble, as though
+	// they had typed it. It also read back to the model that way on the next
+	// turn, where an assistant-role card gets a fenced origin marker
+	// (llmHistoryContent) saying where it came from.
+	//
+	// Empty leaves every other caller exactly as it was: a channel inbound and
+	// a dispatch really are somebody's message.
+	InputReportFrom string
+	InputReportKind string
 	// DeliverySessionID is the CONVERSATION anything this run starts in the
 	// background must come home to. A dispatch runs under its own sub-session
 	// id so its ephemeral state stays off the caller's thread; a picture
@@ -1188,6 +1205,23 @@ func buildInboundImageRecord(sender string, count int, captions []string) string
 
 // RunAgentSyncContinuing is the text-only wrapper kept for existing callers
 // (goal conversations, dispatch_agent, event-monitor wakes).
+// storedRunInput is the record a run leaves of what it was asked.
+//
+// Ordinarily the user turn, verbatim. When the caller says the input was an
+// EVENT (InputReportFrom), it is stored as a report card instead — the same
+// shape a standing report, a monitor's direct-mode trace and a channel
+// observation already use, which is what makes it render as a card and reach
+// the model with a fenced origin marker rather than as the owner's own words.
+func storedRunInput(run AgentSyncRun, text string, now time.Time) ChatMessage {
+	if from := strings.TrimSpace(run.InputReportFrom); from != "" {
+		return ChatMessage{
+			Role: "assistant", Content: text, Created: now,
+			ReportFrom: from, ReportKind: strings.TrimSpace(run.InputReportKind),
+		}
+	}
+	return ChatMessage{Role: "user", Content: text, Created: now, Sender: run.MessageSender}
+}
+
 func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string, freshSession bool) (string, error) {
 	res, err := T.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 		AgentOwner: agentOwner, RuntimeUser: runtimeUser, AgentKey: agentKey,
@@ -1792,7 +1826,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			priorSession.Messages = append(priorSession.Messages, latest.Messages[baseCount:]...)
 		}
 		priorSession.Messages = append(priorSession.Messages,
-			ChatMessage{Role: "user", Content: deliveredMessage, Created: now, Sender: run.MessageSender},
+			storedRunInput(run, deliveredMessage, now),
 			// ToolCalls is what a replayed turn shows as its tool chips, and
 			// this path never set it — so a channel turn opened later in
 			// cortex showed the reply with no sign of the six tools behind it,
