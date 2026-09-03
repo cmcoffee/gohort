@@ -119,3 +119,36 @@ func TestFixRequestsAskBeforeSurveying(t *testing.T) {
 		}
 	}
 }
+
+// Every kind Builder can AUTHOR gets a door on the starting row, and the row is
+// where anybody finds out what Builder does. Machine was the one missing: it is
+// authored by a Builder-only tool declared right beside pipeline and app_def,
+// and offering the siblings without it read as "Builder does not do machines" —
+// which is how a two-phase machine kept being asked for as a setting.
+func TestTheStartingRowOffersEveryKindBuilderAuthors(t *testing.T) {
+	seed, ok := seedAgentByID("seed-builder")
+	if !ok {
+		t.Fatal("seed-builder should exist")
+	}
+	if len(seed.IntakeForm) == 0 {
+		t.Fatal("Builder has no intake form")
+	}
+	opts := strings.Join(seed.IntakeForm[0].Options, "|")
+	for _, kind := range []string{"Agent", "App", "Tool", "Pipeline", "Machine"} {
+		if !strings.Contains(opts, kind) {
+			t.Errorf("the starting row must offer %q — Builder authors it", kind)
+		}
+	}
+	// The options double as the dispatch brief hint, so a caller composing a
+	// brief is told the same list. A kind missing from the row is a kind
+	// nobody knows to ask for, by either door.
+	hint := dispatchBriefHint(seed)
+	if !strings.Contains(hint, "Machine") {
+		t.Errorf("callers must be told Machine is askable: %s", hint)
+	}
+	// Fix something stays last: it leads with a verb where the others are bare
+	// nouns, and it is the row's catch-all rather than another build kind.
+	if last := seed.IntakeForm[0].Options[len(seed.IntakeForm[0].Options)-1]; last != "Fix something" {
+		t.Errorf("the catch-all belongs at the end, got %q", last)
+	}
+}

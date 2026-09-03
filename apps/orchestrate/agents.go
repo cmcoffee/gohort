@@ -1547,6 +1547,17 @@ FINISH THE JOB: an api/toolbox tool isn't done until tool_def(action="test") pas
 					"App",
 					"Tool",
 					"Pipeline",
+					// Machine sits beside Pipeline because that is where it
+					// sits in Builder's catalog — the two authoring tools are
+					// declared next to each other, and the machine tool's own
+					// description opens by distinguishing them ("a machine when
+					// a conversation should do something ONCE and then settle;
+					// a PIPELINE when the work runs start-to-finish"). Offering
+					// one and not the other told everybody Builder does not do
+					// machines, which is how "an agent that looks before it
+					// answers" kept being asked for as a setting rather than as
+					// the two-phase machine it is.
+					"Machine",
 					"Fix something",
 				},
 				// No Detail entry on "Fix something": the CONVERSATION asks
