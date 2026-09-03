@@ -726,6 +726,12 @@ type PerUserConnection struct {
 	// happened to be showing it.
 	Kind       string `json:"kind,omitempty"`
 	ConnectURL string `json:"connect_url,omitempty"`
+	// Secured is the lock as it applies to THIS user, and AdminSecured says
+	// whether the deployment set it — which is what tells the panel whether the
+	// switch is theirs to move. A user may tighten their own key; they may not
+	// lift a lock the admin put on the credential.
+	Secured      bool `json:"secured"`
+	AdminSecured bool `json:"admin_secured"`
 }
 
 // PerUserConnectionsFor returns the per_user credentials a user can connect, each
@@ -738,10 +744,12 @@ func (s *SecureAPI) PerUserConnectionsFor(user string) []PerUserConnection {
 			continue
 		}
 		out = append(out, PerUserConnection{
-			Name:        c.Name,
-			Description: c.Description,
-			Connected:   s.UserConnected(c, user),
-			OAuth:       c.IsAuthCode(),
+			Name:         c.Name,
+			Description:  c.Description,
+			Connected:    s.UserConnected(c, user),
+			OAuth:        c.IsAuthCode(),
+			Secured:      s.EffectiveSecured(c, user),
+			AdminSecured: c.Secured,
 		})
 	}
 	return out
@@ -946,7 +954,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error
 	if !ok {
 		return nil
 	}
-	if !c.Secured {
+	if !s.EffectiveSecured(c, user) {
 		// OPEN cred → access is the tier-1 user ACL (WHO). Enforce it here so the
 		// fetch_via / api-mode paths can't reach a credential the user was never
 		// shared — tier-1 AllowedUsers is otherwise only enforced at tool-BUILD (the
@@ -1149,6 +1157,69 @@ func (s *SecureAPI) loadUserSecret(name, user string) (string, bool) {
 	return secret, ok
 }
 
+// secureCredUserSecuredKey is the DB key for one user's OWN tool-lock on a
+// per_user credential. Mirrors the per-user SECRET key, because it governs the
+// same thing the secret belongs to.
+func secureCredUserSecuredKey(name, user string) string { return name + "__usecured__" + user }
+
+// SetUserSecured records one user's own Secured setting for a per_user
+// credential.
+//
+// Secured lives on the credential RECORD, which is admin-owned — and for a
+// per_user credential the record is the only admin-owned part. The secret is
+// the user's, entered on their Account page, and whether every agent they have
+// gets a generic call_<name> route to spend it is a decision about their key,
+// not the deployment's. Unsecuring one in Admin > APIs opened EVERY user's own
+// token to the auto-routed tool at once, including users who never asked.
+//
+// This is the same gap SetSecuredOwned closed for a fully user-owned
+// credential, one case short: there the whole record moved into the user's
+// namespace, so the mode came with it. A per_user hybrid keeps admin config and
+// user secrets, and the mode stayed behind with the config.
+func (s *SecureAPI) SetUserSecured(name, user string, secured bool) error {
+	if !s.ready() || strings.TrimSpace(name) == "" || strings.TrimSpace(user) == "" {
+		return fmt.Errorf("name and user required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !secured {
+		// Absent means "no opinion", which reads the same as false and leaves
+		// no row behind for a user who never had one.
+		s.db.Unset(secureAPITable, secureCredUserSecuredKey(name, user))
+		return nil
+	}
+	s.db.Set(secureAPITable, secureCredUserSecuredKey(name, user), true)
+	return nil
+}
+
+// UserSecured reports one user's own tool-lock on a per_user credential.
+func (s *SecureAPI) UserSecured(name, user string) bool {
+	if !s.ready() || strings.TrimSpace(name) == "" || strings.TrimSpace(user) == "" {
+		return false
+	}
+	var on bool
+	return s.db.Get(secureAPITable, secureCredUserSecuredKey(name, user), &on) && on
+}
+
+// EffectiveSecured is the Secured state governing one user's calls: the
+// admin's setting OR that user's own, on a per_user credential.
+//
+// OR, never a replacement, and the direction matters. A user may TIGHTEN a
+// credential the admin left open — their key, their lock. A user may not
+// LOOSEN one the admin secured, because that setting is about the deployment's
+// exposure and is not theirs to lift. Every other credential kind reads exactly
+// as it did: a shared credential has no per-user secret to protect, and a
+// user-OWNED one already carries the mode on its own record.
+func (s *SecureAPI) EffectiveSecured(c SecureCredential, user string) bool {
+	if c.Secured {
+		return true
+	}
+	if !c.IsPerUser() {
+		return false
+	}
+	return s.UserSecured(c.Name, user)
+}
+
 // HasUserSecret reports whether a user has set their secret for a credential —
 // never reveals the value (for the Account page's connected/disconnected badge).
 func (s *SecureAPI) HasUserSecret(name, user string) bool {
@@ -1227,6 +1298,13 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 		return nil
 	}
 	allKeys := s.db.Keys(secureAPITable)
+	// Whose catalog this is. Nil session (enumeration outside a request) has no
+	// user, so only the admin's setting applies — the safe reading, since a
+	// per-user lock can only ever ADD to it.
+	sessUser := ""
+	if sess != nil {
+		sessUser = strings.TrimSpace(sess.Username)
+	}
 	creds := s.List()
 	out := make([]AgentToolDef, 0, len(creds))
 	// seen dedupes by NAME so the session user's OWN credential shadows a global
@@ -1240,12 +1318,16 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 				continue
 			}
 			seen[c.Name] = true
-			if c.Disabled || c.Secured {
+			if c.Disabled || s.EffectiveSecured(c, sessUser) {
 				// Disabled = hard kill; Secured = tool-locked. Neither gets a
 				// direct LLM-callable fetch_url_<name> (for Secured that would
 				// hand the default pool access, defeating the lock). Dispatch via
 				// DispatchToolCall (api-mode temp tools / declaring wrappers) is
 				// unaffected.
+				//
+				// EFFECTIVE, not the raw flag: on a per_user credential the
+				// secret being spent is this user's own, and their lock counts
+				// alongside the admin's.
 				continue
 			}
 			// SecureCredNone (the bootstrapped "no_auth" credential) is

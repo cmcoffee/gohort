@@ -249,6 +249,10 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 			Name       string `json:"name"`
 			Secret     string `json:"secret"`
 			Disconnect bool   `json:"disconnect"`
+			// A POINTER so "absent" and "off" are different things: a save
+			// that says nothing about the lock must not read as a request to
+			// unlock, which is the shape that loses a setting nobody touched.
+			Secured *bool `json:"secured,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -271,6 +275,25 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		c, found := Secure().Load(body.Name)
 		if !found || !c.IsPerUser() {
 			http.Error(w, "no such per-user integration", http.StatusNotFound)
+			return
+		}
+		// The lock on this user's OWN key: whether every agent they have gets a
+		// generic call_<name> route to spend it. Sent on its own, never
+		// alongside a secret, so a save that only moves the switch cannot
+		// disturb the key and vice versa.
+		if body.Secured != nil {
+			if c.Secured && !*body.Secured {
+				// The admin's lock is about the deployment's exposure and is
+				// not a user's to lift. Said plainly rather than silently
+				// ignored, so a switch that will not move explains itself.
+				http.Error(w, "an admin has secured this integration for everyone — you can keep it locked, but not open it", http.StatusForbidden)
+				return
+			}
+			if err := Secure().SetUserSecured(body.Name, user, *body.Secured); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		switch {

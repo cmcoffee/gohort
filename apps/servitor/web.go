@@ -883,11 +883,35 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			}
 			targetUDB = exUDB
 			owner = exOwner
-			if req.Type == "ssh" && req.Password == "" {
+			// Write-only secrets. Every read path blanks these before the
+			// record leaves the server, so the edit form ALWAYS loads with
+			// them empty and an empty field on save means "not shown", never
+			// "clear it".
+			//
+			// Preserved unconditionally rather than on req.Type, which is the
+			// hole this closes: the guard read the INCOMING type, so any save
+			// whose body did not carry type ("repo" / "ssh") — a partial
+			// update, another surface, an agent posting the record back —
+			// wrote a blank straight over a stored token or password. And it
+			// presented as "no token configured" rather than as a token that
+			// stopped working, because by then there genuinely was none.
+			if req.Password == "" {
 				req.Password = existing.Password
 			}
-			if req.Type == "repo" && req.RepoToken == "" {
+			if req.RepoToken == "" {
 				req.RepoToken = existing.RepoToken
+			}
+			// The one case where carrying one forward is wrong: a real type
+			// change. The secret belongs to a kind this appliance no longer
+			// is, it can never be used again, and leaving it is secret
+			// material lingering in a record nobody thinks holds one.
+			if req.Type != "" && req.Type != existing.Type {
+				if req.Type != "ssh" {
+					req.Password = ""
+				}
+				if req.Type != "repo" {
+					req.RepoToken = ""
+				}
 			}
 			req.Profile = existing.Profile
 			req.LogMap = existing.LogMap

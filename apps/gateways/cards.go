@@ -21,6 +21,9 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
 .acct-conn-row { display: flex; gap: 0.4rem; align-items: center; }
 .acct-conn-row input { flex: 1; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; font-size: 0.85rem; }
 .acct-conns-empty { color: var(--text-mute); font-style: italic; padding: 0.5rem 0; }
+.acct-conn-lock { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-mute); cursor: pointer; }
+.acct-conn-lock input { cursor: pointer; }
+.acct-conn-lock input:disabled { cursor: default; }
 </style>
 <script>
 (function(){
@@ -77,6 +80,30 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
           }
         }
         card.appendChild(row);
+        // The lock on YOUR key: with it off, every agent you have gets a
+        // generic call tool that can spend this credential. Shown only once
+        // there is a key to protect, and frozen when an admin has locked it
+        // for the deployment — you may keep your own lock on, never lift
+        // theirs.
+        if (c.connected){
+          var lockWrap = el('label', {class:'acct-conn-lock'});
+          var lock = el('input', {type:'checkbox'});
+          lock.checked = !!c.secured;
+          if (c.admin_secured){ lock.disabled = true; }
+          lockWrap.appendChild(lock);
+          lockWrap.appendChild(el('span', {text: c.admin_secured
+            ? 'Locked to approved tools by your admin'
+            : 'Only let approved tools use my key'}));
+          lock.addEventListener('click', function(ev){
+            if (c.admin_secured){ ev.preventDefault(); return; }
+            var want = lock.checked;
+            fetch(API, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({name:c.name, secured:want})})
+              .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
+              .catch(function(e){ lock.checked = !want; alert('Failed: '+(e&&e.message||e)); });
+          });
+          card.appendChild(lockWrap);
+        }
         box.appendChild(card);
       });
     }).catch(function(){ box.textContent = 'Could not load connections.'; });
