@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // A monitor firing is not something the owner said.
@@ -71,5 +73,48 @@ func TestBothMonitorPathsLeaveTheSameKindOfTrace(t *testing.T) {
 	// is comparing against nothing.
 	if !strings.Contains(src, "ReportKind: cortexKindMonitor") {
 		t.Error("the direct path's monitor card is the reference shape")
+	}
+}
+
+// An event card is capped where a person's message never is.
+//
+// A watch monitor hands over a diff and a payload the agent reads once and
+// answers. The answer — stored in full right beneath it — is what anybody needs
+// later; the payload's value decays the moment it has been read, and its cost
+// does not, because a persistent thread replays every card into every prompt
+// after it.
+func TestAnEventCardIsCappedAndSaysSo(t *testing.T) {
+	cap := TuneInt("tune_event_card_chars")
+	if cap <= 0 {
+		t.Fatal("the cap must have a default, or nothing bounds a firing monitor")
+	}
+	payload := "[EVENT — monitor \"molty\" fired]\n" + strings.Repeat("{\"comments\":[…]}", 400)
+	got := storedRunInput(AgentSyncRun{
+		InputReportFrom: "molty", InputReportKind: cortexKindMonitor,
+	}, payload, time.Now())
+
+	if len([]rune(got.Content)) >= len([]rune(payload)) {
+		t.Errorf("the card kept the whole payload: %d runes", len([]rune(got.Content)))
+	}
+	// The head survives — a card whose first line is gone names nothing.
+	if !strings.HasPrefix(got.Content, "[EVENT — monitor \"molty\" fired]") {
+		t.Errorf("the card lost its opening: %q", got.Content[:60])
+	}
+	// And it SAYS it was trimmed. A card that just stops reads as a payload the
+	// agent might still be able to use, and a model will reason about the
+	// fragment rather than about the reply underneath.
+	if !strings.Contains(got.Content, "went to the agent when it fired") {
+		t.Errorf("a trimmed card must say what happened to the rest: %q", got.Content)
+	}
+	// A small event is untouched — the cap is for the ones that need it.
+	small := storedRunInput(AgentSyncRun{InputReportFrom: "molty"}, "nothing much changed", time.Now())
+	if small.Content != "nothing much changed" {
+		t.Errorf("a small event was rewritten: %q", small.Content)
+	}
+	// A person's message is never capped, however long: it is the thing they
+	// said, and the agent answering it is not a reason to keep less of it.
+	long := strings.Repeat("x", cap*3)
+	if got := storedRunInput(AgentSyncRun{MessageSender: "Dana"}, long, time.Now()); got.Content != long {
+		t.Error("a user's message must be stored whole")
 	}
 }

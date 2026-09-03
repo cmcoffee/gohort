@@ -1205,6 +1205,23 @@ func buildInboundImageRecord(sender string, count int, captions []string) string
 
 // RunAgentSyncContinuing is the text-only wrapper kept for existing callers
 // (goal conversations, dispatch_agent, event-monitor wakes).
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_event_card_chars",
+		App:      "/orchestrate",
+		Category: "Limits",
+		Label:    "Event card kept in the thread (characters)",
+		Help: "How much of an event's text stays in the thread after the agent has reacted to it — a monitor fire, a scheduled wake. " +
+			"The agent still receives the WHOLE thing when it fires; this bounds only the record left behind. " +
+			"A watch monitor's payload is evidence for one turn and the agent's reply is the record: the raw diff is worth little the moment it has been read, and on a Cortex thread it is worth it forever, because every fire is replayed into every later prompt. " +
+			"Raise it if you find yourself opening a card and wanting the part that was cut; 0 stores the event whole.",
+		Kind:    KindInt,
+		Default: 700,
+		Min:     0,
+		Max:     20000,
+	})
+}
+
 // storedRunInput is the record a run leaves of what it was asked.
 //
 // Ordinarily the user turn, verbatim. When the caller says the input was an
@@ -1212,14 +1229,38 @@ func buildInboundImageRecord(sender string, count int, captions []string) string
 // shape a standing report, a monitor's direct-mode trace and a channel
 // observation already use, which is what makes it render as a card and reach
 // the model with a fenced origin marker rather than as the owner's own words.
+//
+// And an event card is CAPPED, where a person's message never is. The two are
+// not the same kind of thing: a watch monitor hands over a diff and a payload
+// that the agent reads once and answers, and the answer — stored in full right
+// beneath it — is what anybody needs later. The payload's value decays the
+// moment it has been read; its cost does not, because a persistent thread
+// replays every card into every prompt after it. One monitor firing hourly is
+// what a settings page cannot show you and a context window notices.
 func storedRunInput(run AgentSyncRun, text string, now time.Time) ChatMessage {
 	if from := strings.TrimSpace(run.InputReportFrom); from != "" {
 		return ChatMessage{
-			Role: "assistant", Content: text, Created: now,
+			Role: "assistant", Content: cappedEventText(text), Created: now,
 			ReportFrom: from, ReportKind: strings.TrimSpace(run.InputReportKind),
 		}
 	}
 	return ChatMessage{Role: "user", Content: text, Created: now, Sender: run.MessageSender}
+}
+
+// cappedEventText trims an event to what is worth keeping, and SAYS it trimmed.
+//
+// The note matters as much as the cap. A card that just stops reads as a
+// truncated payload the agent might still be able to use, and a model will
+// reason about the fragment; a card that says the rest was delivered when it
+// fired tells the reader — person or model — that nothing here is missing by
+// accident and the agent's own reply is where the findings are.
+func cappedEventText(text string) string {
+	cap := TuneInt("tune_event_card_chars")
+	if cap <= 0 || len([]rune(text)) <= cap {
+		return text
+	}
+	return strings.TrimSpace(string([]rune(text)[:cap])) +
+		"\n\n…(the rest of this event went to the agent when it fired; see its reply below)"
 }
 
 func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string, freshSession bool) (string, error) {
