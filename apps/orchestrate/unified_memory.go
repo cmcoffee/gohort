@@ -250,19 +250,19 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 	// no multi-layer framing, no `layer` knob — so what the model is told matches
 	// what recall can actually return. Every other agent gets the full four-layer
 	// verb plus an optional `layer` filter to narrow to one source on demand.
-	desc := "Look something up across ALL of your memory at once — no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted — verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only).\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this — do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
+	desc := "Look something up across ALL of your memory at once — no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted — verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only). Ids come ONLY from a recall result in front of you — never construct, guess, or reuse an id-shaped string from anywhere else. With no id in hand, search with `query` first.\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this — do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
 	params := map[string]ToolParam{
 		"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
-		"id":    {Type: "string", Description: "An id from a prior recall hit (e.g. `doc:…`, `span:…`, `mem:…`, `fact:…`). Returns the full item behind that id instead of searching."},
+		"id":    {Type: "string", Description: "An id COPIED from a recall hit you can see (e.g. `doc:…`, `span:…`, `mem:…`, `fact:…`). Returns the full item behind that id instead of searching. Never assemble one yourself: if you have not run a recall query in this conversation, you have no ids, so pass `query` instead."},
 		"k":     {Type: "number", Description: "Max hits in TOTAL, split across the layers searched (default 4 per layer; per-layer share capped by the knowledge ceiling). Leave default unless you want a wider or narrower net."},
 		"layer": {Type: "string", Enum: []string{"knowledge", "finding", "pinned", "history"}, Description: "Optional. Restrict the search to ONE source, named by the tag you see on hits: `knowledge` (authoritative docs), `finding` (your saved findings), `pinned` (always-in-prompt notes), or `history` (earlier conversation). Omit to search all four. Use `knowledge` when the answer must come strictly from the corpus."},
 		"topic": {Type: "string", Description: "Optional snake_case topic slug — narrows [finding] and [knowledge] hits to one subject bucket (pinned notes and history aren't topic-filed). Pass a slug from the \"Known topics\" block, e.g. the one you filed a finding under with remember. Omit to span all topics."},
 	}
 	if t.recallCorpusOnly() {
-		desc = "Look something up in your knowledge corpus — the authoritative uploaded/shared documents this agent answers from. Pass `query` to search; each hit carries a `doc:` id, and calling recall again with that id returns the full document.\n\nA 'no matches' result means the corpus genuinely has nothing on this — do NOT speculate from it or fall back to general knowledge. Required: `query` OR `id`. Optional: `k`, `topic`."
+		desc = "Look something up in your knowledge corpus — the authoritative uploaded/shared documents this agent answers from. Pass `query` to search; each hit carries a `doc:` id, and calling recall again with that id returns the full document. Ids come ONLY from a recall result in front of you — never construct or guess one; with no id in hand, search with `query` first.\n\nA 'no matches' result means the corpus genuinely has nothing on this — do NOT speculate from it or fall back to general knowledge. Required: `query` OR `id`. Optional: `k`, `topic`."
 		params = map[string]ToolParam{
 			"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
-			"id":    {Type: "string", Description: "A `doc:…` id from a prior recall hit. Returns the full document behind it instead of searching."},
+			"id":    {Type: "string", Description: "A `doc:…` id COPIED from a recall hit you can see. Returns the full document behind it instead of searching. Never assemble one yourself: with no recall result in hand, pass `query` instead."},
 			"k":     {Type: "number", Description: "Max hits (default 4, cap follows the knowledge ceiling). Leave default unless you want a wider net."},
 			"topic": {Type: "string", Description: "Optional snake_case topic slug to scope the search to one subject bucket (from the \"Known topics\" block). Omit to search across all topics (broadest)."},
 		}
@@ -671,12 +671,78 @@ func recallSnippet(text string) string {
 	return strings.ReplaceAll(s, "\n", "\n  ")
 }
 
+// recallIDWasIssued reports whether this id has ever been handed to the agent
+// in this conversation — in a tool result, or typed by the user.
+//
+// It answers the question the old error could not: is this a MALFORMED id, or
+// an INVENTED one? Observed live 2026-09-03: an agent three messages into a
+// session with no recall behind it called recall(id:"2bd98b45-…"), a UUID it
+// had never been given, for "that research" that did not exist. The error told
+// it the format — "pass an id exactly as recall returned it (doc:… / mem:… /
+// span:… / fact:…)" — so it corrected the FORMAT and re-sent the same invented
+// reference twice: first "knowledge:2bd98b45-…", a prefix that was not even in
+// the list it had just been shown, then "doc:2bd98b45-…". Two rounds spent
+// making a fabrication better-formed, because the message only ever talked
+// about shape.
+//
+// Drives the WORDING only, never access. A scan can miss a legitimately issued
+// id — compaction elides old tool-result bodies, and an id can arrive from
+// somewhere this does not look — so a false negative must cost a slightly wrong
+// message, never a refused lookup.
+func (t *chatTurn) recallIDWasIssued(id string) bool {
+	if t == nil || t.session == nil || strings.TrimSpace(id) == "" {
+		return false
+	}
+	// The bare reference counts: an id is issued as "doc:<ref>", and an agent
+	// re-prefixing a real ref it already holds is malformed, not invented. The
+	// prefix is stripped whether or not it is a KIND we know, because
+	// "wrongkind:abc123" over a real abc123 is a formatting slip, while
+	// "knowledge:2bd98b45-…" over a ref nobody ever saw is the fabrication —
+	// what separates them is the reference, never the word in front of it.
+	ref := id
+	if i := strings.IndexByte(id, ':'); i > 0 && i < len(id)-1 {
+		ref = id[i+1:]
+	}
+	for _, m := range t.session.Messages {
+		if strings.Contains(m.Content, ref) {
+			return true
+		}
+		for _, tc := range m.ToolCalls {
+			if strings.Contains(tc.Result, ref) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// inventedRecallIDError is what an id nobody handed out gets back.
+//
+// Written as a DIRECTIVE, not a format spec, because a format spec is what the
+// model was answering when it re-sent the same fabricated reference with a
+// better prefix. Same shape as inspect_run's id-less refusal, and for the same
+// reason: naming the tool that produces real ids is the only instruction that
+// ends the loop.
+func (t *chatTurn) inventedRecallIDError(id string) error {
+	return fmt.Errorf("no id %q has been given to you in this conversation, so there is nothing to fetch. recall ids are opaque and come ONLY from a recall result you can see — they are never constructed, guessed, or built from a UUID. Call recall with `query` (a natural-language description of what you are after) and use an id from ITS output. If you were about to answer the user, do that instead: nothing here is blocking you", id)
+}
+
 // recallFetch returns the FULL item behind a recall id — the drill-down that
 // subsumes fetch_knowledge_doc (doc:/mem:) and expand_history (span:).
 func (t *chatTurn) recallFetch(id string) (string, error) {
 	kind, ref, ok := splitRecallID(id)
 	if !ok {
+		if !t.recallIDWasIssued(id) {
+			return "", t.inventedRecallIDError(id)
+		}
 		return "", fmt.Errorf("unrecognized id %q — pass an id exactly as recall returned it (doc:… / mem:… / span:… / fact:…)", id)
+	}
+	// A well-formed id for something nobody ever handed out is the same
+	// fabrication wearing a correct prefix, and the miss messages below all
+	// invite a retry ("re-run the search", "it may have been forgotten") that
+	// is exactly wrong for it.
+	if !t.recallIDWasIssued(id) {
+		return "", t.inventedRecallIDError(id)
 	}
 	switch kind {
 	case "doc", "mem":
@@ -752,7 +818,17 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			}
 			kind, ref, ok := splitRecallID(id)
 			if !ok {
+				if !t.recallIDWasIssued(id) {
+					return "", t.inventedRecallIDError(id)
+				}
 				return "", fmt.Errorf("unrecognized id %q — pass fact:… , mem:… , or a bare number", id)
+			}
+			// Same fabrication guard recall uses. Deleting by an invented id is
+			// harmless (nothing matches), but "it may already be gone" reads as
+			// confirmation that the thing existed and is now handled, which is
+			// the worst possible answer to a made-up id.
+			if !t.recallIDWasIssued(id) {
+				return "", t.inventedRecallIDError(id)
 			}
 			switch kind {
 			case "fact":
