@@ -242,6 +242,9 @@ var errSchedNotReady = errors.New("orchestrate not ready")
 func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) {
 	var p orchUpdatePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
+		// The ONE drop that cannot leave a ledger row: the ledger is keyed by
+		// owner and the owner lives inside the payload we just failed to read.
+		// The log is the only place this can go.
 		Log("[orchestrate/scheduled] payload unmarshal failed: %v", err)
 		return
 	}
@@ -250,12 +253,20 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 			// Same payload, no fire counted — the retry IS this occurrence.
 			if _, aerr := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(2*time.Minute)); aerr != nil {
 				Log("[orchestrate/scheduled] %v — retry re-arm FAILED for session %s: %v", err, p.SessionID, aerr)
+				// The chain is dead: this occurrence did not run and nothing is
+				// queued to try again. The successful-retry branch below stays
+				// unrecorded on purpose — it is the ordinary boot race, it
+				// resolves itself in two minutes, and a row per restart would
+				// train the owner to ignore the ones that matter.
+				recordScheduledDrop(p, RunFailed, fmt.Sprintf(
+					"Did not run and could not be re-queued (%v). Nothing is scheduled, so this task is stopped until it is edited.", aerr))
 			} else {
 				Log("[orchestrate/scheduled] %v — retrying in 2m (session %s)", err, p.SessionID)
 			}
 			return
 		}
 		Log("[orchestrate/scheduled] %v", err)
+		recordScheduledDrop(p, RunFailed, fmt.Sprintf("Did not run: %v", err))
 	}
 }
 
@@ -285,6 +296,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	if reArm && p.FireCount >= p.effectiveMaxFires() {
 		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
+		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
+			"Auto-cancelled: this recurring task reached its cap of %d fires. It did not run and will not run again — recreate it if you still want it.",
+			p.effectiveMaxFires()))
 		return nil
 	}
 
@@ -298,6 +312,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// "needs relink" task instead of a vanished one, and can relink or delete
 		// it deliberately.
 		Log("[orchestrate/scheduled] agent %s missing for user %s — parking task as broken", p.AgentID, p.Username)
+		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
+			"Did not run: its agent (id %s) no longer exists. The task is parked, not deleted — relink it to a live agent from the Scheduler to resume.",
+			p.AgentID))
 		if reArm {
 			parkRecurringBroken(p, fmt.Sprintf("its agent was deleted (id %s)", p.AgentID))
 		}
@@ -939,6 +956,52 @@ const brokenDormantReArm = 24 * time.Hour
 // when a task's agent is gone, so the owner sees a "needs relink" task instead of
 // a vanished one. A subsequent resume/relink clears Broken and reschedules the
 // task on its real cadence.
+// recordScheduledDrop files a run-ledger row for a fire that ended before the
+// agent ever ran, or for a chain that has stopped for good.
+//
+// Every one of these paths used to Log and return. That is invisible from the
+// only surface a person opens: an owner asking "did my task run today?" got
+// silence from the ledger, which reads exactly like a task that ran and did
+// nothing. Worse, FireCount increments at PRE-ARM, before the turn executes —
+// so a schedule that died at the front of the handler twelve times in a row
+// still showed twelve fires and no runs, and the honest reading of that pair
+// (it fired and recorded nothing) is not available to anyone.
+//
+// Only TERMINAL and TRANSITION events land here. A dormant tick on a task
+// already parked broken is a routine no-op that repeats every few hours, and
+// filing a row each time would bury the ledger in the state it is trying to
+// report. The console already shows a parked task as broken.
+//
+// The agent's display name is not on the payload and the agent may be the very
+// thing that went missing, so the row identifies itself by Task (the name the
+// owner gave the schedule, see RunRecord.Task) and falls back to the agent id
+// for the label.
+func recordScheduledDrop(p orchUpdatePayload, status RunStatus, summary string) {
+	if strings.TrimSpace(p.Username) == "" {
+		return // nothing to file it under; the caller logs
+	}
+	label := "agent " + p.AgentID
+	if app := orchRef; app != nil {
+		if udb := UserDB(app.DB, p.Username); udb != nil {
+			if a, ok := loadAgent(udb, p.AgentID); ok && strings.TrimSpace(a.Name) != "" {
+				label = a.Name
+			}
+		}
+	}
+	now := time.Now()
+	RecordRun(RootDB, RunRecord{
+		Owner:   p.Username,
+		Agent:   label,
+		Task:    recurringName(p),
+		Trigger: "schedule",
+		Brief:   p.Prompt,
+		Status:  status,
+		Summary: summary,
+		Started: now,
+		Ended:   now,
+	}.AboutAgent(p.AgentID))
+}
+
 func parkRecurringBroken(p orchUpdatePayload, reason string) {
 	p.Broken = true
 	if reason != "" {
@@ -958,6 +1021,8 @@ func reschedule(p orchUpdatePayload) {
 	// can mean "indefinite" without a task running forever unwatched.
 	if idleDays := orchUpdateIdleDays(); p.idleReapDue(time.Now(), idleDays) {
 		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days — recurring task auto-cancelled", p.SessionID, idleDays)
+		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
+			"Auto-cancelled: %d days without a productive fire or an edit. It will not run again — recreate it if you still want it.", idleDays))
 		return
 	}
 	p.FireCount++
@@ -969,15 +1034,21 @@ func reschedule(p orchUpdatePayload) {
 		// delete). A high-frequency pattern (e.g. 24x/day) burns the default
 		// cap in days, so this fires more than the name "cap" suggests.
 		Log("[orchestrate/scheduled] session=%s retired: reached fire cap %d (recurring task auto-cancelled)", p.SessionID, p.effectiveMaxFires())
+		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
+			"Retired: reached its cap of %d fires. This fire ran; there will not be another.", p.effectiveMaxFires()))
 		return
 	}
 	next, err := computeNextFire(&p, time.Now().In(UserLocation(p.Username)))
 	if err != nil {
 		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v — stopping", p.SessionID, err)
+		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
+			"The schedule stopped: its next fire time could not be computed (%v). Edit the schedule to restart it.", err))
 		return
 	}
 	if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
 		Log("[orchestrate/scheduled] reschedule failed for session %s: %v", p.SessionID, err)
+		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
+			"The schedule stopped: the next fire could not be armed (%v). Nothing is queued, so it will not run again until it is edited.", err))
 	}
 }
 

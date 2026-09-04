@@ -265,8 +265,9 @@ func TestEventMonitorWakeRecordsThePromptDigest(t *testing.T) {
 	db := memDB(t)
 
 	// A waker that runs an agent turn, the way the real one does.
-	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) {
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
 		recordPromptDigest(ctx, PromptDigest{Window: 200000, Estimated: 4321, InputTokens: 100})
+		return true, ""
 	})
 	defer RegisterEventWaker(nil)
 
@@ -287,7 +288,7 @@ func TestEventMonitorWakeRecordsThePromptDigest(t *testing.T) {
 // owner's phone) leaves the zero digest rather than a half-filled one.
 func TestAWakeThatRunsNoTurnRecordsNoDigest(t *testing.T) {
 	db := memDB(t)
-	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) {})
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) { return true, "" })
 	defer RegisterEventWaker(nil)
 
 	FireEventMonitor(context.Background(), db, EventMonitor{

@@ -35,7 +35,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// same conversation the user has with the Operator. The Operator's
 	// consequential action (delegate) self-gates through the authorization
 	// queue, so auto-approve at the loop level is safe here.
-	RegisterEventWaker(func(ctx context.Context, owner, monitorName, summary string) {
+	RegisterEventWaker(func(ctx context.Context, owner, monitorName, summary string) (bool, string) {
 		brief := ""
 		// The monitor names the agent to wake (WakeAgent) and the session it
 		// was created in (WakeSession), so the event lands back where the user
@@ -46,7 +46,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		m, ok := GetEventMonitor(RootDB, owner, monitorName)
 		if !ok {
 			Log("[operator.wake] %s/%s: monitor no longer exists — wake dropped", owner, monitorName)
-			return
+			return false, "the monitor no longer exists, so the event had nowhere to go"
 		}
 		if strings.TrimSpace(m.WakeBrief) != "" {
 			brief = "\n\nWhat to do: " + m.WakeBrief
@@ -95,11 +95,11 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// proactively too; this covers webhook-kind monitors and races.
 		if wakeAgent == "" {
 			if channelTargetDelivered {
-				return
+				return true, ""
 			}
 			MarkEventMonitorBroken(RootDB, owner, monitorName, "it has no wake agent — its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume")
 			Log("[operator.wake] %s/%s parked broken: no wake agent (legacy Chat-seed default retired)", owner, monitorName)
-			return
+			return false, "it has no wake agent, so it was parked broken — relink an agent to resume"
 		}
 		if wakeSession == "" {
 			wakeSession = cortexSessionID(wakeAgent)
@@ -230,8 +230,14 @@ func registerOperatorWake(app *OrchestrateApp) {
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
 			}); err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
+				return delivered, "the wake turn failed: " + err.Error()
 			}
+			delivered = true
 		}
+		if !delivered {
+			return false, "no notify destination accepted the event"
+		}
+		return true, ""
 	})
 
 	// Watch-tool invoker: lets a "watch" monitor poll OWNER-SCOPED tools that

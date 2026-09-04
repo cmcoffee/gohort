@@ -191,7 +191,13 @@ type EventMonitor struct {
 
 // WakeFunc wakes the Operator with an event. Provided by orchestrate; it injects
 // the event into the Operator's ongoing thread and runs a turn so it reacts.
-type WakeFunc func(ctx context.Context, owner, monitorName, eventSummary string)
+// It reports whether the event was DELIVERED anywhere, and when it was not, one
+// sentence saying why. Before that, fireWake recorded RunOK unconditionally as
+// soon as the waker returned — so a wake that dropped (the monitor deleted
+// mid-flight, no wake agent, every notify destination refusing) filed a run
+// saying "Woke the Operator". A ledger row that reports a delivery which did
+// not happen is worse than no row: the silence at least prompts a question.
+type WakeFunc func(ctx context.Context, owner, monitorName, eventSummary string) (delivered bool, detail string)
 
 // PollCheckFunc runs a checker agent against a brief and returns its answer.
 // Provided by orchestrate.
@@ -1258,9 +1264,17 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 		Log("[event] %s/%s fired but no waker is registered", owner, name)
 		return
 	}
-	waker(ctx, owner, name, summary)
-	rec.Status = RunOK
-	rec.Summary = "Woke the Operator: " + truncateEvent(summary, 200)
+	delivered, detail := waker(ctx, owner, name, summary)
+	if delivered {
+		rec.Status = RunOK
+		rec.Summary = "Woke the Operator: " + truncateEvent(summary, 200)
+	} else {
+		// The fire happened; the delivery did not. Attention rather than failed:
+		// nothing errored, the event simply reached nobody, and the owner is the
+		// one who can fix that.
+		rec.Status = RunAttention
+		rec.Summary = "Event fired but was not delivered — " + detail
+	}
 	rec.Prompt = promptDigest()
 	rec.Ended = time.Now()
 	RecordRun(db, rec)

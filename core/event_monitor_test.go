@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -122,8 +123,9 @@ func TestExecuteEventPollFiresAndDebounces(t *testing.T) {
 	defer RegisterEventPoller(nil)
 
 	var wakes []string
-	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) {
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
 		wakes = append(wakes, summary)
+		return true, ""
 	})
 	defer RegisterEventWaker(nil)
 
@@ -177,5 +179,56 @@ func TestIsSkipSentinel(t *testing.T) {
 		if isSkipSentinel(s) {
 			t.Errorf("isSkipSentinel(%q) = true, want false (must deliver, not suppress)", s)
 		}
+	}
+}
+
+// A wake that reached nobody must not file a run saying it woke somebody.
+// fireWake used to set RunOK the moment the waker returned, so a monitor
+// deleted mid-flight, or one with no wake agent, recorded "Woke the Operator"
+// — a delivery that did not happen. Silence would at least prompt a question.
+func TestAnUndeliveredWakeIsNotRecordedAsSuccess(t *testing.T) {
+	db := memDB(t)
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return false, "the monitor no longer exists, so the event had nowhere to go"
+	})
+	defer RegisterEventWaker(nil)
+
+	FireEventMonitor(context.Background(), db, EventMonitor{
+		Name: "cve-watch", Owner: "craig", Kind: EventKindPoll,
+	}, "CVE-2026-1 published")
+
+	runs := ListRuns(db, "craig", RunFilter{})
+	if len(runs) != 1 {
+		t.Fatalf("expected one run, got %d", len(runs))
+	}
+	if runs[0].Status != RunAttention {
+		t.Errorf("an undelivered wake is attention, got %q", runs[0].Status)
+	}
+	if strings.Contains(runs[0].Summary, "Woke the Operator") {
+		t.Errorf("it did not wake anyone: %q", runs[0].Summary)
+	}
+	if !strings.Contains(runs[0].Summary, "no longer exists") {
+		t.Errorf("the row must carry WHY it was not delivered: %q", runs[0].Summary)
+	}
+}
+
+// The delivering case keeps saying so, with the event in the summary.
+func TestADeliveredWakeStillReadsAsSuccess(t *testing.T) {
+	db := memDB(t)
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	FireEventMonitor(context.Background(), db, EventMonitor{
+		Name: "cve-watch", Owner: "craig", Kind: EventKindPoll,
+	}, "CVE-2026-1 published")
+
+	runs := ListRuns(db, "craig", RunFilter{})
+	if len(runs) != 1 || runs[0].Status != RunOK {
+		t.Fatalf("expected one ok run, got %+v", runs)
+	}
+	if !strings.Contains(runs[0].Summary, "Woke the Operator") {
+		t.Errorf("summary lost the delivery: %q", runs[0].Summary)
 	}
 }
