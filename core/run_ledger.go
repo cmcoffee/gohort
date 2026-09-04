@@ -134,6 +134,20 @@ type RunRecord struct {
 	// way they always were; this field is for the case where the two names
 	// differ.
 	Task string `json:"task,omitempty"`
+
+	// Prompt is what this run's prompt was made of — sizes, live clause keys,
+	// the window and how close the prompt came to it. Metadata, not text: it
+	// carries no prompt content, so it rides in the ledger table with the rest
+	// of the row rather than in the encrypted side tables.
+	//
+	// An unattended run is exactly where this is needed and exactly where
+	// nothing else reaches: a scheduled fire has no HTTP client watching and
+	// tails no SSE ring, so a live-channel diagnostic reaches every path except
+	// the ones nobody is looking at. Off the record, it reaches all of them.
+	//
+	// Zero Window means no digest was recorded (an older row, or a path that
+	// does not run an agent loop).
+	Prompt PromptDigest `json:"prompt,omitempty"`
 }
 
 // RunFilter narrows a ListRuns query. Zero value = all of the owner's

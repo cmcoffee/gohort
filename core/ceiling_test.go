@@ -104,7 +104,24 @@ const (
 	// MigrateAppPathGrants). Both are called from apps/customapps so neither
 	// can be unexported, and a subpackage for two functions about the root mux
 	// and stored auth grants would be further from their subjects, not closer.
-	coreExportCeiling = 2139
+	//
+	// Raised 2139 -> 2140 for PromptDigest, ONE type, and the count was sitting
+	// on 2164 — the exact top of the slack — when it arrived, which is the
+	// ceiling working rather than a reason to argue with it. The type cannot
+	// leave the hub: it is a field on RunRecord and a hook parameter on
+	// AgentLoopConfig, both declared here, and docs/core-cuts.md records
+	// outbound TYPE edges as the thing that kills a cut. It cannot be
+	// unexported either, because orchestrate writes the hook's closure and has
+	// to name the parameter. What did NOT get exported is its total: Estimated
+	// is a field on the struct rather than a method, which is also the better
+	// shape for a stored record.
+	//
+	// Raised 2140 -> 2141 for WithPromptDigest, which is how a caller that
+	// never sees the loop config collects a digest: an event-monitor wake calls
+	// an opaque registered waker and writes the run record itself. ONE name for
+	// that, not three — it returns its reader as a closure, and the writer stays
+	// unexported because only this package's loop ever writes one.
+	coreExportCeiling = 2141
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

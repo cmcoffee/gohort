@@ -122,6 +122,12 @@ type StandingRunResult struct {
 	// also the only one whose record could not answer "did it actually call
 	// anything, and what came back".
 	Steps []RunStep
+
+	// Prompt is what the run's prompt was made of. Same reason as Steps: the
+	// one kind of run nobody watches happen is the one whose record has to
+	// answer every question about it afterwards, and "was this turn's prompt
+	// about to overflow the window?" is one of them.
+	Prompt PromptDigest
 }
 
 // StandingRunnerFunc executes one run of a standing agent. Provided by an
@@ -552,6 +558,7 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 	rec.Raw = res.Raw
 	rec.Artifacts = res.Artifacts
 	rec.Steps = res.Steps
+	rec.Prompt = res.Prompt
 	rec.Err = res.Err
 	rec.Ended = time.Now()
 	fullOutput := rec.Raw // capture before RecordRun moves Raw to the encrypted side table

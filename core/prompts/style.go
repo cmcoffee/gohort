@@ -31,6 +31,12 @@ import (
 
 const customStyleKey = "prompt_custom_style_rules"
 
+// StyleKey names the assembled [Style:] clause for a per-turn prompt digest.
+// The rules inside it are addressable one at a time by their own keys (that is
+// the point of a list); this names the single clause they compose into, which
+// is the unit the system prompt actually carries.
+const StyleKey = "framework.style"
+
 // StyleRule is one line of house style.
 type StyleRule struct {
 	Key     string // stable id, e.g. "style.no_em_dash"

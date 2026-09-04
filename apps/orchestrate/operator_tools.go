@@ -1298,6 +1298,24 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if rec.Task != "" {
 					task = "task: " + rec.Task + "\n"
 				}
+				// What the run's prompt was made of. Printed only when a digest
+				// was recorded, so an older row reads exactly as it always did
+				// rather than gaining a line of zeroes that looks like a
+				// measurement.
+				if d := rec.Prompt; d.Window > 0 || d.SystemBytes > 0 {
+					line := fmt.Sprintf("prompt: ~%d tokens (system %d + tools %d over %d tool(s) + history %d over %d msg(s))",
+						d.Estimated, d.SystemTokens, d.ToolTokens, d.ToolCount, d.HistoryTokens, d.Messages)
+					if d.Window > 0 {
+						line += fmt.Sprintf(", window %d, headroom %d", d.Window, d.Headroom)
+					}
+					if d.InputTokens > 0 {
+						line += fmt.Sprintf(", provider charged %d", d.InputTokens)
+					}
+					if d.Tight {
+						line += " — TIGHT: this prompt was within a tenth of the window, which fails intermittently rather than cleanly"
+					}
+					task += line + "\n"
+				}
 				return fmt.Sprintf("Run %s\nagent: %s\n%sstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\n%soutput:\n%s",
 					rec.ID, rec.Agent, task, rec.Status, rec.Trigger, rec.Brief, rec.Summary, formatRunSteps(rec.Steps), rec.Raw), nil
 			},

@@ -510,6 +510,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// allowance and had to be forced to wrap up (its work is likely incomplete).
 	softCap := resolveMaxWorkerRounds(agent)
 	lastRound := 0
+	// Filled by the loop's OnPromptDigest hook, read by record() below.
+	var promptDigest PromptDigest
 	// liveCalls accumulates the tool calls the model actually requested each
 	// round, straight from OnStep — the SAME stream the live activity card
 	// renders. This is the faithful record: a text-based-tool-call model (the
@@ -591,6 +593,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			liveCalls = append(liveCalls, s.ToolCalls...)
 			liveRun.SetProgress(s.Round, s.ToolCalls)
 		},
+		// What this fire's prompt was made of, onto the run record below. A
+		// recurring fire re-runs a REAL session, so its prompt carries whatever
+		// that thread has accumulated since the schedule was made — the one
+		// place a context problem grows unattended and unwatched.
+		OnPromptDigest: func(d PromptDigest) { promptDigest = d },
 		// Is the reply true about what this fire actually did?
 		//
 		// A scheduled fire is the turn that needs this MOST and was the one
@@ -670,7 +677,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	record := func(status RunStatus, summary, raw, errStr string) {
 		RecordRun(RootDB, RunRecord{
-			Owner: p.Username,
+			Owner:  p.Username,
+			Prompt: promptDigest,
 			// The label is the agent's display name; identity is its id (see
 			// AboutAgent below), so a schedule that happens to be named after
 			// this agent no longer shares its history.

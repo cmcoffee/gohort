@@ -1245,6 +1245,11 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 		Brief:   summary,
 		Started: time.Now(),
 	}.AboutMonitor(name)
+	// A wake runs an agent turn somewhere below this call, through a waker
+	// registered by an app this package cannot see. The context collector is
+	// the only seam that reaches it: whatever loop eventually runs writes its
+	// digest here, and a waker that runs no loop at all leaves the zero value.
+	ctx, promptDigest := WithPromptDigest(ctx)
 	if waker == nil {
 		rec.Status = RunAttention
 		rec.Summary = "Event fired but no Operator waker is registered."
@@ -1256,6 +1261,7 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	waker(ctx, owner, name, summary)
 	rec.Status = RunOK
 	rec.Summary = "Woke the Operator: " + truncateEvent(summary, 200)
+	rec.Prompt = promptDigest()
 	rec.Ended = time.Now()
 	RecordRun(db, rec)
 

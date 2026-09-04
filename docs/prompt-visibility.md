@@ -118,7 +118,52 @@ is exactly what confused us.
 tools exist. Register the template and say so in `Gate`, or register both
 variants. Do not register a string that is never sent verbatim.
 
-## Stage 2 — the per-turn prompt record
+## Stage 2 — the per-turn prompt record — BUILT (digest half)
+
+> **Built v0.6.564.** `PromptDigest` (core/agent_loop.go) records one turn's
+> prompt shape: system bytes and tokens, the clause keys that were live, tool
+> count and the tokens their serialized schemas cost, message count, history
+> chars and tokens, the window, the compaction budget, the provider's own
+> `InputTokens` / prefill split, and `Headroom` with a `Tight` flag when the
+> prompt came within a tenth of the window. `buildPromptDigest` measures the
+> prompt AFTER compaction on round 1 — the prompt actually sent — and
+> `emitPromptDigest` logs it (Debug normally, a loud `HEADROOM:` Log line when
+> tight) and hands it to `AgentLoopConfig.OnPromptDigest`, once per turn.
+>
+> `compactHistory` now RETURNS the budget it used, and the digest records that
+> number rather than recomputing the formula beside it. Recomputation is the
+> specific defect this stage exists to answer: two layers of one turn reported
+> its history as 4,635 and 151,251 tokens because each had its own copy of the
+> measurement.
+>
+> Storage is `RunRecord.Prompt`, in the metadata table — it carries sizes and
+> keys, never prompt text, so it needs none of the encrypted side-table
+> handling `Raw` and `Steps` get. Surfaced on `inspect_run`, which prints the
+> digest line only when one was recorded.
+>
+> **Two ways to collect it, because there are two kinds of caller.**
+> `AgentLoopConfig.OnPromptDigest` serves the caller that builds the loop
+> config — the recurring fire uses it. Every other caller is several frames
+> above a prompt it never sees: a standing fire reaches its through the shared
+> `runAgentSyncConfirm`, which already returns four values, and an
+> event-monitor wake calls an opaque registered waker and writes the RunRecord
+> itself. For those, `core.WithPromptDigest(ctx)` returns a context that
+> collects the turn's digest and a reader for it; the loop writes there as well
+> as to the hook. One name, its reader returned as a closure and its writer
+> unexported, and it reaches every path that runs an agent loop — including
+> ones written later, which a per-call-site hook could never promise.
+>
+> First digest under a context wins (a fanout stage dispatches its branches
+> concurrently and the run is about the prompt that opened it), tracked with an
+> explicit "has one arrived" flag so a genuinely empty measurement is not
+> overwritten by a later one. A wake that runs no turn at all — a direct notify
+> straight to the owner's phone — records the zero digest rather than a
+> half-filled one.
+>
+> The export ceiling went 2139 -> 2141 across the two additions; see the notes
+> in core/ceiling_test.go for why neither can leave the hub or lose its name.
+> Full-text capture behind a per-agent toggle remains item 3 in Order below,
+> and is still not built.
 
 The new capability, and the one that pays for the rest.
 

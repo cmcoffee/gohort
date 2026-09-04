@@ -19,6 +19,13 @@ package prompts
 
 import "strings"
 
+// GlobalRulesKey names this clause for a per-turn prompt digest. It is NOT a
+// registered PromptBlock and must not become one: the text is entirely
+// operator-authored, so there is no shipped default to display, override or
+// switch off. The key exists so a digest can say the deployment's rules were
+// in this prompt without pretending they are a builtin.
+const GlobalRulesKey = "framework.global_rules"
+
 const customGlobalKey = "prompt_global_rules"
 
 // GlobalRules returns the operator's rules, in order.

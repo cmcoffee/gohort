@@ -87,6 +87,10 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// sa.DispatchedBy is set only on a DELEGATION (a transient record built
 		// by RunDelegation) — it hands the delegate the delegator's channel
 		// reach. A stored schedule leaves it empty and keeps its own scope.
+		// Collect what the fire's prompt was made of. A standing agent runs at
+		// 5am with the tab closed, so its record is the only place this can be
+		// read afterwards.
+		ctx, promptDigest := WithPromptDigest(ctx)
 		out, hitRoundCap, toolTrace, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
 		if err != nil {
 			liveRun.Complete(RunStatusFailed)
@@ -103,6 +107,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 				Summary: "Run failed: " + err.Error(),
 				Err:     err.Error(),
 				Steps:   steps,
+				Prompt:  promptDigest(),
 			}
 		}
 
@@ -111,6 +116,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 			Summary: standingSummary(out),
 			Raw:     out,
 			Steps:   steps,
+			Prompt:  promptDigest(),
 		}
 		if blockedTool := gate.blocked(); blockedTool != "" {
 			res.Status = RunAttention

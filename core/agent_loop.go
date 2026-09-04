@@ -467,6 +467,49 @@ type StepInfo struct {
 // StepCallback is called after each round of the agent loop for observability.
 type StepCallback func(step StepInfo)
 
+// PromptDigest is what one turn's prompt was made of, recorded per turn.
+//
+// The bug this exists to catch is intermittent and invisible. A cortex thread
+// arrived at ~203k tokens with a 64s prefill and 0% cache on a turn that made
+// ONE call, and every message-shaped diagnostic read healthy while it happened,
+// because the weight was in persisted tool results rather than in anything a
+// message count could see. Two layers reported the same quantity 30x apart for
+// weeks. A number next to the window, recorded every turn, turns that kind of
+// archaeology into a glance.
+//
+// SIZES AND KEYS, NOT TEXT. The full prompt is 46KB+ on an ordinary chat turn;
+// a ledger of those is a storage problem and a mild disclosure one. What is
+// stored is the shape: how big each part was, which clauses were live, and how
+// close the whole thing came to the window. Capturing the text itself is a
+// separate, per-agent, off-by-default thing and is deliberately not here.
+//
+// Token counts are estimates (EstimateTokens is chars/4) EXCEPT InputTokens,
+// which is what the provider actually charged. When the two disagree badly, the
+// provider is right and the estimator is the thing to fix.
+type PromptDigest struct {
+	SystemBytes   int      `json:"system_bytes"`
+	SystemTokens  int      `json:"system_tokens"`
+	ClauseKeys    []string `json:"clause_keys,omitempty"` // framework blocks live this turn
+	ToolCount     int      `json:"tool_count"`
+	ToolTokens    int      `json:"tool_tokens"` // measured from the serialized schemas, which is what is sent
+	Messages      int      `json:"messages"`
+	HistoryChars  int      `json:"history_chars"`
+	HistoryTokens int      `json:"history_tokens"` // counts tool-result bodies, where a standing thread's weight lives
+	Window        int      `json:"window"`         // the model's context size, 0 when none was declared
+	Budget        int      `json:"budget"`         // what compaction allowed history, 0 when compaction is off
+	InputTokens   int      `json:"input_tokens,omitempty"`
+	Prefilled     int      `json:"prefilled,omitempty"` // prompt tokens the provider re-prefilled (the rest was cached)
+	PrefillMS     float64  `json:"prefill_ms,omitempty"`
+	Headroom      int      `json:"headroom,omitempty"` // window minus the estimated prompt; negative means over
+	Tight         bool     `json:"tight,omitempty"`    // estimated prompt is within a tenth of the window
+
+	// Estimated is the whole prompt as the loop measured it before the call.
+	// A stored FIELD rather than a method over the parts: this is a record of
+	// one moment, and a total recomputed later from fields somebody may have
+	// migrated is a different number wearing the same name.
+	Estimated int `json:"estimated"`
+}
+
 // AgentLoopConfig configures a RunAgentLoop invocation.
 // Guardrail interception points — the canonical hook labels shared between
 // core (which calls GuardrailCheck at these moments) and the app (which
@@ -853,6 +896,15 @@ type AgentLoopConfig struct {
 
 	// OnStep is called after each LLM round for logging/observability. Optional.
 	OnStep StepCallback
+
+	// OnPromptDigest is called ONCE per turn with what the prompt was made of,
+	// as soon as the first response makes the provider's own token count
+	// available. Wire it to whatever outlives the turn — orchestrate puts it on
+	// the run record, which is the only surface a scheduled fire has: a
+	// recurring fire tails no SSE ring and has no HTTP client watching, so a
+	// digest delivered over the live channel would reach every path EXCEPT the
+	// unattended ones that need it most. Optional.
+	OnPromptDigest func(PromptDigest)
 
 	// OnDiag is called when the loop makes a silent framework decision on the
 	// user's behalf mid-turn — chiefly the correction guards below that inject
@@ -1745,6 +1797,133 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	return resp, history, err
 }
 
+// --- collecting a digest from several frames up --------------------------------
+//
+// OnPromptDigest serves the caller that BUILDS the loop config. The other
+// caller is the one several frames up that never sees it: an event-monitor
+// wake calls an opaque registered waker and writes the run record itself, and
+// a standing fire reaches its prompt through a shared dispatch that already
+// returns four values. Neither can be given the hook without threading a
+// parameter through code that has no other reason to know about it.
+//
+// So the loop writes the digest onto the context as well, and a caller that
+// wants it wraps its ctx before handing it down. That reaches every path that
+// runs an agent loop at all — including ones written later, which is the part
+// a per-call-site hook could never promise.
+
+type promptDigestKeyT struct{}
+
+var promptDigestKey promptDigestKeyT
+
+type promptDigestSink struct {
+	mu sync.Mutex
+	d  PromptDigest
+	// set records whether anything has been written, so a first prompt that
+	// genuinely measured zero still counts as the answer.
+	set bool
+}
+
+// WithPromptDigest returns a context that collects the next turn's prompt
+// digest, and a reader for it. The reader is safe to call before, during or
+// after the turn; it reports the zero digest until one is recorded.
+//
+// The FIRST digest under a given context wins. A fanout stage runs several
+// dispatches concurrently under one context, and the run being described is
+// the one that opened it.
+func WithPromptDigest(ctx context.Context) (context.Context, func() PromptDigest) {
+	s := &promptDigestSink{}
+	return context.WithValue(ctx, promptDigestKey, s), func() PromptDigest {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.d
+	}
+}
+
+// recordPromptDigest writes to the collector on ctx, if a caller installed one.
+func recordPromptDigest(ctx context.Context, d PromptDigest) {
+	if ctx == nil {
+		return
+	}
+	s, _ := ctx.Value(promptDigestKey).(*promptDigestSink)
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if !s.set {
+		s.d, s.set = d, true
+	}
+	s.mu.Unlock()
+}
+
+// emitPromptDigest logs the turn's prompt shape and hands it to the app.
+//
+// The log line is always written: it is the thing to read FIRST when a turn is
+// slow or a reply is strange, and it costs one line. The tight case is louder
+// because a prompt sitting on the window is the failure that took a week to
+// find — the surface that would have made it a glance is a number printed next
+// to the window it is about to exceed.
+func emitPromptDigest(ctx context.Context, cfg AgentLoopConfig, d PromptDigest) {
+	line := fmt.Sprintf("prompt~%d tokens = system %d + tools %d (%d) + history %d (%d msgs), window %d, budget %d, %d clause(s)",
+		d.Estimated, d.SystemTokens, d.ToolTokens, d.ToolCount, d.HistoryTokens, d.Messages, d.Window, d.Budget, len(d.ClauseKeys))
+	if d.InputTokens > 0 {
+		line += fmt.Sprintf(", provider charged %d", d.InputTokens)
+	}
+	if d.Tight {
+		Log("[agent_loop] HEADROOM: %s — %d tokens from the window. A prompt this close to the wall fails intermittently rather than cleanly.", line, d.Headroom)
+	} else {
+		Debug("[agent_loop] %s", line)
+	}
+	if cfg.OnPromptDigest != nil {
+		cfg.OnPromptDigest(d)
+	}
+	// And the context collector, for the callers that never see the config.
+	recordPromptDigest(ctx, d)
+}
+
+// buildPromptDigest measures the prompt about to be sent.
+//
+// Everything here is read from the SAME values the call will use: the assembled
+// system prompt, the compacted history, the tool set for this round, and the
+// budget compactHistory just reported. Nothing is recomputed from a formula
+// kept beside the original, because that is precisely how the two layers of one
+// turn came to disagree about history size by a factor of thirty.
+func buildPromptDigest(systemPrompt string, clauseKeys []string, tools []AgentToolDef, msgs []Message, window, budget int) PromptDigest {
+	d := PromptDigest{
+		SystemBytes:  len(systemPrompt),
+		SystemTokens: EstimateTokens(systemPrompt),
+		ClauseKeys:   clauseKeys,
+		ToolCount:    len(tools),
+		Messages:     len(msgs),
+		Window:       window,
+		Budget:       budget,
+	}
+	// The serialized schema is what the provider is sent; names and
+	// descriptions alone understate a catalog whose weight is in parameters.
+	for _, td := range tools {
+		if b, err := json.Marshal(td.Tool); err == nil {
+			d.ToolTokens += len(b) / 4
+		}
+	}
+	for i := range msgs {
+		d.HistoryChars += len(msgs[i].Content)
+		for j := range msgs[i].ToolResults {
+			d.HistoryChars += len(msgs[i].ToolResults[j].Content)
+		}
+	}
+	d.HistoryTokens = EstimateMessagesTokens(msgs)
+	d.Estimated = d.SystemTokens + d.ToolTokens + d.HistoryTokens
+	if window > 0 {
+		d.Headroom = window - d.Estimated
+		// A tenth of the window. The measured failure was 523,749 chars against
+		// a 131,072-token budget: sitting ON the line, which is why it was
+		// intermittent and why nobody could catch it in the act. Anything this
+		// close is worth saying out loud whether or not this particular turn
+		// survived it.
+		d.Tight = d.Headroom < window/10
+	}
+	return d
+}
+
 // promptReuseNote renders the prompt-cache read for the round breadcrumb, or
 // nothing at all when the backend doesn't report one. It rides the existing
 // "LLM returned" line rather than adding a line of its own: the question it
@@ -1957,13 +2136,21 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// Every framework clause below arrives through the prompts registry, which
 	// hands back "" for a block an operator has switched off. One conditional
 	// append here beats fifteen at the call sites.
-	addClause := func(clause string) {
+	//
+	// The key rides along because the digest's question is "which rules were
+	// live on THIS turn?", and a gate ("only when the agent has tools") answers
+	// that in general while a per-turn list answers it for the turn that
+	// actually went wrong.
+	var clauseKeys []string
+	addClause := func(key, clause string) {
 		if clause != "" {
 			systemPrompt += "\n\n" + clause
+			clauseKeys = append(clauseKeys, key)
 		}
 	}
 	if cfg.PromptTools && len(tools) > 0 {
 		systemPrompt += BuildToolPrompt(tools)
+		clauseKeys = append(clauseKeys, "framework.tools_directive")
 	}
 	// Tool-round discipline — applies to EVERY tool-using agent loop
 	// (native or prompt-based tool calling), not just one app. The
@@ -1984,7 +2171,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// must wait, so nothing legitimate gets dropped.
 	const emitDisciplinePrompt = true
 	if emitDisciplinePrompt && len(tools) > 0 {
-		addClause(prompts.AnsweringRoundsClause())
+		addClause(prompts.AnsweringRoundsKey, prompts.AnsweringRoundsClause())
 	}
 	// Grounding discipline — every tool-using loop. The failure mode: the
 	// model retrieves real sources, then embellishes with specifics pulled
@@ -1999,7 +2186,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// pile of rules. Kept to a single short line on purpose: the per-block
 		// salience the 27B needs comes from the blunt standalone blocks, NOT from
 		// a long preamble, so the frame stays out of their way.
-		addClause(prompts.GroundingContractClause())
+		addClause(prompts.GroundingContractKey, prompts.GroundingContractClause())
 		// Capability-first — tool SELECTION, distinct from Grounding (which
 		// governs specifics once you have results). The failure mode: the
 		// model answers a recency-sensitive or job-specific question straight
@@ -2009,18 +2196,18 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// separate from the trust decision (where the answer comes from) so
 		// this doesn't push the model away from delegating real multi-step
 		// work. Written without em-dashes so it doesn't model the tic.
-		addClause(prompts.CapabilityFirstClause())
-		addClause(prompts.GroundingClause())
+		addClause(prompts.CapabilityFirstKey, prompts.CapabilityFirstClause())
+		addClause(prompts.GroundingKey, prompts.GroundingClause())
 		// Action grounding — the sibling of Grounding aimed at ACTIONS rather than
 		// facts. The failure mode (observed live: an agent in a group chat said "I
 		// sent a meme" with zero tool calls): the model narrates a completed action
 		// it never performed, because its reply text feels like doing the thing.
 		// Written without em-dashes (house style).
-		addClause(prompts.ActionsClause())
+		addClause(prompts.ActionsKey, prompts.ActionsClause())
 		// Stated where [Actions:] is stated, because they are the same mistake
 		// from opposite ends: that one stops an agent claiming work it never did,
 		// this one stops it withholding work it actually did.
-		addClause(prompts.ToolVisibilityClause())
+		addClause(prompts.ToolVisibilityKey, prompts.ToolVisibilityClause())
 		// Contradiction discipline — the sibling of Grounding aimed the OPPOSITE
 		// direction: not the model's own volunteered specifics, but the model
 		// DISPUTING a fact the user stated or assumed. The failure mode is a
@@ -2029,8 +2216,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// Scoped to CONTRADICTING the user (not to general answers) so it does
 		// not add hedging to the decisive-language posture elsewhere. Written
 		// without em-dashes (house style).
-		addClause(prompts.DisagreeingClause())
-		addClause(prompts.NumbersClause())
+		addClause(prompts.DisagreeingKey, prompts.DisagreeingClause())
+		addClause(prompts.NumbersKey, prompts.NumbersClause())
 		// False-precision prevention — the behavioral half of the same concern
 		// the [Numbers] / [Grounding] blocks address: stop the model inventing a
 		// percentage / fraction / dollar figure for rhetorical weight. This is
@@ -2038,7 +2225,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// it was removed because its verbatim-corpus match couldn't tell a
 		// correctly COMPUTED figure ("$120 over MSRP") from a fabricated one and
 		// false-flagged the model's own arithmetic.
-		addClause(prompts.NoFalsePrecisionClause())
+		addClause(prompts.NoFalsePrecisionKey, prompts.NoFalsePrecisionClause())
 		// Volatile facts — a blunt, standalone restatement of the Grounding rule
 		// aimed at the specifics the worker keeps fabricating. Already covered
 		// inside Grounding + Capability-first + Numbers, but buried in long
@@ -2063,13 +2250,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				break
 			}
 		}
-		addClause(prompts.VolatileFactsClause(hasWebTool))
+		addClause(prompts.VolatileFactsKey, prompts.VolatileFactsClause(hasWebTool))
 	}
 	// Global rules — the deployment's own, ahead of everything else this
 	// section adds. Injected here and ONLY here: the per-namespace rules panels
 	// display them so a person can see the whole set on one screen, and a
 	// display is not a second injection.
-	addClause(prompts.GlobalRulesClause())
+	addClause(prompts.GlobalRulesKey, prompts.GlobalRulesClause())
 	// Output style — universal (every reply, with or without tools).
 	// Suppresses persistent LLM lexical/punctuation tics the user flagged.
 	//
@@ -2080,27 +2267,31 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// turning one off on the Prompts page stops the sentence AND the transform
 	// together rather than leaving the prompt asking for something the code no
 	// longer does. Empty when every rule is off, and then nothing is appended.
-	addClause(prompts.StyleClause())
+	addClause(prompts.StyleKey, prompts.StyleClause())
 	// Secret handling — universal. Stops any agent from soliciting API
 	// credentials in chat (the OPNsense-controller failure mode); auth is
 	// injected server-side via Admin > APIs credentials, so the secret never
 	// belongs in the conversation or the tool-call logs.
-	addClause(prompts.SecretsClause())
+	addClause(prompts.SecretsKey, prompts.SecretsClause())
 
 	// Internal-marker convention: gives the model a sanctioned, always-scrubbed
 	// wrapper for internal-only notes AND tells it not to type bare delivery
 	// markers into user-facing text (the textutil.StripMetaTags safety net catches both).
-	addClause(prompts.InternalMarkersClause())
+	addClause(prompts.InternalMarkersKey, prompts.InternalMarkersClause())
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
 	// budget were infinite, then getting truncated). Only emit for
 	// sessions with meaningful budgets; short fixed loops (judges,
 	// classifiers) don't need the noise.
 	if maxRounds >= 10 {
-		addClause(prompts.RoundBudgetClause(maxRounds))
+		addClause(prompts.RoundBudgetKey, prompts.RoundBudgetClause(maxRounds))
 	}
 
 	var lastResp *Response
+	// Per-turn prompt digest: built on the first round, emitted once the first
+	// response carries the provider's own token count.
+	var digest PromptDigest
+	digestBuilt, digestSent := false, false
 	prevHadToolCalls := false
 	// Rations the loop's silent re-prompts. Per KIND, not one pot — see
 	// correctionBudget for why that mattered.
@@ -2609,7 +2800,18 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// refused a prompt, the next one has to be built against what the
 		// worker actually granted. Otherwise every turn rebuilds to the claim
 		// and rediscovers the wall a round later.
-		compactHistory(history, systemPrompt, effectiveContextSize(cfg.ContextSize), forceCompact)
+		window := effectiveContextSize(cfg.ContextSize)
+		budget := compactHistory(history, systemPrompt, window, forceCompact)
+		// One digest per TURN, measured on the prompt of the first round after
+		// compaction has run — the prompt that is actually sent. Later rounds
+		// grow history with results the model asked for; round 1 is the part a
+		// person can act on (a system prompt, a tool catalog, and a thread they
+		// can trim). Provider numbers are filled in below, once the response
+		// makes them real.
+		if !digestBuilt {
+			digest = buildPromptDigest(systemPrompt, clauseKeys, tools, history, window, budget)
+			digestBuilt = true
+		}
 		// Route think is the default; ChatOptions override it. Build route
 		// defaults first so per-call WithThink(true/false) takes precedence.
 		var opts []ChatOption
@@ -2939,6 +3141,19 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		llmWall += time.Since(llmStarted)
 		llmCalls++
 		Log("[agent_loop] round %d: ← LLM returned in %s (tier=%v, content=%d, tools=%d%s)", round, time.Since(llmStarted).Round(time.Millisecond), resp.Tier, len(resp.Content), len(resp.ToolCalls), promptReuseNote(resp))
+
+		// The turn's prompt digest, completed with what the provider charged
+		// and handed to whatever outlives the turn. Emitted here, after the
+		// first response, because InputTokens is the one number in it that is
+		// measured rather than estimated — and when it disagrees badly with
+		// the estimate, the estimator is the thing that is wrong.
+		if digestBuilt && !digestSent {
+			digest.InputTokens = resp.InputTokens
+			digest.Prefilled = resp.PromptTokensPrefilled
+			digest.PrefillMS = resp.PrefillMS
+			digestSent = true
+			emitPromptDigest(ctx, cfg, digest)
+		}
 
 		// DIAGNOSTIC: collapse-ish round — the model wrote a large reasoning
 		// block but little visible content and called no tool. The existing
@@ -5763,9 +5978,14 @@ func estimateMessageTokens(m Message) int {
 // newest result — for when the model knows it's done with a long tool
 // output (e.g. a smoke-test report it has finished judging). force also
 // works when contextSize is unset.
-func compactHistory(msgs []Message, systemPrompt string, contextSize int, force bool) {
+// It returns the history budget it computed, so a caller that wants to RECORD
+// the budget reads the number this function actually used rather than
+// recomputing the formula beside it. Two copies of one quantity is how a
+// standing thread came to be reported at 4,635 tokens and 151,251 tokens by
+// two layers of the same turn. 0 means compaction was off for this call.
+func compactHistory(msgs []Message, systemPrompt string, contextSize int, force bool) int {
 	if contextSize <= 0 && !force {
-		return
+		return 0
 	}
 	const (
 		// Headroom (tokens) reserved for tool schemas + a near-max thinking
@@ -5810,7 +6030,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 	// waiting for an elision to fire the Log line below.
 	Debug("[agent_loop] compaction check: history ~%d tokens, budget %d, window %d (msgs=%d)", total, budget, contextSize, len(msgs))
 	if total <= budget {
-		return
+		return budget
 	}
 	origTotal := total
 
@@ -5834,7 +6054,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 		if total < origTotal {
 			Log("[agent_loop] compaction: truncated an oversized tool result, est %d→%d tokens (window=%d)", origTotal, total, contextSize)
 		}
-		return
+		return budget
 	}
 
 	var trIdx []int
@@ -5847,7 +6067,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 		if total < origTotal {
 			Log("[agent_loop] compaction: truncated an oversized tool result, est %d→%d tokens (window=%d)", origTotal, total, contextSize)
 		}
-		return // nothing old enough to safely elide
+		return budget // nothing old enough to safely elide
 	}
 	elided := 0
 	for _, i := range trIdx[:len(trIdx)-keepRecentToolMsgs] {
@@ -5875,6 +6095,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 		// session context management is visible without --debug.
 		Log("[agent_loop] compaction (%s): elided %d old tool-result body(ies), est %d→%d tokens (budget=%d, window=%d)", mode, elided, origTotal, total, budget, contextSize)
 	}
+	return budget
 }
 
 // nearestToolName returns the registered tool whose name shares the
