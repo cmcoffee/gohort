@@ -70,8 +70,14 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 		Basis   string `json:"basis"`
 	}
 	if derr := DecodeJSON(resp.Content, &out); derr != nil {
-		Debug("[grounding-judge] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
-		return TurnGroundingVerdict{}, false
+		// A quoted claim usually carries its own quotation marks, unescaped;
+		// see salvageJudgeJSON. Only text with no verdict at all is given up on.
+		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "claim", "basis"})
+		if !ok {
+			Debug("[grounding-judge] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
+			return TurnGroundingVerdict{}, false
+		}
+		out.Verdict, out.Claim, out.Basis = fields["verdict"], fields["claim"], fields["basis"]
 	}
 	if !strings.EqualFold(strings.TrimSpace(out.Verdict), "ASSERTED") {
 		Debug("[grounding-judge] CLEAN (%d unverified note(s) in scope)", len(ev.Unchecked))

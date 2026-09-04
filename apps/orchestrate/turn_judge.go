@@ -87,11 +87,17 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 		Machinery string `json:"machinery"`
 	}
 	if derr := DecodeJSON(resp.Content, &out); derr != nil {
-		// No text fallback, unlike the gatekeeper. There a scan for "YES" is a
+		// A quoted claim usually carries its own quotation marks, unescaped;
+		// salvageJudgeJSON recovers the object by its keys. Beyond that there is
+		// no text fallback, unlike the gatekeeper. There a scan for "YES" is a
 		// reasonable guess because the cost of guessing wrong is one message
 		// not delivered; here it is a retracted reply and a burnt round.
-		Debug("[turn-judge] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
-		return TurnClaimVerdict{}, false
+		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "claim", "why", "machinery"})
+		if !ok {
+			Debug("[turn-judge] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
+			return TurnClaimVerdict{}, false
+		}
+		out.Verdict, out.Claim, out.Why, out.Machinery = fields["verdict"], fields["claim"], fields["why"], fields["machinery"]
 	}
 	machinery := strings.TrimSpace(out.Machinery)
 	if !strings.EqualFold(strings.TrimSpace(out.Verdict), "UNKEPT") {
