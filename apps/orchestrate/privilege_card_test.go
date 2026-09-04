@@ -168,7 +168,7 @@ func TestEmitPrivilegeCardPayload(t *testing.T) {
 		gotID, gotName, gotData = id, name, data
 	}
 	rec := AgentRecord{ID: "a7", Name: "Poster", Author: true, AllowedTools: []string{"post_update"}}
-	emitPrivilegeCard(sess, rec, []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}})
+	emitPrivilegeCard(sess, rec, []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}}, nil)
 	if gotID != "a7" || gotName != "Poster" {
 		t.Fatalf("card target = %q/%q", gotID, gotName)
 	}
@@ -188,5 +188,58 @@ func TestEmitPrivilegeCardPayload(t *testing.T) {
 	}
 
 	// No live viewer (a scheduled authoring run) — nothing to emit, no panic.
-	emitPrivilegeCard(&ToolSession{Username: "u"}, rec, nil)
+	emitPrivilegeCard(&ToolSession{Username: "u"}, rec, nil, nil)
+}
+
+// TestUpdateCardOnlyForWidening pins the update rule: an agent that already
+// holds a consequential tool and a capability flag does not re-raise the card
+// on a save that changed neither, and does the moment the save grants
+// something new. Before this, every update of such an agent prompted for
+// "permission changes" nobody had proposed.
+func TestUpdateCardOnlyForWidening(t *testing.T) {
+	shown := 0
+	sess := &ToolSession{Username: "u"}
+	sess.PrivilegePrompt = func(string, string, map[string]string) { shown++ }
+	tool := []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}}
+	rec := AgentRecord{ID: "a7", Name: "Poster", Author: true, AllowedTools: []string{"post_update"}}
+	// Same powers, prompt-only edit: quiet. The snapshot is built the way the
+	// update path builds it, from the rows of the stored record.
+	prev := &privilegeSnapshot{tools: privilegeToolRows(sess, rec, tool), flags: privilegeFlagRows(rec)}
+	edited := rec
+	edited.OrchestratorPrompt = "be terse"
+	emitPrivilegeCard(sess, edited, tool, prev)
+	if shown != 0 {
+		t.Fatalf("a save that widened nothing raised the card %d time(s)", shown)
+	}
+
+	// A flag turned on: shown.
+	wider := rec
+	wider.Fleet = true
+	emitPrivilegeCard(sess, wider, tool, prev)
+	if shown != 1 {
+		t.Fatalf("a newly granted capability must raise the card, shown=%d", shown)
+	}
+
+	// A consequential tool added: shown.
+	more := rec
+	more.AllowedTools = []string{"post_update", "wipe_disk"}
+	tools := append(tool, TempTool{Name: "wipe_disk", CommandTemplate: "rm -rf /", Credential: "loud_api"})
+	emitPrivilegeCard(sess, more, tools, prev)
+	if shown != 2 {
+		t.Fatalf("a newly granted consequential tool must raise the card, shown=%d", shown)
+	}
+
+	// Narrowing — the flag turned off — is not a grant: quiet.
+	narrower := rec
+	narrower.Author = false
+	emitPrivilegeCard(sess, narrower, tool, prev)
+	if shown != 2 {
+		t.Fatalf("a narrowing save must not raise the card, shown=%d", shown)
+	}
+
+	// A record that did not exist before (create/clone) keeps the old rule.
+	emitPrivilegeCard(sess, rec, tool, nil)
+	if shown != 3 {
+		t.Fatalf("a created agent with powers must raise the card, shown=%d", shown)
+	}
 }

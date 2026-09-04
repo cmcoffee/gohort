@@ -185,11 +185,68 @@ func privilegeFlagRows(rec AgentRecord) []privilegeFlag {
 	return flags
 }
 
+// privilegeSnapshot is what an agent could do BEFORE an update touched it:
+// the same rows the card would have drawn for the stored record. An update
+// compares its result against this so the card appears for what the update
+// granted, not for what the agent already held.
+//
+// It is taken before the merge and before any inline tool is committed to the
+// store. Taking it afterwards would classify a rewritten tool by its NEW
+// definition on both sides of the comparison and miss, say, a credential swap.
+type privilegeSnapshot struct {
+	tools []privilegeGrant
+	flags []privilegeFlag
+}
+
+// snapshotPrivileges captures the card rows for a stored record as it stands.
+func snapshotPrivileges(sess *ToolSession, rec AgentRecord) *privilegeSnapshot {
+	return &privilegeSnapshot{
+		tools: privilegeToolRows(sess, rec, nil),
+		flags: privilegeFlagRows(rec),
+	}
+}
+
+// widenedBy reports whether the new rows hold anything to decide that the
+// snapshot did not: a consequential tool the agent could not call before, one
+// whose policy or reach changed, or a capability flag newly on. Narrowing —
+// a tool dropped, a flag turned off — never prompts; there is nothing to grant.
+func (p *privilegeSnapshot) widenedBy(tools []privilegeGrant, flags []privilegeFlag) bool {
+	had := map[privilegeGrant]bool{}
+	for _, t := range p.tools {
+		had[t] = true
+	}
+	for _, t := range tools {
+		if t.Policy != "auto" && !had[t] {
+			return true
+		}
+	}
+	on := map[string]bool{}
+	for _, f := range p.flags {
+		if f.On {
+			on[f.Field] = true
+		}
+	}
+	for _, f := range flags {
+		if f.On && !on[f.Field] {
+			return true
+		}
+	}
+	return false
+}
+
 // emitPrivilegeCard builds the card for a just-saved agent and hands it to the
 // app's PrivilegePrompt. No-op without a live viewer (a wake or scheduled
 // authoring run has no one to show it to) — the tool's text result stands on
 // its own in that case.
-func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool) {
+//
+// prev is the agent's privileges before an update, or nil for a record that
+// did not exist before this call (create, clone). With prev set, the card is
+// shown only when the save WIDENED something. It used to be recomputed from
+// the whole saved record on every update, so an agent holding one
+// consequential tool or one capability flag re-raised the card — and re-armed
+// one the user had already settled — on a save that only touched its prompt.
+// The user saw "approve these permissions" for a change nobody had proposed.
+func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool, prev *privilegeSnapshot) {
 	if sess == nil || sess.PrivilegePrompt == nil || rec.ID == "" {
 		return
 	}
@@ -198,6 +255,9 @@ func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool) {
 	// A card with nothing consequential and no capability on is noise — the
 	// agent got read-only tools and holds no powers. Stay quiet.
 	if !privilegeCardWorthShowing(tools, flags) {
+		return
+	}
+	if prev != nil && !prev.widenedBy(tools, flags) {
 		return
 	}
 	toolsJSON, _ := json.Marshal(tools)

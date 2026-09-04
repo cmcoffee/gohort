@@ -186,7 +186,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// Surface what this agent may now DO as an inline card, so the powers it
 	// just gained are reviewed in the conversation that granted them instead of
 	// on a later trip to the Permissions pane.
-	emitPrivilegeCard(sess, saved, committedTools)
+	emitPrivilegeCard(sess, saved, committedTools, nil)
 	// Announce the focus move. Creating an agent silently re-points the
 	// authoring-focus slot (above), which is the implicit target of a later
 	// add_tool. When the new agent is a HELPER for something else — the
@@ -455,6 +455,9 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if msg := agentMutationLock(existing, sess); msg != "" {
 		return "", errors.New(msg)
 	}
+	// What the agent could do before this update, so the privileges card can
+	// tell a grant from a save that merely carried existing powers along.
+	before := snapshotPrivileges(sess, existing)
 	mergeAgentArgs(&existing, args)
 	// LLM-supplied inline tools commit via the unified store (scoped to this
 	// agent) after the record saves — mergeAgentArgs no longer writes them
@@ -503,8 +506,8 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	verifyHint += unresolvedToolsWarning(sess, &saved)
 	// An update can widen what an agent may do as easily as a create can —
-	// same card, same reason.
-	emitPrivilegeCard(sess, saved, append(append([]TempTool{}, inlineTools...), copiedTools...))
+	// same card, same reason — but only when it actually did (see before).
+	emitPrivilegeCard(sess, saved, append(append([]TempTool{}, inlineTools...), copiedTools...), before)
 	b := agentEchoJSON(saved)
 	// Same check as create: an update is where a tool name goes stale,
 	// because the allowlist is rewritten while the tools it references
@@ -551,7 +554,7 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	}
 	// A clone copies the source's grants verbatim, which is exactly the case
 	// where they go unexamined — show them.
-	emitPrivilegeCard(sess, saved, nil)
+	emitPrivilegeCard(sess, saved, nil, nil)
 	b := agentEchoJSON(saved)
 	return fmt.Sprintf(
 		"AGENT_CLONED ok. id=%s name=%q. DONE — reply with a short summary of what was cloned and END THE TURN. Do NOT call ask_user, clone_agent, or any other tool after this.\n\nSaved record: %s",
