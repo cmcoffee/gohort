@@ -1954,6 +1954,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// as plain text — tool calls are parsed from <tool_call> tags and
 	// results are sent back as regular user messages.
 	systemPrompt := cfg.SystemPrompt
+	// Every framework clause below arrives through the prompts registry, which
+	// hands back "" for a block an operator has switched off. One conditional
+	// append here beats fifteen at the call sites.
+	addClause := func(clause string) {
+		if clause != "" {
+			systemPrompt += "\n\n" + clause
+		}
+	}
 	if cfg.PromptTools && len(tools) > 0 {
 		systemPrompt += BuildToolPrompt(tools)
 	}
@@ -1976,7 +1984,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// must wait, so nothing legitimate gets dropped.
 	const emitDisciplinePrompt = true
 	if emitDisciplinePrompt && len(tools) > 0 {
-		systemPrompt += "\n\n[Answering across tool rounds: NEVER emit answer text in the same step as a tool call. Call your tools FIRST, wait for the results, THEN write your answer from those results, in a final step that has no tool call. Do NOT pre-write an answer from training/memory and then also fetch tools: an answer composed before the results is exactly the double-emit to avoid. Answer after tools, not before. A brief progress note as you work (\"checking that now…\") is fine; your actual answer waits for the end and appears exactly once. Never two answers in one turn.]"
+		addClause(prompts.AnsweringRoundsClause())
 	}
 	// Grounding discipline — every tool-using loop. The failure mode: the
 	// model retrieves real sources, then embellishes with specifics pulled
@@ -1991,7 +1999,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// pile of rules. Kept to a single short line on purpose: the per-block
 		// salience the 27B needs comes from the blunt standalone blocks, NOT from
 		// a long preamble, so the frame stays out of their way.
-		systemPrompt += "\n\n[Grounding contract: the blocks below are one rule seen from several sides. You earn the right to state a fact by pointing to where it came from THIS turn; when you can't, say so instead of guessing.]"
+		addClause(prompts.GroundingContractClause())
 		// Capability-first — tool SELECTION, distinct from Grounding (which
 		// governs specifics once you have results). The failure mode: the
 		// model answers a recency-sensitive or job-specific question straight
@@ -2001,20 +2009,18 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// separate from the trust decision (where the answer comes from) so
 		// this doesn't push the model away from delegating real multi-step
 		// work. Written without em-dashes so it doesn't model the tic.
-		systemPrompt += "\n\n[Capability-first: when a tool or agent can do the job or get fresher information than you hold (news, prices, status, anything that may have changed since training), use it instead of answering from memory. Size it to the job: a direct tool for one lookup or action, an agent for multi-step or specialized work. Prior knowledge is a fallback for gaps no capability can fill, never a substitute for one that exists; if you fall back, say so and offer to verify. To answer what tools you have, read your live catalog (including any 'custom tools (load before use)' section), never recite from memory, and never claim you already built a tool without checking.]"
-		systemPrompt += "\n\n[Grounding: state a precise specific (number, name, citation, statute/case/version/ID, date, dosage, direct quote) ONLY when it appears in a tool result or material the user gave you THIS turn, never from memory however confident: a specific you can't point to is worse than none. This holds in casual talk too: give the general shape, but don't attach a specific you can't source, say you're not sure instead of guessing. The [Current date & time: …] stamp on the latest user message IS a this-turn source: read the date and time off it and state them plainly (no tool call needed), but do NOT add a holiday, season, or event association unless a source gave it this turn (a rule-based holiday like \"the last Monday in May\" is exactly the specific you must not assert from memory; \"it's a regular Sunday, what's up?\" beats a confident wrong holiday). If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing, never backfill from memory. Same for MEDIA you couldn't open, download, or view: don't describe it or infer its content from the URL, caption, sender, or nearby messages, and don't reuse one item's description for another; if a past turn's \"[N image(s) attached …]\" note records what an image showed, rely only on that note, don't re-describe or invent its subject. If the user corrects a specific, don't swap in another guess or invent a reason for the error, admit you're unsure and offer to look it up.]"
+		addClause(prompts.CapabilityFirstClause())
+		addClause(prompts.GroundingClause())
 		// Action grounding — the sibling of Grounding aimed at ACTIONS rather than
 		// facts. The failure mode (observed live: an agent in a group chat said "I
 		// sent a meme" with zero tool calls): the model narrates a completed action
 		// it never performed, because its reply text feels like doing the thing.
 		// Written without em-dashes (house style).
-		systemPrompt += "\n\n[Actions: never claim you DID something (sent a message/meme/image/file, posted, scheduled, created, saved, ran a command) unless you called the tool that does it THIS turn and its result confirms success. Your reply text is NOT an action: writing 'I sent it', 'attached', 'posted to the group', or 'done' does nothing by itself. If the thing needs a tool, call it and report what its result says; if you didn't call it, don't say you did. If you couldn't or chose not to, say so plainly. When an action tool errors, times out, or returns empty, treat the action as NOT done and tell the user.]"
+		addClause(prompts.ActionsClause())
 		// Stated where [Actions:] is stated, because they are the same mistake
 		// from opposite ends: that one stops an agent claiming work it never did,
 		// this one stops it withholding work it actually did.
-		if clause := prompts.ToolVisibilityClause(); clause != "" {
-			systemPrompt += "\n\n" + clause
-		}
+		addClause(prompts.ToolVisibilityClause())
 		// Contradiction discipline — the sibling of Grounding aimed the OPPOSITE
 		// direction: not the model's own volunteered specifics, but the model
 		// DISPUTING a fact the user stated or assumed. The failure mode is a
@@ -2023,8 +2029,8 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// Scoped to CONTRADICTING the user (not to general answers) so it does
 		// not add hedging to the decisive-language posture elsewhere. Written
 		// without em-dashes (house style).
-		systemPrompt += "\n\n[Disagreeing with the user: your training is not enough to tell the user they are wrong. When they state a fact you think is mistaken, treat your priors as possibly stale. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it, do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask. This is about EMPIRICAL claims (dates, numbers, who/what/when, current state, how something works). Reasoning, math you can show step by step, and the user's own preferences you can still engage directly and decisively.]"
-		systemPrompt += "\n\n[Numbers: reproduce a figure exactly as the source writes it, keep its unit or currency attached, and keep it bound to the thing it describes (which item, date, place) so you never swap two values from the same source. Do not do multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: show the steps so it can be checked, or use a tool. If two sources disagree, say so rather than silently picking one. (Prices and other time-sensitive figures are governed by [Volatile facts].)]"
+		addClause(prompts.DisagreeingClause())
+		addClause(prompts.NumbersClause())
 		// False-precision prevention — the behavioral half of the same concern
 		// the [Numbers] / [Grounding] blocks address: stop the model inventing a
 		// percentage / fraction / dollar figure for rhetorical weight. This is
@@ -2032,7 +2038,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// it was removed because its verbatim-corpus match couldn't tell a
 		// correctly COMPUTED figure ("$120 over MSRP") from a fabricated one and
 		// false-flagged the model's own arithmetic.
-		systemPrompt += "\n\n[No false precision: do NOT manufacture a number for emphasis or authority. Without a real sourced figure, don't invent a percentage, fraction, or dollar amount: say \"most\", \"roughly half\", \"a few thousand\", or describe the size in words. An invented \"80%\" or \"$5,000\" reads as precise and is worse than an honest \"most\". A genuinely sourced number stated exactly is right, as is arithmetic you actually did on sourced numbers (show it), and hedged estimates (\"about half\") are fine.]"
+		addClause(prompts.NoFalsePrecisionClause())
 		// Volatile facts — a blunt, standalone restatement of the Grounding rule
 		// aimed at the specifics the worker keeps fabricating. Already covered
 		// inside Grounding + Capability-first + Numbers, but buried in long
@@ -2050,22 +2056,20 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		// only when the catalog actually has one; a private/offline agent gets
 		// the say-you-can't-confirm branch instead of being told to call a tool
 		// another layer stripped.
-		lookupClause := "look it up FIRST with whatever search or fetch tool you have and quote what the result returns (with what it applies to and when observed); if you have no way to look it up right now, say plainly you don't have a current figure and offer to check"
+		hasWebTool := false
 		for _, td := range tools {
 			if n := td.Tool.Name; n == "web_search" || n == "fetch_url" || n == "browse_page" {
-				lookupClause = "call web_search or fetch_url FIRST and quote what the result returns (with what it applies to and when observed), or, if you cannot look it up right now, say plainly you don't have a current figure and offer to check"
+				hasWebTool = true
 				break
 			}
 		}
-		systemPrompt += "\n\n[Volatile facts: some facts change over time, and you do NOT know their current value no matter how confident it feels. PRICES are the clearest case: any price, rate, fee, cost, or money figure is volatile, so NEVER state one from memory, not even a rough number or a range; a remembered price is always a guess. The same rule covers stock and availability, the CURRENT holder of a changing role or record (who runs a company now, the latest version of something, the current champion or office-holder), and live status, scores, or counts. The test for any specific: could this have changed since your training, and does the user expect today's value? If yes, it is volatile: " + lookupClause + ". Do not fill the gap with a plausible-sounding value. This is not a closed list: any fact that fails the test is volatile even if it is not named here.]"
+		addClause(prompts.VolatileFactsClause(hasWebTool))
 	}
 	// Global rules — the deployment's own, ahead of everything else this
 	// section adds. Injected here and ONLY here: the per-namespace rules panels
 	// display them so a person can see the whole set on one screen, and a
 	// display is not a second injection.
-	if clause := prompts.GlobalRulesClause(); clause != "" {
-		systemPrompt += "\n\n" + clause
-	}
+	addClause(prompts.GlobalRulesClause())
 	// Output style — universal (every reply, with or without tools).
 	// Suppresses persistent LLM lexical/punctuation tics the user flagged.
 	//
@@ -2076,26 +2080,24 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// turning one off on the Prompts page stops the sentence AND the transform
 	// together rather than leaving the prompt asking for something the code no
 	// longer does. Empty when every rule is off, and then nothing is appended.
-	if clause := prompts.StyleClause(); clause != "" {
-		systemPrompt += "\n\n" + clause
-	}
+	addClause(prompts.StyleClause())
 	// Secret handling — universal. Stops any agent from soliciting API
 	// credentials in chat (the OPNsense-controller failure mode); auth is
 	// injected server-side via Admin > APIs credentials, so the secret never
 	// belongs in the conversation or the tool-call logs.
-	systemPrompt += "\n\n[Secrets: never ask the user to paste an API key, secret, token, or password into the conversation, and do not accept one if offered. Authenticated APIs are wired through gohort credentials set up in Admin > APIs; auth is injected server-side, so you never see or need the secret. If a tool's credential is not configured yet, tell the user it needs to be set up in Admin > APIs (name the credential) and stop there, do not collect login details in chat. A secret typed into a chat leaks into the session history and the tool-call logs, which is what the credential system exists to prevent.]"
+	addClause(prompts.SecretsClause())
 
 	// Internal-marker convention: gives the model a sanctioned, always-scrubbed
 	// wrapper for internal-only notes AND tells it not to type bare delivery
 	// markers into user-facing text (the textutil.StripMetaTags safety net catches both).
-	systemPrompt += "\n\n[Internal markers: anything wrapped in <gohort-meta>...</gohort-meta> is stripped before the user sees it, so use it for internal-only notes and NEVER put anything the user should read inside it. Do not type bare delivery markers like [ATTACH: file] into your reply; attachments ride along through their tool, and any stray marker is scrubbed from your reply anyway.]"
+	addClause(prompts.InternalMarkersClause())
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
 	// budget were infinite, then getting truncated). Only emit for
 	// sessions with meaningful budgets; short fixed loops (judges,
 	// classifiers) don't need the noise.
 	if maxRounds >= 10 {
-		systemPrompt += fmt.Sprintf("\n\n[Round budget: this turn has up to %d tool-execution rounds. The framework will nudge you at the halfway mark and again near the cap; plan your investigation so you finish with a real answer rather than hitting the limit mid-exploration.]", maxRounds)
+		addClause(prompts.RoundBudgetClause(maxRounds))
 	}
 
 	var lastResp *Response

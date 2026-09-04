@@ -45,7 +45,7 @@ More than expected, which turns most of this from invention into migration.
 - `core` already imports `core/prompts` (`core.go:25`), so registration from
   core needs no new dependency.
 
-## The gap
+## The gap (CLOSED — see Stage 1 below)
 
 `core/agent_loop.go` has 14 `systemPrompt +=` sites: one is the tool digest
 (`BuildToolPrompt`, line 1940) and the other **13 are bracketed behaviour
@@ -76,7 +76,27 @@ saying so. **A partial list is worse than no list**, because it reads as
 complete. An operator checking "what are my agents told?" today gets a
 confident, wrong answer.
 
-## Stage 1 — register core's clauses (single source, no copies)
+## Stage 1 — register core's clauses (single source, no copies) — BUILT
+
+> **Built v0.6.562.** `core/prompts/agent_loop_clauses.go` holds the twelve
+> clauses as consts, registers each with its real `Gate`, and exposes one
+> accessor per clause; `core/agent_loop.go` appends what the accessor returns
+> through a single `addClause` helper, so a disabled block appends nothing.
+> By then the loop had grown to 16 append sites, three of which (tool
+> visibility, global rules, style) already came from the registry, so twelve
+> were registered here. The registered `Text` IS the const the assembler sends:
+> verified byte-for-byte against the previous revision for all twelve, both
+> volatile-facts branches included.
+>
+> Two clauses are not fixed text, and both take a named placeholder rather
+> than a format verb: `{lookup}` (volatile facts, expanded to the web-tool or
+> the use-what-you-have branch) and `{rounds}` (round budget). The page then
+> shows the shape actually sent, and `expandClause` falls back to the shipped
+> wording — breadcrumbed once per key — when an edit has dropped the
+> placeholder. That guard is not hypothetical: the Prompts page offers an LLM
+> rewrite over every block at once, and a rewrite that tidies `{rounds}` away
+> leaves the model told it has "up to tool-execution rounds" in prose nothing
+> downstream would flag.
 
 Mechanical, with one rule that decides whether it ages well: **the registry and
 the assembler must read the same string.** Orchestrate's existing registry
