@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1193,9 +1194,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "list_runs",
-				Description: "List recent background/fleet runs (delegated tasks and standing-agent executions), status-level. These are NOT your own chat turns. Each line shows the run id for use with inspect_run.",
+				Description: "List recent background/fleet runs (delegated tasks, standing-agent executions, recurring-task fires), status-level. These are NOT your own chat turns. Each line shows the run id for use with inspect_run.",
 				Parameters: map[string]ToolParam{
-					"agent": {Type: "string", Description: "Optional: restrict to one standing agent's name."},
+					"name":  {Type: "string", Description: "Optional: restrict to one name — an agent's display name OR a recurring task's name, whichever you have."},
+					"agent": {Type: "string", Description: "Optional: same as name. Accepted so either spelling works."},
 					"limit": {Type: "number", Description: "Optional: max rows (default 15, max 50)."},
 				},
 			},
@@ -1204,9 +1206,43 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if limit <= 0 || limit > 50 {
 					limit = 15
 				}
-				runs := ListRuns(RootDB, owner, RunFilter{Agent: strings.TrimSpace(oArgStr(args, "agent")), Limit: limit})
+				name := strings.TrimSpace(oArgStr(args, "name"))
+				if name == "" {
+					name = strings.TrimSpace(oArgStr(args, "agent"))
+				}
+				// A name is an agent label or a schedule's name, and the caller
+				// asking "did X run?" does not know which kind of thing X is.
+				// Ask both ways and merge: the previous single Agent-match
+				// answered a recurring task's name with "No runs recorded yet.",
+				// indistinguishable from a task that never fired.
+				runs := ListRuns(RootDB, owner, RunFilter{Agent: name, Limit: limit})
+				if name != "" {
+					seen := make(map[string]bool, len(runs))
+					for _, rr := range runs {
+						seen[rr.ID] = true
+					}
+					for _, rr := range ListRuns(RootDB, owner, RunFilter{Task: name, Limit: limit}) {
+						if !seen[rr.ID] {
+							runs = append(runs, rr)
+						}
+					}
+					sort.Slice(runs, func(i, j int) bool { return runs[i].Started.After(runs[j].Started) })
+					if len(runs) > limit {
+						runs = runs[:limit]
+					}
+				}
 				if len(runs) == 0 {
-					return "No runs recorded yet.", nil
+					if name == "" {
+						return "No runs recorded yet.", nil
+					}
+					// Say which of the two things happened. "No runs recorded"
+					// for an unknown name reads as "it never ran", and that
+					// reading has already been believed and reported as fact.
+					total := len(ListRuns(RootDB, owner, RunFilter{Limit: 200}))
+					if total == 0 {
+						return fmt.Sprintf("No runs recorded yet for %q, and no runs recorded at all for this owner.", name), nil
+					}
+					return fmt.Sprintf("No runs match the name %q. There ARE %d run(s) recorded for this owner, so this is a name that does not appear in the ledger rather than an empty ledger. Call list_runs with no name to see what did run. Note that intentional early exits (agent or session gone) are logged but never recorded, so a schedule can fire without leaving a row.", name, total), nil
 				}
 				var b strings.Builder
 				for _, rr := range runs {
@@ -1214,8 +1250,15 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if len(sum) > 120 {
 						sum = sum[:120] + "…"
 					}
+					// The task name when the run came from a named schedule:
+					// without it every recurring fire prints under its agent's
+					// label and nothing on the line says which task ran.
+					label := rr.Agent
+					if rr.Task != "" && rr.Task != rr.Agent {
+						label = rr.Agent + " · " + rr.Task
+					}
 					fmt.Fprintf(&b, "- [%s] %s %s (%s): %s\n",
-						rr.ID, rr.Started.Local().Format("Jan 2 3:04 PM"), rr.Agent, rr.Status, sum)
+						rr.ID, rr.Started.Local().Format("Jan 2 3:04 PM"), label, rr.Status, sum)
 				}
 				return strings.TrimSpace(b.String()), nil
 			},
@@ -1251,8 +1294,12 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// (observed live). Return a hard, id-less directive instead.
 					return "", fmt.Errorf("no run with that id — run ids are opaque and come ONLY from list_runs, never constructed. If you were trying to answer the user, this is the WRONG tool: call the tool that does what they asked. If you genuinely need a run, call list_runs first, then inspect_run with an id it returned.")
 				}
-				return fmt.Sprintf("Run %s\nagent: %s\nstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\n%soutput:\n%s",
-					rec.ID, rec.Agent, rec.Status, rec.Trigger, rec.Brief, rec.Summary, formatRunSteps(rec.Steps), rec.Raw), nil
+				task := ""
+				if rec.Task != "" {
+					task = "task: " + rec.Task + "\n"
+				}
+				return fmt.Sprintf("Run %s\nagent: %s\n%sstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\n%soutput:\n%s",
+					rec.ID, rec.Agent, task, rec.Status, rec.Trigger, rec.Brief, rec.Summary, formatRunSteps(rec.Steps), rec.Raw), nil
 			},
 		},
 		{

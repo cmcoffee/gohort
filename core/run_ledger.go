@@ -116,6 +116,24 @@ type RunRecord struct {
 	// back to matching Agent for those (see RunFilter.Subject), or a ledger's
 	// whole history would vanish the day identity arrived.
 	Subject string `json:"subject,omitempty"`
+
+	// Task is the name of the SCHEDULE that fired, when the run came from one
+	// a person named. It exists because Agent could not answer "did the
+	// Snuglab blog post task run today?".
+	//
+	// A recurring fire re-runs an agent, so it records that agent's label in
+	// Agent and its id in Subject — correct, and it leaves the task's own name
+	// nowhere a filter can reach it. Asking the ledger for the task by name
+	// matched nothing and read back as "No runs recorded yet.", which is the
+	// same sentence the ledger returns when a task genuinely never fired. An
+	// answer that cannot distinguish "no such name here" from "it never ran"
+	// is worse than no answer, and this one was believed.
+	//
+	// Empty for the surfaces whose Agent already IS the schedule's name (a
+	// standing agent, an event monitor, a trigger). Those stay findable the
+	// way they always were; this field is for the case where the two names
+	// differ.
+	Task string `json:"task,omitempty"`
 }
 
 // RunFilter narrows a ListRuns query. Zero value = all of the owner's
@@ -181,6 +199,7 @@ type RunFilter struct {
 	// age out through pruneRuns, so the ambiguity drains rather than persists.
 	Subject string
 	Agent   string    // restrict by DISPLAY label — legacy fallback; prefer Subject
+	Task    string    // restrict by the firing schedule's name (see RunRecord.Task)
 	Status  RunStatus // restrict to one status
 	Since   time.Time // only runs started at/after this time
 	Limit   int       // max rows returned (0 = no extra cap beyond storage)
@@ -191,6 +210,13 @@ type RunFilter struct {
 // record without a Subject is matched the old way so its history stays
 // reachable.
 func (f RunFilter) matches(r RunRecord) bool {
+	// Task is its own axis, ANDed with the rest like Status: a caller asking
+	// for one schedule's fires gets that schedule's fires. Callers that want
+	// "anything answering to this name" ask twice and merge, which keeps the
+	// widening at the call site where it is visible instead of hidden in here.
+	if f.Task != "" && r.Task != f.Task {
+		return false
+	}
 	switch {
 	case f.Subject != "" && r.Subject != "":
 		return r.Subject == f.Subject

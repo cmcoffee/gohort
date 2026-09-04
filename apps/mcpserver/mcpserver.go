@@ -641,8 +641,15 @@ func (T *MCPServer) recentResults(owner string, args map[string]any) (string, er
 	}
 	var b strings.Builder
 	for _, rr := range runs {
+		// Name the schedule when the run came from one: otherwise every
+		// recurring fire prints under its agent's label and the line cannot
+		// say which task ran.
+		label := rr.Agent
+		if rr.Task != "" && rr.Task != rr.Agent {
+			label = rr.Agent + " · " + rr.Task
+		}
 		fmt.Fprintf(&b, "[%s] %s (%s): %s\n",
-			rr.Started.Local().Format("Jan 2 15:04"), rr.Agent, rr.Status, rr.Summary)
+			rr.Started.Local().Format("Jan 2 15:04"), label, rr.Status, rr.Summary)
 	}
 	return b.String(), nil
 }

@@ -128,3 +128,48 @@ func TestRunLedgerPrune(t *testing.T) {
 		t.Fatal("oldest run should have been pruned")
 	}
 }
+
+// A recurring fire records the AGENT that ran, so the schedule's own name had
+// nowhere to live and "did the Snuglab blog post task run today?" came back
+// "No runs recorded yet." — the same sentence an empty ledger returns.
+func TestRunLedgerFilterByTaskName(t *testing.T) {
+	db := memDB(t)
+	base := time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC)
+	RecordRun(db, RunRecord{Owner: "alice", Agent: "Moltbook agent", Task: "Snuglab blog post", Status: RunOK, Started: base})
+	RecordRun(db, RunRecord{Owner: "alice", Agent: "Moltbook agent", Task: "morning digest", Status: RunOK, Started: base.Add(time.Hour)})
+	RecordRun(db, RunRecord{Owner: "alice", Agent: "Moltbook agent", Status: RunOK, Started: base.Add(2 * time.Hour)})
+
+	byTask := ListRuns(db, "alice", RunFilter{Task: "Snuglab blog post"})
+	if len(byTask) != 1 {
+		t.Fatalf("expected the one Snuglab fire, got %d", len(byTask))
+	}
+	// The agent label still reaches every run it ran, tasks included: adding an
+	// axis must not narrow the one that was already there.
+	if got := ListRuns(db, "alice", RunFilter{Agent: "Moltbook agent"}); len(got) != 3 {
+		t.Fatalf("agent filter should still return all 3, got %d", len(got))
+	}
+	// A task name is not an agent name. This is the query that used to look
+	// like proof a schedule never fired.
+	if got := ListRuns(db, "alice", RunFilter{Agent: "Snuglab blog post"}); len(got) != 0 {
+		t.Fatalf("task name should not match the agent axis, got %d", len(got))
+	}
+	// Task ANDs with the other axes rather than replacing them.
+	if got := ListRuns(db, "alice", RunFilter{Task: "Snuglab blog post", Status: RunFailed}); len(got) != 0 {
+		t.Fatalf("task+status should AND, got %d", len(got))
+	}
+}
+
+// A run with no Task is a standing agent, a monitor or a trigger, whose Agent
+// already IS its name. Those must stay reachable exactly as before.
+func TestTaskFilterLeavesLegacyRunsAlone(t *testing.T) {
+	db := memDB(t)
+	base := time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC)
+	RecordRun(db, RunRecord{Owner: "alice", Agent: "nightly-backup", Status: RunOK, Started: base})
+
+	if got := ListRuns(db, "alice", RunFilter{Agent: "nightly-backup"}); len(got) != 1 {
+		t.Fatalf("a task-less run should still match its agent, got %d", len(got))
+	}
+	if got := ListRuns(db, "alice", RunFilter{Task: "nightly-backup"}); len(got) != 0 {
+		t.Fatalf("a task-less run has no task to match, got %d", len(got))
+	}
+}

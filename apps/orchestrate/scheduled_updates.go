@@ -674,7 +674,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// The label is the agent's display name; identity is its id (see
 			// AboutAgent below), so a schedule that happens to be named after
 			// this agent no longer shares its history.
-			Agent:   agentLabel,
+			Agent: agentLabel,
+			// The task's own name, so "did the Snuglab blog post task run
+			// today?" is a question the ledger can answer. Agent is the agent
+			// that ran and Brief is the prompt; neither is the name a person
+			// gave this schedule.
+			Task:    recurringName(p),
 			Trigger: trigger,
 			Brief:   p.Prompt,
 			Status:  status,
