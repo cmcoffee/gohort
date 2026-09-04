@@ -57,3 +57,32 @@ func TestTruncationAndRefusalDoNotOverlap(t *testing.T) {
 		t.Error("a truncated reply read as a provider refusal")
 	}
 }
+
+// A refusal that arrives WITH content is the provider's classifier stopping a
+// reply partway. It is neither a truncation (no continuation would pass the
+// same classifier) nor providerRefused's empty case (that re-runs the round on
+// the worker); it is its own thing, and the loop must notice it — before this
+// the fragment shipped as the answer with nothing in the turn's diagnostics.
+func TestAProviderCutReplyIsNoticed(t *testing.T) {
+	cut := &Response{Content: "All twelve folder rows are gone while the child", StopReason: "refusal"}
+	if !providerCutReply(cut) {
+		t.Error("a refusal with content must be recognized as a cut reply")
+	}
+	if responseWasTruncated(cut) || providerRefused(cut) {
+		t.Error("a cut reply is neither a truncation nor an empty refusal")
+	}
+	empty := &Response{StopReason: "refusal"}
+	if !providerRefused(empty) || providerCutReply(empty) {
+		t.Error("an empty refusal is providerRefused's case, not a cut reply")
+	}
+	for _, r := range []*Response{
+		{Content: "Here you go.", StopReason: "end_turn"},
+		{Content: "partial", StopReason: "max_tokens"},
+		{Content: "calling", StopReason: "refusal", ToolCalls: []ToolCall{{Name: "x"}}},
+		nil,
+	} {
+		if providerCutReply(r) {
+			t.Errorf("%+v misread as a provider cut", r)
+		}
+	}
+}

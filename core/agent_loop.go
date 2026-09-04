@@ -3539,6 +3539,22 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				noteUncorrected(correctionTruncated, "The reply was cut off at the output limit again and no further continuation was left to spend, so the partial answer was delivered as written.")
 			}
 
+			// Cut off by the provider, not by the model. Anthropic's streaming
+			// classifier can stop a reply partway with stop_reason=refusal,
+			// and the fragment arrives exactly like a finished answer: content,
+			// no tool calls. Nothing else here looks at it — providerRefused
+			// wants EMPTY content, the truncation check wants max_tokens — so
+			// the fragment was delivered as the answer with a Warn in the log
+			// and nothing in the turn's diagnostics. No retry: a continuation
+			// on the same model meets the same classifier, and a regenerate
+			// re-bills the whole prompt. The user gets told what they are
+			// looking at and decides.
+			if providerCutReply(resp) {
+				Log("[agent_loop] round %d: provider stopped the reply partway (stop_reason=%q, %d chars) — delivering the fragment with a diagnostic",
+					round, resp.StopReason, len(resp.Content))
+				emitDiag("provider-refusal", "The provider's content classifier stopped this reply partway (stop_reason=refusal); what you see is the fragment produced before the stop, not a finished answer. Rephrasing the request or retrying may get a complete one.")
+			}
+
 			// Action-promise correction DISABLED for now — it false-positived
 			// on ordinary conversational replies ("I'll try to nail the house
 			// next time."), burning rounds re-prompting for an action the model
@@ -6777,10 +6793,22 @@ func providerRefused(resp *Response) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(resp.StopReason)) {
-	case "safety", "recitation", "blocklist", "content_filter", "prohibited_content":
+	case "safety", "recitation", "blocklist", "content_filter", "prohibited_content", "refusal":
 		return true
 	}
 	return false
+}
+
+// providerCutReply reports a reply the provider stopped PARTWAY on its content
+// policy: content arrived, then stop_reason=refusal. The empty case is
+// providerRefused's (it re-runs the round on the worker); this one has a
+// fragment the user has already watched stream, which is delivered as-is with
+// a diagnostic saying why it stops where it does.
+func providerCutReply(resp *Response) bool {
+	if resp == nil || strings.TrimSpace(resp.Content) == "" || len(resp.ToolCalls) > 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(resp.StopReason), "refusal")
 }
 
 // logPromptFloor breaks the first round's prompt into its parts.
