@@ -143,15 +143,32 @@ func probeVersion(name string, args []string) string {
 // stale when its leading date is older than staleAfter. Returns false for any
 // version that isn't a parseable leading date, so non-date-versioned tools are
 // never marked stale.
+//
+// Parsed in the LOCAL zone, which is the whole subtlety here. time.Parse
+// resolves a bare date to midnight UTC, and the age is then compared against
+// the local wall clock — so west of UTC the count runs a day high for part of
+// every day, and east of UTC a day low. A build reported as "57 days old" at
+// 5pm and "56 days old" the same morning is not a build that aged overnight.
+// The version string carries a calendar date and no zone, so reading it as a
+// local date is what makes the answer stable for the person reading it.
 func dateVersionStale(version string, staleAfter time.Duration) (bool, string) {
+	return dateVersionStaleAt(version, staleAfter, time.Now())
+}
+
+// dateVersionStaleAt is dateVersionStale with the clock passed in. The split
+// exists because the bug above is only observable at certain hours in certain
+// zones: a test that reads time.Now() passes all morning and fails after 5pm,
+// which is how this went unnoticed. With now as an argument the skew is
+// something a test can state exactly.
+func dateVersionStaleAt(version string, staleAfter time.Duration, now time.Time) (bool, string) {
 	if len(version) < 10 {
 		return false, ""
 	}
-	t, err := time.Parse("2006.01.02", version[:10])
+	t, err := time.ParseInLocation("2006.01.02", version[:10], now.Location())
 	if err != nil {
 		return false, ""
 	}
-	if age := time.Since(t); age > staleAfter {
+	if age := now.Sub(t); age > staleAfter {
 		return true, fmt.Sprintf("%d days old", int(age.Hours()/24))
 	}
 	return false, ""
