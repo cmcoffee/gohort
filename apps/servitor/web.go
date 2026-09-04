@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -2063,31 +2064,118 @@ func buildSynthesisMessage(invNarrative string, storedFacts, techniques, notes, 
 
 // runQuickSnapshot runs a fixed set of enumeration commands and returns formatted markdown.
 // No LLM — just captures the system's fingerprint so the investigator can decide what to probe.
-func runQuickSnapshot(ctx context.Context, execFn func(string) (string, error)) string {
-	type snap struct{ label, cmd string }
-	snaps := []snap{
-		{"OS & Identity", `uname -a; hostname; cat /etc/os-release 2>/dev/null | grep -E '^(NAME|VERSION|PRETTY_NAME)' | head -5`},
-		{"Resources", `nproc; free -h; df -h --output=target,size,avail 2>/dev/null | head -10`},
-		{"Running Services", `systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | awk '{print $1}' | head -40`},
-		{"Listening Ports", `ss -tlnp 2>/dev/null | head -30`},
-		{"Key Directories", `ls /opt/ /srv/ /var/www/ /home/ /app/ 2>/dev/null; ls /etc/nginx /etc/apache2 /etc/httpd /etc/php* 2>/dev/null`},
-		{"App Config Files", `find /opt /srv /var/www /home -maxdepth 5 \( -name 'docker-compose.yml' -o -name '.env' -o -name 'package.json' -o -name 'go.mod' -o -name 'requirements.txt' -o -name 'Gemfile' \) 2>/dev/null | head -25`},
-		{"Databases", `which mysql psql redis-cli mongosh mongo sqlite3 2>/dev/null; ss -tlnp 2>/dev/null | grep -E ':3306|:5432|:6379|:27017|:9200'`},
-		{"Containers", `docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}' 2>/dev/null`},
-		{"Process Tree", `ps auxf 2>/dev/null | head -50`},
+// snapshotSection is one block of the quick snapshot: a label the model reads,
+// the shell that produces it, and the exec batch it travels in.
+type snapshotSection struct {
+	label, cmd string
+	batch      int
+}
+
+// snapshotSections is the fixed reconnaissance set. Every command already
+// swallows its own stderr and tolerates a missing tool, so a section that
+// yields nothing is simply omitted from the snapshot.
+//
+// Batches group sections into ONE exec each. The old shape ran one SSH session
+// per section — nine back to back — and over a slow link or a peer hop the
+// session setup dominated the commands themselves. A single script for all
+// nine would be simplest, but execOverSSH caps one exec's output at max_output
+// and a real process tree plus port list already approaches it, so the sections
+// are grouped by expected size: small outputs together, the bulky ones alone.
+var snapshotSections = []snapshotSection{
+	{"OS & Identity", `uname -a; hostname; cat /etc/os-release 2>/dev/null | grep -E '^(NAME|VERSION|PRETTY_NAME)' | head -5`, 0},
+	{"Resources", `nproc; free -h; df -h --output=target,size,avail 2>/dev/null | head -10`, 0},
+	{"Running Services", `systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | awk '{print $1}' | head -40`, 1},
+	{"Listening Ports", `ss -tlnp 2>/dev/null | head -30`, 1},
+	{"Key Directories", `ls /opt/ /srv/ /var/www/ /home/ /app/ 2>/dev/null; ls /etc/nginx /etc/apache2 /etc/httpd /etc/php* 2>/dev/null`, 0},
+	{"App Config Files", `find /opt /srv /var/www /home -maxdepth 5 \( -name 'docker-compose.yml' -o -name '.env' -o -name 'package.json' -o -name 'go.mod' -o -name 'requirements.txt' -o -name 'Gemfile' \) 2>/dev/null | head -25`, 0},
+	{"Databases", `which mysql psql redis-cli mongosh mongo sqlite3 2>/dev/null; ss -tlnp 2>/dev/null | grep -E ':3306|:5432|:6379|:27017|:9200'`, 0},
+	{"Containers", `docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}' 2>/dev/null`, 1},
+	{"Process Tree", `ps auxf 2>/dev/null | head -50`, 2},
+}
+
+// snapshotBatches is how many execs a full snapshot takes: one per distinct
+// batch number above.
+const snapshotBatches = 3
+
+// snapshotMarker separates sections in a batch's combined output. The shell
+// prints it before each section and it never appears in real command output,
+// so splitting on it recovers each section exactly.
+const snapshotMarker = "@@SNAPSHOT-SECTION@@"
+
+// snapshotScript joins one batch's sections into a single shell script, each
+// section preceded by a marker line carrying its index. Sections are joined
+// with ";" rather than "&&" so a failing section (no systemd, no docker) never
+// suppresses the ones after it — the same tolerance the per-section loop had
+// when it skipped an erroring exec.
+func snapshotScript(batch int) string {
+	var b strings.Builder
+	for i, s := range snapshotSections {
+		if s.batch != batch {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "echo '%s%d'; %s", snapshotMarker, i, s.cmd)
 	}
+	return b.String()
+}
+
+// snapshotBodies splits a batch's combined output into per-section bodies,
+// keyed by section index. A section whose marker is missing (the batch's exec
+// died early) or whose body is empty is absent from the result.
+func snapshotBodies(raw string) map[int]string {
+	bodies := make(map[int]string)
+	for i := range snapshotSections {
+		open := snapshotMarker + strconv.Itoa(i) + "\n"
+		start := strings.Index(raw, open)
+		if start < 0 {
+			continue
+		}
+		body := raw[start+len(open):]
+		if end := strings.Index(body, snapshotMarker); end >= 0 {
+			body = body[:end]
+		}
+		if body = strings.TrimSpace(body); body != "" {
+			bodies[i] = body
+		}
+	}
+	return bodies
+}
+
+// renderSnapshot writes the collected bodies as labelled markdown blocks in
+// snapshotSections order, so the snapshot reads exactly as the nine-session
+// version did regardless of which batch each section came from.
+func renderSnapshot(bodies map[int]string) string {
 	var out strings.Builder
-	for _, s := range snaps {
+	for i, s := range snapshotSections {
+		body, ok := bodies[i]
+		if !ok {
+			continue
+		}
+		out.WriteString(fmt.Sprintf("### %s\n```\n%s\n```\n\n", s.label, body))
+	}
+	return out.String()
+}
+
+// runQuickSnapshot gathers the no-LLM reconnaissance pass in snapshotBatches
+// execs. A batch whose exec errors contributes nothing, exactly as a failing
+// section was skipped before; the investigator starts from whatever came back.
+func runQuickSnapshot(ctx context.Context, execFn func(string) (string, error)) string {
+	bodies := make(map[int]string)
+	for batch := 0; batch < snapshotBatches; batch++ {
 		if ctx.Err() != nil {
 			break
 		}
-		result, err := execFn(s.cmd)
-		if err != nil || strings.TrimSpace(result) == "" {
+		result, err := execFn(snapshotScript(batch))
+		if err != nil {
 			continue
 		}
-		out.WriteString(fmt.Sprintf("### %s\n```\n%s\n```\n\n", s.label, strings.TrimSpace(result)))
+		for i, body := range snapshotBodies(result) {
+			bodies[i] = body
+		}
 	}
-	return out.String()
+	return renderSnapshot(bodies)
 }
 
 // buildInvestigatorSystemPrompt is the system prompt for the investigator agent in mapping mode.
@@ -3565,6 +3653,42 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
+	// techniqueMu serializes the techniques string between an append in the
+	// tool handler and a prune in a background audit: both are read-modify-
+	// write on one record, and without the lock a prune landing mid-append
+	// would drop whichever write finished first. An audit outliving the
+	// session is fine — it holds no session state, only the store — and is
+	// bounded by its own timeout.
+	var techniqueMu sync.Mutex
+	// auditTechniques asks the worker model which stored techniques the new one
+	// supersedes and removes those lines. It reads the CURRENT stored value
+	// under the lock rather than the snapshot it was given, so an append that
+	// raced ahead of it survives.
+	auditTechniques := func(udb Database, applianceID, existing, technique string) {
+		auditCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		auditPrompt := "You are auditing a list of stored techniques for a specific system. " +
+			"A new technique is about to be added. Identify any existing techniques that the new one " +
+			"supersedes, contradicts, or makes redundant (e.g. an old auth method that is now wrong, " +
+			"a path that has changed, an approach that the new one replaces). " +
+			"Reply with ONLY the exact lines to remove, one per line. " +
+			"If nothing should be removed, reply with exactly: NONE"
+		auditMsg := fmt.Sprintf("Existing techniques:\n%s\n\nNew technique being added:\n- %s", existing, technique)
+		auditResp, auditErr := a.WorkerChat(auditCtx, []Message{{Role: "user", Content: auditMsg}},
+			WithSystemPrompt(auditPrompt), WithMaxTokens(512))
+		if auditErr != nil || auditResp == nil {
+			return
+		}
+		removal := strings.TrimSpace(auditResp.Content)
+		if removal == "" || removal == "NONE" {
+			return
+		}
+		techniqueMu.Lock()
+		defer techniqueMu.Unlock()
+		pruned := pruneTechniqueLines(techniquesFor(udb, applianceID), removal)
+		udb.Set(techniquesTable, applianceID, pruned)
+	}
+
 	// record_technique — save a successful approach for future sessions.
 	record_technique_tool := AgentToolDef{
 		Tool: Tool{
@@ -3591,37 +3715,22 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if udb == nil {
 				return "", fmt.Errorf("no database")
 			}
-			// Before appending, audit existing techniques against the new one.
-			// If any existing entry covers the same topic but with outdated or
-			// contradicted information, remove it so stale knowledge doesn't linger.
-			if existing := techniquesFor(udb, appliance.ID); existing != "" {
-				auditPrompt := "You are auditing a list of stored techniques for a specific system. " +
-					"A new technique is about to be added. Identify any existing techniques that the new one " +
-					"supersedes, contradicts, or makes redundant (e.g. an old auth method that is now wrong, " +
-					"a path that has changed, an approach that the new one replaces). " +
-					"Reply with ONLY the exact lines to remove, one per line. " +
-					"If nothing should be removed, reply with exactly: NONE"
-				auditMsg := fmt.Sprintf("Existing techniques:\n%s\n\nNew technique being added:\n- %s", existing, technique)
-				auditResp, auditErr := a.WorkerChat(ctx, []Message{{Role: "user", Content: auditMsg}},
-					WithSystemPrompt(auditPrompt), WithMaxTokens(512))
-				if auditErr == nil && auditResp != nil {
-					removal := strings.TrimSpace(auditResp.Content)
-					if removal != "" && removal != "NONE" {
-						pruned := existing
-						for _, line := range strings.Split(removal, "\n") {
-							line = strings.TrimSpace(line)
-							if line != "" {
-								pruned = strings.ReplaceAll(pruned, line+"\n", "")
-								pruned = strings.ReplaceAll(pruned, line, "")
-							}
-						}
-						udb.Set(techniquesTable, appliance.ID, strings.TrimSpace(pruned))
-					}
-				}
-			}
+			// The new technique is stored FIRST and the audit of older entries runs
+			// in the background. The audit is an LLM call, and it used to sit
+			// inline: every record_technique cost the worker a full model
+			// round-trip before its tool result came back, on the same backend
+			// the worker itself was waiting on. Nothing downstream needs the
+			// prune to have happened — a superseded line lingers for one probe at
+			// most, and the next read sees the pruned list.
+			existing := techniquesFor(udb, appliance.ID)
+			techniqueMu.Lock()
 			recordTechnique(udb, appliance.ID, technique)
+			techniqueMu.Unlock()
 			recordScopedExplicit(appliance, technique) // working command -> Explicit Memory (always-in-prompt Shortcuts layer)
 			emit(id, probeEvent{Kind: "status", Text: "Technique saved: " + technique})
+			if existing != "" {
+				go auditTechniques(udb, appliance.ID, existing, technique)
+			}
 			return "technique recorded", nil
 		},
 		NeedsConfirm: false,
@@ -5166,53 +5275,66 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		}
 
 		// Verification pass.
+		//
+		// The model is only consulted when a deterministic check finds an
+		// identifier in the reply that is NOT in the findings verbatim. The
+		// verifier's whole job is character-for-character comparison, and when
+		// every path, name, address and version in the reply already appears in
+		// the findings there is nothing for it to correct — so the call, a
+		// findings-sized prefill sitting between the finished answer and the
+		// user, is skipped. When the check finds a candidate, the model runs
+		// exactly as before: it decides, not the heuristic.
 		if reply != "" && len(allProbeResults) > 0 {
-			emit(id, probeEvent{Kind: "status", Text: "Verifying names and identifiers…"})
 			rawFindings := strings.Join(allProbeResults, "\n\n---\n\n")
 			if len(rawFindings) > 24000 {
 				rawFindings = rawFindings[:24000] + "\n... [truncated]"
 			}
-			// Targeted find/replace pairs instead of "regenerate the whole
-			// response": the old shape accepted ANY differing output as the
-			// corrected answer, so a 27B that reformatted prose (or invented
-			// a "fix") silently replaced a correct reply. Now the model can
-			// only name identifier swaps, each one is verified against the
-			// findings before applying, and a malformed verdict changes
-			// nothing.
-			verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings — that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
-				"Respond with ONLY a JSON array of corrections, each {\"wrong\": \"<exact string copied from the response>\", \"right\": \"<exact string copied from the findings>\"}. If every identifier matches exactly, respond with [].\n\n" +
-				"## Raw Worker Findings\n\n" + rawFindings
-			verifyResp, verifyErr := a.WorkerChat(ctx,
-				[]Message{
-					{Role: "user", Content: "## Response to verify\n\n" + reply},
-				},
-				WithSystemPrompt(verifyPrompt),
-				WithTemperature(0.0),
-				WithThink(false),
-			)
-			if verifyErr == nil && verifyResp != nil {
-				var pairs []struct {
-					Wrong string `json:"wrong"`
-					Right string `json:"right"`
-				}
-				if derr := DecodeJSON(verifyResp.Content, &pairs); derr == nil {
-					applied := 0
-					for i, p := range pairs {
-						if i >= 20 {
-							break // runaway verdicts are noise, not corrections
-						}
-						// Both sides must check out: the wrong string has to
-						// actually be in the reply, and the replacement has to
-						// exist verbatim in the findings (no invented fixes).
-						if p.Wrong == "" || p.Wrong == p.Right ||
-							!strings.Contains(reply, p.Wrong) || !strings.Contains(rawFindings, p.Right) {
-							continue
-						}
-						reply = strings.ReplaceAll(reply, p.Wrong, p.Right)
-						applied++
+			if unverified := unverifiedIdentifiers(reply, rawFindings); len(unverified) == 0 {
+				Debug("[servitor] verification skipped: every identifier in the reply appears in the findings")
+			} else {
+				emit(id, probeEvent{Kind: "status", Text: "Verifying names and identifiers…"})
+				// Targeted find/replace pairs instead of "regenerate the whole
+				// response": the old shape accepted ANY differing output as the
+				// corrected answer, so a 27B that reformatted prose (or invented
+				// a "fix") silently replaced a correct reply. Now the model can
+				// only name identifier swaps, each one is verified against the
+				// findings before applying, and a malformed verdict changes
+				// nothing.
+				verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings — that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
+					"Respond with ONLY a JSON array of corrections, each {\"wrong\": \"<exact string copied from the response>\", \"right\": \"<exact string copied from the findings>\"}. If every identifier matches exactly, respond with [].\n\n" +
+					"## Raw Worker Findings\n\n" + rawFindings
+				verifyResp, verifyErr := a.WorkerChat(ctx,
+					[]Message{
+						{Role: "user", Content: "## Response to verify\n\n" + reply},
+					},
+					WithSystemPrompt(verifyPrompt),
+					WithTemperature(0.0),
+					WithThink(false),
+				)
+				if verifyErr == nil && verifyResp != nil {
+					var pairs []struct {
+						Wrong string `json:"wrong"`
+						Right string `json:"right"`
 					}
-					if applied > 0 {
-						Debug("[servitor] verification corrected %d identifier(s)", applied)
+					if derr := DecodeJSON(verifyResp.Content, &pairs); derr == nil {
+						applied := 0
+						for i, p := range pairs {
+							if i >= 20 {
+								break // runaway verdicts are noise, not corrections
+							}
+							// Both sides must check out: the wrong string has to
+							// actually be in the reply, and the replacement has to
+							// exist verbatim in the findings (no invented fixes).
+							if p.Wrong == "" || p.Wrong == p.Right ||
+								!strings.Contains(reply, p.Wrong) || !strings.Contains(rawFindings, p.Right) {
+								continue
+							}
+							reply = strings.ReplaceAll(reply, p.Wrong, p.Right)
+							applied++
+						}
+						if applied > 0 {
+							Debug("[servitor] verification corrected %d identifier(s)", applied)
+						}
 					}
 				}
 			}

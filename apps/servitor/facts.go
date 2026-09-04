@@ -259,3 +259,20 @@ func formatDiscoveries(discoveries []SshDiscovery) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
+// pruneTechniqueLines removes every line named in removal from the stored
+// techniques string. removal is the audit model's verdict: one exact stored
+// line per row. A row that matches nothing removes nothing, so a verdict that
+// paraphrases instead of quoting leaves the list untouched.
+func pruneTechniqueLines(existing, removal string) string {
+	pruned := existing
+	for _, line := range strings.Split(removal, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		pruned = strings.ReplaceAll(pruned, line+"\n", "")
+		pruned = strings.ReplaceAll(pruned, line, "")
+	}
+	return strings.TrimSpace(pruned)
+}
