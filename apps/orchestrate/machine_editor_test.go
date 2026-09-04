@@ -1803,3 +1803,41 @@ func TestByNameNarrowingFoldsAwayUntilItHoldsSomething(t *testing.T) {
 		t.Errorf("the section should be gated on the reach, got %q", got)
 	}
 }
+
+// The deny checklist has to reach the record, and has to be clearable: a
+// restriction you can tick and cannot untick is worse than one you never had.
+func TestTheDenyChecklistRoundTrips(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	def := SaveMachineDef(udb, MachineDef{
+		Owner: user, Name: "Investigation", Start: "look",
+		Phases: []MachinePhase{{Name: "look", Prompt: "look into it", Resident: true}},
+	})
+
+	save := func(bodyJSON string) MachineDef {
+		t.Helper()
+		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=look", strings.NewReader(bodyJSON))
+		w := httptest.NewRecorder()
+		app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+		if w.Code != 200 {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		got, ok := LoadMachineDef(udb, user, def.ID)
+		if !ok {
+			t.Fatal("machine vanished")
+		}
+		return got
+	}
+
+	got := save(`{"deny":["web_search"]}`)
+	if len(got.Phases[0].Deny) != 1 || got.Phases[0].Deny[0] != "web_search" {
+		t.Fatalf("deny did not reach the record: %+v", got.Phases[0].Deny)
+	}
+	// An untouched save leaves it alone — the form posts one section at a time.
+	if got = save(`{"prompt":"look harder"}`); len(got.Phases[0].Deny) != 1 {
+		t.Errorf("a partial save dropped the deny: %+v", got.Phases[0].Deny)
+	}
+	// And unticking everything clears it.
+	if got = save(`{"deny":[]}`); len(got.Phases[0].Deny) != 0 {
+		t.Errorf("the deny could not be cleared: %+v", got.Phases[0].Deny)
+	}
+}

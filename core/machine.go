@@ -760,7 +760,7 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 	// tools it could see and was entitled to use.
 	//
 	// Static per phase, so it costs the cache nothing.
-	if len(ph.Tools) > 0 || PhaseReach(ph) != ReachAll {
+	if len(ph.Tools) > 0 || len(ph.Deny) > 0 || PhaseReach(ph) != ReachAll {
 		b.WriteString("\n## Tools in this phase\n")
 		if PhaseReach(ph) == ReachRead {
 			b.WriteString("This phase may only READ. Nothing that writes, runs a command, or reaches the network is available here — that is the step's design, not a fault.\n")
@@ -773,6 +773,14 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 		} else if len(ph.Tools) > 0 {
 			b.WriteString("This phase narrows what you may reach to: " + strings.Join(ph.Tools, ", ") + " — alongside your workflow controls and anything your attachments grant.\n")
 			b.WriteString("Go by what is IN your catalog. A tool you used earlier in this conversation, under a phase that allowed it, and can no longer see is out of scope HERE — not misnamed. Don't retry those names. Work with what you have, or change_phase if the job has genuinely moved to a phase that carries what you need.\n")
+		}
+		// Named, not merely absent. A tool the model has used all conversation
+		// and now cannot see reads as a fault it should work around — by
+		// retrying the name, by reaching for a neighbour that does the same
+		// thing, or by authoring one. Saying which tools this step withholds,
+		// and that it is deliberate, is what stops the workaround.
+		if len(ph.Deny) > 0 {
+			b.WriteString("Withheld in this phase, by the step's design: " + strings.Join(ph.Deny, ", ") + ". Do not reach for these, do not substitute a neighbouring tool that does the same job, and do not author a replacement. If the work genuinely needs one, say so plainly or change_phase to a step that carries it.\n")
 		}
 	}
 
@@ -944,7 +952,46 @@ func PhaseTools(ph MachinePhase, catalog []AgentToolDef) []AgentToolDef {
 	case ReachRead:
 		catalog = FilterToolsByCaps(catalog, ReachAllowsCaps(ReachRead))
 	}
-	return resolveStageTools(ph.Tools, catalog)
+	// Deny goes LAST, after the reach and after the name list, so it is the
+	// final word however permissive the stages above were.
+	return applyPhaseDeny(ph, resolveStageTools(ph.Tools, catalog))
+}
+
+// phaseDenied reports whether a phase's Deny list names this tool.
+//
+// Matched on the trimmed name exactly, the way Tools is: a catalog name is
+// already normalized by the time it gets here (sanitizeToolName lowercases
+// remote names at registration), so a second normalization would only invent
+// disagreements between the allow list and the deny list about what a name is.
+//
+// Mirrored by the same check inside orchestrate's narrowCatalog, which has to
+// apply the subtraction again against tools that bypass the ordinary narrowing
+// (an agent's attachments). Both read this field with this rule; if one grows a
+// normalization step, so must the other.
+func phaseDenied(ph MachinePhase, name string) bool {
+	for _, d := range ph.Deny {
+		if strings.TrimSpace(d) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// applyPhaseDeny subtracts the phase's Deny list. Subtraction only: it never
+// adds a tool back, and an empty result is an honest answer rather than a
+// signal to give up (see the Deny field comment on why it takes no part in the
+// allow-list's total-miss rescue).
+func applyPhaseDeny(ph MachinePhase, tools []AgentToolDef) []AgentToolDef {
+	if len(ph.Deny) == 0 {
+		return tools
+	}
+	out := make([]AgentToolDef, 0, len(tools))
+	for _, td := range tools {
+		if !phaseDenied(ph, td.Tool.Name) {
+			out = append(out, td)
+		}
+	}
+	return out
 }
 
 // PhaseThink applies a phase's reasoning override on top of whatever

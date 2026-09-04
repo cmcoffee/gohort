@@ -46,6 +46,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/toolrules"
 )
 
 // MachineDefsTable stores per-user machine definitions.
@@ -207,6 +209,30 @@ type MachinePhase struct {
 	// why it is no longer the primary control. Reach for it when a step
 	// must use one particular thing and not its neighbours.
 	Tools []string `json:"tools,omitempty"`
+
+	// Deny names tools this step may NOT reach, subtracted last — after
+	// Reach and after Tools, so it is the final word however permissive
+	// the stages above were.
+	//
+	// The list you want when a step keeps everything it had EXCEPT one
+	// thing. Tools above can express that only by enumerating the whole
+	// catalog minus one, which freezes the step at the catalog of the day
+	// it was written: give the agent a new tool next month and the step
+	// silently does not get it. A deny keeps the step current by default
+	// and holds back only what it names.
+	//
+	// It only ever SUBTRACTS. A deny that matches nothing in the catalog is
+	// satisfied, not suspicious, and so it deliberately does not take part
+	// in the total-miss rescue that Tools has (see narrowCatalog): an
+	// allow-list matching nothing is a typo every time, while a deny naming
+	// a tool this deployment does not have is the normal case for a machine
+	// carried between deployments. Restoring the catalog because a deny
+	// missed would hand back the one tool the author wrote it to remove.
+	//
+	// The workflow controls are exempt. A step that cannot change_phase is
+	// stranded rather than restricted, so a deny naming one is refused at
+	// authoring time rather than honoured here.
+	Deny []string `json:"deny,omitempty"`
 
 	// Model pins the tier for turns spent here ("worker" | "lead"), and
 	// maps onto AgentLoopConfig.TierOverride. Empty follows the agent's
@@ -1054,6 +1080,25 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	}
 	if !validReach(p.Reach) {
 		probs = append(probs, "step "+name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(p.Reach))
+	}
+	// A deny that names the workflow controls strands the step: it could not
+	// change_phase, so the machine would have no way out of it. Refused here
+	// rather than silently ignored, because an author who wrote it believes it
+	// took effect, and "deny everything risky" is exactly how someone arrives
+	// at this by accident.
+	for _, d := range p.Deny {
+		if d = strings.TrimSpace(d); d == "" {
+			continue
+		}
+		if toolrules.IsWorkflowControlTool(d) {
+			probs = append(probs, "step "+name+": cannot deny "+strconv.Quote(d)+
+				" — the workflow controls are how a step hands on, and a step that cannot reach them is stranded rather than restricted. Narrow what the step DOES with reach or tools instead.")
+		}
+		for _, t := range p.Tools {
+			if strings.TrimSpace(t) == d {
+				probs = append(probs, "step "+name+": "+strconv.Quote(d)+" is in both tools and deny — deny wins, so the tools entry does nothing. Remove whichever one you did not mean.")
+			}
+		}
 	}
 	if runners := phaseRunners(p); len(runners) > 1 {
 		probs = append(probs, "step "+name+" names "+strings.Join(runners, " and ")+" — a step is run by ONE thing. "+

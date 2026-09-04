@@ -43,7 +43,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"full":        {Type: "boolean", Description: "(get) When true, return every phase's full prompt. Default false previews them to save context."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last — the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -176,6 +176,13 @@ tools      what this phase may use, BY NAME, on top of whatever reach allowed. E
            Names must match the agent's catalog EXACTLY — a phase naming a tool nobody has reaches
            nothing under that name, so use list_reference_sources / the agent's own tool list
            rather than a plausible-looking guess.
+deny       names this phase may NOT reach, subtracted LAST — after reach, after tools. The list to
+           use when a step keeps everything it has EXCEPT one thing: "tools" can only say that by
+           enumerating the catalog minus one, which freezes the step at the catalog of the day it
+           was written, while a deny keeps the step current and holds back only what it names.
+           It only subtracts, so a deny naming a tool this deployment does not have is satisfied
+           rather than a mistake. The workflow controls cannot be denied — a step that cannot
+           change_phase is stranded, not restricted.
 model      "worker" | "lead"    think   "on" | "off"
 
 === TRANSIENT vs RESIDENT ===
@@ -668,6 +675,7 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			Prompt:   mapStr(m, "prompt"),
 			Reach:    strings.ToLower(strings.TrimSpace(mapStr(m, "reach"))),
 			Tools:    mapStrList(m, "tools"),
+			Deny:     mapStrList(m, "deny"),
 			Model:    strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
 			Think:    normalizePhaseThink(m["think"]),
 			Output:   fields,

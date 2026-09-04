@@ -297,3 +297,92 @@ func TestANameTheReachDroppedSaysSo(t *testing.T) {
 		t.Errorf("the report should name the tool AND the control that took it: %v", unmatched)
 	}
 }
+
+// The step keeps everything it had, minus the names it denied — and keeps the
+// control plane, which is never denied.
+func TestDenyRemovesOnlyWhatItNames(t *testing.T) {
+	m := turnMachine{on: true, phase: MachinePhase{Name: "investigate", Deny: []string{"web_search"}}}
+	out, dropped, _, fellBack := m.narrowCatalog(scopeCatalog(), nil)
+
+	if fellBack {
+		t.Fatal("a deny is not a selection that missed")
+	}
+	if hasScopeName(out, "web_search") {
+		t.Error("the denied tool survived the narrowing")
+	}
+	for _, n := range []string{"atlassian_search", "atlassian_getconfluencepage", "change_phase", "plan_set"} {
+		if !hasScopeName(out, n) {
+			t.Errorf("a deny must subtract only what it names; %q went missing: %v", n, scopeNames(out))
+		}
+	}
+	if len(dropped) != 1 || dropped[0] != "web_search" {
+		t.Errorf("dropped should name exactly the denied tool, got %v", dropped)
+	}
+}
+
+// An attachment is a deliberate grant and so is a deny. The deny is the one
+// somebody wrote about THIS step, so it is the one that wins — otherwise
+// attaching a tool would quietly reopen a step that was closed on purpose.
+func TestDenyOutranksAnAttachment(t *testing.T) {
+	m := turnMachine{on: true, phase: MachinePhase{Name: "investigate", Deny: []string{"web_search"}}}
+	attached := map[string]bool{"web_search": true}
+
+	out, _, _, _ := m.narrowCatalog(scopeCatalog(), attached)
+	if hasScopeName(out, "web_search") {
+		t.Error("an attachment must not carry a denied tool back into the phase")
+	}
+
+	// Same under a reach of none, which takes the other code path.
+	none := turnMachine{on: true, phase: MachinePhase{Name: "quiet", Reach: ReachNone, Deny: []string{"web_search"}}}
+	out, _, _, _ = none.narrowCatalog(scopeCatalog(), attached)
+	if hasScopeName(out, "web_search") {
+		t.Error("reach=none plus an attachment must still honour the deny")
+	}
+	if !hasScopeName(out, "change_phase") {
+		t.Error("the control plane survives reach=none, as it always did")
+	}
+}
+
+// The total-miss rescue restores the whole catalog when an allow list matched
+// nothing, on the reasoning that a selection resolving to zero is a typo. That
+// reasoning must not reach a phase carrying a deny: restoring the catalog would
+// hand back precisely the tool the author wrote the deny to remove.
+func TestATypoedAllowListDoesNotUndoADeny(t *testing.T) {
+	m := turnMachine{on: true, phase: MachinePhase{
+		Name:  "investigate",
+		Tools: []string{"web_serch", "atlasian_search"}, // both misspelled
+		Deny:  []string{"web_search"},
+	}}
+	out, _, unmatched, fellBack := m.narrowCatalog(scopeCatalog(), nil)
+
+	if fellBack {
+		t.Error("a phase with a deny must not fall back to the whole catalog")
+	}
+	if hasScopeName(out, "web_search") {
+		t.Error("the rescue handed back the denied tool")
+	}
+	if len(unmatched) != 2 {
+		t.Errorf("the misspellings should still be reported, got %v", unmatched)
+	}
+	if !hasScopeName(out, "change_phase") {
+		t.Error("the turn still needs its way out")
+	}
+}
+
+// A tool that arrives AFTER the catalog was narrowed — authored mid-turn,
+// minted by a credential, hydrated lazily — never passes through narrowCatalog.
+// Without the round filter, the one control written to keep a step off a tool
+// could be walked around by creating it again under the same name.
+func TestDenyHoldsForToolsThatArriveLater(t *testing.T) {
+	m := turnMachine{on: true, phase: MachinePhase{Name: "investigate", Deny: []string{"web_search"}}}
+	if !m.Denies("web_search") {
+		t.Error("the phase should deny the name wherever it turns up")
+	}
+	if m.Denies("atlassian_search") {
+		t.Error("a deny must not spread to names it did not list")
+	}
+	// No machine running: a plain turn denies nothing.
+	if (turnMachine{}).Denies("web_search") {
+		t.Error("a turn with no machine has nothing to deny")
+	}
+}

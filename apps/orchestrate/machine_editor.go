@@ -990,7 +990,29 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 			Options:     toolChecklistOptions(cat.tools, p.Tools),
 			Placeholder: "(no tools to offer)",
 			Help:        toolsHelp(p)},
+		// The other direction, and the one that keeps working as the agent
+		// grows: the list above freezes a step at today's catalog, while this
+		// one holds back what it names and lets everything else through.
+		// Open whenever it holds something, for the same reason the list above
+		// is — a restriction nobody can see is what this panel exists to end.
+		ui.FormField{Type: "header", Label: denyHeaderLabel(p),
+			Collapsed: len(p.Deny) == 0,
+			ShowWhen:  "reach:!none"},
+		ui.FormField{Field: "deny", Type: "checklist", Label: "Never in this step",
+			ShowWhen:    "reach:!none",
+			Options:     toolChecklistOptions(cat.tools, p.Deny),
+			Placeholder: "(no tools to offer)",
+			Help:        "Subtracted last, after everything above. Ticking one here keeps the step current with the agent's catalog while holding back just this tool — which is what you want when a step should do its ordinary work but must not, say, search the public web. The workflow controls cannot be denied."},
 	}
+}
+
+// denyHeaderLabel titles the deny section, carrying its count when it has one,
+// so a closed drawer still states what the step withholds.
+func denyHeaderLabel(p MachinePhase) string {
+	if n := len(p.Deny); n > 0 {
+		return fmt.Sprintf("Withheld tools (%d)", n)
+	}
+	return "Withheld tools"
 }
 
 // nameNarrowingLabel titles the by-name section, carrying its count when
@@ -1343,6 +1365,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	}
 	if _, ok := body["tools"]; ok {
 		ph.Tools = stringSliceFromArgs(body, "tools")
+	}
+	if _, ok := body["deny"]; ok {
+		ph.Deny = stringSliceFromArgs(body, "deny")
 	}
 	if v, ok := body["output"]; ok {
 		ph.Output = outputsFromAny(v)

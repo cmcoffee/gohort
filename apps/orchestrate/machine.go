@@ -20,6 +20,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+
+	"github.com/cmcoffee/gohort/core/toolrules"
 )
 
 // turnMachine is what a machine contributes to ONE turn: the phase that
@@ -616,12 +618,44 @@ func (m turnMachine) phaseGovernsAttachments(attached map[string]bool) bool {
 	return false
 }
 
+// Denies reports whether the CURRENT phase denies this tool name. Off when no
+// machine is running, so a plain turn answers false to everything.
+func (m turnMachine) Denies(name string) bool {
+	return m.on && phaseDenies(m.phase, name)
+}
+
+// phaseDenies mirrors core's phaseDenied for the paths that bypass the ordinary
+// narrowing — the control plane and an agent's attachments are rebuilt from the
+// full catalog here, so the subtraction has to be applied a second time on the
+// way back out. Same field, same trimmed-exact rule; if one gains a
+// normalization step, so must the other.
+func phaseDenies(ph MachinePhase, name string) bool {
+	for _, d := range ph.Deny {
+		if strings.TrimSpace(d) == name {
+			return true
+		}
+	}
+	return false
+}
+
 var machineControlTools = map[string]bool{
 	"change_phase":     true,
 	"plan_set":         true,
 	"respond_directly": true,
 	"stay_silent":      true,
 	"keep_going":       true,
+}
+
+// Told to the shared registry so machine-definition validation can refuse a
+// step that denies its own way out. The map above stays the runtime authority —
+// this is the same list reaching the one place that cannot see it, rather than
+// a second copy of it.
+func init() {
+	names := make([]string, 0, len(machineControlTools))
+	for n := range machineControlTools {
+		names = append(names, n)
+	}
+	toolrules.RegisterWorkflowControlTool(names...)
 }
 
 // narrowCatalog is Tools plus what it took away: the names this phase
@@ -650,7 +684,12 @@ var machineControlTools = map[string]bool{
 // instead; a phase that genuinely wants no tools says that by naming none.
 func (m turnMachine) narrowCatalog(catalog []AgentToolDef, attached map[string]bool) (out []AgentToolDef, dropped, unmatched []string, fellBack bool) {
 	narrowed := m.Tools(catalog)
-	if !m.on || (len(m.phase.Tools) == 0 && PhaseReach(m.phase) == ReachAll) {
+	// A deny-only phase still narrows, so it does not take the "nothing to do"
+	// exit: the tools ARE removed either way (m.Tools applied the deny), but
+	// leaving through here would report an empty dropped list and the step's
+	// one restriction would be the only thing the turn's diagnostics could not
+	// see.
+	if !m.on || (len(m.phase.Tools) == 0 && len(m.phase.Deny) == 0 && PhaseReach(m.phase) == ReachAll) {
 		return narrowed, nil, nil, false
 	}
 	// The explicit "nothing": the control plane and the agent's
@@ -660,7 +699,7 @@ func (m turnMachine) narrowCatalog(catalog []AgentToolDef, attached map[string]b
 	// emptiness was meant.
 	if PhaseReach(m.phase) == ReachNone {
 		for _, td := range catalog {
-			if machineControlTools[td.Tool.Name] || attached[td.Tool.Name] {
+			if machineControlTools[td.Tool.Name] || (attached[td.Tool.Name] && !phaseDenies(m.phase, td.Tool.Name)) {
 				out = append(out, td)
 				continue
 			}
@@ -700,7 +739,13 @@ func (m turnMachine) narrowCatalog(catalog []AgentToolDef, attached map[string]b
 	// A total miss is still a total miss even when attachments would have
 	// carried the turn: the list was written to express a selection, and one
 	// that resolves to nothing is a typo whatever else survives it.
-	if len(narrowed) == 0 {
+	//
+	// Except when this phase also carries a Deny. The rescue exists to undo a
+	// mistyped SELECTION by restoring the catalog, and restoring the catalog
+	// hands back precisely the tools the deny was written to remove. A phase
+	// that says "not this one" gets the fail-closed reading of an unrelated
+	// typo: fewer tools than the author meant, never the one they excluded.
+	if len(narrowed) == 0 && len(m.phase.Deny) == 0 {
 		return catalog, nil, unmatched, true
 	}
 	// Rebuilt in CATALOG order rather than appending the exempt tools to the
@@ -709,7 +754,17 @@ func (m turnMachine) narrowCatalog(catalog []AgentToolDef, attached map[string]b
 	out = make([]AgentToolDef, 0, len(narrowed)+len(machineControlTools))
 	for _, td := range catalog {
 		switch {
-		case kept[td.Tool.Name], machineControlTools[td.Tool.Name], attached[td.Tool.Name]:
+		case machineControlTools[td.Tool.Name]:
+			// The workflow controls are never denied — a step that cannot
+			// change_phase is stranded, not restricted. Authoring refuses a
+			// deny that names one, so this is the second line of that defence.
+			out = append(out, td)
+		case phaseDenies(m.phase, td.Tool.Name):
+			// Denied wins over an attachment's grant. An attachment is a
+			// deliberate grant, and so is a deny; the deny is the more specific
+			// one, and it is the one someone wrote about THIS step.
+			dropped = append(dropped, td.Tool.Name)
+		case kept[td.Tool.Name], attached[td.Tool.Name]:
 			out = append(out, td)
 		default:
 			dropped = append(dropped, td.Tool.Name)

@@ -7895,6 +7895,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// catalog so it physically can't keep re-submitting the same
 		// vacuous plan (a real Qwen loop — see planSetRejects above).
 		RoundToolFilter: func(name string) bool {
+			// A phase's deny holds for tools that arrive AFTER the catalog was
+			// narrowed — a temp tool authored mid-turn, a credential minting its
+			// own, a lazily hydrated custom tool. Those never pass through
+			// narrowCatalog, so without this the one control written to keep a
+			// step off a tool could be walked around by creating it again under
+			// the same name.
+			if t.machine.Denies(name) {
+				return false
+			}
 			return !(name == "plan_set" && planSetRejects >= planSetDropThreshold)
 		},
 		// The round right after a plan_set rejection skips thinking — the

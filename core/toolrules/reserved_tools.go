@@ -40,3 +40,39 @@ func IsReservedToolName(name string) bool {
 	defer reservedToolNamesMu.RUnlock()
 	return reservedToolNames[strings.TrimSpace(name)]
 }
+
+// --- workflow control plane ---------------------------------------------------
+//
+// The tools a machine step uses to hand on: change_phase and its siblings.
+// Registered by the app that supplies them, for the same reason the reserved
+// names above are — they are assembled per turn and never appear in a static
+// catalog, so nothing else can enumerate them.
+//
+// Asked by machine-definition validation, which must refuse a step that denies
+// its own way out: a step that cannot change_phase is stranded, not restricted.
+// Kept apart from the reserved set because that one is much broader — denying
+// send_message for a step is a perfectly sensible thing to author, denying
+// change_phase is never sensible.
+
+var workflowControlTools = map[string]bool{}
+
+// RegisterWorkflowControlTool marks names as the machine control plane. Called
+// at startup by the app that provides them.
+func RegisterWorkflowControlTool(names ...string) {
+	reservedToolNamesMu.Lock()
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			workflowControlTools[n] = true
+		}
+	}
+	reservedToolNamesMu.Unlock()
+}
+
+// IsWorkflowControlTool reports whether a name is one of the machine's own
+// controls. False before the app registers them, which is why the runtime
+// exemption in the phase narrowing is the guarantee and this is the warning.
+func IsWorkflowControlTool(name string) bool {
+	reservedToolNamesMu.RLock()
+	defer reservedToolNamesMu.RUnlock()
+	return workflowControlTools[strings.TrimSpace(name)]
+}
