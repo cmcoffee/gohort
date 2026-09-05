@@ -224,10 +224,14 @@ func registerOperatorWake(app *OrchestrateApp) {
 			// same event to the agent as a user turn, so the owner's cortex
 			// showed the whole wake prompt — diff payload, closing instruction
 			// and all — in a bubble attributed to them.
+			// The card a watch attached (EventCardFromContext) is what the
+			// thread shows; the model still gets msg. A wake without one keeps
+			// msg as its card.
 			if _, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
 				SubSessionID: wakeTarget, Message: msg,
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
+				InputCardText: EventCardFromContext(ctx),
 			}); err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 				return delivered, "the wake turn failed: " + err.Error()

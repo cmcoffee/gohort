@@ -162,3 +162,69 @@ func TestWatchComparablePassesThroughText(t *testing.T) {
 		}
 	}
 }
+
+// The card a person sees in the thread names the new comment the way a
+// person would, and never shows the record's JSON.
+func TestWatchCardTextReadsLikeAMessage(t *testing.T) {
+	card := watchCardText("molty-profile-bug-replies", watchComparable(watchCommentsA), watchComparable(watchCommentsB))
+	for _, want := range []string{
+		`Watch "molty-profile-bug-replies" changed.`,
+		"New (1):",
+		`• ClawdClawderberg — "finally a reply" (9f9f9f9f, 2026-09-05 05:59 UTC)`,
+		"Changed (1):",
+		"• count: 1 → 2",
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("card lacks %q:\n%s", want, card)
+		}
+	}
+	for _, never := range []string{`{"author"`, "Current output", "HTTP 200", "4272e6b5", "Gone"} {
+		if strings.Contains(card, never) {
+			t.Errorf("card must not contain %q:\n%s", never, card)
+		}
+	}
+}
+
+// Plain-text watches keep their own words; a change with no line-level
+// difference still says something a person can act on.
+func TestWatchCardTextForPlainAndFlatChanges(t *testing.T) {
+	card := watchCardText("ts3", "SouthPawn: online\nnobody else", "SouthPawn: online\nWiWee: online")
+	if !strings.Contains(card, "New (1):\n• WiWee: online") || !strings.Contains(card, "Gone (1):\n• nobody else") {
+		t.Errorf("plain lines must be shown as they are:\n%s", card)
+	}
+	flat := watchCardText("x", "same\n", "same\n")
+	if !strings.Contains(flat, "no line stands out") {
+		t.Errorf("a change with no line difference must still say so: %q", flat)
+	}
+}
+
+// The card rides the wake's context, so the waker in another package can
+// store it in place of the prompt.
+func TestWatchWakeCarriesTheCard(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	result := watchCommentsA
+	RegisterWatchToolInvoker(func(owner, agentID, toolName string, args map[string]any) (string, error) {
+		return result, nil
+	})
+	defer RegisterWatchToolInvoker(nil)
+	var gotCard, gotSummary string
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		gotCard, gotSummary = EventCardFromContext(ctx), summary
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+	m := EventMonitor{Owner: "u", Name: "molty", Kind: EventKindWatch, ToolName: "moltbook", Notify: EventNotifyChannel}
+	SaveEventMonitor(db, m)
+	executeWatchPoll(context.Background(), db, m) // baseline
+	result = watchCommentsB
+	executeWatchPoll(context.Background(), db, m)
+	if !strings.Contains(gotCard, `ClawdClawderberg — "finally a reply"`) {
+		t.Errorf("the waker must receive the readable card, got %q", gotCard)
+	}
+	if !strings.Contains(gotSummary, "Current output") || !strings.Contains(gotSummary, "finally a reply") {
+		t.Errorf("the model's summary keeps the diff and payload, got %q", gotSummary)
+	}
+	if EventCardFromContext(context.Background()) != "" {
+		t.Error("a context without a card must read as none")
+	}
+}

@@ -118,3 +118,25 @@ func TestAnEventCardIsCappedAndSaysSo(t *testing.T) {
 		t.Error("a user's message must be stored whole")
 	}
 }
+
+// A wake that carries a readable card stores the card, and the model still
+// gets the prompt: the two readers get the text written for them.
+func TestAnEventCardPrefersItsReadableText(t *testing.T) {
+	now := time.Now()
+	prompt := "[EVENT — monitor \"molty\" fired]\nWatch monitor \"molty\" detected a change.\n\nWhat changed:\n+ {\"author\":{\"name\":\"x\"}}\n\nCurrent output:\nHTTP 200 OK\n{…}"
+	got := storedRunInput(AgentSyncRun{
+		Message: prompt, InputReportFrom: "molty", InputReportKind: cortexKindMonitor,
+		InputCardText: "Watch \"molty\" changed.\n\nNew (1):\n• x — \"hi\"",
+	}, prompt, now)
+	if got.Content != "Watch \"molty\" changed.\n\nNew (1):\n• x — \"hi\"" {
+		t.Errorf("the card must be the readable text, got %q", got.Content)
+	}
+	if got.ReportFrom != "molty" || got.Role == "user" {
+		t.Errorf("it is still a monitor card: %+v", got)
+	}
+	// No readable text: the message is the card, exactly as before.
+	plain := storedRunInput(AgentSyncRun{Message: prompt, InputReportFrom: "molty"}, prompt, now)
+	if plain.Content != prompt {
+		t.Errorf("without a card text the message is stored, got %q", plain.Content)
+	}
+}

@@ -906,7 +906,233 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	Debug("[event] watch %s/%s: change detected — firing (%s)", m.Owner, m.Name, m.Notify)
 	cur.LastFired = time.Now()
 	SaveEventMonitor(db, cur)
-	fireWake(ctx, db, m.Owner, m.Name, summary, "watch")
+	// The summary is for the model: diff plus payload. The card is for the
+	// thread the wake lands in, where the same text read as a wall of JSON.
+	fireWake(withWatchCard(ctx, watchCardText(m.Name, prior, body)), db, m.Owner, m.Name, summary, "watch")
+}
+
+// A watch fire has two readers. The model gets the summary — the diff and the
+// current payload, everything it needs to react. The thread the wake lands
+// in used to be handed that same text as its card, so a person scrolling
+// their own conversation met "[EVENT — monitor fired] / What changed: +
+// {"author":{"avatarUrl":null,…" and twelve hundred characters of the API's
+// response, every time. The card rides the wake's context so the waker, in
+// another package, can store it in place of the prompt.
+
+type watchCardKey struct{}
+
+func withWatchCard(ctx context.Context, card string) context.Context {
+	if strings.TrimSpace(card) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, watchCardKey{}, card)
+}
+
+// EventCardFromContext returns the readable card a watch fire attached for
+// the thread, or "" for a wake that carries none.
+func EventCardFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	card, _ := ctx.Value(watchCardKey{}).(string)
+	return card
+}
+
+// watchCardText renders a watch's change the way a person would say it: what
+// is new, what is gone, and which values moved — one line each, drawn from
+// the fields a record is known by (who wrote it, its title or text, its id,
+// when) rather than the record's JSON. Lines that are not JSON are shown as
+// they are, trimmed.
+func watchCardText(name, prior, current string) string {
+	added, removed := diffLineSets(prior, current)
+	var changed []string
+	// A member whose value moved shows up as one removed and one added line
+	// with the same `"key": ` prefix. Say it once, as old → new.
+	memberKey := func(l string) string {
+		if !strings.HasPrefix(l, "\"") {
+			return ""
+		}
+		if i := strings.Index(l, "\": "); i > 0 {
+			return l[:i+3]
+		}
+		return ""
+	}
+	removedByKey := map[string]int{}
+	for i, l := range removed {
+		if k := memberKey(l); k != "" {
+			removedByKey[k] = i
+		}
+	}
+	usedRemoved := map[int]bool{}
+	var adds []string
+	for _, l := range added {
+		if k := memberKey(l); k != "" {
+			if i, ok := removedByKey[k]; ok && !usedRemoved[i] {
+				usedRemoved[i] = true
+				changed = append(changed, describeMemberChange(removed[i], l))
+				continue
+			}
+		}
+		adds = append(adds, describeWatchLine(l))
+	}
+	var gones []string
+	for i, l := range removed {
+		if !usedRemoved[i] {
+			gones = append(gones, describeWatchLine(l))
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Watch %q changed.", name)
+	if len(adds)+len(gones)+len(changed) == 0 {
+		b.WriteString(" The output differs, but no line stands out as new or gone.")
+		return b.String()
+	}
+	writeCardGroup(&b, "New", adds)
+	writeCardGroup(&b, "Gone", gones)
+	writeCardGroup(&b, "Changed", changed)
+	return b.String()
+}
+
+// writeCardGroup writes one titled bullet list, capped so a bulk change
+// stays a card and not a scroll.
+func writeCardGroup(b *strings.Builder, title string, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	const max = 6
+	fmt.Fprintf(b, "\n\n%s (%d):", title, len(lines))
+	for i, l := range lines {
+		if i >= max {
+			fmt.Fprintf(b, "\n• …and %d more", len(lines)-max)
+			break
+		}
+		fmt.Fprintf(b, "\n• %s", l)
+	}
+}
+
+// describeMemberChange renders `"count": 1` → `"count": 2` as `count: 1 → 2`.
+func describeMemberChange(before, after string) string {
+	k, oldV := splitWatchMember(before)
+	_, newV := splitWatchMember(after)
+	return fmt.Sprintf("%s: %s → %s", k, truncateEvent(oldV, 60), truncateEvent(newV, 60))
+}
+
+// splitWatchMember splits a canonical `"key": value` line into key and the
+// raw value text; ok is false for anything else.
+func splitWatchMember(l string) (key, value string) {
+	i := strings.Index(l, "\": ")
+	if !strings.HasPrefix(l, "\"") || i < 1 {
+		return "", l
+	}
+	return l[1:i], strings.TrimSpace(l[i+3:])
+}
+
+// describeWatchLine renders one diff line for a person. A JSON object is
+// described by who, what, id and when; a canonical member line by key and
+// value; anything else is shown trimmed.
+func describeWatchLine(line string) string {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "{") {
+		var obj map[string]any
+		if json.Unmarshal([]byte(line), &obj) == nil {
+			return describeWatchObject(obj)
+		}
+	}
+	if k, v := splitWatchMember(line); k != "" {
+		return k + ": " + truncateEvent(v, 120)
+	}
+	return truncateEvent(line, 160)
+}
+
+func describeWatchObject(obj map[string]any) string {
+	str := func(v any) string {
+		s, _ := v.(string)
+		return strings.TrimSpace(s)
+	}
+	nested := func(v any, keys ...string) string {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return ""
+		}
+		for _, k := range keys {
+			if s := str(m[k]); s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	first := func(keys ...string) string {
+		for _, k := range keys {
+			if s := str(obj[k]); s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	who := nested(obj["author"], "name", "username", "handle")
+	if who == "" {
+		who = nested(obj["user"], "name", "username", "handle")
+	}
+	if who == "" {
+		who = first("author", "username", "from", "sender")
+	}
+	title := first("title", "subject")
+	text := first("content", "text", "body", "message", "description")
+	id := first("id", "ID", "_id", "uuid")
+	if len(id) > 12 {
+		id = id[:8]
+	}
+	when := first("created_at", "createdAt", "timestamp", "time", "date")
+	if t, err := time.Parse(time.RFC3339Nano, when); err == nil {
+		when = t.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	var parts []string
+	if who != "" {
+		parts = append(parts, who)
+	}
+	if title != "" {
+		parts = append(parts, truncateEvent(oneLine(title), 100))
+	}
+	if text != "" && (title == "" || len(parts) < 2) {
+		parts = append(parts, "\""+truncateEvent(oneLine(text), 120)+"\"")
+	}
+	if len(parts) == 0 {
+		// Nothing a person names a record by: show a few scalar fields.
+		keys := make([]string, 0, len(obj))
+		for k, v := range obj {
+			switch v.(type) {
+			case string, float64, bool:
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		for i, k := range keys {
+			if i >= 3 {
+				break
+			}
+			parts = append(parts, fmt.Sprintf("%s=%v", k, obj[k]))
+		}
+		if len(parts) == 0 {
+			return "a record with no readable fields"
+		}
+	}
+	out := strings.Join(parts, " — ")
+	var tail []string
+	if id != "" {
+		tail = append(tail, id)
+	}
+	if when != "" {
+		tail = append(tail, when)
+	}
+	if len(tail) > 0 {
+		out += " (" + strings.Join(tail, ", ") + ")"
+	}
+	return out
+}
+
+// oneLine collapses whitespace so a multi-paragraph body fits a bullet.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // buildWatchSummary produces the alert text for a watch fire. With a
@@ -1076,31 +1302,7 @@ func capBody(s string) string {
 // "new message" on a chat without caring about order. Capped so a big change
 // can't produce a wall of text. Empty when nothing line-level changed.
 func diffLines(prior, current string) string {
-	priorSet := map[string]bool{}
-	for _, l := range strings.Split(prior, "\n") {
-		if t := strings.TrimSpace(l); !punctuationOnlyLine(t) {
-			priorSet[t] = true
-		}
-	}
-	curSet := map[string]bool{}
-	var added []string
-	for _, l := range strings.Split(current, "\n") {
-		t := strings.TrimSpace(l)
-		if punctuationOnlyLine(t) {
-			continue
-		}
-		curSet[t] = true
-		if !priorSet[t] {
-			added = append(added, t)
-		}
-	}
-	var removed []string
-	for l := range priorSet {
-		if !curSet[l] {
-			removed = append(removed, l)
-		}
-	}
-	sort.Strings(removed) // map iteration order isn't stable; keep wakes deterministic
+	added, removed := diffLineSets(prior, current)
 	const maxLines = 20
 	var b strings.Builder
 	for i, l := range added {
@@ -1118,6 +1320,36 @@ func diffLines(prior, current string) string {
 		fmt.Fprintf(&b, "- %s\n", truncateEvent(l, 200))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// diffLineSets is the set difference behind diffLines: lines present now but
+// not before, in output order, and lines present before but not now, sorted
+// so map iteration cannot make two wakes disagree.
+func diffLineSets(prior, current string) (added, removed []string) {
+	priorSet := map[string]bool{}
+	for _, l := range strings.Split(prior, "\n") {
+		if t := strings.TrimSpace(l); !punctuationOnlyLine(t) {
+			priorSet[t] = true
+		}
+	}
+	curSet := map[string]bool{}
+	for _, l := range strings.Split(current, "\n") {
+		t := strings.TrimSpace(l)
+		if punctuationOnlyLine(t) {
+			continue
+		}
+		curSet[t] = true
+		if !priorSet[t] {
+			added = append(added, t)
+		}
+	}
+	for l := range priorSet {
+		if !curSet[l] {
+			removed = append(removed, l)
+		}
+	}
+	sort.Strings(removed)
+	return added, removed
 }
 
 // punctuationOnlyLine reports a line with nothing to say: empty, or JSON

@@ -121,7 +121,12 @@ const (
 	// an opaque registered waker and writes the run record itself. ONE name for
 	// that, not three — it returns its reader as a closure, and the writer stays
 	// unexported because only this package's loop ever writes one.
-	coreExportCeiling = 2141
+	//
+	// Raised 2141 -> 2142 for EventCardFromContext, the one name the event
+	// waker (registered from another package) reads a watch's readable card
+	// off the wake's context. The writer and the card builder stay unexported:
+	// only this package's watch poll ever attaches one.
+	coreExportCeiling = 2142
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

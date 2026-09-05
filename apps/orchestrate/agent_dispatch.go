@@ -893,6 +893,13 @@ type AgentSyncRun struct {
 	// a dispatch really are somebody's message.
 	InputReportFrom string
 	InputReportKind string
+	// InputCardText, when set with InputReportFrom, is what the stored card
+	// SAYS, in place of the message. The message is still the turn the model
+	// answers — a watch wake needs its diff and payload — but a thread is read
+	// by a person, and the same text there was a wall of JSON. Empty keeps the
+	// message as the card, which is right for an event that has no separate
+	// readable form.
+	InputCardText string
 	// DeliverySessionID is the CONVERSATION anything this run starts in the
 	// background must come home to. A dispatch runs under its own sub-session
 	// id so its ephemeral state stays off the caller's thread; a picture
@@ -1239,8 +1246,12 @@ func init() {
 // what a settings page cannot show you and a context window notices.
 func storedRunInput(run AgentSyncRun, text string, now time.Time) ChatMessage {
 	if from := strings.TrimSpace(run.InputReportFrom); from != "" {
+		card := text
+		if c := strings.TrimSpace(run.InputCardText); c != "" {
+			card = c
+		}
 		return ChatMessage{
-			Role: "assistant", Content: cappedEventText(text), Created: now,
+			Role: "assistant", Content: cappedEventText(card), Created: now,
 			ReportFrom: from, ReportKind: strings.TrimSpace(run.InputReportKind),
 		}
 	}
