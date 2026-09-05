@@ -854,6 +854,13 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		cur.ConsecutiveFailures = 0
 		SaveEventMonitor(db, cur)
 	}
+	// Hash and diff the COMPARABLE form: JSON re-rendered canonically with
+	// presence timestamps dropped (see watchComparable). The failure guard
+	// above judged the raw output; everything from here — the baseline, the
+	// diff, the format_script's prior/current — sees the comparable one, so a
+	// field that only says "this author was active a moment ago" cannot wake
+	// anyone.
+	body = watchComparable(body)
 	hash := sha256Sum(body)
 	if hash == cur.LastHash {
 		return // no change — stay quiet, no LLM
@@ -1071,7 +1078,7 @@ func capBody(s string) string {
 func diffLines(prior, current string) string {
 	priorSet := map[string]bool{}
 	for _, l := range strings.Split(prior, "\n") {
-		if t := strings.TrimSpace(l); t != "" {
+		if t := strings.TrimSpace(l); !punctuationOnlyLine(t) {
 			priorSet[t] = true
 		}
 	}
@@ -1079,7 +1086,7 @@ func diffLines(prior, current string) string {
 	var added []string
 	for _, l := range strings.Split(current, "\n") {
 		t := strings.TrimSpace(l)
-		if t == "" {
+		if punctuationOnlyLine(t) {
 			continue
 		}
 		curSet[t] = true
@@ -1111,6 +1118,14 @@ func diffLines(prior, current string) string {
 		fmt.Fprintf(&b, "- %s\n", truncateEvent(l, 200))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// punctuationOnlyLine reports a line with nothing to say: empty, or JSON
+// structure alone — the "," / "[" / "]" / "{" / "}" lines watchComparable
+// renders so that element lines stay stable. Such a line appearing or
+// vanishing is not a change anyone needs told about.
+func punctuationOnlyLine(t string) bool {
+	return strings.Trim(t, ",[]{} \t") == ""
 }
 
 // fetchAndExtract GETs the monitor's URL and pulls out the value to compare,
@@ -1296,4 +1311,147 @@ func truncateEvent(s string, max int) string {
 		return s
 	}
 	return strings.TrimSpace(s[:max]) + "…"
+}
+
+// A watch monitor fires when the hash of its tool's output changes. That is
+// the right test for a chat log or a server roster, and the wrong one for a
+// JSON API that stamps presence into every response: a comments endpoint that
+// embeds each author's lastActive changes every time that author does
+// anything, so a watch on a thread the agent itself posts in fired every
+// cycle with nothing new in it, woke the agent, and cost a turn of "same ping
+// again" each time. The agent read it as serialization drift; it was a clock.
+//
+// watchComparable is the form a watch hashes and diffs. JSON output is
+// re-rendered canonically — keys sorted, presence timestamps dropped, one
+// array element per line — so the hash ignores what is noise and the
+// line-level diff names the element that changed instead of the whole body.
+// Anything that is not JSON passes through untouched.
+
+// volatileWatchKeys are fields that report presence or freshness rather than
+// content. Matched after lowercasing and dropping separators, so lastActive,
+// last_active and last-active are one key. created_at is deliberately NOT
+// here: a new element's creation time is part of what makes it new.
+var volatileWatchKeys = map[string]bool{
+	"lastactive": true, "lastactiveat": true, "lastactivity": true, "lastactivityat": true,
+	"lastseen": true, "lastseenat": true, "lastonline": true, "lastonlineat": true,
+	"onlineat": true, "activeat": true, "seenat": true,
+	"updatedat": true, "modifiedat": true, "lastmodified": true, "lastupdated": true,
+	"heartbeat": true, "lastheartbeat": true, "heartbeatat": true,
+	"lastcheck": true, "lastchecked": true, "lastcheckedat": true, "lastpolled": true, "lastpolledat": true,
+}
+
+// watchComparable returns the text a watch should hash and diff for body.
+func watchComparable(body string) string {
+	status, rest := SplitHTTPStatus(body)
+	trimmed := strings.TrimSpace(rest)
+	if trimmed == "" || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return body
+	}
+	var v any
+	if err := json.Unmarshal([]byte(trimmed), &v); err != nil {
+		return body
+	}
+	v = dropVolatileWatchFields(v)
+	var b strings.Builder
+	if status != "" {
+		b.WriteString(status)
+		b.WriteByte('\n')
+	}
+	renderWatchJSON(&b, v)
+	return b.String()
+}
+
+// dropVolatileWatchFields removes presence/freshness keys at every depth.
+func dropVolatileWatchFields(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if volatileWatchKeys[watchKeyNorm(k)] {
+				delete(t, k)
+				continue
+			}
+			t[k] = dropVolatileWatchFields(val)
+		}
+		return t
+	case []any:
+		for i := range t {
+			t[i] = dropVolatileWatchFields(t[i])
+		}
+		return t
+	}
+	return v
+}
+
+func watchKeyNorm(k string) string {
+	k = strings.ToLower(k)
+	k = strings.ReplaceAll(k, "_", "")
+	k = strings.ReplaceAll(k, "-", "")
+	return k
+}
+
+// renderWatchJSON writes v as JSON that is valid as a whole and diffable by
+// line: a top-level object puts each member on its own line, and an array at
+// the top level or directly under it puts each element on its own line
+// (compact). Deeper structure stays compact inside its line. encoding/json
+// sorts map keys, which is what makes the rendering canonical.
+//
+// Separating commas sit on lines of their own. A trailing comma on the
+// element line would change the previously-last element whenever one is
+// appended, and a leading one would change the previously-first whenever
+// one is prepended — and a feed lists newest first. A lone "," line carries
+// nothing, and diffLines ignores punctuation-only lines, so an element's
+// line depends on that element alone.
+func renderWatchJSON(b *strings.Builder, v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		b.WriteString("{\n")
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteString(",\n")
+			}
+			kj, _ := json.Marshal(k)
+			b.Write(kj)
+			b.WriteString(": ")
+			if arr, ok := t[k].([]any); ok {
+				renderWatchArray(b, arr)
+			} else {
+				b.Write(compactWatchJSON(t[k]))
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString("}")
+	case []any:
+		renderWatchArray(b, t)
+	default:
+		b.Write(compactWatchJSON(v))
+	}
+}
+
+func renderWatchArray(b *strings.Builder, arr []any) {
+	if len(arr) == 0 {
+		b.WriteString("[]")
+		return
+	}
+	b.WriteString("[\n")
+	for i, el := range arr {
+		if i > 0 {
+			b.WriteString(",\n")
+		}
+		b.Write(compactWatchJSON(el))
+		b.WriteByte('\n')
+	}
+	b.WriteString("]")
+}
+
+func compactWatchJSON(v any) []byte {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return []byte("null")
+	}
+	return out
 }
