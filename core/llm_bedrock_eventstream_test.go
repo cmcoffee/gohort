@@ -312,8 +312,8 @@ func TestBedrockRuntimeStreamTruncationKeepsPartial(t *testing.T) {
 	}
 	// ...but marked as the fragment it is, so the loop continues the reply
 	// rather than delivering "partial" as a finished answer.
-	if resp.StopReason != anthStopInterrupted {
-		t.Errorf("stop_reason = %q, want %q", resp.StopReason, anthStopInterrupted)
+	if resp.StopReason != stopInterrupted {
+		t.Errorf("stop_reason = %q, want %q", resp.StopReason, stopInterrupted)
 	}
 }
 
@@ -330,8 +330,8 @@ func TestBedrockRuntimeCleanEOFWithoutStopReasonIsInterrupted(t *testing.T) {
 	if resp.Content != "The first half of the answer, and" {
 		t.Errorf("content = %q", resp.Content)
 	}
-	if resp.StopReason != anthStopInterrupted {
-		t.Errorf("stop_reason = %q, want %q", resp.StopReason, anthStopInterrupted)
+	if resp.StopReason != stopInterrupted {
+		t.Errorf("stop_reason = %q, want %q", resp.StopReason, stopInterrupted)
 	}
 	if !responseWasTruncated(resp) {
 		t.Error("the loop must read an interrupted stream as unfinished")

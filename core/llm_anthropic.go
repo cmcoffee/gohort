@@ -897,15 +897,6 @@ func (a *anthStreamState) feed(data []byte) {
 	}
 }
 
-// anthStopInterrupted is the stop reason stamped on a response whose stream
-// ended before the provider said why. It is not a wire value: Anthropic's
-// terminal stop_reason rides on message_delta, and a stream that closes
-// without one — a clean EOF from a dropped connection, a frame cut in half,
-// an exception event mid-answer — delivered a fragment, not a finish. The
-// agent loop reads it exactly as it reads max_tokens: settle what showed,
-// then ask the model to continue.
-const anthStopInterrupted = "interrupted"
-
 // finish closes out a stream. cause is what ended it: nil for EOF, else the
 // read or decode error.
 //
@@ -932,7 +923,7 @@ func (a *anthStreamState) finish(tag string, cause error) (*Response, error) {
 	}
 	Warn("[%s]: stream ended before the terminal event (%s) — returning %d chars as an interrupted reply",
 		tag, why, a.textContent.Len())
-	a.stopReason = anthStopInterrupted
+	a.stopReason = stopInterrupted
 	return a.response(tag), nil
 }
 

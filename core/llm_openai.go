@@ -2101,6 +2101,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	skipCount := 0
 	contentCount := 0
 	finishReason := ""
+	sawDone := false
 	for scanner.Scan() {
 		totalLines++
 		line := scanner.Text()
@@ -2109,6 +2110,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 
@@ -2282,6 +2284,15 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	// the agent loop's retry kicks in.
 	if finishReason == "length" && full.Len() == 0 && len(toolCalls) == 0 {
 		return nil, &APIError{Message: fmt.Sprintf("empty LLM response: finish_reason=length after %d output tokens (raise max_tokens or disable thinking for this call)", outputTokens), Provider: c.provider()}
+	}
+	// The body ended with neither a finish_reason nor [DONE]: the backend
+	// never said the reply was over, so it is not. A peer proxy that gave up
+	// on a silent upstream, or a connection that dropped mid-generation, ends
+	// the body cleanly from here — and what had arrived was returned as a
+	// finished answer, delivered with nothing to say it stopped short.
+	if finishReason == "" && !sawDone && (full.Len() > 0 || len(toolCalls) > 0) {
+		Warn("[%s]: stream ended before finish_reason or [DONE] — returning %d chars as an interrupted reply", c.provider(), full.Len())
+		finishReason = stopInterrupted
 	}
 
 	streamed := &Response{

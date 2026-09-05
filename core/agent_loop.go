@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -2545,6 +2546,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		graceRounds = 0
 	}
 	hardStop := -1
+	// truncatedLead holds the text of every reply that was cut off and then
+	// continued this turn, in order. See joinContinuation for who needs it.
+	var truncatedLead strings.Builder
 
 	// Wedge break-out. The loop-guard above blocks a repeated failing call, but a
 	// small model may keep RE-EMITTING that identical blocked call every round
@@ -3525,11 +3529,23 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			// unfinished one, and the corrections that pattern-match prose
 			// would either miss it or scold the model for being interrupted.
 			if responseWasTruncated(resp) {
-				if corrections.available(correctionTruncated) && round < maxRounds {
+				if corrections.available(correctionTruncated) {
 					Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars) — continuing (correction %d/%d)",
 						round, resp.StopReason, len(resp.Content), corrections.spend(correctionTruncated), maxCorrectionsPerKind)
 					emitDiag("output-truncated", truncationDiag(resp))
 					settleRound() // finalize the partial so the continuation doesn't concatenate into it
+					// The continuation needs a round of its own. This used to
+					// be gated on round < maxRounds, which left a one-round
+					// call — a synthesis pass, a summary — with no way to
+					// finish: its only round was the cut one, and the fragment
+					// shipped as the report. Extend the runway by the round the
+					// continuation takes, keeping an active wrap-up hard stop
+					// in step; the correction budget above bounds how often.
+					graceRounds++
+					if hardStop >= 0 {
+						hardStop++
+					}
+					truncatedLead.WriteString(resp.Content)
 					history = append(history, Message{
 						Role:    "user",
 						Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it — you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
@@ -3997,6 +4013,18 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				}
 			}
 
+			if truncatedLead.Len() > 0 && cfg.SettleRound == nil {
+				// A caller with no SettleRound never displayed the cut-off
+				// part — the loop is the only thing that saw it — so the reply
+				// it gets has to carry it. (A caller WITH one already showed
+				// the partial as its own bubble; handing it back joined would
+				// render it twice.) Before this, every headless consumer of a
+				// continued reply got the continuation alone: a report that
+				// began mid-sentence, or, when the continuation was itself the
+				// cut one, a report that simply ended short.
+				resp.Content = joinContinuation(truncatedLead.String(), resp.Content)
+				Debug("[agent_loop] round %d: reply joined with %d chars cut off earlier this turn (caller never saw them)", round, truncatedLead.Len())
+			}
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{
 					Round:   round,
@@ -6759,7 +6787,7 @@ func parseFunctionTagToolCall(body string) (string, map[string]any) {
 // (and Gemini, through geminiStopReason) say "length". Every client populates
 // StopReason now, so this is a fact rather than a guess.
 //
-// "interrupted" is this package's own value (anthStopInterrupted): a stream
+// "interrupted" is this package's own value (stopInterrupted): a stream
 // that closed before the provider sent its stop reason. Same situation from
 // the loop's side — content in hand, model not done — so the same continuation.
 //
@@ -6768,10 +6796,33 @@ func parseFunctionTagToolCall(body string) (string, map[string]any) {
 // only fires on emptiness (llm_openai.go's finish_reason==length check) misses
 // exactly the case that matters: 133 characters of "Doing it now" with the
 // tool call it was about to make lost past the ceiling.
+// joinContinuation puts a continued reply back together: the text that was
+// cut off, then what the model wrote when asked to carry on. The seam gets a
+// space only when both sides end and begin in a word character — a cut lands
+// mid-token, and "config" + "is stored" is far more common than "config" +
+// "uration"; punctuation or whitespace on either side needs nothing.
+func joinContinuation(lead, tail string) string {
+	lead = strings.TrimRight(lead, " \t")
+	tail = strings.TrimLeft(tail, " \t")
+	if lead == "" {
+		return tail
+	}
+	if tail == "" {
+		return lead
+	}
+	last, _ := utf8.DecodeLastRuneInString(lead)
+	first, _ := utf8.DecodeRuneInString(tail)
+	wordy := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	if wordy(last) && wordy(first) {
+		return lead + " " + tail
+	}
+	return lead + tail
+}
+
 // truncationDiag names the cut for the turn's diagnostics: the output limit
 // and a dropped stream are fixed in different places.
 func truncationDiag(resp *Response) string {
-	if strings.EqualFold(strings.TrimSpace(resp.StopReason), anthStopInterrupted) {
+	if strings.EqualFold(strings.TrimSpace(resp.StopReason), stopInterrupted) {
 		return "The provider's stream ended before the model finished its reply; it was asked to continue."
 	}
 	return "The model's reply hit the output limit before it finished; it was asked to continue."
@@ -6782,7 +6833,7 @@ func responseWasTruncated(resp *Response) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(resp.StopReason)) {
-	case "max_tokens", "length", anthStopInterrupted:
+	case "max_tokens", "length", stopInterrupted:
 		return true
 	}
 	return false

@@ -787,6 +787,16 @@ func WithReasoningStream(h StreamHandler) ChatOption {
 }
 
 // WithMaxTokens sets the maximum number of tokens to generate.
+// stopInterrupted is the stop reason stamped on a response whose stream ended
+// before the provider said why. It is not a wire value. Every streaming
+// transport delivers its terminal stop reason on a final event — Anthropic on
+// message_delta, the OpenAI-compatible backends as finish_reason followed by
+// [DONE] — and a stream that closes without one, whether from a dropped
+// connection, a proxy that gave up on silence, or a frame cut in half,
+// delivered a fragment, not a finish. The agent loop reads it exactly as it
+// reads max_tokens: settle what showed, then ask the model to continue.
+const stopInterrupted = "interrupted"
+
 func WithMaxTokens(n int) ChatOption {
 	return func(c *ChatConfig) { c.MaxTokens = n }
 }
