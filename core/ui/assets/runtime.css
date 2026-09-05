@@ -2338,6 +2338,10 @@ select:-webkit-autofill {
   70%  { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); }
   100% { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0); }
 }
+/* The whole row reads as live, not only the dot: a faint tint of the same
+ * green, and the title carries the weight of something happening. */
+.ui-chat-side-item.running { background: rgba(63, 185, 80, 0.08); }
+.ui-chat-side-item.running .ui-chat-side-title { font-weight: 600; }
 .ui-chat-side-del {
   position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%);
   background: transparent; color: var(--text-mute);

@@ -4522,6 +4522,25 @@
       }, 6000);
     }
 
+    // scheduleRunningRefresh re-reads the rail a few seconds from now while
+    // any row is running, so the pulse goes out when the turn ends without
+    // the reader clicking anything. One timer at a time; a fresh render
+    // replaces a pending one. The 30s poll further up serves channel agents
+    // only, and an ordinary agent's rail otherwise refreshes on its own
+    // turns alone — a run started in another tab would show forever.
+    var runningPollTimer = null;
+    function scheduleRunningRefresh(items) {
+      if (runningPollTimer) { clearTimeout(runningPollTimer); runningPollTimer = null; }
+      var anyRunning = Array.isArray(items) && items.some(function(s) { return s && s.running; });
+      if (!anyRunning) return;
+      runningPollTimer = setTimeout(function() {
+        runningPollTimer = null;
+        if (bulkState && bulkState.mode) return;
+        if (document.hidden) { scheduleRunningRefresh(items); return; }
+        loadSessions();
+      }, 8000);
+    }
+
     function loadSessions() {
       if (!hasList) return;
       loadChannels();
@@ -4651,6 +4670,16 @@
           if (rec.unread && sid !== activeSessionId) {
             rowKids.unshift(el('span', {class: 'ui-unread-dot', title: 'New activity',
               style: 'display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-right:0.45rem;flex:0 0 auto;vertical-align:middle'}, ['']));
+          }
+          // Running pulse — this session is mid-turn RIGHT NOW (the server
+          // keys it off its in-flight run, so a turn started from another
+          // tab or a wake counts too). The style has been in the stylesheet
+          // all along; the row stopped emitting it, so a list of five
+          // sessions with one working looked like five idle ones.
+          if (rec.running) {
+            rowClass += ' running';
+            rowKids.unshift(el('span', {class: 'ui-chat-side-running-dot',
+              title: 'Running now — open to watch'}, ['']));
           }
           // Active-work badge — LIVE watchers/dispatches attached to this
           // session. Distinct from the unread dot (a past append) and the
@@ -4785,6 +4814,7 @@
         var rest = items.filter(function(rec) { return !hasBgWork(rec); });
         actives.forEach(buildAndAppendRow);
         rest.forEach(buildAndAppendRow);
+        scheduleRunningRefresh(items);
         // Re-apply the side-search filter to the freshly rebuilt rows so an
         // active query survives reloads (entering select mode, bulk delete).
         // Without this the rebuilt rows come back all-visible and Select-all,
@@ -5009,6 +5039,14 @@
       // the server run keeps going and we re-attach via tryResumeRun, so a
       // stale send/resume stream can't double-feed the new view's bubble.
       detachActiveStream();
+      // The composer belongs to the session on screen, not to the panel. It
+      // used to keep whatever state the LAST send left it in: leave a running
+      // session for an idle one and Send stayed hidden behind a Cancel that
+      // would have cancelled nothing (the cancel POST keys off the OPEN
+      // session), and every session looked busy while any one of them was.
+      // Start every open idle; tryResumeRun below flips it back to Cancel
+      // only when THIS session has a run in flight.
+      enableInput();
       // CONTEXT mode — list rows are reference contexts (workspaces,
       // projects, …). Selecting one binds future sends to that id
       // via cfg.list_body_field. Server-side LoadURL still gets
