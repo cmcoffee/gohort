@@ -367,24 +367,25 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 
 	st := &anthStreamState{handler: handler}
 	reader := newEventStreamReader(resp.Body)
+	// Every way out goes through finish: it is the one place that knows a
+	// stream without its terminal stop_reason is a fragment. Partial output
+	// is still returned — the caller has already rendered those tokens
+	// through the handler — but marked interrupted, so the loop continues
+	// the reply instead of delivering the fragment as the answer.
 	for {
 		frame, err := reader.next()
 		if err == io.EOF {
-			break
+			return st.finish("bedrock-runtime", nil)
 		}
 		if err != nil {
-			// Partial output is still worth returning: the caller has already
-			// seen these tokens through the handler, and discarding them would
-			// turn a truncated answer into an empty one.
-			if st.textContent.Len() > 0 || len(st.toolCalls) > 0 {
-				Warn("[bedrock-runtime]: stream ended early (%v) — returning the partial response", err)
-				return st.response("bedrock-runtime"), nil
-			}
-			return nil, fmt.Errorf("stream read error: %w", err)
+			return st.finish("bedrock-runtime", err)
 		}
 		event, err := decodeBedrockEvent(frame)
 		if err != nil {
-			return nil, err
+			// An exception event mid-answer (throttling, a model stream error)
+			// is the same fragment as a dropped connection; with nothing yet
+			// delivered it is the error itself.
+			return st.finish("bedrock-runtime", err)
 		}
 		if event == nil {
 			continue // keep-alive, or a frame type that carries no event
@@ -392,7 +393,6 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 		st.feed(event)
 		applyBedrockMetrics(st, event)
 	}
-	return st.response("bedrock-runtime"), nil
 }
 
 // applyBedrockMetrics reads the billed token counts off the final chunk.

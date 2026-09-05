@@ -3528,11 +3528,11 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				if corrections.available(correctionTruncated) && round < maxRounds {
 					Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars) — continuing (correction %d/%d)",
 						round, resp.StopReason, len(resp.Content), corrections.spend(correctionTruncated), maxCorrectionsPerKind)
-					emitDiag("output-truncated", "The model's reply hit the output limit before it finished; it was asked to continue.")
+					emitDiag("output-truncated", truncationDiag(resp))
 					settleRound() // finalize the partial so the continuation doesn't concatenate into it
 					history = append(history, Message{
 						Role:    "user",
-						Content: frameworkNoticeTag + "Your previous reply was CUT OFF at the output limit before you finished it — you did not choose to stop. Continue from where you left off. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
+						Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it — you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
 					})
 					continue
 				}
@@ -6759,17 +6759,30 @@ func parseFunctionTagToolCall(body string) (string, map[string]any) {
 // (and Gemini, through geminiStopReason) say "length". Every client populates
 // StopReason now, so this is a fact rather than a guess.
 //
+// "interrupted" is this package's own value (anthStopInterrupted): a stream
+// that closed before the provider sent its stop reason. Same situation from
+// the loop's side — content in hand, model not done — so the same continuation.
+//
 // Deliberately does NOT require empty content. A truncated turn usually HAS
 // content — a preamble the model wrote before it ran out — and the guard that
 // only fires on emptiness (llm_openai.go's finish_reason==length check) misses
 // exactly the case that matters: 133 characters of "Doing it now" with the
 // tool call it was about to make lost past the ceiling.
+// truncationDiag names the cut for the turn's diagnostics: the output limit
+// and a dropped stream are fixed in different places.
+func truncationDiag(resp *Response) string {
+	if strings.EqualFold(strings.TrimSpace(resp.StopReason), anthStopInterrupted) {
+		return "The provider's stream ended before the model finished its reply; it was asked to continue."
+	}
+	return "The model's reply hit the output limit before it finished; it was asked to continue."
+}
+
 func responseWasTruncated(resp *Response) bool {
 	if resp == nil {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(resp.StopReason)) {
-	case "max_tokens", "length":
+	case "max_tokens", "length", anthStopInterrupted:
 		return true
 	}
 	return false

@@ -310,6 +310,60 @@ func TestBedrockRuntimeStreamTruncationKeepsPartial(t *testing.T) {
 	if resp.Content != "partial" {
 		t.Errorf("content = %q, want the partial text", resp.Content)
 	}
+	// ...but marked as the fragment it is, so the loop continues the reply
+	// rather than delivering "partial" as a finished answer.
+	if resp.StopReason != anthStopInterrupted {
+		t.Errorf("stop_reason = %q, want %q", resp.StopReason, anthStopInterrupted)
+	}
+}
+
+// The silent case: the connection closes CLEANLY after some text, with no
+// message_delta. Nothing errored, so this used to come back as a finished
+// reply — the user saw an answer that stopped mid-sentence and no log line
+// said why.
+func TestBedrockRuntimeCleanEOFWithoutStopReasonIsInterrupted(t *testing.T) {
+	resp := runBedrockStream(t, []string{
+		`{"type":"message_start","message":{"model":"claude-opus-4-8","usage":{"input_tokens":8}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The first half of the answer, and"}}`,
+	})
+	if resp.Content != "The first half of the answer, and" {
+		t.Errorf("content = %q", resp.Content)
+	}
+	if resp.StopReason != anthStopInterrupted {
+		t.Errorf("stop_reason = %q, want %q", resp.StopReason, anthStopInterrupted)
+	}
+	if !responseWasTruncated(resp) {
+		t.Error("the loop must read an interrupted stream as unfinished")
+	}
+}
+
+// A stream that carried its stop_reason is complete however the body ends.
+func TestBedrockRuntimeStopReasonMarksCompletion(t *testing.T) {
+	resp := runBedrockStream(t, []string{
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done."}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
+	})
+	if resp.StopReason != "end_turn" || responseWasTruncated(resp) {
+		t.Errorf("a stream with its stop_reason is finished, got %q", resp.StopReason)
+	}
+}
+
+// Nothing arrived and the body ended: an error, not an empty success.
+func TestBedrockRuntimeEmptyStreamIsAnError(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDTEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "SECRETTEST")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+	}))
+	defer srv.Close()
+	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
+	llm, _ := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
+		strings.TrimPrefix(srv.URL, "http://"), api)
+	if _, err := llm.ChatStream(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil); err == nil {
+		t.Fatal("an empty stream must be an error")
+	}
 }
 
 // Guard the envelope assumption: Bedrock base64s the inner event under "bytes",

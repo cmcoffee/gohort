@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -896,6 +897,45 @@ func (a *anthStreamState) feed(data []byte) {
 	}
 }
 
+// anthStopInterrupted is the stop reason stamped on a response whose stream
+// ended before the provider said why. It is not a wire value: Anthropic's
+// terminal stop_reason rides on message_delta, and a stream that closes
+// without one — a clean EOF from a dropped connection, a frame cut in half,
+// an exception event mid-answer — delivered a fragment, not a finish. The
+// agent loop reads it exactly as it reads max_tokens: settle what showed,
+// then ask the model to continue.
+const anthStopInterrupted = "interrupted"
+
+// finish closes out a stream. cause is what ended it: nil for EOF, else the
+// read or decode error.
+//
+// Before this, both transports returned whatever had accumulated as a
+// finished response the moment the body ended — no stop reason, no error —
+// so the loop finalized the fragment as the answer and the user saw a reply
+// that stopped mid-sentence with nothing to say why. A stream is complete
+// only when the terminal stop_reason arrived; anything short of that with
+// content in hand is returned marked interrupted, and with nothing in hand
+// it is the error it always should have been.
+func (a *anthStreamState) finish(tag string, cause error) (*Response, error) {
+	if a.stopReason != "" {
+		return a.response(tag), nil
+	}
+	if a.textContent.Len() == 0 && len(a.toolCalls) == 0 {
+		if cause == nil {
+			cause = errors.New("stream ended before any content arrived")
+		}
+		return nil, fmt.Errorf("stream read error: %w", cause)
+	}
+	why := "connection closed"
+	if cause != nil {
+		why = cause.Error()
+	}
+	Warn("[%s]: stream ended before the terminal event (%s) — returning %d chars as an interrupted reply",
+		tag, why, a.textContent.Len())
+	a.stopReason = anthStopInterrupted
+	return a.response(tag), nil
+}
+
 // response materializes the accumulated state, emitting the same trace lines
 // both transports relied on.
 func (a *anthStreamState) response(tag string) *Response {
@@ -999,10 +1039,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		st.feed([]byte(strings.TrimPrefix(line, "data: ")))
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("stream read error: %w", err)
-	}
-	return st.response("anthropic"), nil
+	return st.finish("anthropic", scanner.Err())
 }
 
 // noteIfAdaptiveThinking records the model's own answer about which thinking

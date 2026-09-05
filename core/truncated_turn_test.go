@@ -11,7 +11,7 @@ import "testing"
 // content AND tool calls to both be empty, which is exactly what a truncated
 // turn is not.
 func TestATruncatedReplyIsNotAFinishedOne(t *testing.T) {
-	for _, stop := range []string{"max_tokens", "length", "MAX_TOKENS", " length "} {
+	for _, stop := range []string{"max_tokens", "length", "MAX_TOKENS", " length ", anthStopInterrupted} {
 		resp := &Response{Content: "No — I said I was writing it. Doing it now.", StopReason: stop}
 		if !responseWasTruncated(resp) {
 			t.Errorf("stop_reason=%q did not read as truncated", stop)
