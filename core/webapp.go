@@ -1132,6 +1132,7 @@ func ServeDashboard(addr string) error {
 			// to it. The access checks below only decide whether the row gets
 			// a link; an entry with no way back still renders its label.
 			entries[i].Label = entries[i].MaskedLabel(viewer)
+			entries[i].applyOwnerDestination(viewer)
 			prefix := liveEntryAppPath(entries[i])
 			if prefix == "" {
 				continue // offers no way back; already Monitor-only
@@ -2198,6 +2199,14 @@ type LiveEntry struct {
 	// without each re-deriving it. Empty means there is nowhere to send
 	// this viewer — either the work has no owning page or access says no.
 	Href string `json:"href,omitempty"`
+	// OwnerURL is where the work's OWNER goes to rejoin it — the conversation
+	// itself — when that is a different place from where everyone else may
+	// look. A running chat turn is a thread its owner was in; to anyone else
+	// it is a row on the monitor. Never serialized: /api/live substitutes it
+	// for URL when the viewer is the owner, so the access check and Href
+	// resolution below see one destination, the right one for this viewer.
+	// Empty means the owner goes where everyone goes.
+	OwnerURL string `json:"-"`
 	// CancelURL is where a POST stops this work, when the owning app offers a
 	// way to stop it. Empty means it cannot be stopped from here, which is the
 	// honest answer for most entries — a turn the viewer is watching ends on
@@ -2296,6 +2305,18 @@ func (e LiveEntry) ResolveHref() string {
 		return ""
 	}
 	return strings.TrimSuffix(e.Path, "/") + "/?reconnect=" + url.QueryEscape(e.ID)
+}
+
+// applyOwnerDestination swaps in the owner's destination when the viewer IS
+// the owner. Decided before the app-access check, so an owner who cannot
+// reach the app gets no link at all rather than a link to the monitor. An
+// entry with no owner has no owner's destination: fail closed, as MaskedLabel
+// does.
+func (e *LiveEntry) applyOwnerDestination(viewer string) {
+	if e.OwnerURL == "" || e.Owner == "" || viewer == "" || e.Owner != viewer {
+		return
+	}
+	e.URL = e.OwnerURL
 }
 
 // liveEntryAppPath returns the app mount prefix a live entry points back

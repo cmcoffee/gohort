@@ -217,11 +217,14 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				out = append(out, LiveEntry{
 					ID: s.ID, Label: runIndentPrefix(s.Depth) + label, App: name, Status: status,
 					Background: background[s.ID],
-					// Where to go to actually WATCH it. A background run has no
-					// session to reopen — a scheduled fire is not a thread you
-					// were in — so the destination is its own row on the
-					// monitor rather than a page that does not exist.
-					URL: "/monitor?run=" + url.QueryEscape(s.ID),
+					// Where to go to actually WATCH it. For everyone but the
+					// owner that is the run's own row on the monitor. The owner
+					// of a run that lives in a conversation goes to the
+					// conversation — the chat page reattaches to the run in
+					// flight and puts Cancel on it — which is what "take me to
+					// it" means to the person who was in that thread.
+					URL:      "/monitor?run=" + url.QueryEscape(s.ID),
+					OwnerURL: runOwnerDestination(T.WebPrefix(), s),
 					// And a way to STOP it. The endpoint has existed all along,
 					// ownership-checked, with a live cancel func behind it —
 					// nothing ever called it, so a fifteen-minute render or a
@@ -2235,6 +2238,21 @@ type consoleActivityRow struct {
 	Surface  string `json:"surface"`
 	ID       string `json:"_id"`
 	Running  bool   `json:"_running,omitempty"`
+}
+
+// runOwnerDestination is the conversation a run's owner rejoins from the live
+// pill, or "" when the run has no conversation to rejoin.
+//
+// Only a ROOT run qualifies: a dispatched sub-agent's session id names a
+// sub-session, not a thread the chat page can open, and the thread it belongs
+// to is its parent's, which is already listed. A root run with a session id
+// — a chat turn, a scheduled or standing fire waking a thread, a channel
+// turn — opens that thread, where the panel's resume probe finds the run.
+func runOwnerDestination(prefix string, s RunSnapshot) string {
+	if s.Depth != 0 || strings.TrimSpace(s.SessionID) == "" || strings.TrimSpace(s.AgentID) == "" {
+		return ""
+	}
+	return strings.TrimSuffix(prefix, "/") + "/?agent=" + url.QueryEscape(s.AgentID) + "&session=" + url.QueryEscape(s.SessionID)
 }
 
 // handleConsoleActivity serves the live agent-activity view: every run the
