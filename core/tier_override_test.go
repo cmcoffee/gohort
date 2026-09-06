@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -106,11 +105,11 @@ func TestAnOverrideCannotDefeatThePrivacyPin(t *testing.T) {
 // mutation-tested and passed, which is how this test came to exist. Each site
 // is individually plausible and only a rule covering all of them sees the gap.
 func TestEveryTierDecisionIsPrivacyGated(t *testing.T) {
-	src, err := os.ReadFile("agent_loop.go")
+	src, err := sourceUnit("agent_loop.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(string(src), "\n")
+	lines := strings.Split(src, "\n")
 	found := 0
 	for i, line := range lines {
 		if !strings.Contains(line, "cfg.wantsLead()") {

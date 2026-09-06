@@ -85,7 +85,14 @@ const (
 	// did not shrink months later. Beside them, that edit is in the reviewer's
 	// diff. The alternative was 15 hooks to move 430 lines further from the two
 	// files they describe.
-	coreFileCeiling = 168
+	//
+	// 168 -> 177 (v0.6.590): agent_loop.go, 8,213 lines around one 3,180-line
+	// method, was cut into nine more files by what each part does (config,
+	// failures, guardrail, reply guards, tool parse, context, budget,
+	// provenance, digest); the tool-grant code went to agent_grants.go, which
+	// already existed. Nothing new lives in the hub; the same code has ten
+	// names instead of one, and the ceiling counts names.
+	coreFileCeiling = 177
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

@@ -156,3 +156,175 @@ func labelOr(label, fallback string) string {
 	}
 	return fallback
 }
+
+// --- confirmation ------------------------------------------------------------
+//
+// What it means for a tool to ask before it acts, and what "don't ask me
+// again" is allowed to mean afterwards.
+//
+// A prompt on every call is a prompt nobody reads. The loop that makes an
+// agentic coding session worth having is edit → build → read the error → fix
+// → build, and if each build stops for approval then the safe configuration
+// is the one that is too tedious to use — which is how gates get switched off
+// wholesale. So the answer to a confirmation has three shapes, not two: no,
+// yes this once, and yes to this KIND of call from now on.
+//
+// The third one is where the care goes. A grant is a standing decision made
+// in one click during a task, so it has to be narrow enough that the user can
+// predict what they just allowed:
+//
+//   - It is namespaced by Scope, an opaque key the app supplies. Allowing a
+//     build in a throwaway checkout must not allow one in the source tree the
+//     server is running from, and only the app knows those are different.
+//   - It covers a tool outright ONLY when the tool has no meaningful argument
+//     to vary — an operator-defined "run the tests" command is one fixed
+//     string, so "always" is exactly as broad as it sounds.
+//   - Where there IS a varying argument (a shell command), the grant is a
+//     PREFIX of it, and prefix matching refuses anything a shell would treat
+//     as more than one command. See CommandIsGrantable for why that guard is
+//     load-bearing rather than defensive.
+//   - A tool can refuse to offer one at all (NeverRemember), for actions
+//     where a standing yes is not a thing a person should be able to hand out
+//     mid-flow.
+
+// ToolConfirmation describes a tool's confirmation behavior.
+type ToolConfirmation struct {
+	// Prompt is the question the user reads. It is prose, and it is the
+	// tool author's job because only they can write one worth interrupting
+	// for: "Allow run?" is a reflex click, "Run a command in gohort?" over
+	// the command itself is a decision.
+	//
+	// FAILS CLOSED. A run with no interactive viewer (a schedule, a
+	// dispatch, a channel wake) has nobody to ask, so the call is denied
+	// rather than allowed. A tool that must work unattended must not set a
+	// confirmation at all.
+	Prompt string
+
+	// Scope namespaces any grant the user hands out from this call's card.
+	// Opaque to the framework — an app passes whatever "the same situation"
+	// means to it (a project id, a workspace, a connection). Empty puts
+	// grants in a namespace shared by everything else that left it empty,
+	// which is rarely what an app wants and never what a dangerous tool
+	// wants.
+	Scope string
+
+	// GrantArg names the argument a remembered grant is matched on. When
+	// set, a grant records a PREFIX of that argument's value and applies
+	// only to later calls whose value starts with it. When empty, a grant
+	// covers the tool outright — correct only when the tool has no varying
+	// argument that changes what it does.
+	GrantArg string
+
+	// NeverRemember withholds the "always allow" option, leaving only
+	// once-or-deny. For calls where a standing yes should not be obtainable
+	// by clicking a third button in the middle of something else.
+	NeverRemember bool
+}
+
+// asks reports whether this confirmation actually gates anything. A nil
+// confirmation, or one with no question in it, does not.
+func (c *ToolConfirmation) asks() bool {
+	return c != nil && strings.TrimSpace(c.Prompt) != ""
+}
+
+// Asks is the exported form, for the layers outside core that decide whether
+// to escalate.
+func (c *ToolConfirmation) Asks() bool { return c.asks() }
+
+// CanRemember reports whether this call may offer a standing grant.
+func (c *ToolConfirmation) CanRemember() bool {
+	return c.asks() && !c.NeverRemember
+}
+
+// shellMetaChars are the characters that let one command line become more
+// than one command, or become a command whose text is computed at run time.
+const shellMetaChars = ";&|`$><\n\r()"
+
+// CommandIsGrantable reports whether a command line may take part in prefix
+// matching at all.
+//
+// This is the guard that decides whether the whole grant mechanism is a
+// convenience or a hole. Without it, granting the prefix "go build" would
+// also allow:
+//
+//	go build ./... ; rm -rf /
+//
+// which starts with the granted prefix, was never shown to the user, and
+// would run without a prompt. So a command containing anything a shell reads
+// as chaining, substitution, or redirection is never matched against a grant
+// and never offered as one — it goes to the user every time, which is the
+// correct answer for a line that does more than one thing.
+//
+// Deliberately a blunt character test rather than a parser. A parser that is
+// subtly wrong here fails open, and the cost of the blunt version is only
+// that a legitimate piped command keeps asking.
+func CommandIsGrantable(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+	return !strings.ContainsAny(cmd, shellMetaChars)
+}
+
+// GrantPrefixFor derives the prefix a card offers for a command: its leading
+// words, up to the first one that looks like an argument rather than part of
+// the verb.
+//
+// "go build ./..."        → "go build"
+// "npm run test -- -w"    → "npm run"
+// "make"                  → "make"
+// "./scripts/ci.sh --fast"→ "./scripts/ci.sh"
+//
+// Two words at most, because the useful unit is the verb ("go test") and
+// anything past it is the part that legitimately varies between iterations —
+// which is the whole reason a prefix beats an exact match here. Returns ""
+// when the command may not be granted at all.
+func GrantPrefixFor(cmd string) string {
+	if !CommandIsGrantable(cmd) {
+		return ""
+	}
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	prefix := fields[0]
+	// A second word joins the verb only when it is a bare subcommand — not a
+	// flag, not a path, not a value. "go build" is a verb; "make -j8" is a
+	// verb plus a setting, and granting "make -j8" would be narrower than the
+	// user expects rather than broader.
+	if len(fields) > 1 && isBareWord(fields[1]) {
+		prefix += " " + fields[1]
+	}
+	return prefix
+}
+
+// isBareWord reports whether s is a plain subcommand token.
+func isBareWord(s string) bool {
+	if s == "" || strings.HasPrefix(s, "-") || strings.ContainsAny(s, "/\\=.") {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') &&
+			!(r >= '0' && r <= '9') && r != '_' && r != ':' {
+			return false
+		}
+	}
+	return true
+}
+
+// CommandMatchesPrefix reports whether cmd is covered by a granted prefix.
+//
+// The match is at a WORD boundary, so a grant of "go build" does not cover
+// "go buildsomethingelse". Both sides must be grantable, which is what stops
+// a chained command from riding in on a grant made for its first clause.
+func CommandMatchesPrefix(cmd, prefix string) bool {
+	cmd = strings.TrimSpace(cmd)
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || !CommandIsGrantable(cmd) {
+		return false
+	}
+	if cmd == prefix {
+		return true
+	}
+	return strings.HasPrefix(cmd, prefix+" ")
+}

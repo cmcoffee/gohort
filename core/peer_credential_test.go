@@ -12,7 +12,6 @@ package core
 // key, for a credential no operator granted to anything.
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -21,11 +20,11 @@ import (
 // facts that live in a struct literal rather than behind a function.
 func readGoSource(t *testing.T, name string) string {
 	t.Helper()
-	raw, err := os.ReadFile(name)
+	raw, err := sourceUnit(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
+	return raw
 }
 
 func TestThePeerKeyIsSecuredAndManaged(t *testing.T) {
