@@ -92,7 +92,13 @@ const (
 	// provenance, digest); the tool-grant code went to agent_grants.go, which
 	// already existed. Nothing new lives in the hub; the same code has ten
 	// names instead of one, and the ceiling counts names.
-	coreFileCeiling = 177
+	//
+	// 177 -> 186 (v0.6.593): common.go, 3,814 lines, was mostly not common:
+	// AppCore, Session, the chat calls, the config hooks, the route stages,
+	// the tool interfaces, ToolSession, the TempTool types and the session
+	// media each have a file named for them now. common.go keeps the alias
+	// facade and the small utilities that were the reason for its name.
+	coreFileCeiling = 186
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

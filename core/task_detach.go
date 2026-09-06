@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -249,4 +250,101 @@ func (d *DetachLedger) EstimateText() string {
 		return ""
 	}
 	return humanizeTaskDuration(v)
+}
+
+// DetachLedger rations background jobs across everything one turn does.
+//
+// The rule: ONE detached job per tool per turn. A detached call is not like an
+// inline one — it delivers its result to the user by itself, minutes later, as
+// its own message. Two of them for one request means the user gets the thing
+// twice.
+//
+// Observed: an edit detached in round 3, the model got back "STARTED, NOT
+// FINISHED", saw no picture, tried again in round 4, again in round 6, and the
+// user received three images for one request. The detach notice already said
+// "do NOT call this tool again for the same request — a second call starts a
+// second job", in those words. Prose was not enough; nothing was enforcing it.
+//
+// It is a separate object rather than a field on the session because a turn is
+// not a session. A host that mints one session per plan step would otherwise
+// hand each step its own allowance, and the cap would count the wrong thing.
+type DetachLedger struct {
+	mu    sync.Mutex
+	slots map[string]TaskRun
+	// est is the wait the framework TOLD the model to quote, when it had a
+	// measured one. Recorded because the turn judge is asked to distinguish "a
+	// duration the assistant made up" from one it was given, and could not: the
+	// evidence it receives never mentioned that a number had been supplied, so
+	// the carve-out was unusable and every quoted estimate read as invented.
+	// The framework said "This usually takes about 13 seconds; say so if it is
+	// worth knowing", the model said so, and the machinery guard retracted the
+	// reply for saying it.
+	est time.Duration
+}
+
+// NewDetachLedger returns a ledger for one turn. Share it across every session
+// that turn creates.
+func NewDetachLedger() *DetachLedger { return &DetachLedger{slots: map[string]TaskRun{}} }
+
+// claim takes the slot for a tool. ok is false when a job already holds it.
+func (d *DetachLedger) claim(tool string) (prior TaskRun, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.slots == nil {
+		d.slots = map[string]TaskRun{}
+	}
+	if held, taken := d.slots[tool]; taken {
+		return held, false
+	}
+	// Placeholder holds the slot for the gap between claiming it and knowing
+	// the run id, so two calls dispatched in parallel in one round can't both
+	// pass.
+	d.slots[tool] = TaskRun{}
+	return TaskRun{}, true
+}
+
+func (d *DetachLedger) record(tool string, run TaskRun) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.slots == nil {
+		d.slots = map[string]TaskRun{}
+	}
+	d.slots[tool] = run
+}
+
+func (d *DetachLedger) recordEstimate(v time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Longest wins. With two jobs running, the honest thing for the model to
+	// have quoted is the one that keeps the user waiting.
+	if v > d.est {
+		d.est = v
+	}
+}
+
+// Estimate is the wait this turn's detach notices offered, or 0 if none did.
+func (d *DetachLedger) Estimate() time.Duration {
+	if d == nil {
+		return 0
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.est
+}
+
+// Any reports whether this turn started any background job. Read by the turn
+// judge: a promise to report back later is TRUE when one is running.
+func (d *DetachLedger) Any() bool {
+	if d == nil {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.slots) > 0
+}
+
+func (d *DetachLedger) release(tool string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.slots, tool)
 }
