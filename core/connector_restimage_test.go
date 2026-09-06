@@ -5,10 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/cmcoffee/snugforge/kvlite"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // tinyPNG is a 1x1 transparent PNG, base64-encoded — a valid decodable payload.
@@ -94,12 +99,12 @@ func TestRestJSONString(t *testing.T) {
 	var node any
 	json.Unmarshal([]byte(`{"images":["AAA","BBB"],"data":{"n":3,"ok":true},"job-1":{"out":{"9":{"images":[{"filename":"g.png"}]}}}}`), &node)
 	cases := map[string]string{
-		"images.0":                    "AAA",
-		"images.1":                    "BBB",
-		"data.n":                      "3",
-		"data.ok":                     "true",
+		"images.0":                      "AAA",
+		"images.1":                      "BBB",
+		"data.n":                        "3",
+		"data.ok":                       "true",
 		"job-1.out.9.images.0.filename": "g.png", // id key with a dash, numeric node id, array index
-		"missing.path":                "",
+		"missing.path":                  "",
 	}
 	for path, want := range cases {
 		if got := restJSONString(node, path); got != want {
@@ -291,7 +296,7 @@ func TestResolveAspect(t *testing.T) {
 
 func TestImageHostPattern(t *testing.T) {
 	cases := map[string]string{
-		"http://alpaca.snuglab.local:8188/prompt": "http://alpaca.snuglab.local:8188/**",
+		"http://alpaca.snuglab.local:8188/prompt":  "http://alpaca.snuglab.local:8188/**",
 		"https://api.example.com/sdapi/v1/txt2img": "https://api.example.com/**",
 		"http://localhost:7860/foo":                "http://localhost:7860/**",
 	}
@@ -352,5 +357,404 @@ func TestApprovingAnImageConnectorLeavesItRegistered(t *testing.T) {
 	}
 	if ImageBackendRegistered(c.Name) {
 		t.Error("an unapproved connector kept a live backend")
+	}
+}
+
+// "Any save should reload the entire image generation."
+//
+// It didn't. Materialize registered the row that changed and nothing else,
+// and Teardown was a no-op on the registry — so an unapproved, deleted or
+// renamed connector kept a live backend closure for the rest of the process.
+// ImageBackendRegistered went on saying yes, which is what the admin's
+// image-provider picker keys off, and only a restart cleared it.
+func reloadTestDB(t *testing.T) Database {
+	t.Helper()
+	db := &DBase{Store: kvlite.MemStore()}
+	prev := RootDB
+	RootDB = db
+	t.Cleanup(func() {
+		RootDB = prev
+		restImageMu.Lock()
+		for n := range ownedImageBackends {
+			delete(ownedImageBackends, n)
+			UnregisterImageBackend(n)
+		}
+		restImageMu.Unlock()
+	})
+	return db
+}
+
+func comfyConnector(t *testing.T, name, baseURL string) Connector {
+	t.Helper()
+	tpl, ok := GetConnectorTemplate("comfyui")
+	if !ok {
+		t.Fatal("comfyui template not registered")
+	}
+	raw, _, err := comfyBuildSpec(tpl, map[string]any{
+		"base_url": baseURL, "workflow_type": ComfyTypeGenerate, "credential": "no_auth",
+	})
+	if err != nil {
+		t.Fatalf("build spec: %v", err)
+	}
+	return Connector{Name: name, Kind: RestImageConnectorKind, Spec: json.RawMessage(raw), Approved: true}
+}
+
+// Unapproving a connector must take its backend out of the registry, not leave
+// it on offer until the process restarts.
+func TestTearingDownAConnectorDropsItsBackend(t *testing.T) {
+	db := reloadTestDB(t)
+	c := comfyConnector(t, "comfyui", "http://box:8188")
+	db.Set(connectorsTable, c.Name, c)
+
+	if err := (restImageHandler{}).Materialize(c); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if !ImageBackendRegistered("comfyui") {
+		t.Fatal("an approved connector must have a live backend")
+	}
+
+	c.Approved = false
+	db.Set(connectorsTable, c.Name, c)
+	if err := (restImageHandler{}).Teardown(c); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if ImageBackendRegistered("comfyui") {
+		t.Error("an unapproved connector must not stay registered as a backend")
+	}
+}
+
+// The sweep is the "reload everything" part: saving ANY connector reconciles
+// the whole registry, so a name that went away behind the app's back — a
+// rename, a delete, an unapprove that skipped Teardown — is cleaned up by the
+// next save rather than surviving to the next restart.
+func TestASaveReconcilesEveryBackendNotJustItsOwn(t *testing.T) {
+	db := reloadTestDB(t)
+	gone := comfyConnector(t, "old_name", "http://box:8188")
+	db.Set(connectorsTable, gone.Name, gone)
+	if err := (restImageHandler{}).Materialize(gone); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if !ImageBackendRegistered("old_name") {
+		t.Fatal("setup: backend should be live")
+	}
+
+	// The row disappears without Teardown running — what a rename does.
+	db.Unset(connectorsTable, "old_name")
+
+	// Saving an UNRELATED connector must still clean it up.
+	other := comfyConnector(t, "new_name", "http://box:8188")
+	db.Set(connectorsTable, other.Name, other)
+	if err := (restImageHandler{}).Materialize(other); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+
+	if ImageBackendRegistered("old_name") {
+		t.Error("the orphaned backend should have been swept on the next save")
+	}
+	if !ImageBackendRegistered("new_name") {
+		t.Error("the saved connector must be registered")
+	}
+}
+
+// The sweep only removes names rest_image put there — it must not clobber a
+// backend registered by anything else.
+func TestTheSweepLeavesForeignBackendsAlone(t *testing.T) {
+	db := reloadTestDB(t)
+	RegisterImageBackend("not_a_connector", func(_ context.Context, _ string, _ bool) (*ImageGenResult, error) {
+		return nil, nil
+	})
+	t.Cleanup(func() { UnregisterImageBackend("not_a_connector") })
+
+	c := comfyConnector(t, "comfyui", "http://box:8188")
+	db.Set(connectorsTable, c.Name, c)
+	if err := (restImageHandler{}).Materialize(c); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if !ImageBackendRegistered("not_a_connector") {
+		t.Error("a backend this handler did not register must survive the sweep")
+	}
+}
+
+// Re-saving with a new server keeps exactly one backend under the same name,
+// pointed at the edit — the whole point of reloading on save.
+func TestReSavingRefreshesRatherThanDuplicates(t *testing.T) {
+	db := reloadTestDB(t)
+	c := comfyConnector(t, "comfyui", "http://oldbox:8188")
+	db.Set(connectorsTable, c.Name, c)
+	if err := (restImageHandler{}).Materialize(c); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+
+	moved := comfyConnector(t, "comfyui", "http://newbox:9000")
+	db.Set(connectorsTable, moved.Name, moved)
+	if err := (restImageHandler{}).Materialize(moved); err != nil {
+		t.Fatalf("re-materialize: %v", err)
+	}
+
+	// One entry under this name, not a second registration alongside the old
+	// one. Asserted against the handler's own set rather than the whole
+	// registry, which other tests in this package also write to.
+	restImageMu.Lock()
+	owned := len(ownedImageBackends)
+	mine := ownedImageBackends["comfyui"]
+	restImageMu.Unlock()
+	if !mine || owned != 1 {
+		t.Errorf("handler-owned backends = %d (comfyui present: %v), want exactly comfyui", owned, mine)
+	}
+	stored, ok := GetConnector(db, "comfyui")
+	if !ok {
+		t.Fatal("connector missing")
+	}
+	s, err := (restImageHandler{}).parse(stored)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if s.SubmitURL == "" || !strings.Contains(s.SubmitURL, "newbox") {
+		t.Errorf("the live spec still points at the old server: %q", s.SubmitURL)
+	}
+}
+
+// The INLINE image-input shape: the source photo rides in the request body as
+// base64 instead of being uploaded first. It was written for A1111 img2img and
+// then had no declaration using it, so nothing exercised the token half of the
+// design. a1111_img2img is that declaration.
+
+// b64OnePixel is a real 1x1 PNG: the result path decode-verifies what a backend
+// returns, so a placeholder string would fail for the wrong reason.
+const b64OnePixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGNgAAACAAEA//8DAAAGAAV9XBsAAAAASUVORK5CYII="
+
+// newCapturingImageServer records the submitted body and replies with reply.
+func newCapturingImageServer(t *testing.T, into *string, reply string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		*into = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(reply))
+	}))
+}
+
+func TestInlineBackendIsAnEditorWithoutAnUploadEndpoint(t *testing.T) {
+	spec, err := ApplyRestImagePreset("a1111_img2img", RestImageSpec{Credential: "no_auth"}, map[string]string{"base_url": "http://localhost:7860"})
+	if err != nil {
+		t.Fatalf("ApplyRestImagePreset: %v", err)
+	}
+	if !spec.SupportsImageInput() {
+		t.Error("an {images} token in the body IS image input — no upload endpoint needed")
+	}
+	if spec.UploadURL != "" {
+		t.Error("the inline shape must not declare an upload endpoint")
+	}
+	if spec.MaxImages() != 1 {
+		t.Errorf("MaxImages = %d, want 1", spec.MaxImages())
+	}
+	c := Connector{Name: "a1111_edit", Kind: RestImageConnectorKind}
+	c.Spec, _ = json.Marshal(spec)
+	if err := (restImageHandler{}).Validate(c); err != nil {
+		t.Fatalf("must validate: %v", err)
+	}
+}
+
+func TestInlineBodyCarriesTheImageAsBase64(t *testing.T) {
+	secureAPITestStore(t)
+	var got string
+	srv := newCapturingImageServer(t, &got, `{"images":["`+b64OnePixel+`"]}`)
+	defer srv.Close()
+
+	spec, err := ApplyRestImagePreset("a1111_img2img", RestImageSpec{Credential: "no_auth"}, map[string]string{"base_url": srv.URL})
+	if err != nil {
+		t.Fatalf("ApplyRestImagePreset: %v", err)
+	}
+	png := smallPNG(t)
+	if _, err := spec.generate(&ToolSession{}, restImageParams{
+		prompt: "make it snowy",
+		seed:   1,
+		images: []inputImage{{name: "photo.png", data: png}},
+	}); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	// init_images must be a JSON ARRAY of base64 — that is what {images}
+	// expands to, and the single-value {image} token would produce a bare
+	// string that A1111 rejects.
+	var body struct {
+		InitImages []string `json:"init_images"`
+		Prompt     string   `json:"prompt"`
+		Denoising  float64  `json:"denoising_strength"`
+	}
+	if err := json.Unmarshal([]byte(got), &body); err != nil {
+		t.Fatalf("submitted body is not JSON: %v\n%s", err, got)
+	}
+	if len(body.InitImages) != 1 {
+		t.Fatalf("init_images = %v, want one entry", body.InitImages)
+	}
+	if decoded, err := decodeBase64Image(body.InitImages[0]); err != nil || len(decoded) != len(png) {
+		t.Error("init_images[0] is not the source photo")
+	}
+	if body.Prompt != "make it snowy" {
+		t.Errorf("prompt = %q", body.Prompt)
+	}
+	// The strength stays where the operator set it, not on the tool surface.
+	if body.Denoising <= 0 || body.Denoising >= 1 {
+		t.Errorf("denoising_strength = %v, want the preset's fixed value", body.Denoising)
+	}
+}
+
+func TestInlineBackendUploadsNothing(t *testing.T) {
+	// uploadInputImages must no-op for the inline shape. Reaching for an upload
+	// endpoint that does not exist would fail every edit on this backend.
+	spec, err := ApplyRestImagePreset("a1111_img2img", RestImageSpec{Credential: "no_auth"}, map[string]string{"base_url": "http://localhost:7860"})
+	if err != nil {
+		t.Fatalf("ApplyRestImagePreset: %v", err)
+	}
+	up, mask, err := spec.uploadInputImages(&ToolSession{}, restImageParams{
+		images: []inputImage{{name: "photo.png", data: smallPNG(t)}},
+	})
+	if err != nil {
+		t.Fatalf("uploadInputImages: %v", err)
+	}
+	if up != nil || mask != nil {
+		t.Errorf("inline shape must upload nothing, got %v / %v", up, mask)
+	}
+}
+
+func TestImg2ImgTemplateIsPureData(t *testing.T) {
+	// The whole point of the declaration split: an editing backend is one
+	// template value naming an existing strategy, with no code of its own.
+	tpl, ok := GetConnectorTemplate("a1111_img2img")
+	if !ok {
+		t.Fatal("a1111_img2img template is not registered")
+	}
+	if tpl.Strategy != "rest_image_preset" {
+		t.Errorf("strategy = %q, want the shared preset strategy", tpl.Strategy)
+	}
+	if tpl.Params["preset"] != "a1111_img2img" {
+		t.Errorf("params = %v, want the img2img preset", tpl.Params)
+	}
+	plain, _ := GetConnectorTemplate("a1111")
+	if tpl.Strategy != plain.Strategy {
+		t.Error("both a1111 declarations must ride the same strategy — that is what makes them data")
+	}
+	if !strings.Contains(strings.ToLower(tpl.Description), "photo") {
+		t.Errorf("description should say it edits a photo: %q", tpl.Description)
+	}
+}
+
+// A SYNCHRONOUS image backend answers the submit with the finished picture, so
+// the submit IS the render. It was governed by tune_secure_api_request_timeout
+// — 30 seconds, a cap sized for ordinary API calls — while the image deadline
+// the operator actually set (900s for an edit) governed only the poll loop a
+// synchronous backend never reaches.
+//
+// A peer render is exactly this shape: the far side runs the whole job under
+// its own ten-minute budget and replies with pixels. Every peer edit that took
+// longer than half a minute came back as "den.snuglab.com did not respond
+// within 30s", which reads as a network fault rather than a deadline nobody
+// could see.
+
+func TestSynchronousImageSubmitGetsTheRenderDeadline(t *testing.T) {
+	sync := RestImageSpec{
+		SubmitURL: "http://gpu.example/render", SubmitMethod: "POST",
+		SubmitBody: `{"prompt":"{prompt}","init_images":{images}}`, ImageB64Path: "images.0",
+	}
+	// An editing spec, so it takes the (longer) edit deadline.
+	if !sync.SupportsImageInput() {
+		t.Fatal("the fixture is meant to be an editing backend")
+	}
+	got := sync.submitTimeoutSecs()
+	want := int(sync.pollDeadline() / time.Second)
+	if got != want {
+		t.Errorf("submit timeout = %ds, want the render deadline %ds", got, want)
+	}
+	if got <= int(secureAPIRequestTimeout()/time.Second) {
+		t.Errorf("submit timeout %ds is no better than the general API cap — the bug is unfixed", got)
+	}
+
+	// An explicit per-connector deadline still wins.
+	sync.PollMaxSecs = 1234
+	if got := sync.submitTimeoutSecs(); got != 1234 {
+		t.Errorf("an explicit PollMaxSecs must govern the submit too, got %ds", got)
+	}
+}
+
+func TestAsyncImageSubmitKeepsTheGeneralCap(t *testing.T) {
+	// With a poll URL the submit should return an id immediately and the poll
+	// loop does the waiting. Letting the submit hang for fifteen minutes there
+	// would hide a genuinely wedged backend.
+	async := RestImageSpec{
+		SubmitURL: "http://gpu.example/prompt", SubmitMethod: "POST",
+		PollURL: "http://gpu.example/history/{id}", ImageB64Path: "images.0",
+	}
+	if got := async.submitTimeoutSecs(); got != 0 {
+		t.Errorf("submit timeout = %ds, want 0 (leave the general cap alone) for a polling backend", got)
+	}
+}
+
+func TestDispatchReadsTheTimeoutOverrideWhateverItsNumericType(t *testing.T) {
+	// The args map is hand-built in one place and JSON-decoded in another, so
+	// the same value arrives as int here and float64 there. An override that is
+	// silently ignored is the exact failure this change removes.
+	for _, v := range []any{900, int64(900), float64(900)} {
+		if got := secureTimeoutSeconds(map[string]any{secureTimeoutArg: v}); got != 900 {
+			t.Errorf("%T override read as %d, want 900", v, got)
+		}
+	}
+	if got := secureTimeoutSeconds(map[string]any{}); got != 0 {
+		t.Errorf("absent override read as %d, want 0", got)
+	}
+}
+
+// End to end through the real dispatch: a backend slower than the general API
+// cap must still be waited for. Uses a tiny override rather than a real 30s
+// wait — the point is that the SPEC's number governs, not the general one.
+func TestASlowSynchronousRenderIsNotCutOffByTheAPICap(t *testing.T) {
+	peerImageDB(t)
+	prev := ImageDir()
+	SetImageDir(t.TempDir())
+	t.Cleanup(func() { SetImageDir(prev) })
+
+	// General API cap: 1s. Render deadline: 30s. The backend takes ~1.4s, so it
+	// finishes only if the render deadline is the one being enforced.
+	tdb := &DBase{Store: kvlite.MemStore()}
+	tdb.Set(WebTable, "tune_secure_api_request_timeout", float64(1))
+	SetTunablesDB(tdb)
+	t.Cleanup(func() { SetTunablesDB(nil) })
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(1400 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"images":[%q]}`, tinyPNG)
+	}))
+	t.Cleanup(slow.Close)
+
+	spec := RestImageSpec{
+		SubmitURL: slow.URL + "/sdapi/v1/img2img", SubmitMethod: "POST",
+		SubmitBody:   `{"prompt":"{prompt}","init_images":{images}}`,
+		ImageB64Path: "images.0", Credential: "no_auth",
+		MaxInputImages: 1, PollMaxSecs: 30,
+	}
+	raw, _ := json.Marshal(spec)
+	if err := SaveConnector(RootDB, Connector{Name: "slowedit", Kind: RestImageConnectorKind, Spec: raw}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := ApproveConnector(RootDB, "slowedit"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	src := filepath.Join(ImageDir(), "src.png")
+	png, _ := base64.StdEncoding.DecodeString(tinyPNG)
+	if err := os.WriteFile(src, png, 0644); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{WorkspaceDir: ImageDir()}
+	res, err := EditImageWithBackend(sess, EditImageRequest{
+		Backend: "slowedit", Prompt: "one legible number on the left pillar",
+		Images: []string{"src.png"},
+	})
+	if err != nil {
+		t.Fatalf("a render slower than the general API cap was cut off: %v", err)
+	}
+	if res == nil || res.URL == "" {
+		t.Fatal("no image came back")
 	}
 }

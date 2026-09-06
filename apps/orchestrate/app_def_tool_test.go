@@ -2,11 +2,339 @@ package orchestrate
 
 import (
 	"encoding/json"
+	. "github.com/cmcoffee/gohort/core"
+	"os"
 	"strings"
 	"testing"
-
-	. "github.com/cmcoffee/gohort/core"
 )
+
+// Three ways the authoring surface used to mislead an author into rebuilding an
+// app that was never broken. Each one on its own costs a round; together they
+// cost a working app, replaced by a hand-written one.
+
+// A key the framework drops must SAY it dropped it. Silence reads as "accepted",
+// so the author looks for the failure somewhere real — and concludes the section
+// kind itself is broken.
+func TestUnknownSectionKeysAreReported(t *testing.T) {
+	notes := unknownSectionKeyNotes([]any{
+		map[string]any{
+			"kind":           "pipeline",
+			"pipeline_label": "Deep Dive Research", // invented
+			"source_script":  "deep_dive_run",      // borrowed from table/display
+			"submit_label":   "Research",           // real
+		},
+	})
+	if len(notes) != 1 {
+		t.Fatalf("want one note, got %v", notes)
+	}
+	for _, want := range []string{"section 1", "pipeline_label", "source_script"} {
+		if !strings.Contains(notes[0], want) {
+			t.Errorf("note should name %q, got %q", want, notes[0])
+		}
+	}
+	if strings.Contains(notes[0], "submit_label —") {
+		t.Errorf("a key the kind DOES read must not be reported: %q", notes[0])
+	}
+	// Every key recognized → nothing to say. A note on a clean section would
+	// train the reader to skip notes, which is worse than not having them.
+	if n := unknownSectionKeyNotes([]any{
+		map[string]any{"kind": "table", "columns": []any{}, "empty_text": "none", "deletable": true, "title": "Rows"},
+	}); len(n) != 0 {
+		t.Errorf("a section using only real keys must produce no note, got %v", n)
+	}
+	// An unknown KIND is the section builder's error to raise, with its own
+	// message listing the kinds. Reporting every key on it as unknown would
+	// bury that.
+	if n := unknownSectionKeyNotes([]any{map[string]any{"kind": "not_a_kind", "whatever": 1}}); len(n) != 0 {
+		t.Errorf("an unknown kind is not this check's business, got %v", n)
+	}
+}
+
+// pipeline_id on the SECTION is where an author naturally writes it — that is
+// where the binding is used. Honor it instead of saving an app with a pipeline
+// section and no pipeline.
+func TestSectionLevelPipelineIDIsHonored(t *testing.T) {
+	got := sectionPipelineRef([]any{
+		map[string]any{"kind": "display", "pairs": []any{}},
+		map[string]any{"kind": "pipeline", "pipeline_id": "f827e5d5"},
+	})
+	if got != "f827e5d5" {
+		t.Errorf("section-level pipeline_id = %q, want it honored", got)
+	}
+	if got := sectionPipelineRef([]any{map[string]any{"kind": "pipeline"}}); got != "" {
+		t.Errorf("no binding anywhere must stay empty, got %q", got)
+	}
+	if got := sectionPipelineRef("not an array"); got != "" {
+		t.Errorf("garbage in, empty out, got %q", got)
+	}
+}
+
+// The render check and the runtime have to agree on how a mounted section is
+// recognized. They didn't: a no-chrome section (chat, workbench, pipeline)
+// mounts its body with no .ui-section card, so a page built only of them
+// counted ZERO sections and verify called a working app blank — which is a
+// verdict an author acts on by rebuilding.
+func TestNoChromeSectionsStayCountableByVerify(t *testing.T) {
+	epilogue, err := os.ReadFile("../../core/ui/assets/runtime/99_epilogue.js")
+	if err != nil {
+		t.Fatalf("read runtime epilogue: %v", err)
+	}
+	const marker = "data-ui-section"
+	if !strings.Contains(string(epilogue), marker) {
+		t.Fatalf("the runtime no longer marks mounted sections with %q — verify's count will read a live panel as a blank page", marker)
+	}
+	src, err := os.ReadFile("app_def_tool.go")
+	if err != nil {
+		t.Fatalf("read tool: %v", err)
+	}
+	if !strings.Contains(string(src), "[data-ui-section]") {
+		t.Fatalf("verify's probe must count %q too, or it reports a page of no-chrome sections as blank", marker)
+	}
+}
+
+// "a form section needs at least one field" was true of the PARSED result and
+// false of the payload: three fields arrived and all three were discarded for
+// carrying the wrong key. Reading a message that contradicted what it had just
+// sent, the author re-sent the same shape six times, then simplified to one
+// field to isolate it — and got the same sentence, because the count was never
+// the problem. Twice in one session: once for fields, once for columns.
+func TestEmptyFieldListSaysWhatWasDropped(t *testing.T) {
+	err := entryListError("form", "field", "fields", []any{
+		map[string]any{"name": "proposition", "label": "Proposition", "type": "textarea"},
+		map[string]any{"name": "side_a", "label": "Side A", "type": "text"},
+	})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "2") || !strings.Contains(msg, "DROPPED") {
+		t.Errorf("say how many arrived and that they were discarded, got: %s", msg)
+	}
+	if !strings.Contains(msg, "label") || !strings.Contains(msg, "type") {
+		t.Errorf("name the keys the entries DO carry — that is the route to the fix, got: %s", msg)
+	}
+	// Genuinely empty still reads as the simple thing it is.
+	if msg := entryListError("form", "field", "fields", []any{}).Error(); strings.Contains(msg, "DROPPED") {
+		t.Errorf("an empty list was not dropped, it was empty: %s", msg)
+	}
+	// Wrong type entirely — say so rather than counting to zero.
+	if msg := entryListError("table", "column", "columns", "proposition").Error(); !strings.Contains(msg, "ARRAY") {
+		t.Errorf("a non-array should be named as such, got: %s", msg)
+	}
+	// The alias hint fires on the near-misses an author actually writes.
+	if msg := entryListError("table", "column", "columns", []any{
+		map[string]any{"key": "id", "label": "#"},
+	}).Error(); !strings.Contains(msg, `Rename "key"`) {
+		t.Errorf("suggest the rename when a near-miss key is present, got: %s", msg)
+	}
+}
+
+// One spelling, one meaning, in every section. `name` worked in a pipeline
+// section and failed in a form and a table, which is how the same payload
+// produced a working section and two dead ones in a single call.
+func TestFieldAndNameAreTheSameKeyEverywhere(t *testing.T) {
+	ff := appFormFields([]any{map[string]any{"name": "proposition", "label": "Proposition", "type": "textarea"}})
+	if len(ff) != 1 || ff[0].Field != "proposition" {
+		t.Errorf("a form field keyed `name` must parse, got %+v", ff)
+	}
+	cols := appTableCols([]any{map[string]any{"name": "winner", "label": "Winner"}})
+	if len(cols) != 1 || cols[0].Field != "winner" {
+		t.Errorf("a table column keyed `name` must parse, got %+v", cols)
+	}
+	// `field` still wins when both are present — it is the canonical spelling.
+	both := appFormFields([]any{map[string]any{"field": "real", "name": "other"}})
+	if len(both) != 1 || both[0].Field != "real" {
+		t.Errorf("field must take precedence over name, got %+v", both)
+	}
+}
+
+// A page can parse perfectly and still promise something it cannot do: a table
+// of "past debates" that nothing ever writes.
+//
+// Extra submit fields used to be reported here too, because the run surface
+// dropped them. They are the pipeline's PARAMETERS now — each arrives as
+// {name} in every stage's prompt — so a form asking for three things is a
+// correct form, and warning about it would be the framework describing its own
+// former limitation as the author's mistake.
+func TestShapeNotesCatchThePromisesAPageCannotKeep(t *testing.T) {
+	notes := appShapeNotes([]any{
+		map[string]any{"kind": "pipeline", "fields": []any{
+			map[string]any{"name": "proposition", "type": "textarea"},
+			map[string]any{"name": "side_a", "type": "text"},
+			map[string]any{"name": "side_b", "type": "text"},
+		}},
+		map[string]any{"kind": "table", "columns": []any{map[string]any{"field": "winner"}}},
+	}, true)
+	joined := strings.Join(notes, "\n")
+	if strings.Contains(joined, "side_a") || strings.Contains(joined, "NOT read") {
+		t.Errorf("a multi-field submit form is now a parameterized run, not a mistake: %s", joined)
+	}
+	if !strings.Contains(joined, "RECORD store") {
+		t.Errorf("a record-backed table beside a pipeline still never fills: %s", joined)
+	}
+	// A computed table is fine beside a pipeline — it fills itself.
+	quiet := appShapeNotes([]any{
+		map[string]any{"kind": "pipeline", "fields": []any{map[string]any{"name": "topic", "type": "textarea"}}},
+		map[string]any{"kind": "table", "source_script": "summary", "columns": []any{map[string]any{"field": "x"}}},
+	}, true)
+	if len(quiet) != 0 {
+		t.Errorf("a clean shape must produce no notes, got %v", quiet)
+	}
+}
+
+// Naming what a kind READS answers "why was this dropped" but not "where does
+// it go". The gap cost three rounds: an actions array nested in an actions
+// SECTION was re-sent unchanged, then moved on a guess.
+func TestMisplacedTopLevelKeysSayWhereTheyBelong(t *testing.T) {
+	notes := unknownSectionKeyNotes([]any{
+		map[string]any{"kind": "actions", "actions": []any{map[string]any{"name": "save"}}},
+	})
+	if len(notes) != 1 {
+		t.Fatalf("want one note, got %v", notes)
+	}
+	if !strings.Contains(notes[0], "TOP-LEVEL") || !strings.Contains(notes[0], `beside "sections"`) {
+		t.Errorf("the note must say where the key belongs, got: %s", notes[0])
+	}
+	// A key that is simply invented gets no relocation advice — there is
+	// nowhere to move it to, and a wrong hint is worse than none.
+	made := unknownSectionKeyNotes([]any{map[string]any{"kind": "pipeline", "pipeline_label": "x"}})
+	if strings.Contains(strings.Join(made, ""), "TOP-LEVEL") {
+		t.Errorf("an invented key has no home to point at: %v", made)
+	}
+	// pipeline_id is valid in BOTH places, so it is never reported at all.
+	if n := unknownSectionKeyNotes([]any{map[string]any{"kind": "pipeline", "pipeline_id": "p1"}}); len(n) != 0 {
+		t.Errorf("pipeline_id is accepted on the section; it must not be flagged: %v", n)
+	}
+}
+
+// The end state of the worst run: an app that binds a pipeline, grows a form, a
+// table and a script-backed "run" button, and has no way to start the thing it
+// is for. Everything parsed, verify passed, and the promised behavior did not
+// exist anywhere on the page.
+func TestBoundPipelineWithNoPipelineSectionIsReported(t *testing.T) {
+	notes := appShapeNotes([]any{
+		map[string]any{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		map[string]any{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+	}, true)
+	joined := strings.Join(notes, "\n")
+	if !strings.Contains(joined, "NO section of kind") {
+		t.Errorf("a bound pipeline with no section to run it must be reported: %v", notes)
+	}
+	if !strings.Contains(joined, "action script cannot run a pipeline") {
+		t.Errorf("say why the obvious workaround is not one: %v", notes)
+	}
+	// No binding, no complaint — that app is simply not a pipeline app.
+	if n := appShapeNotes([]any{
+		map[string]any{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+	}, false); len(n) != 0 {
+		t.Errorf("an app with no pipeline_id has nothing missing: %v", n)
+	}
+}
+
+// An app built to run a five-pass pipeline had a working pipeline section,
+// verified. The next update dropped it while the author narrated adding live
+// progress, and everything downstream passed — a form and a table render fine.
+// What shipped was a form, a table, and a button that set a status field.
+func TestUpdateRefusesToSilentlyDropAFunctionalSection(t *testing.T) {
+	prior := []map[string]any{
+		{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		{"kind": "pipeline"},
+		{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+	}
+	next := []map[string]any{
+		{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+	}
+	risk := appDroppedFunctionSection(prior, next)
+	if risk == "" {
+		t.Fatal("dropping the section that runs the pipeline must not pass silently")
+	}
+	for _, want := range []string{"pipeline", "REPLACES the sections array", "confirm_rewrite"} {
+		if !strings.Contains(risk, want) {
+			t.Errorf("the refusal must contain %q so it is actionable, got:\n%s", want, risk)
+		}
+	}
+	// Ordinary edits are not refusals: adding, reordering and re-titling all
+	// keep the functional section, and a guard that fires on those gets muted.
+	if r := appDroppedFunctionSection(prior, []map[string]any{
+		{"kind": "pipeline", "title": "Renamed"},
+		{"kind": "form", "fields": []any{map[string]any{"field": "draft"}}},
+		{"kind": "table", "columns": []any{map[string]any{"field": "id"}}},
+		{"kind": "display"},
+	}); r != "" {
+		t.Errorf("reordering, re-titling and adding are ordinary edits: %s", r)
+	}
+	// A page with nothing load-bearing has nothing to lose.
+	if r := appDroppedFunctionSection([]map[string]any{{"kind": "form"}}, nil); r != "" {
+		t.Errorf("no functional section to drop: %s", r)
+	}
+	// A spec stored before authoring-sections existed gives the guard nothing
+	// to compare — staying quiet is the right way to be wrong.
+	if r := appDroppedFunctionSection(nil, next); r != "" {
+		t.Errorf("no prior sections recorded means no verdict: %s", r)
+	}
+	// chat and workbench are load-bearing for the same reason.
+	if r := appDroppedFunctionSection([]map[string]any{{"kind": "workbench"}}, []map[string]any{{"kind": "table"}}); !strings.Contains(r, "workbench") {
+		t.Errorf("a workbench IS the app; dropping it must be refused: %s", r)
+	}
+}
+
+// An app bound to a pipeline that does not exist renders perfectly: the panel
+// touches the pipeline only when someone presses Start. So every check passed
+// and the app was declared ready, and the first person to use it met the
+// failure instead — which is the wrong order for finding it out.
+func TestVerifyChecksTheBoundPipelineResolves(t *testing.T) {
+	src, err := os.ReadFile("app_def_tool.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify := string(src)[strings.Index(string(src), "func (t *chatTurn) appDefVerify"):]
+	if !strings.Contains(verify[:4000], "LookupAppPipeline") {
+		t.Fatal("verify never resolves the app's pipeline binding — a dangling pipeline_id passes every check")
+	}
+	if !strings.Contains(verify[:4000], "FAIL binding") {
+		t.Error("a binding that resolves to nothing has to FAIL, not pass quietly")
+	}
+	if !strings.Contains(verify[:4000], "author the pipeline first") {
+		t.Error("say what to do about it — the fix is ordering, not syntax")
+	}
+}
+
+// A tool is not importable from a script. The author reached for
+// "from gohort import create_docx", got Python's bare ImportError, tried
+// "from gohort import workspace", got the same, then invented
+// default_api.create_docx — three rounds against a message that names the
+// missing symbol and nothing about what is actually available.
+func TestScriptImportErrorNamesWhatGohortActuallyExports(t *testing.T) {
+	traceback := `Traceback (most recent call last):
+  File "/opt/gohort/data/workspaces/u/action_forge_save.py", line 4, in <module>
+    from gohort import create_docx, workspace
+ImportError: cannot import name 'create_docx' [exit: exit status 1]`
+
+	hint := scriptFailureHint(traceback)
+	if hint == "" {
+		t.Fatal("a gohort ImportError is the recognizable case; it must carry a hint")
+	}
+	for _, want := range []string{"fetch_url", "fetch_via", "secret", "NOT the tool catalog"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("the hint must list what IS exported (%q), got:\n%s", want, hint)
+		}
+	}
+	if !strings.Contains(hint, `"create_docx" is a gohort TOOL`) {
+		t.Errorf("name the symbol the author reached for, got:\n%s", hint)
+	}
+	if !strings.Contains(hint, "pipeline tool stage") {
+		t.Errorf("say where the work belongs if it really does need a tool, got:\n%s", hint)
+	}
+
+	// Unrelated failures get no invented advice.
+	if h := scriptFailureHint("NameError: name 'records' is not defined"); h != "" {
+		t.Errorf("only the recognized case gets a hint, got: %s", h)
+	}
+	if h := scriptFailureHint("ImportError: No module named 'requests'"); h != "" {
+		t.Errorf("a non-gohort import is a different problem: %s", h)
+	}
+}
 
 // TestBuildAppPage_FormAndTable verifies the declarative-spec → ui.Page → JSON
 // path produces a renderable page with the expected component types and the

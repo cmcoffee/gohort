@@ -1,9 +1,5 @@
 package core
 
-// The image space and the reference forms that resolve through it. The point of
-// the space is that the MODEL no longer does filesystem hygiene: it never
-// deletes, and an image it made three turns ago is still addressable.
-
 import (
 	"bytes"
 	"context"
@@ -15,6 +11,593 @@ import (
 	"strings"
 	"testing"
 )
+
+// A picture the agent made is not evidence of what anything looks like.
+//
+// Reference images existed with no notion of provenance, so an agent could keep
+// its own render and later treat it as the reference for the subject it had
+// invented — each reuse compounding the invention, the depicted thing drifting
+// further from the real one. These pin that origin is recorded at every
+// producer, survives a keep, and cannot be laundered by re-keeping.
+func TestOriginIsRecordedAtEveryProducer(t *testing.T) {
+	sess := imageSpaceSession(t)
+	for _, c := range []struct {
+		note   string
+		origin ImageOrigin
+		made   bool
+	}{
+		{"received from craig", ImageFromUser, false},
+		{"found: a brown terrier", ImageFromFound, false},
+		{"generated: a cat on a bike", ImageFromGenerated, true},
+		{"edited image#2: make it night", ImageFromEdited, true},
+	} {
+		if RecordRecentImage(sess, testPNG(t, 8, 8), c.note, c.origin) == "" {
+			t.Fatalf("record %q failed", c.note)
+		}
+		got := RecentImages(sess)[0]
+		if got.Origin != c.origin {
+			t.Errorf("%q: origin = %q, want %q", c.note, got.Origin, c.origin)
+		}
+		if got.Origin.AgentMade() != c.made {
+			t.Errorf("%q: AgentMade = %v, want %v", c.note, got.Origin.AgentMade(), c.made)
+		}
+	}
+}
+
+// Unknown must not read as agent-made: the whole filter points the safe way,
+// acting only on what is positively recognized.
+func TestUnknownOriginIsNotAgentMade(t *testing.T) {
+	if ImageOriginUnknown.AgentMade() {
+		t.Error("unknown origin must not be treated as the agent's own output")
+	}
+}
+
+// An entry written before origins existed still has to be classifiable, or the
+// libraries that prompted this change stay unfiltered.
+func TestLegacyEntriesClassifyFromTheFrameworkNote(t *testing.T) {
+	cases := map[string]ImageOrigin{
+		"generated: a navy circle":     ImageFromGenerated,
+		"edited image#1: brighter":     ImageFromEdited,
+		"received from craig":          ImageFromUser,
+		"found: brown terrier":         ImageFromFound,
+		"downloaded: https://x/y.png":  ImageFromFound,
+		"something nobody wrote today": ImageOriginUnknown,
+	}
+	for note, want := range cases {
+		if got := originFromNote(note); got != want {
+			t.Errorf("originFromNote(%q) = %q, want %q", note, got, want)
+		}
+	}
+}
+
+// The sidecar has no origin field on old data; the read path must fill it in.
+func TestSidecarWithoutOriginIsClassifiedOnRead(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a navy circle", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	// Rewrite the sidecar as a pre-origin one would have looked.
+	dir := recentImageDir(sess)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dir, e.Name()),
+			[]byte(`{"note":"generated: a navy circle","mime":"image/png"}`), 0600); err != nil {
+			t.Fatalf("rewrite meta: %v", err)
+		}
+	}
+	if got := RecentImages(sess)[0].Origin; got != ImageFromGenerated {
+		t.Errorf("legacy sidecar should classify from its note, got %q", got)
+	}
+}
+
+func TestKeepCarriesOriginForward(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a navy circle", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	kept, err := KeepImage(sess, "image#1", "logo", "our mark")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	if !kept.Origin.AgentMade() {
+		t.Errorf("a kept render should stay marked as the agent's own, got %q", kept.Origin)
+	}
+	// And it must survive the round trip through the sidecar, since that is
+	// what every later turn reads.
+	var found bool
+	for _, k := range KeptImages(sess) {
+		if k.Name == "logo" {
+			found = true
+			if k.Origin != ImageFromGenerated {
+				t.Errorf("origin lost on reload: %q", k.Origin)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("kept image missing after reload")
+	}
+}
+
+// Re-keeping under a new name is the obvious way to launder provenance, so the
+// kept entry's own origin has to be followed.
+func TestRekeepingCannotLaunderAGeneratedImage(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a navy circle", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	if _, err := KeepImage(sess, "image#1", "logo", "our mark"); err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	relaundered, err := KeepImage(sess, "image#logo", "the_real_thing", "a photo, honest")
+	if err != nil {
+		t.Fatalf("re-keep: %v", err)
+	}
+	if !relaundered.Origin.AgentMade() {
+		t.Errorf("re-keeping under a new name must carry the origin forward, got %q", relaundered.Origin)
+	}
+}
+
+// A user's picture must keep working as a reference — the filter is meant to
+// remove invented subjects, not to empty the library.
+func TestUserSuppliedImageStaysAReference(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "received from craig", ImageFromUser) == "" {
+		t.Fatal("record failed")
+	}
+	kept, err := KeepImage(sess, "image#1", "wren", "the user's dog")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	if kept.Origin.AgentMade() {
+		t.Error("an attachment from the user is not the agent's own output")
+	}
+}
+
+// help and the schema have to agree about which entries are references, or the
+// model gets one answer from each.
+func TestManifestMarksAgentMadeEntries(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a navy circle", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	if _, err := KeepImage(sess, "image#1", "logo", "our mark"); err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	m := KeptImageManifest(sess)
+	if !strings.Contains(m, "MADE BY YOU") || !strings.Contains(m, "not a reference") {
+		t.Errorf("manifest should mark the agent's own output, got %q", m)
+	}
+}
+
+// A burst of renders must not expire the photo they were attempts AT. This is
+// the reported failure: the user's selfie aged out behind the agent's own
+// output, and the agent asked them to send it again.
+func TestRendersCannotEvictTheUsersPictures(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "received from craig", ImageFromUser) == "" {
+		t.Fatal("recording the user's photo failed")
+	}
+	// Well past the limit, which under one flat queue would have evicted it.
+	for i := 0; i < recentImageLimit*2; i++ {
+		if RecordRecentImage(sess, testPNG(t, 4+i%4, 4+i%4), "generated: attempt", ImageFromGenerated) == "" {
+			t.Fatalf("recording render %d failed", i)
+		}
+	}
+	var survived bool
+	for _, r := range RecentImages(sess) {
+		if r.Origin == ImageFromUser {
+			survived = true
+		}
+	}
+	if !survived {
+		t.Error("the user's photo must outlive any number of the agent's own renders")
+	}
+	// And the agent's own queue is still bounded, or this just leaks.
+	made := 0
+	for _, r := range RecentImages(sess) {
+		if r.Origin.AgentMade() {
+			made++
+		}
+	}
+	if made > recentImageLimit {
+		t.Errorf("agent-made queue should stay bounded at %d, got %d", recentImageLimit, made)
+	}
+}
+
+// The user's own queue is bounded too — protection, not an unbounded store.
+func TestSourceQueueIsBounded(t *testing.T) {
+	sess := imageSpaceSession(t)
+	for i := 0; i < sourceImageLimit*2; i++ {
+		if RecordRecentImage(sess, testPNG(t, 4+i%4, 4+i%4), "received from craig", ImageFromUser) == "" {
+			t.Fatalf("recording photo %d failed", i)
+		}
+	}
+	if got := len(RecentImages(sess)); got > sourceImageLimit {
+		t.Errorf("source queue should cap at %d, got %d", sourceImageLimit, got)
+	}
+}
+
+// "Keep the picture I just sent you" has to work on the ref the model was
+// handed for it. media#N is a separate namespace the edit path accepted and
+// keep did not.
+func TestKeepAcceptsAMediaRef(t *testing.T) {
+	sess := imageSpaceSession(t)
+	sess.RegisterInboundMedia("image", testPNG(t, 8, 8), "craig")
+
+	kept, err := KeepImage(sess, "media#1", "wren", "the user's dog")
+	if err != nil {
+		t.Fatalf("keeping an attached photo should work: %v", err)
+	}
+	if kept.Origin != ImageFromUser {
+		t.Errorf("an attachment is user-origin by definition, got %q", kept.Origin)
+	}
+	if _, ok := ResolveKeptImage(sess, "image#wren"); !ok {
+		t.Error("the kept photo should resolve under its lasting name")
+	}
+}
+
+// The ring manifest is where a photo somebody sent lives before anyone keeps
+// it, and it used to list everything flat — so a render and a real photograph
+// differed only by the prose in their notes. Asked for a reference, the model
+// took whatever was newest, which after two attempts is always something it
+// made itself.
+func TestRingManifestSeparatesGivenFromMade(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "received from craig", ImageFromUser) == "" {
+		t.Fatal("record failed")
+	}
+	if RecordRecentImage(sess, testPNG(t, 9, 9), "generated: a dog", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	m := RecentImageManifest(sess)
+
+	given := strings.Index(m, "GIVEN or found")
+	made := strings.Index(m, "YOU MADE")
+	if given < 0 || made < 0 {
+		t.Fatalf("the manifest should separate provenance, got:\n%s", m)
+	}
+	// Given first: those are what a request for a reference means, and the
+	// newest-first flat list put the latest render at the top instead.
+	if given > made {
+		t.Errorf("pictures you were given should lead, got:\n%s", m)
+	}
+	if !strings.Contains(m, "not evidence of what anything really looks like") {
+		t.Errorf("the agent's own output should be marked, got:\n%s", m)
+	}
+	// And the instruction must point at the parameter, not the removed action.
+	if strings.Contains(m, `action="edit"`) {
+		t.Errorf("the manifest should not name a removed action, got:\n%s", m)
+	}
+}
+
+// A ring holding only renders must not print an empty "given" heading, and vice
+// versa — a heading over nothing reads as missing data.
+func TestRingManifestOmitsEmptyGroups(t *testing.T) {
+	sess := imageSpaceSession(t)
+	if RecordRecentImage(sess, testPNG(t, 8, 8), "generated: a dog", ImageFromGenerated) == "" {
+		t.Fatal("record failed")
+	}
+	m := RecentImageManifest(sess)
+	if strings.Contains(m, "GIVEN or found") {
+		t.Errorf("nothing was given; that heading should be absent, got:\n%s", m)
+	}
+	if !strings.Contains(m, "YOU MADE") {
+		t.Errorf("the render should still be listed, got:\n%s", m)
+	}
+}
+
+// image#N is a POSITION, and every save renumbers the ring. The gap this covers
+// is between the model CHOOSING a ref and the call USING it: a render saved in
+// between slides into image#1 and pushes everything the model was looking at
+// down one, so the call lands on a picture nobody asked about. Delivered, that
+// is a reply carrying two pictures — the right one, and one from an earlier
+// request entirely.
+
+// freezeSession builds a session with its own ring, and a snapshot already
+// taken — the state a tool round starts in.
+func freezeSession(t *testing.T, user, agent string) *ToolSession {
+	t.Helper()
+	return &ToolSession{Username: user, AgentID: agent}
+}
+
+func TestPositionalRefSurvivesASaveInTheSameRound(t *testing.T) {
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+
+	RecordRecentImage(sess, []byte("THE-PHOTO-SHE-SENT"), "a photo", ImageFromUser)
+	// The model reads the round's tools with this ring in front of it.
+	SnapshotImageRefs(sess)
+
+	args := map[string]any{"path": "image#1"}
+	// A sibling render lands mid-round and takes over image#1.
+	RecordRecentImage(sess, []byte("A-RENDER"), "generated: something else", ImageFromGenerated)
+
+	if n := FreezeImageRefs(sess, args); n != 1 {
+		t.Fatalf("froze %d refs, want 1", n)
+	}
+	got, ok := ResolveRecentImage(sess, args["path"].(string))
+	if !ok {
+		t.Fatalf("frozen ref %q no longer resolves", args["path"])
+	}
+	if !bytes.Equal(got, []byte("THE-PHOTO-SHE-SENT")) {
+		t.Errorf("image#1 delivered the render that arrived after the model chose it: %q", got)
+	}
+	// Live resolution is what the freeze exists to bypass — pinned here so the
+	// test fails if the ring ever stops renumbering and this stops proving
+	// anything.
+	live, _ := ResolveRecentImage(sess, "image#1")
+	if bytes.Equal(live, []byte("THE-PHOTO-SHE-SENT")) {
+		t.Fatal("the ring did not renumber; this test no longer covers the failure")
+	}
+}
+
+func TestFreezeRewritesEveryRefInAList(t *testing.T) {
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("OLDEST"), "a photo", ImageFromUser)
+	RecordRecentImage(sess, []byte("MIDDLE"), "another photo", ImageFromUser)
+	SnapshotImageRefs(sess)
+
+	args := map[string]any{"images": []any{"image#1", "image#2"}}
+	RecordRecentImage(sess, []byte("LATE-RENDER"), "generated", ImageFromGenerated)
+
+	if n := FreezeImageRefs(sess, args); n != 2 {
+		t.Fatalf("froze %d refs, want 2", n)
+	}
+	list := args["images"].([]any)
+	first, _ := ResolveRecentImage(sess, list[0].(string))
+	second, _ := ResolveRecentImage(sess, list[1].(string))
+	if !bytes.Equal(first, []byte("MIDDLE")) || !bytes.Equal(second, []byte("OLDEST")) {
+		t.Errorf("list resolved to %q and %q, want MIDDLE and OLDEST", first, second)
+	}
+}
+
+func TestFreezeLeavesProseAlone(t *testing.T) {
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("A-PHOTO"), "a photo", ImageFromUser)
+	SnapshotImageRefs(sess)
+
+	// A prompt MENTIONING a ref is the model describing a picture, not
+	// addressing one. Rewriting inside it would put a machine id in a sentence
+	// a user reads.
+	prompt := "make it look like image#1 but at night"
+	args := map[string]any{"prompt": prompt}
+	if n := FreezeImageRefs(sess, args); n != 0 {
+		t.Errorf("rewrote %d refs inside prose", n)
+	}
+	if args["prompt"] != prompt {
+		t.Errorf("prompt was rewritten to %q", args["prompt"])
+	}
+}
+
+func TestFreezeLeavesStableAndKeptRefsAlone(t *testing.T) {
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("A-PHOTO"), "a photo", ImageFromUser)
+	SnapshotImageRefs(sess)
+	all := RecentImages(sess)
+	if len(all) != 1 || all[0].ID == "" {
+		t.Fatalf("expected one picture with a stable id, got %+v", all)
+	}
+
+	args := map[string]any{"a": all[0].ID, "b": "image#brand_mark", "c": "not a ref"}
+	if n := FreezeImageRefs(sess, args); n != 0 {
+		t.Errorf("rewrote %d refs that were already durable", n)
+	}
+	if args["a"] != all[0].ID || args["b"] != "image#brand_mark" || args["c"] != "not a ref" {
+		t.Errorf("args were altered: %+v", args)
+	}
+}
+
+func TestWithoutASnapshotPositionsResolveLive(t *testing.T) {
+	// A caller that never wires the hook keeps the old behavior rather than
+	// silently resolving against an empty snapshot and failing to find
+	// anything.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("A-PHOTO"), "a photo", ImageFromUser)
+
+	args := map[string]any{"path": "image#1"}
+	if n := FreezeImageRefs(sess, args); n != 0 {
+		t.Fatalf("froze %d refs with no snapshot taken", n)
+	}
+	got, ok := ResolveRecentImage(sess, args["path"].(string))
+	if !ok || !bytes.Equal(got, []byte("A-PHOTO")) {
+		t.Errorf("unfrozen ref stopped resolving: %q ok=%v", got, ok)
+	}
+}
+
+func TestSnapshotIsRetakenEachRound(t *testing.T) {
+	// The freeze must not pin a ref FOREVER: once the model has seen the
+	// results naming the new picture, image#1 legitimately means that one.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("FIRST"), "a photo", ImageFromUser)
+	SnapshotImageRefs(sess)
+	RecordRecentImage(sess, []byte("SECOND"), "generated", ImageFromGenerated)
+
+	// Next round: the model has read the result announcing SECOND.
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	if n := FreezeImageRefs(sess, args); n != 1 {
+		t.Fatalf("froze %d refs, want 1", n)
+	}
+	got, _ := ResolveRecentImage(sess, args["path"].(string))
+	if !bytes.Equal(got, []byte("SECOND")) {
+		t.Errorf("image#1 still means the previous round's picture: %q", got)
+	}
+}
+
+func TestABackgroundRenderDoesNotRenumberUnderTheModel(t *testing.T) {
+	// The between-rounds window: a detached render finishes while no round is
+	// running, so the next snapshot would otherwise pin a ring the model has
+	// never seen — its image#1 silently becomes the render, and every position
+	// it is holding moves down one.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("THE-PHOTO-SHE-SENT"), "a photo", ImageFromUser)
+
+	detached := freezeSession(t, "alice", "agent-wren")
+	detached.Detached = true
+	RecordRecentImage(detached, []byte("BACKGROUND-RENDER"), "generated: something", ImageFromGenerated)
+
+	// A new round begins. The model has read no list naming the render.
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	FreezeImageRefs(sess, args)
+	got, ok := ResolveRecentImage(sess, args["path"].(string))
+	if !ok || !bytes.Equal(got, []byte("THE-PHOTO-SHE-SENT")) {
+		t.Errorf("image#1 moved to the background render the model was never shown: %q", got)
+	}
+	// It is still reachable — by the id its result handed over.
+	all := RecentImages(sess)
+	if len(all) != 2 || !all[0].Unannounced {
+		t.Fatalf("expected the render to be present and unannounced, got %+v", all)
+	}
+	if data, ok := ResolveRecentImage(sess, all[0].ID); !ok || !bytes.Equal(data, []byte("BACKGROUND-RENDER")) {
+		t.Errorf("the stable id did not reach the background render: %q ok=%v", data, ok)
+	}
+}
+
+func TestListingTheRingGivesABackgroundRenderItsPosition(t *testing.T) {
+	// Being shown the list IS the announcement: from then on the model holds
+	// positions it actually read, so the render takes image#1 like anything
+	// else.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("THE-PHOTO-SHE-SENT"), "a photo", ImageFromUser)
+	detached := freezeSession(t, "alice", "agent-wren")
+	detached.Detached = true
+	RecordRecentImage(detached, []byte("BACKGROUND-RENDER"), "generated: something", ImageFromGenerated)
+
+	if m := RecentImageManifest(sess); m == "" {
+		t.Fatal("expected a manifest")
+	}
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	FreezeImageRefs(sess, args)
+	got, _ := ResolveRecentImage(sess, args["path"].(string))
+	if !bytes.Equal(got, []byte("BACKGROUND-RENDER")) {
+		t.Errorf("after the ring was listed, image#1 is still %q", got)
+	}
+	// And the flag is cleared on disk, not just for this read.
+	if all := RecentImages(sess); all[0].Unannounced {
+		t.Error("the announcement did not persist")
+	}
+}
+
+func TestAForegroundSaveIsAnnouncedImmediately(t *testing.T) {
+	// Only a BACKGROUND save is held back. A foreground one puts its position
+	// in a result the model reads on the very next round, so holding it back
+	// would make the ring disagree with what the model was just told.
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("FIRST"), "a photo", ImageFromUser)
+	RecordRecentImage(sess, []byte("SECOND"), "generated", ImageFromGenerated)
+
+	SnapshotImageRefs(sess)
+	args := map[string]any{"path": "image#1"}
+	FreezeImageRefs(sess, args)
+	got, _ := ResolveRecentImage(sess, args["path"].(string))
+	if !bytes.Equal(got, []byte("SECOND")) {
+		t.Errorf("a foreground save did not take image#1: %q", got)
+	}
+}
+
+func TestOutOfRangeRefIsLeftForTheNormalError(t *testing.T) {
+	attachmentTestDir(t)
+	sess := freezeSession(t, "alice", "agent-wren")
+	RecordRecentImage(sess, []byte("A-PHOTO"), "a photo", ImageFromUser)
+	SnapshotImageRefs(sess)
+
+	args := map[string]any{"path": "image#9"}
+	if n := FreezeImageRefs(sess, args); n != 0 {
+		t.Errorf("rewrote a position that does not exist")
+	}
+	if _, ok := ResolveRecentImage(sess, "image#9"); ok {
+		t.Error("image#9 resolved to something")
+	}
+}
+
+// Whose picture is image#1. The refs are POSITIONAL, so a ring shared across a
+// fleet hands an agent asking for "the one you just made" whatever another
+// agent made a second earlier — silently, plausibly, and wrong.
+
+func spaceSession(t *testing.T, user, agent string) *ToolSession {
+	t.Helper()
+	return &ToolSession{Username: user, AgentID: agent}
+}
+
+func TestOneAgentsPictureIsNotAnothersImageOne(t *testing.T) {
+	attachmentTestDir(t) // scopes ImageDir to a temp dir
+	wren := spaceSession(t, "alice", "agent-wren")
+	other := spaceSession(t, "alice", "agent-wiwee")
+
+	if ref := RecordRecentImage(wren, []byte("WREN-PICTURE"), "wren made this", ImageFromUser); ref != "image#1" {
+		t.Fatalf("record returned %q", ref)
+	}
+	if ref := RecordRecentImage(other, []byte("OTHER-PICTURE"), "wiwee made this", ImageFromUser); ref != "image#1" {
+		t.Fatalf("record returned %q", ref)
+	}
+
+	got, ok := ResolveRecentImage(wren, "image#1")
+	if !ok {
+		t.Fatal("wren should still see its own picture")
+	}
+	if !bytes.Equal(got, []byte("WREN-PICTURE")) {
+		t.Errorf("image#1 for wren resolved to another agent's picture: %q", got)
+	}
+	got, ok = ResolveRecentImage(other, "image#1")
+	if !ok || !bytes.Equal(got, []byte("OTHER-PICTURE")) {
+		t.Errorf("image#1 for the other agent resolved to %q", got)
+	}
+	// Each ring holds only its own.
+	if n := len(RecentImages(wren)); n != 1 {
+		t.Errorf("wren's ring holds %d, want only its own picture", n)
+	}
+}
+
+func TestTheSameAgentKeepsOneRingAcrossItsSurfaces(t *testing.T) {
+	// Web chat and a phone conversation are the same agent, and "edit the one
+	// you just made" has to work across them — including from the wake turn,
+	// which runs under a different session id than the task that made it.
+	attachmentTestDir(t)
+	made := &ToolSession{Username: "alice", AgentID: "agent-wren", ChatSessionID: "web-session"}
+	woken := &ToolSession{Username: "alice", AgentID: "agent-wren", ChatSessionID: "scheduled:chan:xyz"}
+
+	RecordRecentImage(made, []byte("THE-EDIT"), "edited", ImageFromEdited)
+	got, ok := ResolveRecentImage(woken, "image#1")
+	if !ok || !bytes.Equal(got, []byte("THE-EDIT")) {
+		t.Errorf("the same agent must reach its own picture from any session, got %q ok=%v", got, ok)
+	}
+}
+
+func TestASessionWithNoAgentGetsItsOwnRing(t *testing.T) {
+	attachmentTestDir(t)
+	anon := &ToolSession{Username: "alice"}
+	named := spaceSession(t, "alice", "agent-wren")
+	RecordRecentImage(named, []byte("AGENT-PICTURE"), "", ImageFromUser)
+	RecordRecentImage(anon, []byte("ANON-PICTURE"), "", ImageFromUser)
+
+	got, _ := ResolveRecentImage(anon, "image#1")
+	if !bytes.Equal(got, []byte("ANON-PICTURE")) {
+		t.Errorf("an agent-less session must not read an agent's ring, got %q", got)
+	}
+	if n := len(RecentImages(named)); n != 1 {
+		t.Errorf("the agent's ring picked up an unrelated image (%d entries)", n)
+	}
+}
+
+// The image space and the reference forms that resolve through it. The point of
+// the space is that the MODEL no longer does filesystem hygiene: it never
+// deletes, and an image it made three turns ago is still addressable.
 
 // testPNG is a real, decodable image — verifyInputImage rejects anything that
 // isn't, so a []byte("fake") fixture would test the wrong path.
