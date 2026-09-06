@@ -23,7 +23,7 @@ import (
 // through because its name appears incidentally is a miss; a field wrongly
 // flagged would be a broken build. Prefer the miss.
 func TestEveryComponentFieldIsReadByTheRuntime(t *testing.T) {
-	src, err := os.ReadFile("components.go")
+	src, err := sourceUnit("components.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestEveryComponentFieldIsReadByTheRuntime(t *testing.T) {
 	structRE := regexp.MustCompile(`(?ms)^type ([A-Z]\w+) struct \{(.*?)^\}`)
 	tagRE := regexp.MustCompile(`json:"([a-z0-9_]+)`)
 
-	for _, m := range structRE.FindAllStringSubmatch(string(src), -1) {
+	for _, m := range structRE.FindAllStringSubmatch(src, -1) {
 		name, body := m[1], m[2]
 		for _, tm := range tagRE.FindAllStringSubmatch(body, -1) {
 			tag := tm[1]

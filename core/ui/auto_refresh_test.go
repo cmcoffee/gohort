@@ -59,11 +59,11 @@ func TestChartCanRefreshAndReactToRecordWrites(t *testing.T) {
 
 func mustFile(t *testing.T, name string) string {
 	t.Helper()
-	b, err := osReadFile(name)
+	b, err := sourceUnit(name)
 	if err != nil {
 		t.Fatalf("read %s: %v", name, err)
 	}
-	return string(b)
+	return b
 }
 
 func runtimeGoSource(t *testing.T) string {
