@@ -658,6 +658,8 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"max_plan_steps":           {Type: "integer", Description: fmt.Sprintf("Optional 1-12. Default %d.", defaultMaxPlanSteps)},
 		"max_worker_rounds":        {Type: "integer", Description: fmt.Sprintf("Optional 1-20. Default %d.", defaultMaxWorkerRounds)},
 		"think_budget":             {Type: "integer", Description: "Max thinking tokens per LLM call; applies only when thinking is on. 0 (default) = deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER it."},
+		"action_quotas":            {Type: "array", Description: "How often one action may run in a rolling 24 hours, as \"action = number\" entries (\"moltbook/create_post = 6\"). Names a grouped tool's action or a whole tool. Enforced by the framework — the call is refused when the allowance is spent — so do NOT also write the limit into the prompt and ask the agent to count for itself. Only successful calls count. Omit for no limit.", Items: &ToolParam{Type: "string"}},
+		"daily_spend_usd":          {Type: "number", Description: "What this agent may cost in a rolling 24 hours, in US dollars. 0 (default) = no limit. Crossing it drops the rest of the running turn to the local worker model and declines the next turn until the window frees up. Does nothing where no cost rates are configured."},
 		"lead_model":               {Type: "boolean", Description: "When true, MAIN reasoning (plan + synthesis) escalates to the lead/precision LLM; per-step workers stay on the worker model. Ignored when no distinct lead is configured, or when force_private or the Private toggle is on. Default false."},
 		"gap_check":                {Type: "boolean", Description: "When true, the runner runs a structural-gap review pass after the plan finishes (research-style quality bar). Default false."},
 		"work_plan":                {Type: "boolean", Description: "When true, the agent gets a TRACKED plan: it commits to a visible checklist, marks each step in progress, closes it with findings or blocks it with a reason, and states anything unfinished in its answer. The checklist survives the turn. Replaces plan_set for that agent. Default false — set it for work with several results that build on each other, leave it off for question-answering."},
@@ -754,6 +756,8 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 		MaxPlanSteps:       intFromArgs(args, "max_plan_steps"),
 		MaxWorkerRounds:    intFromArgs(args, "max_worker_rounds"),
 		ThinkBudget:        intFromArgs(args, "think_budget"),
+		ActionQuotas:       actionQuotasFromArgs(args),
+		DailySpendUSD:      floatFromArgs(args, "daily_spend_usd"),
 		IntakeForm:         intakeFormFromArgs(args),
 		// Tools deliberately NOT set: LLM-supplied inline tools commit to the
 		// unified store scoped to the agent (see create_agent, post-save) —
@@ -908,6 +912,12 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["think_budget"]; ok && v != nil {
 		rec.ThinkBudget = coerceInt(v)
+	}
+	if v, ok := args["action_quotas"]; ok && v != nil {
+		rec.ActionQuotas = actionQuotasFromArgs(args)
+	}
+	if v, ok := args["daily_spend_usd"]; ok && v != nil {
+		rec.DailySpendUSD = floatFromArgs(args, "daily_spend_usd")
 	}
 	if v, ok := args["gap_check"].(bool); ok {
 		rec.GapCheck = v
@@ -1223,6 +1233,49 @@ func coerceInt(v any) int {
 		}
 		if started {
 			return out
+		}
+	}
+	return 0
+}
+
+// actionQuotasFromArgs reads the per-action allowances an authoring call
+// supplied, accepting the "action = N" entries a person writes and the object
+// a program would send. Entries that name no action or no positive number are
+// dropped rather than guessed at.
+func actionQuotasFromArgs(args map[string]any) ActionQuotaMap {
+	out := ActionQuotaMap{}
+	switch v := args["action_quotas"].(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				if name, n, ok := parseActionQuotaLine(s); ok {
+					out[name] = n
+				}
+			}
+		}
+	case map[string]any:
+		for k, raw := range v {
+			if n := coerceInt(raw); n > 0 && strings.TrimSpace(k) != "" {
+				out[strings.TrimSpace(k)] = n
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// floatFromArgs reads a number an LLM may have sent as a string.
+func floatFromArgs(args map[string]any, key string) float64 {
+	switch v := args[key].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f
 		}
 	}
 	return 0

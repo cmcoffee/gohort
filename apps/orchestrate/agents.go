@@ -2163,6 +2163,7 @@ var patchAgentFields = map[string]bool{
 	"allowed_dispatch_targets": true, "allowed_users": true,
 	"max_plan_steps": true, "max_worker_rounds": true, "think": true,
 	"think_budget": true, "context_depth": true, "gap_check": true,
+	"action_quotas": true, "daily_spend_usd": true,
 	"lead_model": true, "memory_mode": true, "disable_explicit": true,
 	"disable_inferred": true, "disable_compaction": true, "recall_hints": true,
 	"allow_explorer": true, "explorer_hard_cap": true,

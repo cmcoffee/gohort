@@ -244,6 +244,19 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		leadModelField(T.HasDistinctLead() && !leadModelLocked),
 		{Type: "header", Label: "Autonomous runs", Collapsed: true,
 			Help: "What this agent may do on a scheduled/standing fire, when no one is present to click Approve."},
+		// Both of these are limits the FRAMEWORK keeps. Written into the
+		// prompt instead — "post at most six times a day" — they are rules
+		// the model has to count for itself, and one did: it counted its own
+		// posts out of a listing, read UTC timestamps as local, and posted
+		// nine before reporting the cap as reached.
+		{Field: "action_quotas", Type: "tags", Label: "Action limits (per 24 hours)",
+			Placeholder: "moltbook/create_post = 6",
+			Help: "How often one action may run in a rolling 24 hours, one per line as `action = number`. Name a grouped tool's action (`moltbook/create_post`) or a whole tool (`send_email`), the action winning where both are set. " +
+				"Counted here, not by the agent: it is refused when the allowance is spent, and told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day. Empty = no limit."},
+		{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,
+			Placeholder: "0",
+			Help: "What this agent may cost in a rolling 24 hours. 0 = no limit. A turn already running is never cut off: crossing the line drops the rest of it to the local worker model, and the NEXT turn is declined until the window frees up. " +
+				"Priced from what the provider reports, so it does nothing on a deployment with no cost rates configured. Worth setting on anything scheduled against a paid model — one unattended turn can cost more than a day of chat."},
 		// Ticked, not typed. A misspelling here grants nothing and looks
 		// exactly like a grant: the tool is refused on the first unattended
 		// fire, at whatever hour that run is scheduled for, and the list in

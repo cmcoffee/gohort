@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -268,7 +270,7 @@ type AgentRecord struct {
 	// itself, and one did: it counted its own posts out of a listing, read
 	// UTC timestamps as local, posted nine, and reported the cap as reached.
 	// Applied by passing it into AgentLoopConfig.ActionQuotas at each run path.
-	ActionQuotas map[string]int `json:"action_quotas,omitempty"`
+	ActionQuotas ActionQuotaMap `json:"action_quotas,omitempty"`
 
 	// DailySpendUSD caps what this agent may cost in a rolling 24 hours.
 	// 0 = uncapped, which is every agent until someone sets one. A turn
@@ -1522,4 +1524,73 @@ type EvalResult struct {
 	Reasons     []string `json:"reasons,omitempty"`      // why a case failed (or "ok" entries on pass)
 	ToolsCalled []string `json:"tools_called,omitempty"` // distinct tools the model called this run
 	ErrText     string   `json:"error,omitempty"`        // populated when the agent itself errored mid-run
+}
+
+// ActionQuotaMap is a per-action 24-hour allowance, stored as a map and
+// carried on the wire as "action = N" lines so the editor can present it with
+// the ordinary tags control instead of needing a widget of its own.
+//
+// It reads BOTH forms — the lines a person edits and the object a program
+// would send — because an authoring tool writing {"moltbook/create_post": 5}
+// is saying exactly the same thing, and refusing that would be pedantry.
+type ActionQuotaMap map[string]int
+
+// MarshalJSON emits sorted "action = N" strings. Sorted so a save that
+// changes nothing produces no diff.
+func (m ActionQuotaMap) MarshalJSON() ([]byte, error) {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, fmt.Sprintf("%s = %d", k, v))
+	}
+	sort.Strings(out)
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON accepts the line form, the object form, or null.
+func (m *ActionQuotaMap) UnmarshalJSON(b []byte) error {
+	*m = ActionQuotaMap{}
+	trimmed := strings.TrimSpace(string(b))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	if trimmed[0] == '{' {
+		var obj map[string]int
+		if err := json.Unmarshal(b, &obj); err != nil {
+			return err
+		}
+		for k, v := range obj {
+			if k = strings.TrimSpace(k); k != "" && v > 0 {
+				(*m)[k] = v
+			}
+		}
+		return nil
+	}
+	var lines []string
+	if err := json.Unmarshal(b, &lines); err != nil {
+		return err
+	}
+	for _, l := range lines {
+		if name, n, ok := parseActionQuotaLine(l); ok {
+			(*m)[name] = n
+		}
+	}
+	return nil
+}
+
+// parseActionQuotaLine reads one "action = N" entry. A line that does not say
+// both an action and a positive number is DROPPED rather than guessed at: a
+// half-typed quota that silently became a cap of 1 would be worse than one
+// that visibly did not save.
+func parseActionQuotaLine(l string) (string, int, bool) {
+	l = strings.TrimSpace(l)
+	i := strings.LastIndexAny(l, "=:")
+	if i <= 0 {
+		return "", 0, false
+	}
+	name := strings.TrimSpace(l[:i])
+	n, err := strconv.Atoi(strings.TrimSpace(l[i+1:]))
+	if name == "" || err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return name, n, true
 }
