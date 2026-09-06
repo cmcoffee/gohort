@@ -107,3 +107,23 @@ func TestAuthoringToolsCanSetTheLimits(t *testing.T) {
 		t.Errorf("absent is no limit, got %v", got)
 	}
 }
+
+// One key builder, because two spellings of the same work would each learn
+// half of what happened.
+func TestFailureMemoryKeyNamesTheWork(t *testing.T) {
+	if got := failureMemoryKey("a1", "s1"); got != "agent:a1:s1" {
+		t.Errorf("agent and thread: %q", got)
+	}
+	if got := failureMemoryKey("a1", ""); got != "agent:a1" {
+		t.Errorf("standing work has no thread: %q", got)
+	}
+	if got := failureMemoryKey("a1", "  "); got != "agent:a1" {
+		t.Errorf("blank is no thread: %q", got)
+	}
+	if got := failureMemoryKey("", "s1"); got != "" {
+		t.Errorf("no agent means no memory, got %q", got)
+	}
+	if failureMemoryKey("a1", "s1") == failureMemoryKey("a1", "s2") {
+		t.Error("separate threads must key separately")
+	}
+}

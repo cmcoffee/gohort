@@ -599,7 +599,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// results — so the repeat guard starts every cycle knowing nothing.
 		// Keyed on the agent and the thread this schedule runs in, so what
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
-		FailureMemoryKey:    "sched:" + p.AgentID + ":" + p.SessionID,
+		FailureMemoryKey:    failureMemoryKey(p.AgentID, p.SessionID),
 		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
 		ThinkBudget:         agent.ThinkBudget,
 		ActionQuotas:        agent.ActionQuotas,

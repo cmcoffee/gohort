@@ -770,9 +770,14 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		ActionQuotas:   target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
 		BudgetKey:      target.ID,
 		DailySpendUSD:  target.DailySpendUSD,
-		OnStep:         func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
-		TurnNotes:      func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
-		TurnClaimJudge: T.turnClaimJudge(ctx),
+		// Standing fires and Fleet dispatches both land here, and neither
+		// carries tool results into the next run's history — so without this
+		// each one re-learns yesterday's dead endpoint from scratch. One
+		// attempt per run is what the memory buys back (see loadFailureMemory).
+		FailureMemoryKey: failureMemoryKey(target.ID, ""),
+		OnStep:           func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
+		TurnNotes:        func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
+		TurnClaimJudge:   T.turnClaimJudge(ctx),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here
@@ -1692,14 +1697,18 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		think = *run.Think
 	}
 	loopCfg := AgentLoopConfig{
-		SendGuardKey:        sendGuardKey,
-		SystemPrompt:        sysPrompt,
-		Tools:               tools,
-		MaxRounds:           resolveMaxWorkerRounds(target),
-		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		ActionQuotas:        target.ActionQuotas,
-		BudgetKey:           target.ID,
-		DailySpendUSD:       target.DailySpendUSD,
+		SendGuardKey:  sendGuardKey,
+		SystemPrompt:  sysPrompt,
+		Tools:         tools,
+		MaxRounds:     resolveMaxWorkerRounds(target),
+		ThinkBudget:   target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		ActionQuotas:  target.ActionQuotas,
+		BudgetKey:     target.ID,
+		DailySpendUSD: target.DailySpendUSD,
+		// A channel turn and a monitor wake run here, unattended and
+		// repeatedly, against the same thread. Keyed to the thread so what
+		// keeps failing in one conversation is not held against another.
+		FailureMemoryKey:    failureMemoryKey(target.ID, run.SubSessionID),
 		Confirm:             func(name, args string) bool { return true },
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
@@ -2375,3 +2384,21 @@ func normalizeAgentKey(s string) string {
 // tool's run action. Both share the same plumbing (delegated marker,
 // Builder-exclusivity gate, sub-session setup, target memory/facts
 // loading).
+
+// failureMemoryKey names what a run's failures belong to: the agent, and the
+// thread it is working when there is one. Standing work has no thread, and
+// its failures are the agent's.
+//
+// One builder because every unattended path calls it and they must agree —
+// two spellings of the same work would each learn half of what happened. The
+// format is this package's business; the loop treats the key as opaque.
+func failureMemoryKey(agentID, sessionID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return ""
+	}
+	if s := strings.TrimSpace(sessionID); s != "" {
+		return "agent:" + agentID + ":" + s
+	}
+	return "agent:" + agentID
+}

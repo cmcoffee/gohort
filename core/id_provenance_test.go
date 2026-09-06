@@ -182,7 +182,7 @@ func TestFailureMemoryCarriesBetweenLoops(t *testing.T) {
 
 	saveFailureMemory(key, map[string]int{sig: 2})
 	carried := map[string]int{}
-	loadFailureMemory(key, carried)
+	loadFailureMemory(key, carried, 0)
 	if carried[sig] != 2 {
 		t.Fatalf("the count must carry, got %d", carried[sig])
 	}
@@ -191,21 +191,21 @@ func TestFailureMemoryCarriesBetweenLoops(t *testing.T) {
 	carried[sig]++
 	saveFailureMemory(key, carried)
 	again := map[string]int{}
-	loadFailureMemory(key, again)
+	loadFailureMemory(key, again, 0)
 	if again[sig] != 3 {
 		t.Errorf("the count must accumulate across loops, got %d", again[sig])
 	}
 
 	// A different thread's failures are not this thread's.
 	other := map[string]int{}
-	loadFailureMemory("sched:agent-1:session-2", other)
+	loadFailureMemory("sched:agent-1:session-2", other, 0)
 	if len(other) != 0 {
 		t.Errorf("memory must be scoped to its key, got %v", other)
 	}
 	// No key means no memory: an ordinary conversation re-arms from history.
 	loose := map[string]int{}
 	saveFailureMemory("", map[string]int{sig: 3})
-	loadFailureMemory("", loose)
+	loadFailureMemory("", loose, 0)
 	if len(loose) != 0 {
 		t.Errorf("an empty key must store and read nothing, got %v", loose)
 	}
@@ -221,7 +221,7 @@ func TestFailureMemoryForgetsWhatWasFixedOrWentStale(t *testing.T) {
 	// The guard clears a signature on success; saving that state forgets it.
 	saveFailureMemory(key, map[string]int{sig: 0})
 	got := map[string]int{}
-	loadFailureMemory(key, got)
+	loadFailureMemory(key, got, 0)
 	if len(got) != 0 {
 		t.Errorf("a call that succeeded must not stay remembered, got %v", got)
 	}
@@ -233,7 +233,7 @@ func TestFailureMemoryForgetsWhatWasFixedOrWentStale(t *testing.T) {
 	}
 	RootDB.Set(failureMemoryTable, key, &stale)
 	aged := map[string]int{}
-	loadFailureMemory(key, aged)
+	loadFailureMemory(key, aged, 0)
 	if len(aged) != 0 {
 		t.Errorf("a failure older than the TTL must be forgotten, got %v", aged)
 	}
@@ -245,7 +245,7 @@ func TestFailureMemoryForgetsWhatWasFixedOrWentStale(t *testing.T) {
 	}
 	RootDB.Set(failureMemoryTable, key, &fresh)
 	carried := map[string]int{}
-	loadFailureMemory(key, carried)
+	loadFailureMemory(key, carried, 0)
 	saveFailureMemory(key, carried)
 	var after failureMemory
 	RootDB.Get(failureMemoryTable, key, &after)
@@ -488,5 +488,30 @@ func TestSpendAgesOutOfTheWindow(t *testing.T) {
 	RootDB.Set(spendLedgerTable, "a", &old)
 	if over, spent := overDailySpend(cfg); over || spent != 0 {
 		t.Errorf("spend older than the window must not count: over=%v spent=%.2f", over, spent)
+	}
+}
+
+// Standing work gets exactly ONE attempt per run at something that has been
+// failing, never zero. A count carried in at the guard's limit would refuse
+// the call outright on evidence gathered yesterday, so an endpoint fixed
+// overnight would stay "broken" until the memory aged out.
+func TestFailureMemoryCarriesOneAttemptBack(t *testing.T) {
+	withRootDB(t)
+	key, sig := "agent:agent-1:sess-1", "call\x00{}"
+	saveFailureMemory(key, map[string]int{sig: 9})
+
+	const limit = 3
+	carried := map[string]int{}
+	loadFailureMemory(key, carried, limit-1)
+	if carried[sig] != limit-1 {
+		t.Fatalf("carried %d, want %d — one attempt short of the block", carried[sig], limit-1)
+	}
+	if carried[sig] >= limit {
+		t.Error("a fresh run must never start already blocked")
+	}
+	// That attempt failing again blocks the rest of the run.
+	carried[sig]++
+	if carried[sig] < limit {
+		t.Error("a second failure in the same run must reach the limit")
 	}
 }

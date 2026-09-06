@@ -2511,7 +2511,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	const repeatFailLimit = 3
 	// Carry in what this standing work already learned, before history is
 	// consulted: a scheduled fire's history has no tool results to learn from.
-	loadFailureMemory(cfg.FailureMemoryKey, repeatFail)
+	loadFailureMemory(cfg.FailureMemoryKey, repeatFail, repeatFailLimit-1)
 	defer func() { saveFailureMemory(cfg.FailureMemoryKey, repeatFail) }()
 	// How much content makes a clean "stop" finish read as an ANSWER rather
 	// than a lead-in to a narrated tool call, for the prose-scan gate below.
@@ -7224,7 +7224,14 @@ type failureMemory struct {
 
 // loadFailureMemory seeds counts with what this key has failed at recently.
 // Entries past the TTL are ignored, so a fixed fault fades on its own.
-func loadFailureMemory(key string, counts map[string]int) {
+//
+// carryMax caps what is carried in, and is the guard's limit MINUS ONE. That
+// one is the whole design: a call that has failed for days gets exactly one
+// attempt per turn rather than being refused outright. An endpoint fixed
+// overnight comes back by itself and its count clears on the success, while
+// a genuinely dead one costs one call a cycle instead of three — and nothing
+// the framework refuses forever on evidence it gathered yesterday.
+func loadFailureMemory(key string, counts map[string]int, carryMax int) {
 	if strings.TrimSpace(key) == "" || RootDB == nil {
 		return
 	}
@@ -7239,6 +7246,9 @@ func loadFailureMemory(key string, counts map[string]int) {
 			continue
 		}
 		if n > 0 {
+			if carryMax > 0 && n > carryMax {
+				n = carryMax
+			}
 			counts[sig] = n
 			carried++
 		}
