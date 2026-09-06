@@ -98,7 +98,12 @@ const (
 	// the tool interfaces, ToolSession, the TempTool types and the session
 	// media each have a file named for them now. common.go keeps the alias
 	// facade and the small utilities that were the reason for its name.
-	coreFileCeiling = 186
+	//
+	// 186 -> 193 (v0.6.595): webapp.go, 2,520 lines, kept the WebApp registry
+	// and gave the rest files named for it: the task queue, the HTML shell,
+	// the middleware and internal-request helpers, the dashboard and its
+	// page, the live session map and the live entry.
+	coreFileCeiling = 193
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

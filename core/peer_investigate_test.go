@@ -303,14 +303,16 @@ func TestSetPeerKeyScopeRefusesWhatTheOwnerCannotReach(t *testing.T) {
 // runtime assertion here would pass or fail on which other tests happened to
 // run first.
 func TestEveryPeerRouteIsSessionAuthExempt(t *testing.T) {
-	src, err := os.ReadFile("webapp.go")
+	// The dashboard mux is wired in dashboard.go (ServeDashboard), which is
+	// where the peer routes and their RegisterPublicPath calls both live.
+	src, err := os.ReadFile("dashboard.go")
 	if err != nil {
-		t.Skipf("cannot read webapp.go: %v", err)
+		t.Skipf("cannot read dashboard.go: %v", err)
 	}
 	body := string(src)
 	handled := regexp.MustCompile(`mux\.HandleFunc\("(/api/peer/[^"]+)"`).FindAllStringSubmatch(body, -1)
 	if len(handled) == 0 {
-		t.Fatal("found no peer routes in webapp.go — has the registration moved?")
+		t.Fatal("found no peer routes in dashboard.go — has the registration moved?")
 	}
 	for _, m := range handled {
 		path := m[1]
