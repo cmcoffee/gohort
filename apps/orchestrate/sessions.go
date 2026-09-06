@@ -34,6 +34,44 @@ func loadChatSession(db Database, agentID, sessionID string) (ChatSession, bool)
 	return s, ok
 }
 
+// appendToStoredSession appends msgs to the STORED copy of a thread, under the
+// per-session append lock, and saves it. `fallback` is the caller's in-memory
+// session, used only when the thread does not exist in the store yet (a
+// synthesized cortex home, a scheduled thread nobody has posted to); when the
+// store has the thread, the stored copy wins outright, because a caller that
+// loaded its copy before a long run has no changes of its own to keep — every
+// message it holds is already in the store, and every message it lacks was
+// written by someone else while it ran. Taking the stored copy rather than
+// grafting past a remembered count also survives a trim that made the thread
+// SHORTER in the meantime, which a count-based graft reads as "nothing new"
+// and then clobbers.
+//
+// The lock serializes only the read-append-write here; it does not hold across
+// the caller's run, so concurrent runs on one thread still interleave, they just
+// stop losing each other's output.
+func appendToStoredSession(db Database, agentID, sessionID string, fallback ChatSession, msgs ...ChatMessage) error {
+	if db == nil {
+		return fmt.Errorf("db not initialized")
+	}
+	var err error
+	withSessionAppend(agentID, sessionID, func() {
+		sess := fallback
+		if latest, ok := loadChatSession(db, agentID, sessionID); ok {
+			sess = latest
+		}
+		if sess.ID == "" {
+			sess.ID = sessionID
+		}
+		if sess.AgentID == "" {
+			sess.AgentID = agentID
+		}
+		sess.Messages = append(sess.Messages, msgs...)
+		sess.LastAt = time.Now()
+		_, err = saveChatSession(db, sess)
+	})
+	return err
+}
+
 // saveChatSession upserts a session. Caller fills out fields; we stamp
 // LastAt and assign an ID + Created if missing.
 func saveChatSession(db Database, s ChatSession) (ChatSession, error) {

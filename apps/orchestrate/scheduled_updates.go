@@ -850,15 +850,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// Hidden: the LLM reads it, the transcript doesn't render it. The user
 		// already saw the reply it produced; showing them the machinery that
 		// prompted it would be showing the same news twice.
+		var cards []ChatMessage
 		if note := strings.TrimSpace(p.HistoryNote); note != "" {
-			sess.Messages = append(sess.Messages, ChatMessage{
+			cards = append(cards, ChatMessage{
 				Role:    "user",
 				Content: note,
 				Created: time.Now(),
 				Hidden:  true,
 			})
 		}
-		sess.Messages = append(sess.Messages, ChatMessage{
+		cards = append(cards, ChatMessage{
 			Role:         "assistant",
 			Content:      reply,
 			Created:      time.Now(),
@@ -871,8 +872,17 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// can ever show what it delivered.
 			Attachments: keepDeliveredAttachments(p.Username, subSess.Images),
 		})
-		sess.LastAt = time.Now()
-		if _, err := saveChatSession(udb, sess); err != nil {
+		// `sess` was loaded before the agent loop ran, minutes ago on a local
+		// model. Two fires on the same thread at the same instant (the scheduler
+		// starts every due task in its own goroutine, and a 09:00 daily task
+		// plus a 09:00–23:00 random one for the same agent are both due at
+		// 09:00:00) each carried their own stale copy to this point, and the
+		// second save overwrote the first's card. Observed: the daily blog post
+		// card missing whenever the engagement fire overlapped it, while the
+		// run ledger and the log both said it posted. The append goes through
+		// the per-session lock and re-reads the stored thread first, the same
+		// discipline RunAgentSyncContinuing uses.
+		if err := appendToStoredSession(udb, p.AgentID, loadSession, sess, cards...); err != nil {
 			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 		}
 	}
