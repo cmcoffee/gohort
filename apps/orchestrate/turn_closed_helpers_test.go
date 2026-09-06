@@ -2,14 +2,19 @@ package orchestrate
 
 import "os"
 
-// readRunnerSource reads runner.go so the turn-closed wiring can be asserted
-// structurally. These are plumbing invariants — which loop declares which
+// readRunnerSource reads the runner (runner.go and its runner_*.go family,
+// plus the dispatch prompt that was cut out of it) so the turn-closed wiring
+// can be asserted structurally. These are plumbing invariants — which loop declares which
 // control tools, and who reads the silence flag — that have no runtime seam to
 // exercise without standing up a whole turn, and that broke silently once
 // already by simply never being wired.
 func readRunnerSource() (string, error) {
-	b, err := os.ReadFile("runner.go")
-	return string(b), err
+	unit, err := sourceUnit("runner.go")
+	if err != nil {
+		return "", err
+	}
+	prompt, err := os.ReadFile("agent_dispatch_prompt.go")
+	return unit + string(prompt), err
 }
 
 // sectionAfter returns up to n bytes following the first occurrence of marker.

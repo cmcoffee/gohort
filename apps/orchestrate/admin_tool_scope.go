@@ -429,7 +429,7 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 // bundleAgentToolByID, and like it it carries NO Owner-field equality guard.
 // The admin scope path removes a tool from ANY of the owner's agents, including
 // SEED/app agents (Owner==seedOwner, e.g. Casefile's "Case Analyzer") and
-// sub-agents whose .Owner differs. runner.go's unbundleAgentTool keeps that
+// sub-agents whose .Owner differs. add_tool.go's unbundleAgentTool keeps that
 // guard for the RUNTIME sess.UnbundleTool caller, but here it only mis-fired:
 // it made the Access selector's unselect return "not your agent", and it made
 // promoteScopedToGlobal's strip silently fail on those agents — so a tool

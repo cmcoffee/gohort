@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -136,11 +135,11 @@ func TestFailClosedIsPreservedShapeMatchesGuardrails(t *testing.T) {
 
 func readSourceFile(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(name)
+	b, err := sourceUnit(name)
 	if err != nil {
 		t.Fatalf("read %s: %v", name, err)
 	}
-	return string(b)
+	return b
 }
 
 // The warden's vocabulary is now binary: violate or comply, nothing else. That

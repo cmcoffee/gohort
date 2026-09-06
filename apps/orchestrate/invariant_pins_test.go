@@ -26,7 +26,7 @@ func TestCapabilityBlocksHaveExactlyTheTwoKnownCallers(t *testing.T) {
 	// that does not exist yet. Kept honest by asserting the exact number rather
 	// than a floor — the failure mode is a third surface built by hand.
 	if n := strings.Count(src, "appendAgentCapabilityBlocks("); n != 3 {
-		t.Errorf("appendAgentCapabilityBlocks appears %d times in runner.go (want 3: its definition, the web turn, the dispatch prompt). A new prompt-building surface must call it, not rebuild its blocks.", n)
+		t.Errorf("appendAgentCapabilityBlocks appears %d times in the runner sources (want 3: its definition, the web turn, the dispatch prompt). A new prompt-building surface must call it, not rebuild its blocks.", n)
 	}
 }
 

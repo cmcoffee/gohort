@@ -487,7 +487,7 @@ func TestTheMachineToolReportsItsOwnAdvice(t *testing.T) {
 		"name":   "Triage",
 		"phases": []any{
 			map[string]any{"name": "decompose", "prompt": "Break it down. Respond only with valid JSON.",
-				"next": "answer",
+				"next":   "answer",
 				"output": []any{map[string]any{"name": "parts", "type": "string", "desc": "the pieces"}}},
 			map[string]any{"name": "answer", "prompt": "reply", "resident": true},
 		},

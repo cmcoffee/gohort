@@ -45,9 +45,9 @@ func TestManagedCredentialsAreNotOfferedAsBindingTargets(t *testing.T) {
 
 func readOwnSource(t *testing.T, name string) string {
 	t.Helper()
-	raw, err := os.ReadFile(name)
+	raw, err := sourceUnit(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
+	return raw
 }

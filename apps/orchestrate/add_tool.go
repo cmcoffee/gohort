@@ -417,3 +417,77 @@ func isPlaceholderCredential(v string) bool {
 var _ interface {
 	RunWithSession(map[string]any, *ToolSession) (string, error)
 } = addToolTool{}
+
+// unbundleAgentTool removes a tool from an agent's record-attached kit
+// (AgentRecord.Tools) and persists — the durable half of tool_def's
+// delete for an agent-bundled ("zombie") tool. Without it, delete drops
+// only the session copy and the record reconstitutes the tool next
+// turn. Owner-scoped through the same load/save path the editor uses.
+func unbundleAgentTool(db Database, owner, agentID, name string) error {
+	if db == nil {
+		return fmt.Errorf("no db")
+	}
+	rec, ok := loadAgent(db, agentID)
+	if !ok {
+		return fmt.Errorf("agent %q not found", agentID)
+	}
+	if rec.Owner != "" && owner != "" && rec.Owner != owner {
+		return fmt.Errorf("not your agent")
+	}
+	// Flattened namespace: delegate to the store-backed unbundle (drop this
+	// agent from ScopeAgents; last carrier → orphan). The owner guard above is
+	// this runtime path's extra check — the scope-pill twin deliberately
+	// doesn't carry it.
+	return unbundleAgentToolByID(db, owner, agentID, name)
+}
+
+// bundleAgentTool attaches (or replaces by name) a tool on an agent's
+// record-attached kit (AgentRecord.Tools) and persists — the durable
+// half of tool_def(create) at agent scope and the wired target for
+// sess.BundleTool. Mirrors unbundleAgentTool: owner-scoped through the
+// same load/save path so an agent can only grow its OWN kit. When the
+// agent has no saved record yet (a first-ever agent-scoped tool on a
+// seed persona), it shadows the in-memory base record so the tool still
+// gets a durable home.
+func bundleAgentTool(db Database, owner string, base AgentRecord, t TempTool) error {
+	if db == nil {
+		return fmt.Errorf("no db")
+	}
+	// App agents never hold LLM-authored tools — their kit is app-declared. This
+	// is the runtime chokepoint (an app agent authoring a tool mid-session goes
+	// through here); refuse regardless of caller. Keyed on the registry so a
+	// drift-able Owner can't slip a tool onto an app agent.
+	if isAppAgent(base.ID) {
+		return fmt.Errorf("cannot bundle a tool onto app agent %q — app agents get their tools from the owning app, not the LLM-authored plane", base.Name)
+	}
+	rec, ok := loadAgent(db, base.ID)
+	if !ok {
+		rec = base
+		if rec.Owner == "" {
+			rec.Owner = owner
+		}
+	}
+	if rec.Owner != "" && owner != "" && rec.Owner != owner {
+		return fmt.Errorf("not your agent")
+	}
+	// Flattened namespace: the tool lands in the unified store scoped to this
+	// agent — no record write, no shadow needed (the store row IS the durable
+	// home, whether or not the agent record has ever been saved — which is
+	// also why this doesn't delegate to bundleAgentToolByID: that path
+	// requires a loadable record).
+	existing, had := UserToolByName(db, owner, t.Name)
+	if err := AdminPersistTempTool(db, owner, t); err != nil {
+		return err
+	}
+	if had && len(existing.ScopeAgents) == 0 {
+		return nil // shared — def updated in place, visibility unchanged
+	}
+	if existing.ScopedToAgent(rec.ID) {
+		return nil
+	}
+	scope := append(append([]string{}, existing.ScopeAgents...), rec.ID)
+	if !SetUserToolScopeAgents(db, owner, t.Name, scope) {
+		return fmt.Errorf("bundle %q: scope update failed", t.Name)
+	}
+	return nil
+}
