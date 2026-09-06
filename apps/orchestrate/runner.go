@@ -7937,8 +7937,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// explorer mode, then lets it run to orchHardCap. Most chat turns
 		// need 1-3 rounds; deep research / large builds bump via the
 		// agent's worker-rounds budget + enter_explorer_mode.
-		MaxRounds:   absoluteCeiling,
-		ThinkBudget: t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		MaxRounds:     absoluteCeiling,
+		ThinkBudget:   t.agent.ThinkBudget,  // per-agent override; 0 = inherit route/global
+		ActionQuotas:  t.agent.ActionQuotas, // per-agent 24h caps; empty = uncapped
+		BudgetKey:     t.agent.ID,
+		DailySpendUSD: t.agent.DailySpendUSD,
 		// StopRound is the dynamic governor (MaxRounds is just the safety
 		// ceiling). Effective cap = soft cap, raised to the explorer cap
 		// once explorer mode is on, raised again to the plan-scaled cap
@@ -8586,6 +8589,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		ToolFallbackResolver: t.lazyToolFallback,
 		MaxRounds:            hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		ActionQuotas:         t.agent.ActionQuotas,
+		BudgetKey:            t.agent.ID,
+		DailySpendUSD:        t.agent.DailySpendUSD,
 		Stream:               stream,
 		// Same turn-scoped notes the orchestrator round gets. A worker step is
 		// where the work usually actually runs, so leaving them out would hand the
@@ -9352,7 +9358,6 @@ func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 	}
 	return tpl
 }
-
 
 // logPromptComposition reports the estimated token split of one turn's prompt.
 //

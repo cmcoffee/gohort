@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -226,5 +227,86 @@ func TestWatchWakeCarriesTheCard(t *testing.T) {
 	}
 	if EventCardFromContext(context.Background()) != "" {
 		t.Error("a context without a card must read as none")
+	}
+}
+
+// A watch pointed at something that stopped moving stops polling — paused and
+// kept, never deleted, with a row in the ledger so the stop is visible.
+func TestAnIdleWatchPausesItselfVisibly(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	RegisterWatchToolInvoker(func(owner, agentID, toolName string, args map[string]any) (string, error) {
+		return "nothing has changed here since July", nil
+	})
+	defer RegisterWatchToolInvoker(nil)
+
+	long := time.Now().Add(-45 * 24 * time.Hour)
+	m := EventMonitor{Owner: "u", Name: "frozen-thread", Kind: EventKindWatch, ToolName: "moltbook",
+		Notify: EventNotifyChannel, Created: long, LastFired: long, SchedulerID: "sched-1"}
+	SaveEventMonitor(db, m)
+
+	executeWatchPoll(context.Background(), db, m) // first poll records the baseline
+	if got, _ := GetEventMonitor(db, "u", "frozen-thread"); got.Paused {
+		t.Fatal("the baseline poll must not pause anything — it has nothing to compare yet")
+	}
+	executeWatchPoll(context.Background(), db, m) // second poll: nothing changed
+	got, _ := GetEventMonitor(db, "u", "frozen-thread")
+	if !got.Paused {
+		t.Fatal("a watch with nothing to say for 45 days must pause itself")
+	}
+	if got.Broken {
+		t.Error("nothing is broken — it must not be marked so")
+	}
+	if got.SchedulerID != "" || !got.NextCheck.IsZero() {
+		t.Error("a paused watch must stop being scheduled")
+	}
+	var found string
+	for _, r := range ListRuns(db, "u", RunFilter{}) {
+		if strings.Contains(r.Summary, "no change to report") {
+			found = r.Summary
+			if r.Status != RunAttention {
+				t.Errorf("the row must ask for attention, got %q", r.Status)
+			}
+		}
+	}
+	if found == "" {
+		t.Error("the pause must leave a ledger row where the owner looks")
+	}
+}
+
+// The clock and the exemptions: a watch that changed recently keeps running,
+// and the guard never touches a paused, broken, or non-watch monitor.
+func TestIdleWatchDueRespectsTheClockAndTheExemptions(t *testing.T) {
+	now := time.Now()
+	old, recent := now.Add(-40*24*time.Hour), now.Add(-2*24*time.Hour)
+	base := EventMonitor{Kind: EventKindWatch, Created: old, LastFired: old}
+
+	if !idleWatchDue(base, now, 30) {
+		t.Error("40 days quiet past a 30-day guard is due")
+	}
+	if idleWatchDue(base, now, 0) {
+		t.Error("0 disables the guard")
+	}
+	fresh := base
+	fresh.LastFired = recent
+	if idleWatchDue(fresh, now, 30) {
+		t.Error("a watch that fired two days ago is not idle")
+	}
+	// Never fired: the clock runs from creation, so a watch pointed at
+	// something that never moves is exactly what this catches.
+	never := EventMonitor{Kind: EventKindWatch, Created: old}
+	if !idleWatchDue(never, now, 30) {
+		t.Error("a watch that has never fired ages from creation")
+	}
+	if idleWatchDue(EventMonitor{Kind: EventKindWatch}, now, 30) {
+		t.Error("with no clock at all the guard must leave it alone")
+	}
+	for _, ex := range []EventMonitor{
+		{Kind: EventKindWatch, Created: old, LastFired: old, Paused: true},
+		{Kind: EventKindWatch, Created: old, LastFired: old, Broken: true},
+		{Kind: EventKindPoll, Created: old, LastFired: old},
+	} {
+		if idleWatchDue(ex, now, 30) {
+			t.Errorf("exempt monitor was judged idle: %+v", ex)
+		}
 	}
 }

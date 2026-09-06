@@ -258,6 +258,26 @@ type AgentRecord struct {
 	// Applied by passing it into AgentLoopConfig.ThinkBudget at each run path.
 	ThinkBudget int `json:"think_budget,omitempty"`
 
+	// ActionQuotas caps how often one action may run in a rolling 24 hours,
+	// keyed by tool ("moltbook") or by a grouped tool's action
+	// ("moltbook/create_post"), the action winning where both are set. Empty
+	// means uncapped, which is every agent until someone sets one.
+	//
+	// The cap is kept by the framework. Written into a prompt instead — "you
+	// may post six times a day" — it is a rule the model must count for
+	// itself, and one did: it counted its own posts out of a listing, read
+	// UTC timestamps as local, posted nine, and reported the cap as reached.
+	// Applied by passing it into AgentLoopConfig.ActionQuotas at each run path.
+	ActionQuotas map[string]int `json:"action_quotas,omitempty"`
+
+	// DailySpendUSD caps what this agent may cost in a rolling 24 hours.
+	// 0 = uncapped, which is every agent until someone sets one. A turn
+	// under way is never stranded: crossing the line drops the rest of it to
+	// the worker tier, and the next turn is refused. Priced from what the
+	// provider reported, so it does nothing on a deployment with no cost
+	// rates configured — a local-only stack has no dollars to count.
+	DailySpendUSD float64 `json:"daily_spend_usd,omitempty"`
+
 	// LeadModel, when true, escalates THIS agent's main reasoning (the
 	// orchestrator plan + synthesis turns) to the lead/precision LLM instead
 	// of the worker-locked default. Opt-in per agent; the dispatched plan_set

@@ -767,6 +767,9 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		MaxRounds:      resolveMaxWorkerRounds(target),
 		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
 		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		ActionQuotas:   target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
+		BudgetKey:      target.ID,
+		DailySpendUSD:  target.DailySpendUSD,
 		OnStep:         func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
 		TurnNotes:      func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
 		TurnClaimJudge: T.turnClaimJudge(ctx),
@@ -1694,6 +1697,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		Tools:               tools,
 		MaxRounds:           resolveMaxWorkerRounds(target),
 		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		ActionQuotas:        target.ActionQuotas,
+		BudgetKey:           target.ID,
+		DailySpendUSD:       target.DailySpendUSD,
 		Confirm:             func(name, args string) bool { return true },
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,

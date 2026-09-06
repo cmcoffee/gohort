@@ -140,8 +140,8 @@ type EventMonitor struct {
 	// A tool/pipeline source is a first-class, verifiable artifact; the raw-url
 	// source is verified at create time by a hard probe (see bridgeCreate).
 	SourceKind string `json:"source_kind,omitempty"`
-	LastHash string         `json:"last_hash,omitempty"` // sha256 of the last output (the change baseline)
-	LastBody string         `json:"last_body,omitempty"` // prior output (capped) — diffed against the new output to show WHAT changed
+	LastHash   string `json:"last_hash,omitempty"` // sha256 of the last output (the change baseline)
+	LastBody   string `json:"last_body,omitempty"` // prior output (capped) — diffed against the new output to show WHAT changed
 	// FormatScript (watch kind, optional) is sandboxed python that shapes the
 	// alert. It receives {"prior":...,"current":...} JSON on stdin (both STRINGS —
 	// the raw tool output, not parsed) and prints the notification text to stdout.
@@ -171,8 +171,8 @@ type EventMonitor struct {
 	// A broken monitor is auto-paused and unscheduled but KEPT, not silently
 	// deleted, so the owner can relink it to a live target or remove it
 	// deliberately. Distinct from a user Pause; BrokenReason records why.
-	Broken       bool      `json:"broken,omitempty"`
-	BrokenReason string    `json:"broken_reason,omitempty"`
+	Broken       bool   `json:"broken,omitempty"`
+	BrokenReason string `json:"broken_reason,omitempty"`
 	// ConsecutiveFailures counts back-to-back FAILED polls (a tool error or a
 	// failure-shaped result — traceback / non-zero exit / timeout). A failed poll
 	// is never delivered (so a direct-channel monitor can't spam a traceback into
@@ -180,13 +180,13 @@ type EventMonitor struct {
 	// success. At watchFailureThreshold the monitor is marked broken + paused.
 	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
 	Created             time.Time `json:"created"`
-	NextCheck    time.Time `json:"next_check,omitempty"`
-	LastFired    time.Time `json:"last_fired,omitempty"`
-	LastChecked  time.Time `json:"last_checked,omitempty"`  // last time the poll ran (every interval) — proves liveness even with no change
-	LastResult   string    `json:"last_result,omitempty"`   // last answer/value seen (poll debounce / http display)
-	LastBreached bool      `json:"last_breached,omitempty"` // http_poll edge-trigger: was the condition met last check
-	LastMatched  bool      `json:"last_matched,omitempty"`  // poll edge-trigger: did the checker answer match last check
-	SchedulerID  string    `json:"scheduler_id,omitempty"`
+	NextCheck           time.Time `json:"next_check,omitempty"`
+	LastFired           time.Time `json:"last_fired,omitempty"`
+	LastChecked         time.Time `json:"last_checked,omitempty"`  // last time the poll ran (every interval) — proves liveness even with no change
+	LastResult          string    `json:"last_result,omitempty"`   // last answer/value seen (poll debounce / http display)
+	LastBreached        bool      `json:"last_breached,omitempty"` // http_poll edge-trigger: was the condition met last check
+	LastMatched         bool      `json:"last_matched,omitempty"`  // poll edge-trigger: did the checker answer match last check
+	SchedulerID         string    `json:"scheduler_id,omitempty"`
 }
 
 // WakeFunc wakes the Operator with an event. Provided by orchestrate; it injects
@@ -407,6 +407,71 @@ func MarkEventMonitorBroken(db Database, owner, name, reason string) bool {
 	m.NextCheck = time.Time{}
 	SaveEventMonitor(db, m)
 	return true
+}
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_watch_idle_days",
+		Category: "Limits",
+		Label:    "Watch monitor idle-pause (days)",
+		Help: "Pause a watch monitor that has gone this many days with no change to report. " +
+			"Nothing is broken when this fires — the watched source stopped moving — so the monitor is PAUSED and kept, not deleted, and one click resumes it. " +
+			"The clock runs from the last real change, or from creation for a watch that has never seen one. 0 disables the guard.",
+		Kind:    KindInt,
+		Default: 30,
+		Min:     0,
+		Max:     365,
+	})
+}
+
+// watchIdleDays is how long a watch may report no change before it stops
+// polling. 0 disables the guard. Registered here rather than by an app: the
+// behavior is this package's, and a knob whose default arrives only when some
+// other package happens to be linked is a guard that silently isn't running.
+func watchIdleDays() int { return TuneInt("tune_watch_idle_days") }
+
+// idleWatchDue reports whether a watch has gone quiet long enough to stop.
+// The clock runs from the last real change, or from creation for a watch that
+// has never seen one — a monitor pointed at something that never moves is the
+// case this exists for.
+func idleWatchDue(m EventMonitor, now time.Time, days int) bool {
+	if days <= 0 || m.Kind != EventKindWatch || m.Paused || m.Broken {
+		return false
+	}
+	since := m.LastFired
+	if since.IsZero() {
+		since = m.Created
+	}
+	if since.IsZero() {
+		return false // no clock to judge by; leave it alone
+	}
+	return now.Sub(since) >= time.Duration(days)*24*time.Hour
+}
+
+// pauseIdleWatch stops a watch that has had nothing to say, and says so where
+// the owner will look. Paused, not deleted: the thread it watches may come
+// back to life, and Resume is one click. A ledger row makes the stop visible
+// in Activity rather than leaving a monitor that silently isn't watching.
+func pauseIdleWatch(db Database, m EventMonitor, days int) {
+	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
+	if !ok || cur.Paused {
+		return
+	}
+	if cur.SchedulerID != "" {
+		UnscheduleTask(cur.SchedulerID)
+		cur.SchedulerID = ""
+	}
+	cur.Paused = true
+	cur.NextCheck = time.Time{}
+	SaveEventMonitor(db, cur)
+	reason := fmt.Sprintf(
+		"Paused: %d days with no change to report. Nothing is broken — the watched source simply stopped moving, so it is no longer being polled. Resume it if you still want it watched, or delete it.", days)
+	Log("[event] watch %s/%s paused: no change in %d days", m.Owner, m.Name, days)
+	RecordRun(db, RunRecord{
+		Owner: m.Owner, Agent: m.Name, Trigger: "watch", Task: m.Name,
+		Status: RunAttention, Summary: reason,
+		Started: time.Now(), Ended: time.Now(),
+	}.AboutMonitor(m.Name))
 }
 
 // ClearEventMonitorBroken lifts the broken flag once the dependency is restored
@@ -863,6 +928,13 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	body = watchComparable(body)
 	hash := sha256Sum(body)
 	if hash == cur.LastHash {
+		// No change. A watch that has reported nothing for a very long time is
+		// usually watching something that has stopped happening — a thread
+		// nobody posts to any more — and it will poll forever without the
+		// owner ever having a reason to look at it. Stop, visibly.
+		if days := watchIdleDays(); idleWatchDue(cur, time.Now(), days) {
+			pauseIdleWatch(db, cur, days)
+		}
 		return // no change — stay quiet, no LLM
 	}
 	firstObservation := cur.LastHash == ""

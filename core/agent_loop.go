@@ -1157,6 +1157,52 @@ type AgentLoopConfig struct {
 	// meta-explanation leaks into the answer. Optional; default false (on).
 	DisableToolMentionCorrection bool
 
+	// DisableIDProvenanceGate turns off the invented-id refusal (see
+	// idProvenanceRefusal). Set it for a loop whose tools legitimately take
+	// identifiers the session never saw — a caller that mints ids on the
+	// model's behalf, or one seeded from a store this loop cannot read.
+	// Optional; default false (on).
+	DisableIDProvenanceGate bool
+
+	// FailureMemoryKey scopes a persistent record of calls that keep failing,
+	// so a repeat guard survives the end of a turn. Empty keeps the guard
+	// per-turn, which is right for a conversation: the history the next turn
+	// carries already re-arms it (seedRepeatFailFromHistory).
+	//
+	// A SCHEDULED fire is the case this exists for. It rebuilds its history
+	// from stored messages, which carry role and content but no tool results,
+	// so nothing about last cycle's failures reaches the guard: two fires an
+	// hour apart each re-ran the same broken call and each wrote a fresh
+	// diagnosis of it. Set it to something stable for the standing work —
+	// agent plus session — and the count carries across fires.
+	FailureMemoryKey string
+
+	// ActionQuotas caps how often one ACTION may run in a rolling 24 hours,
+	// keyed by the name the quota is written against: a tool name
+	// ("create_post"), or a grouped tool's action ("moltbook/create_post").
+	// Counted and enforced here because a cap the MODEL is asked to keep is
+	// not a cap: told "6 posts a day", an agent counted its own posts out of
+	// a listing, got the UTC day boundary wrong, and posted nine.
+	//
+	// BudgetKey scopes everything this agent is charged for — its action
+	// counts and its spend — and is the agent's own id at every call site.
+	// Work with no key is UNCAPPED rather than pooled: a budget nobody owns
+	// is somebody else's, and silently sharing one would be worse than not
+	// enforcing it.
+	ActionQuotas map[string]int
+	BudgetKey    string
+
+	// DailySpendUSD caps what this agent may cost in a rolling 24 hours.
+	// 0 = uncapped.
+	//
+	// A turn already under way is never stranded: crossing the line
+	// DE-ESCALATES the rest of it to the worker tier (the same move the
+	// per-turn lead budget makes), and it is the NEXT turn that is refused
+	// outright. A scheduled fire on a frontier model is what this is for —
+	// one turn, unattended, cost over a dollar in prompt-cache writes alone,
+	// and nothing between it and doing that every hour.
+	DailySpendUSD float64
+
 	// Tier selects which LLM tier runs the loop. Defaults to WORKER.
 	// Set to LEAD to route all rounds through the lead LLM.
 	// Ignored when RouteKey is set.
@@ -2451,8 +2497,22 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// stop executing it and feed back a hard STOP directive instead. Signature-
 	// scoped (not tool-scoped) so the SAME tool with DIFFERENT args is fine, and
 	// a success resets the counter so legitimate polling isn't penalized.
+	// Over budget before the first call: refuse the turn rather than start
+	// work that will de-escalate on its first round anyway.
+	if over, spent := overDailySpend(cfg); over {
+		Log("[agent_loop] daily spend cap reached for %q ($%.2f of $%.2f) — turn refused", cfg.BudgetKey, spent, cfg.DailySpendUSD)
+		emitDiag("spend-cap", fmt.Sprintf("This agent has spent $%.2f of its $%.2f daily allowance; the turn was not run.", spent, cfg.DailySpendUSD))
+		return &Response{Content: fmt.Sprintf(
+			"I've reached my spending limit for now — $%.2f of the $%.2f allowed in a 24-hour window — so I didn't run this. It frees up as earlier work ages out, or the owner can raise the limit.",
+			spent, cfg.DailySpendUSD)}, messages, nil
+	}
+
 	repeatFail := map[string]int{}
 	const repeatFailLimit = 3
+	// Carry in what this standing work already learned, before history is
+	// consulted: a scheduled fire's history has no tool results to learn from.
+	loadFailureMemory(cfg.FailureMemoryKey, repeatFail)
+	defer func() { saveFailureMemory(cfg.FailureMemoryKey, repeatFail) }()
 	// How much content makes a clean "stop" finish read as an ANSWER rather
 	// than a lead-in to a narrated tool call, for the prose-scan gate below.
 	// Under it the scan still runs, so a model that only ever describes its
@@ -3131,6 +3191,15 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					cfg.OnDiag("tier_deescalated", fmt.Sprintf("This turn spent its lead-model budget (%d tokens) — the remaining rounds ran on the worker model.", leadTokens))
 				}
 			}
+		}
+
+		// Charge this round, then check the line. A turn under way finishes —
+		// on the worker tier once it crosses — because stranding half-done
+		// work costs the owner more than the round would have.
+		if spent, crossed := chargeDailySpend(cfg, resp); crossed && deescalated == "" && !T.LeadDenied() {
+			deescalated = "spend-cap"
+			Log("[agent_loop] daily spend cap reached mid-turn for %q ($%.2f of $%.2f) — remaining rounds run on the worker tier", cfg.BudgetKey, spent, cfg.DailySpendUSD)
+			emitDiag("spend-cap", fmt.Sprintf("This agent crossed its $%.2f daily allowance mid-turn; the rest of the turn ran on the local worker model.", cfg.DailySpendUSD))
 		}
 
 		Debug("[agent_loop] round %d: content=%d chars, reasoning=%d chars, tool_calls=%d", round, len(resp.Content), len(resp.Reasoning), len(resp.ToolCalls))
@@ -4194,6 +4263,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			emitDiag("round-batch-capped", fmt.Sprintf("The model emitted %d tool calls in one round; only the first %d ran.", len(resp.ToolCalls), maxToolCallsPerRound))
 			guardBlockedThisRound = true
 		}
+		// Identifiers this conversation has actually produced: everything the
+		// user wrote, every tool result, and the system prompt (which carries
+		// the appliance / agent / memory ids a turn is entitled to name). The
+		// model's own prose is deliberately absent — that is where an invented
+		// id is written, and treating it as a source would launder one.
+		knownIDs := collectKnownIDs(systemPrompt, history)
 		for i, tc := range resp.ToolCalls {
 			if i >= maxToolCallsPerRound {
 				results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap — a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
@@ -4299,6 +4374,38 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 					toolErrors++
 					continue
 				}
+			}
+
+			// Invented-identifier gate: this call references a record by an id
+			// nobody ever gave the model. Checked BEFORE the call runs, because
+			// the service's own answer to a fabricated id is a 404 — which reads
+			// as "that record is missing" or "the endpoint is broken", and is
+			// acted on as either. Observed live: an agent invented a post id by
+			// splicing the front of one real id onto the tail of another, got
+			// 404 twice, and reported a routing bug in the API.
+			if !cfg.DisableIDProvenanceGate {
+				if refusal := idProvenanceRefusal(tc.Name, tc.Args, knownIDs); refusal != "" {
+					Debug("[agent_loop] id-provenance: %s blocked (argument id was never issued this session)", tc.Name)
+					guardBlockedThisRound = true
+					emitDiag("invented-id", fmt.Sprintf("A call to '%s' referenced an id that nothing in this conversation produced; it was refused before it ran.", tc.Name))
+					results[i] = ToolResult{ID: tc.ID, Content: refusal, IsError: true}
+					toolErrors++
+					continue
+				}
+			}
+
+			// Action quota: this action has already run its allowance in the
+			// last 24 hours. Refused before it runs, and counted below only
+			// when it SUCCEEDS — a failed call consumed nothing anyone cares
+			// about, and charging for it would end a day's budget on an
+			// outage.
+			if refusal, action := actionQuotaRefusal(cfg, tc.Name, tc.Args); refusal != "" {
+				Debug("[agent_loop] quota: %s blocked (%s is at its 24h allowance)", tc.Name, action)
+				guardBlockedThisRound = true
+				emitDiag("action-quota", fmt.Sprintf("'%s' has used its allowance of %d per 24 hours; further calls were refused this turn.", action, cfg.ActionQuotas[action]))
+				results[i] = ToolResult{ID: tc.ID, Content: refusal, IsError: true}
+				toolErrors++
+				continue
 			}
 
 			// Repeated-failure loop-guard: this exact call (name+args) has
@@ -4510,6 +4617,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 			} else {
 				debugResult(toolCallLabel(w.tc), output)
 				results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
+				chargeActionQuota(cfg, w.tc.Name, w.tc.Args)
 			}
 		} else if len(work) > 1 {
 			var wg sync.WaitGroup
@@ -4523,6 +4631,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 				} else {
 					debugResult(toolCallLabel(w.tc), output)
 					results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
+					chargeActionQuota(cfg, w.tc.Name, w.tc.Args)
 				}
 			}
 			// Partition into LANES. Calls sharing a lane run SEQUENTIALLY in
@@ -6873,6 +6982,426 @@ func providerCutReply(resp *Response) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(resp.StopReason), "refusal")
+}
+
+// --- action quotas -----------------------------------------------------------
+//
+// "You may post six times a day" is a rule, and a rule the model is asked to
+// keep is not a limit. Told exactly that, an agent counted its own posts out
+// of a listing, mistook UTC timestamps for local ones, and posted nine — then
+// reported the cap as reached. The count belongs where the calls actually
+// happen.
+//
+// The window is a rolling 24 hours rather than a calendar day, which is the
+// same choice the per-credential cap makes, and for the same reason: a
+// calendar day needs a timezone, and the one thing this must never do is
+// disagree with itself about when the day started.
+
+const actionQuotaTable = "agent_action_quota"
+
+const actionQuotaWindow = 24 * time.Hour
+
+// actionQuotaName is the name a quota is written against: the grouped tool's
+// action when the call carries one ("moltbook/create_post"), else the tool.
+func actionQuotaName(tool string, args map[string]any) string {
+	if a, ok := args["action"].(string); ok {
+		if a = strings.TrimSpace(a); a != "" {
+			return tool + "/" + a
+		}
+	}
+	return tool
+}
+
+// actionQuotaLimit finds the limit that applies, accepting either the exact
+// action ("moltbook/create_post") or the bare tool ("moltbook") so a quota can
+// cover a whole tool or one of its actions.
+func actionQuotaLimit(cfg AgentLoopConfig, tool string, args map[string]any) (name string, limit int) {
+	if len(cfg.ActionQuotas) == 0 || strings.TrimSpace(cfg.BudgetKey) == "" {
+		return "", 0
+	}
+	action := actionQuotaName(tool, args)
+	if n, ok := cfg.ActionQuotas[action]; ok && n > 0 {
+		return action, n
+	}
+	if n, ok := cfg.ActionQuotas[tool]; ok && n > 0 {
+		return tool, n
+	}
+	return "", 0
+}
+
+// actionQuotaRefusal returns the text to hand back instead of running a call
+// that is out of allowance, and the action it was judged against.
+func actionQuotaRefusal(cfg AgentLoopConfig, tool string, args map[string]any) (string, string) {
+	action, limit := actionQuotaLimit(cfg, tool, args)
+	if limit <= 0 {
+		return "", ""
+	}
+	used, oldest := actionQuotaUsage(cfg.BudgetKey, action)
+	if used < limit {
+		return "", action
+	}
+	when := "later today"
+	if !oldest.IsZero() {
+		if free := time.Until(oldest.Add(actionQuotaWindow)); free > 0 {
+			when = "in about " + shortDurationWords(free)
+		}
+	}
+	return fmt.Sprintf(
+		"STOP — '%s' was NOT called. It has already run %d time(s) in the last 24 hours, which is its allowance of %d. This is enforced by the framework, not a rule you are asked to keep: further calls will be refused until the window frees up, %s. "+
+			"Do NOT try to reach the same action another way. Finish with what you have and say plainly that the allowance is spent.",
+		action, used, limit, when), action
+}
+
+// chargeActionQuota records one SUCCESSFUL run of a capped action.
+func chargeActionQuota(cfg AgentLoopConfig, tool string, args map[string]any) {
+	action, limit := actionQuotaLimit(cfg, tool, args)
+	if limit <= 0 || RootDB == nil {
+		return
+	}
+	key := cfg.BudgetKey
+	var stamps []time.Time
+	RootDB.Get(actionQuotaTable, key+"|"+action, &stamps)
+	stamps = append(pruneQuotaStamps(stamps), time.Now())
+	RootDB.Set(actionQuotaTable, key+"|"+action, &stamps)
+}
+
+// actionQuotaUsage reports how many runs are inside the window and when the
+// oldest of them was, which is when the allowance next frees up.
+func actionQuotaUsage(key, action string) (used int, oldest time.Time) {
+	if RootDB == nil {
+		return 0, time.Time{}
+	}
+	var stamps []time.Time
+	RootDB.Get(actionQuotaTable, key+"|"+action, &stamps)
+	stamps = pruneQuotaStamps(stamps)
+	if len(stamps) == 0 {
+		return 0, time.Time{}
+	}
+	return len(stamps), stamps[0]
+}
+
+// pruneQuotaStamps drops runs that have aged out of the window, keeping the
+// remainder in order.
+func pruneQuotaStamps(stamps []time.Time) []time.Time {
+	cutoff := time.Now().Add(-actionQuotaWindow)
+	out := stamps[:0:0]
+	for _, t := range stamps {
+		if t.After(cutoff) {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out
+}
+
+// shortDurationWords renders a wait the way a person would say it. Rounded,
+// not truncated: a slot that frees in 21 hours 59 minutes is "22 hours" to
+// everyone except an int conversion.
+func shortDurationWords(d time.Duration) string {
+	if d >= time.Hour {
+		if h := int(d.Round(time.Hour).Hours()); h == 1 {
+			return "an hour"
+		} else {
+			return fmt.Sprintf("%d hours", h)
+		}
+	}
+	m := int(d.Round(time.Minute).Minutes())
+	if m <= 1 {
+		return "a minute"
+	}
+	return fmt.Sprintf("%d minutes", m)
+}
+
+// --- daily spend ceiling ------------------------------------------------------
+//
+// Nothing stood between a scheduled agent on a frontier model and doing that
+// every hour: one unattended turn was measured at over a dollar, most of it
+// prompt-cache writes, and the only place it showed up was a line in a log
+// nobody reads hourly. This is the ceiling, charged from what the provider
+// actually reported and kept in the same rolling window as the action quotas.
+
+const spendLedgerTable = "agent_spend_ledger"
+
+type spendEntry struct {
+	At  time.Time `json:"at"`
+	USD float64   `json:"usd"`
+}
+
+// dailySpend totals what this budget has cost inside the window, dropping
+// what has aged out.
+func dailySpend(key string) (float64, []spendEntry) {
+	if strings.TrimSpace(key) == "" || RootDB == nil {
+		return 0, nil
+	}
+	var entries []spendEntry
+	RootDB.Get(spendLedgerTable, key, &entries)
+	cutoff := time.Now().Add(-actionQuotaWindow)
+	kept := entries[:0:0]
+	total := 0.0
+	for _, e := range entries {
+		if e.At.After(cutoff) {
+			kept = append(kept, e)
+			total += e.USD
+		}
+	}
+	return total, kept
+}
+
+// overDailySpend reports whether this budget is already spent.
+func overDailySpend(cfg AgentLoopConfig) (bool, float64) {
+	if cfg.DailySpendUSD <= 0 || strings.TrimSpace(cfg.BudgetKey) == "" {
+		return false, 0
+	}
+	spent, _ := dailySpend(cfg.BudgetKey)
+	return spent >= cfg.DailySpendUSD, spent
+}
+
+// chargeDailySpend bills one round and reports the running total, plus
+// whether this round is the one that crossed the line.
+func chargeDailySpend(cfg AgentLoopConfig, resp *Response) (float64, bool) {
+	if cfg.DailySpendUSD <= 0 || strings.TrimSpace(cfg.BudgetKey) == "" || resp == nil || RootDB == nil {
+		return 0, false
+	}
+	cost := roundCostUSD(resp)
+	if cost <= 0 {
+		return 0, false
+	}
+	before, entries := dailySpend(cfg.BudgetKey)
+	entries = append(entries, spendEntry{At: time.Now(), USD: cost})
+	RootDB.Set(spendLedgerTable, cfg.BudgetKey, &entries)
+	after := before + cost
+	return after, before < cfg.DailySpendUSD && after >= cfg.DailySpendUSD
+}
+
+// roundCostUSD prices one response with the deployment's configured rates,
+// billing it against the tier that actually served it. Zero when no rates are
+// configured, which is what a local-only deployment has — and a ceiling
+// measured in dollars means nothing there.
+func roundCostUSD(resp *Response) float64 {
+	if !RatesConfigured() {
+		return 0
+	}
+	d := UsageDiff{}
+	if resp.Tier == LEAD {
+		d.LeadInput = int64(resp.InputTokens)
+		d.LeadOutput = int64(resp.OutputTokens)
+		d.LeadCacheRead = int64(resp.CacheReadTokens)
+		d.LeadCacheWrite = int64(resp.CacheWriteTokens)
+	} else {
+		d.WorkerInput = int64(resp.InputTokens)
+		d.WorkerOutput = int64(resp.OutputTokens)
+		d.WorkerCacheRead = int64(resp.CacheReadTokens)
+		d.WorkerCacheWrite = int64(resp.CacheWriteTokens)
+	}
+	return GetCostRates().Estimate(d)
+}
+
+// --- failure memory across turns ---------------------------------------------
+//
+// The repeat guard counts identical failures within one turn, and a
+// conversation re-arms it from the tool results in its history. Standing work
+// has neither: a scheduled fire is a fresh loop whose history is stored
+// messages, role and content only. So a call that failed the same way every
+// hour for a week was, every hour, a brand-new failure — retried, re-diagnosed
+// in the report, and forgotten again.
+//
+// This is the smallest thing that fixes it: the per-signature counts, kept
+// under a key the caller chooses, aged out so a fault that gets fixed stops
+// being remembered.
+
+const failureMemoryTable = "agent_failure_memory"
+
+// failureMemoryTTL is how long a remembered failure stays remembered. Long
+// enough to span a daily task's fires, short enough that a repaired endpoint
+// is not held against a call for a week.
+const failureMemoryTTL = 48 * time.Hour
+
+type failureMemory struct {
+	Counts  map[string]int       `json:"counts"`
+	Seen    map[string]time.Time `json:"seen"`
+	Updated time.Time            `json:"updated"`
+}
+
+// loadFailureMemory seeds counts with what this key has failed at recently.
+// Entries past the TTL are ignored, so a fixed fault fades on its own.
+func loadFailureMemory(key string, counts map[string]int) {
+	if strings.TrimSpace(key) == "" || RootDB == nil {
+		return
+	}
+	var mem failureMemory
+	if !RootDB.Get(failureMemoryTable, key, &mem) {
+		return
+	}
+	cutoff := time.Now().Add(-failureMemoryTTL)
+	carried := 0
+	for sig, n := range mem.Counts {
+		if at, ok := mem.Seen[sig]; ok && at.Before(cutoff) {
+			continue
+		}
+		if n > 0 {
+			counts[sig] = n
+			carried++
+		}
+	}
+	if carried > 0 {
+		Debug("[agent_loop] failure memory %q: carried %d failing call signature(s) from earlier work", key, carried)
+	}
+}
+
+// saveFailureMemory persists the counts that are still failing. A signature
+// the turn CLEARED is dropped rather than written as zero: the guard resets a
+// count on success, and that success is exactly what should stop this being
+// remembered at all.
+func saveFailureMemory(key string, counts map[string]int) {
+	if strings.TrimSpace(key) == "" || RootDB == nil {
+		return
+	}
+	now := time.Now()
+	mem := failureMemory{Counts: map[string]int{}, Seen: map[string]time.Time{}, Updated: now}
+	var prior failureMemory
+	RootDB.Get(failureMemoryTable, key, &prior)
+	cutoff := now.Add(-failureMemoryTTL)
+	for sig, n := range counts {
+		if n <= 0 {
+			continue
+		}
+		mem.Counts[sig] = n
+		// Keep the ORIGINAL first-seen stamp when the count only carried
+		// through, so a failure cannot renew its own lease by being retried.
+		if at, ok := prior.Seen[sig]; ok && at.After(cutoff) {
+			mem.Seen[sig] = at
+		} else {
+			mem.Seen[sig] = now
+		}
+	}
+	if len(mem.Counts) == 0 {
+		RootDB.Unset(failureMemoryTable, key)
+		return
+	}
+	RootDB.Set(failureMemoryTable, key, &mem)
+}
+
+// --- invented-identifier gate ------------------------------------------------
+//
+// A model that references a record by an id nobody issued gets the service's
+// 404, and a 404 is indistinguishable from "that record was deleted" or "this
+// endpoint is broken" — so the model explains the failure instead of fixing
+// it, and the invented id survives into the next call and the report. The
+// recall tool learned this first (an id nobody issued is a fabrication, not a
+// formatting mistake); this is the same rule for every tool, checked from the
+// one place that sees both the arguments and everything the session was given.
+
+// uuidPattern matches the canonical 8-4-4-4-12 hex form. Deliberately narrow:
+// an opaque slug or a numeric id cannot be told apart from a value the model
+// legitimately composed, and refusing one of those would block real work.
+var uuidPattern = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+
+// referenceParam reports whether an argument NAMES an existing record rather
+// than describing a new one: id, post_id, parentId, thread_id, uuid, ref.
+func referenceParam(name string) bool {
+	n := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(strings.TrimSpace(name)))
+	switch n {
+	case "id", "uuid", "guid", "ref", "reference":
+		return true
+	}
+	return strings.HasSuffix(n, "id") || strings.HasSuffix(n, "uuid") || strings.HasSuffix(n, "ref")
+}
+
+// creationCall reports a call that BRINGS A RECORD INTO BEING, where an id the
+// session has never seen is the point rather than a mistake. Matched on the
+// verb the name starts with, which is the only signal available here.
+func creationCall(tool string, args map[string]any) bool {
+	t := strings.ToLower(strings.TrimSpace(tool))
+	if a, ok := args["action"].(string); ok && strings.TrimSpace(a) != "" {
+		t = strings.ToLower(strings.TrimSpace(a))
+	}
+	if i := strings.LastIndex(t, "/"); i >= 0 {
+		t = t[i+1:]
+	}
+	for _, verb := range []string{"create", "new", "add", "insert", "register", "upsert", "save", "put", "set", "start", "open", "make", "import", "generate", "schedule"} {
+		if strings.HasPrefix(t, verb) {
+			return true
+		}
+	}
+	return false
+}
+
+// collectKnownIDs gathers every UUID the conversation has been GIVEN: the
+// system prompt, the user's own words, and tool results. Assistant prose is
+// excluded on purpose — see the gate's note above.
+func collectKnownIDs(systemPrompt string, history []Message) map[string]bool {
+	out := map[string]bool{}
+	add := func(text string) {
+		for _, id := range uuidPattern.FindAllString(text, -1) {
+			out[strings.ToLower(id)] = true
+		}
+	}
+	add(systemPrompt)
+	for _, m := range history {
+		if m.Role == "user" || m.Role == "system" {
+			add(m.Content)
+		}
+		for _, r := range m.ToolResults {
+			add(r.Content)
+		}
+	}
+	return out
+}
+
+// idProvenanceRefusal returns the text to hand back instead of running a call
+// whose reference argument names an id this session never saw, or "" to let
+// the call proceed.
+func idProvenanceRefusal(tool string, args map[string]any, known map[string]bool) string {
+	if creationCall(tool, args) {
+		return ""
+	}
+	for _, name := range sortedArgNames(args) {
+		if !referenceParam(name) {
+			continue
+		}
+		v, _ := args[name].(string)
+		id := strings.ToLower(strings.TrimSpace(v))
+		if !uuidPattern.MatchString(id) || known[id] {
+			continue
+		}
+		return fmt.Sprintf(
+			"STOP — '%s' was NOT called. Its %s is %q, an identifier nothing in this conversation ever produced: it is not in any tool result, and the user did not give it to you. You composed it.%s\n\n"+
+				"An id you did not receive will not start working on a retry, and the service's 404 for one reads exactly like a deleted record or a broken endpoint — do not report it as either. "+
+				"Call the tool that LISTS or SEARCHES the records you want, copy the id from its result character-for-character, and use that. If you cannot find the record, say so plainly.",
+			tool, name, v, nearestKnownIDNote(id, known))
+	}
+	return ""
+}
+
+// nearestKnownIDNote names a real id the invented one was likely assembled
+// from — the observed failure spliced the front of one id onto the tail of
+// another, and being shown the pair is what makes that visible.
+func nearestKnownIDNote(id string, known map[string]bool) string {
+	best, bestLen := "", 0
+	for k := range known {
+		n := 0
+		for n < len(k) && n < len(id) && k[n] == id[n] {
+			n++
+		}
+		if n > bestLen || (n == bestLen && k < best) {
+			best, bestLen = k, n
+		}
+	}
+	if bestLen < 8 {
+		return ""
+	}
+	return fmt.Sprintf(" The closest id this conversation actually produced is %q — check whether you meant that one, and whether you joined pieces of two different ids together.", best)
+}
+
+// sortedArgNames keeps a refusal deterministic when a call carries more than
+// one reference argument.
+func sortedArgNames(args map[string]any) []string {
+	names := make([]string, 0, len(args))
+	for k := range args {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // logPromptFloor breaks the first round's prompt into its parts.
