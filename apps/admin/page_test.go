@@ -10,10 +10,10 @@ func TestToggleLabel(t *testing.T) {
 		"Finding conflict detection (0 = off)":  "Finding conflict detection",
 		"Automatic entity extraction (0 = off)": "Automatic entity extraction",
 		"Something (0=off)":                     "Something",
-		"Something (0 = OFF)":                    "Something",
+		"Something (0 = OFF)":                   "Something",
 		"Grounding gate: unsourced figures":     "Grounding gate: unsourced figures",
-		"Recall min score (0 = off)":             "Recall min score", // helper strips; caller only applies it to bool knobs
-		"Chunk size (chars)":                     "Chunk size (chars)",
+		"Recall min score (0 = off)":            "Recall min score", // helper strips; caller only applies it to bool knobs
+		"Chunk size (chars)":                    "Chunk size (chars)",
 	}
 	for in, want := range cases {
 		if got := toggleLabel(in); got != want {

@@ -12,7 +12,6 @@ package admin
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -20,11 +19,7 @@ import (
 )
 
 func TestMaintenanceRunPostsTheKeyNotTheLabel(t *testing.T) {
-	src, err := os.ReadFile("page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := string(src)
+	page := adminPageSource(t)
 	if strings.Contains(page, "api/maintenance?key={Label}") {
 		t.Error("the Run button posts the label; the registry is keyed by Key, so every action 404s")
 	}

@@ -8,7 +8,6 @@ package admin
 // the only way to see the truth was a full refresh.
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -18,11 +17,7 @@ import (
 // Invalidate would fail silently and leave a stale graph with nothing to notice
 // it by, so the coupling is a compile error rather than a bug report.
 func TestCostSurfacesAreNamedOnce(t *testing.T) {
-	b, err := os.ReadFile("page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	src := adminPageSource(t)
 	for _, lit := range []string{`"api/cost-history?days=`, `"api/cost-by-source?days=`} {
 		if n := strings.Count(src, lit); n > 1 {
 			t.Errorf("%s appears as a literal %d times; use the shared constant or the two will drift", lit, n)
@@ -35,11 +30,7 @@ func TestCostSurfacesAreNamedOnce(t *testing.T) {
 // typed while creating a source hook is as invisible as one typed while editing
 // it.
 func TestEveryCostEditingFormInvalidates(t *testing.T) {
-	b, err := os.ReadFile("page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	src := adminPageSource(t)
 
 	// The four forms are the ones whose fields carry cost_per_call.
 	forms := strings.Count(src, "credentialFormFields()") + strings.Count(src, "sourceHookFormFields()")

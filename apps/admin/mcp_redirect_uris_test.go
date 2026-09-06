@@ -11,17 +11,12 @@ package admin
 
 import (
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
 
 func TestBothMCPRedirectURIsAreDocumentedWhereTheyAreRegistered(t *testing.T) {
-	src, err := os.ReadFile("page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	help := string(src)
+	help := adminPageSource(t)
 	// The form that asks for a pre-registered client ID is the only
 	// place somebody learns what to register.
 	for _, want := range []string{

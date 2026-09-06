@@ -8,7 +8,6 @@ package admin
 // the answer from before the click.
 
 import (
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -20,7 +19,7 @@ func actionBlock(t *testing.T, src, want string) string {
 	t.Helper()
 	// PostTo, not any mention: the same URL is also a form's Source and a
 	// picker's RecordSource, and those are reads.
-	loc := regexp.MustCompile(`PostTo:\s*"`+regexp.QuoteMeta(want)+`"`).FindStringIndex(src)
+	loc := regexp.MustCompile(`PostTo:\s*"` + regexp.QuoteMeta(want) + `"`).FindStringIndex(src)
 	if loc == nil {
 		t.Fatalf("no action posts to %q any more", want)
 	}
@@ -38,11 +37,7 @@ func actionBlock(t *testing.T, src, want string) string {
 }
 
 func TestTheActionsThatChangeAnotherSectionSaySo(t *testing.T) {
-	b, err := os.ReadFile("page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	src := adminPageSource(t)
 
 	for _, tc := range []struct {
 		post string
