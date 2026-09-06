@@ -101,11 +101,7 @@ func TestNothingOpensAnSSHSessionUnguarded(t *testing.T) {
 // perfectly well over the peer transport. Checked against the source because
 // the toolkit is assembled inside runSession, which needs a live session.
 func TestRunPtyIsWithheldWhenReachedThroughAPeer(t *testing.T) {
-	data, err := os.ReadFile("web.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(data)
+	body := webSource(t)
 	if !strings.Contains(body, `ptyLocal := strings.TrimSpace(appliance.PeerName) == ""`) {
 		t.Fatal("the ptyLocal predicate is gone — run_pty may now be offered on a peer appliance")
 	}

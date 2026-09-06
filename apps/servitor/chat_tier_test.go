@@ -1,7 +1,6 @@
 package servitor
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -19,11 +18,7 @@ import (
 // two paths live hundreds of lines apart and neither can see that the other
 // disagrees with it.
 func TestBothInvestigatorPathsCarryTheApplianceTier(t *testing.T) {
-	src, err := os.ReadFile("web.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
+	body := webSource(t)
 
 	// The map/probe path: an AgentLoopConfig with the orchestrator route stage.
 	if !strings.Contains(body, `RouteKey:     "app.servitor.orchestrator",`) &&

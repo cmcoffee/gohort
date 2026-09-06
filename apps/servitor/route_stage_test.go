@@ -99,11 +99,7 @@ func TestRouteKeysAreRegistered(t *testing.T) {
 // this is the one that was wrong and the fix is a single string that a future
 // copy-paste from a neighbouring loop would quietly undo.
 func TestTheInvestigatorUsesTheOrchestratorStage(t *testing.T) {
-	data, err := os.ReadFile("web.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(data)
+	body := webSource(t)
 	i := strings.Index(body, "buildInvestigatorSystemPrompt(appliance, resolvedTools)")
 	if i < 0 {
 		t.Fatal("the investigator loop config has moved")

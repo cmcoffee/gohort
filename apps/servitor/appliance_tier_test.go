@@ -64,11 +64,7 @@ func TestTheModalGatesLeadOnTheServerFlag(t *testing.T) {
 // persisting it would freeze a snapshot that goes stale the moment Model
 // Privacy changes.
 func TestTheAvailabilityFlagIsComputedNotStored(t *testing.T) {
-	src, err := os.ReadFile("web.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
+	body := webSource(t)
 	if n := strings.Count(body, "LeadTierAvailable = AllLLMsPrivate()"); n < 3 {
 		t.Errorf("only %d of the appliance read paths set the availability flag — a form "+
 			"reached through one of the others would silently hide the Lead option", n)

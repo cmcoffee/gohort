@@ -1,7 +1,6 @@
 package servitor
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -19,11 +18,7 @@ import (
 // the source because the handler is inline in an HTTP switch with no seam to
 // call — the shape of the guard IS the fix.
 func TestAWriteOnlySecretIsNotBlankedByASaveThatOmitsIt(t *testing.T) {
-	raw, err := os.ReadFile("web.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(raw)
+	src := webSource(t)
 
 	for _, want := range []string{
 		"if req.Password == \"\" {\n\t\t\t\treq.Password = existing.Password",
